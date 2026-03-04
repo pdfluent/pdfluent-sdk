@@ -1,14 +1,4 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+//! PDFium FFI Bridge — PDF rendering and XFA packet extraction.
+//!
+//! Provides Rust bindings to PDFium via pdfium-render,
+//! handling XFA packet extraction, rendering, and UI events.

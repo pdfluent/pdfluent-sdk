@@ -6,3 +6,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+roxmltree.workspace = true
+thiserror.workspace = true

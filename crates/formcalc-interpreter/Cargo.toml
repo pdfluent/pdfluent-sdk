@@ -6,3 +6,5 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+xfa-dom-resolver.workspace = true
+thiserror.workspace = true
