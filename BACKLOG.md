@@ -39,7 +39,7 @@ Epic 0 (Fundament)
 | 1.1 | XFA DOM parser           | Parse XFA XML packets uit PDF via `roxmltree`, bouw Template + Data DOM | ✅ Done |
 | 1.2 | SOM path resolver        | Implementeer `xfa.form.subform[3].field[*]` pad-resolutie           | ✅ Done |
 | 1.3 | SOM expression evaluator | Wildcards, predicates, named references in SOM paden                | ✅ Done |
-| 1.4 | DOM manipulation API     | CRUD operaties op Template/Data DOM nodes                           | Pending |
+| 1.4 | DOM manipulation API     | CRUD operaties op Template/Data DOM nodes                           | ✅ Done |
 | 1.5 | Unit tests SOM           | Volledige test coverage voor padresolutie edge cases                 | ✅ Done |
 
 ---
@@ -54,11 +54,11 @@ Epic 0 (Fundament)
 | 2.2  | FormCalc parser → AST           | Recursive descent parser voor volledige grammatica                     | ✅ Done |
 | 2.3  | AST interpreter                 | Expression evaluator met type coercion                                 | ✅ Done |
 | 2.4  | Built-in: Arithmetic            | `Abs`, `Avg`, `Ceil`, `Count`, `Floor`, `Max`, `Min`, `Mod`, `Round`, `Sum` | ✅ Done |
-| 2.5  | Built-in: Date/Time             | `Date`, `Date2Num`, `Num2Date`, `Time`, `Time2Num` + 7 anderen        | Pending |
+| 2.5  | Built-in: Date/Time             | `Date`, `Date2Num`, `Num2Date`, `Time`, `Time2Num` + 7 anderen        | ✅ Done |
 | 2.6  | Built-in: String                | `At`, `Concat`, `Left`, `Len`, `Replace`, `Substr` + 13 anderen       | ✅ Done |
-| 2.7  | Built-in: Financial             | `Apr`, `Pmt`, `Pv`, `Rate`, `Term` + 5 anderen                        | Pending |
+| 2.7  | Built-in: Financial             | `Apr`, `Pmt`, `Pv`, `Rate`, `Term` + 5 anderen                        | ✅ Done |
 | 2.8  | Built-in: Logical + Misc        | `If`, `Choose`, `Oneof`, `Within`, `Eval`, `Null`                     | ✅ Done |
-| 2.9  | SOM-integratie                  | FormCalc scripts resolven en muteren DOM nodes via Module A            | Pending |
+| 2.9  | SOM-integratie                  | FormCalc scripts resolven en muteren DOM nodes via Module A            | ✅ Done |
 | 2.10 | Conformance tests               | Test suite tegen FormCalc spec voorbeelden                             | Pending |
 
 ---
