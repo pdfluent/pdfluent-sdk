@@ -191,7 +191,8 @@ impl DataDom {
         }
     }
 
-    fn alloc(&mut self, node: DataNode) -> DataNodeId {
+    /// Allocate a new node in the arena (does not attach to any parent).
+    pub fn alloc(&mut self, node: DataNode) -> DataNodeId {
         let id = DataNodeId(self.nodes.len());
         self.nodes.push(node);
         id
@@ -263,6 +264,186 @@ impl DataDom {
         }
     }
 
+    // ── CRUD: Create ──────────────────────────────────────────
+
+    /// Create a new DataGroup node and attach it to a parent.
+    pub fn create_group(&mut self, parent: DataNodeId, name: &str) -> Result<DataNodeId> {
+        self.ensure_group(parent)?;
+        let id = self.alloc(DataNode::DataGroup {
+            name: name.to_string(),
+            namespace: None,
+            children: Vec::new(),
+            is_record: false,
+            parent: Some(parent),
+        });
+        self.add_child(parent, id);
+        Ok(id)
+    }
+
+    /// Create a new DataValue node and attach it to a parent.
+    pub fn create_value(
+        &mut self,
+        parent: DataNodeId,
+        name: &str,
+        value: &str,
+    ) -> Result<DataNodeId> {
+        self.ensure_group(parent)?;
+        let id = self.alloc(DataNode::DataValue {
+            name: name.to_string(),
+            namespace: None,
+            value: value.to_string(),
+            contains: DataContains::Data,
+            content_type: None,
+            is_null: false,
+            null_type: NullType::Exclude,
+            parent: Some(parent),
+        });
+        self.add_child(parent, id);
+        Ok(id)
+    }
+
+    // ── CRUD: Delete / Remove ────────────────────────────────
+
+    /// Remove a child from its parent's children list (does not deallocate).
+    pub fn remove_child(&mut self, parent: DataNodeId, child: DataNodeId) -> Result<()> {
+        self.ensure_group(parent)?;
+        if let DataNode::DataGroup { children, .. } = &mut self.nodes[parent.0] {
+            if let Some(pos) = children.iter().position(|&id| id == child) {
+                children.remove(pos);
+            }
+        }
+        // Clear the child's parent reference
+        match &mut self.nodes[child.0] {
+            DataNode::DataGroup { parent, .. } | DataNode::DataValue { parent, .. } => {
+                *parent = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove a node from its parent and mark it as orphaned.
+    pub fn detach(&mut self, id: DataNodeId) -> Result<()> {
+        let parent_id = self
+            .get(id)
+            .ok_or_else(|| XfaDomError::NodeNotFound(format!("DataNodeId({})", id.0)))?
+            .parent();
+        if let Some(pid) = parent_id {
+            self.remove_child(pid, id)?;
+        }
+        Ok(())
+    }
+
+    // ── CRUD: Update (rename) ────────────────────────────────
+
+    /// Rename a node.
+    pub fn rename(&mut self, id: DataNodeId, new_name: &str) -> Result<()> {
+        match self.get_mut(id) {
+            Some(DataNode::DataGroup { name, .. }) | Some(DataNode::DataValue { name, .. }) => {
+                *name = new_name.to_string();
+                Ok(())
+            }
+            None => Err(XfaDomError::NodeNotFound(format!("DataNodeId({})", id.0))),
+        }
+    }
+
+    // ── Insert at position ───────────────────────────────────
+
+    /// Insert a child at a specific index in the parent's children list.
+    pub fn insert_child_at(
+        &mut self,
+        parent: DataNodeId,
+        index: usize,
+        child: DataNodeId,
+    ) -> Result<()> {
+        self.ensure_group(parent)?;
+        // Update child's parent reference
+        match &mut self.nodes[child.0] {
+            DataNode::DataGroup { parent: p, .. } | DataNode::DataValue { parent: p, .. } => {
+                *p = Some(parent);
+            }
+        }
+        if let DataNode::DataGroup { children, .. } = &mut self.nodes[parent.0] {
+            let idx = index.min(children.len());
+            children.insert(idx, child);
+        }
+        Ok(())
+    }
+
+    // ── Move node ────────────────────────────────────────────
+
+    /// Move a node from its current parent to a new parent.
+    pub fn move_node(&mut self, node: DataNodeId, new_parent: DataNodeId) -> Result<()> {
+        self.ensure_group(new_parent)?;
+        self.detach(node)?;
+        match &mut self.nodes[node.0] {
+            DataNode::DataGroup { parent, .. } | DataNode::DataValue { parent, .. } => {
+                *parent = Some(new_parent);
+            }
+        }
+        self.add_child(new_parent, node);
+        Ok(())
+    }
+
+    // ── Serialisation ────────────────────────────────────────
+
+    /// Serialize the DOM back to XML.
+    pub fn to_xml(&self) -> String {
+        let mut out = String::new();
+        if let Some(root) = self.root {
+            self.write_xml_node(root, &mut out, 0);
+        }
+        out
+    }
+
+    fn write_xml_node(&self, id: DataNodeId, out: &mut String, depth: usize) {
+        let node = match self.get(id) {
+            Some(n) => n,
+            None => return,
+        };
+        let indent = "  ".repeat(depth);
+        match node {
+            DataNode::DataGroup { name, children, .. } => {
+                if children.is_empty() {
+                    out.push_str(&format!("{indent}<{name}/>\n"));
+                } else {
+                    out.push_str(&format!("{indent}<{name}>\n"));
+                    for &child in children {
+                        self.write_xml_node(child, out, depth + 1);
+                    }
+                    out.push_str(&format!("{indent}</{name}>\n"));
+                }
+            }
+            DataNode::DataValue {
+                name,
+                value,
+                is_null,
+                ..
+            } => {
+                if *is_null {
+                    out.push_str(&format!("{indent}<{name} xsi:nil=\"true\"/>\n"));
+                } else if value.is_empty() {
+                    out.push_str(&format!("{indent}<{name}/>\n"));
+                } else {
+                    let escaped = xml_escape(value);
+                    out.push_str(&format!("{indent}<{name}>{escaped}</{name}>\n"));
+                }
+            }
+        }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────
+
+    fn ensure_group(&self, id: DataNodeId) -> Result<()> {
+        match self.get(id) {
+            Some(DataNode::DataGroup { .. }) => Ok(()),
+            Some(node) => Err(XfaDomError::InvalidNodeType {
+                expected: "DataGroup",
+                got: format!("DataValue({})", node.name()),
+            }),
+            None => Err(XfaDomError::NodeNotFound(format!("DataNodeId({})", id.0))),
+        }
+    }
+
     /// Total number of nodes in the arena.
     pub fn len(&self) -> usize {
         self.nodes.len()
@@ -272,6 +453,14 @@ impl DataDom {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 impl Default for DataDom {
@@ -406,5 +595,161 @@ mod tests {
 
         assert_eq!(dom.get(child).unwrap().parent(), Some(root));
         assert_eq!(dom.get(root).unwrap().parent(), None);
+    }
+
+    #[test]
+    fn create_group_and_value() {
+        let xml = r#"<data><placeholder>x</placeholder></data>"#;
+        let mut dom = DataDom::from_xml(xml).unwrap();
+        let root = dom.root().unwrap();
+
+        let grp = dom.create_group(root, "Invoice").unwrap();
+        assert!(dom.get(grp).unwrap().is_group());
+        assert_eq!(dom.get(grp).unwrap().parent(), Some(root));
+
+        let val = dom.create_value(grp, "Total", "99.50").unwrap();
+        assert_eq!(dom.value(val).unwrap(), "99.50");
+        assert_eq!(dom.get(val).unwrap().parent(), Some(grp));
+
+        assert_eq!(dom.children(root).len(), 2); // placeholder + Invoice
+        assert_eq!(dom.children(grp).len(), 1);
+    }
+
+    #[test]
+    fn create_on_value_node_fails() {
+        let xml = r#"<data><leaf>x</leaf></data>"#;
+        let mut dom = DataDom::from_xml(xml).unwrap();
+        let root = dom.root().unwrap();
+        let leaf = dom.children_by_name(root, "leaf")[0];
+
+        assert!(dom.create_group(leaf, "child").is_err());
+        assert!(dom.create_value(leaf, "child", "v").is_err());
+    }
+
+    #[test]
+    fn remove_child_works() {
+        let xml = r#"<data><a>1</a><b>2</b><c>3</c></data>"#;
+        let mut dom = DataDom::from_xml(xml).unwrap();
+        let root = dom.root().unwrap();
+        assert_eq!(dom.children(root).len(), 3);
+
+        let b = dom.children_by_name(root, "b")[0];
+        dom.remove_child(root, b).unwrap();
+        assert_eq!(dom.children(root).len(), 2);
+        assert!(dom.get(b).unwrap().parent().is_none());
+
+        let names: Vec<&str> = dom
+            .children(root)
+            .iter()
+            .map(|&id| dom.get(id).unwrap().name())
+            .collect();
+        assert_eq!(names, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn detach_node() {
+        let xml = r#"<data><item>val</item></data>"#;
+        let mut dom = DataDom::from_xml(xml).unwrap();
+        let root = dom.root().unwrap();
+        let item = dom.children_by_name(root, "item")[0];
+
+        dom.detach(item).unwrap();
+        assert_eq!(dom.children(root).len(), 0);
+        assert!(dom.get(item).unwrap().parent().is_none());
+    }
+
+    #[test]
+    fn rename_node() {
+        let xml = r#"<data><old>val</old></data>"#;
+        let mut dom = DataDom::from_xml(xml).unwrap();
+        let root = dom.root().unwrap();
+        let node = dom.children_by_name(root, "old")[0];
+
+        dom.rename(node, "new").unwrap();
+        assert_eq!(dom.get(node).unwrap().name(), "new");
+        assert_eq!(dom.children_by_name(root, "new").len(), 1);
+        assert_eq!(dom.children_by_name(root, "old").len(), 0);
+    }
+
+    #[test]
+    fn insert_child_at_position() {
+        let xml = r#"<data><a>1</a><c>3</c></data>"#;
+        let mut dom = DataDom::from_xml(xml).unwrap();
+        let root = dom.root().unwrap();
+
+        let b = dom.alloc(DataNode::DataValue {
+            name: "b".to_string(),
+            namespace: None,
+            value: "2".to_string(),
+            contains: DataContains::Data,
+            content_type: None,
+            is_null: false,
+            null_type: NullType::Exclude,
+            parent: None,
+        });
+        dom.insert_child_at(root, 1, b).unwrap();
+
+        let names: Vec<&str> = dom
+            .children(root)
+            .iter()
+            .map(|&id| dom.get(id).unwrap().name())
+            .collect();
+        assert_eq!(names, vec!["a", "b", "c"]);
+        assert_eq!(dom.get(b).unwrap().parent(), Some(root));
+    }
+
+    #[test]
+    fn move_node_between_parents() {
+        let xml = r#"<data><src><item>val</item></src><dst><placeholder>x</placeholder></dst></data>"#;
+        let mut dom = DataDom::from_xml(xml).unwrap();
+        let root = dom.root().unwrap();
+        let src = dom.children_by_name(root, "src")[0];
+        let dst = dom.children_by_name(root, "dst")[0];
+        let item = dom.children_by_name(src, "item")[0];
+
+        dom.move_node(item, dst).unwrap();
+        assert_eq!(dom.children(src).len(), 0);
+        assert_eq!(dom.children(dst).len(), 2); // placeholder + item
+        assert_eq!(dom.get(item).unwrap().parent(), Some(dst));
+    }
+
+    #[test]
+    fn to_xml_roundtrip() {
+        let mut dom = DataDom::new();
+        let root = dom.alloc(DataNode::DataGroup {
+            name: "data".to_string(),
+            namespace: None,
+            children: Vec::new(),
+            is_record: false,
+            parent: None,
+        });
+        dom.root = Some(root);
+
+        let inv = dom.create_group(root, "Invoice").unwrap();
+        dom.create_value(inv, "Total", "112.50").unwrap();
+        dom.create_value(inv, "Tax", "23.63").unwrap();
+
+        let xml = dom.to_xml();
+        assert!(xml.contains("<Invoice>"));
+        assert!(xml.contains("<Total>112.50</Total>"));
+        assert!(xml.contains("<Tax>23.63</Tax>"));
+        assert!(xml.contains("</Invoice>"));
+    }
+
+    #[test]
+    fn to_xml_escapes_special_chars() {
+        let mut dom = DataDom::new();
+        let root = dom.alloc(DataNode::DataGroup {
+            name: "data".to_string(),
+            namespace: None,
+            children: Vec::new(),
+            is_record: false,
+            parent: None,
+        });
+        dom.root = Some(root);
+        dom.create_value(root, "note", "A & B < C").unwrap();
+
+        let xml = dom.to_xml();
+        assert!(xml.contains("A &amp; B &lt; C"));
     }
 }
