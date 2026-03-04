@@ -91,8 +91,8 @@ Epic 0 (Fundament)
 
 | #   | Issue                       | Beschrijving                                                        | Status  |
 | --- | --------------------------- | ------------------------------------------------------------------- | ------- |
-| 4.1 | PDFium bindings setup       | `pdfium-render` crate integratie, library linking                   | Pending |
-| 4.2 | XFA packet extractie        | XFA streams uit PDF lezen via PDFium                                | Pending |
+| 4.1 | PDFium bindings setup       | `pdfium-render` crate integratie, library linking                   | ✅ Done |
+| 4.2 | XFA packet extractie        | XFA streams uit PDF lezen via PDFium                                | ✅ Done |
 | 4.3 | FPDF_FORMFILLINFO callbacks | Implementeer form fill interface voor UI events                     | Pending |
 | 4.4 | Render pipeline             | XFA layout → PDFium rendering → pixel output                       | Pending |
 | 4.5 | Event handling              | Muisklikken, toetsaanslagen doorsturen naar Rust engine             | Pending |
