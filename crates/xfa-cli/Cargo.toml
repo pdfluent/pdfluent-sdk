@@ -6,3 +6,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+xfa-dom-resolver.workspace = true
+formcalc-interpreter.workspace = true
+xfa-layout-engine.workspace = true
+pdfium-ffi-bridge.workspace = true

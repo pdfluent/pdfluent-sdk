@@ -6,3 +6,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+xfa-dom-resolver.workspace = true
+xfa-layout-engine.workspace = true
+pdfium-render.workspace = true
+thiserror.workspace = true
+image.workspace = true

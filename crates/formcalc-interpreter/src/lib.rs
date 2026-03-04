@@ -1,14 +1,4 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+//! FormCalc Interpreter — lexer, parser, and AST evaluator.
+//!
+//! Implements the FormCalc scripting language from XFA 3.3 §25,
+//! including all built-in functions and SOM integration.

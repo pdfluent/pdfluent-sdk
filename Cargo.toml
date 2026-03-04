@@ -18,3 +18,11 @@ repository = "https://github.com/jasperdew/xfa-native-rust"
 roxmltree = "0.20"
 pdfium-render = "0.8"
 thiserror = "2"
+image = "0.25"
+pixelmatch = "0.1"
+
+# Internal crates
+xfa-dom-resolver = { path = "crates/xfa-dom-resolver" }
+formcalc-interpreter = { path = "crates/formcalc-interpreter" }
+xfa-layout-engine = { path = "crates/xfa-layout-engine" }
+pdfium-ffi-bridge = { path = "crates/pdfium-ffi-bridge" }
