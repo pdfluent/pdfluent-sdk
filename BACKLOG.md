@@ -50,14 +50,14 @@ Epic 0 (Fundament)
 
 | #    | Issue                           | Beschrijving                                                           | Status  |
 | ---- | ------------------------------- | ---------------------------------------------------------------------- | ------- |
-| 2.1  | FormCalc lexer                  | Tokenizer voor literals, keywords, operators                           | Pending |
-| 2.2  | FormCalc parser → AST           | Recursive descent parser voor volledige grammatica                     | Pending |
-| 2.3  | AST interpreter                 | Expression evaluator met type coercion                                 | Pending |
-| 2.4  | Built-in: Arithmetic            | `Abs`, `Avg`, `Ceil`, `Count`, `Floor`, `Max`, `Min`, `Mod`, `Round`, `Sum` | Pending |
+| 2.1  | FormCalc lexer                  | Tokenizer voor literals, keywords, operators                           | ✅ Done |
+| 2.2  | FormCalc parser → AST           | Recursive descent parser voor volledige grammatica                     | ✅ Done |
+| 2.3  | AST interpreter                 | Expression evaluator met type coercion                                 | ✅ Done |
+| 2.4  | Built-in: Arithmetic            | `Abs`, `Avg`, `Ceil`, `Count`, `Floor`, `Max`, `Min`, `Mod`, `Round`, `Sum` | ✅ Done |
 | 2.5  | Built-in: Date/Time             | `Date`, `Date2Num`, `Num2Date`, `Time`, `Time2Num` + 7 anderen        | Pending |
-| 2.6  | Built-in: String                | `At`, `Concat`, `Left`, `Len`, `Replace`, `Substr` + 13 anderen       | Pending |
+| 2.6  | Built-in: String                | `At`, `Concat`, `Left`, `Len`, `Replace`, `Substr` + 13 anderen       | ✅ Done |
 | 2.7  | Built-in: Financial             | `Apr`, `Pmt`, `Pv`, `Rate`, `Term` + 5 anderen                        | Pending |
-| 2.8  | Built-in: Logical + Misc        | `If`, `Choose`, `Oneof`, `Within`, `Eval`, `Null`                     | Pending |
+| 2.8  | Built-in: Logical + Misc        | `If`, `Choose`, `Oneof`, `Within`, `Eval`, `Null`                     | ✅ Done |
 | 2.9  | SOM-integratie                  | FormCalc scripts resolven en muteren DOM nodes via Module A            | Pending |
 | 2.10 | Conformance tests               | Test suite tegen FormCalc spec voorbeelden                             | Pending |
 
