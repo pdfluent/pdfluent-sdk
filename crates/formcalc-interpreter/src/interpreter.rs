@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use crate::ast::{BinOp, Expr};
 use crate::builtins;
 use crate::error::{FormCalcError, Result};
+use crate::som_bridge::{self, DomContext};
 use crate::value::Value;
 
 /// Control flow signal from expression evaluation.
@@ -71,6 +72,9 @@ impl Env {
 /// The FormCalc interpreter.
 pub struct Interpreter {
     env: Env,
+    /// Raw pointer to a DomContext, set during `exec_with_dom`.
+    /// SAFETY: only valid for the duration of `exec_with_dom`.
+    dom_ctx: *mut DomContext<'static>,
 }
 
 impl Default for Interpreter {
@@ -81,7 +85,10 @@ impl Default for Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self { env: Env::new() }
+        Self {
+            env: Env::new(),
+            dom_ctx: std::ptr::null_mut(),
+        }
     }
 
     /// Execute a list of expressions (a script) and return the last value.
@@ -104,6 +111,19 @@ impl Interpreter {
             }
         }
         Ok(result)
+    }
+
+    /// Execute with a DOM context for SOM path resolution.
+    pub fn exec_with_dom(&mut self, exprs: &[Expr], ctx: &mut DomContext<'_>) -> Result<Value> {
+        // SAFETY: we store the pointer only for the duration of this call,
+        // and clear it before returning. The DomContext outlives this call.
+        #[allow(clippy::unnecessary_cast)]
+        {
+            self.dom_ctx = ctx as *mut DomContext<'_> as *mut DomContext<'static>;
+        }
+        let result = self.exec(exprs);
+        self.dom_ctx = std::ptr::null_mut();
+        result
     }
 
     /// Evaluate an expression and return its value.
@@ -178,7 +198,16 @@ impl Interpreter {
                     arg_vals.push(self.eval(arg)?);
                 }
 
-                // Try built-in first
+                // Try DOM built-ins first (if a DOM context is bound)
+                if !self.dom_ctx.is_null() {
+                    // SAFETY: pointer is valid for the duration of exec_with_dom
+                    let ctx = unsafe { &mut *self.dom_ctx };
+                    if let Some(result) = som_bridge::call_dom_builtin(ctx, name, &arg_vals)? {
+                        return Ok(Signal::Value(result));
+                    }
+                }
+
+                // Try built-in
                 if let Some(result) = builtins::call_builtin(name, &arg_vals)? {
                     return Ok(Signal::Value(result));
                 }
