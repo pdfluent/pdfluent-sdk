@@ -1,0 +1,20 @@
+[workspace]
+members = [
+    "crates/xfa-dom-resolver",
+    "crates/formcalc-interpreter",
+    "crates/xfa-layout-engine",
+    "crates/pdfium-ffi-bridge",
+    "crates/xfa-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/jasperdew/xfa-native-rust"
+
+[workspace.dependencies]
+roxmltree = "0.20"
+pdfium-render = "0.8"
+thiserror = "2"
