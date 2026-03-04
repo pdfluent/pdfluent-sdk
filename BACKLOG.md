@@ -23,10 +23,10 @@ Epic 0 (Fundament)
 | #   | Issue                  | Beschrijving                                                                 | Status  |
 | --- | ---------------------- | ---------------------------------------------------------------------------- | ------- |
 | 0.1 | Project scaffolding    | Cargo workspace met modules A-D, CI setup, `CLAUDE.md`                       | ✅ Done |
-| 0.2 | SPEC.md opstellen      | Architectuurdocument op basis van XFA 3.3 §4 (Box Model) + §3 (SOM)         | Pending |
-| 0.3 | Dependency setup       | `roxmltree`, `pdfium-render`, test framework configureren                    | Pending |
-| 0.4 | Test infrastructure    | Golden render pipeline: render → PNG → pixel diff → rapport                  | Pending |
-| 0.5 | CI/CD pipeline         | GitHub Actions: `cargo check`, `cargo test`, `cargo clippy`, `cargo fmt`     | Pending |
+| 0.2 | SPEC.md opstellen      | Architectuurdocument op basis van XFA 3.3 §4 (Box Model) + §3 (SOM)         | ✅ Done |
+| 0.3 | Dependency setup       | `roxmltree`, `pdfium-render`, test framework configureren                    | ✅ Done |
+| 0.4 | Test infrastructure    | Golden render pipeline: render → PNG → pixel diff → rapport                  | ✅ Done |
+| 0.5 | CI/CD pipeline         | GitHub Actions: `cargo check`, `cargo test`, `cargo clippy`, `cargo fmt`     | ✅ Done |
 
 ---
 
@@ -36,11 +36,11 @@ Epic 0 (Fundament)
 
 | #   | Issue                    | Beschrijving                                                        | Status  |
 | --- | ------------------------ | ------------------------------------------------------------------- | ------- |
-| 1.1 | XFA DOM parser           | Parse XFA XML packets uit PDF via `roxmltree`, bouw Template + Data DOM | Pending |
-| 1.2 | SOM path resolver        | Implementeer `xfa.form.subform[3].field[*]` pad-resolutie           | Pending |
-| 1.3 | SOM expression evaluator | Wildcards, predicates, named references in SOM paden                | Pending |
+| 1.1 | XFA DOM parser           | Parse XFA XML packets uit PDF via `roxmltree`, bouw Template + Data DOM | ✅ Done |
+| 1.2 | SOM path resolver        | Implementeer `xfa.form.subform[3].field[*]` pad-resolutie           | ✅ Done |
+| 1.3 | SOM expression evaluator | Wildcards, predicates, named references in SOM paden                | ✅ Done |
 | 1.4 | DOM manipulation API     | CRUD operaties op Template/Data DOM nodes                           | Pending |
-| 1.5 | Unit tests SOM           | Volledige test coverage voor padresolutie edge cases                 | Pending |
+| 1.5 | Unit tests SOM           | Volledige test coverage voor padresolutie edge cases                 | ✅ Done |
 
 ---
 
