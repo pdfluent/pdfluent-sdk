@@ -1,8 +1,11 @@
-//! PDFium FFI Bridge — PDF rendering and XFA packet extraction.
+//! Native PDF I/O — XFA packet extraction and PDF manipulation.
 //!
-//! Provides Rust bindings to PDFium via pdfium-render,
-//! handling XFA packet extraction, rendering, and UI events.
+//! Pure Rust implementation using `lopdf` for PDF structure parsing.
+//! PDFium is available as an optional feature for visual comparison.
 
 pub mod error;
-pub mod renderer;
+pub mod pdf_reader;
 pub mod xfa_extract;
+
+#[cfg(feature = "pdfium")]
+pub mod renderer;

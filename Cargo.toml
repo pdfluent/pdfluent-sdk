@@ -16,6 +16,7 @@ repository = "https://github.com/jasperdew/xfa-native-rust"
 
 [workspace.dependencies]
 roxmltree = "0.20"
+lopdf = "0.39"
 pdfium-render = "0.8"
 thiserror = "2"
 image = "0.25"
