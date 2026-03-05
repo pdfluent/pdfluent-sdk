@@ -113,6 +113,7 @@ pub fn has_docmdp(reader: &PdfReader) -> Result<bool> {
 ///
 /// This removes the `UR3` (and `UR`) entries from the `Perms` dictionary.
 /// If the `Perms` dictionary becomes empty, it is removed entirely.
+/// Handles both indirect references and inline Perms dictionaries.
 ///
 /// Returns `true` if a signature was removed, `false` if none was found.
 pub fn remove_ur3(reader: &mut PdfReader) -> Result<bool> {
@@ -131,14 +132,16 @@ pub fn remove_ur3(reader: &mut PdfReader) -> Result<bool> {
         .map_err(|_| PdfError::XfaPacketNotFound("Root not a dictionary".to_string()))?
         .clone();
 
-    // Find Perms
-    let perms_ref = match catalog.get(b"Perms") {
-        Ok(lopdf::Object::Reference(r)) => *r,
-        _ => return Ok(false),
-    };
-
-    let perms = match doc.get_object(perms_ref) {
-        Ok(lopdf::Object::Dictionary(d)) => d.clone(),
+    // Find Perms — may be an indirect reference or an inline dictionary
+    let (perms, perms_ref) = match catalog.get(b"Perms") {
+        Ok(lopdf::Object::Reference(r)) => {
+            let r = *r;
+            match doc.get_object(r) {
+                Ok(lopdf::Object::Dictionary(d)) => (d.clone(), Some(r)),
+                _ => return Ok(false),
+            }
+        }
+        Ok(lopdf::Object::Dictionary(d)) => (d.clone(), None),
         _ => return Ok(false),
     };
 
@@ -155,19 +158,25 @@ pub fn remove_ur3(reader: &mut PdfReader) -> Result<bool> {
     new_perms.remove(b"UR3");
     new_perms.remove(b"UR");
 
+    let catalog_dict = doc
+        .get_object_mut(catalog_ref)
+        .and_then(|o| o.as_dict_mut())
+        .map_err(|_| PdfError::XfaPacketNotFound("catalog not mutable".to_string()))?;
+
     if new_perms.is_empty() {
         // Remove the Perms entry entirely from catalog
-        let catalog_dict = doc
-            .get_object_mut(catalog_ref)
-            .and_then(|o| o.as_dict_mut())
-            .map_err(|_| PdfError::XfaPacketNotFound("catalog not mutable".to_string()))?;
         catalog_dict.remove(b"Perms");
-        // Also remove the perms object
-        doc.objects.remove(&perms_ref);
-    } else {
-        // Update the Perms dictionary
+        // Also remove the indirect perms object if it exists
+        if let Some(r) = perms_ref {
+            doc.objects.remove(&r);
+        }
+    } else if let Some(r) = perms_ref {
+        // Update the indirect Perms dictionary
         doc.objects
-            .insert(perms_ref, lopdf::Object::Dictionary(new_perms));
+            .insert(r, lopdf::Object::Dictionary(new_perms));
+    } else {
+        // Update the inline Perms dictionary
+        catalog_dict.set("Perms", lopdf::Object::Dictionary(new_perms));
     }
 
     Ok(true)
@@ -390,5 +399,67 @@ mod tests {
         assert!(detect_ur3(&reader2).unwrap().is_none());
         // DocMDP preserved
         assert!(has_docmdp(&reader2).unwrap());
+    }
+
+    #[test]
+    fn remove_ur3_handles_inline_perms() {
+        // Build PDF with Perms as an inline dictionary (not an indirect reference)
+        let mut doc = Document::with_version("1.7");
+
+        let ur3_sig = dictionary! {
+            "Type" => "Sig",
+            "Filter" => "Adobe.PPKLite",
+            "SubFilter" => Object::Name(b"adbe.pkcs7.detached".to_vec()),
+        };
+        let ur3_id = doc.add_object(Object::Dictionary(ur3_sig));
+
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        doc.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+            }),
+        );
+
+        // Catalog with inline Perms dictionary (UR3 is still an indirect ref)
+        let catalog_id = doc.new_object_id();
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+                "Perms" => Object::Dictionary(dictionary! {
+                    "UR3" => ur3_id,
+                }),
+            }),
+        );
+        doc.trailer.set("Root", catalog_id);
+
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf).unwrap();
+
+        let mut reader = PdfReader::from_bytes(&buf).unwrap();
+
+        // UR3 should be detected
+        assert!(detect_ur3(&reader).unwrap().is_some());
+
+        // Remove should succeed even with inline Perms
+        let removed = remove_ur3(&mut reader).unwrap();
+        assert!(removed, "should remove UR3 from inline Perms");
+
+        // Verify it's gone after save/reload
+        let saved = reader.save_to_bytes().unwrap();
+        let reader2 = PdfReader::from_bytes(&saved).unwrap();
+        assert!(detect_ur3(&reader2).unwrap().is_none());
     }
 }
