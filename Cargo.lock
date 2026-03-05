@@ -1575,8 +1575,11 @@ dependencies = [
  "image",
  "lopdf",
  "pdfium-render",
+ "roxmltree",
+ "serde_json",
  "thiserror",
  "xfa-dom-resolver",
+ "xfa-json",
  "xfa-layout-engine",
 ]
 
