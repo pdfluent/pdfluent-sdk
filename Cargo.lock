@@ -1764,6 +1764,7 @@ dependencies = [
  "lopdf",
  "pdfium-render",
  "thiserror",
+ "ttf-parser",
  "xfa-dom-resolver",
  "xfa-layout-engine",
 ]
