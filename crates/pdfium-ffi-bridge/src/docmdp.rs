@@ -148,7 +148,7 @@ pub fn remove_docmdp(reader: &mut PdfReader) -> Result<bool> {
         vec![]
     };
 
-    // Collect AcroForm info for field removal
+    // Collect AcroForm info for field removal (indirect or inline)
     let acroform_ref = catalog.get(b"AcroForm").ok().and_then(|o| {
         if let Object::Reference(r) = o {
             Some(*r)
@@ -156,6 +156,7 @@ pub fn remove_docmdp(reader: &mut PdfReader) -> Result<bool> {
             None
         }
     });
+    let acroform_is_inline = matches!(catalog.get(b"AcroForm"), Ok(Object::Dictionary(_)));
 
     // --- Begin mutations ---
     let doc = reader.document_mut();
@@ -187,6 +188,7 @@ pub fn remove_docmdp(reader: &mut PdfReader) -> Result<bool> {
     // 3. Remove the signature field from AcroForm.Fields
     if let Some(field_id) = info.field_object_id {
         if let Some(af_ref) = acroform_ref {
+            // AcroForm is an indirect reference
             if let Ok(Object::Dictionary(ref mut af)) = doc.get_object_mut(af_ref) {
                 if let Ok(Object::Array(ref mut fields)) = af.get_mut(b"Fields") {
                     fields.retain(|f| {
@@ -198,6 +200,21 @@ pub fn remove_docmdp(reader: &mut PdfReader) -> Result<bool> {
                     });
                 }
             }
+        } else if acroform_is_inline {
+            // AcroForm is inline in the catalog dictionary
+            if let Ok(Object::Dictionary(ref mut cat)) = doc.get_object_mut(catalog_ref) {
+                if let Ok(Object::Dictionary(ref mut af)) = cat.get_mut(b"AcroForm") {
+                    if let Ok(Object::Array(ref mut fields)) = af.get_mut(b"Fields") {
+                        fields.retain(|f| {
+                            if let Object::Reference(r) = f {
+                                *r != field_id
+                            } else {
+                                true
+                            }
+                        });
+                    }
+                }
+            }
         }
         // Remove the field object itself
         doc.objects.remove(&field_id);
@@ -205,15 +222,28 @@ pub fn remove_docmdp(reader: &mut PdfReader) -> Result<bool> {
 
     // 4. Remove signature annotations from pages
     for (page_id, annot_id) in page_annot_removals {
-        if let Ok(Object::Dictionary(ref mut page)) = doc.get_object_mut(page_id) {
-            if let Ok(Object::Array(ref mut annots)) = page.get_mut(b"Annots") {
-                annots.retain(|a| {
-                    if let Object::Reference(r) = a {
-                        *r != annot_id
-                    } else {
-                        true
-                    }
-                });
+        // First, check if Annots is an indirect reference
+        let annots_ref = if let Ok(Object::Dictionary(page)) = doc.get_object(page_id) {
+            if let Ok(Object::Reference(r)) = page.get(b"Annots") {
+                Some(*r)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(annots_id) = annots_ref {
+            // Annots is indirect — mutate the target array object
+            if let Ok(Object::Array(ref mut annots)) = doc.get_object_mut(annots_id) {
+                annots.retain(|a| !matches!(a, Object::Reference(r) if *r == annot_id));
+            }
+        } else {
+            // Annots is inline in the page dictionary
+            if let Ok(Object::Dictionary(ref mut page)) = doc.get_object_mut(page_id) {
+                if let Ok(Object::Array(ref mut annots)) = page.get_mut(b"Annots") {
+                    annots.retain(|a| !matches!(a, Object::Reference(r) if *r == annot_id));
+                }
             }
         }
     }
@@ -335,8 +365,13 @@ fn collect_page_annotation_refs(
             continue;
         }
 
+        // Dereference Annots — may be inline array or indirect reference
         let annots = match page_dict.get(b"Annots") {
             Ok(Object::Array(a)) => a,
+            Ok(Object::Reference(r)) => match doc.get_object(*r) {
+                Ok(Object::Array(a)) => a,
+                _ => continue,
+            },
             _ => continue,
         };
 
