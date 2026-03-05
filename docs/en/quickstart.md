@@ -13,8 +13,8 @@ pdfium-ffi-bridge = { git = "https://github.com/jasperdew/xfa-native-rust" }
 ## Extract Fields from an XFA PDF
 
 ```rust
-use pdfium_ffi_bridge::pdf_reader::PdfReader;
 use pdfium_ffi_bridge::pipeline::extract_xfa_from_file;
+use pdfium_ffi_bridge::template_parser::parse_template;
 use xfa_json::form_tree_to_json;
 use std::path::Path;
 
@@ -22,8 +22,9 @@ fn main() -> anyhow::Result<()> {
     // 1. Open the PDF and extract XFA packets
     let packets = extract_xfa_from_file(Path::new("form.pdf"))?;
 
-    // 2. Parse the template into a FormTree
-    let (tree, root) = xfa_json::import::parse_template(&packets.template)?;
+    // 2. Parse the template into a FormTree (with optional datasets merge)
+    let template_xml = packets.template().expect("no template packet");
+    let (tree, root) = parse_template(template_xml, packets.datasets())?;
 
     // 3. Export field values as JSON
     let data = form_tree_to_json(&tree, root);

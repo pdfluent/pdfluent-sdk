@@ -204,11 +204,7 @@ mod tests {
         })
     }
 
-    fn make_subform(
-        tree: &mut FormTree,
-        name: &str,
-        children: Vec<FormNodeId>,
-    ) -> FormNodeId {
+    fn make_subform(tree: &mut FormTree, name: &str, children: Vec<FormNodeId>) -> FormNodeId {
         make_subform_with_occur(tree, name, children, Occur::once())
     }
 

@@ -173,7 +173,10 @@ fn roundtrip_edit_data_and_save() {
     let full = packets.full_xml.as_deref().unwrap();
 
     assert!(full.contains("Jane Smith"), "new name should be in PDF");
-    assert!(full.contains("jane@example.com"), "new email should be in PDF");
+    assert!(
+        full.contains("jane@example.com"),
+        "new email should be in PDF"
+    );
     assert!(full.contains("250.00"), "new amount should be in PDF");
     assert!(!full.contains("John Doe"), "old name should be gone");
 }
@@ -229,7 +232,10 @@ fn roundtrip_with_ur3_removal() {
 
     // Verify round-trip
     let reader2 = PdfReader::from_bytes(&saved).unwrap();
-    assert!(detect_ur3(&reader2).unwrap().is_none(), "UR3 should be gone");
+    assert!(
+        detect_ur3(&reader2).unwrap().is_none(),
+        "UR3 should be gone"
+    );
     let packets = reader2.extract_xfa().unwrap();
     let full = packets.full_xml.as_deref().unwrap();
     assert!(full.contains("Updated"));
@@ -247,7 +253,11 @@ fn roundtrip_page_count_preserved() {
     let saved = reader.save_to_bytes().unwrap();
 
     let reader2 = PdfReader::from_bytes(&saved).unwrap();
-    assert_eq!(reader2.page_count(), page_count, "page count should not change");
+    assert_eq!(
+        reader2.page_count(),
+        page_count,
+        "page count should not change"
+    );
 }
 
 #[test]
@@ -269,7 +279,10 @@ fn roundtrip_template_unchanged_after_data_edit() {
     let after = reader2.extract_xfa().unwrap();
     let after_template = after.template().unwrap().to_string();
 
-    assert_eq!(original_template, after_template, "template should not change");
+    assert_eq!(
+        original_template, after_template,
+        "template should not change"
+    );
 }
 
 #[test]

@@ -225,7 +225,12 @@ mod tests {
         let amount = make_field(&mut tree, "Amount", "42.50");
         let active = make_field(&mut tree, "Active", "true");
 
-        let form = make_subform(&mut tree, "form1", vec![name, amount, active], Occur::once());
+        let form = make_subform(
+            &mut tree,
+            "form1",
+            vec![name, amount, active],
+            Occur::once(),
+        );
         let root = make_root(&mut tree, vec![form]);
 
         let data = form_tree_to_json(&tree, root);
@@ -250,8 +255,7 @@ mod tests {
         let street = make_field(&mut tree, "Street", "123 Main St");
         let city = make_field(&mut tree, "City", "Springfield");
 
-        let address =
-            make_subform(&mut tree, "Address", vec![street, city], Occur::once());
+        let address = make_subform(&mut tree, "Address", vec![street, city], Occur::once());
         let form = make_subform(&mut tree, "form1", vec![address], Occur::once());
         let root = make_root(&mut tree, vec![form]);
 
@@ -289,8 +293,7 @@ mod tests {
             Occur::repeating(0, None, 2),
         );
 
-        let form =
-            make_subform(&mut tree, "form1", vec![item1, item2], Occur::once());
+        let form = make_subform(&mut tree, "form1", vec![item1, item2], Occur::once());
         let root = make_root(&mut tree, vec![form]);
 
         let data = form_tree_to_json(&tree, root);

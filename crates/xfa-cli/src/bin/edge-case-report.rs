@@ -8,6 +8,7 @@
 //!   cargo run --bin edge-case-report -- --corpus corpus/
 
 use clap::Parser;
+use lopdf::Object;
 use pdfium_ffi_bridge::pdf_reader::PdfReader;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -156,7 +157,10 @@ fn analyze_corpus(corpus_dir: &Path) -> Vec<FormEdgeCases> {
         Ok(dir) => dir
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("pdf")))
+            .filter(|p| {
+                p.extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+            })
             .collect(),
         Err(e) => {
             eprintln!("Error: {e}");
@@ -169,7 +173,11 @@ fn analyze_corpus(corpus_dir: &Path) -> Vec<FormEdgeCases> {
 
     let mut results = Vec::with_capacity(entries.len());
     for (i, path) in entries.iter().enumerate() {
-        let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let filename = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         print!("  [{}/{}] {}", i + 1, entries.len(), filename);
 
         match analyze_single_pdf(path) {
@@ -216,7 +224,11 @@ fn analyze_single_pdf(path: &Path) -> Option<FormEdgeCases> {
     let edge_case_count = count_edge_cases(&flags);
 
     Some(FormEdgeCases {
-        filename: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+        filename: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
         xfa_type: xfa_type.to_string(),
         edge_case_count,
         flags,
@@ -273,8 +285,8 @@ fn detect_edge_cases(template_xml: &str, full_xml: &str, reader: &PdfReader) -> 
     flags.has_relevant = template_xml.contains("relevant=\"");
 
     // Custom fonts
-    flags.has_custom_fonts = template_xml.contains("<font typeface=\"")
-        && !only_standard_fonts(template_xml);
+    flags.has_custom_fonts =
+        template_xml.contains("<font typeface=\"") && !only_standard_fonts(template_xml);
 
     // Barcodes
     flags.has_barcodes = template_xml.contains("<barcode");
@@ -283,8 +295,8 @@ fn detect_edge_cases(template_xml: &str, full_xml: &str, reader: &PdfReader) -> 
     flags.has_images = template_xml.contains("<image");
 
     // Signatures
-    flags.has_signatures = template_xml.contains("<signature")
-        || template_xml.contains("type=\"signature\"");
+    flags.has_signatures =
+        template_xml.contains("<signature") || template_xml.contains("type=\"signature\"");
 
     // Multiple page areas
     flags.page_area_count = count_tag_occurrences(template_xml, "<pageArea");
@@ -341,17 +353,32 @@ fn detect_hybrid(reader: &PdfReader) -> bool {
     // Check if AcroForm has both XFA and Fields entries.
     // Uses get_deref to handle both indirect references and inline dicts.
     let doc = reader.document();
-    let catalog = match doc.trailer.get_deref(b"Root", doc).and_then(|o| o.as_dict()) {
+    let catalog = match doc
+        .trailer
+        .get_deref(b"Root", doc)
+        .and_then(|o| o.as_dict())
+    {
         Ok(c) => c,
         Err(_) => return false,
     };
 
-    let acroform = match catalog.get_deref(b"AcroForm", doc).and_then(|o| o.as_dict()) {
+    let acroform = match catalog
+        .get_deref(b"AcroForm", doc)
+        .and_then(|o| o.as_dict())
+    {
         Ok(af) => af,
         Err(_) => return false,
     };
 
-    acroform.has(b"XFA") && acroform.has(b"Fields")
+    let has_xfa = acroform.has(b"XFA");
+    let has_fields = match acroform.get(b"Fields") {
+        Ok(Object::Array(a)) => !a.is_empty(),
+        Ok(Object::Reference(r)) => {
+            matches!(doc.get_object(*r), Ok(Object::Array(a)) if !a.is_empty())
+        }
+        _ => false,
+    };
+    has_xfa && has_fields
 }
 
 fn count_formcalc_scripts(xml: &str) -> usize {
@@ -395,8 +422,14 @@ fn count_repeating_sections(xml: &str) -> usize {
 
 fn only_standard_fonts(xml: &str) -> bool {
     let standard_fonts = [
-        "Courier", "Helvetica", "Times", "Symbol", "ZapfDingbats",
-        "Arial", "Myriad Pro", "MyriadPro",
+        "Courier",
+        "Helvetica",
+        "Times",
+        "Symbol",
+        "ZapfDingbats",
+        "Arial",
+        "Myriad Pro",
+        "MyriadPro",
     ];
 
     let mut pos = 0;
@@ -415,40 +448,95 @@ fn only_standard_fonts(xml: &str) -> bool {
 
 fn count_edge_cases(flags: &EdgeCaseFlags) -> usize {
     let mut count = 0;
-    if flags.deep_nesting { count += 1; }
-    if flags.high_field_count { count += 1; }
-    if flags.has_unicode { count += 1; }
-    if flags.has_cjk { count += 1; }
-    if flags.is_hybrid { count += 1; }
-    if flags.has_complex_formcalc { count += 1; }
-    if flags.has_javascript { count += 1; }
-    if flags.has_dynamic_pagination { count += 1; }
-    if flags.has_repeating { count += 1; }
-    if flags.has_tables { count += 1; }
-    if flags.has_relevant { count += 1; }
-    if flags.has_barcodes { count += 1; }
-    if flags.has_images { count += 1; }
-    if flags.has_signatures { count += 1; }
-    if flags.has_multiple_page_areas { count += 1; }
+    if flags.deep_nesting {
+        count += 1;
+    }
+    if flags.high_field_count {
+        count += 1;
+    }
+    // CJK is a subset of Unicode — count at most one of the two.
+    if flags.has_cjk || flags.has_unicode {
+        count += 1;
+    }
+    if flags.is_hybrid {
+        count += 1;
+    }
+    if flags.has_complex_formcalc {
+        count += 1;
+    }
+    if flags.has_javascript {
+        count += 1;
+    }
+    if flags.has_dynamic_pagination {
+        count += 1;
+    }
+    if flags.has_repeating {
+        count += 1;
+    }
+    if flags.has_tables {
+        count += 1;
+    }
+    if flags.has_relevant {
+        count += 1;
+    }
+    if flags.has_barcodes {
+        count += 1;
+    }
+    if flags.has_images {
+        count += 1;
+    }
+    if flags.has_signatures {
+        count += 1;
+    }
+    if flags.has_multiple_page_areas {
+        count += 1;
+    }
     count
 }
 
 fn collect_tags(flags: &EdgeCaseFlags) -> Vec<&str> {
     let mut tags = Vec::new();
-    if flags.deep_nesting { tags.push("deep-nesting"); }
-    if flags.high_field_count { tags.push("500+fields"); }
-    if flags.has_cjk { tags.push("CJK"); }
-    else if flags.has_unicode { tags.push("unicode"); }
-    if flags.is_hybrid { tags.push("hybrid"); }
-    if flags.has_complex_formcalc { tags.push("complex-formcalc"); }
-    if flags.has_javascript { tags.push("javascript"); }
-    if flags.has_dynamic_pagination { tags.push("dynamic-pagination"); }
-    if flags.has_repeating { tags.push("repeating"); }
-    if flags.has_tables { tags.push("tables"); }
-    if flags.has_barcodes { tags.push("barcodes"); }
-    if flags.has_images { tags.push("images"); }
-    if flags.has_signatures { tags.push("signatures"); }
-    if flags.has_multiple_page_areas { tags.push("multi-pagearea"); }
+    if flags.deep_nesting {
+        tags.push("deep-nesting");
+    }
+    if flags.high_field_count {
+        tags.push("500+fields");
+    }
+    if flags.has_cjk {
+        tags.push("CJK");
+    } else if flags.has_unicode {
+        tags.push("unicode");
+    }
+    if flags.is_hybrid {
+        tags.push("hybrid");
+    }
+    if flags.has_complex_formcalc {
+        tags.push("complex-formcalc");
+    }
+    if flags.has_javascript {
+        tags.push("javascript");
+    }
+    if flags.has_dynamic_pagination {
+        tags.push("dynamic-pagination");
+    }
+    if flags.has_repeating {
+        tags.push("repeating");
+    }
+    if flags.has_tables {
+        tags.push("tables");
+    }
+    if flags.has_barcodes {
+        tags.push("barcodes");
+    }
+    if flags.has_images {
+        tags.push("images");
+    }
+    if flags.has_signatures {
+        tags.push("signatures");
+    }
+    if flags.has_multiple_page_areas {
+        tags.push("multi-pagearea");
+    }
     tags
 }
 
@@ -477,21 +565,66 @@ fn build_summary(forms: &[FormEdgeCases]) -> EdgeCaseSummary {
 
     for f in forms {
         let flags = &f.flags;
-        if flags.deep_nesting { summary.forms_with_deep_nesting += 1; *dist.entry("deep-nesting".into()).or_default() += 1; }
-        if flags.high_field_count { summary.forms_with_500_plus_fields += 1; *dist.entry("500+fields".into()).or_default() += 1; }
-        if flags.has_unicode { summary.forms_with_unicode += 1; *dist.entry("unicode".into()).or_default() += 1; }
-        if flags.has_cjk { summary.forms_with_cjk += 1; *dist.entry("cjk".into()).or_default() += 1; }
-        if flags.is_hybrid { summary.forms_with_hybrid += 1; *dist.entry("hybrid".into()).or_default() += 1; }
-        if flags.has_complex_formcalc { summary.forms_with_complex_formcalc += 1; *dist.entry("complex-formcalc".into()).or_default() += 1; }
-        if flags.has_javascript { summary.forms_with_javascript += 1; *dist.entry("javascript".into()).or_default() += 1; }
-        if flags.has_dynamic_pagination { summary.forms_with_dynamic_pagination += 1; *dist.entry("dynamic-pagination".into()).or_default() += 1; }
-        if flags.has_repeating { summary.forms_with_repeating += 1; *dist.entry("repeating".into()).or_default() += 1; }
-        if flags.has_tables { summary.forms_with_tables += 1; *dist.entry("tables".into()).or_default() += 1; }
-        if flags.has_relevant { summary.forms_with_relevant += 1; *dist.entry("relevant".into()).or_default() += 1; }
-        if flags.has_barcodes { summary.forms_with_barcodes += 1; *dist.entry("barcodes".into()).or_default() += 1; }
-        if flags.has_images { summary.forms_with_images += 1; *dist.entry("images".into()).or_default() += 1; }
-        if flags.has_signatures { summary.forms_with_signatures += 1; *dist.entry("signatures".into()).or_default() += 1; }
-        if flags.has_multiple_page_areas { summary.forms_with_multiple_page_areas += 1; *dist.entry("multi-pagearea".into()).or_default() += 1; }
+        if flags.deep_nesting {
+            summary.forms_with_deep_nesting += 1;
+            *dist.entry("deep-nesting".into()).or_default() += 1;
+        }
+        if flags.high_field_count {
+            summary.forms_with_500_plus_fields += 1;
+            *dist.entry("500+fields".into()).or_default() += 1;
+        }
+        if flags.has_unicode {
+            summary.forms_with_unicode += 1;
+            *dist.entry("unicode".into()).or_default() += 1;
+        }
+        if flags.has_cjk {
+            summary.forms_with_cjk += 1;
+            *dist.entry("cjk".into()).or_default() += 1;
+        }
+        if flags.is_hybrid {
+            summary.forms_with_hybrid += 1;
+            *dist.entry("hybrid".into()).or_default() += 1;
+        }
+        if flags.has_complex_formcalc {
+            summary.forms_with_complex_formcalc += 1;
+            *dist.entry("complex-formcalc".into()).or_default() += 1;
+        }
+        if flags.has_javascript {
+            summary.forms_with_javascript += 1;
+            *dist.entry("javascript".into()).or_default() += 1;
+        }
+        if flags.has_dynamic_pagination {
+            summary.forms_with_dynamic_pagination += 1;
+            *dist.entry("dynamic-pagination".into()).or_default() += 1;
+        }
+        if flags.has_repeating {
+            summary.forms_with_repeating += 1;
+            *dist.entry("repeating".into()).or_default() += 1;
+        }
+        if flags.has_tables {
+            summary.forms_with_tables += 1;
+            *dist.entry("tables".into()).or_default() += 1;
+        }
+        if flags.has_relevant {
+            summary.forms_with_relevant += 1;
+            *dist.entry("relevant".into()).or_default() += 1;
+        }
+        if flags.has_barcodes {
+            summary.forms_with_barcodes += 1;
+            *dist.entry("barcodes".into()).or_default() += 1;
+        }
+        if flags.has_images {
+            summary.forms_with_images += 1;
+            *dist.entry("images".into()).or_default() += 1;
+        }
+        if flags.has_signatures {
+            summary.forms_with_signatures += 1;
+            *dist.entry("signatures".into()).or_default() += 1;
+        }
+        if flags.has_multiple_page_areas {
+            summary.forms_with_multiple_page_areas += 1;
+            *dist.entry("multi-pagearea".into()).or_default() += 1;
+        }
     }
 
     summary.edge_case_distribution = dist;
@@ -519,14 +652,20 @@ fn print_summary(report: &EdgeCaseReport) {
     println!("  Hybrid AcroForm+XFA:   {}", s.forms_with_hybrid);
     println!("  Complex FormCalc:      {}", s.forms_with_complex_formcalc);
     println!("  JavaScript:            {}", s.forms_with_javascript);
-    println!("  Dynamic pagination:    {}", s.forms_with_dynamic_pagination);
+    println!(
+        "  Dynamic pagination:    {}",
+        s.forms_with_dynamic_pagination
+    );
     println!("  Repeating sections:    {}", s.forms_with_repeating);
     println!("  Tables:                {}", s.forms_with_tables);
     println!("  Conditional (relevant):{}", s.forms_with_relevant);
     println!("  Barcodes:              {}", s.forms_with_barcodes);
     println!("  Images:                {}", s.forms_with_images);
     println!("  Signatures:            {}", s.forms_with_signatures);
-    println!("  Multiple page areas:   {}", s.forms_with_multiple_page_areas);
+    println!(
+        "  Multiple page areas:   {}",
+        s.forms_with_multiple_page_areas
+    );
 
     println!();
     println!("  Top complex forms:");

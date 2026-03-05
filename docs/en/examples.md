@@ -6,12 +6,14 @@
 
 ```rust
 use pdfium_ffi_bridge::pipeline::extract_xfa_from_file;
+use pdfium_ffi_bridge::template_parser::parse_template;
 use xfa_json::form_tree_to_json;
 use std::path::Path;
 
 fn main() -> anyhow::Result<()> {
     let packets = extract_xfa_from_file(Path::new("form.pdf"))?;
-    let (tree, root) = xfa_json::import::parse_template(&packets.template)?;
+    let template_xml = packets.template().expect("no template packet");
+    let (tree, root) = parse_template(template_xml, packets.datasets())?;
     let data = form_tree_to_json(&tree, root);
 
     for (path, value) in &data.fields {
@@ -25,7 +27,7 @@ fn main() -> anyhow::Result<()> {
 
 ```rust
 use pdfium_ffi_bridge::pdf_reader::PdfReader;
-use pdfium_ffi_bridge::dataset_sync::sync_datasets;
+use pdfium_ffi_bridge::template_parser::parse_template;
 use xfa_json::{json_to_form_tree, FormData, FieldValue};
 use indexmap::IndexMap;
 use std::path::Path;
@@ -33,7 +35,8 @@ use std::path::Path;
 fn main() -> anyhow::Result<()> {
     let mut reader = PdfReader::from_file(Path::new("form.pdf"))?;
     let packets = reader.extract_xfa()?;
-    let (mut tree, root) = xfa_json::import::parse_template(&packets.template)?;
+    let template_xml = packets.template().expect("no template packet");
+    let (mut tree, root) = parse_template(template_xml, packets.datasets())?;
 
     let mut fields = IndexMap::new();
     fields.insert("form1.Name".into(), FieldValue::Text("Jane Smith".into()));
@@ -41,7 +44,7 @@ fn main() -> anyhow::Result<()> {
     let data = FormData { fields };
 
     json_to_form_tree(&data, &mut tree, root);
-    reader.save(Path::new("filled.pdf"))?;
+    reader.save_to_file(Path::new("filled.pdf"))?;
     Ok(())
 }
 ```

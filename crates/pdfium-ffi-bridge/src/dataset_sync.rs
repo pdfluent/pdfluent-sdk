@@ -72,8 +72,7 @@ pub fn sync_datasets(reader: &mut PdfReader, data_dom: &DataDom) -> Result<()> {
             // Single-stream XFA: rebuild the full XDP document
             let full_xdp = rebuild_xdp_with_datasets(doc, *r, &datasets_xml)?;
             let stream = lopdf::Stream::new(lopdf::dictionary! {}, full_xdp.into_bytes());
-            doc.objects
-                .insert(*r, lopdf::Object::Stream(stream));
+            doc.objects.insert(*r, lopdf::Object::Stream(stream));
             Ok(())
         }
         lopdf::Object::Array(arr) => {
@@ -155,19 +154,13 @@ fn update_datasets_in_array(
     let mut i = 0;
     while i + 1 < arr.len() {
         let is_datasets = match &arr[i] {
-            lopdf::Object::String(s, _) => {
-                String::from_utf8_lossy(s) == "datasets"
-            }
-            lopdf::Object::Name(n) => {
-                String::from_utf8_lossy(n) == "datasets"
-            }
-            lopdf::Object::Reference(r) => {
-                match doc.get_object(*r) {
-                    Ok(lopdf::Object::String(s, _)) => String::from_utf8_lossy(s) == "datasets",
-                    Ok(lopdf::Object::Name(n)) => String::from_utf8_lossy(n) == "datasets",
-                    _ => false,
-                }
-            }
+            lopdf::Object::String(s, _) => String::from_utf8_lossy(s) == "datasets",
+            lopdf::Object::Name(n) => String::from_utf8_lossy(n) == "datasets",
+            lopdf::Object::Reference(r) => match doc.get_object(*r) {
+                Ok(lopdf::Object::String(s, _)) => String::from_utf8_lossy(s) == "datasets",
+                Ok(lopdf::Object::Name(n)) => String::from_utf8_lossy(n) == "datasets",
+                _ => false,
+            },
             _ => false,
         };
 
@@ -197,10 +190,7 @@ mod tests {
     use xfa_dom_resolver::data_dom::DataDom;
 
     fn build_test_data_dom() -> DataDom {
-        DataDom::from_xml(
-            "<form1><Name>John Doe</Name><Amount>42.50</Amount></form1>",
-        )
-        .unwrap()
+        DataDom::from_xml("<form1><Name>John Doe</Name><Amount>42.50</Amount></form1>").unwrap()
     }
 
     #[test]

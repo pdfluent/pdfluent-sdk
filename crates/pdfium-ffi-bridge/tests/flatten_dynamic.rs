@@ -142,15 +142,35 @@ fn flatten_repeating_subforms_renders_all_instances() {
     let f1 = tree.add_node(default_field("Item", "Widget A", 10.0, 5.0));
     let row_template = tree.add_node(repeating_subform("Row", vec![f1], 1, Some(5), 3));
 
-    let root = tree.add_node(subform("form1", vec![row_template], LayoutStrategy::TopToBottom));
+    let root = tree.add_node(subform(
+        "form1",
+        vec![row_template],
+        LayoutStrategy::TopToBottom,
+    ));
 
-    let config = FlattenConfig::default();
+    let config = FlattenConfig {
+        compress: false,
+        ..Default::default()
+    };
     let pdf_bytes = flatten_form_tree(&mut tree, root, &config).unwrap();
     assert!(!pdf_bytes.is_empty());
 
     let doc = load_flat_pdf(&pdf_bytes);
     assert!(!doc.get_pages().is_empty());
     assert_no_xfa(&doc);
+
+    // Verify that the initial count (3) of repeating instances produced XObject references.
+    // In uncompressed mode we can check for multiple Do operators or XObject names.
+    let pages = doc.get_pages();
+    let page_id = *pages.values().next().unwrap();
+    if let Ok(content_bytes) = doc.get_page_content(page_id) {
+        let content_str = String::from_utf8_lossy(&content_bytes);
+        let do_count = content_str.matches(" Do").count();
+        assert!(
+            do_count >= 3,
+            "Expected at least 3 XObject paints for 3 repeated rows, found {do_count}"
+        );
+    }
 }
 
 // ── Test: Hidden fields ──────────────────────────────────────────────
@@ -191,11 +211,25 @@ fn flatten_hidden_fields_excluded() {
         LayoutStrategy::Positioned,
     ));
 
-    let config = FlattenConfig::default();
+    let config = FlattenConfig {
+        compress: false,
+        ..Default::default()
+    };
     let pdf_bytes = flatten_form_tree(&mut tree, root, &config).unwrap();
     let doc = load_flat_pdf(&pdf_bytes);
     assert_eq!(doc.get_pages().len(), 1);
     assert_no_xfa(&doc);
+
+    // Verify hidden field content ("secret") does not appear in the PDF stream
+    let pages = doc.get_pages();
+    let page_id = *pages.values().next().unwrap();
+    if let Ok(content_bytes) = doc.get_page_content(page_id) {
+        let content_str = String::from_utf8_lossy(&content_bytes);
+        assert!(
+            !content_str.contains("secret"),
+            "Hidden field value should not appear in flattened content"
+        );
+    }
 }
 
 // ── Test: Multi-page pagination ──────────────────────────────────────
@@ -560,11 +594,7 @@ fn flatten_output_is_reloadable() {
     let mut tree = FormTree::new();
     let f1 = tree.add_node(default_field("Name", "Test", 20.0, 20.0));
     let f2 = tree.add_node(default_field("City", "Amsterdam", 20.0, 50.0));
-    let root = tree.add_node(subform(
-        "form1",
-        vec![f1, f2],
-        LayoutStrategy::Positioned,
-    ));
+    let root = tree.add_node(subform("form1", vec![f1, f2], LayoutStrategy::Positioned));
 
     let config = FlattenConfig::default();
     let pdf_bytes = flatten_form_tree(&mut tree, root, &config).unwrap();

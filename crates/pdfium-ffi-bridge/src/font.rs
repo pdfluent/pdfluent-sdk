@@ -278,16 +278,18 @@ impl FontResolver {
             }
         }
 
-        // Try common fallbacks
+        // Try common fallbacks (with requested style first, then regular)
         for fallback in &["Helvetica", "Arial", "DejaVu Sans", "Liberation Sans"] {
-            let fallback_key = font_cache_key(fallback, bold, italic);
-            if self.fonts.contains_key(&fallback_key) {
-                return self.fonts.get(&fallback_key);
-            }
-            if let Some(path) = self.font_index.get(&fallback_key).cloned() {
-                if let Ok(font) = LoadedFont::from_file(&path) {
-                    self.fonts.insert(fallback_key.clone(), font);
+            for (fb_bold, fb_italic) in [(bold, italic), (false, false)] {
+                let fallback_key = font_cache_key(fallback, fb_bold, fb_italic);
+                if self.fonts.contains_key(&fallback_key) {
                     return self.fonts.get(&fallback_key);
+                }
+                if let Some(path) = self.font_index.get(&fallback_key).cloned() {
+                    if let Ok(font) = LoadedFont::from_file(&path) {
+                        self.fonts.insert(fallback_key.clone(), font);
+                        return self.fonts.get(&fallback_key);
+                    }
                 }
             }
         }
@@ -315,7 +317,27 @@ impl FontResolver {
             if path.is_dir() {
                 self.scan_dir_recursive(&path);
             } else if is_font_file(&path) {
-                if let Ok(font) = LoadedFont::from_file(&path) {
+                if is_font_collection(&path) {
+                    // TTC/OTC: index all faces in the collection
+                    if let Ok(data) = std::fs::read(&path) {
+                        for face_index in 0..u32::MAX {
+                            match ttf_parser::Face::parse(&data, face_index) {
+                                Ok(face) => {
+                                    let family = face
+                                        .names()
+                                        .into_iter()
+                                        .find(|n| n.name_id == ttf_parser::name_id::FAMILY)
+                                        .and_then(|n| n.to_string())
+                                        .unwrap_or_else(|| "Unknown".to_string());
+                                    let key =
+                                        font_cache_key(&family, face.is_bold(), face.is_italic());
+                                    self.font_index.entry(key).or_insert_with(|| path.clone());
+                                }
+                                Err(_) => break,
+                            }
+                        }
+                    }
+                } else if let Ok(font) = LoadedFont::from_file(&path) {
                     let key = font_cache_key(&font.family, font.is_bold, font.is_italic);
                     self.font_index.entry(key).or_insert(path);
                 }
@@ -385,6 +407,13 @@ fn font_cache_key(family: &str, bold: bool, italic: bool) -> String {
         (false, false) => "Regular",
     };
     format!("{}:{}", family.to_lowercase(), style)
+}
+
+/// Check if a font file is a TTC/OTC collection.
+fn is_font_collection(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| matches!(ext.to_lowercase().as_str(), "ttc" | "otc"))
 }
 
 /// Check if a file path is a font file.

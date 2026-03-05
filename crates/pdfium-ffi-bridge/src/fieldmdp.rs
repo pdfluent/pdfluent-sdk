@@ -78,9 +78,24 @@ pub fn detect_fieldmdp(reader: &PdfReader) -> Result<Vec<FieldMdpInfo>> {
 
     let fields = match acroform.get(b"Fields") {
         Ok(Object::Array(a)) => a,
+        Ok(Object::Reference(r)) => match doc.get_object(*r) {
+            Ok(Object::Array(a)) => a,
+            _ => return Ok(results),
+        },
         _ => return Ok(results),
     };
 
+    collect_fieldmdp_recursive(doc, fields, &mut results);
+
+    Ok(results)
+}
+
+/// Recursively search fields (including Kids) for FieldMDP signatures.
+fn collect_fieldmdp_recursive(
+    doc: &lopdf::Document,
+    fields: &[Object],
+    results: &mut Vec<FieldMdpInfo>,
+) {
     for field_ref in fields {
         let field_id = match field_ref {
             Object::Reference(r) => *r,
@@ -91,6 +106,11 @@ pub fn detect_fieldmdp(reader: &PdfReader) -> Result<Vec<FieldMdpInfo>> {
             Ok(Object::Dictionary(d)) => d,
             _ => continue,
         };
+
+        // Recurse into Kids
+        if let Ok(Object::Array(kids)) = field_dict.get(b"Kids") {
+            collect_fieldmdp_recursive(doc, kids, results);
+        }
 
         // Only look at Sig fields
         if !is_sig_field(field_dict) {
@@ -140,8 +160,6 @@ pub fn detect_fieldmdp(reader: &PdfReader) -> Result<Vec<FieldMdpInfo>> {
             sig_value_id,
         });
     }
-
-    Ok(results)
 }
 
 /// Report per-field lock status based on all FieldMDP signatures.
@@ -276,7 +294,9 @@ fn remove_fieldmdp_by_info(reader: &mut PdfReader, info: &FieldMdpInfo) -> Resul
         if let Ok(Object::Dictionary(ref mut cat)) = doc.get_object_mut(catalog_ref) {
             if let Ok(Object::Dictionary(ref mut af)) = cat.get_mut(b"AcroForm") {
                 if let Ok(Object::Array(ref mut fields)) = af.get_mut(b"Fields") {
-                    fields.retain(|f| !matches!(f, Object::Reference(r) if *r == info.field_object_id));
+                    fields.retain(
+                        |f| !matches!(f, Object::Reference(r) if *r == info.field_object_id),
+                    );
                 }
             }
         }

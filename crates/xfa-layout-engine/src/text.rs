@@ -141,7 +141,10 @@ pub fn measure_text(text: &str, font: &FontMetrics) -> Size {
     }
 
     let lines: Vec<&str> = text.split('\n').collect();
-    let max_width = lines.iter().map(|l| font.measure_width(l)).fold(0.0, f64::max);
+    let max_width = lines
+        .iter()
+        .map(|l| font.measure_width(l))
+        .fold(0.0, f64::max);
     let height = lines.len() as f64 * font.line_height_pt();
 
     Size {
@@ -245,7 +248,7 @@ mod tests {
         let f = FontMetrics::new(14.0);
         assert_eq!(f.size, 14.0);
         assert_eq!(f.line_height_pt(), 16.8); // 14 * 1.2
-        // "AB" = 2 * 14 * 0.5 = 14pt
+                                              // "AB" = 2 * 14 * 0.5 = 14pt
         assert_eq!(f.measure_width("AB"), 14.0);
     }
 }

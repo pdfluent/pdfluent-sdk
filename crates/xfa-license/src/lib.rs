@@ -87,6 +87,17 @@ impl LicenseGuard {
         }
     }
 
+    /// Re-check whether the license has expired at the given timestamp.
+    ///
+    /// Call this periodically for long-lived guards to detect post-construction expiry.
+    pub fn check_expiry(&self, now: u64) -> Result<()> {
+        if now > self.claims.expires_at {
+            Err(LicenseError::Expired(self.claims.expires_at))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Record an API call (rate limit + quota check).
     pub fn record_api_call(&mut self, now: u64) -> Result<()> {
         self.meter.record_api_call(now)

@@ -61,23 +61,17 @@ pub fn detect_ur3(reader: &PdfReader) -> Result<Option<Ur3Info>> {
         Err(_) => return Ok(None),
     };
 
-    let sub_filter = sig_dict
-        .get(b"SubFilter")
-        .ok()
-        .and_then(|o| match o {
-            lopdf::Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
-            _ => None,
-        });
+    let sub_filter = sig_dict.get(b"SubFilter").ok().and_then(|o| match o {
+        lopdf::Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
+        _ => None,
+    });
 
     let has_byte_range = sig_dict.get(b"ByteRange").is_ok();
 
-    let field_name = sig_dict
-        .get(b"Name")
-        .ok()
-        .and_then(|o| match o {
-            lopdf::Object::String(s, _) => Some(String::from_utf8_lossy(s).to_string()),
-            _ => None,
-        });
+    let field_name = sig_dict.get(b"Name").ok().and_then(|o| match o {
+        lopdf::Object::String(s, _) => Some(String::from_utf8_lossy(s).to_string()),
+        _ => None,
+    });
 
     Ok(Some(Ur3Info {
         field_name,
@@ -172,8 +166,7 @@ pub fn remove_ur3(reader: &mut PdfReader) -> Result<bool> {
         }
     } else if let Some(r) = perms_ref {
         // Update the indirect Perms dictionary
-        doc.objects
-            .insert(r, lopdf::Object::Dictionary(new_perms));
+        doc.objects.insert(r, lopdf::Object::Dictionary(new_perms));
     } else {
         // Update the inline Perms dictionary
         catalog_dict.set("Perms", lopdf::Object::Dictionary(new_perms));

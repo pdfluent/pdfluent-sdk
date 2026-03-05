@@ -26,6 +26,13 @@ Matches fields by SOM path and handles repeating sections by array index.
 
 Exports field metadata (types, required flags, repeat rules, scripts) as a `FormSchema`.
 
+### pdfium-ffi-bridge / template_parser
+
+#### `parse_template(template_xml: &str, datasets_xml: Option<&str>) -> Result<(FormTree, FormNodeId)>`
+
+Parses an XFA template XML string into a `FormTree`. Optionally merges data
+values from a datasets XML string.
+
 ### Types
 
 #### `FormData`
@@ -89,11 +96,17 @@ let packets: XfaPackets = reader.extract_xfa()?;
 #### `XfaPackets`
 
 ```rust
-pub struct XfaPackets {
-    pub template: String,    // XFA template XML
-    pub datasets: String,    // Data DOM XML
-    pub config: String,      // Configuration
-    pub localeSet: String,   // Locale definitions
+pub struct XfaPackets { /* private fields */ }
+
+impl XfaPackets {
+    /// Get a specific packet by name.
+    pub fn get_packet(&self, name: &str) -> Option<&str>;
+    /// Get the template packet.
+    pub fn template(&self) -> Option<&str>;
+    /// Get the datasets packet.
+    pub fn datasets(&self) -> Option<&str>;
+    /// Get the config packet.
+    pub fn config(&self) -> Option<&str>;
 }
 ```
 
