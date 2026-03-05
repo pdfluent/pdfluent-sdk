@@ -4,6 +4,7 @@
 //! PDFium is available as an optional feature for visual comparison.
 
 pub mod error;
+pub mod events;
 pub mod native_renderer;
 pub mod pdf_reader;
 pub mod pipeline;
