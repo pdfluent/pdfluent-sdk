@@ -175,6 +175,8 @@ fn calculate_script_then_render() {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
     let tax = tree.add_node(FormNode {
         name: "Tax".to_string(),
@@ -194,6 +196,8 @@ fn calculate_script_then_render() {
         font: FontMetrics::default(),
         calculate: Some("100 * 0.21".to_string()),
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
     let root = tree.add_node(FormNode {
         name: "invoice".to_string(),
@@ -209,6 +213,8 @@ fn calculate_script_then_render() {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
 
     let config = RenderConfig::default();
@@ -293,6 +299,8 @@ fn multipage_form_renders_all_pages() {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         children.push(field);
     }
@@ -315,6 +323,8 @@ fn multipage_form_renders_all_pages() {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
     let page_set = tree.add_node(FormNode {
         name: "PageSet".to_string(),
@@ -326,6 +336,8 @@ fn multipage_form_renders_all_pages() {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
     let root = tree.add_node(FormNode {
         name: "form1".to_string(),
@@ -347,6 +359,8 @@ fn multipage_form_renders_all_pages() {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
 
     let config = RenderConfig::default();
@@ -455,6 +469,8 @@ fn build_simple_form() -> (FormTree, FormNodeId) {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
     let root = tree.add_node(FormNode {
         name: "form1".to_string(),
@@ -472,6 +488,8 @@ fn build_simple_form() -> (FormTree, FormNodeId) {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
     (tree, root)
 }

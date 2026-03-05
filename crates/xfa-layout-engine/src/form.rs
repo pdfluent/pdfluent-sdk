@@ -58,6 +58,13 @@ pub struct FormNode {
     pub calculate: Option<String>,
     /// FormCalc validate script: runs to validate the field's value, returns bool.
     pub validate: Option<String>,
+    /// Column widths for table-layout subforms (XFA columnWidths attribute).
+    /// Positive values are fixed widths in points; -1.0 means auto-size.
+    /// Empty for non-table nodes.
+    pub column_widths: Vec<f64>,
+    /// Column span for cells inside a table row (XFA colSpan attribute).
+    /// 1 = single column (default), N = span N columns, -1 = span remaining.
+    pub col_span: i32,
 }
 
 /// The type of form node.

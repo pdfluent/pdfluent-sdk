@@ -81,7 +81,7 @@ Dit maakt WASM-compilatie mogelijk en versterkt de "memory safe" USP.
 | 3.6  | Occur rules              | Herhalende subforms op basis van `occur` (min/max/initial)             | ✅ Done |
 | 3.7  | Pagination               | Content overflow, page breaks, multi-page reflow (§8)                  | ✅ Done |
 | 3.8  | Content splitting        | Splitsen van content over pagina's                                     | ✅ Done |
-| 3.9  | Tables layout            | Table, row, cell layout met spanning                                   | Pending |
+| 3.9  | Tables layout            | Table, row, cell layout met spanning                                   | ✅ Done |
 | 3.10 | Leaders & trailers       | Header/footer elementen per pagina                                     | ✅ Done |
 | 3.11 | Text placement           | Rich text rendering, text wrapping, font metrics                       | ✅ Done |
 | 3.12 | Scripting-integratie     | Layout reageert op FormCalc calculations/validations                   | ✅ Done |
