@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "xfa-collector"
 path = "src/bin/xfa-collector.rs"
 
+[[bin]]
+name = "edge-case-report"
+path = "src/bin/edge-case-report.rs"
+
 [dependencies]
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
