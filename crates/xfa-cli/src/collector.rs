@@ -180,7 +180,10 @@ pub fn scan(dir: &Path, report_path: &Path) -> anyhow::Result<()> {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "pdf"))
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+        })
         .collect();
     entries.sort();
 
@@ -264,7 +267,7 @@ pub fn stats(dir: &Path) -> anyhow::Result<()> {
         for entry in fs::read_dir(dir)? {
             let path = entry?.path();
             if path.extension().is_some_and(|ext| ext == "json")
-                && path.file_stem().is_some_and(|s| !s.to_string_lossy().ends_with("report"))
+                && path.file_name().is_some_and(|s| s != "report.json")
             {
                 if let Ok(json) = fs::read_to_string(&path) {
                     if let Ok(meta) = serde_json::from_str::<PdfMetadata>(&json) {
@@ -321,16 +324,31 @@ fn read_url_list(path: &Path) -> anyhow::Result<Vec<String>> {
     Ok(urls)
 }
 
-/// Convert a URL to a safe filename.
+/// Convert a URL to a safe, unique filename.
+///
+/// Includes a hash prefix derived from the full URL to prevent collisions
+/// when different hosts serve files with the same basename.
 fn url_to_filename(url: &str, index: usize) -> String {
-    // Try to extract the filename from the URL path
+    // Hash the full URL to create a unique prefix
+    let hash = simple_hash(url);
+    let prefix = format!("{hash:08x}");
+
     if let Some(last_segment) = url.rsplit('/').next() {
         let clean = last_segment.split('?').next().unwrap_or(last_segment);
         if clean.ends_with(".pdf") && clean.len() < 100 {
-            return clean.to_string();
+            return format!("{prefix}_{clean}");
         }
     }
-    format!("pdf_{index:04}.pdf")
+    format!("{prefix}_pdf_{index:04}.pdf")
+}
+
+/// Simple non-cryptographic hash for filename uniqueness.
+fn simple_hash(s: &str) -> u32 {
+    let mut h: u32 = 0;
+    for b in s.bytes() {
+        h = h.wrapping_mul(31).wrapping_add(u32::from(b));
+    }
+    h
 }
 
 /// Get today's date as ISO 8601 string without pulling in chrono.
@@ -350,27 +368,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn url_to_filename_extracts_pdf_name() {
-        assert_eq!(
-            url_to_filename("https://example.com/forms/f1040.pdf", 0),
-            "f1040.pdf"
-        );
+    fn url_to_filename_extracts_pdf_name_with_hash() {
+        let name = url_to_filename("https://example.com/forms/f1040.pdf", 0);
+        assert!(name.ends_with("_f1040.pdf"));
+        assert!(name.len() > "f1040.pdf".len()); // hash prefix present
+    }
+
+    #[test]
+    fn url_to_filename_different_hosts_produce_unique_names() {
+        let a = url_to_filename("https://host-a.com/form.pdf", 0);
+        let b = url_to_filename("https://host-b.com/form.pdf", 0);
+        assert_ne!(a, b); // different URLs → different filenames
+        assert!(a.ends_with("_form.pdf"));
+        assert!(b.ends_with("_form.pdf"));
     }
 
     #[test]
     fn url_to_filename_with_query_params() {
-        assert_eq!(
-            url_to_filename("https://example.com/get?file=form.pdf&v=2", 5),
-            "pdf_0005.pdf"
-        );
+        let name = url_to_filename("https://example.com/get?file=form.pdf&v=2", 5);
+        assert!(name.contains("pdf_0005.pdf"));
     }
 
     #[test]
     fn url_to_filename_fallback() {
-        assert_eq!(
-            url_to_filename("https://example.com/download/abc123", 3),
-            "pdf_0003.pdf"
-        );
+        let name = url_to_filename("https://example.com/download/abc123", 3);
+        assert!(name.contains("pdf_0003.pdf"));
     }
 
     #[test]
