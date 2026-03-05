@@ -5,6 +5,7 @@ members = [
     "crates/xfa-layout-engine",
     "crates/pdfium-ffi-bridge",
     "crates/xfa-cli",
+    "crates/xfa-json",
 ]
 resolver = "2"
 
@@ -26,9 +27,11 @@ reqwest = { version = "0.12", features = ["blocking"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+indexmap = { version = "2", features = ["serde"] }
 
 # Internal crates
 xfa-dom-resolver = { path = "crates/xfa-dom-resolver" }
 formcalc-interpreter = { path = "crates/formcalc-interpreter" }
 xfa-layout-engine = { path = "crates/xfa-layout-engine" }
 pdfium-ffi-bridge = { path = "crates/pdfium-ffi-bridge" }
+xfa-json = { path = "crates/xfa-json" }
