@@ -1,0 +1,134 @@
+name: veraPDF Conformance
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'crates/xfa-layout-engine/**'
+      - 'crates/pdfium-ffi-bridge/**'
+      - 'crates/xfa-dom-resolver/**'
+      - 'crates/xfa-json/**'
+      - 'corpus/**'
+      - 'scripts/run-verapdf.sh'
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'PDF/A profile (1a, 1b, 2a, 2b, 2u, 3a, 3b, 3u)'
+        default: '2b'
+        type: string
+
+env:
+  VERAPDF_VERSION: "1.26.2"
+
+jobs:
+  conformance:
+    name: PDF/A Conformance Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache veraPDF
+        uses: actions/cache@v4
+        id: verapdf-cache
+        with:
+          path: /opt/verapdf
+          key: verapdf-${{ env.VERAPDF_VERSION }}
+
+      - name: Install veraPDF
+        if: steps.verapdf-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /opt/verapdf
+          curl -sL "https://software.verapdf.org/releases/verapdf-installer.zip" -o verapdf-installer.zip
+          unzip -q verapdf-installer.zip -d verapdf-installer
+          # Find the installer JAR
+          INSTALLER_JAR=$(find verapdf-installer -name '*.jar' | head -1)
+          # Create auto-install configuration
+          cat > auto-install.xml <<'INSTALLEOF'
+          <?xml version="1.0" encoding="UTF-8" standalone="no"?>
+          <AutomatedInstallation langpack="eng">
+            <com.izforge.izpack.panels.target.TargetPanel id="install_dir">
+              <installpath>/opt/verapdf</installpath>
+            </com.izforge.izpack.panels.target.TargetPanel>
+            <com.izforge.izpack.panels.install.InstallPanel id="install"/>
+          </AutomatedInstallation>
+          INSTALLEOF
+          java -jar "$INSTALLER_JAR" auto-install.xml || true
+          # Verify installation
+          ls -la /opt/verapdf/
+
+      - name: Add veraPDF to PATH
+        run: echo "/opt/verapdf" >> $GITHUB_PATH
+
+      - name: Run conformance check
+        run: |
+          PROFILE="${{ inputs.profile || '2b' }}"
+          ./scripts/run-verapdf.sh --profile "$PROFILE" --output reports/verapdf --format json corpus/
+
+      - name: Generate HTML report
+        if: always()
+        run: ./scripts/verapdf-report.sh reports/verapdf reports/verapdf/conformance.html
+
+      - name: Upload conformance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verapdf-conformance-report
+          path: reports/verapdf/
+          retention-days: 30
+
+      - name: Comment PR with results
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = JSON.parse(fs.readFileSync('reports/verapdf/summary.json', 'utf8'));
+            const emoji = summary.pass_rate >= 90 ? ':white_check_mark:' : ':warning:';
+            const body = [
+              `## ${emoji} veraPDF Conformance Report`,
+              '',
+              `**Profile:** ${summary.profile}`,
+              '',
+              `| Metric | Value |`,
+              `|--------|-------|`,
+              `| Total | ${summary.total} |`,
+              `| Passed | ${summary.passed} |`,
+              `| Failed | ${summary.failed} |`,
+              `| Errors | ${summary.errors} |`,
+              `| **Pass Rate** | **${summary.pass_rate}%** |`,
+            ];
+            if (summary.failed_files && summary.failed_files.length > 0) {
+              body.push('', '<details><summary>Failed files</summary>', '');
+              summary.failed_files.forEach(f => body.push(`- \`${f}\``));
+              body.push('', '</details>');
+            }
+            body.push('', '*Full report available as workflow artifact.*');
+
+            // Find existing comment to update
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes('veraPDF Conformance Report'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body.join('\n'),
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body.join('\n'),
+              });
+            }
