@@ -269,10 +269,10 @@ impl<'a> LayoutEngine<'a> {
 
         for &child_id in children {
             let child = self.form.get(child_id);
-            let child_size = self.compute_extent(child_id);
+            let child_size = self.compute_extent_with_available(child_id, Some(available));
 
-            // Place the child at (0, y_cursor)
-            let node = self.layout_single_node(child_id, child, 0.0, y_cursor)?;
+            let node =
+                self.layout_single_node_with_extent(child_id, child, 0.0, y_cursor, child_size)?;
             nodes.push(node);
 
             y_cursor += child_size.height;
@@ -375,7 +375,18 @@ impl<'a> LayoutEngine<'a> {
         y: f64,
     ) -> Result<LayoutNode> {
         let extent = self.compute_extent(id);
+        self.layout_single_node_with_extent(id, node, x, y, extent)
+    }
 
+    /// Layout a single node with a pre-computed extent.
+    fn layout_single_node_with_extent(
+        &self,
+        id: FormNodeId,
+        node: &FormNode,
+        x: f64,
+        y: f64,
+        extent: Size,
+    ) -> Result<LayoutNode> {
         let content = match &node.node_type {
             FormNodeType::Field { value } => LayoutContent::Field {
                 value: value.clone(),
@@ -405,7 +416,20 @@ impl<'a> LayoutEngine<'a> {
     }
 
     /// Compute the outer extent (total bounding box) of a form node.
-    fn compute_extent(&self, id: FormNodeId) -> Size {
+    ///
+    /// When `available` is provided, growable dimensions may expand to fill
+    /// the available space (XFA §8: growable objects fill the parent container).
+    pub fn compute_extent(&self, id: FormNodeId) -> Size {
+        self.compute_extent_with_available(id, None)
+    }
+
+    /// Compute extent with optional available-space constraint.
+    ///
+    /// For growable dimensions (width/height = None), the element sizes to fit
+    /// its content. When `available` is given, a growable dimension expands to
+    /// at least the available space (but content can make it larger, subject to
+    /// max constraints).
+    fn compute_extent_with_available(&self, id: FormNodeId, available: Option<Size>) -> Size {
         let node = self.form.get(id);
         let bm = &node.box_model;
 
@@ -446,6 +470,14 @@ impl<'a> LayoutEngine<'a> {
                             content_size.height.max(child.box_model.y + cs.height);
                     }
                 }
+            }
+        }
+
+        // When available space is given, growable dims expand to fill it
+        if let Some(avail) = available {
+            if bm.width.is_none() {
+                let insets_w = bm.margins.horizontal() + bm.border_width * 2.0;
+                content_size.width = content_size.width.max(avail.width - insets_w);
             }
         }
 
@@ -783,5 +815,355 @@ mod tests {
         // RL: first field at right edge, second to its left
         assert_eq!(page.nodes[0].rect.x, 300.0); // 400 - 100
         assert_eq!(page.nodes[1].rect.x, 200.0); // 400 - 100 - 100
+    }
+
+    // --- Dynamic sizing tests (Epic 3.5) ---
+
+    #[test]
+    fn growable_clamped_by_min() {
+        // A container with tiny content but min constraints
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 50.0, 10.0);
+
+        let sub = tree.add_node(FormNode {
+            name: "Container".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                min_width: 200.0,
+                min_height: 100.0,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let extent = engine.compute_extent(sub);
+
+        // Content is 50x10 but min clamps to 200x100
+        assert_eq!(extent.width, 200.0);
+        assert_eq!(extent.height, 100.0);
+    }
+
+    #[test]
+    fn growable_clamped_by_max() {
+        // A container with large content but max constraints
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 500.0, 300.0);
+
+        let sub = tree.add_node(FormNode {
+            name: "Container".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                min_width: 0.0,
+                min_height: 0.0,
+                max_width: 200.0,
+                max_height: 100.0,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let extent = engine.compute_extent(sub);
+
+        // Content is 500x300 but max clamps to 200x100
+        assert_eq!(extent.width, 200.0);
+        assert_eq!(extent.height, 100.0);
+    }
+
+    #[test]
+    fn partially_growable_width_fixed() {
+        // Width fixed, height growable
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 100.0, 25.0);
+        let f2 = make_field(&mut tree, "F2", 100.0, 25.0);
+
+        let sub = tree.add_node(FormNode {
+            name: "Container".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(300.0),
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1, f2],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let extent = engine.compute_extent(sub);
+
+        // Width fixed at 300, height grows to content (25+25=50)
+        assert_eq!(extent.width, 300.0);
+        assert_eq!(extent.height, 50.0);
+    }
+
+    #[test]
+    fn partially_growable_height_fixed() {
+        // Height fixed, width growable
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 100.0, 25.0);
+        let f2 = make_field(&mut tree, "F2", 150.0, 25.0);
+
+        let sub = tree.add_node(FormNode {
+            name: "Container".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1, f2],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let extent = engine.compute_extent(sub);
+
+        // Height fixed at 200, width grows to max child (150)
+        assert_eq!(extent.width, 150.0);
+        assert_eq!(extent.height, 200.0);
+    }
+
+    #[test]
+    fn growable_fills_available_width_in_tb() {
+        // A growable subform inside a tb-layout parent should fill parent width
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 100.0, 25.0);
+
+        let growable_sub = tree.add_node(FormNode {
+            name: "GrowableSub".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(500.0),
+                height: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![growable_sub],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let page = &result.pages[0];
+        // Growable subform should fill the parent's available width (500)
+        assert_eq!(page.nodes[0].rect.width, 500.0);
+        // Height should be content-based (25)
+        assert_eq!(page.nodes[0].rect.height, 25.0);
+    }
+
+    #[test]
+    fn growable_fill_capped_by_max() {
+        // A growable subform filling parent, but capped by maxW
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 100.0, 25.0);
+
+        let growable_sub = tree.add_node(FormNode {
+            name: "GrowableSub".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                max_width: 300.0,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(500.0),
+                height: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![growable_sub],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let page = &result.pages[0];
+        // Would fill 500, but maxW caps it to 300
+        assert_eq!(page.nodes[0].rect.width, 300.0);
+    }
+
+    #[test]
+    fn growable_with_margins_in_tb() {
+        // Growable container with margins should fill parent minus margins
+        use crate::types::Insets;
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 50.0, 20.0);
+
+        let growable_sub = tree.add_node(FormNode {
+            name: "GrowableSub".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                margins: Insets {
+                    top: 5.0,
+                    right: 10.0,
+                    bottom: 5.0,
+                    left: 10.0,
+                },
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(300.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![growable_sub],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let page = &result.pages[0];
+        // Width: content fills 400 - margins(20) = 380, outer = 380 + 20 = 400
+        assert_eq!(page.nodes[0].rect.width, 400.0);
+        // Height: content 20, outer = 20 + margins(10) = 30
+        assert_eq!(page.nodes[0].rect.height, 30.0);
+    }
+
+    #[test]
+    fn nested_growable_containers() {
+        // Nested growable containers should propagate constraints correctly
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 80.0, 20.0);
+
+        let inner = tree.add_node(FormNode {
+            name: "Inner".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                min_width: 150.0,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+        });
+
+        // Outer container with maxW constraint
+        let outer = tree.add_node(FormNode {
+            name: "Outer".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                max_width: 400.0,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![inner],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let extent = engine.compute_extent(outer);
+
+        // Inner: content 80, minW clamps to 150 → 150x20
+        // Outer: child is 150, maxW is 400 → 150x20
+        assert_eq!(extent.width, 150.0);
+        assert_eq!(extent.height, 20.0);
+    }
+
+    #[test]
+    fn min_max_in_lr_tb_layout() {
+        // Min/max constraints on children in lr-tb layout
+        let mut tree = FormTree::new();
+
+        let f1 = tree.add_node(FormNode {
+            name: "F1".to_string(),
+            node_type: FormNodeType::Field {
+                value: "A".to_string(),
+            },
+            box_model: BoxModel {
+                width: None,
+                height: Some(30.0),
+                min_width: 200.0,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+        });
+
+        let f2 = make_field(&mut tree, "F2", 200.0, 30.0);
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(500.0),
+                height: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::LeftToRightTB,
+            children: vec![f1, f2],
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let page = &result.pages[0];
+        // F1 has minW=200, no content so uses 200
+        assert_eq!(page.nodes[0].rect.width, 200.0);
+        // F2 at x=200
+        assert_eq!(page.nodes[1].rect.x, 200.0);
     }
 }
