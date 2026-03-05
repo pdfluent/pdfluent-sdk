@@ -1,0 +1,12 @@
+# Known XFA sample/test files from public repositories and documentation
+# These are well-known examples commonly used for XFA testing
+
+# Adobe LiveCycle Designer samples (archived)
+# SAP/Adobe interactive forms samples
+# Open-source XFA test files
+
+# PDF Association XFA samples
+https://pdfa.org/wp-content/uploads/2017/07/XFA-3_3.pdf
+
+# Government forms known to be XFA (verified)
+https://www.irs.gov/pub/irs-pdf/f1040.pdf
