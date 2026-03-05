@@ -1,0 +1,28 @@
+[package]
+name = "xfa-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WASM bindings for XFA form processing — parse, extract, and convert XFA PDFs in the browser"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+xfa-dom-resolver.workspace = true
+formcalc-interpreter.workspace = true
+xfa-layout-engine.workspace = true
+xfa-json.workspace = true
+wasm-bindgen = "0.2"
+serde.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+js-sys = "0.3"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
