@@ -99,6 +99,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn string_coercion() {
         assert_eq!(Value::Number(42.0).to_string_val(), "42");
         assert_eq!(Value::Number(3.14).to_string_val(), "3.14");
