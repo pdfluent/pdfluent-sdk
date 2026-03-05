@@ -59,16 +59,22 @@ impl<'a> LayoutEngine<'a> {
     }
 
     /// Perform layout on the entire form tree starting from the root node.
+    ///
+    /// Supports multi-page pagination: when content overflows a page's content
+    /// area, remaining nodes are placed on subsequent pages. The last page
+    /// template is repeated as needed for overflow content.
     pub fn layout(&self, root: FormNodeId) -> Result<LayoutDom> {
         let root_node = self.form.get(root);
 
-        // Find the page set and content subforms
-        let (page_areas, content_nodes) = self.extract_page_structure(root_node)?;
+        let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
+        // Expand occur rules for top-level content used by layout_content_fitting
+        // (layout_content_on_page uses layout_children which expands internally)
+        let content_nodes_expanded = self.expand_occur(&raw_content_nodes);
 
         let mut pages = Vec::new();
 
         if page_areas.is_empty() {
-            // No explicit page structure — use root's dimensions or defaults
+            // No explicit page structure — use root's dimensions
             let page_w = root_node.box_model.width.unwrap_or(612.0);
             let page_h = root_node.box_model.height.unwrap_or(792.0);
             let area = ContentArea {
@@ -78,17 +84,43 @@ impl<'a> LayoutEngine<'a> {
                 width: page_w,
                 height: page_h,
             };
-            let page = self.layout_content_on_page(
-                &area,
-                page_w,
-                page_h,
-                &content_nodes,
-                root_node.layout,
-            )?;
-            pages.push(page);
+
+            if root_node.layout == LayoutStrategy::TopToBottom {
+                // TB layout supports pagination: split content across pages
+                let mut remaining = content_nodes_expanded;
+                while !remaining.is_empty() {
+                    let (page, rest) =
+                        self.layout_content_fitting(&area, &remaining, page_w, page_h)?;
+                    if page.nodes.is_empty() {
+                        // Force place one item to prevent infinite loop
+                        let forced = self.layout_content_on_page(
+                            &area,
+                            page_w,
+                            page_h,
+                            &remaining[..1],
+                            root_node.layout,
+                        )?;
+                        pages.push(forced);
+                        remaining = remaining[1..].to_vec();
+                    } else {
+                        pages.push(page);
+                        remaining = rest;
+                    }
+                }
+            } else {
+                // Non-TB layouts: place everything on one page (layout_children expands occur)
+                let page = self.layout_content_on_page(
+                    &area,
+                    page_w,
+                    page_h,
+                    &raw_content_nodes,
+                    root_node.layout,
+                )?;
+                pages.push(page);
+            }
         } else {
-            // Layout content across page areas
-            let mut remaining = content_nodes.clone();
+            // Layout content across page areas, then repeat last template for overflow
+            let mut remaining = content_nodes_expanded;
             for pa in &page_areas {
                 if remaining.is_empty() {
                     break;
@@ -105,21 +137,38 @@ impl<'a> LayoutEngine<'a> {
                     remaining = rest;
                 }
             }
-            // If there's remaining content, place it on the last page type
+
+            // Overflow: repeat last page template until all content is placed
             if !remaining.is_empty() {
                 let last_pa = page_areas.last().unwrap();
                 let ca = last_pa
                     .content_areas
                     .first()
                     .ok_or(LayoutError::NoMatchingPageArea)?;
-                let page = self.layout_content_on_page(
-                    ca,
-                    last_pa.page_width,
-                    last_pa.page_height,
-                    &remaining,
-                    LayoutStrategy::TopToBottom,
-                )?;
-                pages.push(page);
+
+                while !remaining.is_empty() {
+                    let (page, rest) = self.layout_content_fitting(
+                        ca,
+                        &remaining,
+                        last_pa.page_width,
+                        last_pa.page_height,
+                    )?;
+                    if page.nodes.is_empty() {
+                        // Force place one item to prevent infinite loop
+                        let forced = self.layout_content_on_page(
+                            ca,
+                            last_pa.page_width,
+                            last_pa.page_height,
+                            &remaining[..1],
+                            LayoutStrategy::TopToBottom,
+                        )?;
+                        pages.push(forced);
+                        remaining = remaining[1..].to_vec();
+                    } else {
+                        pages.push(page);
+                        remaining = rest;
+                    }
+                }
             }
         }
 
@@ -208,18 +257,24 @@ impl<'a> LayoutEngine<'a> {
             nodes: Vec::new(),
         };
 
+        let available = Size {
+            width: content_area.width,
+            height: content_area.height,
+        };
+
         let mut y_cursor = 0.0;
         let mut placed_count = 0;
 
         for &child_id in content_ids {
             let child = self.form.get(child_id);
-            let child_size = self.compute_extent(child_id);
+            let child_size = self.compute_extent_with_available(child_id, Some(available));
 
             if y_cursor + child_size.height > content_area.height && placed_count > 0 {
                 break;
             }
 
-            let node = self.layout_single_node(child_id, child, 0.0, y_cursor)?;
+            let node =
+                self.layout_single_node_with_extent(child_id, child, 0.0, y_cursor, child_size)?;
             let mut offset_node = node;
             offset_node.rect.x += content_area.x;
             offset_node.rect.y += content_area.y;
@@ -1464,5 +1519,243 @@ mod tests {
         // 5 rows of 150x20 stacked: width=150, height=100
         assert_eq!(extent.width, 150.0);
         assert_eq!(extent.height, 100.0);
+    }
+
+    // --- Pagination tests (Epic 3.7) ---
+
+    #[test]
+    fn pagination_single_page_no_overflow() {
+        // Content fits on one page — no extra pages
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 200.0, 30.0);
+        let f2 = make_field(&mut tree, "F2", 200.0, 30.0);
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1, f2],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 1);
+        assert_eq!(result.pages[0].nodes.len(), 2);
+    }
+
+    #[test]
+    fn pagination_overflow_creates_pages() {
+        // 10 fields of 30pt each = 300pt total, page height 100pt → 3 pages
+        let mut tree = FormTree::new();
+        let mut fields = Vec::new();
+        for i in 0..10 {
+            fields.push(make_field(&mut tree, &format!("F{i}"), 200.0, 30.0));
+        }
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(100.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: fields,
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // 100pt fits 3 fields (0+30+30+30=90 < 100). 4th at 90+30=120 > 100.
+        // Page 1: 3 fields, Page 2: 3 fields, Page 3: 3 fields, Page 4: 1 field
+        assert_eq!(result.pages.len(), 4);
+        assert_eq!(result.pages[0].nodes.len(), 3);
+        assert_eq!(result.pages[1].nodes.len(), 3);
+        assert_eq!(result.pages[2].nodes.len(), 3);
+        assert_eq!(result.pages[3].nodes.len(), 1);
+    }
+
+    #[test]
+    fn pagination_with_page_area() {
+        // PageArea with content area, content overflows to multiple pages
+        let mut tree = FormTree::new();
+        let mut fields = Vec::new();
+        for i in 0..6 {
+            fields.push(make_field(&mut tree, &format!("F{i}"), 200.0, 50.0));
+        }
+
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 20.0,
+                    y: 20.0,
+                    width: 360.0,
+                    height: 160.0, // fits 3 fields of 50pt
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+        });
+
+        let mut root_children = vec![page_area];
+        root_children.extend(fields);
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: root_children,
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // 6 fields × 50pt = 300pt, content area is 160pt → 2 pages
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(result.pages[0].nodes.len(), 3);
+        assert_eq!(result.pages[1].nodes.len(), 3);
+
+        // Nodes should be offset by content area position (20, 20)
+        assert_eq!(result.pages[0].nodes[0].rect.x, 20.0);
+        assert_eq!(result.pages[0].nodes[0].rect.y, 20.0);
+        assert_eq!(result.pages[0].nodes[1].rect.y, 70.0); // 20 + 50
+    }
+
+    #[test]
+    fn pagination_with_occur_repeating() {
+        // Repeating subform creating many instances that overflow
+        let mut tree = FormTree::new();
+        let row = tree.add_node(FormNode {
+            name: "DataRow".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(25.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::repeating(1, None, 8),
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(100.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![row],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // 8 rows × 25pt = 200pt, page 100pt → 2 pages (4+4)
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(result.pages[0].nodes.len(), 4);
+        assert_eq!(result.pages[1].nodes.len(), 4);
+    }
+
+    #[test]
+    fn pagination_oversized_item_forced() {
+        // Single item taller than page — should still be placed (forced)
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "Big", 200.0, 200.0); // taller than page
+        let f2 = make_field(&mut tree, "Small", 200.0, 30.0);
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(100.0), // page shorter than f1
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1, f2],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // Big item forced onto page 1, Small on page 2
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(result.pages[0].nodes[0].name, "Big");
+        assert_eq!(result.pages[1].nodes[0].name, "Small");
+    }
+
+    #[test]
+    fn pagination_page_dimensions_correct() {
+        // All pages should have correct dimensions
+        let mut tree = FormTree::new();
+        let mut fields = Vec::new();
+        for i in 0..5 {
+            fields.push(make_field(&mut tree, &format!("F{i}"), 200.0, 50.0));
+        }
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(500.0),
+                height: Some(120.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: fields,
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        for page in &result.pages {
+            assert_eq!(page.width, 500.0);
+            assert_eq!(page.height, 120.0);
+        }
     }
 }
