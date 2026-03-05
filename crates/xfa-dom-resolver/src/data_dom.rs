@@ -700,7 +700,8 @@ mod tests {
 
     #[test]
     fn move_node_between_parents() {
-        let xml = r#"<data><src><item>val</item></src><dst><placeholder>x</placeholder></dst></data>"#;
+        let xml =
+            r#"<data><src><item>val</item></src><dst><placeholder>x</placeholder></dst></data>"#;
         let mut dom = DataDom::from_xml(xml).unwrap();
         let root = dom.root().unwrap();
         let src = dom.children_by_name(root, "src")[0];
