@@ -3,6 +3,7 @@
 //! These represent the merged Form DOM nodes that the layout engine processes.
 //! In a full implementation, these would come from xfa-dom-resolver's merge step.
 
+use crate::text::FontMetrics;
 use crate::types::{BoxModel, LayoutStrategy};
 
 /// A unique identifier for a form node.
@@ -51,6 +52,8 @@ pub struct FormNode {
     pub children: Vec<FormNodeId>,
     /// Occurrence rules for repeating subforms.
     pub occur: Occur,
+    /// Font metrics for text measurement (Draw/Field nodes).
+    pub font: FontMetrics,
 }
 
 /// The type of form node.

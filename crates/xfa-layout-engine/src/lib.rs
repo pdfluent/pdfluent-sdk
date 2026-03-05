@@ -6,4 +6,5 @@
 pub mod error;
 pub mod form;
 pub mod layout;
+pub mod text;
 pub mod types;
