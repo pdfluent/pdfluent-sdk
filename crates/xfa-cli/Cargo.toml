@@ -21,6 +21,10 @@ path = "src/bin/edge-case-report.rs"
 name = "accuracy-report"
 path = "src/bin/accuracy-report.rs"
 
+[[bin]]
+name = "edge-case-analyzer"
+path = "src/bin/edge-case-analyzer.rs"
+
 [dependencies]
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
@@ -32,3 +36,4 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 roxmltree.workspace = true
+lopdf.workspace = true
