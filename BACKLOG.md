@@ -101,7 +101,7 @@ PDFium is optioneel (`#[cfg(feature = "pdfium")]`) alleen voor visuele vergelijk
 | 4.1 | ~~PDFium bindings setup~~   | ~~`pdfium-render` crate integratie~~ → verplaatst naar optionele feature | ✅ Done |
 | 4.2 | XFA packet extractie        | XFA streams uit PDF lezen via `lopdf` (pure Rust)                   | ✅ Done |
 | 4.3 | Native PDF parser           | PDF lezen/schrijven via `lopdf`, XFA extractie zonder PDFium        | ✅ Done |
-| 4.4 | Native render pipeline      | Layout DOM → `image` crate rendering → pixel output (pure Rust)    | Pending |
+| 4.4 | Native render pipeline      | Layout DOM → `image` crate rendering → pixel output (pure Rust)    | ✅ Done |
 | 4.5 | Event handling              | Muisklikken, toetsaanslagen doorsturen naar Rust engine             | Pending |
 | 4.6 | Integratie tests            | End-to-end: PDF → XFA → layout → render → vergelijken              | Pending |
 
