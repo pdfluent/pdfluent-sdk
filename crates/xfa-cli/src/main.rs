@@ -11,7 +11,7 @@ use formcalc_interpreter::lexer::tokenize;
 use formcalc_interpreter::parser;
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_dom_resolver::som;
-use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree};
+use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occur};
 use xfa_layout_engine::layout::LayoutEngine;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
 
@@ -130,6 +130,7 @@ fn demo_layout() {
         },
         layout: LayoutStrategy::Positioned,
         children: vec![],
+        occur: Occur::once(),
     });
 
     let addr_field = tree.add_node(FormNode {
@@ -146,6 +147,7 @@ fn demo_layout() {
         },
         layout: LayoutStrategy::Positioned,
         children: vec![],
+        occur: Occur::once(),
     });
 
     let total_field = tree.add_node(FormNode {
@@ -162,6 +164,7 @@ fn demo_layout() {
         },
         layout: LayoutStrategy::Positioned,
         children: vec![],
+        occur: Occur::once(),
     });
 
     // Create a subform container
@@ -178,6 +181,7 @@ fn demo_layout() {
         },
         layout: LayoutStrategy::TopToBottom,
         children: detail_ids,
+        occur: Occur::once(),
     });
 
     // Root
@@ -193,6 +197,7 @@ fn demo_layout() {
         },
         layout: LayoutStrategy::TopToBottom,
         children: vec![form_subform],
+        occur: Occur::once(),
     });
 
     let engine = LayoutEngine::new(&tree);

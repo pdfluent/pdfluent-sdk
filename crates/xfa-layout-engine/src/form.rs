@@ -49,6 +49,8 @@ pub struct FormNode {
     pub box_model: BoxModel,
     pub layout: LayoutStrategy,
     pub children: Vec<FormNodeId>,
+    /// Occurrence rules for repeating subforms.
+    pub occur: Occur,
 }
 
 /// The type of form node.
@@ -66,6 +68,61 @@ pub enum FormNodeType {
     Field { value: String },
     /// A static draw element (text, image, line, etc.).
     Draw { content: String },
+}
+
+/// Occurrence rules for repeating subforms (XFA §3.3 occur element).
+///
+/// Controls how many instances of a subform are created. The layout engine
+/// expands templates based on the `initial` count, bounded by `min` and `max`.
+#[derive(Debug, Clone)]
+pub struct Occur {
+    /// Minimum number of occurrences (default 1).
+    pub min: u32,
+    /// Maximum number of occurrences (-1 = unlimited). Default 1.
+    /// Using `Option<u32>` where `None` means unlimited.
+    pub max: Option<u32>,
+    /// Initial number of occurrences (default = min).
+    pub initial: u32,
+}
+
+impl Default for Occur {
+    fn default() -> Self {
+        Self {
+            min: 1,
+            max: Some(1),
+            initial: 1,
+        }
+    }
+}
+
+impl Occur {
+    /// Occur rule that means "exactly once" (the default).
+    pub fn once() -> Self {
+        Self::default()
+    }
+
+    /// Occur rule for a repeating subform.
+    pub fn repeating(min: u32, max: Option<u32>, initial: u32) -> Self {
+        let initial = initial.max(min);
+        let initial = match max {
+            Some(m) => initial.min(m),
+            None => initial,
+        };
+        Self { min, max, initial }
+    }
+
+    /// How many instances should be created.
+    pub fn count(&self) -> u32 {
+        self.initial
+    }
+
+    /// Whether the subform can repeat (max > 1 or unlimited).
+    pub fn is_repeating(&self) -> bool {
+        match self.max {
+            Some(m) => m > 1,
+            None => true,
+        }
+    }
 }
 
 /// A content area within a page area.
