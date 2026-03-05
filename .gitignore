@@ -4,3 +4,4 @@
 .DS_Store
 *.pdf
 !/tests/fixtures/*.pdf
+/crates/xfa-wasm/pkg/
