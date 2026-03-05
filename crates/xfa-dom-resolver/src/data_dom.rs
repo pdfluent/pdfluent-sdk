@@ -219,6 +219,11 @@ impl DataDom {
         self.root
     }
 
+    /// Set the root node.
+    pub fn set_root(&mut self, id: DataNodeId) {
+        self.root = Some(id);
+    }
+
     /// Get children of a DataGroup node.
     pub fn children(&self, id: DataNodeId) -> &[DataNodeId] {
         match self.get(id) {
