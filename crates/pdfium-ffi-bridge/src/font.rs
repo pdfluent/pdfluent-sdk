@@ -295,22 +295,32 @@ impl FontResolver {
         None
     }
 
-    /// Build the font file index from system directories.
+    /// Build the font file index from system directories (recursive).
     fn build_index(&mut self) {
-        for dir in &self.font_dirs.clone() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if is_font_file(&path) {
-                        if let Ok(font) = LoadedFont::from_file(&path) {
-                            let key = font_cache_key(&font.family, font.is_bold, font.is_italic);
-                            self.font_index.entry(key).or_insert(path);
-                        }
-                    }
+        let dirs = self.font_dirs.clone();
+        for dir in &dirs {
+            self.scan_dir_recursive(dir);
+        }
+        self.indexed = true;
+    }
+
+    /// Recursively scan a directory for font files.
+    fn scan_dir_recursive(&mut self, dir: &Path) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                self.scan_dir_recursive(&path);
+            } else if is_font_file(&path) {
+                if let Ok(font) = LoadedFont::from_file(&path) {
+                    let key = font_cache_key(&font.family, font.is_bold, font.is_italic);
+                    self.font_index.entry(key).or_insert(path);
                 }
             }
         }
-        self.indexed = true;
     }
 }
 
