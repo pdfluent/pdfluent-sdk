@@ -8,13 +8,17 @@ Epic 0 (Fundament)
   │                                   ├── Epic 3 (Layout Engine)
   ├── Epic 2 (FormCalc) ─────────────┘         │
   │                                             │
-  ├── Epic 4 (PDFium Bridge) ───────────────────┤
+  ├── Epic 4 (Native PDF I/O & Rendering) ─────┤
   │                                             │
   └── Epic 5 (Persistence) ────────────────────→├── Epic 6 (Validatie)
 ```
 
 **Kritisch pad:** 0 → 1 → 3 → 4 → 6
 **Parallel pad:** Epic 2 (FormCalc) kan gelijktijdig met Epic 1
+
+**Architectuurkeuze:** 100% pure Rust, geen C/C++ dependencies.
+PDFium wordt alleen optioneel gebruikt voor visuele vergelijking tijdens development.
+Dit maakt WASM-compilatie mogelijk en versterkt de "memory safe" USP.
 
 ---
 
@@ -85,18 +89,21 @@ Epic 0 (Fundament)
 
 ---
 
-## Epic 4: Module D — `pdfium-ffi-bridge`
+## Epic 4: Module D — Native PDF I/O & Rendering (100% Rust)
 
-**Spec referentie:** PDFium API + XFA 3.3 §14 (User Experience)
+**Spec referentie:** XFA 3.3 §14 (User Experience), PDF 1.7 Reference
+
+**Architectuur:** Pure Rust met `lopdf` voor PDF structuur. Geen C/C++ dependencies.
+PDFium is optioneel (`#[cfg(feature = "pdfium")]`) alleen voor visuele vergelijking.
 
 | #   | Issue                       | Beschrijving                                                        | Status  |
 | --- | --------------------------- | ------------------------------------------------------------------- | ------- |
-| 4.1 | PDFium bindings setup       | `pdfium-render` crate integratie, library linking                   | ✅ Done |
-| 4.2 | XFA packet extractie        | XFA streams uit PDF lezen via PDFium                                | ✅ Done |
-| 4.3 | FPDF_FORMFILLINFO callbacks | Implementeer form fill interface voor UI events                     | Pending |
-| 4.4 | Render pipeline             | XFA layout → PDFium rendering → pixel output                       | Pending |
+| 4.1 | ~~PDFium bindings setup~~   | ~~`pdfium-render` crate integratie~~ → verplaatst naar optionele feature | ✅ Done |
+| 4.2 | XFA packet extractie        | XFA streams uit PDF lezen via `lopdf` (pure Rust)                   | ✅ Done |
+| 4.3 | Native PDF parser           | PDF lezen/schrijven via `lopdf`, XFA extractie zonder PDFium        | Pending |
+| 4.4 | Native render pipeline      | Layout DOM → `image` crate rendering → pixel output (pure Rust)    | Pending |
 | 4.5 | Event handling              | Muisklikken, toetsaanslagen doorsturen naar Rust engine             | Pending |
-| 4.6 | Integratie tests            | End-to-end: PDF → XFA → render → vergelijken                       | Pending |
+| 4.6 | Integratie tests            | End-to-end: PDF → XFA → layout → render → vergelijken              | Pending |
 
 ---
 
