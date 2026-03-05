@@ -113,10 +113,10 @@ PDFium is optioneel (`#[cfg(feature = "pdfium")]`) alleen voor visuele vergelijk
 
 | #   | Issue                    | Beschrijving                                                         | Status  |
 | --- | ------------------------ | -------------------------------------------------------------------- | ------- |
-| 5.1 | Dataset sync             | Bij save: Data DOM → `<xfa:datasets>` packet terug in PDF           | Pending |
-| 5.2 | UR3 signature detectie   | Detecteer Usage Rights signatures in PDF                             | Pending |
-| 5.3 | UR3 veilige verwijdering | Verwijder UR3 signatures zonder PDF te corrumperen                   | Pending |
-| 5.4 | Round-trip tests         | Open → edit → save → reopen → verify integriteit                    | Pending |
+| 5.1 | Dataset sync             | Bij save: Data DOM → `<xfa:datasets>` packet terug in PDF           | ✅ Done |
+| 5.2 | UR3 signature detectie   | Detecteer Usage Rights signatures in PDF                             | ✅ Done |
+| 5.3 | UR3 veilige verwijdering | Verwijder UR3 signatures zonder PDF te corrumperen                   | ✅ Done |
+| 5.4 | Round-trip tests         | Open → edit → save → reopen → verify integriteit                    | ✅ Done |
 
 ---
 
@@ -124,7 +124,7 @@ PDFium is optioneel (`#[cfg(feature = "pdfium")]`) alleen voor visuele vergelijk
 
 | #   | Issue                   | Beschrijving                                                          | Status  |
 | --- | ----------------------- | --------------------------------------------------------------------- | ------- |
-| 6.1 | Conformance test suite  | Tests tegen echte XFA PDFs uit het wild                               | Pending |
-| 6.2 | Performance benchmarks  | Parsing, layout, rendering tijdmetingen                               | Pending |
-| 6.3 | Edge case hardening     | Foutafhandeling, malformed XML, ontbrekende fonts                     | Pending |
-| 6.4 | Documentatie            | API docs, architectuur overview, usage guide                          | Pending |
+| 6.1 | Conformance test suite  | Tests tegen echte XFA PDFs uit het wild                               | ✅ Done |
+| 6.2 | Performance benchmarks  | Parsing, layout, rendering tijdmetingen                               | ✅ Done |
+| 6.3 | Edge case hardening     | Foutafhandeling, malformed XML, ontbrekende fonts                     | ✅ Done |
+| 6.4 | Documentatie            | API docs, architectuur overview, usage guide                          | ✅ Done |
