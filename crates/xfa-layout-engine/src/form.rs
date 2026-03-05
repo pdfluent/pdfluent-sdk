@@ -54,6 +54,10 @@ pub struct FormNode {
     pub occur: Occur,
     /// Font metrics for text measurement (Draw/Field nodes).
     pub font: FontMetrics,
+    /// FormCalc calculate script (XFA §14.3.2): runs to compute the field's value.
+    pub calculate: Option<String>,
+    /// FormCalc validate script: runs to validate the field's value, returns bool.
+    pub validate: Option<String>,
 }
 
 /// The type of form node.
