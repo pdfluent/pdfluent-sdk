@@ -772,6 +772,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         })
     }
 
@@ -797,6 +799,8 @@ mod tests {
             children,
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         })
     }
 
@@ -821,6 +825,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
         let f2 = tree.add_node(FormNode {
             name: "Field2".to_string(),
@@ -840,6 +846,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
         let root = tree.add_node(FormNode {
             name: "Root".to_string(),
@@ -855,6 +863,8 @@ mod tests {
             children: vec![f1, f2],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -890,6 +900,8 @@ mod tests {
             children: vec![f1, f2, f3],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -925,6 +937,8 @@ mod tests {
             children: vec![f1, f2, f3],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -971,6 +985,8 @@ mod tests {
             children: vec![sub],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1015,6 +1031,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -1031,6 +1049,8 @@ mod tests {
             children: vec![page_area, f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1087,6 +1107,8 @@ mod tests {
             children: vec![f1, f2],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1122,6 +1144,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1154,6 +1178,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1185,6 +1211,8 @@ mod tests {
             children: vec![f1, f2],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1216,6 +1244,8 @@ mod tests {
             children: vec![f1, f2],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1246,6 +1276,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -1262,6 +1294,8 @@ mod tests {
             children: vec![growable_sub],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1294,6 +1328,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -1310,6 +1346,8 @@ mod tests {
             children: vec![growable_sub],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1347,6 +1385,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -1363,6 +1403,8 @@ mod tests {
             children: vec![growable_sub],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1396,6 +1438,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         // Outer container with maxW constraint
@@ -1413,6 +1457,8 @@ mod tests {
             children: vec![inner],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1446,6 +1492,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let f2 = make_field(&mut tree, "F2", 200.0, 30.0);
@@ -1464,6 +1512,8 @@ mod tests {
             children: vec![f1, f2],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1498,6 +1548,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1523,6 +1575,8 @@ mod tests {
             children: vec![],
             occur: Occur::repeating(1, Some(10), 3),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -1539,6 +1593,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1572,6 +1628,8 @@ mod tests {
             children: vec![],
             occur: Occur::repeating(1, None, 5),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -1588,6 +1646,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1655,6 +1715,8 @@ mod tests {
             children: vec![],
             occur: Occur::repeating(1, Some(10), 4),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
         let footer = make_field(&mut tree, "Footer", 200.0, 30.0);
 
@@ -1672,6 +1734,8 @@ mod tests {
             children: vec![header, row, footer],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1711,6 +1775,8 @@ mod tests {
             children: vec![],
             occur: Occur::repeating(1, None, 5),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let container = tree.add_node(FormNode {
@@ -1727,6 +1793,8 @@ mod tests {
             children: vec![row],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1760,6 +1828,8 @@ mod tests {
             children: vec![f1, f2],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1792,6 +1862,8 @@ mod tests {
             children: fields,
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1839,6 +1911,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let mut root_children = vec![page_area];
@@ -1858,6 +1932,8 @@ mod tests {
             children: root_children,
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1892,6 +1968,8 @@ mod tests {
             children: vec![],
             occur: Occur::repeating(1, None, 8),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -1908,6 +1986,8 @@ mod tests {
             children: vec![row],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1940,6 +2020,8 @@ mod tests {
             children: vec![f1, f2],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1974,6 +2056,8 @@ mod tests {
             children: fields,
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2014,6 +2098,8 @@ mod tests {
             children: sub_children,
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -2030,6 +2116,8 @@ mod tests {
             children: vec![header, subform],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2073,6 +2161,8 @@ mod tests {
             children: sub_children,
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -2089,6 +2179,8 @@ mod tests {
             children: vec![subform],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2125,6 +2217,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let subform = tree.add_node(FormNode {
@@ -2141,6 +2235,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -2157,6 +2253,8 @@ mod tests {
             children: vec![header, subform],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2185,6 +2283,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let pos_sub = tree.add_node(FormNode {
@@ -2199,6 +2299,8 @@ mod tests {
             children: vec![f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let empty_sub = tree.add_node(FormNode {
@@ -2213,6 +2315,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2255,6 +2359,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -2271,6 +2377,8 @@ mod tests {
             children: vec![page_area, f1, f2],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2318,6 +2426,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let root = tree.add_node(FormNode {
@@ -2334,6 +2444,8 @@ mod tests {
             children: vec![page_area, f1],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2382,6 +2494,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let mut root_children = vec![page_area];
@@ -2401,6 +2515,8 @@ mod tests {
             children: root_children,
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2451,6 +2567,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let mut root_children = vec![page_area];
@@ -2470,6 +2588,8 @@ mod tests {
             children: root_children,
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2508,6 +2628,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(), // 10pt, avg_char_width=0.5
+            calculate: None,
+            validate: None,
         });
         let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![draw]);
 
@@ -2541,6 +2663,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
         let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![draw]);
 
@@ -2571,6 +2695,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
         let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![field]);
 
@@ -2608,6 +2734,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2636,6 +2764,8 @@ mod tests {
             children: vec![],
             occur: Occur::once(),
             font: FontMetrics::new(20.0), // 20pt font
+            calculate: None,
+            validate: None,
         });
 
         let engine = LayoutEngine::new(&tree);
