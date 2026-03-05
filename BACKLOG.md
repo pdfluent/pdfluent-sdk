@@ -73,7 +73,7 @@ Epic 0 (Fundament)
 | 3.2  | Positioned layout        | Absolute positioning van elementen in containers                       | ✅ Done |
 | 3.3  | Flowed layout            | Flow-based layout: `tb`, `lr-tb`, `rl-tb`                             | ✅ Done |
 | 3.4  | Content areas & pages    | Page templates, master pages, content area definitie                   | ✅ Done |
-| 3.5  | Dynamic sizing           | `minH`, `maxH`, `minW`, `maxW` constraints                            | Pending |
+| 3.5  | Dynamic sizing           | `minH`, `maxH`, `minW`, `maxW` constraints                            | ✅ Done |
 | 3.6  | Occur rules              | Herhalende subforms op basis van `occur` (min/max/initial)             | Pending |
 | 3.7  | Pagination               | Content overflow, page breaks, multi-page reflow (§8)                  | Pending |
 | 3.8  | Content splitting        | Splitsen van content over pagina's                                     | Pending |
