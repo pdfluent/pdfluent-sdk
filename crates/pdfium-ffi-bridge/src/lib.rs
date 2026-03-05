@@ -4,7 +4,9 @@
 //! PDFium is available as an optional feature for visual comparison.
 
 pub mod error;
+pub mod native_renderer;
 pub mod pdf_reader;
+pub mod pipeline;
 pub mod xfa_extract;
 
 #[cfg(feature = "pdfium")]

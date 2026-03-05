@@ -105,11 +105,12 @@ impl PdfReader {
     /// Per PDF spec, the XFA array alternates: [name1, stream-ref1, name2, stream-ref2, ...]
     fn extract_xfa_from_array(&self, arr: &[lopdf::Object]) -> Result<XfaPackets> {
         let mut packets = XfaPackets::default();
-        let mut full_xml = String::new();
 
         let mut i = 0;
         while i + 1 < arr.len() {
-            let name = match &arr[i] {
+            // Resolve indirect references for name entries (P2 fix).
+            let name_obj = self.resolve(&arr[i])?;
+            let name = match name_obj {
                 lopdf::Object::String(s, _) => {
                     String::from_utf8_lossy(s).to_string()
                 }
@@ -136,14 +137,12 @@ impl PdfReader {
                 }
             };
 
-            full_xml.push_str(&content);
             packets.packets.push((name, content));
             i += 2;
         }
 
-        if !full_xml.is_empty() {
-            packets.full_xml = Some(full_xml);
-        }
+        // Array-form XFA: do NOT set full_xml since the raw concatenation
+        // of packet fragments is not a valid XDP document.
 
         Ok(packets)
     }
