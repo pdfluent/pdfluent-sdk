@@ -62,16 +62,28 @@ fn render_page(page: &LayoutPage, config: &RenderConfig) -> DynamicImage {
     let mut img = RgbaImage::from_pixel(w, h, config.background);
 
     for node in &page.nodes {
-        render_node(&mut img, node, config, 0);
+        render_node(&mut img, node, config, 0, 0.0, 0.0);
     }
 
     DynamicImage::ImageRgba8(img)
 }
 
 /// Render a layout node and its children recursively.
-fn render_node(img: &mut RgbaImage, node: &LayoutNode, config: &RenderConfig, depth: usize) {
-    let x = (node.rect.x * config.scale) as i32;
-    let y = (node.rect.y * config.scale) as i32;
+///
+/// `parent_x` and `parent_y` are the accumulated offsets from parent containers,
+/// since child node coordinates are relative to their parent.
+fn render_node(
+    img: &mut RgbaImage,
+    node: &LayoutNode,
+    config: &RenderConfig,
+    depth: usize,
+    parent_x: f64,
+    parent_y: f64,
+) {
+    let abs_x = node.rect.x + parent_x;
+    let abs_y = node.rect.y + parent_y;
+    let x = (abs_x * config.scale) as i32;
+    let y = (abs_y * config.scale) as i32;
     let w = (node.rect.width * config.scale) as i32;
     let h = (node.rect.height * config.scale) as i32;
 
@@ -118,9 +130,9 @@ fn render_node(img: &mut RgbaImage, node: &LayoutNode, config: &RenderConfig, de
         }
     }
 
-    // Render children
+    // Render children with accumulated parent offset.
     for child in &node.children {
-        render_node(img, child, config, depth + 1);
+        render_node(img, child, config, depth + 1, abs_x, abs_y);
     }
 }
 
