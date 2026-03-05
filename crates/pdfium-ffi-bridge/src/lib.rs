@@ -4,6 +4,7 @@
 //! PDFium is available as an optional feature for visual comparison.
 
 pub mod dataset_sync;
+pub mod docmdp;
 pub mod error;
 pub mod events;
 pub mod native_renderer;
