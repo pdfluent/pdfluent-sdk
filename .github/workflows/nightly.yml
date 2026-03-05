@@ -1,0 +1,113 @@
+name: Nightly Corpus Test
+
+on:
+  schedule:
+    # Run nightly at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  full-corpus-test:
+    name: Full Corpus Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build all binaries
+        run: cargo build --release --workspace
+
+      - name: Run all tests
+        run: cargo test --release --workspace
+
+      - name: Run clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Run accuracy report
+        run: |
+          if [[ -d corpus/ ]] && [[ $(ls corpus/*.pdf 2>/dev/null | wc -l) -gt 0 ]]; then
+            mkdir -p reports/accuracy
+            cargo run --release --bin accuracy-report -- \
+              --corpus corpus \
+              --output reports/accuracy/report.json \
+              --html
+          else
+            echo "No corpus PDFs found, skipping accuracy report"
+          fi
+
+      - name: Upload accuracy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-accuracy-report
+          path: reports/accuracy/
+          retention-days: 90
+          if-no-files-found: ignore
+
+  conformance:
+    name: Nightly Conformance (veraPDF)
+    runs-on: ubuntu-latest
+    if: false  # Enable when veraPDF is installed and gold masters are available
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache veraPDF
+        uses: actions/cache@v4
+        with:
+          path: /opt/verapdf
+          key: verapdf-nightly
+
+      - name: Run veraPDF
+        run: ./scripts/run-verapdf.sh --profile 2b --output reports/verapdf --ci corpus/
+
+      - name: Generate report
+        if: always()
+        run: ./scripts/verapdf-report.sh
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-verapdf-report
+          path: reports/verapdf/
+          retention-days: 90
+
+  visual-regression:
+    name: Nightly AVRT
+    runs-on: ubuntu-latest
+    if: false  # Enable when gold masters are available
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ImageMagick
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run AVRT
+        run: ./scripts/run-avrt.sh --ci
+
+      - name: Generate report
+        if: always()
+        run: ./scripts/avrt-report.sh
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-avrt-report
+          path: reports/avrt/
+          retention-days: 90
