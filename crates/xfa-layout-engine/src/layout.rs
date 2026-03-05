@@ -264,12 +264,38 @@ impl<'a> LayoutEngine<'a> {
 
         let mut y_cursor = 0.0;
         let mut placed_count = 0;
+        let mut split_remaining: Vec<FormNodeId> = Vec::new();
 
         for &child_id in content_ids {
             let child = self.form.get(child_id);
             let child_size = self.compute_extent_with_available(child_id, Some(available));
 
-            if y_cursor + child_size.height > content_area.height && placed_count > 0 {
+            if y_cursor + child_size.height > content_area.height {
+                let remaining_height = content_area.height - y_cursor;
+
+                // Try to split this node if it's a splittable tb-layout container
+                if remaining_height > 0.0 && self.can_split(child_id) {
+                    let (partial, rest_children) =
+                        self.split_tb_node(child_id, y_cursor, remaining_height, available)?;
+                    if !partial.children.is_empty() {
+                        let mut offset_node = partial;
+                        offset_node.rect.x += content_area.x;
+                        offset_node.rect.y += content_area.y;
+                        page.nodes.push(offset_node);
+                        placed_count += 1;
+                        split_remaining = rest_children;
+                    }
+                } else if placed_count == 0 {
+                    // First item too large and can't split — force place it
+                    let node = self.layout_single_node_with_extent(
+                        child_id, child, 0.0, y_cursor, child_size,
+                    )?;
+                    let mut offset_node = node;
+                    offset_node.rect.x += content_area.x;
+                    offset_node.rect.y += content_area.y;
+                    page.nodes.push(offset_node);
+                    placed_count += 1;
+                }
                 break;
             }
 
@@ -284,8 +310,73 @@ impl<'a> LayoutEngine<'a> {
             placed_count += 1;
         }
 
-        let remaining = content_ids[placed_count..].to_vec();
+        let mut remaining = split_remaining;
+        remaining.extend_from_slice(&content_ids[placed_count..]);
         Ok((page, remaining))
+    }
+
+    /// Check if a node can be split across pages.
+    ///
+    /// Only tb-layout subforms with children can be split.
+    fn can_split(&self, id: FormNodeId) -> bool {
+        let node = self.form.get(id);
+        node.layout == LayoutStrategy::TopToBottom && !node.children.is_empty()
+    }
+
+    /// Split a tb-layout node: place children that fit in `remaining_height`,
+    /// return a partial layout node and the remaining child IDs.
+    fn split_tb_node(
+        &self,
+        id: FormNodeId,
+        y_offset: f64,
+        remaining_height: f64,
+        available: Size,
+    ) -> Result<(LayoutNode, Vec<FormNodeId>)> {
+        let node = self.form.get(id);
+        let expanded_children = self.expand_occur(&node.children);
+
+        let mut placed_children = Vec::new();
+        let mut child_y = 0.0;
+        let mut split_idx = 0;
+
+        for (i, &child_id) in expanded_children.iter().enumerate() {
+            let child = self.form.get(child_id);
+            let child_size = self.compute_extent(child_id);
+
+            if child_y + child_size.height > remaining_height && !placed_children.is_empty() {
+                split_idx = i;
+                break;
+            }
+
+            let child_node = self.layout_single_node(child_id, child, 0.0, child_y)?;
+            placed_children.push(child_node);
+            child_y += child_size.height;
+            split_idx = i + 1;
+        }
+
+        let content = match &node.node_type {
+            FormNodeType::Field { value } => LayoutContent::Field {
+                value: value.clone(),
+            },
+            FormNodeType::Draw { content } => LayoutContent::Text(content.clone()),
+            _ => LayoutContent::None,
+        };
+
+        // Compute partial extent: full width, height = content that fit
+        let partial_width = self
+            .compute_extent_with_available(id, Some(available))
+            .width;
+
+        let partial_node = LayoutNode {
+            form_node: id,
+            rect: Rect::new(0.0, y_offset, partial_width, child_y),
+            name: node.name.clone(),
+            content,
+            children: placed_children,
+        };
+
+        let rest = expanded_children[split_idx..].to_vec();
+        Ok((partial_node, rest))
     }
 
     /// Layout children within available space using the given strategy.
@@ -1757,5 +1848,231 @@ mod tests {
             assert_eq!(page.width, 500.0);
             assert_eq!(page.height, 120.0);
         }
+    }
+
+    // --- Content splitting tests (Epic 3.8) ---
+
+    #[test]
+    fn split_subform_across_pages() {
+        // A tb-subform with 6 children of 30pt each (180pt total)
+        // on a page with only 100pt remaining after a header.
+        // The subform should be split: some children on page 1, rest on page 2.
+        let mut tree = FormTree::new();
+        let header = make_field(&mut tree, "Header", 300.0, 40.0);
+
+        let mut sub_children = Vec::new();
+        for i in 0..6 {
+            sub_children.push(make_field(&mut tree, &format!("Row{i}"), 300.0, 30.0));
+        }
+
+        let subform = tree.add_node(FormNode {
+            name: "DataBlock".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(300.0),
+                height: None, // growable
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: sub_children,
+            occur: Occur::once(),
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(160.0), // header(40) + 120pt left → fits 4 rows
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![header, subform],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // Page 1: header + partial subform (4 rows fit in 120pt)
+        // Page 2: remaining 2 rows
+        assert!(result.pages.len() >= 2);
+        // Page 1 has header + partial subform
+        let p1 = &result.pages[0];
+        assert_eq!(p1.nodes[0].name, "Header");
+        assert_eq!(p1.nodes[1].name, "DataBlock");
+        let split_sub = &p1.nodes[1];
+        assert_eq!(split_sub.children.len(), 4); // 4 rows fit
+
+        // Page 2 has the remaining 2 rows
+        let p2 = &result.pages[1];
+        assert_eq!(p2.nodes.len(), 2);
+    }
+
+    #[test]
+    fn split_preserves_node_positions() {
+        // Verify that split children have correct y positions within their partial container
+        let mut tree = FormTree::new();
+        let mut sub_children = Vec::new();
+        for i in 0..4 {
+            sub_children.push(make_field(&mut tree, &format!("Row{i}"), 200.0, 25.0));
+        }
+
+        let subform = tree.add_node(FormNode {
+            name: "Block".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: sub_children,
+            occur: Occur::once(),
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(60.0), // fits 2 rows of 25pt (50pt < 60pt, 75pt > 60pt)
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![subform],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // First page: partial subform with 2 children
+        let split_sub = &result.pages[0].nodes[0];
+        assert_eq!(split_sub.children.len(), 2);
+        assert_eq!(split_sub.children[0].rect.y, 0.0);
+        assert_eq!(split_sub.children[1].rect.y, 25.0);
+    }
+
+    #[test]
+    fn no_split_for_non_tb_layout() {
+        // A positioned subform should NOT be split — goes entirely to next page
+        let mut tree = FormTree::new();
+        let header = make_field(&mut tree, "Header", 300.0, 80.0);
+
+        let f1 = tree.add_node(FormNode {
+            name: "Child1".to_string(),
+            node_type: FormNodeType::Field {
+                value: "A".to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(100.0),
+                height: Some(50.0),
+                x: 0.0,
+                y: 0.0,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+        });
+
+        let subform = tree.add_node(FormNode {
+            name: "PositionedBlock".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(100.0), // fixed size, doesn't fit after header
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned, // can't split
+            children: vec![f1],
+            occur: Occur::once(),
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(100.0), // header takes 80pt, subform needs 100pt → overflow
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![header, subform],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // Header on page 1, positioned subform on page 2 (not split)
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(result.pages[0].nodes[0].name, "Header");
+        assert_eq!(result.pages[1].nodes[0].name, "PositionedBlock");
+    }
+
+    #[test]
+    fn can_split_checks() {
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 100.0, 20.0);
+
+        let tb_sub = tree.add_node(FormNode {
+            name: "TB".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+            occur: Occur::once(),
+        });
+
+        let pos_sub = tree.add_node(FormNode {
+            name: "Pos".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![f1],
+            occur: Occur::once(),
+        });
+
+        let empty_sub = tree.add_node(FormNode {
+            name: "Empty".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        assert!(engine.can_split(tb_sub));
+        assert!(!engine.can_split(pos_sub));
+        assert!(!engine.can_split(empty_sub));
     }
 }
