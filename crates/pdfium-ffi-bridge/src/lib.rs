@@ -4,6 +4,7 @@
 //! PDFium is available as an optional feature for visual comparison.
 
 pub mod appearance;
+pub mod colorspace;
 pub mod dataset_sync;
 pub mod docmdp;
 pub mod error;
