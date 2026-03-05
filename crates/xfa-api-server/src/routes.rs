@@ -300,7 +300,7 @@ async fn read_pdf_from_multipart(multipart: &mut Multipart) -> Result<Vec<u8>, A
 /// Build a FormTree from template XML and optional datasets XML.
 fn build_form_tree(
     template_xml: &str,
-    _datasets_xml: Option<&str>,
+    datasets_xml: Option<&str>,
 ) -> std::result::Result<(xfa_layout_engine::form::FormTree, FormNodeId), String> {
     let template_doc =
         roxmltree::Document::parse(template_xml).map_err(|e| format!("parse template: {e}"))?;
@@ -317,7 +317,79 @@ fn build_form_tree(
     let root_id = build_node_recursive(&mut tree, &root_el)
         .ok_or_else(|| "failed to build root node".to_string())?;
 
+    // Apply datasets XML values to the form tree (if available)
+    if let Some(ds_xml) = datasets_xml {
+        if let Ok(data_dom) = xfa_dom_resolver::data_dom::DataDom::from_xml(ds_xml) {
+            apply_data_dom_values(&mut tree, root_id, &data_dom);
+        }
+    }
+
     Ok((tree, root_id))
+}
+
+/// Apply values from a DataDom to matching fields in the FormTree.
+fn apply_data_dom_values(
+    tree: &mut xfa_layout_engine::form::FormTree,
+    root: FormNodeId,
+    data_dom: &xfa_dom_resolver::data_dom::DataDom,
+) {
+    use xfa_layout_engine::form::FormNodeType;
+
+    let data_root = match data_dom.root() {
+        Some(r) => r,
+        None => return,
+    };
+
+    // Build a flat map of name→value from the DataDom
+    let mut data_values = std::collections::HashMap::new();
+    collect_data_values(data_dom, data_root, &mut data_values);
+
+    // Walk all form nodes and apply matching values
+    let node_ids: Vec<FormNodeId> = collect_all_node_ids(tree, root);
+    for node_id in node_ids {
+        let name = tree.get(node_id).name.clone();
+        if let FormNodeType::Field { ref value } = tree.get(node_id).node_type {
+            if value.is_empty() {
+                if let Some(text) = data_values.get(&name) {
+                    tree.get_mut(node_id).node_type = FormNodeType::Field {
+                        value: text.clone(),
+                    };
+                }
+            }
+        }
+    }
+}
+
+/// Recursively collect name→value pairs from a DataDom.
+fn collect_data_values(
+    data_dom: &xfa_dom_resolver::data_dom::DataDom,
+    node_id: xfa_dom_resolver::data_dom::DataNodeId,
+    values: &mut std::collections::HashMap<String, String>,
+) {
+    if let Some(node) = data_dom.get(node_id) {
+        if node.is_value() && !node.value().is_empty() {
+            values
+                .entry(node.name().to_string())
+                .or_insert_with(|| node.value().to_string());
+        }
+    }
+
+    for &child_id in data_dom.children(node_id) {
+        collect_data_values(data_dom, child_id, values);
+    }
+}
+
+/// Collect all FormNodeIds in the tree by walking children recursively.
+fn collect_all_node_ids(
+    tree: &xfa_layout_engine::form::FormTree,
+    node_id: FormNodeId,
+) -> Vec<FormNodeId> {
+    let mut ids = vec![node_id];
+    let children = tree.get(node_id).children.clone();
+    for child_id in children {
+        ids.extend(collect_all_node_ids(tree, child_id));
+    }
+    ids
 }
 
 /// Recursively build FormTree nodes from template XML.
@@ -446,7 +518,30 @@ fn form_data_to_xml(data: &xfa_json::FormData) -> String {
                 }
             }
             xfa_json::FieldValue::Null => String::new(),
-            xfa_json::FieldValue::Array(_) => continue, // Skip arrays in flat XML
+            xfa_json::FieldValue::Array(items) => {
+                // Expand repeating section: each item is a sub-object
+                for item_map in items {
+                    xml.push_str(&format!("<{key}>"));
+                    for (sub_key, sub_value) in item_map {
+                        let sub_text = match sub_value {
+                            xfa_json::FieldValue::Text(s) => s.clone(),
+                            xfa_json::FieldValue::Number(n) => n.to_string(),
+                            xfa_json::FieldValue::Boolean(b) => {
+                                if *b { "1".to_string() } else { "0".to_string() }
+                            }
+                            xfa_json::FieldValue::Null => String::new(),
+                            xfa_json::FieldValue::Array(_) => continue,
+                        };
+                        let escaped = sub_text
+                            .replace('&', "&amp;")
+                            .replace('<', "&lt;")
+                            .replace('>', "&gt;");
+                        xml.push_str(&format!("<{sub_key}>{escaped}</{sub_key}>"));
+                    }
+                    xml.push_str(&format!("</{key}>"));
+                }
+                continue;
+            }
         };
         let escaped = text
             .replace('&', "&amp;")
@@ -581,5 +676,26 @@ mod tests {
 
         let xml = form_data_to_xml(&data);
         assert!(xml.contains("a &lt; b &amp; c &gt; d"));
+    }
+
+    #[test]
+    fn form_data_to_xml_array_fields() {
+        let mut data = xfa_json::FormData {
+            fields: indexmap::IndexMap::new(),
+        };
+        let mut row1 = indexmap::IndexMap::new();
+        row1.insert("Item".to_string(), xfa_json::FieldValue::Text("A".to_string()));
+        row1.insert("Qty".to_string(), xfa_json::FieldValue::Number(2.0));
+        let mut row2 = indexmap::IndexMap::new();
+        row2.insert("Item".to_string(), xfa_json::FieldValue::Text("B".to_string()));
+        row2.insert("Qty".to_string(), xfa_json::FieldValue::Number(5.0));
+        data.fields.insert(
+            "Line".to_string(),
+            xfa_json::FieldValue::Array(vec![row1, row2]),
+        );
+
+        let xml = form_data_to_xml(&data);
+        assert!(xml.contains("<Line><Item>A</Item><Qty>2</Qty></Line>"), "Row 1: {xml}");
+        assert!(xml.contains("<Line><Item>B</Item><Qty>5</Qty></Line>"), "Row 2: {xml}");
     }
 }
