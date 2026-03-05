@@ -21,6 +21,11 @@ pdfium-render = "0.8"
 thiserror = "2"
 image = "0.25"
 pixelmatch = "0.1"
+anyhow = "1"
+reqwest = { version = "0.12", features = ["blocking"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Internal crates
 xfa-dom-resolver = { path = "crates/xfa-dom-resolver" }

@@ -1,0 +1,57 @@
+# IRS tax forms — many use XFA (LiveCycle Designer)
+# Source: https://www.irs.gov/forms-instructions
+#
+# Note: IRS has been migrating away from XFA since ~2020, but many
+# older forms and instructions still use XFA/LiveCycle.
+
+https://www.irs.gov/pub/irs-pdf/f1040.pdf
+https://www.irs.gov/pub/irs-pdf/f1040sr.pdf
+https://www.irs.gov/pub/irs-pdf/f1040es.pdf
+https://www.irs.gov/pub/irs-pdf/f1040x.pdf
+https://www.irs.gov/pub/irs-pdf/f1040sc.pdf
+https://www.irs.gov/pub/irs-pdf/f1040sd.pdf
+https://www.irs.gov/pub/irs-pdf/f1040se.pdf
+https://www.irs.gov/pub/irs-pdf/fw2.pdf
+https://www.irs.gov/pub/irs-pdf/fw4.pdf
+https://www.irs.gov/pub/irs-pdf/fw9.pdf
+https://www.irs.gov/pub/irs-pdf/f1099msc.pdf
+https://www.irs.gov/pub/irs-pdf/f1099nec.pdf
+https://www.irs.gov/pub/irs-pdf/f1099int.pdf
+https://www.irs.gov/pub/irs-pdf/f1099div.pdf
+https://www.irs.gov/pub/irs-pdf/f941.pdf
+https://www.irs.gov/pub/irs-pdf/f940.pdf
+https://www.irs.gov/pub/irs-pdf/f944.pdf
+https://www.irs.gov/pub/irs-pdf/f8862.pdf
+https://www.irs.gov/pub/irs-pdf/f8863.pdf
+https://www.irs.gov/pub/irs-pdf/f8880.pdf
+https://www.irs.gov/pub/irs-pdf/f8888.pdf
+https://www.irs.gov/pub/irs-pdf/f8889.pdf
+https://www.irs.gov/pub/irs-pdf/f8829.pdf
+https://www.irs.gov/pub/irs-pdf/f8812.pdf
+https://www.irs.gov/pub/irs-pdf/f2441.pdf
+https://www.irs.gov/pub/irs-pdf/f2848.pdf
+https://www.irs.gov/pub/irs-pdf/f4506.pdf
+https://www.irs.gov/pub/irs-pdf/f4506t.pdf
+https://www.irs.gov/pub/irs-pdf/f4868.pdf
+https://www.irs.gov/pub/irs-pdf/f8822.pdf
+https://www.irs.gov/pub/irs-pdf/f8821.pdf
+https://www.irs.gov/pub/irs-pdf/f433a.pdf
+https://www.irs.gov/pub/irs-pdf/f656.pdf
+https://www.irs.gov/pub/irs-pdf/f9465.pdf
+https://www.irs.gov/pub/irs-pdf/f1065.pdf
+https://www.irs.gov/pub/irs-pdf/f1120.pdf
+https://www.irs.gov/pub/irs-pdf/f1120s.pdf
+https://www.irs.gov/pub/irs-pdf/f706.pdf
+https://www.irs.gov/pub/irs-pdf/f709.pdf
+https://www.irs.gov/pub/irs-pdf/f990.pdf
+https://www.irs.gov/pub/irs-pdf/f990ez.pdf
+https://www.irs.gov/pub/irs-pdf/f1023.pdf
+https://www.irs.gov/pub/irs-pdf/f1024.pdf
+https://www.irs.gov/pub/irs-pdf/fss4.pdf
+https://www.irs.gov/pub/irs-pdf/f8832.pdf
+https://www.irs.gov/pub/irs-pdf/f2553.pdf
+https://www.irs.gov/pub/irs-pdf/f8233.pdf
+https://www.irs.gov/pub/irs-pdf/fw8ben.pdf
+https://www.irs.gov/pub/irs-pdf/fw8bene.pdf
+https://www.irs.gov/pub/irs-pdf/f1040nr.pdf
+https://www.irs.gov/pub/irs-pdf/f5471.pdf

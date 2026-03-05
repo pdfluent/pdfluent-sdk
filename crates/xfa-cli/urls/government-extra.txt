@@ -1,0 +1,127 @@
+# Additional US government and Canadian government XFA PDF sources
+
+# Department of Defense (DD forms)
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd0214.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd0149.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd0200.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd0293.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd1172-2.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd2656.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd2807-1.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd2808.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd0689.pdf
+https://www.esd.whs.mil/Portals/54/Documents/DD/forms/dd/dd1351-2.pdf
+
+# OPM — additional forms
+https://www.opm.gov/forms/pdf_fill/sf15.pdf
+https://www.opm.gov/forms/pdf_fill/sf52.pdf
+https://www.opm.gov/forms/pdf_fill/sf61.pdf
+https://www.opm.gov/forms/pdf_fill/sf144.pdf
+https://www.opm.gov/forms/pdf_fill/sf181.pdf
+https://www.opm.gov/forms/pdf_fill/sf256.pdf
+https://www.opm.gov/forms/pdf_fill/sf85p.pdf
+https://www.opm.gov/forms/pdf_fill/sf86a.pdf
+https://www.opm.gov/forms/pdf_fill/of306.pdf
+https://www.opm.gov/forms/pdf_fill/of612.pdf
+
+# Department of Labor
+https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/wh347.pdf
+https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/wh382.pdf
+https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/wh381.pdf
+https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/wh380e.pdf
+https://www.dol.gov/sites/dolgov/files/WHD/legacy/files/wh380f.pdf
+
+# USCIS — additional forms
+https://www.uscis.gov/sites/default/files/document/forms/i-9.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-129.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-131.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-134.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-360.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-539.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-589.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-600.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-751.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-821.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-864.pdf
+https://www.uscis.gov/sites/default/files/document/forms/n-600.pdf
+
+# VA — additional
+https://www.va.gov/vaforms/va/pdf/VA21-22.pdf
+https://www.va.gov/vaforms/va/pdf/VA21-4138.pdf
+https://www.va.gov/vaforms/va/pdf/VA21-0966.pdf
+https://www.va.gov/vaforms/va/pdf/VA10-10d.pdf
+https://www.va.gov/vaforms/va/pdf/VA10-10EZR.pdf
+https://www.va.gov/vaforms/va/pdf/VA21-0781.pdf
+https://www.va.gov/vaforms/va/pdf/VA21-2680.pdf
+https://www.va.gov/vaforms/va/pdf/VA26-1880.pdf
+https://www.va.gov/vaforms/va/pdf/VA28-8832.pdf
+
+# SSA — additional
+https://www.ssa.gov/forms/ss-5fs.pdf
+https://www.ssa.gov/forms/ssa-2.pdf
+https://www.ssa.gov/forms/ssa-3.pdf
+https://www.ssa.gov/forms/ssa-16.pdf
+https://www.ssa.gov/forms/ssa-44.pdf
+https://www.ssa.gov/forms/ssa-454.pdf
+https://www.ssa.gov/forms/ssa-521.pdf
+https://www.ssa.gov/forms/ssa-632.pdf
+https://www.ssa.gov/forms/ssa-795.pdf
+https://www.ssa.gov/forms/ssa-827.pdf
+
+# FinCEN (Treasury)
+https://www.fincen.gov/sites/default/files/shared/fin114.pdf
+https://www.fincen.gov/sites/default/files/shared/FinCEN105_Fillable.pdf
+
+# IRS — more forms not in previous lists
+https://www.irs.gov/pub/irs-pdf/f941x.pdf
+https://www.irs.gov/pub/irs-pdf/f1040sse.pdf
+https://www.irs.gov/pub/irs-pdf/f1040pr.pdf
+https://www.irs.gov/pub/irs-pdf/f1040ss.pdf
+https://www.irs.gov/pub/irs-pdf/f1120f.pdf
+https://www.irs.gov/pub/irs-pdf/f1120h.pdf
+https://www.irs.gov/pub/irs-pdf/f1065b.pdf
+https://www.irs.gov/pub/irs-pdf/f1065sk1.pdf
+https://www.irs.gov/pub/irs-pdf/f1120ssk.pdf
+https://www.irs.gov/pub/irs-pdf/f1120x.pdf
+https://www.irs.gov/pub/irs-pdf/f990pf.pdf
+https://www.irs.gov/pub/irs-pdf/f990t.pdf
+https://www.irs.gov/pub/irs-pdf/f1023ez.pdf
+https://www.irs.gov/pub/irs-pdf/f2555.pdf
+https://www.irs.gov/pub/irs-pdf/f4136.pdf
+https://www.irs.gov/pub/irs-pdf/f5498.pdf
+https://www.irs.gov/pub/irs-pdf/f5498sa.pdf
+https://www.irs.gov/pub/irs-pdf/f8844.pdf
+https://www.irs.gov/pub/irs-pdf/f8868.pdf
+https://www.irs.gov/pub/irs-pdf/f8908.pdf
+https://www.irs.gov/pub/irs-pdf/fw2g.pdf
+https://www.irs.gov/pub/irs-pdf/fw4p.pdf
+https://www.irs.gov/pub/irs-pdf/fw4s.pdf
+https://www.irs.gov/pub/irs-pdf/fw4v.pdf
+https://www.irs.gov/pub/irs-pdf/fw8exp.pdf
+https://www.irs.gov/pub/irs-pdf/fw12.pdf
+https://www.irs.gov/pub/irs-pdf/f12153.pdf
+https://www.irs.gov/pub/irs-pdf/f14039.pdf
+
+# Canadian CRA tax forms (known XFA/LiveCycle heavy users)
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t1-2024/t1-2024-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t2125/t2125-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t2202/t2202-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t4/t4-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t4a/t4a-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t5/t5-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t2200/t2200-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t2201/t2201-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t1135/t1135-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t3/t3-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/td1/td1-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/rc66/rc66-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/t2/t2-fill-24e.pdf
+https://www.canada.ca/content/dam/cra-arc/formspubs/pbg/gst34/gst34-fill-24e.pdf
+
+# Canadian Immigration (IRCC) — known XFA heavy users
+https://www.canada.ca/content/dam/ircc/migration/ircc/english/pdf/kits/forms/imm5257e.pdf
+https://www.canada.ca/content/dam/ircc/migration/ircc/english/pdf/kits/forms/imm5645e.pdf
+https://www.canada.ca/content/dam/ircc/migration/ircc/english/pdf/kits/forms/imm5709e.pdf
+https://www.canada.ca/content/dam/ircc/migration/ircc/english/pdf/kits/forms/imm5710e.pdf
+https://www.canada.ca/content/dam/ircc/migration/ircc/english/pdf/kits/forms/imm0008e.pdf
+https://www.canada.ca/content/dam/ircc/migration/ircc/english/pdf/kits/forms/imm1294e.pdf
