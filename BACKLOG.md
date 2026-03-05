@@ -76,7 +76,7 @@ Epic 0 (Fundament)
 | 3.5  | Dynamic sizing           | `minH`, `maxH`, `minW`, `maxW` constraints                            | ✅ Done |
 | 3.6  | Occur rules              | Herhalende subforms op basis van `occur` (min/max/initial)             | ✅ Done |
 | 3.7  | Pagination               | Content overflow, page breaks, multi-page reflow (§8)                  | ✅ Done |
-| 3.8  | Content splitting        | Splitsen van content over pagina's                                     | Pending |
+| 3.8  | Content splitting        | Splitsen van content over pagina's                                     | ✅ Done |
 | 3.9  | Tables layout            | Table, row, cell layout met spanning                                   | Pending |
 | 3.10 | Leaders & trailers       | Header/footer elementen per pagina                                     | Pending |
 | 3.11 | Text placement           | Rich text rendering, text wrapping, font metrics                       | Pending |
