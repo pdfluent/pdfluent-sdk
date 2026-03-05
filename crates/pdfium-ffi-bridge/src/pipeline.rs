@@ -117,6 +117,191 @@ pub fn pdf_file_to_json(path: &Path) -> Result<serde_json::Value> {
     pdf_to_json(&bytes)
 }
 
+/// End-to-end pipeline: merge JSON data into an XFA PDF template.
+///
+/// Steps:
+/// 1. Extract XFA packets from the template PDF
+/// 2. Parse the template into a FormTree
+/// 3. Import JSON field values into the FormTree
+/// 4. Run FormCalc calculate scripts
+/// 5. Serialize updated data back into the PDF's datasets packet
+/// 6. Return the updated PDF bytes
+///
+/// The `data` parameter accepts the `fields` portion of `pdf_to_json` output,
+/// i.e. `{"fields": {"form1.Name": "Alice", ...}}` or a flat key-value object.
+pub fn json_to_pdf(template: &[u8], data: &serde_json::Value) -> Result<Vec<u8>> {
+    let mut reader = PdfReader::from_bytes(template)?;
+    let packets = reader.extract_xfa()?;
+
+    let template_xml = packets
+        .template()
+        .ok_or_else(|| PdfError::XfaPacketNotFound("no template packet in XFA".to_string()))?;
+
+    let datasets_xml = packets.datasets();
+
+    let (mut tree, root) = template_parser::parse_template(template_xml, datasets_xml)?;
+
+    // Parse the JSON data into FormData and import into the FormTree.
+    let form_data = parse_json_input(data)?;
+    xfa_json::json_to_form_tree(&form_data, &mut tree, root);
+
+    // Run calculate scripts to update computed fields.
+    let _ = scripting::run_calculations(&mut tree);
+
+    // Build a DataDom from the updated FormTree and sync into the PDF.
+    let data_dom = form_tree_to_data_dom(&tree, root);
+    crate::dataset_sync::sync_datasets(&mut reader, &data_dom)?;
+
+    reader.save_to_bytes()
+}
+
+/// Parse JSON input into FormData.
+///
+/// Accepts either:
+/// - `{"fields": {"form1.Name": "Alice"}}` (pdf_to_json output format)
+/// - `{"form1.Name": "Alice"}` (flat key-value)
+fn parse_json_input(data: &serde_json::Value) -> Result<xfa_json::FormData> {
+    // Try the wrapped format first
+    if let Some(fields_obj) = data.get("fields") {
+        if let Ok(form_data) = serde_json::from_value::<xfa_json::FormData>(fields_obj.clone()) {
+            return Ok(form_data);
+        }
+        // If fields is a plain object, try parsing directly
+        if let Ok(form_data) = serde_json::from_value::<xfa_json::FormData>(data.clone()) {
+            return Ok(form_data);
+        }
+    }
+
+    // Try flat format: the entire value is the fields map
+    if data.is_object() {
+        // Convert plain JSON object to FormData with string-keyed FieldValues
+        let mut fields = indexmap::IndexMap::new();
+        if let Some(obj) = data.as_object() {
+            for (key, val) in obj {
+                let field_val = json_value_to_field_value(val);
+                fields.insert(key.clone(), field_val);
+            }
+        }
+        return Ok(xfa_json::FormData { fields });
+    }
+
+    Err(PdfError::LoadFailed(
+        "invalid JSON data: expected object with field values".to_string(),
+    ))
+}
+
+/// Convert a serde_json::Value to a FieldValue.
+fn json_value_to_field_value(val: &serde_json::Value) -> xfa_json::FieldValue {
+    match val {
+        serde_json::Value::Null => xfa_json::FieldValue::Null,
+        serde_json::Value::Bool(b) => xfa_json::FieldValue::Boolean(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                xfa_json::FieldValue::Number(f)
+            } else {
+                xfa_json::FieldValue::Text(n.to_string())
+            }
+        }
+        serde_json::Value::String(s) => xfa_json::FieldValue::Text(s.clone()),
+        serde_json::Value::Array(arr) => {
+            let instances: Vec<indexmap::IndexMap<String, xfa_json::FieldValue>> = arr
+                .iter()
+                .filter_map(|item| {
+                    item.as_object().map(|obj| {
+                        obj.iter()
+                            .map(|(k, v)| (k.clone(), json_value_to_field_value(v)))
+                            .collect()
+                    })
+                })
+                .collect();
+            xfa_json::FieldValue::Array(instances)
+        }
+        serde_json::Value::Object(_) => xfa_json::FieldValue::Text(val.to_string()),
+    }
+}
+
+/// Build a DataDom from a FormTree's current field values.
+///
+/// Walks the FormTree and constructs a DataDom with the same structure,
+/// suitable for writing back into the PDF's datasets packet.
+fn form_tree_to_data_dom(tree: &FormTree, root: FormNodeId) -> xfa_dom_resolver::data_dom::DataDom {
+    use xfa_dom_resolver::data_dom::{DataDom, DataNode};
+    use xfa_layout_engine::form::FormNodeType;
+
+    let mut dom = DataDom::new();
+
+    fn walk(
+        tree: &FormTree,
+        node_id: FormNodeId,
+        dom: &mut DataDom,
+        parent: Option<xfa_dom_resolver::data_dom::DataNodeId>,
+    ) {
+        let node = tree.get(node_id);
+
+        match &node.node_type {
+            FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => {
+                // Skip structural nodes, recurse into children
+                for &child_id in &node.children {
+                    walk(tree, child_id, dom, parent);
+                }
+            }
+            FormNodeType::Subform => {
+                if node.name.is_empty() {
+                    // Unnamed subform: recurse without creating a group
+                    for &child_id in &node.children {
+                        walk(tree, child_id, dom, parent);
+                    }
+                } else if let Some(pid) = parent {
+                    let group_id = dom.create_group(pid, &node.name).unwrap();
+                    for &child_id in &node.children {
+                        walk(tree, child_id, dom, Some(group_id));
+                    }
+                } else if dom.root().is_none() {
+                    // Root-level subform becomes the data root
+                    let root_id = dom.alloc(DataNode::DataGroup {
+                        name: node.name.clone(),
+                        namespace: None,
+                        children: Vec::new(),
+                        is_record: false,
+                        parent: None,
+                    });
+                    dom.set_root(root_id);
+                    for &child_id in &node.children {
+                        walk(tree, child_id, dom, Some(root_id));
+                    }
+                } else if let Some(rid) = dom.root() {
+                    let group_id = dom.create_group(rid, &node.name).unwrap();
+                    for &child_id in &node.children {
+                        walk(tree, child_id, dom, Some(group_id));
+                    }
+                }
+            }
+            FormNodeType::Field { value } => {
+                if let Some(pid) = parent {
+                    let _ = dom.create_value(pid, &node.name, value);
+                }
+            }
+            FormNodeType::Draw { .. } => {
+                // Draw elements are not stored in the data DOM
+            }
+        }
+    }
+
+    let root_node = tree.get(root);
+    match &root_node.node_type {
+        FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => {
+            for &child_id in &root_node.children {
+                walk(tree, child_id, &mut dom, None);
+            }
+        }
+        _ => {
+            walk(tree, root, &mut dom, None);
+        }
+    }
+
+    dom
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
