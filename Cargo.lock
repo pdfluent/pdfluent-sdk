@@ -1573,6 +1573,7 @@ name = "pdfium-ffi-bridge"
 version = "0.1.0"
 dependencies = [
  "image",
+ "indexmap",
  "lopdf",
  "pdfium-render",
  "roxmltree",
