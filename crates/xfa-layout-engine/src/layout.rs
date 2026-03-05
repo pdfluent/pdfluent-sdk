@@ -83,6 +83,8 @@ impl<'a> LayoutEngine<'a> {
                 y: 0.0,
                 width: page_w,
                 height: page_h,
+                leader: None,
+                trailer: None,
             };
 
             if root_node.layout == LayoutStrategy::TopToBottom {
@@ -257,21 +259,52 @@ impl<'a> LayoutEngine<'a> {
             nodes: Vec::new(),
         };
 
+        // Compute leader/trailer heights and place them first
+        let mut leader_height = 0.0;
+        let mut trailer_height = 0.0;
+
+        if let Some(leader_id) = content_area.leader {
+            let leader_size = self.compute_extent(leader_id);
+            leader_height = leader_size.height;
+            let leader_node = self.form.get(leader_id);
+            let node = self.layout_single_node(leader_id, leader_node, 0.0, 0.0)?;
+            let mut offset = node;
+            offset.rect.x += content_area.x;
+            offset.rect.y += content_area.y;
+            page.nodes.push(offset);
+        }
+
+        if let Some(trailer_id) = content_area.trailer {
+            let trailer_size = self.compute_extent(trailer_id);
+            trailer_height = trailer_size.height;
+            // Trailer is placed at the bottom of the content area
+            let trailer_y = content_area.height - trailer_height;
+            let trailer_node = self.form.get(trailer_id);
+            let node = self.layout_single_node(trailer_id, trailer_node, 0.0, trailer_y)?;
+            let mut offset = node;
+            offset.rect.x += content_area.x;
+            offset.rect.y += content_area.y;
+            page.nodes.push(offset);
+        }
+
+        // Available height for content = total - leader - trailer
+        let content_height = content_area.height - leader_height - trailer_height;
         let available = Size {
             width: content_area.width,
-            height: content_area.height,
+            height: content_height,
         };
 
-        let mut y_cursor = 0.0;
+        let mut y_cursor = leader_height;
         let mut placed_count = 0;
         let mut split_remaining: Vec<FormNodeId> = Vec::new();
+        let content_bottom = leader_height + content_height;
 
         for &child_id in content_ids {
             let child = self.form.get(child_id);
             let child_size = self.compute_extent_with_available(child_id, Some(available));
 
-            if y_cursor + child_size.height > content_area.height {
-                let remaining_height = content_area.height - y_cursor;
+            if y_cursor + child_size.height > content_bottom {
+                let remaining_height = content_bottom - y_cursor;
 
                 // Try to split this node if it's a splittable tb-layout container
                 if remaining_height > 0.0 && self.can_split(child_id) {
@@ -903,6 +936,8 @@ mod tests {
                     y: 36.0,
                     width: 540.0,
                     height: 720.0,
+                    leader: None,
+                    trailer: None,
                 }],
             },
             box_model: BoxModel {
@@ -1697,6 +1732,8 @@ mod tests {
                     y: 20.0,
                     width: 360.0,
                     height: 160.0, // fits 3 fields of 50pt
+                    leader: None,
+                    trailer: None,
                 }],
             },
             box_model: BoxModel {
@@ -2074,5 +2111,262 @@ mod tests {
         assert!(engine.can_split(tb_sub));
         assert!(!engine.can_split(pos_sub));
         assert!(!engine.can_split(empty_sub));
+    }
+
+    // --- Leaders & trailers tests (Epic 3.10) ---
+
+    #[test]
+    fn leader_placed_at_top() {
+        // Leader (header) should appear at the top of each page
+        let mut tree = FormTree::new();
+        let header = make_field(&mut tree, "PageHeader", 300.0, 30.0);
+        let f1 = make_field(&mut tree, "Content1", 300.0, 50.0);
+        let f2 = make_field(&mut tree, "Content2", 300.0, 50.0);
+
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 200.0,
+                    leader: Some(header),
+                    trailer: None,
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![page_area, f1, f2],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let page = &result.pages[0];
+        // Header at y=0, content starts at y=30
+        assert_eq!(page.nodes[0].name, "PageHeader");
+        assert_eq!(page.nodes[0].rect.y, 0.0);
+        // Content after header
+        assert!(page.nodes.len() >= 2);
+        // First content node at y=30 (after header)
+        let first_content = page.nodes.iter().find(|n| n.name == "Content1").unwrap();
+        assert_eq!(first_content.rect.y, 30.0);
+    }
+
+    #[test]
+    fn trailer_placed_at_bottom() {
+        // Trailer (footer) should appear at the bottom of the content area
+        let mut tree = FormTree::new();
+        let footer = make_field(&mut tree, "PageFooter", 300.0, 25.0);
+        let f1 = make_field(&mut tree, "Content1", 300.0, 50.0);
+
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 200.0,
+                    leader: None,
+                    trailer: Some(footer),
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![page_area, f1],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let page = &result.pages[0];
+        // Footer at bottom: y = 200 - 25 = 175
+        let footer_node = page.nodes.iter().find(|n| n.name == "PageFooter").unwrap();
+        assert_eq!(footer_node.rect.y, 175.0);
+    }
+
+    #[test]
+    fn leader_and_trailer_reduce_content_space() {
+        // With both leader and trailer, content space is reduced
+        let mut tree = FormTree::new();
+        let header = make_field(&mut tree, "Header", 300.0, 30.0);
+        let footer = make_field(&mut tree, "Footer", 300.0, 20.0);
+
+        // 5 fields of 30pt each = 150pt total
+        let mut fields = Vec::new();
+        for i in 0..5 {
+            fields.push(make_field(&mut tree, &format!("F{i}"), 300.0, 30.0));
+        }
+
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 200.0, // 200 - 30(header) - 20(footer) = 150pt for content
+                    leader: Some(header),
+                    trailer: Some(footer),
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+        });
+
+        let mut root_children = vec![page_area];
+        root_children.extend(fields);
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: root_children,
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // Content space is 150pt, 5 fields × 30pt = 150pt → exactly fits on 1 page
+        assert_eq!(result.pages.len(), 1);
+        let page = &result.pages[0];
+        // header + 5 content + footer = 7 nodes
+        assert_eq!(page.nodes.len(), 7);
+    }
+
+    #[test]
+    fn leader_trailer_repeated_on_overflow_pages() {
+        // When content overflows, leaders/trailers should appear on each page
+        let mut tree = FormTree::new();
+        let header = make_field(&mut tree, "Header", 300.0, 30.0);
+        let footer = make_field(&mut tree, "Footer", 300.0, 20.0);
+
+        // 8 fields of 30pt = 240pt, available per page = 200-30-20 = 150pt
+        // Page 1: 5 fields (150pt), Page 2: 3 fields (90pt)
+        let mut fields = Vec::new();
+        for i in 0..8 {
+            fields.push(make_field(&mut tree, &format!("F{i}"), 300.0, 30.0));
+        }
+
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 200.0,
+                    leader: Some(header),
+                    trailer: Some(footer),
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+        });
+
+        let mut root_children = vec![page_area];
+        root_children.extend(fields);
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(200.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: root_children,
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 2);
+
+        // Both pages should have header and footer
+        for page in &result.pages {
+            let has_header = page.nodes.iter().any(|n| n.name == "Header");
+            let has_footer = page.nodes.iter().any(|n| n.name == "Footer");
+            assert!(has_header, "Page missing header");
+            assert!(has_footer, "Page missing footer");
+        }
     }
 }
