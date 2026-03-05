@@ -10,10 +10,12 @@ use formcalc_interpreter::parser;
 use formcalc_interpreter::value::Value;
 
 fn run(src: &str) -> Value {
-    let tokens = tokenize(src).expect(&format!("Tokenize failed for: {src}"));
-    let ast = parser::parse(tokens).expect(&format!("Parse failed for: {src}"));
+    let tokens = tokenize(src).unwrap_or_else(|e| panic!("Tokenize failed for: {src}: {e}"));
+    let ast = parser::parse(tokens).unwrap_or_else(|e| panic!("Parse failed for: {src}: {e}"));
     let mut interp = Interpreter::new();
-    interp.exec(&ast).expect(&format!("Exec failed for: {src}"))
+    interp
+        .exec(&ast)
+        .unwrap_or_else(|e| panic!("Exec failed for: {src}: {e}"))
 }
 
 fn run_f64(src: &str) -> f64 {
@@ -691,6 +693,7 @@ fn spec_builtin_npv() {
 // ============================================================
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn spec_coercion_string_to_number() {
     assert_eq!(run_f64(r#""42" + 0"#), 42.0);
     assert_eq!(run_f64(r#""3.14" + 0"#), 3.14);
