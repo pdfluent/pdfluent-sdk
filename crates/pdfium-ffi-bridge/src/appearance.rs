@@ -196,11 +196,18 @@ pub fn multiline_appearance(
 
         let start_y = height - font_size - padding;
         for (i, line) in lines.iter().enumerate() {
-            let y = start_y - (i as f64 * line_height);
-            if y < 0.0 {
+            let abs_y = start_y - (i as f64 * line_height);
+            if abs_y < 0.0 {
                 break; // Clip at bottom
             }
-            write_text_position(&mut ops, padding, y);
+            if i == 0 {
+                // First Td: offset from BT origin (0,0) — effectively absolute
+                write_text_position(&mut ops, padding, abs_y);
+            } else {
+                // Subsequent Td: relative to previous position
+                // dx = 0 (same x), dy = -line_height (move down one line)
+                write_text_position(&mut ops, 0.0, -line_height);
+            }
             write_text_show(&mut ops, line);
         }
 
@@ -409,6 +416,38 @@ mod tests {
         let content = String::from_utf8_lossy(&ap.content);
         assert!(content.contains("(Line 1) Tj"));
         assert!(content.contains("(Line 2) Tj"));
+    }
+
+    #[test]
+    fn multiline_td_uses_relative_offsets() {
+        let config = AppearanceConfig {
+            text_padding: 2.0,
+            ..Default::default()
+        };
+        let lines = vec![
+            "First".to_string(),
+            "Second".to_string(),
+            "Third".to_string(),
+        ];
+        let ap = multiline_appearance(&lines, 10.0, 12.0, 200.0, 60.0, &config);
+        let content = String::from_utf8_lossy(&ap.content);
+
+        // First Td should be absolute from BT origin: padding, start_y
+        let start_y = 60.0 - 10.0 - 2.0; // height - font_size - padding = 48.0
+        let expected_first = format!("{:.2} {:.2} Td", 2.0, start_y);
+        assert!(
+            content.contains(&expected_first),
+            "First Td should be absolute: {expected_first}\nGot: {content}"
+        );
+
+        // Subsequent Td should be relative: 0, -line_height
+        let expected_rel = format!("{:.2} {:.2} Td", 0.0, -12.0);
+        // Count occurrences — should appear exactly twice (for lines 2 and 3)
+        let rel_count = content.matches(&expected_rel).count();
+        assert_eq!(
+            rel_count, 2,
+            "Should have 2 relative Td ops, got {rel_count}\nContent: {content}"
+        );
     }
 
     #[test]

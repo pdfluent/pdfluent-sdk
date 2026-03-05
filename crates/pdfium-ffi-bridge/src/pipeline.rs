@@ -1,8 +1,9 @@
-//! End-to-end pipelines — PDF ↔ JSON, PDF → rendered images.
+//! End-to-end pipelines — PDF ↔ JSON, PDF → rendered images, PDF → flat PDF.
 //!
-//! Connects the full chain: PDF → XFA extraction → FormTree → JSON/rendering.
+//! Connects the full chain: PDF → XFA extraction → layout → rendering/flattening.
 
 use crate::error::{PdfError, Result};
+use crate::flatten::{flatten_to_pdf, FlattenConfig};
 use crate::native_renderer::{render_layout, RenderConfig};
 use crate::pdf_reader::PdfReader;
 use crate::template_parser;
@@ -302,6 +303,33 @@ fn form_tree_to_data_dom(tree: &FormTree, root: FormNodeId) -> xfa_dom_resolver:
     dom
 }
 
+/// End-to-end pipeline: flatten a `FormTree` to a static PDF.
+///
+/// Steps:
+/// 1. Run FormCalc calculate scripts
+/// 2. Layout the form tree into pages
+/// 3. Generate appearance streams for all fields/draws
+/// 4. Embed as Form XObjects in a new static PDF (no AcroForm/XFA)
+///
+/// Returns the flattened PDF as bytes.
+pub fn flatten_form_tree(
+    form: &mut FormTree,
+    root: FormNodeId,
+    config: &FlattenConfig,
+) -> Result<Vec<u8>> {
+    // Run calculate scripts to populate computed field values.
+    scripting::run_calculations(form)
+        .map_err(|e| PdfError::RenderError(format!("scripting: {e}")))?;
+
+    // Layout the form tree into pages.
+    let engine = LayoutEngine::new(form);
+    let layout = engine
+        .layout(root)
+        .map_err(|e| PdfError::RenderError(format!("layout: {e}")))?;
+
+    flatten_to_pdf(&layout, config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,5 +469,80 @@ mod tests {
     fn extract_xfa_from_invalid_bytes_fails() {
         let result = extract_xfa_from_bytes(b"not a pdf");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn flatten_form_tree_produces_valid_pdf() {
+        let (mut tree, root) = simple_form();
+        let config = FlattenConfig::default();
+        let pdf_bytes = flatten_form_tree(&mut tree, root, &config).unwrap();
+        assert!(!pdf_bytes.is_empty());
+
+        // Should be a valid PDF
+        let doc = lopdf::Document::load_mem(&pdf_bytes).unwrap();
+        assert_eq!(doc.get_pages().len(), 1);
+
+        // Should not have AcroForm (flattened)
+        let catalog_id = match doc.trailer.get(b"Root").unwrap() {
+            lopdf::Object::Reference(id) => *id,
+            _ => panic!("No Root"),
+        };
+        let catalog = doc.get_object(catalog_id).unwrap().as_dict().unwrap();
+        assert!(catalog.get(b"AcroForm").is_err());
+    }
+
+    #[test]
+    fn flatten_form_tree_with_calculate_script() {
+        let mut tree = FormTree::new();
+        let field = tree.add_node(FormNode {
+            name: "Total".to_string(),
+            node_type: FormNodeType::Field {
+                value: String::new(),
+            },
+            box_model: BoxModel {
+                width: Some(100.0),
+                height: Some(25.0),
+                x: 10.0,
+                y: 10.0,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: Some("10 + 20".to_string()),
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+        let root = tree.add_node(FormNode {
+            name: "form1".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(100.0),
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![field],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+        let config = FlattenConfig::default();
+        let pdf_bytes = flatten_form_tree(&mut tree, root, &config).unwrap();
+
+        // Calculate script should have run before flattening
+        if let FormNodeType::Field { value } = &tree.get(field).node_type {
+            assert_eq!(value, "30");
+        } else {
+            panic!("expected Field node");
+        }
+
+        let doc = lopdf::Document::load_mem(&pdf_bytes).unwrap();
+        assert_eq!(doc.get_pages().len(), 1);
     }
 }
