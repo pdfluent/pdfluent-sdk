@@ -78,7 +78,7 @@ Epic 0 (Fundament)
 | 3.7  | Pagination               | Content overflow, page breaks, multi-page reflow (§8)                  | ✅ Done |
 | 3.8  | Content splitting        | Splitsen van content over pagina's                                     | ✅ Done |
 | 3.9  | Tables layout            | Table, row, cell layout met spanning                                   | Pending |
-| 3.10 | Leaders & trailers       | Header/footer elementen per pagina                                     | Pending |
+| 3.10 | Leaders & trailers       | Header/footer elementen per pagina                                     | ✅ Done |
 | 3.11 | Text placement           | Rich text rendering, text wrapping, font metrics                       | Pending |
 | 3.12 | Scripting-integratie     | Layout reageert op FormCalc calculations/validations                   | Pending |
 | 3.13 | Golden render tests      | Visuele vergelijking met Adobe Reader output                           | Pending |
