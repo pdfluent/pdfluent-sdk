@@ -13,6 +13,7 @@ pub mod font;
 pub mod native_renderer;
 pub mod pdf_reader;
 pub mod pipeline;
+pub mod template_parser;
 pub mod ur3;
 pub mod xfa_extract;
 
