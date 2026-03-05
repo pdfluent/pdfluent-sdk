@@ -5,7 +5,7 @@
 //! field values in the FormTree accordingly.
 
 use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree};
-use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode};
+use xfa_layout_engine::layout::{LayoutDom, LayoutNode};
 
 /// A user input event.
 #[derive(Debug, Clone)]
@@ -45,11 +45,11 @@ pub struct FormState {
 
 impl FormState {
     /// Create a new FormState by scanning the LayoutDom for focusable fields.
-    pub fn new(layout: &LayoutDom) -> Self {
+    pub fn new(layout: &LayoutDom, form: &FormTree) -> Self {
         let mut tab_order = Vec::new();
         for page in &layout.pages {
             for node in &page.nodes {
-                collect_fields(node, &mut tab_order);
+                collect_fields(node, form, &mut tab_order);
             }
         }
         Self {
@@ -73,7 +73,7 @@ impl FormState {
         form: &mut FormTree,
     ) -> EventResult {
         match event {
-            InputEvent::Click { page, x, y } => self.handle_click(*page, *x, *y, layout),
+            InputEvent::Click { page, x, y } => self.handle_click(*page, *x, *y, layout, form),
             InputEvent::CharInput(ch) => self.handle_char_input(*ch, form),
             InputEvent::Backspace => self.handle_backspace(form),
             InputEvent::Tab => self.handle_tab(false),
@@ -81,22 +81,23 @@ impl FormState {
         }
     }
 
-    /// Handle a click event: find the field at the click position.
+    /// Handle a click event: find the interactive field at the click position.
     fn handle_click(
         &mut self,
         page_idx: usize,
         x: f64,
         y: f64,
         layout: &LayoutDom,
+        form: &FormTree,
     ) -> EventResult {
         let Some(page) = layout.pages.get(page_idx) else {
             return EventResult::Ignored;
         };
 
-        // Hit-test: find the deepest field node at (x, y).
+        // Hit-test: find the deepest interactive field at (x, y).
         let mut hit = None;
         for node in &page.nodes {
-            if let Some(found) = hit_test_node(node, x, y) {
+            if let Some(found) = hit_test_node(node, x, y, form) {
                 hit = Some(found);
             }
         }
@@ -188,38 +189,45 @@ impl FormState {
 }
 
 /// Recursively collect focusable field IDs from the layout tree.
-fn collect_fields(node: &LayoutNode, fields: &mut Vec<FormNodeId>) {
-    match &node.content {
-        LayoutContent::Field { .. } | LayoutContent::WrappedText { .. } => {
-            fields.push(node.form_node);
-        }
-        _ => {}
+///
+/// Only includes nodes backed by `FormNodeType::Field` in the form tree,
+/// excluding static Draw/text nodes that happen to produce WrappedText content.
+fn collect_fields(node: &LayoutNode, form: &FormTree, fields: &mut Vec<FormNodeId>) {
+    if is_interactive_field(node, form) {
+        fields.push(node.form_node);
     }
     for child in &node.children {
-        collect_fields(child, fields);
+        collect_fields(child, form, fields);
     }
 }
 
-/// Hit-test a layout node tree: return the deepest field at (x, y).
-fn hit_test_node(node: &LayoutNode, x: f64, y: f64) -> Option<FormNodeId> {
+/// Hit-test a layout node tree: return the deepest interactive field at (x, y).
+fn hit_test_node(node: &LayoutNode, x: f64, y: f64, form: &FormTree) -> Option<FormNodeId> {
     if !node.rect.contains(x, y) {
         return None;
     }
 
     // Check children first (deeper nodes take priority).
     for child in &node.children {
-        if let Some(found) = hit_test_node(child, x, y) {
+        if let Some(found) = hit_test_node(child, x, y, form) {
             return Some(found);
         }
     }
 
-    // If this node is a field, it's a hit.
-    match &node.content {
-        LayoutContent::Field { .. } | LayoutContent::WrappedText { .. } => {
-            Some(node.form_node)
-        }
-        _ => None,
+    // Only return a hit if this is an interactive field (not a Draw/label).
+    if is_interactive_field(node, form) {
+        Some(node.form_node)
+    } else {
+        None
     }
+}
+
+/// Check if a layout node represents an interactive field (not a static Draw).
+fn is_interactive_field(node: &LayoutNode, form: &FormTree) -> bool {
+    matches!(
+        form.get(node.form_node).node_type,
+        FormNodeType::Field { .. }
+    )
 }
 
 #[cfg(test)]
@@ -304,7 +312,7 @@ mod tests {
     #[test]
     fn click_focuses_field() {
         let (mut tree, layout) = test_layout();
-        let mut state = FormState::new(&layout);
+        let mut state = FormState::new(&layout, &tree);
 
         let result = state.process_event(
             &InputEvent::Click { page: 0, x: 50.0, y: 15.0 },
@@ -318,7 +326,7 @@ mod tests {
     #[test]
     fn click_outside_clears_focus() {
         let (mut tree, layout) = test_layout();
-        let mut state = FormState::new(&layout);
+        let mut state = FormState::new(&layout, &tree);
 
         // Focus a field first
         state.process_event(
@@ -339,7 +347,7 @@ mod tests {
     #[test]
     fn char_input_appends_to_field() {
         let (mut tree, layout) = test_layout();
-        let mut state = FormState::new(&layout);
+        let mut state = FormState::new(&layout, &tree);
 
         // Focus the Email field
         state.process_event(
@@ -362,7 +370,7 @@ mod tests {
     #[test]
     fn backspace_removes_character() {
         let (mut tree, layout) = test_layout();
-        let mut state = FormState::new(&layout);
+        let mut state = FormState::new(&layout, &tree);
 
         // Focus Name field (has "Alice")
         state.process_event(
@@ -381,7 +389,7 @@ mod tests {
     #[test]
     fn tab_cycles_focus() {
         let (mut tree, layout) = test_layout();
-        let mut state = FormState::new(&layout);
+        let mut state = FormState::new(&layout, &tree);
 
         // Tab without focus: goes to first field
         let result = state.process_event(&InputEvent::Tab, &layout, &mut tree);
@@ -399,7 +407,7 @@ mod tests {
     #[test]
     fn shift_tab_reverses() {
         let (mut tree, layout) = test_layout();
-        let mut state = FormState::new(&layout);
+        let mut state = FormState::new(&layout, &tree);
 
         // Shift+Tab without focus: goes to last field
         let result = state.process_event(&InputEvent::ShiftTab, &layout, &mut tree);
@@ -413,7 +421,7 @@ mod tests {
     #[test]
     fn char_input_without_focus_is_ignored() {
         let (mut tree, layout) = test_layout();
-        let mut state = FormState::new(&layout);
+        let mut state = FormState::new(&layout, &tree);
 
         let result = state.process_event(&InputEvent::CharInput('x'), &layout, &mut tree);
         assert_eq!(result, EventResult::Ignored);
@@ -422,7 +430,7 @@ mod tests {
     #[test]
     fn click_invalid_page_is_ignored() {
         let (mut tree, layout) = test_layout();
-        let mut state = FormState::new(&layout);
+        let mut state = FormState::new(&layout, &tree);
 
         let result = state.process_event(
             &InputEvent::Click { page: 5, x: 50.0, y: 15.0 },
