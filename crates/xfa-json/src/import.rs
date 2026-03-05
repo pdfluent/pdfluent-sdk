@@ -4,6 +4,7 @@
 //! FormTree, updating field values by matching SOM-style paths.
 
 use crate::types::{FieldValue, FormData};
+use indexmap::IndexMap;
 use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree};
 
 /// Merge JSON field values into an existing FormTree.
@@ -59,36 +60,102 @@ fn merge_node(data: &FormData, tree: &mut FormTree, node_id: FormNodeId, parent_
         }
         FormNodeType::Subform => {
             if is_repeating {
-                // For repeating subforms, match array elements by index
-                if let Some(FieldValue::Array(instances)) = data.fields.get(&path) {
-                    // Update this instance if it's within the array bounds
-                    // (instance index tracking would need caller context,
-                    // so for now we update the first instance only)
-                    if let Some(instance_data) = instances.first() {
-                        for child_id in &children {
-                            let child = tree.get(*child_id);
-                            let child_name = child.name.clone();
-                            if let Some(value) = instance_data.get(&child_name) {
-                                if let FormNodeType::Field { .. } = &child.node_type {
-                                    let string_value = field_value_to_string(value);
-                                    tree.get_mut(*child_id).node_type = FormNodeType::Field {
-                                        value: string_value,
-                                    };
-                                }
-                            }
-                        }
-                    }
-                }
+                // Repeating subforms are handled by the parent via
+                // merge_children_with_repeating_groups — skip here.
             } else {
-                for child_id in children {
-                    merge_node(data, tree, child_id, &path);
-                }
+                merge_children_with_repeating_groups(data, tree, &children, &path);
             }
         }
         FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => {
-            for child_id in children {
-                merge_node(data, tree, child_id, &path);
+            merge_children_with_repeating_groups(data, tree, &children, &path);
+        }
+    }
+}
+
+/// Merge children, grouping same-name repeating siblings and assigning
+/// array indices so each sibling gets the correct element from the JSON array.
+fn merge_children_with_repeating_groups(
+    data: &FormData,
+    tree: &mut FormTree,
+    children: &[FormNodeId],
+    parent_path: &str,
+) {
+    // Track how many times we've seen each repeating name, so we can assign indices.
+    let mut repeating_counts: IndexMap<String, usize> = IndexMap::new();
+
+    for &child_id in children {
+        let child = tree.get(child_id);
+        let is_repeating = child.occur.is_repeating();
+
+        if is_repeating {
+            let name = child.name.clone();
+            let index = repeating_counts.get(&name).copied().unwrap_or(0);
+            repeating_counts.insert(name.clone(), index + 1);
+
+            let path = if parent_path.is_empty() {
+                name
+            } else {
+                format!("{parent_path}.{name}")
+            };
+
+            // Look up the array and apply the correct element by index.
+            if let Some(FieldValue::Array(instances)) = data.fields.get(&path) {
+                if let Some(instance_data) = instances.get(index) {
+                    merge_instance(tree, child_id, instance_data);
+                }
             }
+        } else {
+            merge_node(data, tree, child_id, parent_path);
+        }
+    }
+}
+
+/// Apply a single instance map (from a JSON array element) to a repeating
+/// subform node, recursively handling nested subforms and draw nodes.
+fn merge_instance(
+    tree: &mut FormTree,
+    node_id: FormNodeId,
+    instance_data: &IndexMap<String, FieldValue>,
+) {
+    let children: Vec<FormNodeId> = tree.get(node_id).children.clone();
+
+    for &child_id in &children {
+        let child = tree.get(child_id);
+        let child_name = child.name.clone();
+        let child_type = child.node_type.clone();
+
+        match child_type {
+            FormNodeType::Field { .. } => {
+                if let Some(value) = instance_data.get(&child_name) {
+                    let string_value = field_value_to_string(value);
+                    tree.get_mut(child_id).node_type = FormNodeType::Field {
+                        value: string_value,
+                    };
+                }
+            }
+            FormNodeType::Draw { .. } => {
+                if let Some(value) = instance_data.get(&child_name) {
+                    let string_value = field_value_to_string(value);
+                    tree.get_mut(child_id).node_type = FormNodeType::Draw {
+                        content: string_value,
+                    };
+                }
+            }
+            FormNodeType::Subform => {
+                // Nested non-repeating subform: look up dotted keys (e.g., "Address.Street")
+                let nested_prefix = format!("{child_name}.");
+                let nested_data: IndexMap<String, FieldValue> = instance_data
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        k.strip_prefix(&nested_prefix)
+                            .map(|rest| (rest.to_string(), v.clone()))
+                    })
+                    .collect();
+                if !nested_data.is_empty() {
+                    merge_instance(tree, child_id, &nested_data);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -142,13 +209,22 @@ mod tests {
         name: &str,
         children: Vec<FormNodeId>,
     ) -> FormNodeId {
+        make_subform_with_occur(tree, name, children, Occur::once())
+    }
+
+    fn make_subform_with_occur(
+        tree: &mut FormTree,
+        name: &str,
+        children: Vec<FormNodeId>,
+        occur: Occur,
+    ) -> FormNodeId {
         tree.add_node(FormNode {
             name: name.to_string(),
             node_type: FormNodeType::Subform,
             box_model: BoxModel::default(),
             layout: LayoutStrategy::TopToBottom,
             children,
-            occur: Occur::once(),
+            occur,
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
@@ -254,5 +330,137 @@ mod tests {
             field_value_to_string(&FieldValue::Text("hi".to_string())),
             "hi"
         );
+    }
+
+    #[test]
+    fn import_repeating_by_index_not_always_first() {
+        // P1 regression: each repeating sibling must get the correct array element
+        let mut tree = FormTree::new();
+        let desc1 = make_field(&mut tree, "Desc", "old1");
+        let qty1 = make_field(&mut tree, "Qty", "0");
+        let item1 = make_subform_with_occur(
+            &mut tree,
+            "Item",
+            vec![desc1, qty1],
+            Occur::repeating(0, None, 2),
+        );
+
+        let desc2 = make_field(&mut tree, "Desc", "old2");
+        let qty2 = make_field(&mut tree, "Qty", "0");
+        let item2 = make_subform_with_occur(
+            &mut tree,
+            "Item",
+            vec![desc2, qty2],
+            Occur::repeating(0, None, 2),
+        );
+
+        let form = make_subform(&mut tree, "form1", vec![item1, item2]);
+        let root = make_root(&mut tree, vec![form]);
+
+        // Import: each array element should go to the correct sibling
+        let mut instance0 = IndexMap::new();
+        instance0.insert("Desc".to_string(), FieldValue::Text("Widget A".to_string()));
+        instance0.insert("Qty".to_string(), FieldValue::Number(10.0));
+        let mut instance1 = IndexMap::new();
+        instance1.insert("Desc".to_string(), FieldValue::Text("Widget B".to_string()));
+        instance1.insert("Qty".to_string(), FieldValue::Number(5.0));
+
+        let mut fields = IndexMap::new();
+        fields.insert(
+            "form1.Item".to_string(),
+            FieldValue::Array(vec![instance0, instance1]),
+        );
+        let data = FormData { fields };
+
+        json_to_form_tree(&data, &mut tree, root);
+
+        // Verify each sibling got the correct data
+        match &tree.get(desc1).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "Widget A"),
+            _ => panic!("Expected Field"),
+        }
+        match &tree.get(desc2).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "Widget B"),
+            _ => panic!("Expected Field"),
+        }
+        match &tree.get(qty1).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "10"),
+            _ => panic!("Expected Field"),
+        }
+        match &tree.get(qty2).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "5"),
+            _ => panic!("Expected Field"),
+        }
+    }
+
+    #[test]
+    fn import_nested_subform_inside_repeating() {
+        // P2 regression: nested structures inside repeated items must be applied
+        let mut tree = FormTree::new();
+
+        // Item[0] has a nested Address subform
+        let street1 = make_field(&mut tree, "Street", "old");
+        let addr1 = make_subform(&mut tree, "Address", vec![street1]);
+        let name1 = make_field(&mut tree, "Name", "old");
+        let item1 = make_subform_with_occur(
+            &mut tree,
+            "Item",
+            vec![name1, addr1],
+            Occur::repeating(0, None, 2),
+        );
+
+        let street2 = make_field(&mut tree, "Street", "old");
+        let addr2 = make_subform(&mut tree, "Address", vec![street2]);
+        let name2 = make_field(&mut tree, "Name", "old");
+        let item2 = make_subform_with_occur(
+            &mut tree,
+            "Item",
+            vec![name2, addr2],
+            Occur::repeating(0, None, 2),
+        );
+
+        let form = make_subform(&mut tree, "form1", vec![item1, item2]);
+        let root = make_root(&mut tree, vec![form]);
+
+        // Import with nested Address.Street keys
+        let mut inst0 = IndexMap::new();
+        inst0.insert("Name".to_string(), FieldValue::Text("Alice".to_string()));
+        inst0.insert(
+            "Address.Street".to_string(),
+            FieldValue::Text("123 Main St".to_string()),
+        );
+        let mut inst1 = IndexMap::new();
+        inst1.insert("Name".to_string(), FieldValue::Text("Bob".to_string()));
+        inst1.insert(
+            "Address.Street".to_string(),
+            FieldValue::Text("456 Oak Ave".to_string()),
+        );
+
+        let mut fields = IndexMap::new();
+        fields.insert(
+            "form1.Item".to_string(),
+            FieldValue::Array(vec![inst0, inst1]),
+        );
+        let data = FormData { fields };
+
+        json_to_form_tree(&data, &mut tree, root);
+
+        // Verify nested fields were applied
+        match &tree.get(name1).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "Alice"),
+            _ => panic!("Expected Field"),
+        }
+        match &tree.get(street1).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "123 Main St"),
+            _ => panic!("Expected Field"),
+        }
+        match &tree.get(name2).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "Bob"),
+            _ => panic!("Expected Field"),
+        }
+        match &tree.get(street2).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "456 Oak Ave"),
+            _ => panic!("Expected Field"),
+        }
     }
 }
