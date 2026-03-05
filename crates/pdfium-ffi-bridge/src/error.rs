@@ -21,6 +21,9 @@ pub enum PdfError {
 
     #[error("XML parse error: {0}")]
     XmlParse(String),
+
+    #[error("Font error: {0}")]
+    FontError(String),
 }
 
 pub type Result<T> = std::result::Result<T, PdfError>;

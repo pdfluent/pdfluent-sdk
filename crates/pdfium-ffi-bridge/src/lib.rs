@@ -8,6 +8,7 @@ pub mod docmdp;
 pub mod error;
 pub mod events;
 pub mod fieldmdp;
+pub mod font;
 pub mod native_renderer;
 pub mod pdf_reader;
 pub mod pipeline;

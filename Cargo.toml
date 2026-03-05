@@ -29,6 +29,7 @@ clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 indexmap = { version = "2", features = ["serde"] }
+ttf-parser = "0.25"
 
 # Internal crates
 xfa-dom-resolver = { path = "crates/xfa-dom-resolver" }

@@ -23,8 +23,7 @@ impl PdfReader {
 
     /// Load a PDF document from a file path.
     pub fn from_file(path: &Path) -> Result<Self> {
-        let document =
-            Document::load(path).map_err(|e| PdfError::LoadFailed(format!("{e}")))?;
+        let document = Document::load(path).map_err(|e| PdfError::LoadFailed(format!("{e}")))?;
         Ok(Self { document })
     }
 
@@ -85,15 +84,14 @@ impl PdfReader {
 
         match resolved_xfa {
             lopdf::Object::Stream(stream) => {
-                let content = stream.get_plain_content()
+                let content = stream
+                    .get_plain_content()
                     .map_err(|e| PdfError::XfaPacketNotFound(format!("stream decode: {e}")))?;
                 let xml = String::from_utf8(content)
                     .map_err(|e| PdfError::XfaPacketNotFound(format!("not UTF-8: {e}")))?;
                 parse_xfa_xml(&xml)
             }
-            lopdf::Object::Array(arr) => {
-                self.extract_xfa_from_array(arr)
-            }
+            lopdf::Object::Array(arr) => self.extract_xfa_from_array(arr),
             _ => Err(PdfError::XfaPacketNotFound(
                 "XFA entry is not a stream or array".to_string(),
             )),
@@ -111,12 +109,8 @@ impl PdfReader {
             // Resolve indirect references for name entries (P2 fix).
             let name_obj = self.resolve(&arr[i])?;
             let name = match name_obj {
-                lopdf::Object::String(s, _) => {
-                    String::from_utf8_lossy(s).to_string()
-                }
-                lopdf::Object::Name(n) => {
-                    String::from_utf8_lossy(n).to_string()
-                }
+                lopdf::Object::String(s, _) => String::from_utf8_lossy(s).to_string(),
+                lopdf::Object::Name(n) => String::from_utf8_lossy(n).to_string(),
                 _ => {
                     i += 1;
                     continue;
@@ -126,7 +120,8 @@ impl PdfReader {
             let content = match &arr[i + 1] {
                 lopdf::Object::Reference(r) => self.read_stream_as_string(*r)?,
                 lopdf::Object::Stream(s) => {
-                    let bytes = s.get_plain_content()
+                    let bytes = s
+                        .get_plain_content()
                         .map_err(|e| PdfError::XfaPacketNotFound(format!("decode: {e}")))?;
                     String::from_utf8(bytes)
                         .map_err(|e| PdfError::XfaPacketNotFound(format!("not UTF-8: {e}")))?
@@ -156,15 +151,14 @@ impl PdfReader {
 
         match obj {
             lopdf::Object::Stream(stream) => {
-                let content = stream.get_plain_content()
+                let content = stream
+                    .get_plain_content()
                     .map_err(|e| PdfError::XfaPacketNotFound(format!("decompress: {e}")))?;
                 String::from_utf8(content)
                     .map_err(|e| PdfError::XfaPacketNotFound(format!("not UTF-8: {e}")))
             }
-            lopdf::Object::String(bytes, _) => {
-                String::from_utf8(bytes.clone())
-                    .map_err(|e| PdfError::XfaPacketNotFound(format!("not UTF-8: {e}")))
-            }
+            lopdf::Object::String(bytes, _) => String::from_utf8(bytes.clone())
+                .map_err(|e| PdfError::XfaPacketNotFound(format!("not UTF-8: {e}"))),
             _ => Err(PdfError::XfaPacketNotFound(
                 "expected stream or string object".to_string(),
             )),
@@ -209,6 +203,59 @@ impl PdfReader {
         Ok(buf)
     }
 
+    /// Extract embedded font data from the PDF.
+    ///
+    /// Scans all objects for font descriptor streams (FontFile, FontFile2,
+    /// FontFile3) and returns the font name and raw data for each.
+    pub fn extract_font_data(&self) -> Vec<(String, Vec<u8>)> {
+        let mut fonts = Vec::new();
+
+        for obj in self.document.objects.values() {
+            let dict = match obj {
+                lopdf::Object::Dictionary(d) => d,
+                lopdf::Object::Stream(s) => &s.dict,
+                _ => continue,
+            };
+
+            // Check if this is a FontDescriptor
+            let is_font_desc = dict
+                .get(b"Type")
+                .ok()
+                .and_then(|t| t.as_name().ok())
+                .is_some_and(|n| n == b"FontDescriptor");
+
+            if !is_font_desc {
+                continue;
+            }
+
+            let font_name = dict
+                .get(b"FontName")
+                .ok()
+                .and_then(|n| n.as_name().ok())
+                .map(|n| String::from_utf8_lossy(n).to_string())
+                .unwrap_or_default();
+
+            // Look for embedded font streams
+            for key in &[
+                b"FontFile2".as_slice(),
+                b"FontFile".as_slice(),
+                b"FontFile3".as_slice(),
+            ] {
+                if let Ok(lopdf::Object::Reference(r)) = dict.get(key) {
+                    if let Ok(lopdf::Object::Stream(stream)) = self.document.get_object(*r) {
+                        if let Ok(data) = stream.get_plain_content() {
+                            if !data.is_empty() {
+                                fonts.push((font_name.clone(), data));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        fonts
+    }
+
     /// Save the PDF document to a file.
     pub fn save_to_file(&mut self, path: &Path) -> Result<()> {
         self.document
@@ -247,7 +294,8 @@ mod tests {
             "Kids" => vec![page_id.into()],
             "Count" => 1,
         };
-        doc.objects.insert(pages_id, lopdf::Object::Dictionary(pages));
+        doc.objects
+            .insert(pages_id, lopdf::Object::Dictionary(pages));
 
         let page = dictionary! {
             "Type" => "Page",
@@ -261,7 +309,8 @@ mod tests {
             "Type" => "Catalog",
             "Pages" => pages_id,
         };
-        doc.objects.insert(catalog_id, lopdf::Object::Dictionary(catalog));
+        doc.objects
+            .insert(catalog_id, lopdf::Object::Dictionary(catalog));
         doc.trailer.set("Root", catalog_id);
 
         let mut buf = Vec::new();
@@ -294,10 +343,7 @@ mod tests {
 </xdp:xdp>"#;
 
         // Create XFA stream
-        let xfa_stream = lopdf::Stream::new(
-            dictionary! {},
-            xfa_xml.as_bytes().to_vec(),
-        );
+        let xfa_stream = lopdf::Stream::new(dictionary! {}, xfa_xml.as_bytes().to_vec());
         let xfa_id = doc.add_object(lopdf::Object::Stream(xfa_stream));
 
         // Create AcroForm with XFA reference
@@ -314,7 +360,8 @@ mod tests {
             "Kids" => vec![page_id.into()],
             "Count" => 1,
         };
-        doc.objects.insert(pages_id, lopdf::Object::Dictionary(pages));
+        doc.objects
+            .insert(pages_id, lopdf::Object::Dictionary(pages));
         let page = dictionary! {
             "Type" => "Page",
             "Parent" => pages_id,
@@ -329,7 +376,8 @@ mod tests {
             "Pages" => pages_id,
             "AcroForm" => acroform_id,
         };
-        doc.objects.insert(catalog_id, lopdf::Object::Dictionary(catalog));
+        doc.objects
+            .insert(catalog_id, lopdf::Object::Dictionary(catalog));
         doc.trailer.set("Root", catalog_id);
 
         // Save and reload
@@ -357,16 +405,10 @@ mod tests {
     <xfa:data><form1><F1>Hello</F1></form1></xfa:data>
 </xfa:datasets>"#;
 
-        let template_stream = lopdf::Stream::new(
-            dictionary! {},
-            template_xml.as_bytes().to_vec(),
-        );
+        let template_stream = lopdf::Stream::new(dictionary! {}, template_xml.as_bytes().to_vec());
         let template_id = doc.add_object(lopdf::Object::Stream(template_stream));
 
-        let data_stream = lopdf::Stream::new(
-            dictionary! {},
-            data_xml.as_bytes().to_vec(),
-        );
+        let data_stream = lopdf::Stream::new(dictionary! {}, data_xml.as_bytes().to_vec());
         let data_id = doc.add_object(lopdf::Object::Stream(data_stream));
 
         // XFA array: ["template", stream-ref, "datasets", stream-ref]
@@ -390,7 +432,8 @@ mod tests {
             "Kids" => vec![page_id.into()],
             "Count" => 1,
         };
-        doc.objects.insert(pages_id, lopdf::Object::Dictionary(pages));
+        doc.objects
+            .insert(pages_id, lopdf::Object::Dictionary(pages));
         let page = dictionary! {
             "Type" => "Page",
             "Parent" => pages_id,
@@ -404,7 +447,8 @@ mod tests {
             "Pages" => pages_id,
             "AcroForm" => acroform_id,
         };
-        doc.objects.insert(catalog_id, lopdf::Object::Dictionary(catalog));
+        doc.objects
+            .insert(catalog_id, lopdf::Object::Dictionary(catalog));
         doc.trailer.set("Root", catalog_id);
 
         let mut buf = Vec::new();
@@ -428,7 +472,8 @@ mod tests {
             "Kids" => vec![page_id.into()],
             "Count" => 1,
         };
-        doc.objects.insert(pages_id, lopdf::Object::Dictionary(pages));
+        doc.objects
+            .insert(pages_id, lopdf::Object::Dictionary(pages));
         let page = dictionary! {
             "Type" => "Page",
             "Parent" => pages_id,
@@ -440,7 +485,8 @@ mod tests {
             "Type" => "Catalog",
             "Pages" => pages_id,
         };
-        doc.objects.insert(catalog_id, lopdf::Object::Dictionary(catalog));
+        doc.objects
+            .insert(catalog_id, lopdf::Object::Dictionary(catalog));
         doc.trailer.set("Root", catalog_id);
 
         let mut buf = Vec::new();
