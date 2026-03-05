@@ -258,6 +258,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let f2 = tree.add_node(FormNode {
             name: "Email".to_string(),
@@ -277,6 +279,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let layout = LayoutDom {

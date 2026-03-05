@@ -335,6 +335,8 @@ fn layout_empty_form_tree() {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
 
     let engine = LayoutEngine::new(&tree);
@@ -369,6 +371,8 @@ fn layout_zero_size_field() {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
     let root = tree.add_node(FormNode {
         name: "form1".to_string(),
@@ -386,6 +390,8 @@ fn layout_zero_size_field() {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
 
     let engine = LayoutEngine::new(&tree);

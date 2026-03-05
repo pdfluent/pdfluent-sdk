@@ -176,6 +176,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: calculate.map(|s| s.to_string()),
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         })
     }
 
@@ -251,6 +253,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: Some("1".to_string()), // truthy
+            column_widths: vec![],
+            col_span: 1,
         });
         let _ = id;
 
@@ -279,6 +283,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: Some("0".to_string()), // falsy
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let result = run_validations(&tree).unwrap();
@@ -309,6 +315,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: Some("0".to_string()), // will fail
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let result = prepare_form(&mut tree).unwrap();

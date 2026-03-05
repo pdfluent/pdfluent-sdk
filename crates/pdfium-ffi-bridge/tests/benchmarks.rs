@@ -110,6 +110,8 @@ fn build_large_form_tree(num_fields: usize) -> (FormTree, FormNodeId) {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         children.push(field);
     }
@@ -130,6 +132,8 @@ fn build_large_form_tree(num_fields: usize) -> (FormTree, FormNodeId) {
         font: FontMetrics::default(),
         calculate: None,
         validate: None,
+        column_widths: vec![],
+        col_span: 1,
     });
 
     (tree, root)
@@ -140,6 +144,7 @@ fn build_large_form_tree(num_fields: usize) -> (FormTree, FormNodeId) {
 // =============================================================================
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_pdf_load_small() {
     let xfa_xml = build_large_xfa(10);
     let pdf = build_xfa_pdf(&xfa_xml);
@@ -157,6 +162,7 @@ fn bench_pdf_load_small() {
 }
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_pdf_load_medium() {
     let xfa_xml = build_large_xfa(100);
     let pdf = build_xfa_pdf(&xfa_xml);
@@ -178,6 +184,7 @@ fn bench_pdf_load_medium() {
 // =============================================================================
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_xfa_extraction() {
     let xfa_xml = build_large_xfa(100);
     let pdf = build_xfa_pdf(&xfa_xml);
@@ -196,6 +203,7 @@ fn bench_xfa_extraction() {
 }
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_xfa_xml_parsing() {
     let xfa_xml = build_large_xfa(200);
 
@@ -216,6 +224,7 @@ fn bench_xfa_xml_parsing() {
 // =============================================================================
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_layout_small_form() {
     let (tree, root) = build_large_form_tree(20);
     let engine = LayoutEngine::new(&tree);
@@ -233,6 +242,7 @@ fn bench_layout_small_form() {
 }
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_layout_medium_form() {
     let (tree, root) = build_large_form_tree(100);
     let engine = LayoutEngine::new(&tree);
@@ -254,6 +264,7 @@ fn bench_layout_medium_form() {
 // =============================================================================
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_render_small() {
     let (mut tree, root) = build_large_form_tree(20);
     let config = RenderConfig::with_dpi(72.0);
@@ -271,6 +282,7 @@ fn bench_render_small() {
 }
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_render_high_dpi() {
     let (mut tree, root) = build_large_form_tree(20);
     let config = RenderConfig::with_dpi(300.0);
@@ -292,6 +304,7 @@ fn bench_render_high_dpi() {
 // =============================================================================
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_dataset_sync() {
     let xfa_xml = build_large_xfa(100);
     let pdf = build_xfa_pdf(&xfa_xml);
@@ -323,6 +336,7 @@ fn bench_dataset_sync() {
 // =============================================================================
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_ur3_detection() {
     let xfa_xml = build_large_xfa(50);
     let pdf = build_xfa_pdf(&xfa_xml);
@@ -345,6 +359,7 @@ fn bench_ur3_detection() {
 // =============================================================================
 
 #[test]
+#[ignore] // perf benchmark — run explicitly with `cargo test -- --ignored`
 fn bench_full_pipeline() {
     let xfa_xml = build_large_xfa(50);
     let pdf = build_xfa_pdf(&xfa_xml);

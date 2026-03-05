@@ -135,6 +135,8 @@ fn demo_layout() {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
     });
 
     let addr_field = tree.add_node(FormNode {
@@ -155,6 +157,8 @@ fn demo_layout() {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
     });
 
     let total_field = tree.add_node(FormNode {
@@ -175,6 +179,8 @@ fn demo_layout() {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
     });
 
     // Create a subform container
@@ -195,6 +201,8 @@ fn demo_layout() {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
     });
 
     // Root
@@ -214,6 +222,8 @@ fn demo_layout() {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
     });
 
     let engine = LayoutEngine::new(&tree);
