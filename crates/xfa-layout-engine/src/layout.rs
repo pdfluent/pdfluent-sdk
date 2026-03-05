@@ -541,13 +541,177 @@ impl<'a> LayoutEngine<'a> {
         Ok(nodes)
     }
 
-    /// Table layout: children are rows, cells fill column widths.
+    /// Table layout: resolve column widths from the table node, then delegate
+    /// to `layout_table_rows`. This stub is still called from `layout_children`
+    /// but the real table path is intercepted in `layout_single_node_with_extent`
+    /// where we have access to the parent FormNode's `column_widths`.
     fn layout_table(&self, children: &[FormNodeId], available: Size) -> Result<Vec<LayoutNode>> {
-        // Simplified table: each child (row) gets full width, stacked vertically
-        self.layout_tb(children, available)
+        // Fallback: equal-width columns based on max cell count
+        let max_cells = children
+            .iter()
+            .map(|&row_id| self.form.get(row_id).children.len())
+            .max()
+            .unwrap_or(0);
+        if max_cells == 0 {
+            return Ok(Vec::new());
+        }
+        let col_width = available.width / max_cells as f64;
+        let col_widths: Vec<f64> = vec![col_width; max_cells];
+        self.layout_table_rows(children, available, &col_widths)
+    }
+
+    /// Layout table rows: stack rows vertically, distributing cells across
+    /// resolved column widths with row height equalization.
+    fn layout_table_rows(
+        &self,
+        children: &[FormNodeId],
+        available: Size,
+        col_widths: &[f64],
+    ) -> Result<Vec<LayoutNode>> {
+        let expanded = self.expand_occur(children);
+        let mut nodes = Vec::new();
+        let mut y_cursor = 0.0;
+
+        for &row_id in &expanded {
+            let row_node = self.form.get(row_id);
+            let row_children = self.expand_occur(&row_node.children);
+
+            // Layout cells within this row using column widths
+            let mut cells = Vec::new();
+            let mut x_cursor = 0.0;
+            let mut col_idx = 0usize;
+            let mut max_cell_height = 0.0_f64;
+
+            for &cell_id in &row_children {
+                if col_idx >= col_widths.len() {
+                    break;
+                }
+                let cell = self.form.get(cell_id);
+                let span = cell.col_span;
+
+                // Calculate cell width from column widths
+                let cell_width = if span == -1 {
+                    // Span remaining columns
+                    col_widths[col_idx..].iter().sum::<f64>()
+                } else {
+                    let span_count =
+                        (span.max(1) as usize).min(col_widths.len().saturating_sub(col_idx));
+                    col_widths[col_idx..col_idx + span_count].iter().sum::<f64>()
+                };
+
+                // Layout cell with forced width
+                let cell_available = Size {
+                    width: cell_width,
+                    height: available.height - y_cursor,
+                };
+                let cell_height =
+                    self.compute_extent_with_available(cell_id, Some(cell_available)).height;
+                let cell_extent = Size {
+                    width: cell_width,
+                    height: cell_height,
+                };
+
+                let cell_node =
+                    self.layout_single_node_with_extent(cell_id, cell, x_cursor, 0.0, cell_extent)?;
+                max_cell_height = max_cell_height.max(cell_extent.height);
+                cells.push(cell_node);
+
+                x_cursor += cell_width;
+                if span == -1 {
+                    col_idx = col_widths.len();
+                } else {
+                    col_idx += span.max(1) as usize;
+                }
+            }
+
+            // Equalize row height: all cells expand to tallest
+            for cell in &mut cells {
+                cell.rect.height = max_cell_height;
+            }
+
+            // Create row layout node
+            let row_layout = LayoutNode {
+                form_node: row_id,
+                rect: Rect::new(0.0, y_cursor, available.width, max_cell_height),
+                name: row_node.name.clone(),
+                content: LayoutContent::None,
+                children: cells,
+            };
+            nodes.push(row_layout);
+
+            y_cursor += max_cell_height;
+        }
+        Ok(nodes)
+    }
+
+    /// Resolve column widths for a table subform.
+    ///
+    /// Specified widths >= 0 are used as-is (points). Widths of -1 auto-size
+    /// to the widest single-span cell in that column across all rows.
+    fn resolve_column_widths(&self, table_node: &FormNode, available_width: f64) -> Vec<f64> {
+        let specified = &table_node.column_widths;
+
+        // Determine number of columns
+        let max_cols_from_rows = table_node
+            .children
+            .iter()
+            .map(|&row_id| {
+                let row = self.form.get(row_id);
+                row.children
+                    .iter()
+                    .map(|&cell_id| {
+                        let cell = self.form.get(cell_id);
+                        cell.col_span.max(1) as usize
+                    })
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0);
+
+        let num_cols = specified.len().max(max_cols_from_rows);
+        if num_cols == 0 {
+            return vec![];
+        }
+
+        let mut widths = Vec::with_capacity(num_cols);
+        for i in 0..num_cols {
+            let spec_value = specified.get(i).copied().unwrap_or(-1.0);
+            if spec_value >= 0.0 {
+                widths.push(spec_value);
+            } else {
+                // Auto-size: find widest single-span cell in this column
+                let mut max_w = 0.0_f64;
+                for &row_id in &table_node.children {
+                    let row = self.form.get(row_id);
+                    let mut col_idx = 0usize;
+                    for &cell_id in &row.children {
+                        let cell = self.form.get(cell_id);
+                        let span = cell.col_span;
+                        if col_idx == i && span == 1 {
+                            let cell_extent = self.compute_extent(cell_id);
+                            max_w = max_w.max(cell_extent.width);
+                        }
+                        col_idx += span.max(1) as usize;
+                    }
+                }
+                widths.push(max_w);
+            }
+        }
+
+        // Scale down proportionally if total exceeds available width
+        let total: f64 = widths.iter().sum();
+        if total > available_width && total > 0.0 {
+            let scale = available_width / total;
+            for w in &mut widths {
+                *w *= scale;
+            }
+        }
+
+        widths
     }
 
     /// Row layout: children fill horizontally within the row.
+    /// Used for standalone Row-layout subforms (not inside a table context).
     fn layout_row(&self, children: &[FormNodeId], available: Size) -> Result<Vec<LayoutNode>> {
         let mut nodes = Vec::new();
         let mut x_cursor = 0.0;
@@ -630,6 +794,11 @@ impl<'a> LayoutEngine<'a> {
 
         let children = if node.children.is_empty() {
             Vec::new()
+        } else if node.layout == LayoutStrategy::Table {
+            // Table layout: resolve column widths from the parent node,
+            // then distribute cells across rows.
+            let col_widths = self.resolve_column_widths(node, child_available.width);
+            self.layout_table_rows(&node.children, child_available, &col_widths)?
         } else {
             self.layout_children(&node.children, child_available, node.layout)?
         };
@@ -687,6 +856,18 @@ impl<'a> LayoutEngine<'a> {
                         let cs = self.compute_extent(child_id);
                         content_size.width += cs.width;
                         content_size.height = content_size.height.max(cs.height);
+                    }
+                }
+                LayoutStrategy::Table => {
+                    // Table width = sum of resolved column widths
+                    let avail_w = available.map(|a| a.width).unwrap_or(f64::MAX);
+                    let col_widths = self.resolve_column_widths(node, avail_w);
+                    let table_width: f64 = col_widths.iter().sum();
+                    content_size.width = content_size.width.max(table_width);
+                    // Table height = sum of row heights
+                    for &row_id in &expanded {
+                        let row_extent = self.compute_extent(row_id);
+                        content_size.height += row_extent.height;
                     }
                 }
                 _ => {
@@ -774,6 +955,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         })
     }
 
@@ -801,6 +984,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         })
     }
 
@@ -827,6 +1012,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let f2 = tree.add_node(FormNode {
             name: "Field2".to_string(),
@@ -848,6 +1035,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let root = tree.add_node(FormNode {
             name: "Root".to_string(),
@@ -865,6 +1054,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -902,6 +1093,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -939,6 +1132,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -987,6 +1182,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1033,6 +1230,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -1051,6 +1250,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1109,6 +1310,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1146,6 +1349,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1180,6 +1385,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1213,6 +1420,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1246,6 +1455,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1278,6 +1489,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -1296,6 +1509,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1330,6 +1545,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -1348,6 +1565,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1387,6 +1606,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -1405,6 +1626,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1440,6 +1663,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         // Outer container with maxW constraint
@@ -1459,6 +1684,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1494,6 +1721,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let f2 = make_field(&mut tree, "F2", 200.0, 30.0);
@@ -1514,6 +1743,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1550,6 +1781,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1577,6 +1810,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -1595,6 +1830,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1630,6 +1867,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -1648,6 +1887,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1717,6 +1958,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let footer = make_field(&mut tree, "Footer", 200.0, 30.0);
 
@@ -1736,6 +1979,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1777,6 +2022,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let container = tree.add_node(FormNode {
@@ -1795,6 +2042,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1830,6 +2079,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1864,6 +2115,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1913,6 +2166,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let mut root_children = vec![page_area];
@@ -1934,6 +2189,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1970,6 +2227,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -1988,6 +2247,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2022,6 +2283,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2058,6 +2321,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2100,6 +2365,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -2118,6 +2385,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2163,6 +2432,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -2181,6 +2452,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2219,6 +2492,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let subform = tree.add_node(FormNode {
@@ -2237,6 +2512,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -2255,6 +2532,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2285,6 +2564,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let pos_sub = tree.add_node(FormNode {
@@ -2301,6 +2582,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let empty_sub = tree.add_node(FormNode {
@@ -2317,6 +2600,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2361,6 +2646,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -2379,6 +2666,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2428,6 +2717,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let root = tree.add_node(FormNode {
@@ -2446,6 +2737,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2496,6 +2789,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let mut root_children = vec![page_area];
@@ -2517,6 +2812,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2569,6 +2866,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let mut root_children = vec![page_area];
@@ -2590,6 +2889,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2630,6 +2931,8 @@ mod tests {
             font: FontMetrics::default(), // 10pt, avg_char_width=0.5
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![draw]);
 
@@ -2665,6 +2968,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![draw]);
 
@@ -2697,6 +3002,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![field]);
 
@@ -2736,6 +3043,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2766,6 +3075,8 @@ mod tests {
             font: FontMetrics::new(20.0), // 20pt font
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2773,5 +3084,331 @@ mod tests {
         // "Hi" = 2 * 20 * 0.5 = 20pt wide, 1 line * 20 * 1.2 = 24pt tall
         assert_eq!(size.width, 20.0);
         assert_eq!(size.height, 24.0);
+    }
+
+    // =========================================================================
+    // Table Layout Tests
+    // =========================================================================
+
+    fn make_cell(
+        tree: &mut FormTree,
+        name: &str,
+        w: f64,
+        h: f64,
+        col_span: i32,
+    ) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Field {
+                value: name.to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(w),
+                height: Some(h),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span,
+        })
+    }
+
+    fn make_row(tree: &mut FormTree, name: &str, cells: Vec<FormNodeId>) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Row,
+            children: cells,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    fn make_table(
+        tree: &mut FormTree,
+        name: &str,
+        column_widths: Vec<f64>,
+        rows: Vec<FormNodeId>,
+    ) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Table,
+            children: rows,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths,
+            col_span: 1,
+        })
+    }
+
+    #[test]
+    fn table_basic_fixed_columns() {
+        let mut tree = FormTree::new();
+
+        // 3 columns: 100, 150, 200
+        let c1 = make_cell(&mut tree, "A1", 100.0, 30.0, 1);
+        let c2 = make_cell(&mut tree, "A2", 150.0, 30.0, 1);
+        let c3 = make_cell(&mut tree, "A3", 200.0, 30.0, 1);
+        let r1 = make_row(&mut tree, "Row1", vec![c1, c2, c3]);
+
+        let c4 = make_cell(&mut tree, "B1", 100.0, 25.0, 1);
+        let c5 = make_cell(&mut tree, "B2", 150.0, 25.0, 1);
+        let c6 = make_cell(&mut tree, "B3", 200.0, 25.0, 1);
+        let r2 = make_row(&mut tree, "Row2", vec![c4, c5, c6]);
+
+        let table = make_table(&mut tree, "Table", vec![100.0, 150.0, 200.0], vec![r1, r2]);
+
+        let page_area = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![table],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(page_area).unwrap();
+
+        assert_eq!(layout.pages.len(), 1);
+        let page = &layout.pages[0];
+        // Table node should be on the page
+        assert_eq!(page.nodes.len(), 1);
+        let table_node = &page.nodes[0];
+        assert_eq!(table_node.name, "Table");
+
+        // 2 rows
+        assert_eq!(table_node.children.len(), 2);
+        let row1 = &table_node.children[0];
+        let row2 = &table_node.children[1];
+
+        // Row 1: 3 cells at x=0, 100, 250
+        assert_eq!(row1.children.len(), 3);
+        assert_eq!(row1.children[0].rect.x, 0.0);
+        assert_eq!(row1.children[0].rect.width, 100.0);
+        assert_eq!(row1.children[1].rect.x, 100.0);
+        assert_eq!(row1.children[1].rect.width, 150.0);
+        assert_eq!(row1.children[2].rect.x, 250.0);
+        assert_eq!(row1.children[2].rect.width, 200.0);
+
+        // Row 2 stacked below row 1
+        assert_eq!(row2.rect.y, 30.0); // row 1 height = 30
+        assert_eq!(row2.children[0].rect.x, 0.0);
+    }
+
+    #[test]
+    fn table_auto_columns() {
+        let mut tree = FormTree::new();
+
+        // Auto columns: -1 means auto-size
+        let c1 = make_cell(&mut tree, "A", 80.0, 20.0, 1);
+        let c2 = make_cell(&mut tree, "B", 120.0, 20.0, 1);
+        let r1 = make_row(&mut tree, "Row1", vec![c1, c2]);
+
+        let c3 = make_cell(&mut tree, "C", 60.0, 20.0, 1);
+        let c4 = make_cell(&mut tree, "D", 150.0, 20.0, 1);
+        let r2 = make_row(&mut tree, "Row2", vec![c3, c4]);
+
+        // Auto-size: widest in col 0 = 80, col 1 = 150
+        let table = make_table(&mut tree, "Table", vec![-1.0, -1.0], vec![r1, r2]);
+
+        let page = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![table],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(page).unwrap();
+
+        let table_node = &layout.pages[0].nodes[0];
+        let row1 = &table_node.children[0];
+
+        // Column 0 auto-sized to 80 (widest), Column 1 auto-sized to 150
+        assert_eq!(row1.children[0].rect.width, 80.0);
+        assert_eq!(row1.children[1].rect.width, 150.0);
+        assert_eq!(row1.children[1].rect.x, 80.0);
+    }
+
+    #[test]
+    fn table_col_span() {
+        let mut tree = FormTree::new();
+
+        // 3 fixed columns: 100, 100, 100
+        let c1 = make_cell(&mut tree, "Span2", 200.0, 20.0, 2); // spans 2 columns
+        let c2 = make_cell(&mut tree, "Single", 100.0, 20.0, 1);
+        let r1 = make_row(&mut tree, "Row1", vec![c1, c2]);
+
+        let table = make_table(
+            &mut tree,
+            "Table",
+            vec![100.0, 100.0, 100.0],
+            vec![r1],
+        );
+
+        let page = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![table],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(page).unwrap();
+
+        let row = &layout.pages[0].nodes[0].children[0];
+        // First cell spans 2 columns: width = 100 + 100 = 200
+        assert_eq!(row.children[0].rect.width, 200.0);
+        assert_eq!(row.children[0].rect.x, 0.0);
+        // Second cell at x=200, width=100
+        assert_eq!(row.children[1].rect.x, 200.0);
+        assert_eq!(row.children[1].rect.width, 100.0);
+    }
+
+    #[test]
+    fn table_col_span_rest() {
+        let mut tree = FormTree::new();
+
+        // 3 fixed columns: 100, 100, 100
+        let c1 = make_cell(&mut tree, "First", 100.0, 20.0, 1);
+        let c2 = make_cell(&mut tree, "Rest", 200.0, 20.0, -1); // span remaining
+        let r1 = make_row(&mut tree, "Row1", vec![c1, c2]);
+
+        let table = make_table(
+            &mut tree,
+            "Table",
+            vec![100.0, 100.0, 100.0],
+            vec![r1],
+        );
+
+        let page = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![table],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(page).unwrap();
+
+        let row = &layout.pages[0].nodes[0].children[0];
+        // First cell: width=100 at x=0
+        assert_eq!(row.children[0].rect.width, 100.0);
+        // Second cell: spans remaining = 100 + 100 = 200 at x=100
+        assert_eq!(row.children[1].rect.x, 100.0);
+        assert_eq!(row.children[1].rect.width, 200.0);
+    }
+
+    #[test]
+    fn table_row_height_equalization() {
+        let mut tree = FormTree::new();
+
+        // Cells with different heights: 30, 50, 20
+        let c1 = make_cell(&mut tree, "Short", 100.0, 30.0, 1);
+        let c2 = make_cell(&mut tree, "Tall", 100.0, 50.0, 1);
+        let c3 = make_cell(&mut tree, "Tiny", 100.0, 20.0, 1);
+        let r1 = make_row(&mut tree, "Row1", vec![c1, c2, c3]);
+
+        let table = make_table(
+            &mut tree,
+            "Table",
+            vec![100.0, 100.0, 100.0],
+            vec![r1],
+        );
+
+        let page = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![table],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(page).unwrap();
+
+        let row = &layout.pages[0].nodes[0].children[0];
+        // All cells should have height = 50 (tallest cell)
+        assert_eq!(row.children[0].rect.height, 50.0);
+        assert_eq!(row.children[1].rect.height, 50.0);
+        assert_eq!(row.children[2].rect.height, 50.0);
+        // Row itself should be 50
+        assert_eq!(row.rect.height, 50.0);
+    }
+
+    #[test]
+    fn table_growable_height() {
+        let mut tree = FormTree::new();
+
+        let c1 = make_cell(&mut tree, "A", 100.0, 30.0, 1);
+        let r1 = make_row(&mut tree, "Row1", vec![c1]);
+
+        let c2 = make_cell(&mut tree, "B", 100.0, 40.0, 1);
+        let r2 = make_row(&mut tree, "Row2", vec![c2]);
+
+        // Table with no explicit height (growable)
+        let table = make_table(&mut tree, "Table", vec![100.0], vec![r1, r2]);
+
+        let engine = LayoutEngine::new(&tree);
+        let extent = engine.compute_extent(table);
+
+        // Table height = sum of row heights = 30 + 40 = 70
+        assert_eq!(extent.height, 70.0);
+        // Table width = column width = 100
+        assert_eq!(extent.width, 100.0);
+    }
+
+    #[test]
+    fn table_empty() {
+        let mut tree = FormTree::new();
+        let table = make_table(&mut tree, "EmptyTable", vec![100.0, 200.0], vec![]);
+
+        let page = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![table],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(page).unwrap();
+
+        // Table exists but has no row children
+        let table_node = &layout.pages[0].nodes[0];
+        assert_eq!(table_node.children.len(), 0);
     }
 }
