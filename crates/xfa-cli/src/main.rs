@@ -12,6 +12,7 @@ use formcalc_interpreter::parser;
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_dom_resolver::som;
 use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occur};
+use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::layout::LayoutEngine;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
 
@@ -131,6 +132,7 @@ fn demo_layout() {
         layout: LayoutStrategy::Positioned,
         children: vec![],
         occur: Occur::once(),
+            font: FontMetrics::default(),
     });
 
     let addr_field = tree.add_node(FormNode {
@@ -148,6 +150,7 @@ fn demo_layout() {
         layout: LayoutStrategy::Positioned,
         children: vec![],
         occur: Occur::once(),
+            font: FontMetrics::default(),
     });
 
     let total_field = tree.add_node(FormNode {
@@ -165,6 +168,7 @@ fn demo_layout() {
         layout: LayoutStrategy::Positioned,
         children: vec![],
         occur: Occur::once(),
+            font: FontMetrics::default(),
     });
 
     // Create a subform container
@@ -182,6 +186,7 @@ fn demo_layout() {
         layout: LayoutStrategy::TopToBottom,
         children: detail_ids,
         occur: Occur::once(),
+            font: FontMetrics::default(),
     });
 
     // Root
@@ -198,6 +203,7 @@ fn demo_layout() {
         layout: LayoutStrategy::TopToBottom,
         children: vec![form_subform],
         occur: Occur::once(),
+            font: FontMetrics::default(),
     });
 
     let engine = LayoutEngine::new(&tree);
@@ -218,6 +224,9 @@ fn print_layout_tree(nodes: &[xfa_layout_engine::layout::LayoutNode], indent: us
                 format!(" = \"{value}\"")
             }
             xfa_layout_engine::layout::LayoutContent::Text(t) => format!(" text=\"{t}\""),
+            xfa_layout_engine::layout::LayoutContent::WrappedText { ref lines, font_size } => {
+                format!(" wrapped_text[{}lines, {font_size}pt]", lines.len())
+            }
             xfa_layout_engine::layout::LayoutContent::None => String::new(),
         };
         println!(
