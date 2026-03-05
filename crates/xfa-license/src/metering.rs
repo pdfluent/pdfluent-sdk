@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn api_calls_within_quota() {
         let mut meter = trial_meter(); // quota: 100, rate: 10/min
-        // Space calls 61s apart so each starts a fresh rate window.
+                                       // Space calls 61s apart so each starts a fresh rate window.
         for i in 0..100 {
             meter.record_api_call(1000 + i * 61).unwrap();
         }
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn rate_limit_window_slides() {
         let mut meter = trial_meter(); // 10/min
-        // Fill window at the same timestamp.
+                                       // Fill window at the same timestamp.
         for _ in 0..10 {
             meter.record_api_call(1000).unwrap();
         }

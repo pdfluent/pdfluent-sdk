@@ -42,7 +42,9 @@ pub fn collect(url_file: &Path, output_dir: &Path, limit: Option<usize>) -> anyh
     fs::create_dir_all(output_dir)?;
 
     let client = reqwest::blocking::ClientBuilder::new()
-        .user_agent("xfa-collector/0.1 (XFA research; https://github.com/jasperdew/xfa-native-rust)")
+        .user_agent(
+            "xfa-collector/0.1 (XFA research; https://github.com/jasperdew/xfa-native-rust)",
+        )
         .timeout(std::time::Duration::from_secs(60))
         .build()?;
 
@@ -187,7 +189,11 @@ pub fn scan(dir: &Path, report_path: &Path) -> anyhow::Result<()> {
         .collect();
     entries.sort();
 
-    println!("Scanning {} PDF files in {}...", entries.len(), dir.display());
+    println!(
+        "Scanning {} PDF files in {}...",
+        entries.len(),
+        dir.display()
+    );
 
     let mut results: Vec<PdfMetadata> = Vec::new();
 
@@ -197,8 +203,10 @@ pub fn scan(dir: &Path, report_path: &Path) -> anyhow::Result<()> {
 
         match scan_single_pdf(path) {
             Ok(Some(meta)) => {
-                println!("{} XFA, {} fields, {} pages",
-                    meta.xfa_type, meta.field_count, meta.page_count);
+                println!(
+                    "{} XFA, {} fields, {} pages",
+                    meta.xfa_type, meta.field_count, meta.page_count
+                );
                 results.push(meta);
             }
             Ok(None) => {
@@ -215,7 +223,11 @@ pub fn scan(dir: &Path, report_path: &Path) -> anyhow::Result<()> {
     fs::write(report_path, &json)?;
 
     println!();
-    println!("Report written to {} ({} XFA PDFs found)", report_path.display(), results.len());
+    println!(
+        "Report written to {} ({} XFA PDFs found)",
+        report_path.display(),
+        results.len()
+    );
     print_stats_summary(&results);
 
     Ok(())
@@ -235,7 +247,11 @@ fn scan_single_pdf(path: &Path) -> anyhow::Result<Option<PdfMetadata>> {
     match xfa_result {
         Ok(packets) if !packets.packets.is_empty() => {
             let classification = classify_xfa(&packets, &reader);
-            let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let filename = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
             Ok(Some(PdfMetadata {
                 source_url: String::new(),
@@ -305,10 +321,19 @@ fn print_stats_summary(results: &[PdfMetadata]) {
     println!("  With FormCalc:     {with_formcalc}");
     println!("  Total fields:      {total_fields}");
     println!("  Total pages:       {total_pages}");
-    println!("  Total size:        {:.1} MB", total_bytes as f64 / 1_048_576.0);
+    println!(
+        "  Total size:        {:.1} MB",
+        total_bytes as f64 / 1_048_576.0
+    );
     if total > 0 {
-        println!("  Avg fields/form:   {:.1}", total_fields as f64 / total as f64);
-        println!("  Avg pages/form:    {:.1}", total_pages as f64 / total as f64);
+        println!(
+            "  Avg fields/form:   {:.1}",
+            total_fields as f64 / total as f64
+        );
+        println!(
+            "  Avg pages/form:    {:.1}",
+            total_pages as f64 / total as f64
+        );
     }
 }
 
@@ -400,7 +425,11 @@ mod tests {
         let dir = std::env::temp_dir().join("xfa_test_urls");
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.txt");
-        fs::write(&path, "# Comment\nhttps://a.com/1.pdf\n\nhttps://b.com/2.pdf\n# end\n").unwrap();
+        fs::write(
+            &path,
+            "# Comment\nhttps://a.com/1.pdf\n\nhttps://b.com/2.pdf\n# end\n",
+        )
+        .unwrap();
 
         let urls = read_url_list(&path).unwrap();
         assert_eq!(urls, vec!["https://a.com/1.pdf", "https://b.com/2.pdf"]);

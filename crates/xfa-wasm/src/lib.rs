@@ -109,31 +109,83 @@ impl XfaEngine {
         let mut child_ids = Vec::new();
 
         for (name, field_val) in &form_data.fields {
-            let value = match field_val {
-                xfa_json::FieldValue::Text(s) => s.clone(),
-                xfa_json::FieldValue::Number(n) => n.to_string(),
-                xfa_json::FieldValue::Boolean(b) => b.to_string(),
-                xfa_json::FieldValue::Null => String::new(),
-                xfa_json::FieldValue::Array(_) => String::new(),
-            };
-
-            // Use the last segment of the SOM path as the field name
-            let field_name = name.rsplit('.').next().unwrap_or(name).to_string();
-
-            let id = tree.add_node(FormNode {
-                name: field_name,
-                node_type: FormNodeType::Field { value },
-                box_model: BoxModel::default(),
-                layout: LayoutStrategy::Positioned,
-                children: vec![],
-                occur: Occur::once(),
-                font: FontMetrics::default(),
-                calculate: None,
-                validate: None,
-                column_widths: vec![],
-                col_span: 1,
-            });
-            child_ids.push(id);
+            match field_val {
+                xfa_json::FieldValue::Array(instances) => {
+                    // Repeating section — create a subform per instance
+                    let section_name = name.rsplit('.').next().unwrap_or(name).to_string();
+                    for instance in instances {
+                        let mut instance_children = Vec::new();
+                        for (sub_key, sub_val) in instance {
+                            let value = fv_to_string(sub_val);
+                            let sub_id = tree.add_node(FormNode {
+                                name: sub_key.clone(),
+                                node_type: FormNodeType::Field { value },
+                                box_model: BoxModel::default(),
+                                layout: LayoutStrategy::Positioned,
+                                children: vec![],
+                                occur: Occur::once(),
+                                font: FontMetrics::default(),
+                                calculate: None,
+                                validate: None,
+                                column_widths: vec![],
+                                col_span: 1,
+                            });
+                            instance_children.push(sub_id);
+                        }
+                        let sub_id = tree.add_node(FormNode {
+                            name: section_name.clone(),
+                            node_type: FormNodeType::Subform,
+                            box_model: BoxModel::default(),
+                            layout: LayoutStrategy::Positioned,
+                            children: instance_children,
+                            occur: Occur::repeating(0, None, 0),
+                            font: FontMetrics::default(),
+                            calculate: None,
+                            validate: None,
+                            column_widths: vec![],
+                            col_span: 1,
+                        });
+                        child_ids.push(sub_id);
+                    }
+                }
+                _ => {
+                    let value = fv_to_string(field_val);
+                    // Build nested subform structure from SOM path segments
+                    let segments: Vec<&str> = name.split('.').collect();
+                    let field_name = segments.last().copied().unwrap_or(name);
+                    let id = tree.add_node(FormNode {
+                        name: field_name.to_string(),
+                        node_type: FormNodeType::Field { value },
+                        box_model: BoxModel::default(),
+                        layout: LayoutStrategy::Positioned,
+                        children: vec![],
+                        occur: Occur::once(),
+                        font: FontMetrics::default(),
+                        calculate: None,
+                        validate: None,
+                        column_widths: vec![],
+                        col_span: 1,
+                    });
+                    // Wrap in intermediate subforms for path segments (skip root "form1")
+                    let mut wrapped = id;
+                    for &seg in segments[1..segments.len().saturating_sub(1)].iter().rev() {
+                        wrapped = tree.add_node(FormNode {
+                            name: seg.to_string(),
+                            node_type: FormNodeType::Subform,
+                            box_model: BoxModel::default(),
+                            layout: LayoutStrategy::Positioned,
+                            children: vec![wrapped],
+                            occur: Occur::once(),
+                            font: FontMetrics::default(),
+                            calculate: None,
+                            validate: None,
+                            column_widths: vec![],
+                            col_span: 1,
+                        });
+                    }
+                    child_ids.push(wrapped);
+                }
+            }
         }
 
         let root = tree.add_node(FormNode {
@@ -167,8 +219,7 @@ impl XfaEngine {
     #[wasm_bindgen(js_name = "exportJson")]
     pub fn export_json(&self) -> Result<String, JsError> {
         let data = xfa_json::form_tree_to_json(&self.tree, self.root);
-        serde_json::to_string(&data)
-            .map_err(|e| JsError::new(&format!("JSON serialize: {e}")))
+        serde_json::to_string(&data).map_err(|e| JsError::new(&format!("JSON serialize: {e}")))
     }
 
     /// Export the form schema as a JSON string.
@@ -177,8 +228,7 @@ impl XfaEngine {
     #[wasm_bindgen(js_name = "exportSchema")]
     pub fn export_schema(&self) -> Result<String, JsError> {
         let schema = xfa_json::export_schema(&self.tree, self.root);
-        serde_json::to_string(&schema)
-            .map_err(|e| JsError::new(&format!("JSON serialize: {e}")))
+        serde_json::to_string(&schema).map_err(|e| JsError::new(&format!("JSON serialize: {e}")))
     }
 
     /// Import field values from a JSON string.
@@ -188,8 +238,7 @@ impl XfaEngine {
     /// - `{"form1.Name": "value"}` (flat format)
     #[wasm_bindgen(js_name = "importJson")]
     pub fn import_json(&mut self, json_str: &str) -> Result<(), JsError> {
-        let form_data = parse_import_json(json_str)
-            .map_err(|e| JsError::new(&e))?;
+        let form_data = parse_import_json(json_str).map_err(|e| JsError::new(&e))?;
         xfa_json::json_to_form_tree(&form_data, &mut self.tree, self.root);
         Ok(())
     }
@@ -220,6 +269,23 @@ impl XfaEngine {
 }
 
 /// Parse JSON import data, accepting both FormData and flat formats.
+/// Convert a FieldValue to its string representation.
+fn fv_to_string(val: &xfa_json::FieldValue) -> String {
+    match val {
+        xfa_json::FieldValue::Text(s) => s.clone(),
+        xfa_json::FieldValue::Number(n) => n.to_string(),
+        xfa_json::FieldValue::Boolean(b) => {
+            if *b {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
+        xfa_json::FieldValue::Null => String::new(),
+        xfa_json::FieldValue::Array(_) => String::new(),
+    }
+}
+
 fn parse_import_json(json_str: &str) -> std::result::Result<xfa_json::FormData, String> {
     // Try FormData format first: {"fields": {"key": "value"}}
     if let Ok(form_data) = serde_json::from_str::<xfa_json::FormData>(json_str) {
@@ -246,7 +312,10 @@ fn parse_import_json(json_str: &str) -> std::result::Result<xfa_json::FormData, 
         }
     }
 
-    Err(format!("invalid JSON import data: {}", &json_str[..json_str.len().min(100)]))
+    Err(format!(
+        "invalid JSON import data: {}",
+        &json_str[..json_str.len().min(100)]
+    ))
 }
 
 /// Field definition for `fromFields`.
@@ -295,12 +364,7 @@ fn find_field_value(tree: &FormTree, root: FormNodeId, path: &str) -> Option<Str
 }
 
 /// Set a field value by dot-separated SOM path.
-fn set_field_value_by_path(
-    tree: &mut FormTree,
-    root: FormNodeId,
-    path: &str,
-    value: &str,
-) -> bool {
+fn set_field_value_by_path(tree: &mut FormTree, root: FormNodeId, path: &str, value: &str) -> bool {
     fn search_and_set(
         tree: &mut FormTree,
         node_id: FormNodeId,

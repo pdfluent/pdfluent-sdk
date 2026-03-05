@@ -184,7 +184,12 @@ mod tests {
         let amount = make_field(&mut tree, "Amount", "42.50", None, None);
         let active = make_field(&mut tree, "Active", "true", None, None);
 
-        let form = make_subform(&mut tree, "form1", vec![name, amount, active], Occur::once());
+        let form = make_subform(
+            &mut tree,
+            "form1",
+            vec![name, amount, active],
+            Occur::once(),
+        );
         let root = make_root(&mut tree, vec![form]);
 
         let schema = export_schema(&tree, root);
@@ -219,10 +224,7 @@ mod tests {
         let schema = export_schema(&tree, root);
         let tax_schema = schema.fields.get("form1.Tax").unwrap();
 
-        assert_eq!(
-            tax_schema.calculate,
-            Some("Subtotal * 0.21".to_string())
-        );
+        assert_eq!(tax_schema.calculate, Some("Subtotal * 0.21".to_string()));
         assert_eq!(tax_schema.validate, Some("Tax >= 0".to_string()));
     }
 
@@ -230,12 +232,7 @@ mod tests {
     fn schema_marks_repeatable_fields() {
         let mut tree = FormTree::new();
         let desc = make_field(&mut tree, "Description", "Item", None, None);
-        let item = make_subform(
-            &mut tree,
-            "Item",
-            vec![desc],
-            Occur::repeating(0, None, 1),
-        );
+        let item = make_subform(&mut tree, "Item", vec![desc], Occur::repeating(0, None, 1));
         let form = make_subform(&mut tree, "form1", vec![item], Occur::once());
         let root = make_root(&mut tree, vec![form]);
 

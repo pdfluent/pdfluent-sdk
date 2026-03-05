@@ -319,7 +319,11 @@ mod tests {
         let mut state = FormState::new(&layout, &tree);
 
         let result = state.process_event(
-            &InputEvent::Click { page: 0, x: 50.0, y: 15.0 },
+            &InputEvent::Click {
+                page: 0,
+                x: 50.0,
+                y: 15.0,
+            },
             &layout,
             &mut tree,
         );
@@ -334,13 +338,21 @@ mod tests {
 
         // Focus a field first
         state.process_event(
-            &InputEvent::Click { page: 0, x: 50.0, y: 15.0 },
+            &InputEvent::Click {
+                page: 0,
+                x: 50.0,
+                y: 15.0,
+            },
             &layout,
             &mut tree,
         );
         // Click outside
         let result = state.process_event(
-            &InputEvent::Click { page: 0, x: 180.0, y: 80.0 },
+            &InputEvent::Click {
+                page: 0,
+                x: 180.0,
+                y: 80.0,
+            },
             &layout,
             &mut tree,
         );
@@ -355,7 +367,11 @@ mod tests {
 
         // Focus the Email field
         state.process_event(
-            &InputEvent::Click { page: 0, x: 50.0, y: 45.0 },
+            &InputEvent::Click {
+                page: 0,
+                x: 50.0,
+                y: 45.0,
+            },
             &layout,
             &mut tree,
         );
@@ -378,7 +394,11 @@ mod tests {
 
         // Focus Name field (has "Alice")
         state.process_event(
-            &InputEvent::Click { page: 0, x: 50.0, y: 15.0 },
+            &InputEvent::Click {
+                page: 0,
+                x: 50.0,
+                y: 15.0,
+            },
             &layout,
             &mut tree,
         );
@@ -437,7 +457,11 @@ mod tests {
         let mut state = FormState::new(&layout, &tree);
 
         let result = state.process_event(
-            &InputEvent::Click { page: 5, x: 50.0, y: 15.0 },
+            &InputEvent::Click {
+                page: 5,
+                x: 50.0,
+                y: 15.0,
+            },
             &layout,
             &mut tree,
         );

@@ -116,11 +116,32 @@ pub fn flatten_into_pdf(
         }
         let page_id = page_ids[page_idx];
 
+        // Use the actual PDF page MediaBox height for coordinate conversion,
+        // falling back to the layout page height if MediaBox is unavailable.
+        let actual_page_height = doc
+            .get_object(page_id)
+            .ok()
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"MediaBox").ok())
+            .and_then(|mb| mb.as_array().ok())
+            .and_then(|arr| {
+                if arr.len() >= 4 {
+                    match &arr[3] {
+                        Object::Real(f) => Some(*f as f64),
+                        Object::Integer(i) => Some(*i as f64),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(page.height);
+
         let appearances = generate_appearances(&page.nodes, &config.appearance)
             .map_err(|e| PdfError::RenderError(format!("appearances: {e}")))?;
 
         let (content_stream, xobject_dict, font_dict, count) =
-            build_content_stream(doc, page.height, &appearances, config)?;
+            build_content_stream(doc, actual_page_height, &appearances, config)?;
 
         let content_id = doc.add_object(Object::Stream(content_stream));
 

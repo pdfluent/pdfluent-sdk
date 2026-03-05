@@ -175,7 +175,10 @@ fn data_dom_xml_escaping_roundtrip() {
     let output = dom.to_xml();
 
     // The escaped content should not be double-escaped, and should remain safe
-    assert!(!output.contains("<script>"), "should not unescape dangerous tags");
+    assert!(
+        !output.contains("<script>"),
+        "should not unescape dangerous tags"
+    );
     assert!(output.contains("&lt;") || output.contains("script"));
 }
 
@@ -236,7 +239,10 @@ fn pdf_reader_save_produces_valid_pdf() {
     let saved = reader.save_to_bytes().unwrap();
 
     // Saved bytes should start with %PDF
-    assert!(saved.starts_with(b"%PDF"), "saved output should be valid PDF");
+    assert!(
+        saved.starts_with(b"%PDF"),
+        "saved output should be valid PDF"
+    );
 
     // Should be re-loadable
     let reader2 = PdfReader::from_bytes(&saved).unwrap();
@@ -304,7 +310,10 @@ fn sync_then_sync_again() {
     let packets = reader2.extract_xfa().unwrap();
     let full = packets.full_xml.as_deref().unwrap();
     assert!(full.contains("Second"), "latest sync should win");
-    assert!(!full.contains("First"), "earlier sync should be overwritten");
+    assert!(
+        !full.contains("First"),
+        "earlier sync should be overwritten"
+    );
 }
 
 // =============================================================================

@@ -68,6 +68,12 @@ jobs:
       - name: Run conformance check
         run: |
           PROFILE="${{ inputs.profile || '2b' }}"
+          if [ ! -d corpus ] || [ -z "$(find corpus -name '*.pdf' -type f 2>/dev/null)" ]; then
+            echo "No PDF corpus found — skipping conformance check"
+            mkdir -p reports/verapdf
+            echo '{"profile":"PDF/A-'"$PROFILE"'","total":0,"passed":0,"failed":0,"errors":0,"pass_rate":0,"failed_files":[]}' > reports/verapdf/summary.json
+            exit 0
+          fi
           ./scripts/run-verapdf.sh --profile "$PROFILE" --output reports/verapdf --format json corpus/
 
       - name: Generate HTML report

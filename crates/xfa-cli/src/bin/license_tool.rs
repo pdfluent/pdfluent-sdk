@@ -19,7 +19,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::time::{SystemTime, UNIX_EPOCH};
-use xfa_license::{LicenseClaims, LicenseGuard, Tier, token};
+use xfa_license::{token, LicenseClaims, LicenseGuard, Tier};
 
 #[derive(Parser)]
 #[command(name = "xfa-license-tool", about = "XFA license key management")]
@@ -69,7 +69,9 @@ fn parse_tier(s: &str) -> std::result::Result<Tier, String> {
         "professional" | "pro" => Ok(Tier::Professional),
         "enterprise" | "ent" => Ok(Tier::Enterprise),
         "archival" => Ok(Tier::Archival),
-        _ => Err(format!("unknown tier: {s} (use trial/basic/professional/enterprise/archival)")),
+        _ => Err(format!(
+            "unknown tier: {s} (use trial/basic/professional/enterprise/archival)"
+        )),
     }
 }
 
@@ -91,7 +93,10 @@ fn main() -> Result<()> {
             secret,
         } => {
             let issued = now_unix();
-            let expires = issued + days * 86400;
+            let secs_per_day: u64 = 86400;
+            let expires = issued
+                .checked_add(days.checked_mul(secs_per_day).expect("days overflow"))
+                .expect("expiry overflow");
             let claims = LicenseClaims::new(&customer, tier, issued, expires);
             let token_str =
                 token::sign(&claims, secret.as_bytes()).context("failed to sign token")?;
@@ -135,7 +140,10 @@ fn main() -> Result<()> {
                     }
                     println!("  Rate limit:  {} req/min", claims.rate_limit);
                     println!("  API quota:   {} calls/period", claims.quotas.api_calls);
-                    println!("  Page quota:  {} pages/period", claims.quotas.pages_rendered);
+                    println!(
+                        "  Page quota:  {} pages/period",
+                        claims.quotas.pages_rendered
+                    );
                 }
                 Err(e) => {
                     eprintln!("License validation failed: {e}");
@@ -148,10 +156,9 @@ fn main() -> Result<()> {
             if parts.len() != 3 {
                 anyhow::bail!("malformed token: expected 3 dot-separated parts");
             }
-            let payload = base64_decode(parts[1])
-                .context("failed to decode payload")?;
-            let claims: LicenseClaims = serde_json::from_slice(&payload)
-                .context("failed to parse claims JSON")?;
+            let payload = base64_decode(parts[1]).context("failed to decode payload")?;
+            let claims: LicenseClaims =
+                serde_json::from_slice(&payload).context("failed to parse claims JSON")?;
             println!("{}", serde_json::to_string_pretty(&claims)?);
         }
     }
