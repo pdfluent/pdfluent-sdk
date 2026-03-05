@@ -59,7 +59,7 @@ Epic 0 (Fundament)
 | 2.7  | Built-in: Financial             | `Apr`, `Pmt`, `Pv`, `Rate`, `Term` + 5 anderen                        | ✅ Done |
 | 2.8  | Built-in: Logical + Misc        | `If`, `Choose`, `Oneof`, `Within`, `Eval`, `Null`                     | ✅ Done |
 | 2.9  | SOM-integratie                  | FormCalc scripts resolven en muteren DOM nodes via Module A            | ✅ Done |
-| 2.10 | Conformance tests               | Test suite tegen FormCalc spec voorbeelden                             | Pending |
+| 2.10 | Conformance tests               | Test suite tegen FormCalc spec voorbeelden                             | ✅ Done |
 
 ---
 
