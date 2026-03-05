@@ -81,7 +81,7 @@ Epic 0 (Fundament)
 | 3.10 | Leaders & trailers       | Header/footer elementen per pagina                                     | ✅ Done |
 | 3.11 | Text placement           | Rich text rendering, text wrapping, font metrics                       | ✅ Done |
 | 3.12 | Scripting-integratie     | Layout reageert op FormCalc calculations/validations                   | ✅ Done |
-| 3.13 | Golden render tests      | Visuele vergelijking met Adobe Reader output                           | Pending |
+| 3.13 | Golden render tests      | Visuele vergelijking met Adobe Reader output                           | ✅ Done |
 
 ---
 
