@@ -101,6 +101,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let root = tree.add_node(FormNode {
             name: "form1".to_string(),
@@ -116,6 +118,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         (tree, root)
     }
@@ -158,6 +162,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: Some("10 + 20".to_string()),
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let root = tree.add_node(FormNode {
             name: "form1".to_string(),
@@ -173,6 +179,8 @@ mod tests {
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
+            column_widths: vec![],
+            col_span: 1,
         });
         let config = RenderConfig::default();
         let images = render_form_tree(&mut tree, root, &config).unwrap();
