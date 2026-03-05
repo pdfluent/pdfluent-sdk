@@ -120,7 +120,7 @@ pub fn flatten_into_pdf(
             .map_err(|e| PdfError::RenderError(format!("appearances: {e}")))?;
 
         let (content_stream, xobject_dict, font_dict, count) =
-            build_content_stream(doc, &appearances, config)?;
+            build_content_stream(doc, page.height, &appearances, config)?;
 
         let content_id = doc.add_object(Object::Stream(content_stream));
 
@@ -164,7 +164,7 @@ fn build_page(
     config: &FlattenConfig,
 ) -> Result<ObjectId> {
     let (content_stream, xobject_dict, font_dict, _) =
-        build_content_stream(doc, appearances, config)?;
+        build_content_stream(doc, height, appearances, config)?;
 
     let content_id = doc.add_object(Object::Stream(content_stream));
 
@@ -196,6 +196,7 @@ fn build_page(
 /// Returns (content_stream, xobject_resources, font_resources, xobject_count).
 fn build_content_stream(
     doc: &mut lopdf::Document,
+    page_height: f64,
     appearances: &[(String, f64, f64, AppearanceStream)],
     config: &FlattenConfig,
 ) -> Result<(Stream, Dictionary, Dictionary, usize)> {
@@ -227,10 +228,15 @@ fn build_content_stream(
             }
         }
 
+        // Convert from layout coordinates (top-left origin) to PDF
+        // coordinates (bottom-left origin): pdf_y = page_height - layout_y - bbox_height
+        let bbox_height = appearance.bbox[3] - appearance.bbox[1];
+        let pdf_y = page_height - *y - bbox_height;
+
         // q — save graphics state
         ops.push(Operation::new("q", vec![]));
 
-        // cm — translate to field position on page
+        // cm — translate to field position on page (PDF bottom-left coordinates)
         ops.push(Operation::new(
             "cm",
             vec![
@@ -239,7 +245,7 @@ fn build_content_stream(
                 0.0.into(),
                 1.0.into(),
                 Object::Real(*x as f32),
-                Object::Real(*y as f32),
+                Object::Real(pdf_y as f32),
             ],
         ));
 
@@ -320,14 +326,10 @@ fn remove_xfa_metadata(doc: &mut lopdf::Document, remove_acroform: bool) {
         _ => return,
     };
 
-    // If keeping AcroForm but removing XFA, find the indirect AcroForm ref first
-    let acroform_ref = if !remove_acroform {
-        if let Ok(Object::Dictionary(catalog)) = doc.get_object(catalog_id) {
-            if let Ok(Object::Reference(r)) = catalog.get(b"AcroForm") {
-                Some(*r)
-            } else {
-                None
-            }
+    // Determine if AcroForm is indirect or inline
+    let acroform_ref = if let Ok(Object::Dictionary(catalog)) = doc.get_object(catalog_id) {
+        if let Ok(Object::Reference(r)) = catalog.get(b"AcroForm") {
+            Some(*r)
         } else {
             None
         }
@@ -335,19 +337,32 @@ fn remove_xfa_metadata(doc: &mut lopdf::Document, remove_acroform: bool) {
         None
     };
 
-    // Remove XFA from indirect AcroForm dict
-    if let Some(acroform_id) = acroform_ref {
-        if let Ok(Object::Dictionary(ref mut acroform)) = doc.get_object_mut(acroform_id) {
-            acroform.remove(b"XFA");
-        }
-    }
-
-    // Remove AcroForm and/or NeedsRendering from catalog
-    if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(catalog_id) {
-        if remove_acroform {
+    if remove_acroform {
+        // Remove AcroForm entirely from catalog
+        if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(catalog_id) {
             catalog.remove(b"AcroForm");
+            catalog.remove(b"NeedsRendering");
         }
-        catalog.remove(b"NeedsRendering");
+    } else {
+        // Keep AcroForm but remove XFA entry from it
+        if let Some(acroform_id) = acroform_ref {
+            // Indirect AcroForm reference
+            if let Ok(Object::Dictionary(ref mut acroform)) = doc.get_object_mut(acroform_id) {
+                acroform.remove(b"XFA");
+            }
+        } else {
+            // Inline AcroForm dictionary
+            if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(catalog_id) {
+                if let Ok(Object::Dictionary(ref mut acroform)) = catalog.get_mut(b"AcroForm") {
+                    acroform.remove(b"XFA");
+                }
+            }
+        }
+
+        // Remove NeedsRendering from catalog
+        if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(catalog_id) {
+            catalog.remove(b"NeedsRendering");
+        }
     }
 }
 
