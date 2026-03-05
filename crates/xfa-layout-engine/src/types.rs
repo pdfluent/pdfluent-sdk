@@ -42,6 +42,11 @@ impl Rect {
     pub fn bottom(&self) -> f64 {
         self.y + self.height
     }
+
+    /// Check whether a point (px, py) lies inside this rectangle.
+    pub fn contains(&self, px: f64, py: f64) -> bool {
+        px >= self.x && px <= self.right() && py >= self.y && py <= self.bottom()
+    }
 }
 
 /// Inset values (margins, padding) for the four sides.
