@@ -582,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn decimal_number() {
         assert_eq!(kinds("3.14"), vec![TokenKind::NumberLit(3.14)]);
     }
