@@ -63,7 +63,10 @@ fn build_xfa_array_pdf(packets: &[(&str, &str)]) -> Vec<u8> {
     for (name, content) in packets {
         let stream = Stream::new(dictionary! {}, content.as_bytes().to_vec());
         let stream_id = doc.add_object(Object::Stream(stream));
-        xfa_array.push(Object::String(name.as_bytes().to_vec(), StringFormat::Literal));
+        xfa_array.push(Object::String(
+            name.as_bytes().to_vec(),
+            StringFormat::Literal,
+        ));
         xfa_array.push(Object::Reference(stream_id));
     }
 
@@ -219,8 +222,14 @@ fn extract_xfa_array_with_multiple_packets() {
     let packets = reader.extract_xfa().unwrap();
 
     assert_eq!(packets.packets.len(), 3);
-    assert!(packets.get_packet("template").unwrap().contains("InvoiceNo"));
-    assert!(packets.get_packet("datasets").unwrap().contains("INV-2024-001"));
+    assert!(packets
+        .get_packet("template")
+        .unwrap()
+        .contains("InvoiceNo"));
+    assert!(packets
+        .get_packet("datasets")
+        .unwrap()
+        .contains("INV-2024-001"));
     assert!(packets.get_packet("config").is_some());
 }
 
@@ -354,10 +363,9 @@ fn sync_with_unicode_data() {
     let mut reader = PdfReader::from_bytes(&pdf).unwrap();
 
     // Unicode: Chinese, Arabic, Emoji, accented chars
-    let new_data = DataDom::from_xml(
-        "<form1><Name>Ünïcödé Tëst — André François Müller</Name></form1>",
-    )
-    .unwrap();
+    let new_data =
+        DataDom::from_xml("<form1><Name>Ünïcödé Tëst — André François Müller</Name></form1>")
+            .unwrap();
     sync_datasets(&mut reader, &new_data).unwrap();
 
     let saved = reader.save_to_bytes().unwrap();

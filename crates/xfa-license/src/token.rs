@@ -27,8 +27,7 @@ pub fn sign(claims: &LicenseClaims, secret: &[u8]) -> Result<String> {
     let payload_b64 = URL_SAFE_NO_PAD.encode(&payload_json);
 
     let signing_input = format!("{header_b64}.{payload_b64}");
-    let mut mac =
-        HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
     mac.update(signing_input.as_bytes());
     let signature = mac.finalize().into_bytes();
     let sig_b64 = URL_SAFE_NO_PAD.encode(signature);
@@ -56,8 +55,7 @@ pub fn verify(token: &str, secret: &[u8]) -> Result<LicenseClaims> {
         .decode(parts[2])
         .map_err(|e| LicenseError::MalformedToken(format!("bad signature base64: {e}")))?;
 
-    let mut mac =
-        HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
     mac.update(signing_input.as_bytes());
     mac.verify_slice(&sig_bytes)
         .map_err(|_| LicenseError::InvalidSignature)?;

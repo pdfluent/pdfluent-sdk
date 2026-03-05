@@ -317,9 +317,22 @@ fn find_signature_field(
 
     let fields = match acroform.get(b"Fields") {
         Ok(Object::Array(a)) => a,
+        Ok(Object::Reference(r)) => match doc.get_object(*r) {
+            Ok(Object::Array(a)) => a,
+            _ => return None,
+        },
         _ => return None,
     };
 
+    find_sig_field_recursive(doc, fields, sig_id)
+}
+
+/// Recursively search fields (including Kids) for the signature field.
+fn find_sig_field_recursive(
+    doc: &lopdf::Document,
+    fields: &[Object],
+    sig_id: ObjectId,
+) -> Option<ObjectId> {
     for field_ref in fields {
         let field_id = match field_ref {
             Object::Reference(r) => *r,
@@ -337,17 +350,28 @@ fn find_signature_field(
                 return Some(field_id);
             }
         }
+
+        // Recurse into Kids
+        if let Ok(Object::Array(kids)) = field_dict.get(b"Kids") {
+            if let Some(found) = find_sig_field_recursive(doc, kids, sig_id) {
+                return Some(found);
+            }
+        }
     }
 
     None
 }
 
 /// Collect (page_id, annotation_id) pairs where the annotation references
-/// the given field object.
+/// the given field object or one of its Kids.
 fn collect_page_annotation_refs(
     doc: &lopdf::Document,
     field_id: ObjectId,
 ) -> Vec<(ObjectId, ObjectId)> {
+    // Collect the field_id and all its Kids recursively
+    let mut related_ids = Vec::new();
+    collect_field_and_kids(doc, field_id, &mut related_ids);
+
     let mut removals = Vec::new();
 
     for (&page_id, page_obj) in &doc.objects {
@@ -377,7 +401,7 @@ fn collect_page_annotation_refs(
 
         for annot_ref in annots {
             if let Object::Reference(annot_id) = annot_ref {
-                if *annot_id == field_id {
+                if related_ids.contains(annot_id) {
                     removals.push((page_id, *annot_id));
                 }
             }
@@ -385,6 +409,20 @@ fn collect_page_annotation_refs(
     }
 
     removals
+}
+
+/// Collect a field's ObjectId and all its Kids recursively.
+fn collect_field_and_kids(doc: &lopdf::Document, id: ObjectId, out: &mut Vec<ObjectId>) {
+    out.push(id);
+    if let Ok(Object::Dictionary(d)) = doc.get_object(id) {
+        if let Ok(Object::Array(kids)) = d.get(b"Kids") {
+            for kid in kids {
+                if let Object::Reference(kid_id) = kid {
+                    collect_field_and_kids(doc, *kid_id, out);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

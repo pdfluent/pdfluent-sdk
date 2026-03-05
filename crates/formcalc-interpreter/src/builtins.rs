@@ -891,7 +891,9 @@ mod tests {
             .unwrap()
             .unwrap();
         // Round-trip
-        let date = call_builtin("Num2Date", std::slice::from_ref(&days)).unwrap().unwrap();
+        let date = call_builtin("Num2Date", std::slice::from_ref(&days))
+            .unwrap()
+            .unwrap();
         assert_eq!(date, Value::String("2026-03-04".to_string()));
     }
 

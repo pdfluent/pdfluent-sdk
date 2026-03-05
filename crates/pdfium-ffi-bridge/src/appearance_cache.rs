@@ -10,31 +10,63 @@
 //! - Thread-safe via interior mutability
 
 use crate::appearance::{
-    field_appearance, draw_appearance, multiline_appearance,
-    AppearanceConfig, AppearanceStream,
+    draw_appearance, field_appearance, multiline_appearance, AppearanceConfig, AppearanceStream,
 };
 use std::collections::HashMap;
 use xfa_layout_engine::layout::{LayoutContent, LayoutNode};
 
-/// Cache key derived from field content and dimensions.
+/// Cache key derived from field content, dimensions, and appearance config.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     name: String,
     content_hash: u64,
     width_bits: u64,
     height_bits: u64,
+    config_hash: u64,
 }
 
 impl CacheKey {
-    fn from_node(node: &LayoutNode) -> Self {
+    fn from_node(node: &LayoutNode, config: &AppearanceConfig) -> Self {
         let content_hash = hash_content(&node.content);
         Self {
             name: node.name.clone(),
             content_hash,
             width_bits: node.rect.width.to_bits(),
             height_bits: node.rect.height.to_bits(),
+            config_hash: hash_config(config),
         }
     }
+}
+
+/// FNV-1a hash for AppearanceConfig (ensures different configs produce different cache keys).
+fn hash_config(config: &AppearanceConfig) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mix = |h: &mut u64, bytes: &[u8]| {
+        for &b in bytes {
+            *h ^= b as u64;
+            *h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    mix(&mut h, config.default_font.as_bytes());
+    mix(&mut h, &config.default_font_size.to_bits().to_le_bytes());
+    mix(&mut h, &config.border_width.to_bits().to_le_bytes());
+    for &c in &config.border_color {
+        mix(&mut h, &c.to_bits().to_le_bytes());
+    }
+    if let Some(bg) = &config.background_color {
+        mix(&mut h, &[1]);
+        for &c in bg {
+            mix(&mut h, &c.to_bits().to_le_bytes());
+        }
+    } else {
+        mix(&mut h, &[0]);
+    }
+    for &c in &config.text_color {
+        mix(&mut h, &c.to_bits().to_le_bytes());
+    }
+    mix(&mut h, &config.text_padding.to_bits().to_le_bytes());
+    mix(&mut h, &[config.compress as u8]);
+    h
 }
 
 /// Simple FNV-1a hash for content hashing (no crypto needed).
@@ -226,7 +258,7 @@ impl AppearanceCache {
         height: f64,
         config: &AppearanceConfig,
     ) -> AppearanceStream {
-        let key = CacheKey::from_node(node);
+        let key = CacheKey::from_node(node, config);
         self.access_counter += 1;
 
         if let Some(entry) = self.entries.get_mut(&key) {
@@ -239,8 +271,11 @@ impl AppearanceCache {
         let stream = generate_appearance(node, width, height, config);
         let size = stream.content.len() + stream.font_resources.len() * 32;
 
-        // Evict if over budget
+        // Evict if over budget; skip entry entirely if it alone exceeds the budget
         if self.config.max_bytes > 0 {
+            if size > self.config.max_bytes {
+                return stream;
+            }
             while self.total_bytes + size > self.config.max_bytes && !self.entries.is_empty() {
                 self.evict_lru();
             }

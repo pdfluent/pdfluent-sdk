@@ -44,9 +44,9 @@ pub fn run_calculations(form: &mut FormTree) -> Result<ScriptResult, ScriptError
         .iter()
         .enumerate()
         .filter_map(|(i, node)| {
-            node.calculate.as_ref().map(|script| {
-                (FormNodeId(i), node.name.clone(), script.clone())
-            })
+            node.calculate
+                .as_ref()
+                .map(|script| (FormNodeId(i), node.name.clone(), script.clone()))
         })
         .collect();
 
@@ -199,7 +199,12 @@ mod tests {
     #[test]
     fn calculate_script_string_result() {
         let mut tree = FormTree::new();
-        make_field_with_calc(&mut tree, "Greeting", "", Some("Concat(\"Hello\", \" \", \"World\")"));
+        make_field_with_calc(
+            &mut tree,
+            "Greeting",
+            "",
+            Some("Concat(\"Hello\", \" \", \"World\")"),
+        );
 
         let result = run_calculations(&mut tree).unwrap();
 
@@ -333,12 +338,7 @@ mod tests {
     #[test]
     fn complex_calculation() {
         let mut tree = FormTree::new();
-        make_field_with_calc(
-            &mut tree,
-            "Tax",
-            "0",
-            Some("Round(100 * 0.21, 2)"),
-        );
+        make_field_with_calc(&mut tree, "Tax", "0", Some("Round(100 * 0.21, 2)"));
 
         let result = run_calculations(&mut tree).unwrap();
         assert_eq!(result.updated_fields.len(), 1);

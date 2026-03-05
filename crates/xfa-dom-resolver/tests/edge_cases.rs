@@ -111,7 +111,10 @@ fn data_dom_xml_escaping_roundtrip() {
     let xml = r#"<form1><field>&lt;script&gt;alert('xss')&lt;/script&gt;</field></form1>"#;
     let dom = DataDom::from_xml(xml).unwrap();
     let output = dom.to_xml();
-    assert!(!output.contains("<script>"), "should not produce unescaped tags");
+    assert!(
+        !output.contains("<script>"),
+        "should not produce unescaped tags"
+    );
 }
 
 #[test]

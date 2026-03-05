@@ -9,7 +9,10 @@ use std::path::PathBuf;
 mod collector;
 
 #[derive(Parser)]
-#[command(name = "xfa-collector", about = "Collect and classify XFA PDFs for testing")]
+#[command(
+    name = "xfa-collector",
+    about = "Collect and classify XFA PDFs for testing"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -50,16 +53,16 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Command::Collect { urls, output, limit } => {
+        Command::Collect {
+            urls,
+            output,
+            limit,
+        } => {
             println!("XFA Collector — downloading from {}", urls.display());
             collector::collect(&urls, &output, limit)
         }
-        Command::Scan { dir, report } => {
-            collector::scan(&dir, &report)
-        }
-        Command::Stats { dir } => {
-            collector::stats(&dir)
-        }
+        Command::Scan { dir, report } => collector::scan(&dir, &report),
+        Command::Stats { dir } => collector::stats(&dir),
     };
 
     if let Err(e) = result {

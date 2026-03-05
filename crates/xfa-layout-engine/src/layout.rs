@@ -46,9 +46,14 @@ pub struct LayoutNode {
 pub enum LayoutContent {
     None,
     Text(String),
-    Field { value: String },
+    Field {
+        value: String,
+    },
     /// Pre-wrapped text lines for rendering.
-    WrappedText { lines: Vec<String>, font_size: f64 },
+    WrappedText {
+        lines: Vec<String>,
+        font_size: f64,
+    },
 }
 
 /// The layout engine.
@@ -596,7 +601,9 @@ impl<'a> LayoutEngine<'a> {
                 } else {
                     let span_count =
                         (span.max(1) as usize).min(col_widths.len().saturating_sub(col_idx));
-                    col_widths[col_idx..col_idx + span_count].iter().sum::<f64>()
+                    col_widths[col_idx..col_idx + span_count]
+                        .iter()
+                        .sum::<f64>()
                 };
 
                 // Layout cell with forced width
@@ -604,8 +611,9 @@ impl<'a> LayoutEngine<'a> {
                     width: cell_width,
                     height: available.height - y_cursor,
                 };
-                let cell_height =
-                    self.compute_extent_with_available(cell_id, Some(cell_available)).height;
+                let cell_height = self
+                    .compute_extent_with_available(cell_id, Some(cell_available))
+                    .height;
                 let cell_extent = Size {
                     width: cell_width,
                     height: cell_height,
@@ -756,8 +764,8 @@ impl<'a> LayoutEngine<'a> {
         let content = match &node.node_type {
             FormNodeType::Field { value } => {
                 if !value.is_empty() && node.children.is_empty() {
-                    let insets_w = node.box_model.margins.horizontal()
-                        + node.box_model.border_width * 2.0;
+                    let insets_w =
+                        node.box_model.margins.horizontal() + node.box_model.border_width * 2.0;
                     let max_w = (extent.width - insets_w).max(0.0);
                     let wrapped = text::wrap_text(value, max_w, &node.font);
                     LayoutContent::WrappedText {
@@ -772,8 +780,8 @@ impl<'a> LayoutEngine<'a> {
             }
             FormNodeType::Draw { content } => {
                 if !content.is_empty() && node.children.is_empty() {
-                    let insets_w = node.box_model.margins.horizontal()
-                        + node.box_model.border_width * 2.0;
+                    let insets_w =
+                        node.box_model.margins.horizontal() + node.box_model.border_width * 2.0;
                     let max_w = (extent.width - insets_w).max(0.0);
                     let wrapped = text::wrap_text(content, max_w, &node.font);
                     LayoutContent::WrappedText {
@@ -2934,7 +2942,14 @@ mod tests {
             column_widths: vec![],
             col_span: 1,
         });
-        let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![draw]);
+        let root = make_subform(
+            &mut tree,
+            "Root",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![draw],
+        );
 
         let engine = LayoutEngine::new(&tree);
         let result = engine.layout(root).unwrap();
@@ -2971,7 +2986,14 @@ mod tests {
             column_widths: vec![],
             col_span: 1,
         });
-        let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![draw]);
+        let root = make_subform(
+            &mut tree,
+            "Root",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![draw],
+        );
 
         let engine = LayoutEngine::new(&tree);
         let result = engine.layout(root).unwrap();
@@ -3005,7 +3027,14 @@ mod tests {
             column_widths: vec![],
             col_span: 1,
         });
-        let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![field]);
+        let root = make_subform(
+            &mut tree,
+            "Root",
+            LayoutStrategy::TopToBottom,
+            Some(612.0),
+            Some(792.0),
+            vec![field],
+        );
 
         let engine = LayoutEngine::new(&tree);
         let result = engine.layout(root).unwrap();
@@ -3090,13 +3119,7 @@ mod tests {
     // Table Layout Tests
     // =========================================================================
 
-    fn make_cell(
-        tree: &mut FormTree,
-        name: &str,
-        w: f64,
-        h: f64,
-        col_span: i32,
-    ) -> FormNodeId {
+    fn make_cell(tree: &mut FormTree, name: &str, w: f64, h: f64, col_span: i32) -> FormNodeId {
         tree.add_node(FormNode {
             name: name.to_string(),
             node_type: FormNodeType::Field {
@@ -3266,12 +3289,7 @@ mod tests {
         let c2 = make_cell(&mut tree, "Single", 100.0, 20.0, 1);
         let r1 = make_row(&mut tree, "Row1", vec![c1, c2]);
 
-        let table = make_table(
-            &mut tree,
-            "Table",
-            vec![100.0, 100.0, 100.0],
-            vec![r1],
-        );
+        let table = make_table(&mut tree, "Table", vec![100.0, 100.0, 100.0], vec![r1]);
 
         let page = make_subform(
             &mut tree,
@@ -3303,12 +3321,7 @@ mod tests {
         let c2 = make_cell(&mut tree, "Rest", 200.0, 20.0, -1); // span remaining
         let r1 = make_row(&mut tree, "Row1", vec![c1, c2]);
 
-        let table = make_table(
-            &mut tree,
-            "Table",
-            vec![100.0, 100.0, 100.0],
-            vec![r1],
-        );
+        let table = make_table(&mut tree, "Table", vec![100.0, 100.0, 100.0], vec![r1]);
 
         let page = make_subform(
             &mut tree,
@@ -3340,12 +3353,7 @@ mod tests {
         let c3 = make_cell(&mut tree, "Tiny", 100.0, 20.0, 1);
         let r1 = make_row(&mut tree, "Row1", vec![c1, c2, c3]);
 
-        let table = make_table(
-            &mut tree,
-            "Table",
-            vec![100.0, 100.0, 100.0],
-            vec![r1],
-        );
+        let table = make_table(&mut tree, "Table", vec![100.0, 100.0, 100.0], vec![r1]);
 
         let page = make_subform(
             &mut tree,
