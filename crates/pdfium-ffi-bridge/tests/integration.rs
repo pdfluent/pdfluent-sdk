@@ -50,8 +50,7 @@ fn build_xfa_pdf(xfa_xml: &str) -> Vec<u8> {
         "Pages" => pages_id,
         "AcroForm" => acroform_id,
     };
-    doc.objects
-        .insert(catalog_id, Object::Dictionary(catalog));
+    doc.objects.insert(catalog_id, Object::Dictionary(catalog));
     doc.trailer.set("Root", catalog_id);
 
     let mut buf = Vec::new();
@@ -365,7 +364,11 @@ fn multipage_form_renders_all_pages() {
 
     let config = RenderConfig::default();
     let images = pipeline::render_form_tree(&mut tree, root, &config).unwrap();
-    assert!(images.len() > 1, "expected multiple pages, got {}", images.len());
+    assert!(
+        images.len() > 1,
+        "expected multiple pages, got {}",
+        images.len()
+    );
 }
 
 #[test]
@@ -403,8 +406,7 @@ fn pdf_without_xfa_is_detected() {
         "Kids" => vec![page_id.into()],
         "Count" => 1,
     };
-    doc.objects
-        .insert(pages_id, Object::Dictionary(pages));
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
     let page = dictionary! {
         "Type" => "Page",
         "Parent" => pages_id,
@@ -416,8 +418,7 @@ fn pdf_without_xfa_is_detected() {
         "Type" => "Catalog",
         "Pages" => pages_id,
     };
-    doc.objects
-        .insert(catalog_id, Object::Dictionary(catalog));
+    doc.objects.insert(catalog_id, Object::Dictionary(catalog));
     doc.trailer.set("Root", catalog_id);
 
     let mut buf = Vec::new();
@@ -443,6 +444,108 @@ fn save_rendered_pages_to_disk_and_verify() {
     }
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn pdf_to_json_end_to_end() {
+    let xfa_xml = r#"<?xml version="1.0"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+  <template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+    <subform name="form1">
+      <field name="FirstName"/>
+      <field name="LastName"/>
+      <field name="Amount"/>
+      <draw name="Label1">
+        <value><text>Welcome</text></value>
+      </draw>
+    </subform>
+  </template>
+  <xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <xfa:data>
+      <form1>
+        <FirstName>Alice</FirstName>
+        <LastName>Smith</LastName>
+        <Amount>42.50</Amount>
+      </form1>
+    </xfa:data>
+  </xfa:datasets>
+</xdp:xdp>"#;
+
+    let pdf_bytes = build_xfa_pdf(xfa_xml);
+    let result = pipeline::pdf_to_json(&pdf_bytes).unwrap();
+
+    // Verify fields
+    let fields = result.get("fields").unwrap().get("fields").unwrap();
+    assert_eq!(fields.get("form1.FirstName").unwrap(), "Alice");
+    assert_eq!(fields.get("form1.LastName").unwrap(), "Smith");
+    assert_eq!(fields.get("form1.Amount").unwrap(), 42.5);
+    assert_eq!(fields.get("form1.Label1").unwrap(), "Welcome");
+
+    // Verify schema
+    let schema = result.get("schema").unwrap().get("fields").unwrap();
+    assert!(schema.get("form1.FirstName").is_some());
+    assert!(schema.get("form1.LastName").is_some());
+    assert!(schema.get("form1.Amount").is_some());
+
+    let amount_schema = schema.get("form1.Amount").unwrap();
+    assert_eq!(amount_schema.get("field_type").unwrap(), "numeric");
+}
+
+#[test]
+fn pdf_to_json_non_xfa_pdf_errors() {
+    use lopdf::{dictionary, Document, Object};
+    let mut doc = Document::with_version("1.4");
+    let pages_id = doc.new_object_id();
+    let page_id = doc.new_object_id();
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![page_id.into()],
+        "Count" => 1,
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let page = dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+    };
+    doc.objects.insert(page_id, Object::Dictionary(page));
+    let catalog_id = doc.new_object_id();
+    let catalog = dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    };
+    doc.objects.insert(catalog_id, Object::Dictionary(catalog));
+    doc.trailer.set("Root", catalog_id);
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+
+    let result = pipeline::pdf_to_json(&buf);
+    assert!(result.is_err());
+}
+
+#[test]
+fn pdf_to_json_with_calculate_script() {
+    let xfa_xml = r#"<?xml version="1.0"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+  <template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+    <subform name="form1">
+      <field name="Price">
+        <value><text>100</text></value>
+      </field>
+      <field name="Tax">
+        <calculate><script>100 * 0.21</script></calculate>
+      </field>
+    </subform>
+  </template>
+</xdp:xdp>"#;
+
+    let pdf_bytes = build_xfa_pdf(xfa_xml);
+    let result = pipeline::pdf_to_json(&pdf_bytes).unwrap();
+
+    let fields = result.get("fields").unwrap().get("fields").unwrap();
+    assert_eq!(fields.get("form1.Price").unwrap(), 100.0);
+    assert_eq!(fields.get("form1.Tax").unwrap(), 21.0);
 }
 
 // --- Helpers ---
