@@ -7,6 +7,7 @@ pub mod appearance;
 pub mod dataset_sync;
 pub mod error;
 pub mod events;
+pub mod flatten;
 pub mod font;
 pub mod native_renderer;
 pub mod pdf_reader;
