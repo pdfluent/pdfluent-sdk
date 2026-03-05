@@ -49,3 +49,35 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all --check
+
+  corpus-smoke:
+    name: Corpus Smoke Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build accuracy-report
+        run: cargo build --release --bin accuracy-report
+      - name: Run accuracy report on corpus subset
+        run: |
+          if [[ -d corpus/ ]] && [[ $(ls corpus/*.pdf 2>/dev/null | wc -l) -gt 0 ]]; then
+            mkdir -p reports/accuracy
+            cargo run --release --bin accuracy-report -- \
+              --corpus corpus \
+              --output reports/accuracy/report.json
+            # Check parse rate from report
+            PARSE_RATE=$(python3 -c "import json; print(json.load(open('reports/accuracy/report.json'))['parse_rate_pct'])")
+            echo "Parse rate: ${PARSE_RATE}%"
+            # Fail if parse rate drops below 95%
+            python3 -c "
+            rate = float('${PARSE_RATE}')
+            if rate < 95.0:
+                print(f'FAIL: Parse rate {rate}% is below 95% threshold')
+                exit(1)
+            print(f'PASS: Parse rate {rate}% meets threshold')
+            "
+          else
+            echo "No corpus PDFs found, skipping"
+          fi
