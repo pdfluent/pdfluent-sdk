@@ -13,13 +13,19 @@ path = "src/main.rs"
 name = "xfa-collector"
 path = "src/bin/xfa-collector.rs"
 
+[[bin]]
+name = "xfa-license-tool"
+path = "src/bin/license_tool.rs"
+
 [dependencies]
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
 xfa-layout-engine.workspace = true
 pdfium-ffi-bridge.workspace = true
+xfa-license.workspace = true
 anyhow.workspace = true
 reqwest.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+base64 = "0.22"
