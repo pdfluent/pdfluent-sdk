@@ -338,26 +338,20 @@ fn is_cjk(ch: char) -> bool {
 }
 
 fn detect_hybrid(reader: &PdfReader) -> bool {
-    // Check if AcroForm has both XFA and Fields entries
+    // Check if AcroForm has both XFA and Fields entries.
+    // Uses get_deref to handle both indirect references and inline dicts.
     let doc = reader.document();
-    let catalog_ref = doc
-        .trailer
-        .get(b"Root")
-        .and_then(|o| o.as_reference())
-        .ok();
+    let catalog = match doc.trailer.get_deref(b"Root", doc).and_then(|o| o.as_dict()) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
 
-    if let Some(cat_ref) = catalog_ref {
-        if let Ok(catalog) = doc.get_object(cat_ref).and_then(|o| o.as_dict()) {
-            if let Ok(acroform_ref) = catalog.get(b"AcroForm").and_then(|o| o.as_reference()) {
-                if let Ok(acroform) = doc.get_object(acroform_ref).and_then(|o| o.as_dict()) {
-                    let has_xfa = acroform.has(b"XFA");
-                    let has_fields = acroform.has(b"Fields");
-                    return has_xfa && has_fields;
-                }
-            }
-        }
-    }
-    false
+    let acroform = match catalog.get_deref(b"AcroForm", doc).and_then(|o| o.as_dict()) {
+        Ok(af) => af,
+        Err(_) => return false,
+    };
+
+    acroform.has(b"XFA") && acroform.has(b"Fields")
 }
 
 fn count_formcalc_scripts(xml: &str) -> usize {
