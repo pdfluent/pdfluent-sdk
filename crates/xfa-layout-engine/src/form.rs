@@ -133,6 +133,10 @@ pub struct ContentArea {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    /// Leader (header) node placed at the top of each page's content area.
+    pub leader: Option<FormNodeId>,
+    /// Trailer (footer) node placed at the bottom of each page's content area.
+    pub trailer: Option<FormNodeId>,
 }
 
 impl Default for ContentArea {
@@ -143,6 +147,8 @@ impl Default for ContentArea {
             y: 0.0,
             width: 612.0,  // US Letter width in points
             height: 792.0, // US Letter height in points
+            leader: None,
+            trailer: None,
         }
     }
 }
