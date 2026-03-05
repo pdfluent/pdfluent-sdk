@@ -5,9 +5,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+pdfium = ["dep:pdfium-render"]
+
 [dependencies]
 xfa-dom-resolver.workspace = true
 xfa-layout-engine.workspace = true
-pdfium-render.workspace = true
+lopdf.workspace = true
+pdfium-render = { workspace = true, optional = true }
 thiserror.workspace = true
 image.workspace = true
