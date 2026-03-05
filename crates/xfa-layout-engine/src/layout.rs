@@ -234,20 +234,40 @@ impl<'a> LayoutEngine<'a> {
     }
 
     /// Layout children within available space using the given strategy.
+    ///
+    /// Children with `occur.count() > 1` are expanded into multiple instances.
     fn layout_children(
         &self,
         children: &[FormNodeId],
         available: Size,
         strategy: LayoutStrategy,
     ) -> Result<Vec<LayoutNode>> {
+        let expanded = self.expand_occur(children);
         match strategy {
-            LayoutStrategy::Positioned => self.layout_positioned(children),
-            LayoutStrategy::TopToBottom => self.layout_tb(children, available),
-            LayoutStrategy::LeftToRightTB => self.layout_lr_tb(children, available),
-            LayoutStrategy::RightToLeftTB => self.layout_rl_tb(children, available),
-            LayoutStrategy::Table => self.layout_table(children, available),
-            LayoutStrategy::Row => self.layout_row(children, available),
+            LayoutStrategy::Positioned => self.layout_positioned(&expanded),
+            LayoutStrategy::TopToBottom => self.layout_tb(&expanded, available),
+            LayoutStrategy::LeftToRightTB => self.layout_lr_tb(&expanded, available),
+            LayoutStrategy::RightToLeftTB => self.layout_rl_tb(&expanded, available),
+            LayoutStrategy::Table => self.layout_table(&expanded, available),
+            LayoutStrategy::Row => self.layout_row(&expanded, available),
         }
+    }
+
+    /// Expand children based on occur rules.
+    ///
+    /// A child with `occur.count() == 3` produces three entries in the output.
+    /// Each entry refers to the same FormNodeId (the template), which the layout
+    /// engine treats as separate instances at different positions.
+    fn expand_occur(&self, children: &[FormNodeId]) -> Vec<FormNodeId> {
+        let mut expanded = Vec::new();
+        for &child_id in children {
+            let child = self.form.get(child_id);
+            let count = child.occur.count();
+            for _ in 0..count {
+                expanded.push(child_id);
+            }
+        }
+        expanded
     }
 
     /// Positioned layout: each child uses its own x,y from the box model.
@@ -441,27 +461,28 @@ impl<'a> LayoutEngine<'a> {
             };
         }
 
-        // For growable dimensions, compute from children
+        // For growable dimensions, compute from children (with occur expansion)
         let mut content_size = Size::default();
 
         if !node.children.is_empty() {
+            let expanded = self.expand_occur(&node.children);
             match node.layout {
                 LayoutStrategy::TopToBottom => {
-                    for &child_id in &node.children {
+                    for &child_id in &expanded {
                         let cs = self.compute_extent(child_id);
                         content_size.width = content_size.width.max(cs.width);
                         content_size.height += cs.height;
                     }
                 }
                 LayoutStrategy::LeftToRightTB | LayoutStrategy::Row => {
-                    for &child_id in &node.children {
+                    for &child_id in &expanded {
                         let cs = self.compute_extent(child_id);
                         content_size.width += cs.width;
                         content_size.height = content_size.height.max(cs.height);
                     }
                 }
                 _ => {
-                    // Positioned: envelope all children
+                    // Positioned: envelope all children (occur doesn't stack in positioned)
                     for &child_id in &node.children {
                         let child = self.form.get(child_id);
                         let cs = self.compute_extent(child_id);
@@ -496,6 +517,7 @@ struct PageAreaInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::form::Occur;
     use crate::types::BoxModel;
 
     fn make_field(tree: &mut FormTree, name: &str, w: f64, h: f64) -> FormNodeId {
@@ -513,6 +535,7 @@ mod tests {
             },
             layout: LayoutStrategy::Positioned,
             children: vec![],
+            occur: Occur::once(),
         })
     }
 
@@ -536,6 +559,7 @@ mod tests {
             },
             layout: strategy,
             children,
+            occur: Occur::once(),
         })
     }
 
@@ -558,6 +582,7 @@ mod tests {
             },
             layout: LayoutStrategy::Positioned,
             children: vec![],
+            occur: Occur::once(),
         });
         let f2 = tree.add_node(FormNode {
             name: "Field2".to_string(),
@@ -575,6 +600,7 @@ mod tests {
             },
             layout: LayoutStrategy::Positioned,
             children: vec![],
+            occur: Occur::once(),
         });
         let root = tree.add_node(FormNode {
             name: "Root".to_string(),
@@ -588,6 +614,7 @@ mod tests {
             },
             layout: LayoutStrategy::Positioned,
             children: vec![f1, f2],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -621,6 +648,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1, f2, f3],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -654,6 +682,7 @@ mod tests {
             },
             layout: LayoutStrategy::LeftToRightTB,
             children: vec![f1, f2, f3],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -698,6 +727,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![sub],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -738,6 +768,7 @@ mod tests {
             },
             layout: LayoutStrategy::Positioned,
             children: vec![],
+            occur: Occur::once(),
         });
 
         let root = tree.add_node(FormNode {
@@ -752,6 +783,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![page_area, f1],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -806,6 +838,7 @@ mod tests {
             },
             layout: LayoutStrategy::RightToLeftTB,
             children: vec![f1, f2],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -839,6 +872,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -869,6 +903,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -898,6 +933,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1, f2],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -927,6 +963,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1, f2],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -955,6 +992,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
+            occur: Occur::once(),
         });
 
         let root = tree.add_node(FormNode {
@@ -969,6 +1007,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![growable_sub],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -999,6 +1038,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
+            occur: Occur::once(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1013,6 +1053,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![growable_sub],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1048,6 +1089,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
+            occur: Occur::once(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1062,6 +1104,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![growable_sub],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1093,6 +1136,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
+            occur: Occur::once(),
         });
 
         // Outer container with maxW constraint
@@ -1108,6 +1152,7 @@ mod tests {
             },
             layout: LayoutStrategy::TopToBottom,
             children: vec![inner],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1139,6 +1184,7 @@ mod tests {
             },
             layout: LayoutStrategy::Positioned,
             children: vec![],
+            occur: Occur::once(),
         });
 
         let f2 = make_field(&mut tree, "F2", 200.0, 30.0);
@@ -1155,6 +1201,7 @@ mod tests {
             },
             layout: LayoutStrategy::LeftToRightTB,
             children: vec![f1, f2],
+            occur: Occur::once(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1165,5 +1212,257 @@ mod tests {
         assert_eq!(page.nodes[0].rect.width, 200.0);
         // F2 at x=200
         assert_eq!(page.nodes[1].rect.x, 200.0);
+    }
+
+    // --- Occur rules tests (Epic 3.6) ---
+
+    #[test]
+    fn occur_default_once() {
+        // Default occur = 1, should produce exactly one instance
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 100.0, 30.0);
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+        assert_eq!(result.pages[0].nodes.len(), 1);
+    }
+
+    #[test]
+    fn occur_repeating_tb() {
+        // A subform with occur(initial=3) in tb layout should produce 3 instances
+        let mut tree = FormTree::new();
+        let f1 = tree.add_node(FormNode {
+            name: "Row".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(30.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::repeating(1, Some(10), 3),
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![f1],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+        let page = &result.pages[0];
+
+        // 3 instances stacked vertically
+        assert_eq!(page.nodes.len(), 3);
+        assert_eq!(page.nodes[0].rect.y, 0.0);
+        assert_eq!(page.nodes[1].rect.y, 30.0);
+        assert_eq!(page.nodes[2].rect.y, 60.0);
+    }
+
+    #[test]
+    fn occur_repeating_lr_tb() {
+        // Repeating subform in lr-tb layout
+        let mut tree = FormTree::new();
+        let f1 = tree.add_node(FormNode {
+            name: "Cell".to_string(),
+            node_type: FormNodeType::Field {
+                value: "X".to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(100.0),
+                height: Some(30.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::repeating(1, None, 5),
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(350.0),
+                height: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::LeftToRightTB,
+            children: vec![f1],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+        let page = &result.pages[0];
+
+        // 5 instances of 100pt wide in 350pt container:
+        // Row 1: 3 cells (0, 100, 200), Row 2: 2 cells (0, 100)
+        assert_eq!(page.nodes.len(), 5);
+        assert_eq!(page.nodes[0].rect.x, 0.0);
+        assert_eq!(page.nodes[0].rect.y, 0.0);
+        assert_eq!(page.nodes[1].rect.x, 100.0);
+        assert_eq!(page.nodes[2].rect.x, 200.0);
+        assert_eq!(page.nodes[3].rect.x, 0.0);
+        assert_eq!(page.nodes[3].rect.y, 30.0);
+        assert_eq!(page.nodes[4].rect.x, 100.0);
+        assert_eq!(page.nodes[4].rect.y, 30.0);
+    }
+
+    #[test]
+    fn occur_min_enforced() {
+        // Occur with min=2, initial=2 should always produce at least 2
+        let occur = Occur::repeating(2, Some(5), 2);
+        assert_eq!(occur.count(), 2);
+        assert!(occur.is_repeating());
+    }
+
+    #[test]
+    fn occur_max_caps_initial() {
+        // Occur with max=3 but initial=5 should cap at 3
+        let occur = Occur::repeating(1, Some(3), 5);
+        assert_eq!(occur.count(), 3);
+    }
+
+    #[test]
+    fn occur_initial_raised_to_min() {
+        // Occur with min=3 but initial=1 should raise to 3
+        let occur = Occur::repeating(3, Some(10), 1);
+        assert_eq!(occur.count(), 3);
+    }
+
+    #[test]
+    fn occur_unlimited_max() {
+        let occur = Occur::repeating(0, None, 5);
+        assert_eq!(occur.count(), 5);
+        assert!(occur.is_repeating());
+    }
+
+    #[test]
+    fn occur_mixed_children() {
+        // Mix of repeating and non-repeating children
+        let mut tree = FormTree::new();
+        let header = make_field(&mut tree, "Header", 200.0, 40.0);
+        let row = tree.add_node(FormNode {
+            name: "DataRow".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(25.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::repeating(1, Some(10), 4),
+        });
+        let footer = make_field(&mut tree, "Footer", 200.0, 30.0);
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(600.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![header, row, footer],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+        let page = &result.pages[0];
+
+        // Header(1) + DataRow(4) + Footer(1) = 6 nodes
+        assert_eq!(page.nodes.len(), 6);
+        assert_eq!(page.nodes[0].name, "Header");
+        assert_eq!(page.nodes[0].rect.y, 0.0);
+        // 4 data rows at y=40, 65, 90, 115
+        assert_eq!(page.nodes[1].name, "DataRow");
+        assert_eq!(page.nodes[1].rect.y, 40.0);
+        assert_eq!(page.nodes[2].rect.y, 65.0);
+        assert_eq!(page.nodes[3].rect.y, 90.0);
+        assert_eq!(page.nodes[4].rect.y, 115.0);
+        // Footer at y=140
+        assert_eq!(page.nodes[5].name, "Footer");
+        assert_eq!(page.nodes[5].rect.y, 140.0);
+    }
+
+    #[test]
+    fn occur_growable_extent() {
+        // A growable container with a repeating child should size to all instances
+        let mut tree = FormTree::new();
+        let row = tree.add_node(FormNode {
+            name: "Row".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(150.0),
+                height: Some(20.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::repeating(1, None, 5),
+        });
+
+        let container = tree.add_node(FormNode {
+            name: "Container".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![row],
+            occur: Occur::once(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let extent = engine.compute_extent(container);
+
+        // 5 rows of 150x20 stacked: width=150, height=100
+        assert_eq!(extent.width, 150.0);
+        assert_eq!(extent.height, 100.0);
     }
 }
