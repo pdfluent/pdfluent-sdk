@@ -5,3 +5,4 @@
 *.pdf
 !/tests/fixtures/*.pdf
 /reports/
+/crates/xfa-wasm/pkg/
