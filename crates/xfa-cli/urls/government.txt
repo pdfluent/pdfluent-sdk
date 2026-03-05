@@ -1,0 +1,35 @@
+# US government forms — various agencies known for XFA/LiveCycle usage
+# SSA, VA, DOD, USCIS, State Department, OPM
+
+# Social Security Administration
+https://www.ssa.gov/forms/ss-5.pdf
+https://www.ssa.gov/forms/ssa-1.pdf
+https://www.ssa.gov/forms/ssa-7.pdf
+https://www.ssa.gov/forms/ssa-561.pdf
+
+# Department of Veterans Affairs
+https://www.va.gov/vaforms/va/pdf/VA10-10EZ.pdf
+https://www.va.gov/vaforms/va/pdf/VA21-526EZ.pdf
+https://www.va.gov/vaforms/va/pdf/VA28-1900.pdf
+https://www.va.gov/vaforms/va/pdf/VA22-1990.pdf
+https://www.va.gov/vaforms/va/pdf/VA21-686c.pdf
+
+# USCIS (immigration forms — many use LiveCycle)
+https://www.uscis.gov/sites/default/files/document/forms/i-130.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-140.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-485.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-765.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-20.pdf
+https://www.uscis.gov/sites/default/files/document/forms/i-90.pdf
+https://www.uscis.gov/sites/default/files/document/forms/n-400.pdf
+
+# OPM (federal employee forms)
+https://www.opm.gov/forms/pdf_fill/sf86.pdf
+https://www.opm.gov/forms/pdf_fill/sf85.pdf
+https://www.opm.gov/forms/pdf_fill/sf50.pdf
+https://www.opm.gov/forms/pdf_fill/sf171.pdf
+
+# State Department
+https://eforms.state.gov/Forms/ds11.pdf
+https://eforms.state.gov/Forms/ds82.pdf
+https://eforms.state.gov/Forms/ds64.pdf
