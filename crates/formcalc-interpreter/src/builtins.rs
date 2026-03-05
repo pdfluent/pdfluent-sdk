@@ -383,12 +383,13 @@ fn date_to_days(year: i32, month: u32, day: u32) -> i64 {
     let m = month as i64 + 12 * a - 3;
     let jdn = day as i64 + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
     // JDN for 1900-01-01 is 2415021
-    jdn - 2415021
+    // Day 1 = 1900-01-01 per XFA spec
+    jdn - 2415020
 }
 
 /// Convert days from epoch (1900-01-01) back to (year, month, day).
 fn days_to_date(days: i64) -> (i32, u32, u32) {
-    let jdn = days + 2415021;
+    let jdn = days + 2415020;
     let a = jdn + 32044;
     let b = (4 * a + 3) / 146097;
     let c = a - (146097 * b) / 4;
@@ -770,7 +771,7 @@ fn number_to_words(n: i64) -> String {
         if n < 100 {
             let t = tens[(n / 10) as usize].to_string();
             let o = chunk_to_words(n % 10, ones, tens);
-            return if o.is_empty() { t } else { format!("{t} {o}") };
+            return if o.is_empty() { t } else { format!("{t}-{o}") };
         }
         let h = format!("{} Hundred", ones[(n / 100) as usize]);
         let rest = chunk_to_words(n % 100, ones, tens);
@@ -874,11 +875,11 @@ mod tests {
     #[test]
     fn test_number_to_words() {
         assert_eq!(number_to_words(0), "Zero");
-        assert_eq!(number_to_words(42), "Forty Two");
+        assert_eq!(number_to_words(42), "Forty-Two");
         assert_eq!(number_to_words(100), "One Hundred");
         assert_eq!(
             number_to_words(1234),
-            "One Thousand Two Hundred Thirty Four"
+            "One Thousand Two Hundred Thirty-Four"
         );
     }
 
@@ -907,11 +908,11 @@ mod tests {
 
     #[test]
     fn test_date_epoch() {
-        // 1900-01-01 should be day 0
+        // 1900-01-01 should be day 1
         let d = call_builtin("Date2Num", &[Value::String("1900-01-01".to_string())])
             .unwrap()
             .unwrap();
-        assert_eq!(d, Value::Number(0.0));
+        assert_eq!(d, Value::Number(1.0));
     }
 
     // --- Financial tests ---
