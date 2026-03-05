@@ -45,7 +45,12 @@ pub struct LoadedFont {
 impl LoadedFont {
     /// Load a font from raw TrueType/OpenType data.
     pub fn from_data(data: Vec<u8>) -> Result<Self> {
-        let face = ttf_parser::Face::parse(&data, 0)
+        Self::from_data_at(data, 0)
+    }
+
+    /// Load a specific face from raw font data (for TTC/OTC collections).
+    pub fn from_data_at(data: Vec<u8>, face_index: u32) -> Result<Self> {
+        let face = ttf_parser::Face::parse(&data, face_index)
             .map_err(|e| PdfError::FontError(format!("Failed to parse font: {e}")))?;
 
         let family = face
@@ -209,8 +214,8 @@ pub struct FontResolver {
     fonts: HashMap<String, LoadedFont>,
     /// System font directories.
     font_dirs: Vec<PathBuf>,
-    /// Font file index: family name → file path.
-    font_index: HashMap<String, PathBuf>,
+    /// Font file index: family name → (file path, face index).
+    font_index: HashMap<String, (PathBuf, u32)>,
     /// Whether the index has been built.
     indexed: bool,
 }
@@ -262,8 +267,8 @@ impl FontResolver {
         }
 
         // Try exact match in index
-        if let Some(path) = self.font_index.get(&key).cloned() {
-            if let Ok(font) = LoadedFont::from_file(&path) {
+        if let Some((path, face_idx)) = self.font_index.get(&key).cloned() {
+            if let Ok(font) = load_font_at(&path, face_idx) {
                 self.fonts.insert(key.clone(), font);
                 return self.fonts.get(&key);
             }
@@ -271,8 +276,8 @@ impl FontResolver {
 
         // Try without style
         let base_key = font_cache_key(family, false, false);
-        if let Some(path) = self.font_index.get(&base_key).cloned() {
-            if let Ok(font) = LoadedFont::from_file(&path) {
+        if let Some((path, face_idx)) = self.font_index.get(&base_key).cloned() {
+            if let Ok(font) = load_font_at(&path, face_idx) {
                 self.fonts.insert(key.clone(), font);
                 return self.fonts.get(&key);
             }
@@ -285,8 +290,8 @@ impl FontResolver {
                 if self.fonts.contains_key(&fallback_key) {
                     return self.fonts.get(&fallback_key);
                 }
-                if let Some(path) = self.font_index.get(&fallback_key).cloned() {
-                    if let Ok(font) = LoadedFont::from_file(&path) {
+                if let Some((path, face_idx)) = self.font_index.get(&fallback_key).cloned() {
+                    if let Ok(font) = load_font_at(&path, face_idx) {
                         self.fonts.insert(fallback_key.clone(), font);
                         return self.fonts.get(&fallback_key);
                     }
@@ -331,7 +336,9 @@ impl FontResolver {
                                         .unwrap_or_else(|| "Unknown".to_string());
                                     let key =
                                         font_cache_key(&family, face.is_bold(), face.is_italic());
-                                    self.font_index.entry(key).or_insert_with(|| path.clone());
+                                    self.font_index
+                                        .entry(key)
+                                        .or_insert_with(|| (path.clone(), face_index));
                                 }
                                 Err(_) => break,
                             }
@@ -339,7 +346,7 @@ impl FontResolver {
                     }
                 } else if let Ok(font) = LoadedFont::from_file(&path) {
                     let key = font_cache_key(&font.family, font.is_bold, font.is_italic);
-                    self.font_index.entry(key).or_insert(path);
+                    self.font_index.entry(key).or_insert((path, 0));
                 }
             }
         }
@@ -407,6 +414,13 @@ fn font_cache_key(family: &str, bold: bool, italic: bool) -> String {
         (false, false) => "Regular",
     };
     format!("{}:{}", family.to_lowercase(), style)
+}
+
+/// Load a font from a file at a specific face index.
+fn load_font_at(path: &Path, face_index: u32) -> Result<LoadedFont> {
+    let data = std::fs::read(path)
+        .map_err(|e| PdfError::FontError(format!("Failed to read font file: {e}")))?;
+    LoadedFont::from_data_at(data, face_index)
 }
 
 /// Check if a font file is a TTC/OTC collection.

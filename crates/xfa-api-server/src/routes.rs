@@ -536,14 +536,14 @@ fn parse_occur(el: &roxmltree::Node) -> xfa_layout_engine::form::Occur {
                 .attribute("min")
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(1);
-            let max = child.attribute("max").and_then(|s| {
-                let v: i32 = s.parse().ok()?;
-                if v < 0 {
-                    None
-                } else {
-                    Some(v as u32)
-                }
-            });
+            let max = match child.attribute("max") {
+                Some(s) => match s.parse::<i32>() {
+                    Ok(v) if v < 0 => None,
+                    Ok(v) => Some(v as u32),
+                    Err(_) => Some(1),
+                },
+                None => Some(1), // XFA default: max=1 when absent
+            };
             let initial = child
                 .attribute("initial")
                 .and_then(|s| s.parse::<u32>().ok())

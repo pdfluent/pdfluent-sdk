@@ -168,7 +168,8 @@ impl XfaEngine {
                     });
                     // Wrap in intermediate subforms for path segments (skip root "form1")
                     let mut wrapped = id;
-                    for &seg in segments[1..segments.len().saturating_sub(1)].iter().rev() {
+                    let end = segments.len().saturating_sub(1);
+                    for &seg in segments[1..end.max(1)].iter().rev() {
                         wrapped = tree.add_node(FormNode {
                             name: seg.to_string(),
                             node_type: FormNodeType::Subform,
