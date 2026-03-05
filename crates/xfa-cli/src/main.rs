@@ -133,6 +133,8 @@ fn demo_layout() {
         children: vec![],
         occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
     });
 
     let addr_field = tree.add_node(FormNode {
@@ -151,6 +153,8 @@ fn demo_layout() {
         children: vec![],
         occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
     });
 
     let total_field = tree.add_node(FormNode {
@@ -169,6 +173,8 @@ fn demo_layout() {
         children: vec![],
         occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
     });
 
     // Create a subform container
@@ -187,6 +193,8 @@ fn demo_layout() {
         children: detail_ids,
         occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
     });
 
     // Root
@@ -204,6 +212,8 @@ fn demo_layout() {
         children: vec![form_subform],
         occur: Occur::once(),
             font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
     });
 
     let engine = LayoutEngine::new(&tree);
