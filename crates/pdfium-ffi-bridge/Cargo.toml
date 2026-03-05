@@ -19,3 +19,4 @@ image.workspace = true
 roxmltree.workspace = true
 xfa-json.workspace = true
 serde_json.workspace = true
+indexmap.workspace = true

@@ -429,6 +429,99 @@ fn pdf_without_xfa_is_detected() {
 }
 
 #[test]
+fn json_to_pdf_basic_merge() {
+    let xfa_xml = r#"<?xml version="1.0"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+  <template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+    <subform name="form1">
+      <field name="Name"/>
+      <field name="Amount"/>
+    </subform>
+  </template>
+  <xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <xfa:data>
+      <form1><Name>Old</Name><Amount>0</Amount></form1>
+    </xfa:data>
+  </xfa:datasets>
+</xdp:xdp>"#;
+
+    let template_bytes = build_xfa_pdf(xfa_xml);
+
+    let data = serde_json::json!({
+        "form1.Name": "Alice",
+        "form1.Amount": 99.95
+    });
+
+    let filled_pdf = pipeline::json_to_pdf(&template_bytes, &data).unwrap();
+
+    // Verify by reading back as JSON
+    let result = pipeline::pdf_to_json(&filled_pdf).unwrap();
+    let fields = result.get("fields").unwrap().get("fields").unwrap();
+    assert_eq!(fields.get("form1.Name").unwrap(), "Alice");
+    assert_eq!(fields.get("form1.Amount").unwrap(), 99.95);
+}
+
+#[test]
+fn json_to_pdf_roundtrip() {
+    // PDF → JSON → PDF → JSON must produce identical data
+    let xfa_xml = r#"<?xml version="1.0"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+  <template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+    <subform name="form1">
+      <field name="FirstName"/>
+      <field name="LastName"/>
+      <field name="Score"/>
+    </subform>
+  </template>
+  <xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <xfa:data>
+      <form1><FirstName>Bob</FirstName><LastName>Jones</LastName><Score>42</Score></form1>
+    </xfa:data>
+  </xfa:datasets>
+</xdp:xdp>"#;
+
+    let original_pdf = build_xfa_pdf(xfa_xml);
+
+    // Step 1: PDF → JSON
+    let json1 = pipeline::pdf_to_json(&original_pdf).unwrap();
+    let fields1 = json1.get("fields").unwrap();
+
+    // Step 2: JSON → PDF (use the fields portion)
+    let filled_pdf = pipeline::json_to_pdf(&original_pdf, fields1).unwrap();
+
+    // Step 3: PDF → JSON again
+    let json2 = pipeline::pdf_to_json(&filled_pdf).unwrap();
+    let fields2 = json2.get("fields").unwrap().get("fields").unwrap();
+
+    // Step 4: Compare — should be identical
+    let f1 = json1.get("fields").unwrap().get("fields").unwrap();
+    assert_eq!(f1.get("form1.FirstName"), fields2.get("form1.FirstName"));
+    assert_eq!(f1.get("form1.LastName"), fields2.get("form1.LastName"));
+    assert_eq!(f1.get("form1.Score"), fields2.get("form1.Score"));
+}
+
+#[test]
+fn json_to_pdf_non_xfa_errors() {
+    use lopdf::{dictionary, Document, Object};
+    let mut doc = Document::with_version("1.4");
+    let pages_id = doc.new_object_id();
+    let page_id = doc.new_object_id();
+    let pages = dictionary! { "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1 };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let page = dictionary! { "Type" => "Page", "Parent" => pages_id, "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()] };
+    doc.objects.insert(page_id, Object::Dictionary(page));
+    let catalog_id = doc.new_object_id();
+    let catalog = dictionary! { "Type" => "Catalog", "Pages" => pages_id };
+    doc.objects.insert(catalog_id, Object::Dictionary(catalog));
+    doc.trailer.set("Root", catalog_id);
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+
+    let data = serde_json::json!({"field": "value"});
+    assert!(pipeline::json_to_pdf(&buf, &data).is_err());
+}
+
+#[test]
 fn save_rendered_pages_to_disk_and_verify() {
     let (mut tree, root) = build_simple_form();
     let config = RenderConfig::with_dpi(144.0);
