@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "xfa-collector"
 path = "src/bin/xfa-collector.rs"
 
+[[bin]]
+name = "edge-case-analyzer"
+path = "src/bin/edge-case-analyzer.rs"
+
 [dependencies]
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
@@ -23,3 +27,5 @@ reqwest.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+roxmltree.workspace = true
+lopdf.workspace = true
