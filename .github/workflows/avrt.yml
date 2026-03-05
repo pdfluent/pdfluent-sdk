@@ -1,0 +1,135 @@
+name: Visual Regression (AVRT)
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'crates/xfa-layout-engine/**'
+      - 'crates/xfa-golden-tests/**'
+      - 'crates/pdfium-ffi-bridge/**'
+      - 'scripts/run-avrt.sh'
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: 'Max pixel diff percentage'
+        default: '1.0'
+        type: string
+
+jobs:
+  visual-regression:
+    name: AVRT Pixel Diff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ImageMagick
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
+      - name: Cache gold masters
+        uses: actions/cache@v4
+        with:
+          path: gold-masters/
+          key: avrt-gold-masters-${{ hashFiles('avrt-config.json') }}
+
+      - name: Check gold masters exist
+        id: gold-check
+        run: |
+          if [[ -d gold-masters/ ]] && [[ $(ls gold-masters/*.png 2>/dev/null | wc -l) -gt 0 ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Gold masters found: $(ls gold-masters/*.png | wc -l) files"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No gold masters found. Skipping AVRT."
+            echo "To set up gold masters, render corpus PDFs with Adobe Acrobat to PNG"
+            echo "and place them in gold-masters/ directory."
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.gold-check.outputs.exists == 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.gold-check.outputs.exists == 'true'
+
+      - name: Build engine
+        if: steps.gold-check.outputs.exists == 'true'
+        run: cargo build --release -p xfa-cli
+
+      - name: Generate engine renders
+        if: steps.gold-check.outputs.exists == 'true'
+        run: |
+          mkdir -p renders/
+          echo "Engine render generation would run here"
+          echo "TODO: cargo run --release --bin xfa-cli -- render --corpus corpus/ --output renders/"
+
+      - name: Run AVRT
+        if: steps.gold-check.outputs.exists == 'true'
+        run: |
+          THRESHOLD="${{ inputs.threshold || '1.0' }}"
+          ./scripts/run-avrt.sh \
+            --renders renders/ \
+            --gold gold-masters/ \
+            --output reports/avrt \
+            --threshold "$THRESHOLD" \
+            --channel-tol 5
+
+      - name: Generate HTML report
+        if: always() && steps.gold-check.outputs.exists == 'true'
+        run: ./scripts/avrt-report.sh reports/avrt
+
+      - name: Upload AVRT report
+        if: always() && steps.gold-check.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: avrt-visual-regression-report
+          path: reports/avrt/
+          retention-days: 30
+
+      - name: Comment PR with results
+        if: always() && github.event_name == 'pull_request' && steps.gold-check.outputs.exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('reports/avrt/summary.json')) return;
+            const summary = JSON.parse(fs.readFileSync('reports/avrt/summary.json', 'utf8'));
+            const emoji = summary.pass_rate >= 90 ? ':white_check_mark:' : ':warning:';
+            const body = [
+              `## ${emoji} Visual Regression Report (AVRT)`,
+              '',
+              `| Metric | Value |`,
+              `|--------|-------|`,
+              `| Compared | ${summary.total} |`,
+              `| Passed | ${summary.passed} |`,
+              `| Failed | ${summary.failed} |`,
+              `| Skipped | ${summary.skipped} |`,
+              `| **Pass Rate** | **${summary.pass_rate}%** |`,
+              `| Threshold | ${summary.threshold_pct}% |`,
+            ];
+            if (summary.failed_files && summary.failed_files.length > 0) {
+              body.push('', '<details><summary>Failed files</summary>', '');
+              summary.failed_files.forEach(f => body.push(`- \`${f}\``));
+              body.push('', '</details>');
+            }
+            body.push('', '*Diff images and full report available as workflow artifact.*');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes('Visual Regression Report (AVRT)'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body.join('\n'),
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body.join('\n'),
+              });
+            }

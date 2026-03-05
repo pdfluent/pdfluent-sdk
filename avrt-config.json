@@ -1,0 +1,41 @@
+{
+  "default_threshold_pct": 1.0,
+  "default_channel_tolerance": 5,
+  "categories": {
+    "irs_tax_forms": {
+      "pattern": "f[0-9]*.png",
+      "threshold_pct": 2.0,
+      "description": "IRS tax forms — complex layouts with many fields"
+    },
+    "uscis_immigration": {
+      "pattern": "i-*.png",
+      "threshold_pct": 2.0,
+      "description": "USCIS immigration forms"
+    },
+    "canadian_tax": {
+      "pattern": "*-fill-*.png",
+      "threshold_pct": 1.5,
+      "description": "Canadian tax forms (CRA)"
+    },
+    "standard_forms": {
+      "pattern": "sf*.png",
+      "threshold_pct": 2.5,
+      "description": "US standard government forms"
+    },
+    "w_forms": {
+      "pattern": "fw*.png",
+      "threshold_pct": 1.5,
+      "description": "W-series employment/tax forms"
+    }
+  },
+  "targets": {
+    "phase_1": {
+      "pass_rate": 90,
+      "description": "Phase 1 target: 90% pixel-perfect"
+    },
+    "phase_2": {
+      "pass_rate": 95,
+      "description": "Phase 2 target: 95% pixel-perfect"
+    }
+  }
+}
