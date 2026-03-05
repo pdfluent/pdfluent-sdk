@@ -1,0 +1,30 @@
+[package]
+name = "xfa-api-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "xfa-api-server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+roxmltree.workspace = true
+indexmap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid = { version = "1", features = ["v4"] }
+
+# Internal crates
+pdfium-ffi-bridge = { path = "../pdfium-ffi-bridge" }
+xfa-json = { path = "../xfa-json" }
+xfa-layout-engine = { path = "../xfa-layout-engine" }
+xfa-dom-resolver = { path = "../xfa-dom-resolver" }
