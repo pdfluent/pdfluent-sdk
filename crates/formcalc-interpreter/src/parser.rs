@@ -496,6 +496,14 @@ impl Parser {
                 self.advance();
                 Ok(Expr::StringLit(s))
             }
+            TokenKind::Null
+                if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) =>
+            {
+                self.advance(); // consume `null`
+                self.advance(); // consume `(`
+                self.expect(&TokenKind::RParen)?;
+                Ok(Expr::Null)
+            }
             TokenKind::Null => {
                 self.advance();
                 Ok(Expr::Null)
