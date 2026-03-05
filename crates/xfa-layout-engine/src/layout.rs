@@ -5,6 +5,7 @@
 
 use crate::error::{LayoutError, Result};
 use crate::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree};
+use crate::text;
 use crate::types::{LayoutStrategy, Rect, Size};
 
 /// A unique identifier for a layout node.
@@ -46,6 +47,8 @@ pub enum LayoutContent {
     None,
     Text(String),
     Field { value: String },
+    /// Pre-wrapped text lines for rendering.
+    WrappedText { lines: Vec<String>, font_size: f64 },
 }
 
 /// The layout engine.
@@ -587,10 +590,36 @@ impl<'a> LayoutEngine<'a> {
         extent: Size,
     ) -> Result<LayoutNode> {
         let content = match &node.node_type {
-            FormNodeType::Field { value } => LayoutContent::Field {
-                value: value.clone(),
-            },
-            FormNodeType::Draw { content } => LayoutContent::Text(content.clone()),
+            FormNodeType::Field { value } => {
+                if !value.is_empty() && node.children.is_empty() {
+                    let insets_w = node.box_model.margins.horizontal()
+                        + node.box_model.border_width * 2.0;
+                    let max_w = (extent.width - insets_w).max(0.0);
+                    let wrapped = text::wrap_text(value, max_w, &node.font);
+                    LayoutContent::WrappedText {
+                        lines: wrapped.lines,
+                        font_size: node.font.size,
+                    }
+                } else {
+                    LayoutContent::Field {
+                        value: value.clone(),
+                    }
+                }
+            }
+            FormNodeType::Draw { content } => {
+                if !content.is_empty() && node.children.is_empty() {
+                    let insets_w = node.box_model.margins.horizontal()
+                        + node.box_model.border_width * 2.0;
+                    let max_w = (extent.width - insets_w).max(0.0);
+                    let wrapped = text::wrap_text(content, max_w, &node.font);
+                    LayoutContent::WrappedText {
+                        lines: wrapped.lines,
+                        font_size: node.font.size,
+                    }
+                } else {
+                    LayoutContent::Text(content.clone())
+                }
+            }
             _ => LayoutContent::None,
         };
 
@@ -640,7 +669,7 @@ impl<'a> LayoutEngine<'a> {
             };
         }
 
-        // For growable dimensions, compute from children (with occur expansion)
+        // For growable dimensions, compute from children or text content
         let mut content_size = Size::default();
 
         if !node.children.is_empty() {
@@ -671,6 +700,32 @@ impl<'a> LayoutEngine<'a> {
                     }
                 }
             }
+        } else {
+            // Leaf node: measure text content for Draw/Field nodes
+            let text_content = match &node.node_type {
+                FormNodeType::Draw { content } => Some(content.as_str()),
+                FormNodeType::Field { value } => Some(value.as_str()),
+                _ => None,
+            };
+
+            if let Some(txt) = text_content {
+                if !txt.is_empty() {
+                    let insets_w = bm.margins.horizontal() + bm.border_width * 2.0;
+                    // If width is fixed, wrap text within that width minus insets
+                    // If width is growable, measure without wrapping
+                    let text_size = if let Some(w) = bm.width {
+                        let max_text_width = (w - insets_w).max(0.0);
+                        text::wrap_text(txt, max_text_width, &node.font).size
+                    } else if let Some(avail) = available {
+                        let max_text_width = (avail.width - insets_w).max(0.0);
+                        text::wrap_text(txt, max_text_width, &node.font).size
+                    } else {
+                        text::measure_text(txt, &node.font)
+                    };
+                    content_size.width = content_size.width.max(text_size.width);
+                    content_size.height = content_size.height.max(text_size.height);
+                }
+            }
         }
 
         // When available space is given, growable dims expand to fill it
@@ -697,6 +752,7 @@ struct PageAreaInfo {
 mod tests {
     use super::*;
     use crate::form::Occur;
+    use crate::text::FontMetrics;
     use crate::types::BoxModel;
 
     fn make_field(tree: &mut FormTree, name: &str, w: f64, h: f64) -> FormNodeId {
@@ -715,6 +771,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         })
     }
 
@@ -739,6 +796,7 @@ mod tests {
             layout: strategy,
             children,
             occur: Occur::once(),
+            font: FontMetrics::default(),
         })
     }
 
@@ -762,6 +820,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
         let f2 = tree.add_node(FormNode {
             name: "Field2".to_string(),
@@ -780,6 +839,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
         let root = tree.add_node(FormNode {
             name: "Root".to_string(),
@@ -794,6 +854,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![f1, f2],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -828,6 +889,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1, f2, f3],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -862,6 +924,7 @@ mod tests {
             layout: LayoutStrategy::LeftToRightTB,
             children: vec![f1, f2, f3],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -907,6 +970,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![sub],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -950,6 +1014,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -965,6 +1030,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![page_area, f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1020,6 +1086,7 @@ mod tests {
             layout: LayoutStrategy::RightToLeftTB,
             children: vec![f1, f2],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1054,6 +1121,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1085,6 +1153,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1115,6 +1184,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1, f2],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1145,6 +1215,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1, f2],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1174,6 +1245,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1189,6 +1261,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![growable_sub],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1220,6 +1293,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1235,6 +1309,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![growable_sub],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1271,6 +1346,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1286,6 +1362,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![growable_sub],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1318,6 +1395,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         // Outer container with maxW constraint
@@ -1334,6 +1412,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![inner],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1366,6 +1445,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let f2 = make_field(&mut tree, "F2", 200.0, 30.0);
@@ -1383,6 +1463,7 @@ mod tests {
             layout: LayoutStrategy::LeftToRightTB,
             children: vec![f1, f2],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1416,6 +1497,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1440,6 +1522,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::repeating(1, Some(10), 3),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1455,6 +1538,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1487,6 +1571,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::repeating(1, None, 5),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1502,6 +1587,7 @@ mod tests {
             layout: LayoutStrategy::LeftToRightTB,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1568,6 +1654,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::repeating(1, Some(10), 4),
+            font: FontMetrics::default(),
         });
         let footer = make_field(&mut tree, "Footer", 200.0, 30.0);
 
@@ -1584,6 +1671,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![header, row, footer],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1622,6 +1710,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::repeating(1, None, 5),
+            font: FontMetrics::default(),
         });
 
         let container = tree.add_node(FormNode {
@@ -1637,6 +1726,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![row],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1669,6 +1759,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1, f2],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1700,6 +1791,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: fields,
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1746,6 +1838,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let mut root_children = vec![page_area];
@@ -1764,6 +1857,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: root_children,
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1797,6 +1891,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::repeating(1, None, 8),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1812,6 +1907,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![row],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1843,6 +1939,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1, f2],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1876,6 +1973,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: fields,
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1915,6 +2013,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: sub_children,
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1930,6 +2029,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![header, subform],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -1972,6 +2072,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: sub_children,
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -1987,6 +2088,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![subform],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2022,6 +2124,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let subform = tree.add_node(FormNode {
@@ -2037,6 +2140,7 @@ mod tests {
             layout: LayoutStrategy::Positioned, // can't split
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -2052,6 +2156,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![header, subform],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2079,6 +2184,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let pos_sub = tree.add_node(FormNode {
@@ -2092,6 +2198,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let empty_sub = tree.add_node(FormNode {
@@ -2105,6 +2212,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2146,6 +2254,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -2161,6 +2270,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![page_area, f1, f2],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2207,6 +2317,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let root = tree.add_node(FormNode {
@@ -2222,6 +2333,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: vec![page_area, f1],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2269,6 +2381,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let mut root_children = vec![page_area];
@@ -2287,6 +2400,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: root_children,
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2336,6 +2450,7 @@ mod tests {
             layout: LayoutStrategy::Positioned,
             children: vec![],
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let mut root_children = vec![page_area];
@@ -2354,6 +2469,7 @@ mod tests {
             layout: LayoutStrategy::TopToBottom,
             children: root_children,
             occur: Occur::once(),
+            font: FontMetrics::default(),
         });
 
         let engine = LayoutEngine::new(&tree);
@@ -2368,5 +2484,164 @@ mod tests {
             assert!(has_header, "Page missing header");
             assert!(has_footer, "Page missing footer");
         }
+    }
+
+    // ── Text placement tests ──────────────────────────────────────────
+
+    #[test]
+    fn draw_node_growable_height_from_text() {
+        // A Draw node with fixed width but no height should grow to fit text
+        let mut tree = FormTree::new();
+        let draw = tree.add_node(FormNode {
+            name: "Label".to_string(),
+            node_type: FormNodeType::Draw {
+                content: "Hello World".to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: None, // growable
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(), // 10pt, avg_char_width=0.5
+        });
+        let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![draw]);
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let page = &result.pages[0];
+        let label = &page.nodes[0];
+        // "Hello World" = 11 chars * 10pt * 0.5 = 55pt wide, fits in 200pt
+        // 1 line * 10pt * 1.2 = 12pt tall
+        assert_eq!(label.rect.height, 12.0);
+    }
+
+    #[test]
+    fn draw_node_text_wraps_in_narrow_width() {
+        // A Draw node with narrow width should wrap text and grow taller
+        let mut tree = FormTree::new();
+        let draw = tree.add_node(FormNode {
+            name: "Label".to_string(),
+            node_type: FormNodeType::Draw {
+                content: "Hello World".to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(40.0), // narrow: "Hello" = 25pt fits, "World" wraps
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+        });
+        let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![draw]);
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let label = &result.pages[0].nodes[0];
+        // 2 lines * 12pt = 24pt
+        assert_eq!(label.rect.height, 24.0);
+    }
+
+    #[test]
+    fn field_produces_wrapped_text_content() {
+        let mut tree = FormTree::new();
+        let field = tree.add_node(FormNode {
+            name: "Name".to_string(),
+            node_type: FormNodeType::Field {
+                value: "John".to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(20.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+        });
+        let root = make_subform(&mut tree, "Root", LayoutStrategy::TopToBottom, Some(612.0), Some(792.0), vec![field]);
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let node = &result.pages[0].nodes[0];
+        match &node.content {
+            LayoutContent::WrappedText { lines, font_size } => {
+                assert_eq!(lines.len(), 1);
+                assert_eq!(lines[0], "John");
+                assert_eq!(*font_size, 10.0);
+            }
+            other => panic!("Expected WrappedText, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn draw_growable_width_and_height_from_text() {
+        // Both width and height are growable: should size to text content
+        let mut tree = FormTree::new();
+        let draw = tree.add_node(FormNode {
+            name: "Auto".to_string(),
+            node_type: FormNodeType::Draw {
+                content: "Test".to_string(),
+            },
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let size = engine.compute_extent(draw);
+        // "Test" = 4 * 10 * 0.5 = 20pt wide, 1 line = 12pt tall
+        assert_eq!(size.width, 20.0);
+        assert_eq!(size.height, 12.0);
+    }
+
+    #[test]
+    fn custom_font_size_affects_layout() {
+        let mut tree = FormTree::new();
+        let draw = tree.add_node(FormNode {
+            name: "Big".to_string(),
+            node_type: FormNodeType::Draw {
+                content: "Hi".to_string(),
+            },
+            box_model: BoxModel {
+                width: None,
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::new(20.0), // 20pt font
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let size = engine.compute_extent(draw);
+        // "Hi" = 2 * 20 * 0.5 = 20pt wide, 1 line * 20 * 1.2 = 24pt tall
+        assert_eq!(size.width, 20.0);
+        assert_eq!(size.height, 24.0);
     }
 }
