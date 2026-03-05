@@ -6,6 +6,7 @@ members = [
     "crates/pdfium-ffi-bridge",
     "crates/xfa-cli",
     "crates/xfa-json",
+    "crates/xfa-api-server",
 ]
 resolver = "2"
 
