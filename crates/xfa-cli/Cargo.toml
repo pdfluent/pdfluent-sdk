@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "xfa-collector"
 path = "src/bin/xfa-collector.rs"
 
+[[bin]]
+name = "accuracy-report"
+path = "src/bin/accuracy-report.rs"
+
 [dependencies]
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
@@ -23,3 +27,4 @@ reqwest.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+roxmltree.workspace = true
