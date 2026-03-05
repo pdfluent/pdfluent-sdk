@@ -8,6 +8,7 @@
 //! Reference: PDF/A-2b (ISO 19005-2), §6.2.3 Color Spaces.
 
 use crate::error::{PdfError, Result};
+use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Dictionary, Object, Stream};
 
 /// Detected color space types in a PDF.
@@ -197,31 +198,36 @@ fn classify_color_space_name(name: &[u8]) -> ColorSpaceType {
 
 /// Scan raw content stream bytes for color-setting operators.
 ///
-/// Detects `rg`/`RG` (DeviceRGB), `k`/`K` (DeviceCMYK), `g`/`G` (DeviceGray).
+/// Uses lopdf's content parser to properly detect operators regardless
+/// of whitespace layout. Detects `rg`/`RG` (DeviceRGB), `k`/`K` (DeviceCMYK),
+/// `g`/`G` (DeviceGray).
 fn scan_content_for_colors(content: &[u8], report: &mut ColorSpaceReport) {
-    let text = String::from_utf8_lossy(content);
-    for line in text.lines() {
-        let trimmed = line.trim();
-        // Check for CMYK color operators
-        if trimmed.ends_with(" k") || trimmed.ends_with(" K") {
-            report.uses_cmyk = true;
-            if !report.content_spaces.contains(&ColorSpaceType::DeviceCMYK) {
-                report.content_spaces.push(ColorSpaceType::DeviceCMYK);
+    let ops = match Content::decode(content) {
+        Ok(c) => c.operations,
+        Err(_) => return, // Unparseable content — skip
+    };
+
+    for op in &ops {
+        match op.operator.as_str() {
+            "k" | "K" => {
+                report.uses_cmyk = true;
+                if !report.content_spaces.contains(&ColorSpaceType::DeviceCMYK) {
+                    report.content_spaces.push(ColorSpaceType::DeviceCMYK);
+                }
             }
-        }
-        // Check for RGB color operators
-        if trimmed.ends_with(" rg") || trimmed.ends_with(" RG") {
-            report.uses_device_rgb = true;
-            if !report.content_spaces.contains(&ColorSpaceType::DeviceRGB) {
-                report.content_spaces.push(ColorSpaceType::DeviceRGB);
+            "rg" | "RG" => {
+                report.uses_device_rgb = true;
+                if !report.content_spaces.contains(&ColorSpaceType::DeviceRGB) {
+                    report.content_spaces.push(ColorSpaceType::DeviceRGB);
+                }
             }
-        }
-        // Check for Gray color operators
-        if trimmed.ends_with(" g") || trimmed.ends_with(" G") {
-            report.uses_device_gray = true;
-            if !report.content_spaces.contains(&ColorSpaceType::DeviceGray) {
-                report.content_spaces.push(ColorSpaceType::DeviceGray);
+            "g" | "G" => {
+                report.uses_device_gray = true;
+                if !report.content_spaces.contains(&ColorSpaceType::DeviceGray) {
+                    report.content_spaces.push(ColorSpaceType::DeviceGray);
+                }
             }
+            _ => {}
         }
     }
 }
@@ -368,56 +374,68 @@ pub fn add_srgb_output_intent(doc: &mut lopdf::Document) -> Result<()> {
 
 /// Convert CMYK color operators in content stream bytes to RGB equivalents.
 ///
-/// Replaces:
+/// Uses lopdf's content parser to properly handle operators regardless
+/// of whitespace layout or inline binary data. Replaces:
 /// - `c m y k k` → `r g b rg` (fill color)
 /// - `c m y k K` → `r g b RG` (stroke color)
 ///
-/// Returns the modified content bytes.
+/// Non-CMYK operators pass through unchanged. If the content stream
+/// cannot be parsed, returns the original bytes unmodified.
 pub fn convert_cmyk_to_rgb_in_content(content: &[u8]) -> Vec<u8> {
-    let text = String::from_utf8_lossy(content);
-    let mut output = String::with_capacity(text.len());
+    let parsed = match Content::decode(content) {
+        Ok(c) => c,
+        Err(_) => return content.to_vec(),
+    };
 
-    for line in text.lines() {
-        let trimmed = line.trim();
+    let mut ops: Vec<Operation> = Vec::with_capacity(parsed.operations.len());
 
-        // Match CMYK fill: "c m y k k"
-        if trimmed.ends_with(" k") {
-            if let Some(rgb_line) = convert_cmyk_line(trimmed, "rg") {
-                output.push_str(&rgb_line);
-                output.push('\n');
-                continue;
+    for op in parsed.operations {
+        match op.operator.as_str() {
+            "k" | "K" => {
+                if let Some(converted) = convert_cmyk_op(&op) {
+                    ops.push(converted);
+                } else {
+                    ops.push(op);
+                }
             }
+            _ => ops.push(op),
         }
-
-        // Match CMYK stroke: "c m y k K"
-        if trimmed.ends_with(" K") {
-            if let Some(rgb_line) = convert_cmyk_line(trimmed, "RG") {
-                output.push_str(&rgb_line);
-                output.push('\n');
-                continue;
-            }
-        }
-
-        output.push_str(line);
-        output.push('\n');
     }
 
-    output.into_bytes()
+    let output = Content { operations: ops };
+    output.encode().unwrap_or_else(|_| content.to_vec())
 }
 
-/// Try to convert a CMYK color operator line to RGB.
-fn convert_cmyk_line(line: &str, rgb_op: &str) -> Option<String> {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() == 5 {
-        let c = parts[0].parse::<f64>().ok()?;
-        let m = parts[1].parse::<f64>().ok()?;
-        let y = parts[2].parse::<f64>().ok()?;
-        let k = parts[3].parse::<f64>().ok()?;
+/// Convert a CMYK color operation (k/K) to its RGB equivalent (rg/RG).
+fn convert_cmyk_op(op: &Operation) -> Option<Operation> {
+    if op.operands.len() != 4 {
+        return None;
+    }
 
-        let [r, g, b] = cmyk_to_srgb(c, m, y, k);
-        Some(format!("{r:.3} {g:.3} {b:.3} {rgb_op}"))
-    } else {
-        None
+    let c = obj_to_f64(&op.operands[0])?;
+    let m = obj_to_f64(&op.operands[1])?;
+    let y = obj_to_f64(&op.operands[2])?;
+    let k = obj_to_f64(&op.operands[3])?;
+
+    let [r, g, b] = cmyk_to_srgb(c, m, y, k);
+
+    let rgb_op = if op.operator == "k" { "rg" } else { "RG" };
+    Some(Operation::new(
+        rgb_op,
+        vec![
+            Object::Real(r as f32),
+            Object::Real(g as f32),
+            Object::Real(b as f32),
+        ],
+    ))
+}
+
+/// Extract an f64 from a PDF numeric object.
+fn obj_to_f64(obj: &Object) -> Option<f64> {
+    match obj {
+        Object::Real(f) => Some(*f as f64),
+        Object::Integer(i) => Some(*i as f64),
+        _ => None,
     }
 }
 
@@ -495,9 +513,15 @@ mod tests {
         let result = convert_cmyk_to_rgb_in_content(content);
         let result_str = String::from_utf8(result).unwrap();
 
-        let [r, g, b] = cmyk_to_srgb(0.5, 0.3, 0.1, 0.2);
-        let expected = format!("{r:.3} {g:.3} {b:.3} rg\n");
-        assert_eq!(result_str, expected);
+        // Should produce an rg operator with converted RGB values
+        assert!(result_str.contains("rg"), "Should have rg operator: {result_str}");
+        assert!(!result_str.contains(" k"), "Should not have CMYK k operator: {result_str}");
+
+        // Verify via parsing: output should parse back with rg operator
+        let reparsed = Content::decode(result_str.as_bytes()).unwrap();
+        assert_eq!(reparsed.operations.len(), 1);
+        assert_eq!(reparsed.operations[0].operator, "rg");
+        assert_eq!(reparsed.operations[0].operands.len(), 3);
     }
 
     #[test]
@@ -505,8 +529,19 @@ mod tests {
         let content = b"1.0 0.0 0.0 0.0 K\n";
         let result = convert_cmyk_to_rgb_in_content(content);
         let result_str = String::from_utf8(result).unwrap();
-        assert!(result_str.contains("RG"));
-        assert!(result_str.contains("0.000 1.000 1.000"));
+        assert!(result_str.contains("RG"), "Should have RG operator: {result_str}");
+        assert!(!result_str.contains(" K"), "Should not have CMYK K operator: {result_str}");
+
+        // Pure cyan (C=1) should produce R≈0, G≈1, B≈1
+        let reparsed = Content::decode(result_str.as_bytes()).unwrap();
+        let ops = &reparsed.operations[0];
+        assert_eq!(ops.operator, "RG");
+        let r = obj_to_f64(&ops.operands[0]).unwrap();
+        let g = obj_to_f64(&ops.operands[1]).unwrap();
+        let b = obj_to_f64(&ops.operands[2]).unwrap();
+        assert!(r.abs() < 0.01, "R should be ~0, got {r}");
+        assert!((g - 1.0).abs() < 0.01, "G should be ~1, got {g}");
+        assert!((b - 1.0).abs() < 0.01, "B should be ~1, got {b}");
     }
 
     #[test]
