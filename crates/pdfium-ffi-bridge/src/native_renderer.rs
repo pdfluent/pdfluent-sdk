@@ -126,7 +126,14 @@ fn render_node(
                 draw_filled_rect(img, x, y, w, h, fill);
             }
             let border_gray = (200u8).saturating_sub((depth as u8).min(5) * 15);
-            draw_rect(img, x, y, w, h, Rgba([border_gray, border_gray, border_gray, 255]));
+            draw_rect(
+                img,
+                x,
+                y,
+                w,
+                h,
+                Rgba([border_gray, border_gray, border_gray, 255]),
+            );
         }
     }
 
@@ -302,6 +309,10 @@ mod tests {
         let img = images[0].as_rgba8().unwrap();
         // Check a pixel where the first character should be drawn
         let pixel = img.get_pixel(9, 9);
-        assert_ne!(*pixel, Rgba([255, 255, 255, 255]), "Character area should not be white");
+        assert_ne!(
+            *pixel,
+            Rgba([255, 255, 255, 255]),
+            "Character area should not be white"
+        );
     }
 }

@@ -344,18 +344,86 @@ fn apply_data_dom_values(
     let mut data_values = std::collections::HashMap::new();
     collect_data_values(data_dom, data_root, &mut data_values);
 
-    // Walk all form nodes and apply matching values
+    // Build SOM-path→value map for more precise matching
+    let mut som_values = std::collections::HashMap::new();
+    collect_data_som_paths(data_dom, data_root, "", &mut som_values);
+
+    // Walk all form nodes and apply matching values (prefer SOM path, fallback to bare name)
     let node_ids: Vec<FormNodeId> = collect_all_node_ids(tree, root);
     for node_id in node_ids {
-        let name = tree.get(node_id).name.clone();
         if let FormNodeType::Field { ref value } = tree.get(node_id).node_type {
             if value.is_empty() {
-                if let Some(text) = data_values.get(&name) {
+                let som_path = build_som_path(tree, root, node_id);
+                let matched = som_values
+                    .get(&som_path)
+                    .or_else(|| data_values.get(&tree.get(node_id).name));
+                if let Some(text) = matched {
                     tree.get_mut(node_id).node_type = FormNodeType::Field {
                         value: text.clone(),
                     };
                 }
             }
+        }
+    }
+}
+
+/// Build a dotted SOM path from root to the given node.
+fn build_som_path(
+    tree: &xfa_layout_engine::form::FormTree,
+    root: FormNodeId,
+    target: FormNodeId,
+) -> String {
+    let mut path = Vec::new();
+    if collect_path(tree, root, target, &mut path) {
+        path.iter()
+            .map(|id| tree.get(*id).name.as_str())
+            .collect::<Vec<_>>()
+            .join(".")
+    } else {
+        tree.get(target).name.clone()
+    }
+}
+
+fn collect_path(
+    tree: &xfa_layout_engine::form::FormTree,
+    current: FormNodeId,
+    target: FormNodeId,
+    path: &mut Vec<FormNodeId>,
+) -> bool {
+    path.push(current);
+    if current == target {
+        return true;
+    }
+    let children = tree.get(current).children.clone();
+    for child in children {
+        if collect_path(tree, child, target, path) {
+            return true;
+        }
+    }
+    path.pop();
+    false
+}
+
+/// Collect SOM-style dotted path→value pairs from a DataDom.
+fn collect_data_som_paths(
+    data_dom: &xfa_dom_resolver::data_dom::DataDom,
+    node_id: xfa_dom_resolver::data_dom::DataNodeId,
+    prefix: &str,
+    values: &mut std::collections::HashMap<String, String>,
+) {
+    if let Some(node) = data_dom.get(node_id) {
+        let path = if prefix.is_empty() {
+            node.name().to_string()
+        } else {
+            format!("{}.{}", prefix, node.name())
+        };
+        if node.is_value() && !node.value().is_empty() {
+            values
+                .entry(path.clone())
+                .or_insert_with(|| node.value().to_string());
+        }
+        for &child_id in data_dom.children(node_id) {
+            collect_data_som_paths(data_dom, child_id, &path, values);
         }
     }
 }
@@ -408,6 +476,7 @@ fn build_node_recursive(
             let name = el.attribute("name").unwrap_or("").to_string();
             let layout = parse_layout(el);
             let box_model = parse_box_model(el);
+            let occur = parse_occur(el);
 
             let node_id = tree.add_node(FormNode {
                 name,
@@ -415,7 +484,7 @@ fn build_node_recursive(
                 box_model,
                 layout,
                 children: vec![],
-                occur: Occur::once(),
+                occur,
                 font: FontMetrics::default(),
                 calculate: None,
                 validate: None,
@@ -455,6 +524,34 @@ fn build_node_recursive(
         }
         _ => None,
     }
+}
+
+/// Parse occur settings from a child `<occur>` element.
+fn parse_occur(el: &roxmltree::Node) -> xfa_layout_engine::form::Occur {
+    use xfa_layout_engine::form::Occur;
+
+    for child in el.children().filter(|c| c.is_element()) {
+        if child.tag_name().name() == "occur" {
+            let min = child
+                .attribute("min")
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(1);
+            let max = child.attribute("max").and_then(|s| {
+                let v: i32 = s.parse().ok()?;
+                if v < 0 {
+                    None
+                } else {
+                    Some(v as u32)
+                }
+            });
+            let initial = child
+                .attribute("initial")
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(min);
+            return Occur::repeating(min, max, initial);
+        }
+    }
+    Occur::once()
 }
 
 /// Parse layout strategy from an element.
@@ -504,53 +601,72 @@ fn parse_box_model(el: &roxmltree::Node) -> xfa_layout_engine::types::BoxModel {
 }
 
 /// Convert FormData to a simple XML string for DataDom.
+///
+/// Dotted SOM paths (e.g. "Customer.Name") are expanded into nested elements.
 fn form_data_to_xml(data: &xfa_json::FormData) -> String {
     let mut xml = String::from("<form1>");
     for (key, value) in &data.fields {
-        let text = match value {
-            xfa_json::FieldValue::Text(s) => s.clone(),
-            xfa_json::FieldValue::Number(n) => n.to_string(),
-            xfa_json::FieldValue::Boolean(b) => {
-                if *b {
-                    "1".to_string()
-                } else {
-                    "0".to_string()
-                }
-            }
-            xfa_json::FieldValue::Null => String::new(),
+        match value {
             xfa_json::FieldValue::Array(items) => {
-                // Expand repeating section: each item is a sub-object
+                let leaf = key.rsplit('.').next().unwrap_or(key);
                 for item_map in items {
-                    xml.push_str(&format!("<{key}>"));
+                    xml.push_str(&format!("<{leaf}>"));
                     for (sub_key, sub_value) in item_map {
                         let sub_text = match sub_value {
                             xfa_json::FieldValue::Text(s) => s.clone(),
                             xfa_json::FieldValue::Number(n) => n.to_string(),
                             xfa_json::FieldValue::Boolean(b) => {
-                                if *b { "1".to_string() } else { "0".to_string() }
+                                if *b {
+                                    "1".to_string()
+                                } else {
+                                    "0".to_string()
+                                }
                             }
                             xfa_json::FieldValue::Null => String::new(),
                             xfa_json::FieldValue::Array(_) => continue,
                         };
-                        let escaped = sub_text
-                            .replace('&', "&amp;")
-                            .replace('<', "&lt;")
-                            .replace('>', "&gt;");
+                        let escaped = xml_escape(&sub_text);
                         xml.push_str(&format!("<{sub_key}>{escaped}</{sub_key}>"));
                     }
-                    xml.push_str(&format!("</{key}>"));
+                    xml.push_str(&format!("</{leaf}>"));
                 }
-                continue;
             }
-        };
-        let escaped = text
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;");
-        xml.push_str(&format!("<{key}>{escaped}</{key}>"));
+            _ => {
+                let text = match value {
+                    xfa_json::FieldValue::Text(s) => s.clone(),
+                    xfa_json::FieldValue::Number(n) => n.to_string(),
+                    xfa_json::FieldValue::Boolean(b) => {
+                        if *b {
+                            "1".to_string()
+                        } else {
+                            "0".to_string()
+                        }
+                    }
+                    xfa_json::FieldValue::Null => String::new(),
+                    xfa_json::FieldValue::Array(_) => unreachable!(),
+                };
+                let escaped = xml_escape(&text);
+
+                // Split dotted SOM path into nested elements
+                let segments: Vec<&str> = key.split('.').collect();
+                for seg in &segments {
+                    xml.push_str(&format!("<{seg}>"));
+                }
+                xml.push_str(&escaped);
+                for seg in segments.iter().rev() {
+                    xml.push_str(&format!("</{seg}>"));
+                }
+            }
+        }
     }
     xml.push_str("</form1>");
     xml
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Count the number of fields in a JSON value.
@@ -684,10 +800,16 @@ mod tests {
             fields: indexmap::IndexMap::new(),
         };
         let mut row1 = indexmap::IndexMap::new();
-        row1.insert("Item".to_string(), xfa_json::FieldValue::Text("A".to_string()));
+        row1.insert(
+            "Item".to_string(),
+            xfa_json::FieldValue::Text("A".to_string()),
+        );
         row1.insert("Qty".to_string(), xfa_json::FieldValue::Number(2.0));
         let mut row2 = indexmap::IndexMap::new();
-        row2.insert("Item".to_string(), xfa_json::FieldValue::Text("B".to_string()));
+        row2.insert(
+            "Item".to_string(),
+            xfa_json::FieldValue::Text("B".to_string()),
+        );
         row2.insert("Qty".to_string(), xfa_json::FieldValue::Number(5.0));
         data.fields.insert(
             "Line".to_string(),
@@ -695,7 +817,13 @@ mod tests {
         );
 
         let xml = form_data_to_xml(&data);
-        assert!(xml.contains("<Line><Item>A</Item><Qty>2</Qty></Line>"), "Row 1: {xml}");
-        assert!(xml.contains("<Line><Item>B</Item><Qty>5</Qty></Line>"), "Row 2: {xml}");
+        assert!(
+            xml.contains("<Line><Item>A</Item><Qty>2</Qty></Line>"),
+            "Row 1: {xml}"
+        );
+        assert!(
+            xml.contains("<Line><Item>B</Item><Qty>5</Qty></Line>"),
+            "Row 2: {xml}"
+        );
     }
 }

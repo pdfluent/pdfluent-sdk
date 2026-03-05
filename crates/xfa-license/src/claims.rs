@@ -206,7 +206,12 @@ pub struct LicenseClaims {
 
 impl LicenseClaims {
     /// Create claims for a customer with tier defaults.
-    pub fn new(customer_id: impl Into<String>, tier: Tier, issued_at: u64, expires_at: u64) -> Self {
+    pub fn new(
+        customer_id: impl Into<String>,
+        tier: Tier,
+        issued_at: u64,
+        expires_at: u64,
+    ) -> Self {
         Self {
             customer_id: customer_id.into(),
             tier,

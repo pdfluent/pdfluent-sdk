@@ -106,7 +106,8 @@ echo ""
 
 for pdf in "${PDF_FILES[@]}"; do
     TOTAL=$((TOTAL + 1))
-    basename=$(basename "$pdf" .pdf)
+    # Use path-based name to avoid collisions between dirs
+    basename=$(echo "$pdf" | sed 's|/|_|g; s|\.pdf$||')
     report_file="${OUTPUT_DIR}/${basename}.${FORMAT}"
 
     printf "  %-50s " "$pdf"
@@ -165,7 +166,7 @@ cat > "${OUTPUT_DIR}/summary.json" <<SUMMARY
   "failed": ${FAILED},
   "errors": ${ERRORS},
   "pass_rate": ${PASS_RATE:-0},
-  "failed_files": [$(printf '"%s",' "${FAILED_FILES[@]}" 2>/dev/null | sed 's/,$//' || echo "")]
+  "failed_files": [$(if [[ ${#FAILED_FILES[@]} -gt 0 ]]; then printf '"%s",' "${FAILED_FILES[@]}" | sed 's/,$//'; fi)]
 }
 SUMMARY
 

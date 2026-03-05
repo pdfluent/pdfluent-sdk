@@ -146,10 +146,7 @@ fn spec_var_assignment() {
 
 #[test]
 fn spec_if_simple() {
-    assert_eq!(
-        run_f64("if 1 then\n  42\nendif"),
-        42.0
-    );
+    assert_eq!(run_f64("if 1 then\n  42\nendif"), 42.0);
 }
 
 #[test]
@@ -205,7 +202,8 @@ fn spec_if_nested() {
 
 #[test]
 fn spec_while_basic() {
-    let script = "var i = 0\nvar sum = 0\nwhile i < 5 do\n  i = i + 1\n  sum = sum + i\nendwhile\nsum";
+    let script =
+        "var i = 0\nvar sum = 0\nwhile i < 5 do\n  i = i + 1\n  sum = sum + i\nendwhile\nsum";
     assert_eq!(run_f64(script), 15.0);
 }
 
@@ -506,10 +504,7 @@ fn spec_builtin_stuff() {
         run_str(r#"Stuff("hello world", 7, 5, "there")"#),
         "hello there"
     );
-    assert_eq!(
-        run_str(r#"Stuff("abcdef", 3, 2, "XY")"#),
-        "abXYef"
-    );
+    assert_eq!(run_str(r#"Stuff("abcdef", 3, 2, "XY")"#), "abXYef");
 }
 
 #[test]

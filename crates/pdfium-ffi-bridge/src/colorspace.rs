@@ -46,8 +46,7 @@ impl ColorSpaceReport {
     /// - Device-dependent colors are used without an sRGB output intent
     pub fn needs_conversion(&self) -> bool {
         self.uses_cmyk
-            || ((self.uses_device_rgb || self.uses_device_gray)
-                && !self.has_srgb_output_intent)
+            || ((self.uses_device_rgb || self.uses_device_gray) && !self.has_srgb_output_intent)
     }
 }
 
@@ -116,7 +115,21 @@ fn has_srgb_output_intent(doc: &lopdf::Document) -> bool {
 
         if let Ok(Object::Name(subtype)) = intent_dict.get(b"S") {
             if subtype == b"GTS_PDFA1" {
-                return true;
+                // Verify the profile is actually sRGB by checking the ICC stream color space
+                let has_rgb_profile = match intent_dict.get(b"DestOutputProfile") {
+                    Ok(Object::Reference(r)) => match doc.get_object(*r) {
+                        Ok(Object::Stream(s)) => {
+                            // ICC profile: color space at offset 16..20 should be "RGB "
+                            let data = &s.content;
+                            data.len() >= 20 && &data[16..20] == b"RGB "
+                        }
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if has_rgb_profile {
+                    return true;
+                }
             }
         }
     }
@@ -125,7 +138,11 @@ fn has_srgb_output_intent(doc: &lopdf::Document) -> bool {
 }
 
 /// Scan page resource dictionaries for color space declarations.
-fn scan_page_resources(doc: &lopdf::Document, page_dict: &Dictionary, report: &mut ColorSpaceReport) {
+fn scan_page_resources(
+    doc: &lopdf::Document,
+    page_dict: &Dictionary,
+    report: &mut ColorSpaceReport,
+) {
     let resources = match page_dict.get(b"Resources") {
         Ok(Object::Dictionary(d)) => d,
         Ok(Object::Reference(r)) => match doc.get_object(*r) {
@@ -299,9 +316,9 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
     profile.extend_from_slice(&[0u8; 4]);
     // PCS illuminant (D50): X=0.9642, Y=1.0000, Z=0.8249
     profile.extend_from_slice(&[0, 0, 0xF6, 0xD6]); // X
-    profile.extend_from_slice(&[0, 1, 0, 0]);         // Y
-    profile.extend_from_slice(&[0, 0, 0xD3, 0x2D]);   // Z
-    // Profile creator
+    profile.extend_from_slice(&[0, 1, 0, 0]); // Y
+    profile.extend_from_slice(&[0, 0, 0xD3, 0x2D]); // Z
+                                                    // Profile creator
     profile.extend_from_slice(b"    ");
     // Profile ID (MD5, zeros)
     profile.extend_from_slice(&[0u8; 16]);
@@ -357,16 +374,16 @@ pub fn add_srgb_output_intent(doc: &mut lopdf::Document) -> Result<()> {
     // Add OutputIntents to catalog
     let catalog_id = match doc.trailer.get(b"Root") {
         Ok(Object::Reference(id)) => *id,
-        _ => {
-            return Err(PdfError::LoadFailed(
-                "no Root in trailer".to_string(),
-            ))
-        }
+        _ => return Err(PdfError::LoadFailed("no Root in trailer".to_string())),
     };
 
     if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(catalog_id) {
-        let intents = Object::Array(vec![Object::Reference(intent_id)]);
-        catalog.set("OutputIntents", intents);
+        let mut existing = match catalog.get(b"OutputIntents") {
+            Ok(Object::Array(arr)) => arr.clone(),
+            _ => Vec::new(),
+        };
+        existing.push(Object::Reference(intent_id));
+        catalog.set("OutputIntents", Object::Array(existing));
     }
 
     Ok(())
@@ -514,8 +531,14 @@ mod tests {
         let result_str = String::from_utf8(result).unwrap();
 
         // Should produce an rg operator with converted RGB values
-        assert!(result_str.contains("rg"), "Should have rg operator: {result_str}");
-        assert!(!result_str.contains(" k"), "Should not have CMYK k operator: {result_str}");
+        assert!(
+            result_str.contains("rg"),
+            "Should have rg operator: {result_str}"
+        );
+        assert!(
+            !result_str.contains(" k"),
+            "Should not have CMYK k operator: {result_str}"
+        );
 
         // Verify via parsing: output should parse back with rg operator
         let reparsed = Content::decode(result_str.as_bytes()).unwrap();
@@ -529,8 +552,14 @@ mod tests {
         let content = b"1.0 0.0 0.0 0.0 K\n";
         let result = convert_cmyk_to_rgb_in_content(content);
         let result_str = String::from_utf8(result).unwrap();
-        assert!(result_str.contains("RG"), "Should have RG operator: {result_str}");
-        assert!(!result_str.contains(" K"), "Should not have CMYK K operator: {result_str}");
+        assert!(
+            result_str.contains("RG"),
+            "Should have RG operator: {result_str}"
+        );
+        assert!(
+            !result_str.contains(" K"),
+            "Should not have CMYK K operator: {result_str}"
+        );
 
         // Pure cyan (C=1) should produce R≈0, G≈1, B≈1
         let reparsed = Content::decode(result_str.as_bytes()).unwrap();
@@ -642,7 +671,10 @@ mod tests {
     #[test]
     fn icc_profile_valid_header() {
         let profile = srgb_icc_profile_bytes();
-        assert!(profile.len() >= 128, "ICC profile must be at least 128 bytes");
+        assert!(
+            profile.len() >= 128,
+            "ICC profile must be at least 128 bytes"
+        );
 
         // Check signature at offset 36: 'acsp'
         assert_eq!(&profile[36..40], b"acsp");
