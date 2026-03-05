@@ -255,6 +255,7 @@ fn remove_fieldmdp_by_info(reader: &mut PdfReader, info: &FieldMdpInfo) -> Resul
         Ok(Object::Reference(r)) => Some(*r),
         _ => None,
     };
+    let acroform_is_inline = matches!(catalog.get(b"AcroForm"), Ok(Object::Dictionary(_)));
 
     // Collect page annotation removals
     let page_annot_removals = collect_page_annotation_refs(doc, info.field_object_id);
@@ -264,15 +265,19 @@ fn remove_fieldmdp_by_info(reader: &mut PdfReader, info: &FieldMdpInfo) -> Resul
 
     // 1. Remove field from AcroForm.Fields
     if let Some(af_ref) = acroform_ref {
+        // AcroForm is an indirect reference
         if let Ok(Object::Dictionary(ref mut af)) = doc.get_object_mut(af_ref) {
             if let Ok(Object::Array(ref mut fields)) = af.get_mut(b"Fields") {
-                fields.retain(|f| {
-                    if let Object::Reference(r) = f {
-                        *r != info.field_object_id
-                    } else {
-                        true
-                    }
-                });
+                fields.retain(|f| !matches!(f, Object::Reference(r) if *r == info.field_object_id));
+            }
+        }
+    } else if acroform_is_inline {
+        // AcroForm is inline in the catalog dictionary
+        if let Ok(Object::Dictionary(ref mut cat)) = doc.get_object_mut(catalog_ref) {
+            if let Ok(Object::Dictionary(ref mut af)) = cat.get_mut(b"AcroForm") {
+                if let Ok(Object::Array(ref mut fields)) = af.get_mut(b"Fields") {
+                    fields.retain(|f| !matches!(f, Object::Reference(r) if *r == info.field_object_id));
+                }
             }
         }
     }
@@ -287,15 +292,28 @@ fn remove_fieldmdp_by_info(reader: &mut PdfReader, info: &FieldMdpInfo) -> Resul
 
     // 4. Remove annotations from pages
     for (page_id, annot_id) in page_annot_removals {
-        if let Ok(Object::Dictionary(ref mut page)) = doc.get_object_mut(page_id) {
-            if let Ok(Object::Array(ref mut annots)) = page.get_mut(b"Annots") {
-                annots.retain(|a| {
-                    if let Object::Reference(r) = a {
-                        *r != annot_id
-                    } else {
-                        true
-                    }
-                });
+        // Check if Annots is indirect
+        let annots_ref = if let Ok(Object::Dictionary(page)) = doc.get_object(page_id) {
+            if let Ok(Object::Reference(r)) = page.get(b"Annots") {
+                Some(*r)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(annots_id) = annots_ref {
+            // Annots is indirect — mutate the target array object
+            if let Ok(Object::Array(ref mut annots)) = doc.get_object_mut(annots_id) {
+                annots.retain(|a| !matches!(a, Object::Reference(r) if *r == annot_id));
+            }
+        } else {
+            // Annots is inline in the page dictionary
+            if let Ok(Object::Dictionary(ref mut page)) = doc.get_object_mut(page_id) {
+                if let Ok(Object::Array(ref mut annots)) = page.get_mut(b"Annots") {
+                    annots.retain(|a| !matches!(a, Object::Reference(r) if *r == annot_id));
+                }
             }
         }
     }
@@ -422,8 +440,13 @@ fn collect_page_annotation_refs(
             continue;
         }
 
+        // Dereference Annots — may be inline array or indirect reference
         let annots = match page_dict.get(b"Annots") {
             Ok(Object::Array(a)) => a,
+            Ok(Object::Reference(r)) => match doc.get_object(*r) {
+                Ok(Object::Array(a)) => a,
+                _ => continue,
+            },
             _ => continue,
         };
 
