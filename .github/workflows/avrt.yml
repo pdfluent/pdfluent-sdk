@@ -13,11 +13,11 @@ on:
       threshold:
         description: 'Max pixel diff percentage'
         default: '1.0'
+        type: string
 
 permissions:
   contents: read
   pull-requests: write
-        type: string
 
 jobs:
   visual-regression:
