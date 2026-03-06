@@ -41,6 +41,11 @@ members = [
     # --- Data exchange + EU compliance (Fase O) ---
     "crates/pdf-invoice",
 
+    # --- Content intelligence (Fase N) ---
+    "crates/pdf-extract",
+    "crates/pdf-redact",
+    "crates/pdf-ocr",
+
     # --- Benchmarks ---
     "crates/pdf-bench",
 ]
@@ -90,3 +95,8 @@ pdf-engine = { path = "crates/pdf-engine" }
 pdf-compliance = { path = "crates/pdf-compliance" }
 pdf-manip = { path = "crates/pdf-manip" }
 pdf-invoice = { path = "crates/pdf-invoice" }
+
+# Content intelligence (Fase N)
+pdf-extract = { path = "crates/pdf-extract" }
+pdf-redact = { path = "crates/pdf-redact" }
+pdf-ocr = { path = "crates/pdf-ocr" }
