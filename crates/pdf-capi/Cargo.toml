@@ -3,9 +3,10 @@ name = "pdf-capi"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "C-compatible API for the PDF engine."
+description = "C-compatible API for the PDF engine (PDFium-compatible interface)."
 
 [lib]
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "lib"]
 
 [dependencies]
+pdf-engine = { path = "../pdf-engine" }
