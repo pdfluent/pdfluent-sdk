@@ -3,6 +3,11 @@ name = "pdf-sign"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "PDF digital signature validation and signing."
+description = "PDF digital signature validation — PAdES, CMS, certificate chain, DocMDP/FieldMDP, LTV."
 
 [dependencies]
+pdf-syntax = { path = "../pdf-syntax" }
+log = "0.4"
+sha2 = "0.10"
+sha1 = "0.10"
+digest = "0.10"
