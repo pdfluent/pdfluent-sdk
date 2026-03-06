@@ -4,5 +4,10 @@
 .DS_Store
 *.pdf
 !/tests/fixtures/*.pdf
+!/corpus/*.pdf
 /reports/
+/renders/
 /crates/xfa-wasm/pkg/
+/fuzz/artifacts/
+/fuzz/corpus/*/
+!/fuzz/corpus/*/seed_*

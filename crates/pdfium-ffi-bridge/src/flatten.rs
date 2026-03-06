@@ -69,11 +69,25 @@ pub fn flatten_to_pdf(layout: &LayoutDom, config: &FlattenConfig) -> Result<Vec<
     let mut doc = lopdf::Document::new();
     let mut page_ids = Vec::new();
 
+    // For PDF/A: embed the font once, share across all pages/XObjects.
+    let embedded_font_id = if config.pdfa {
+        embed_font_for_pdfa(&mut doc, &config.appearance.default_font)
+    } else {
+        None
+    };
+
     for page in &layout.pages {
         let appearances = generate_appearances(&page.nodes, &config.appearance)
             .map_err(|e| PdfError::RenderError(format!("appearances: {e}")))?;
 
-        let page_id = build_page(&mut doc, page.width, page.height, &appearances, config)?;
+        let page_id = build_page(
+            &mut doc,
+            page.width,
+            page.height,
+            &appearances,
+            config,
+            embedded_font_id,
+        )?;
         page_ids.push(page_id);
     }
 
@@ -122,6 +136,13 @@ pub fn flatten_into_pdf(
     let mut fields_flattened = 0;
     let mut streams_generated = 0;
 
+    // For PDF/A: embed the font once, share across all pages/XObjects.
+    let embedded_font_id = if config.pdfa {
+        embed_font_for_pdfa(doc, &config.appearance.default_font)
+    } else {
+        None
+    };
+
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
 
     for (page_idx, page) in layout.pages.iter().enumerate() {
@@ -154,8 +175,13 @@ pub fn flatten_into_pdf(
         let appearances = generate_appearances(&page.nodes, &config.appearance)
             .map_err(|e| PdfError::RenderError(format!("appearances: {e}")))?;
 
-        let (content_stream, xobject_dict, font_dict, count) =
-            build_content_stream(doc, actual_page_height, &appearances, config)?;
+        let (content_stream, xobject_dict, font_dict, count) = build_content_stream(
+            doc,
+            actual_page_height,
+            &appearances,
+            config,
+            embedded_font_id,
+        )?;
 
         let content_id = doc.add_object(Object::Stream(content_stream));
 
@@ -202,9 +228,10 @@ fn build_page(
     height: f64,
     appearances: &[(String, f64, f64, AppearanceStream)],
     config: &FlattenConfig,
+    embedded_font_id: Option<ObjectId>,
 ) -> Result<ObjectId> {
     let (content_stream, xobject_dict, font_dict, _) =
-        build_content_stream(doc, height, appearances, config)?;
+        build_content_stream(doc, height, appearances, config, embedded_font_id)?;
 
     let content_id = doc.add_object(Object::Stream(content_stream));
 
@@ -239,6 +266,7 @@ fn build_content_stream(
     page_height: f64,
     appearances: &[(String, f64, f64, AppearanceStream)],
     config: &FlattenConfig,
+    embedded_font_id: Option<ObjectId>,
 ) -> Result<(Stream, Dictionary, Dictionary, usize)> {
     let mut ops = Vec::new();
     let mut xobject_dict = Dictionary::new();
@@ -249,7 +277,7 @@ fn build_content_stream(
         let xobject_name = format!("XF{idx}");
 
         // Build Form XObject from the appearance stream
-        let xobject = build_form_xobject(appearance, config.compress);
+        let xobject = build_form_xobject(appearance, config.compress, embedded_font_id);
         let xobject_id = doc.add_object(Object::Stream(xobject));
         xobject_dict.set(
             xobject_name.as_bytes().to_vec(),
@@ -259,12 +287,8 @@ fn build_content_stream(
         // Collect font resources
         for (res_name, font_name) in &appearance.font_resources {
             if font_seen.insert(res_name.clone()) {
-                let font_obj = dictionary! {
-                    "Type" => Object::Name(b"Font".to_vec()),
-                    "Subtype" => Object::Name(b"Type1".to_vec()),
-                    "BaseFont" => Object::Name(font_name.as_bytes().to_vec()),
-                };
-                font_dict.set(res_name.as_bytes().to_vec(), Object::Dictionary(font_obj));
+                let font_obj = make_font_object(font_name, embedded_font_id);
+                font_dict.set(res_name.as_bytes().to_vec(), font_obj);
             }
         }
 
@@ -314,19 +338,19 @@ fn build_content_stream(
 }
 
 /// Build a PDF Form XObject stream from an AppearanceStream.
-fn build_form_xobject(appearance: &AppearanceStream, compress: bool) -> Stream {
+fn build_form_xobject(
+    appearance: &AppearanceStream,
+    compress: bool,
+    embedded_font_id: Option<ObjectId>,
+) -> Stream {
     let [bx, by, bw, bh] = appearance.bbox;
     let bbox = vec![bx.into(), by.into(), bw.into(), bh.into()];
 
     // Build font resources for the XObject
     let mut font_dict = Dictionary::new();
     for (res_name, font_name) in &appearance.font_resources {
-        let font_obj = dictionary! {
-            "Type" => Object::Name(b"Font".to_vec()),
-            "Subtype" => Object::Name(b"Type1".to_vec()),
-            "BaseFont" => Object::Name(font_name.as_bytes().to_vec()),
-        };
-        font_dict.set(res_name.as_bytes().to_vec(), Object::Dictionary(font_obj));
+        let font_obj = make_font_object(font_name, embedded_font_id);
+        font_dict.set(res_name.as_bytes().to_vec(), font_obj);
     }
 
     let mut resources = Dictionary::new();
@@ -349,6 +373,131 @@ fn build_form_xobject(appearance: &AppearanceStream, compress: bool) -> Stream {
     stream
 }
 
+/// Build a font Object: either a reference to an embedded font or an inline Type1 dict.
+fn make_font_object(font_name: &str, embedded_font_id: Option<ObjectId>) -> Object {
+    if let Some(font_id) = embedded_font_id {
+        Object::Reference(font_id)
+    } else {
+        Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Font".to_vec()),
+            "Subtype" => Object::Name(b"Type1".to_vec()),
+            "BaseFont" => Object::Name(font_name.as_bytes().to_vec()),
+        })
+    }
+}
+
+/// Embed a system font into the document for PDF/A compliance.
+///
+/// Finds the font on the system via `FontResolver`, embeds it as TrueType
+/// with a complete `FontDescriptor` + `FontFile2`, and returns the font
+/// object's ID for shared referencing across pages and XObjects.
+fn embed_font_for_pdfa(doc: &mut lopdf::Document, font_name: &str) -> Option<ObjectId> {
+    let mut resolver = crate::font::FontResolver::new();
+    let loaded = resolver.resolve(font_name, false, false)?;
+
+    let raw_data = loaded.raw_data().to_vec();
+    let units_per_em = loaded.units_per_em;
+    let ascender = loaded.ascender;
+    let descender = loaded.descender;
+    let scale = 1000.0 / units_per_em as f64;
+
+    // Build widths for WinAnsiEncoding range (32..=255).
+    // WinAnsiEncoding maps code points 128-159 to specific Unicode characters
+    // (e.g. 128 → U+20AC Euro sign), not to U+0080-U+009F control chars.
+    // We must use the correct Unicode mapping to get consistent glyph widths.
+    let first_char: i64 = 32;
+    let last_char: i64 = 255;
+    let widths: Vec<Object> = (first_char..=last_char)
+        .map(|cp| {
+            let unicode = winansi_to_unicode(cp as u8);
+            // Undefined positions (U+FFFD) get width 0 — they should never render.
+            let w = if unicode == '\u{FFFD}' {
+                0
+            } else {
+                loaded.char_advance(unicode)
+            };
+            Object::Integer((w as f64 * scale).round() as i64)
+        })
+        .collect();
+
+    let postscript_name = loaded
+        .postscript_name
+        .clone()
+        .unwrap_or_else(|| font_name.to_string());
+
+    // Drop the borrow on resolver before mutating doc.
+    drop(resolver);
+
+    // Embed the raw TrueType font data.
+    let font_stream = Stream::new(
+        dictionary! {
+            "Length1" => Object::Integer(raw_data.len() as i64),
+        },
+        raw_data,
+    );
+    let font_file_id = doc.add_object(Object::Stream(font_stream));
+
+    // FontDescriptor (ISO 32000-1:2008, Table 122).
+    let descriptor = dictionary! {
+        "Type" => Object::Name(b"FontDescriptor".to_vec()),
+        "FontName" => Object::Name(postscript_name.as_bytes().to_vec()),
+        "Flags" => Object::Integer(32), // Nonsymbolic
+        "FontBBox" => Object::Array(vec![
+            Object::Integer(-200),
+            Object::Integer((descender as f64 * scale).round() as i64),
+            Object::Integer(1200),
+            Object::Integer((ascender as f64 * scale).round() as i64),
+        ]),
+        "ItalicAngle" => Object::Integer(0),
+        "Ascent" => Object::Integer((ascender as f64 * scale).round() as i64),
+        "Descent" => Object::Integer((descender as f64 * scale).round() as i64),
+        "CapHeight" => Object::Integer(700),
+        "StemV" => Object::Integer(80),
+        "FontFile2" => Object::Reference(font_file_id),
+    };
+    let descriptor_id = doc.add_object(Object::Dictionary(descriptor));
+
+    // Complete TrueType font dictionary.
+    let font = dictionary! {
+        "Type" => Object::Name(b"Font".to_vec()),
+        "Subtype" => Object::Name(b"TrueType".to_vec()),
+        "BaseFont" => Object::Name(postscript_name.as_bytes().to_vec()),
+        "FirstChar" => Object::Integer(first_char),
+        "LastChar" => Object::Integer(last_char),
+        "Widths" => Object::Array(widths),
+        "FontDescriptor" => Object::Reference(descriptor_id),
+        "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+    };
+    let font_id = doc.add_object(Object::Dictionary(font));
+
+    Some(font_id)
+}
+
+/// Map a WinAnsiEncoding code point (0-255) to its Unicode character.
+///
+/// Code points 32-127 and 160-255 map directly to their Unicode equivalents
+/// (Latin-1 / ISO 8859-1). Code points 128-159 map to specific characters
+/// per the PDF spec (ISO 32000-1:2008, Annex D, Table D.1).
+fn winansi_to_unicode(code: u8) -> char {
+    #[rustfmt::skip]
+    const WIN_ANSI_128_159: [char; 32] = [
+        '\u{20AC}', '\u{FFFD}', '\u{201A}', '\u{0192}', // 128-131
+        '\u{201E}', '\u{2026}', '\u{2020}', '\u{2021}', // 132-135
+        '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', // 136-139
+        '\u{0152}', '\u{FFFD}', '\u{017D}', '\u{FFFD}', // 140-143
+        '\u{FFFD}', '\u{2018}', '\u{2019}', '\u{201C}', // 144-147
+        '\u{201D}', '\u{2022}', '\u{2013}', '\u{2014}', // 148-151
+        '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}', // 152-155
+        '\u{0153}', '\u{FFFD}', '\u{017E}', '\u{0178}', // 156-159
+    ];
+
+    if (128..=159).contains(&code) {
+        WIN_ANSI_128_159[(code - 128) as usize]
+    } else {
+        char::from(code)
+    }
+}
+
 /// Build a Pages dictionary for the document.
 fn build_pages_dict(page_ids: &[ObjectId]) -> Dictionary {
     let kids: Vec<Object> = page_ids.iter().map(|id| Object::Reference(*id)).collect();
@@ -367,6 +516,7 @@ fn build_pages_dict(page_ids: &[ObjectId]) -> Dictionary {
 /// 3. Convert CMYK colors to sRGB in content streams
 /// 4. Remove JavaScript and additional actions
 /// 5. Remove embedded files
+/// 6. Add file identifier to trailer (ISO 32000-1:2008, 14.4)
 fn apply_pdfa2b(doc: &mut lopdf::Document) -> Result<()> {
     // 1. XMP metadata
     crate::xmp::inject_pdfa2b_metadata(doc, "XFA Flattened Document")?;
@@ -396,7 +546,41 @@ fn apply_pdfa2b(doc: &mut lopdf::Document) -> Result<()> {
     // 5. Remove embedded files
     crate::pdfa_sanitize::remove_embedded_files(doc);
 
+    // 6. File identifier (PDF/A-2b §6.1.3)
+    inject_file_id(doc);
+
     Ok(())
+}
+
+/// Inject a file identifier array into the document trailer.
+///
+/// PDF/A-2b requires the trailer to contain an `ID` key with two byte strings
+/// (ISO 32000-1:2008, §14.4). We generate a deterministic ID based on the
+/// current timestamp and a fixed salt.
+fn inject_file_id(doc: &mut lopdf::Document) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let hash = simple_hash(seed);
+
+    let id_bytes = hash.to_be_bytes().to_vec();
+    let id_string = Object::String(id_bytes.clone(), lopdf::StringFormat::Literal);
+    doc.trailer
+        .set("ID", Object::Array(vec![id_string.clone(), id_string]));
+}
+
+/// Simple non-cryptographic hash for generating file IDs.
+fn simple_hash(seed: u128) -> u128 {
+    let mut h = seed;
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xff51afd7ed558ccd);
+    h ^= h >> 33;
+    h = h.wrapping_mul(0xc4ceb9fe1a85ec53);
+    h ^= h >> 33;
+    h
 }
 
 /// Remove XFA metadata and optionally AcroForm from the document catalog.

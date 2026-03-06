@@ -50,6 +50,21 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
+      - name: Run benchmarks
+        run: |
+          cargo bench --package pdf-bench -- --output-format bencher 2>&1 | tee reports/bench-results.txt || true
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-benchmark-results
+          path: |
+            reports/bench-results.txt
+            target/criterion/
+          retention-days: 90
+          if-no-files-found: ignore
+
   conformance:
     name: Nightly Conformance (veraPDF)
     runs-on: ubuntu-latest

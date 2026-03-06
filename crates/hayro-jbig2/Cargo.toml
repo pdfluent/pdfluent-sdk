@@ -1,0 +1,17 @@
+[package]
+name = "hayro-jbig2"
+version = "0.1.0"
+description = "A memory-safe, pure-Rust JBIG2 decoder."
+authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+hayro-ccitt = { path = "../hayro-ccitt" }
+
+[lints.clippy]
+too_many_arguments = "allow"

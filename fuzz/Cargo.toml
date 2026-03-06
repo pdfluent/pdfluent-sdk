@@ -1,0 +1,56 @@
+[package]
+name = "xfa-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pdf-syntax = { path = "../crates/pdf-syntax", features = ["std", "images"] }
+xfa-dom-resolver = { path = "../crates/xfa-dom-resolver" }
+formcalc-interpreter = { path = "../crates/formcalc-interpreter" }
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_pdf_parser"
+path = "fuzz_targets/fuzz_pdf_parser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_content_stream"
+path = "fuzz_targets/fuzz_content_stream.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_xref"
+path = "fuzz_targets/fuzz_xref.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_filters"
+path = "fuzz_targets/fuzz_filters.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_data_dom"
+path = "fuzz_targets/fuzz_data_dom.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_formcalc"
+path = "fuzz_targets/fuzz_formcalc.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_som_path"
+path = "fuzz_targets/fuzz_som_path.rs"
+doc = false

@@ -1,0 +1,23 @@
+[package]
+name = "hayro-jpeg2000"
+version = "0.3.2"
+description = "A memory-safe, pure-Rust JPEG 2000 decoder."
+authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
+log = { version = "0.4", optional = true }
+fearless_simd = { version = "0.3.0", optional = true }
+image = { version = "0.25", default-features = false, optional = true }
+moxcms = { version = "0.7.11", optional = true }
+
+[features]
+default = ["std", "simd", "image"]
+std = []
+simd = ["fearless_simd", "std"]
+image = ["dep:image", "dep:moxcms", "std"]
+logging = ["dep:log"]
+
+[lints.clippy]
+too_many_arguments = "allow"

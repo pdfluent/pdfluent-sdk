@@ -1,0 +1,32 @@
+[package]
+name = "pdf-interpret"
+version = "0.5.0"
+description = "A crate for interpreting PDF files."
+edition = "2024"
+authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
+repository = "https://github.com/LaurenzV/hayro"
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
+pdf-font = { path = "../pdf-font" }
+pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"] }
+kurbo = "0.13.0"
+smallvec = "1"
+log = "0.4"
+moxcms = "0.7.11"
+phf = { version = "0.13.1", features = ["macros"] }
+skrifa = "0.40.0"
+yoke = { version = "0.8", features = ["derive"] }
+siphasher = "1"
+bitflags = "2.10"
+rustc-hash = "2"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[features]
+default = ["embed-fonts", "embed-cmaps"]
+# Embed a light-weight set of fonts (around 240KB) that can be used as a substitute for the 14 PDF standard fonts.
+embed-fonts = []
+# Embed the 61 predefined cmaps into the binary. Adds about ~250KB of brotli-encoded data.
+embed-cmaps = ["pdf-font/embed-cmaps"]

@@ -1,0 +1,18 @@
+[package]
+name = "pdf-font"
+version = "0.1.0"
+description = "PDF font handling: CFF/Type1 parsing, CMap parsing, and PostScript scanning."
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
+repository = "https://github.com/LaurenzV/hayro"
+
+[features]
+default = ["std", "embed-cmaps"]
+std = []
+embed-cmaps = ["std", "dep:brotli"]
+
+[dependencies]
+log = "0.4"
+phf = { version = "0.13.1", features = ["macros"] }
+brotli = { version = "8", default-features = false, features = ["std"], optional = true }
