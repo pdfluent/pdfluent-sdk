@@ -6,3 +6,4 @@ license = "MIT"
 description = "AcroForm engine for PDF interactive forms."
 
 [dependencies]
+thiserror = { workspace = true }
