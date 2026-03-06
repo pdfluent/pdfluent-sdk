@@ -636,3 +636,133 @@ fn flatten_uncompressed_contains_readable_operators() {
         "Uncompressed PDF should have readable XObject references"
     );
 }
+
+// ── PDF/A-2b compliance tests ────────────────────────────────────────
+
+#[test]
+fn flatten_pdfa_has_xmp_metadata() {
+    let mut tree = FormTree::new();
+    let f1 = tree.add_node(default_field("Name", "Alice", 20.0, 20.0));
+    let root = tree.add_node(subform("form1", vec![f1], LayoutStrategy::Positioned));
+
+    let config = FlattenConfig {
+        pdfa: true,
+        ..Default::default()
+    };
+    let pdf_bytes = flatten_form_tree(&mut tree, root, &config).unwrap();
+    let doc = lopdf::Document::load_mem(&pdf_bytes).unwrap();
+
+    // Catalog should have a Metadata stream
+    let catalog_id = match doc.trailer.get(b"Root").unwrap() {
+        lopdf::Object::Reference(id) => *id,
+        _ => panic!("No Root"),
+    };
+    let catalog = doc.get_object(catalog_id).unwrap().as_dict().unwrap();
+    let meta_ref = catalog.get(b"Metadata").unwrap();
+    assert!(
+        matches!(meta_ref, lopdf::Object::Reference(_)),
+        "Catalog should have Metadata reference"
+    );
+
+    // Metadata stream should contain PDF/A-2b declarations
+    if let lopdf::Object::Reference(id) = meta_ref {
+        if let Ok(lopdf::Object::Stream(s)) = doc.get_object(*id) {
+            let text = String::from_utf8_lossy(&s.content);
+            assert!(
+                text.contains("pdfaid:part"),
+                "XMP should contain pdfaid:part"
+            );
+            assert!(
+                text.contains("<pdfaid:conformance>B</pdfaid:conformance>"),
+                "XMP should declare PDF/A-2b conformance"
+            );
+        } else {
+            panic!("Metadata should be a stream");
+        }
+    }
+}
+
+#[test]
+fn flatten_pdfa_has_srgb_output_intent() {
+    let mut tree = FormTree::new();
+    let f1 = tree.add_node(default_field("Name", "Bob", 20.0, 20.0));
+    let root = tree.add_node(subform("form1", vec![f1], LayoutStrategy::Positioned));
+
+    let config = FlattenConfig {
+        pdfa: true,
+        ..Default::default()
+    };
+    let pdf_bytes = flatten_form_tree(&mut tree, root, &config).unwrap();
+    let doc = lopdf::Document::load_mem(&pdf_bytes).unwrap();
+
+    let catalog_id = match doc.trailer.get(b"Root").unwrap() {
+        lopdf::Object::Reference(id) => *id,
+        _ => panic!("No Root"),
+    };
+    let catalog = doc.get_object(catalog_id).unwrap().as_dict().unwrap();
+    let intents = catalog
+        .get(b"OutputIntents")
+        .expect("Should have OutputIntents");
+    if let lopdf::Object::Array(arr) = intents {
+        assert!(!arr.is_empty(), "OutputIntents should not be empty");
+        // First intent should be GTS_PDFA1
+        if let lopdf::Object::Reference(r) = &arr[0] {
+            let intent = doc.get_object(*r).unwrap().as_dict().unwrap();
+            let subtype = intent.get(b"S").unwrap();
+            assert_eq!(
+                subtype,
+                &lopdf::Object::Name(b"GTS_PDFA1".to_vec()),
+                "Output intent should be GTS_PDFA1"
+            );
+        }
+    } else {
+        panic!("OutputIntents should be an array");
+    }
+}
+
+#[test]
+fn flatten_pdfa_no_javascript_or_embedded_files() {
+    let layout = LayoutDom {
+        pages: vec![LayoutPage {
+            width: 612.0,
+            height: 792.0,
+            nodes: vec![LayoutNode {
+                form_node: FormNodeId(0),
+                rect: Rect::new(20.0, 20.0, 200.0, 20.0),
+                name: "F".to_string(),
+                content: LayoutContent::WrappedText {
+                    lines: vec!["Test".to_string()],
+                    font_size: 12.0,
+                },
+                children: vec![],
+            }],
+        }],
+    };
+    let config = FlattenConfig {
+        pdfa: true,
+        ..Default::default()
+    };
+    let pdf_bytes = flatten_to_pdf(&layout, &config).unwrap();
+    let doc = lopdf::Document::load_mem(&pdf_bytes).unwrap();
+
+    let catalog_id = match doc.trailer.get(b"Root").unwrap() {
+        lopdf::Object::Reference(id) => *id,
+        _ => panic!("No Root"),
+    };
+    let catalog = doc.get_object(catalog_id).unwrap().as_dict().unwrap();
+
+    // No JavaScript, AA, or embedded files should be present
+    assert!(catalog.get(b"AA").is_err(), "No AA in PDF/A");
+    if let Ok(names) = catalog.get(b"Names") {
+        if let Ok(d) = names.as_dict() {
+            assert!(
+                d.get(b"JavaScript").is_err(),
+                "No JavaScript nametree in PDF/A"
+            );
+            assert!(
+                d.get(b"EmbeddedFiles").is_err(),
+                "No EmbeddedFiles in PDF/A"
+            );
+        }
+    }
+}
