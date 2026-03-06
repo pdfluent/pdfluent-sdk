@@ -73,10 +73,21 @@ pub fn generate_page_overlay(page: &LayoutPage, config: &XfaRenderConfig) -> Res
 
 /// Generate PDF content stream overlays for all pages in a layout.
 pub fn generate_all_overlays(layout: &LayoutDom, config: &XfaRenderConfig) -> Result<Vec<Vec<u8>>> {
-    layout.pages.iter().map(|page| generate_page_overlay(page, config)).collect()
+    layout
+        .pages
+        .iter()
+        .map(|page| generate_page_overlay(page, config))
+        .collect()
 }
 
-fn render_nodes(nodes: &[LayoutNode], parent_x: f64, parent_y: f64, mapper: &CoordinateMapper, config: &XfaRenderConfig, ops: &mut Vec<u8>) {
+fn render_nodes(
+    nodes: &[LayoutNode],
+    parent_x: f64,
+    parent_y: f64,
+    mapper: &CoordinateMapper,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
     for node in nodes {
         let abs_x = node.rect.x + parent_x;
         let abs_y = node.rect.y + parent_y;
@@ -87,7 +98,9 @@ fn render_nodes(nodes: &[LayoutNode], parent_x: f64, parent_y: f64, mapper: &Coo
         match &node.content {
             LayoutContent::Field { value } => render_field(abs_x, pdf_y, w, h, value, config, ops),
             LayoutContent::Text(text) => render_text(abs_x, pdf_y, text, config, ops),
-            LayoutContent::WrappedText { lines, font_size } => render_multiline(abs_x, pdf_y, lines, *font_size, mapper, abs_y, config, ops),
+            LayoutContent::WrappedText { lines, font_size } => {
+                render_multiline(abs_x, pdf_y, lines, *font_size, mapper, abs_y, config, ops)
+            }
             LayoutContent::None => {}
         }
 
@@ -97,42 +110,110 @@ fn render_nodes(nodes: &[LayoutNode], parent_x: f64, parent_y: f64, mapper: &Coo
     }
 }
 
-fn render_field(x: f64, pdf_y: f64, w: f64, h: f64, value: &str, config: &XfaRenderConfig, ops: &mut Vec<u8>) {
+fn render_field(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    value: &str,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
     if let Some(bg) = &config.background_color {
-        write_ops(ops, format_args!("{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
-            bg[0], bg[1], bg[2], x, pdf_y, w, h));
+        write_ops(
+            ops,
+            format_args!(
+                "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
+                bg[0], bg[1], bg[2], x, pdf_y, w, h
+            ),
+        );
     }
     if config.draw_borders && config.border_width > 0.0 {
-        write_ops(ops, format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
-            config.border_width, config.border_color[0], config.border_color[1], config.border_color[2], x, pdf_y, w, h));
+        write_ops(
+            ops,
+            format_args!(
+                "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
+                config.border_width,
+                config.border_color[0],
+                config.border_color[1],
+                config.border_color[2],
+                x,
+                pdf_y,
+                w,
+                h
+            ),
+        );
     }
     if !value.is_empty() {
         let fs = config.default_font_size;
         let p = config.text_padding;
-        write_ops(ops, format_args!("BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-            config.text_color[0], config.text_color[1], config.text_color[2], fs, x + p, pdf_y + p, pdf_escape(value)));
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+                config.text_color[0],
+                config.text_color[1],
+                config.text_color[2],
+                fs,
+                x + p,
+                pdf_y + p,
+                pdf_escape(value)
+            ),
+        );
     }
 }
 
 fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &mut Vec<u8>) {
-    if text.is_empty() { return; }
+    if text.is_empty() {
+        return;
+    }
     let fs = config.default_font_size;
     let p = config.text_padding;
-    write_ops(ops, format_args!("BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-        config.text_color[0], config.text_color[1], config.text_color[2], fs, x + p, pdf_y + p, pdf_escape(text)));
+    write_ops(
+        ops,
+        format_args!(
+            "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+            config.text_color[0],
+            config.text_color[1],
+            config.text_color[2],
+            fs,
+            x + p,
+            pdf_y + p,
+            pdf_escape(text)
+        ),
+    );
 }
 
-fn render_multiline(x: f64, pdf_y: f64, lines: &[String], font_size: f64, mapper: &CoordinateMapper, abs_y_xfa: f64, config: &XfaRenderConfig, ops: &mut Vec<u8>) {
-    if lines.is_empty() { return; }
+#[allow(clippy::too_many_arguments)]
+fn render_multiline(
+    x: f64,
+    pdf_y: f64,
+    lines: &[String],
+    font_size: f64,
+    mapper: &CoordinateMapper,
+    abs_y_xfa: f64,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    if lines.is_empty() {
+        return;
+    }
     let p = config.text_padding;
     let line_height = font_size * 1.2;
-    write_ops(ops, format_args!("BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n",
-        config.text_color[0], config.text_color[1], config.text_color[2], font_size));
+    write_ops(
+        ops,
+        format_args!(
+            "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n",
+            config.text_color[0], config.text_color[1], config.text_color[2], font_size
+        ),
+    );
     let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + p + font_size, 0.0);
     let text_x = x + p;
     for (i, line) in lines.iter().enumerate() {
         let line_y = first_line_pdf_y - (i as f64 * line_height);
-        if line_y < pdf_y { break; }
+        if line_y < pdf_y {
+            break;
+        }
         if i == 0 {
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
         } else {
@@ -146,7 +227,12 @@ fn render_multiline(x: f64, pdf_y: f64, lines: &[String], font_size: f64, mapper
 fn pdf_escape(s: &str) -> String {
     let mut r = String::with_capacity(s.len());
     for c in s.chars() {
-        match c { '(' => r.push_str("\\("), ')' => r.push_str("\\)"), '\\' => r.push_str("\\\\"), _ => r.push(c) }
+        match c {
+            '(' => r.push_str("\\("),
+            ')' => r.push_str("\\)"),
+            '\\' => r.push_str("\\\\"),
+            _ => r.push(c),
+        }
     }
     r
 }
@@ -163,7 +249,11 @@ mod tests {
     use xfa_layout_engine::types::Rect;
 
     fn make_page(nodes: Vec<LayoutNode>) -> LayoutPage {
-        LayoutPage { width: 612.0, height: 792.0, nodes }
+        LayoutPage {
+            width: 612.0,
+            height: 792.0,
+            nodes,
+        }
     }
 
     fn make_field_node(x: f64, y: f64, w: f64, h: f64, value: &str) -> LayoutNode {
@@ -171,7 +261,9 @@ mod tests {
             form_node: FormNodeId(0),
             rect: Rect::new(x, y, w, h),
             name: "field1".to_string(),
-            content: LayoutContent::Field { value: value.to_string() },
+            content: LayoutContent::Field {
+                value: value.to_string(),
+            },
             children: vec![],
         }
     }

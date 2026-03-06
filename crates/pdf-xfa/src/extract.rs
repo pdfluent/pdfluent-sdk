@@ -12,17 +12,30 @@ pub struct XfaPackets {
 
 impl XfaPackets {
     pub fn get_packet(&self, name: &str) -> Option<&str> {
-        self.packets.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
+        self.packets
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
     }
-    pub fn template(&self) -> Option<&str> { self.get_packet("template") }
-    pub fn datasets(&self) -> Option<&str> { self.get_packet("datasets") }
-    pub fn config(&self) -> Option<&str> { self.get_packet("config") }
-    pub fn locale_set(&self) -> Option<&str> { self.get_packet("localeSet") }
+    pub fn template(&self) -> Option<&str> {
+        self.get_packet("template")
+    }
+    pub fn datasets(&self) -> Option<&str> {
+        self.get_packet("datasets")
+    }
+    pub fn config(&self) -> Option<&str> {
+        self.get_packet("config")
+    }
+    pub fn locale_set(&self) -> Option<&str> {
+        self.get_packet("localeSet")
+    }
 }
 
 pub fn extract_xfa(pdf: &Pdf) -> Result<XfaPackets> {
     if let Some(p) = extract_from_acroform(pdf) {
-        if !p.packets.is_empty() || p.full_xml.is_some() { return Ok(p); }
+        if !p.packets.is_empty() || p.full_xml.is_some() {
+            return Ok(p);
+        }
     }
     scan_for_xfa(pdf)
 }
@@ -53,13 +66,20 @@ fn extract_from_array(array: &Array<'_>) -> XfaPackets {
         let name = match &items[i] {
             Object::String(s) => std::string::String::from_utf8_lossy(s.as_bytes()).to_string(),
             Object::Name(n) => std::string::String::from_utf8_lossy(n.as_ref()).to_string(),
-            _ => { i += 1; continue; }
+            _ => {
+                i += 1;
+                continue;
+            }
         };
         if let Some(c) = match &items[i + 1] {
             Object::Stream(s) => decode_stream(s),
-            Object::String(s) => Some(std::string::String::from_utf8_lossy(s.as_bytes()).to_string()),
+            Object::String(s) => {
+                Some(std::string::String::from_utf8_lossy(s.as_bytes()).to_string())
+            }
             _ => None,
-        } { packets.packets.push((name, c)); }
+        } {
+            packets.packets.push((name, c));
+        }
         i += 2;
     }
     packets
@@ -69,7 +89,9 @@ fn scan_for_xfa(pdf: &Pdf) -> Result<XfaPackets> {
     for obj in pdf.objects() {
         if let Object::Stream(s) = obj {
             if let Some(d) = decode_stream(&s) {
-                if d.contains("<xdp:xdp") { return Ok(parse_xfa_xml(&d)); }
+                if d.contains("<xdp:xdp") {
+                    return Ok(parse_xfa_xml(&d));
+                }
             }
         }
     }
@@ -81,42 +103,73 @@ fn decode_stream(stream: &Stream<'_>) -> Option<String> {
 }
 
 fn parse_xfa_xml(xml: &str) -> XfaPackets {
-    let mut packets = XfaPackets { full_xml: Some(xml.to_string()), packets: Vec::new() };
+    let mut packets = XfaPackets {
+        full_xml: Some(xml.to_string()),
+        packets: Vec::new(),
+    };
     let t = xml.trim();
     let c = t.find("?>").map(|p| &t[p + 2..]).unwrap_or(t).trim();
     let inner = match c.find('>') {
         Some(s) => {
             let rest = &c[s + 1..];
-            rest.rfind("</xdp:xdp>").map(|e| &rest[..e]).or_else(|| rest.rfind("</xdp>").map(|e| &rest[..e])).unwrap_or(rest)
+            rest.rfind("</xdp:xdp>")
+                .map(|e| &rest[..e])
+                .or_else(|| rest.rfind("</xdp>").map(|e| &rest[..e]))
+                .unwrap_or(rest)
         }
         None => return packets,
     };
     let mut pos = 0;
     let bytes = inner.as_bytes();
     while pos < bytes.len() {
-        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() { pos += 1; }
-        if pos >= bytes.len() { break; }
-        if bytes[pos] != b'<' { pos += 1; continue; }
-        if inner[pos..].starts_with("<!--") { if let Some(e) = inner[pos..].find("-->") { pos += e + 3; continue; } }
-        if inner[pos..].starts_with("<?") { if let Some(e) = inner[pos..].find("?>") { pos += e + 2; continue; } }
+        while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+        if bytes[pos] != b'<' {
+            pos += 1;
+            continue;
+        }
+        if inner[pos..].starts_with("<!--") {
+            if let Some(e) = inner[pos..].find("-->") {
+                pos += e + 3;
+                continue;
+            }
+        }
+        if inner[pos..].starts_with("<?") {
+            if let Some(e) = inner[pos..].find("?>") {
+                pos += e + 2;
+                continue;
+            }
+        }
         let ts = pos;
         pos += 1;
         let ns = pos;
-        while pos < bytes.len() && bytes[pos] != b'>' && bytes[pos] != b' ' && bytes[pos] != b'/' { pos += 1; }
+        while pos < bytes.len() && bytes[pos] != b'>' && bytes[pos] != b' ' && bytes[pos] != b'/' {
+            pos += 1;
+        }
         let ft = &inner[ns..pos];
         let pn = ft.split(':').next_back().unwrap_or(ft);
         let ct = format!("</{ft}>");
         let at = format!("</xfa:{pn}>");
         if let Some(cp) = inner[ts..].find(ct.as_str()) {
             let ee = ts + cp + ct.len();
-            packets.packets.push((pn.to_string(), inner[ts..ee].to_string()));
+            packets
+                .packets
+                .push((pn.to_string(), inner[ts..ee].to_string()));
             pos = ee;
         } else if let Some(cp) = inner[ts..].find(at.as_str()) {
             let ee = ts + cp + at.len();
-            packets.packets.push((pn.to_string(), inner[ts..ee].to_string()));
+            packets
+                .packets
+                .push((pn.to_string(), inner[ts..ee].to_string()));
             pos = ee;
         } else {
-            while pos < bytes.len() && bytes[pos] != b'>' { pos += 1; }
+            while pos < bytes.len() && bytes[pos] != b'>' {
+                pos += 1;
+            }
             pos += 1;
         }
     }
@@ -133,11 +186,24 @@ pub fn extract_embedded_fonts(pdf: &Pdf) -> Vec<(String, Vec<u8>)> {
             Object::Stream(s) => s.dict().clone(),
             _ => continue,
         };
-        if !dict.get::<Name>(TYPE).is_some_and(|n| n.as_ref() == b"FontDescriptor") { continue; }
-        let name = dict.get::<Name>(FONT_NAME).map(|n| std::string::String::from_utf8_lossy(n.as_ref()).to_string()).unwrap_or_default();
+        if dict
+            .get::<Name>(TYPE)
+            .is_none_or(|n| n.as_ref() != b"FontDescriptor")
+        {
+            continue;
+        }
+        let name = dict
+            .get::<Name>(FONT_NAME)
+            .map(|n| std::string::String::from_utf8_lossy(n.as_ref()).to_string())
+            .unwrap_or_default();
         for key in [FONT_FILE2, FONT_FILE, FONT_FILE3] {
             if let Some(s) = dict.get::<Stream<'_>>(key) {
-                if let Ok(d) = s.decoded() { if !d.is_empty() { fonts.push((name.clone(), d)); break; } }
+                if let Ok(d) = s.decoded() {
+                    if !d.is_empty() {
+                        fonts.push((name.clone(), d));
+                        break;
+                    }
+                }
             }
         }
     }

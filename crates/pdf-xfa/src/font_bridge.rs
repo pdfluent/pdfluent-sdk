@@ -59,13 +59,21 @@ impl ResolvedFont {
     /// Ascender in points at the given font size.
     pub fn ascender_pt(&self, font_size: f64) -> f64 {
         let upem = self.units_per_em as f64;
-        if upem > 0.0 { self.ascender as f64 / upem * font_size } else { font_size * 0.8 }
+        if upem > 0.0 {
+            self.ascender as f64 / upem * font_size
+        } else {
+            font_size * 0.8
+        }
     }
 
     /// Descender in points at the given font size (negative value).
     pub fn descender_pt(&self, font_size: f64) -> f64 {
         let upem = self.units_per_em as f64;
-        if upem > 0.0 { self.descender as f64 / upem * font_size } else { font_size * -0.2 }
+        if upem > 0.0 {
+            self.descender as f64 / upem * font_size
+        } else {
+            font_size * -0.2
+        }
     }
 
     /// Generate PDF glyph widths array for embedding.
@@ -77,7 +85,9 @@ impl ResolvedFont {
             for code in 0u16..256 {
                 let w = if let Some(gid) = face.glyph_index(char::from(code as u8)) {
                     (face.glyph_hor_advance(gid).unwrap_or(0) as f64 * scale) as u16
-                } else { 0 };
+                } else {
+                    0
+                };
                 widths.push(w);
             }
             (0, widths)
@@ -97,19 +107,39 @@ pub struct XfaFontSpec {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FontWeight { Normal, Bold }
+pub enum FontWeight {
+    Normal,
+    Bold,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FontPosture { Normal, Italic }
+pub enum FontPosture {
+    Normal,
+    Italic,
+}
 
 impl XfaFontSpec {
     /// Parse a font specification from XFA template attributes.
-    pub fn from_xfa_attrs(typeface: &str, weight: Option<&str>, posture: Option<&str>, size: Option<&str>) -> Self {
+    pub fn from_xfa_attrs(
+        typeface: &str,
+        weight: Option<&str>,
+        posture: Option<&str>,
+        size: Option<&str>,
+    ) -> Self {
         Self {
             typeface: typeface.to_string(),
-            weight: match weight { Some("bold") => FontWeight::Bold, _ => FontWeight::Normal },
-            posture: match posture { Some("italic") => FontPosture::Italic, _ => FontPosture::Normal },
-            size_pt: size.and_then(|s| s.strip_suffix("pt").or(Some(s))).and_then(|s| s.parse::<f64>().ok()).unwrap_or(10.0),
+            weight: match weight {
+                Some("bold") => FontWeight::Bold,
+                _ => FontWeight::Normal,
+            },
+            posture: match posture {
+                Some("italic") => FontPosture::Italic,
+                _ => FontPosture::Normal,
+            },
+            size_pt: size
+                .and_then(|s| s.strip_suffix("pt").or(Some(s)))
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(10.0),
         }
     }
 }
@@ -131,7 +161,11 @@ impl XfaFontResolver {
             }
         }
         let system_fonts = scan_system_fonts();
-        Self { embedded, system_fonts, cache: HashMap::new() }
+        Self {
+            embedded,
+            system_fonts,
+            cache: HashMap::new(),
+        }
     }
 
     /// Resolve a font specification to a usable font.
@@ -140,11 +174,14 @@ impl XfaFontResolver {
         if let Some(cached) = self.cache.get(&cache_key) {
             return Ok(cached.clone());
         }
-        let font = self.try_embedded(&spec.typeface)
+        let font = self
+            .try_embedded(&spec.typeface)
             .or_else(|| self.try_system(&spec.typeface))
             .or_else(|| self.try_base_name(&spec.typeface))
             .or_else(|| self.try_fallbacks())
-            .ok_or_else(|| XfaError::FontError(format!("cannot resolve font: {}", spec.typeface)))?;
+            .ok_or_else(|| {
+                XfaError::FontError(format!("cannot resolve font: {}", spec.typeface))
+            })?;
         self.cache.insert(cache_key, font.clone());
         Ok(font)
     }
@@ -159,14 +196,24 @@ impl XfaFontResolver {
     }
 
     fn try_base_name(&self, name: &str) -> Option<ResolvedFont> {
-        let base = name.replace("-Bold", "").replace("-Italic", "").replace("-BoldItalic", "")
-            .replace(",Bold", "").replace(",Italic", "");
-        if base != name { self.try_embedded(&base).or_else(|| self.try_system(&base)) } else { None }
+        let base = name
+            .replace("-Bold", "")
+            .replace("-Italic", "")
+            .replace("-BoldItalic", "")
+            .replace(",Bold", "")
+            .replace(",Italic", "");
+        if base != name {
+            self.try_embedded(&base).or_else(|| self.try_system(&base))
+        } else {
+            None
+        }
     }
 
     fn try_fallbacks(&self) -> Option<ResolvedFont> {
         for name in &["Helvetica", "Arial", "DejaVuSans", "LiberationSans"] {
-            if let Some(font) = self.try_system(name) { return Some(font); }
+            if let Some(font) = self.try_system(name) {
+                return Some(font);
+            }
         }
         None
     }
@@ -175,8 +222,12 @@ impl XfaFontResolver {
 fn parse_font_data(name: &str, data: &[u8]) -> Option<ResolvedFont> {
     let face = ttf_parser::Face::parse(data, 0).ok()?;
     Some(ResolvedFont {
-        name: name.to_string(), data: data.to_vec(), face_index: 0,
-        units_per_em: face.units_per_em(), ascender: face.ascender(), descender: face.descender(),
+        name: name.to_string(),
+        data: data.to_vec(),
+        face_index: 0,
+        units_per_em: face.units_per_em(),
+        ascender: face.ascender(),
+        descender: face.descender(),
     })
 }
 
@@ -190,8 +241,12 @@ fn load_system_font(path: &PathBuf, name: &str) -> Option<ResolvedFont> {
             });
             if matches || idx == 0 {
                 return Some(ResolvedFont {
-                    name: name.to_string(), data: data.clone(), face_index: idx,
-                    units_per_em: face.units_per_em(), ascender: face.ascender(), descender: face.descender(),
+                    name: name.to_string(),
+                    data: data.clone(),
+                    face_index: idx,
+                    units_per_em: face.units_per_em(),
+                    ascender: face.ascender(),
+                    descender: face.descender(),
                 });
             }
         }
@@ -205,7 +260,11 @@ fn scan_system_fonts() -> HashMap<String, PathBuf> {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
                 if matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
                     if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
                         fonts.insert(name.to_lowercase(), path);
@@ -223,7 +282,9 @@ fn system_font_dirs() -> Vec<PathBuf> {
     {
         dirs.push(PathBuf::from("/System/Library/Fonts"));
         dirs.push(PathBuf::from("/Library/Fonts"));
-        if let Ok(home) = std::env::var("HOME") { dirs.push(PathBuf::from(format!("{home}/Library/Fonts"))); }
+        if let Ok(home) = std::env::var("HOME") {
+            dirs.push(PathBuf::from(format!("{home}/Library/Fonts")));
+        }
     }
     #[cfg(target_os = "linux")]
     {
@@ -236,8 +297,12 @@ fn system_font_dirs() -> Vec<PathBuf> {
     }
     #[cfg(target_os = "windows")]
     {
-        if let Ok(windir) = std::env::var("WINDIR") { dirs.push(PathBuf::from(format!("{windir}\\Fonts"))); }
-        if let Ok(local) = std::env::var("LOCALAPPDATA") { dirs.push(PathBuf::from(format!("{local}\\Microsoft\\Windows\\Fonts"))); }
+        if let Ok(windir) = std::env::var("WINDIR") {
+            dirs.push(PathBuf::from(format!("{windir}\\Fonts")));
+        }
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            dirs.push(PathBuf::from(format!("{local}\\Microsoft\\Windows\\Fonts")));
+        }
     }
     dirs
 }

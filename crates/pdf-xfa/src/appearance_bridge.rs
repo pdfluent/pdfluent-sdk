@@ -50,7 +50,9 @@ pub struct AppearanceCache {
 
 impl AppearanceCache {
     pub fn new() -> Self {
-        Self { cache: HashMap::new() }
+        Self {
+            cache: HashMap::new(),
+        }
     }
 
     pub fn get_or_generate(
@@ -131,9 +133,14 @@ fn collect_appearances(
         let ap = match &node.content {
             LayoutContent::Field { value } => Some(field_appearance(value, w, h, config)),
             LayoutContent::Text(text) => Some(draw_appearance(text, w, h, config)),
-            LayoutContent::WrappedText { lines, font_size } => {
-                Some(multiline_appearance(lines, *font_size, font_size * 1.2, w, h, config))
-            }
+            LayoutContent::WrappedText { lines, font_size } => Some(multiline_appearance(
+                lines,
+                *font_size,
+                font_size * 1.2,
+                w,
+                h,
+                config,
+            )),
             LayoutContent::None => None,
         };
         if let Some(ap) = ap {
@@ -150,117 +157,228 @@ fn collect_appearances(
     }
 }
 
-pub fn field_appearance(value: &str, width: f64, height: f64, config: &AppearanceConfig) -> AppearanceStream {
+pub fn field_appearance(
+    value: &str,
+    width: f64,
+    height: f64,
+    config: &AppearanceConfig,
+) -> AppearanceStream {
     let mut ops = Vec::new();
     if let Some(bg) = &config.background_color {
-        let _ = write!(ops, "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
-            bg[0], bg[1], bg[2], 0.0, 0.0, width, height);
+        let _ = write!(
+            ops,
+            "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
+            bg[0], bg[1], bg[2], 0.0, 0.0, width, height
+        );
     }
     if config.border_width > 0.0 {
-        let _ = write!(ops, "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
-            config.border_width, config.border_color[0], config.border_color[1],
-            config.border_color[2], 0.0, 0.0, width, height);
+        let _ = write!(
+            ops,
+            "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
+            config.border_width,
+            config.border_color[0],
+            config.border_color[1],
+            config.border_color[2],
+            0.0,
+            0.0,
+            width,
+            height
+        );
     }
     if !value.is_empty() {
         let fs = config.default_font_size;
         let p = config.text_padding;
-        let _ = write!(ops, "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-            config.text_color[0], config.text_color[1], config.text_color[2],
-            fs, p, height - fs - p, pdf_escape(value));
-        AppearanceStream { content: ops, bbox: [0.0, 0.0, width, height],
-            font_resources: vec![("F1".to_string(), config.default_font.clone())] }
+        let _ = write!(
+            ops,
+            "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+            config.text_color[0],
+            config.text_color[1],
+            config.text_color[2],
+            fs,
+            p,
+            height - fs - p,
+            pdf_escape(value)
+        );
+        AppearanceStream {
+            content: ops,
+            bbox: [0.0, 0.0, width, height],
+            font_resources: vec![("F1".to_string(), config.default_font.clone())],
+        }
     } else {
-        AppearanceStream { content: ops, bbox: [0.0, 0.0, width, height], font_resources: vec![] }
+        AppearanceStream {
+            content: ops,
+            bbox: [0.0, 0.0, width, height],
+            font_resources: vec![],
+        }
     }
 }
 
-pub fn draw_appearance(text: &str, width: f64, height: f64, config: &AppearanceConfig) -> AppearanceStream {
+pub fn draw_appearance(
+    text: &str,
+    width: f64,
+    height: f64,
+    config: &AppearanceConfig,
+) -> AppearanceStream {
     let mut ops = Vec::new();
     if let Some(bg) = &config.background_color {
-        let _ = write!(ops, "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
-            bg[0], bg[1], bg[2], 0.0, 0.0, width, height);
+        let _ = write!(
+            ops,
+            "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
+            bg[0], bg[1], bg[2], 0.0, 0.0, width, height
+        );
     }
     if !text.is_empty() {
         let fs = config.default_font_size;
         let p = config.text_padding;
-        let _ = write!(ops, "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-            config.text_color[0], config.text_color[1], config.text_color[2],
-            fs, p, height - fs - p, pdf_escape(text));
-        AppearanceStream { content: ops, bbox: [0.0, 0.0, width, height],
-            font_resources: vec![("F1".to_string(), config.default_font.clone())] }
+        let _ = write!(
+            ops,
+            "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+            config.text_color[0],
+            config.text_color[1],
+            config.text_color[2],
+            fs,
+            p,
+            height - fs - p,
+            pdf_escape(text)
+        );
+        AppearanceStream {
+            content: ops,
+            bbox: [0.0, 0.0, width, height],
+            font_resources: vec![("F1".to_string(), config.default_font.clone())],
+        }
     } else {
-        AppearanceStream { content: ops, bbox: [0.0, 0.0, width, height], font_resources: vec![] }
+        AppearanceStream {
+            content: ops,
+            bbox: [0.0, 0.0, width, height],
+            font_resources: vec![],
+        }
     }
 }
 
-pub fn multiline_appearance(lines: &[String], font_size: f64, line_height: f64, width: f64, height: f64, config: &AppearanceConfig) -> AppearanceStream {
+pub fn multiline_appearance(
+    lines: &[String],
+    font_size: f64,
+    line_height: f64,
+    width: f64,
+    height: f64,
+    config: &AppearanceConfig,
+) -> AppearanceStream {
     let mut ops = Vec::new();
     if let Some(bg) = &config.background_color {
-        let _ = write!(ops, "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
-            bg[0], bg[1], bg[2], 0.0, 0.0, width, height);
+        let _ = write!(
+            ops,
+            "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
+            bg[0], bg[1], bg[2], 0.0, 0.0, width, height
+        );
     }
     if config.border_width > 0.0 {
-        let _ = write!(ops, "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
-            config.border_width, config.border_color[0], config.border_color[1],
-            config.border_color[2], 0.0, 0.0, width, height);
+        let _ = write!(
+            ops,
+            "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
+            config.border_width,
+            config.border_color[0],
+            config.border_color[1],
+            config.border_color[2],
+            0.0,
+            0.0,
+            width,
+            height
+        );
     }
     if !lines.is_empty() {
         let p = config.text_padding;
-        let _ = write!(ops, "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n",
-            config.text_color[0], config.text_color[1], config.text_color[2], font_size);
+        let _ = write!(
+            ops,
+            "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n",
+            config.text_color[0], config.text_color[1], config.text_color[2], font_size
+        );
         let start_y = height - font_size - p;
         for (i, line) in lines.iter().enumerate() {
             let ay = start_y - (i as f64 * line_height);
-            if ay < 0.0 { break; }
-            if i == 0 {
-                let _ = write!(ops, "{:.2} {:.2} Td\n", p, ay);
-            } else {
-                let _ = write!(ops, "{:.2} {:.2} Td\n", 0.0, -line_height);
+            if ay < 0.0 {
+                break;
             }
-            let _ = write!(ops, "({}) Tj\n", pdf_escape(line));
+            if i == 0 {
+                let _ = writeln!(ops, "{:.2} {:.2} Td", p, ay);
+            } else {
+                let _ = writeln!(ops, "{:.2} {:.2} Td", 0.0, -line_height);
+            }
+            let _ = writeln!(ops, "({}) Tj", pdf_escape(line));
         }
         ops.extend_from_slice(b"ET\n");
-        AppearanceStream { content: ops, bbox: [0.0, 0.0, width, height],
-            font_resources: vec![("F1".to_string(), config.default_font.clone())] }
+        AppearanceStream {
+            content: ops,
+            bbox: [0.0, 0.0, width, height],
+            font_resources: vec![("F1".to_string(), config.default_font.clone())],
+        }
     } else {
-        AppearanceStream { content: ops, bbox: [0.0, 0.0, width, height], font_resources: vec![] }
+        AppearanceStream {
+            content: ops,
+            bbox: [0.0, 0.0, width, height],
+            font_resources: vec![],
+        }
     }
 }
 
 pub fn checkbox_appearance(checked: bool, width: f64, height: f64) -> AppearanceStream {
     let mut ops = Vec::new();
     let size = width.min(height);
-    let _ = write!(ops, "0.50 w\n0.000 0.000 0.000 RG\n0.00 0.00 {:.2} {:.2} re\nS\n", size, size);
+    let _ = write!(
+        ops,
+        "0.50 w\n0.000 0.000 0.000 RG\n0.00 0.00 {:.2} {:.2} re\nS\n",
+        size, size
+    );
     if checked {
         let pad = size * 0.2;
         let _ = write!(ops,
             "1.50 w\n0.000 0.000 0.000 RG\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
             pad, pad, size - pad, size - pad, size - pad, pad, pad, size - pad);
     }
-    AppearanceStream { content: ops, bbox: [0.0, 0.0, size, size], font_resources: vec![] }
+    AppearanceStream {
+        content: ops,
+        bbox: [0.0, 0.0, size, size],
+        font_resources: vec![],
+    }
 }
 
 /// Apply XFA formatting patterns to a value.
 pub fn format_value(value: &str, pattern: Option<&str>) -> String {
-    let Some(pattern) = pattern else { return value.to_string(); };
+    let Some(pattern) = pattern else {
+        return value.to_string();
+    };
     if pattern.starts_with("num{") && pattern.ends_with('}') {
         if let Ok(num) = value.parse::<f64>() {
-            if num == num.floor() { format!("{}", num as i64) } else { format!("{:.2}", num) }
-        } else { value.to_string() }
-    } else { value.to_string() }
+            if num == num.floor() {
+                format!("{}", num as i64)
+            } else {
+                format!("{:.2}", num)
+            }
+        } else {
+            value.to_string()
+        }
+    } else {
+        value.to_string()
+    }
 }
 
 fn pdf_escape(s: &str) -> String {
     let mut r = String::with_capacity(s.len());
     for c in s.chars() {
-        match c { '(' => r.push_str("\\("), ')' => r.push_str("\\)"), '\\' => r.push_str("\\\\"), _ => r.push(c) }
+        match c {
+            '(' => r.push_str("\\("),
+            ')' => r.push_str("\\)"),
+            '\\' => r.push_str("\\\\"),
+            _ => r.push(c),
+        }
     }
     r
 }
 
 fn simple_hash(s: &str) -> u64 {
     let mut h: u64 = 5381;
-    for b in s.bytes() { h = h.wrapping_mul(33).wrapping_add(b as u64); }
+    for b in s.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u64);
+    }
     h
 }
 
