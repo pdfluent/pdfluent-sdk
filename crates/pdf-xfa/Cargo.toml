@@ -3,10 +3,17 @@ name = "pdf-xfa"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "XFA (XML Forms Architecture) engine wrapper."
+description = "XFA engine — extraction, layout rendering, font resolution."
 
 [dependencies]
 xfa-dom-resolver = { path = "../xfa-dom-resolver" }
 formcalc-interpreter = { path = "../formcalc-interpreter" }
 xfa-layout-engine = { path = "../xfa-layout-engine" }
 xfa-json = { path = "../xfa-json" }
+pdf-syntax = { path = "../pdf-syntax" }
+pdf-font = { path = "../pdf-font" }
+pdf-interpret = { path = "../pdf-interpret" }
+thiserror = "2"
+ttf-parser = "0.25"
+roxmltree = "0.20"
+log = "0.4"
