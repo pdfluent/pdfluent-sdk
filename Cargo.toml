@@ -25,7 +25,7 @@ members = [
     "crates/xfa-json",
 
     # --- Bindings & tools ---
-    "crates/pdf-python",
+    # pdf-python: excluded — PyO3 requires matching Python. Build via maturin.
     "crates/pdf-node",
     "crates/xfa-wasm",
     "crates/xfa-cli",
