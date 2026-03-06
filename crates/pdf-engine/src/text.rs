@@ -28,13 +28,28 @@ pub struct TextBlock {
 }
 
 impl TextBlock {
-    /// Concatenate all spans into a single string, space-separated.
+    /// Concatenate all spans into a single string.
+    ///
+    /// Spans that are close together are joined without a separator;
+    /// a space is inserted when the gap between spans exceeds half
+    /// the average character width.
     pub fn text(&self) -> String {
-        self.spans
-            .iter()
-            .map(|s| s.text.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
+        if self.spans.is_empty() {
+            return String::new();
+        }
+        let mut result = self.spans[0].text.clone();
+        for pair in self.spans.windows(2) {
+            let prev = &pair[0];
+            let curr = &pair[1];
+            // Estimate the expected advance: font_size * 0.6 per character.
+            let char_width = prev.font_size * 0.6;
+            let gap = curr.x - (prev.x + char_width * prev.text.len() as f64);
+            if gap > char_width * 0.5 {
+                result.push(' ');
+            }
+            result.push_str(&curr.text);
+        }
+        result
     }
 }
 
@@ -90,7 +105,7 @@ impl Device<'_> for TextExtractionDevice {
         &mut self,
         glyph: &Glyph<'_>,
         transform: Affine,
-        _glyph_transform: Affine,
+        glyph_transform: Affine,
         _paint: &Paint<'_>,
         _draw_mode: &GlyphDrawMode,
     ) {
@@ -100,10 +115,12 @@ impl Device<'_> for TextExtractionDevice {
             None => return,
         };
 
-        let coeffs = transform.as_coeffs();
+        // Compose page and glyph transforms to get the actual glyph position.
+        let composed = transform * glyph_transform;
+        let coeffs = composed.as_coeffs();
         let x = coeffs[4];
         let y = coeffs[5];
-        // Approximate font size from the transform matrix.
+        // Approximate font size from the composed transform matrix.
         let font_size = (coeffs[0].powi(2) + coeffs[1].powi(2)).sqrt().abs();
 
         self.spans.push(TextSpan {
@@ -203,7 +220,30 @@ mod tests {
     }
 
     #[test]
-    fn text_block_concatenation() {
+    fn text_block_concatenation_adjacent() {
+        // Adjacent glyphs (x gap < half char width) → no space.
+        let block = TextBlock {
+            spans: vec![
+                TextSpan {
+                    text: "A".into(),
+                    x: 0.0,
+                    y: 0.0,
+                    font_size: 12.0,
+                },
+                TextSpan {
+                    text: "B".into(),
+                    x: 7.0,
+                    y: 0.0,
+                    font_size: 12.0,
+                },
+            ],
+        };
+        assert_eq!(block.text(), "AB");
+    }
+
+    #[test]
+    fn text_block_concatenation_spaced() {
+        // Gap larger than half char width → space inserted.
         let block = TextBlock {
             spans: vec![
                 TextSpan {
