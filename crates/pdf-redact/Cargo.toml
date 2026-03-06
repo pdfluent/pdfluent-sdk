@@ -1,0 +1,15 @@
+[package]
+name = "pdf-redact"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "GDPR-compliant PDF redaction: permanent content removal"
+
+[dependencies]
+lopdf.workspace = true
+thiserror.workspace = true
+flate2 = "1"
+
+[dev-dependencies]
+tempfile = "3"

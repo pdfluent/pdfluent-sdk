@@ -9,6 +9,8 @@ description = "Python bindings for the PDF engine via PyO3."
 name = "pdfengine"
 crate-type = ["cdylib"]
 
+[workspace]
+
 [dependencies]
 pdf-engine = { path = "../pdf-engine" }
 pdf-sign = { path = "../pdf-sign" }
