@@ -17,6 +17,10 @@ on:
         default: '2b'
         type: string
 
+permissions:
+  contents: read
+  pull-requests: write
+
 env:
   VERAPDF_VERSION: "1.26.2"
 

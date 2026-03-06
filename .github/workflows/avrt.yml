@@ -13,6 +13,10 @@ on:
       threshold:
         description: 'Max pixel diff percentage'
         default: '1.0'
+
+permissions:
+  contents: read
+  pull-requests: write
         type: string
 
 jobs:
