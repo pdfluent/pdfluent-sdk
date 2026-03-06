@@ -58,11 +58,34 @@ pub fn catalog<'a>(pdf: &'a Pdf) -> Option<Dict<'a>> {
 }
 
 /// Check if the document is encrypted.
+///
+/// The /Encrypt entry lives in the trailer dictionary (or xref stream dict),
+/// not in the catalog. We scan the raw PDF bytes for it.
 pub fn is_encrypted(pdf: &Pdf) -> bool {
-    let Some(cat) = catalog(pdf) else {
-        return false;
-    };
-    cat.get::<Dict<'_>>(keys::ENCRYPT).is_some()
+    let data = pdf.data().as_ref();
+
+    // Look for /Encrypt in the trailer dictionary section.
+    if let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") {
+        let end = data.len().min(trailer_pos + 2000);
+        let trailer_region = &data[trailer_pos..end];
+        if trailer_region.windows(8).any(|w| w == b"/Encrypt") {
+            return true;
+        }
+    }
+
+    // Also check xref stream dictionaries (PDF 1.5+).
+    for obj in pdf.objects() {
+        if let Object::Stream(s) = obj {
+            let dict = s.dict();
+            if let Some(t) = dict.get::<Name>(keys::TYPE) {
+                if t.as_ref() == keys::XREF && dict.contains_key(keys::ENCRYPT) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 /// Get XMP metadata as bytes from the catalog Metadata stream.
@@ -144,15 +167,12 @@ pub fn font_has_tounicode(font_dict: &Dict<'_>) -> bool {
 }
 
 /// Iterate over all font dictionaries in all page resources.
+///
+/// Uses `page.resources().fonts` which handles inherited /Resources
+/// from parent Pages nodes, rather than only checking the page's own dict.
 pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>, usize)) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
-        let page_dict = page.raw();
-        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
-            continue;
-        };
-        let Some(fonts) = res_dict.get::<Dict<'_>>(keys::FONT) else {
-            continue;
-        };
+        let fonts = &page.resources().fonts;
         for (name, _) in fonts.entries() {
             let name_str = std::str::from_utf8(name.as_ref()).unwrap_or("<invalid>");
             if let Some(font_dict) = fonts.get::<Dict<'_>>(name.as_ref()) {

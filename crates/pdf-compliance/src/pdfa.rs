@@ -117,7 +117,7 @@ fn check_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
 fn check_font_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
     check::for_each_font(pdf, |name, font_dict, page_idx| {
         let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) else {
-            // Type0 fonts have DescendantFonts
+            // Type0 fonts have DescendantFonts instead of a direct FontDescriptor
             if let Some(descendants) =
                 font_dict.get::<pdf_syntax::object::Array<'_>>(keys::DESCENDANT_FONTS)
             {
@@ -133,6 +133,14 @@ fn check_font_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
                         }
                     }
                 }
+            } else {
+                // No FontDescriptor and no DescendantFonts — cannot verify embedding
+                check::error_at(
+                    report,
+                    "6.3.3",
+                    format!("Font {name} has no FontDescriptor; cannot verify embedding"),
+                    format!("page {}", page_idx + 1),
+                );
             }
             return;
         };
