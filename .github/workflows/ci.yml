@@ -87,11 +87,11 @@ jobs:
             PARSE_RATE=$(python3 -c "import json; print(json.load(open('reports/accuracy/report.json'))['parse_rate_pct'])")
             echo "Parse rate: ${PARSE_RATE}%"
             python3 -c "
-            rate = float('${PARSE_RATE}')
-            if rate < 95.0:
-                print(f'FAIL: Parse rate {rate}% is below 95% threshold')
-                exit(1)
-            print(f'PASS: Parse rate {rate}% meets threshold')
+rate = float('${PARSE_RATE}')
+if rate < 95.0:
+    print(f'FAIL: Parse rate {rate}% is below 95% threshold')
+    exit(1)
+print(f'PASS: Parse rate {rate}% meets threshold')
             "
           else
             echo "No corpus PDFs found, skipping"
