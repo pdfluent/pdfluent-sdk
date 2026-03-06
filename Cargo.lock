@@ -2210,16 +2210,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pdf-extract"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "lopdf",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
 name = "pdf-font"
 version = "0.1.0"
 dependencies = [
@@ -2295,25 +2285,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "pdf-ocr"
-version = "0.1.0"
-dependencies = [
- "lopdf",
- "tempfile",
- "thiserror",
-]
-
-[[package]]
-name = "pdf-redact"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "lopdf",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]

@@ -50,11 +50,26 @@ fn set_acroform_field(doc: &mut lopdf::Document, name: &str, value: &str) -> boo
                     lopdf::Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal),
                 );
                 dict.remove(b"AP");
-                return true;
             }
+            // Tell viewers to regenerate appearances for all fields.
+            set_need_appearances(doc);
+            return true;
         }
     }
     false
+}
+
+/// Set /NeedAppearances on the AcroForm dict so viewers regenerate /AP streams.
+fn set_need_appearances(doc: &mut lopdf::Document) {
+    let acroform_ref = doc
+        .catalog()
+        .ok()
+        .and_then(|cat| cat.get(b"AcroForm").ok().cloned());
+    if let Some(lopdf::Object::Reference(af_id)) = acroform_ref {
+        if let Ok(lopdf::Object::Dictionary(ref mut af_dict)) = doc.get_object_mut(af_id) {
+            af_dict.set("NeedAppearances", lopdf::Object::Boolean(true));
+        }
+    }
 }
 
 /// Collect all field object IDs by walking /Fields and /Kids recursively.
