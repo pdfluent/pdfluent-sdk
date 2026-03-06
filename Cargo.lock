@@ -2184,9 +2184,6 @@ dependencies = [
 [[package]]
 name = "pdf-capi"
 version = "0.1.0"
-dependencies = [
- "pdf-engine",
-]
 
 [[package]]
 name = "pdf-compliance"
