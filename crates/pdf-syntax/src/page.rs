@@ -331,6 +331,14 @@ impl<'a> Page<'a> {
     pub fn typed_operations(&self) -> TypedIter<'_> {
         TypedIter::from_untyped(self.operations())
     }
+
+    /// Return the annotation dictionaries for this page, if any.
+    pub fn annots(&self) -> Vec<Dict<'a>> {
+        self.inner
+            .get::<Array<'_>>(crate::object::dict::keys::ANNOTS)
+            .map(|arr| arr.iter::<Dict<'_>>().collect())
+            .unwrap_or_default()
+    }
 }
 
 /// A structure keeping track of the resources of a page.
