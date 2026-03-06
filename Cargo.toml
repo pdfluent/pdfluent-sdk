@@ -38,6 +38,11 @@ members = [
     # --- PDF manipulation ---
     "crates/pdf-manip",
 
+    # --- Content intelligence (Fase N) ---
+    "crates/pdf-extract",
+    "crates/pdf-redact",
+    "crates/pdf-ocr",
+
     # --- Data exchange + EU compliance (Fase O) ---
     "crates/pdf-invoice",
 
@@ -90,3 +95,6 @@ pdf-engine = { path = "crates/pdf-engine" }
 pdf-compliance = { path = "crates/pdf-compliance" }
 pdf-manip = { path = "crates/pdf-manip" }
 pdf-invoice = { path = "crates/pdf-invoice" }
+pdf-extract = { path = "crates/pdf-extract" }
+pdf-redact = { path = "crates/pdf-redact" }
+pdf-ocr = { path = "crates/pdf-ocr" }
