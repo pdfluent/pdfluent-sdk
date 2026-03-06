@@ -454,8 +454,9 @@ impl PyTextBlock {
 
     fn __repr__(&self) -> String {
         let t = self.0.text();
-        let preview = if t.len() > 50 {
-            format!("{}...", &t[..50])
+        let preview = if t.chars().count() > 50 {
+            let end = t.char_indices().nth(50).map_or(t.len(), |(i, _)| i);
+            format!("{}...", &t[..end])
         } else {
             t
         };
