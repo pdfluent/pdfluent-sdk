@@ -2111,6 +2111,11 @@ dependencies = [
 [[package]]
 name = "pdf-forms"
 version = "0.1.0"
+dependencies = [
+ "log",
+ "lopdf",
+ "pdf-syntax",
+]
 
 [[package]]
 name = "pdf-interpret"
@@ -2179,6 +2184,13 @@ name = "pdf-xfa"
 version = "0.1.0"
 dependencies = [
  "formcalc-interpreter",
+ "log",
+ "pdf-font",
+ "pdf-interpret",
+ "pdf-syntax",
+ "roxmltree",
+ "thiserror",
+ "ttf-parser",
  "xfa-dom-resolver",
  "xfa-json",
  "xfa-layout-engine",
