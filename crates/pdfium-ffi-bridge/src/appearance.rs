@@ -341,9 +341,20 @@ fn write_text_position(ops: &mut Vec<u8>, x: f64, y: f64) {
 }
 
 fn write_text_show(ops: &mut Vec<u8>, text: &str) {
-    // Escape special PDF string characters
-    let escaped = pdf_escape_string(text);
-    ops.extend_from_slice(format!("({escaped}) Tj\n").as_bytes());
+    // Convert Unicode text to WinAnsiEncoding bytes. PDF string literals
+    // with WinAnsiEncoding expect single-byte codes, not raw UTF-8.
+    ops.push(b'(');
+    for ch in text.chars() {
+        match unicode_to_winansi(ch) {
+            Some(b @ (b'(' | b')' | b'\\')) => {
+                ops.push(b'\\');
+                ops.push(b);
+            }
+            Some(b) => ops.push(b),
+            None => ops.push(b'?'), // Unmappable character
+        }
+    }
+    ops.extend_from_slice(b") Tj\n");
 }
 
 fn write_move_to(ops: &mut Vec<u8>, x: f64, y: f64) {
@@ -355,6 +366,7 @@ fn write_line_to(ops: &mut Vec<u8>, x: f64, y: f64) {
 }
 
 /// Escape a string for use in a PDF string literal `(...)`.
+#[cfg(test)]
 fn pdf_escape_string(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     for c in s.chars() {
@@ -366,6 +378,44 @@ fn pdf_escape_string(s: &str) -> String {
         }
     }
     result
+}
+
+/// Map a Unicode character to its WinAnsiEncoding byte code.
+fn unicode_to_winansi(ch: char) -> Option<u8> {
+    let cp = ch as u32;
+    if (32..=127).contains(&cp) || (160..=255).contains(&cp) {
+        return Some(cp as u8);
+    }
+    match cp {
+        0x20AC => Some(128), // Euro
+        0x201A => Some(130), // quotesinglbase
+        0x0192 => Some(131), // florin
+        0x201E => Some(132), // quotedblbase
+        0x2026 => Some(133), // ellipsis
+        0x2020 => Some(134), // dagger
+        0x2021 => Some(135), // daggerdbl
+        0x02C6 => Some(136), // circumflex
+        0x2030 => Some(137), // perthousand
+        0x0160 => Some(138), // Scaron
+        0x2039 => Some(139), // guilsinglleft
+        0x0152 => Some(140), // OE
+        0x017D => Some(142), // Zcaron
+        0x2018 => Some(145), // quoteleft
+        0x2019 => Some(146), // quoteright
+        0x201C => Some(147), // quotedblleft
+        0x201D => Some(148), // quotedblright
+        0x2022 => Some(149), // bullet
+        0x2013 => Some(150), // endash
+        0x2014 => Some(151), // emdash
+        0x02DC => Some(152), // tilde
+        0x2122 => Some(153), // trademark
+        0x0161 => Some(154), // scaron
+        0x203A => Some(155), // guilsinglright
+        0x0153 => Some(156), // oe
+        0x017E => Some(158), // zcaron
+        0x0178 => Some(159), // Ydieresis
+        _ => None,
+    }
 }
 
 #[cfg(test)]
