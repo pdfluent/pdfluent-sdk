@@ -111,7 +111,7 @@ pub fn generate_appearance_stream(
     ops
 }
 
-fn write_text_line(ops: &mut Vec<u8>, x: f64, y: f64, font_size: f64, text: &str) {
+fn write_text_line(ops: &mut Vec<u8>, x: f64, y: f64, _font_size: f64, text: &str) {
     // Escape PDF string characters.
     let escaped: String = text
         .chars()
@@ -123,9 +123,8 @@ fn write_text_line(ops: &mut Vec<u8>, x: f64, y: f64, font_size: f64, text: &str
         })
         .collect();
     // Use Tm (text matrix) for absolute positioning instead of cumulative Td.
-    ops.extend_from_slice(
-        format!("{font_size:.1} 0 0 {font_size:.1} {x:.2} {y:.2} Tm ({escaped}) Tj\n").as_bytes(),
-    );
+    // Scale is 1 (identity) because font size is already set via Tf.
+    ops.extend_from_slice(format!("1 0 0 1 {x:.2} {y:.2} Tm ({escaped}) Tj\n").as_bytes());
 }
 
 /// Check if a signature field widget has an existing appearance stream.

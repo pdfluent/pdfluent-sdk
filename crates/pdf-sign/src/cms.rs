@@ -17,6 +17,8 @@ pub struct CmsSignedData {
     signature_value: Vec<u8>,
     /// The message digest from signed attributes.
     message_digest: Option<Vec<u8>>,
+    /// Encapsulated content bytes (e.g. SHA-1 digest for adbe.pkcs7.sha1).
+    encapsulated_content: Option<Vec<u8>>,
     /// Signing time from signed attributes, if present.
     signing_time: Option<String>,
     /// Signer common name extracted from signer info.
@@ -52,8 +54,9 @@ impl CmsSignedData {
             parse_algorithm_identifier(digest_algos_set).unwrap_or(DigestAlgorithm::Unknown);
         pos = rest;
 
-        // encapContentInfo SEQUENCE
-        let (rest, _encap) = parse_tlv(pos)?;
+        // encapContentInfo SEQUENCE { contentType OID, content [0] EXPLICIT OCTET STRING (opt) }
+        let (rest, encap_seq) = parse_tlv(pos)?;
+        let encapsulated_content = parse_encap_content(encap_seq);
         pos = rest;
 
         // certificates [0] IMPLICIT SET OF Certificate (optional)
@@ -87,6 +90,7 @@ impl CmsSignedData {
             certificates,
             signature_value: si.signature_value,
             message_digest: si.message_digest,
+            encapsulated_content,
             signing_time: si.signing_time,
             signer_cn: si.signer_cn,
             signed_attrs_raw: si.signed_attrs_raw,
@@ -98,9 +102,14 @@ impl CmsSignedData {
         self.digest_algo
     }
 
-    /// Return the embedded message digest.
+    /// Return the embedded message digest from signed attributes.
     pub fn message_digest(&self) -> Option<&[u8]> {
         self.message_digest.as_deref()
+    }
+
+    /// Return the encapsulated content (e.g. SHA-1 digest for adbe.pkcs7.sha1).
+    pub fn encapsulated_content(&self) -> Option<&[u8]> {
+        self.encapsulated_content.as_deref()
     }
 
     /// Return embedded certificates.
@@ -129,7 +138,7 @@ impl CmsSignedData {
     pub fn verify_structural_integrity(&self) -> bool {
         !self.signature_value.is_empty()
             && self.digest_algo != DigestAlgorithm::Unknown
-            && self.message_digest.is_some()
+            && (self.message_digest.is_some() || self.encapsulated_content.is_some())
     }
 
     /// Return the raw signature value bytes.
@@ -251,6 +260,17 @@ pub(crate) fn parse_length(data: &[u8]) -> Option<(usize, &[u8])> {
         }
         Some((len, &data[1 + num_bytes..]))
     }
+}
+
+/// Parse encapsulated content from EncapsulatedContentInfo.
+/// Returns the raw content bytes if present (used by adbe.pkcs7.sha1).
+fn parse_encap_content(data: &[u8]) -> Option<Vec<u8>> {
+    // EncapsulatedContentInfo ::= SEQUENCE { contentType OID, eContent [0] EXPLICIT OCTET STRING }
+    let (rest, _content_type) = parse_tlv(data)?;
+    // eContent [0] EXPLICIT is optional
+    let (_, inner) = parse_context_explicit(rest, 0)?;
+    let (_, content_bytes) = parse_tlv(inner)?;
+    Some(content_bytes.to_vec())
 }
 
 /// Parse an AlgorithmIdentifier SEQUENCE and return the digest algorithm.

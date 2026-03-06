@@ -31,6 +31,17 @@ pub fn verify_byte_range_digest(
         _ => return DigestVerification::Error("byte range exceeds PDF size".into()),
     };
 
+    // Enforce that the signed range starts at byte 0 (ISO 32000-2 §12.8.1).
+    if off1 != 0 {
+        return DigestVerification::Error("byte range does not start at offset 0".into());
+    }
+
+    // Enforce that the second range reaches the end of the PDF data.
+    // This prevents crafted offsets from omitting trailing bytes.
+    if end2 != pdf_data.len() {
+        return DigestVerification::Error("byte range does not cover end of file".into());
+    }
+
     let range1 = &pdf_data[off1..end1];
     let range2 = &pdf_data[off2..end2];
 
@@ -48,7 +59,12 @@ pub fn verify_byte_range_digest(
     };
 
     let algo = signed_data.digest_algorithm();
-    let embedded_digest = match signed_data.message_digest() {
+    // Prefer messageDigest signed attribute; fall back to encapsulated content
+    // (used by adbe.pkcs7.sha1 which carries the SHA-1 digest as eContent).
+    let embedded_digest = match signed_data
+        .message_digest()
+        .or(signed_data.encapsulated_content())
+    {
         Some(d) => d,
         None => return DigestVerification::Error("no message digest in CMS".into()),
     };
