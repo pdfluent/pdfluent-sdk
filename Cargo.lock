@@ -2098,6 +2098,26 @@ version = "0.1.0"
 [[package]]
 name = "pdf-compliance"
 version = "0.1.0"
+dependencies = [
+ "log",
+ "pdf-syntax",
+ "thiserror",
+]
+
+[[package]]
+name = "pdf-engine"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "kurbo",
+ "pdf-forms",
+ "pdf-interpret",
+ "pdf-render",
+ "pdf-syntax",
+ "pdf-xfa",
+ "rayon",
+ "thiserror",
+]
 
 [[package]]
 name = "pdf-font"
@@ -2132,6 +2152,19 @@ dependencies = [
  "skrifa",
  "smallvec",
  "yoke",
+]
+
+[[package]]
+name = "pdf-manip"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "image",
+ "lopdf",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

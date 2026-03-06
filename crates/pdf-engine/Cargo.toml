@@ -1,0 +1,19 @@
+[package]
+name = "pdf-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Unified PDF rendering engine — page rendering, text extraction, thumbnails."
+
+[dependencies]
+pdf-syntax = { path = "../pdf-syntax" }
+pdf-interpret = { path = "../pdf-interpret" }
+pdf-render = { path = "../pdf-render" }
+pdf-forms = { path = "../pdf-forms" }
+pdf-xfa = { path = "../pdf-xfa" }
+thiserror = { workspace = true }
+kurbo = "0.13.0"
+rayon = "1"
+
+[dev-dependencies]
+image = { workspace = true }

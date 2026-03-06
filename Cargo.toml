@@ -10,6 +10,7 @@ members = [
     "crates/hayro-ccitt",
 
     # --- New engine crates ---
+    "crates/pdf-engine",
     "crates/pdf-forms",
     "crates/pdf-annot",
     "crates/pdf-sign",
@@ -33,6 +34,9 @@ members = [
     "crates/pdfium-ffi-bridge",
     "crates/xfa-api-server",
     "crates/xfa-license",
+
+    # --- PDF manipulation ---
+    "crates/pdf-manip",
 
     # --- Benchmarks ---
     "crates/pdf-bench",
@@ -79,4 +83,5 @@ pdf-forms = { path = "crates/pdf-forms" }
 pdf-annot = { path = "crates/pdf-annot" }
 pdf-xfa = { path = "crates/pdf-xfa" }
 pdf-sign = { path = "crates/pdf-sign" }
+pdf-engine = { path = "crates/pdf-engine" }
 pdf-compliance = { path = "crates/pdf-compliance" }
