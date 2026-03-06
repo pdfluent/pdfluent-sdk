@@ -2184,6 +2184,9 @@ dependencies = [
 [[package]]
 name = "pdf-capi"
 version = "0.1.0"
+dependencies = [
+ "pdf-engine",
+]
 
 [[package]]
 name = "pdf-compliance"
@@ -2206,6 +2209,16 @@ dependencies = [
  "pdf-syntax",
  "pdf-xfa",
  "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "pdf-extract"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "lopdf",
+ "tempfile",
  "thiserror",
 ]
 
@@ -2285,6 +2298,25 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "pdf-ocr"
+version = "0.1.0"
+dependencies = [
+ "lopdf",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "pdf-redact"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "lopdf",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
