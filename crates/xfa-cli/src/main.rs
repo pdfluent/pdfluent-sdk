@@ -1,263 +1,158 @@
-//! XFA-Native-Rust CLI — demo pipeline combining all modules.
-//!
-//! This binary demonstrates the full XFA processing pipeline:
-//! 1. Parse XFA XML data (xfa-dom-resolver)
-//! 2. Execute FormCalc scripts (formcalc-interpreter)
-//! 3. Lay out form elements (xfa-layout-engine)
-//! 4. Optionally render via PDFium (pdfium-ffi-bridge)
+//! XFA-Native-Rust CLI — PDF and XFA form processing toolkit.
 
-use formcalc_interpreter::interpreter::Interpreter;
-use formcalc_interpreter::lexer::tokenize;
-use formcalc_interpreter::parser;
-use xfa_dom_resolver::data_dom::DataDom;
-use xfa_dom_resolver::som;
-use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occur};
-use xfa_layout_engine::layout::LayoutEngine;
-use xfa_layout_engine::text::FontMetrics;
-use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
+use anyhow::{bail, Result};
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
-fn main() {
-    println!("XFA-Native-Rust Engine v{}", env!("CARGO_PKG_VERSION"));
-    println!();
+mod cmd_demo;
+mod cmd_extract;
+mod cmd_fill;
+mod cmd_flatten;
+mod cmd_info;
+mod cmd_render;
+mod cmd_sign;
+mod cmd_validate;
 
-    // Demo 1: Data DOM + SOM resolution
-    demo_data_dom();
-    println!();
-
-    // Demo 2: FormCalc interpreter
-    demo_formcalc();
-    println!();
-
-    // Demo 3: Layout engine
-    demo_layout();
+#[derive(Parser)]
+#[command(
+    name = "xfa-cli",
+    version,
+    about = "PDF and XFA form processing toolkit"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
 }
 
-fn demo_data_dom() {
-    println!("=== Data DOM + SOM Resolution ===");
+#[derive(Subcommand)]
+enum Commands {
+    /// Render PDF pages to PNG images.
+    Render {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Output directory for PNG files.
+        #[arg(short, long, default_value = ".")]
+        output: PathBuf,
+        /// Resolution in DPI.
+        #[arg(short, long, default_value_t = 150.0)]
+        dpi: f64,
+        /// Page selection (e.g. "1,3-5").
+        #[arg(short, long)]
+        pages: Option<String>,
+    },
+    /// Extract text from PDF pages.
+    Extract {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Page selection (e.g. "1,3-5").
+        #[arg(short, long)]
+        pages: Option<String>,
+        /// Output as JSON with text blocks.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Fill AcroForm fields from a JSON file.
+    Fill {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Output PDF file.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// JSON file with field name→value pairs.
+        #[arg(short, long)]
+        data: PathBuf,
+    },
+    /// Flatten form fields (remove interactive elements).
+    Flatten {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Output PDF file.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Display PDF document information.
+    Info {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate PDF against compliance profiles (PDF/A, PDF/UA).
+    Validate {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Compliance profile (e.g. pdf-a2b, pdf-ua).
+        #[arg(short = 'P', long, default_value = "pdf-a2b")]
+        profile: String,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate digital signatures in a PDF.
+    Sign {
+        /// Input PDF file.
+        input: PathBuf,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the XFA engine demo pipeline.
+    Demo,
+}
 
-    let xml = r#"<data>
-        <Invoice>
-            <Customer>
-                <Name>Acme Corp</Name>
-                <Address>123 Main St</Address>
-            </Customer>
-            <Item>
-                <Description>Widget A</Description>
-                <Qty>10</Qty>
-                <Price>5.00</Price>
-            </Item>
-            <Item>
-                <Description>Widget B</Description>
-                <Qty>5</Qty>
-                <Price>12.50</Price>
-            </Item>
-            <Total>112.50</Total>
-        </Invoice>
-    </data>"#;
+fn main() -> Result<()> {
+    let cli = Cli::parse();
 
-    let dom = DataDom::from_xml(xml).expect("Failed to parse XML");
+    match cli.command {
+        Commands::Render {
+            input,
+            output,
+            dpi,
+            pages,
+        } => cmd_render::run(&input, &output, dpi, pages.as_deref()),
+        Commands::Extract { input, pages, json } => {
+            cmd_extract::run(&input, pages.as_deref(), json)
+        }
+        Commands::Fill {
+            input,
+            output,
+            data,
+        } => cmd_fill::run(&input, &output, &data),
+        Commands::Flatten { input, output } => cmd_flatten::run(&input, &output),
+        Commands::Info { input, json } => cmd_info::run(&input, json),
+        Commands::Validate {
+            input,
+            profile,
+            json,
+        } => cmd_validate::run(&input, &profile, json),
+        Commands::Sign { input, json } => cmd_sign::run(&input, json),
+        Commands::Demo => cmd_demo::run(),
+    }
+}
 
-    // Resolve various SOM paths
-    let paths = [
-        "$data.Invoice.Customer.Name",
-        "$data.Invoice.Item[0].Description",
-        "$data.Invoice.Item[1].Description",
-        "$data.Invoice.Item[*]",
-        "$data.Invoice.Total",
-    ];
-
-    for path in &paths {
-        let results = som::resolve_data_path(&dom, path, None).expect("SOM resolve failed");
-        if results.is_empty() {
-            println!("  {path} -> (no match)");
-        } else if results.len() == 1 {
-            let val = dom.value(results[0]).unwrap_or("(group)");
-            println!("  {path} -> {val}");
+/// Parse a comma-separated page list (1-based) into 0-based indices.
+/// Supports ranges like "1,3-5,8".
+pub fn parse_page_list(s: &str, total: usize) -> Result<Vec<usize>> {
+    let mut result = Vec::new();
+    for part in s.split(',') {
+        let part = part.trim();
+        if let Some((start, end)) = part.split_once('-') {
+            let start: usize = start.trim().parse()?;
+            let end: usize = end.trim().parse()?;
+            if start == 0 || end == 0 || start > total || end > total {
+                bail!("page range {start}-{end} out of bounds (1-{total})");
+            }
+            for i in start..=end {
+                result.push(i - 1);
+            }
         } else {
-            println!("  {path} -> [{} matches]", results.len());
+            let page: usize = part.parse()?;
+            if page == 0 || page > total {
+                bail!("page {page} out of bounds (1-{total})");
+            }
+            result.push(page - 1);
         }
     }
-}
-
-fn demo_formcalc() {
-    println!("=== FormCalc Interpreter ===");
-
-    let scripts = [
-        ("Arithmetic", "var price = 5.00\nvar qty = 10\nprice * qty"),
-        (
-            "String ops",
-            r#"Concat("Hello, ", Upper("world"), "!")"#,
-        ),
-        (
-            "Tax calc",
-            "var subtotal = 112.50\nvar tax_rate = 0.21\nvar tax = Round(subtotal * tax_rate, 2)\nConcat(\"Tax: \", tax)",
-        ),
-        (
-            "Control flow",
-            "var total = 0\nfor i = 1 upto 10 do\n  total = total + i\nendfor\ntotal",
-        ),
-        (
-            "User function",
-            "func discount(amount, pct)\n  Round(amount * (1 - pct / 100), 2)\nendfunc\ndiscount(112.50, 15)",
-        ),
-    ];
-
-    for (label, script) in &scripts {
-        let tokens = tokenize(script).expect("Tokenize failed");
-        let ast = parser::parse(tokens).expect("Parse failed");
-        let mut interp = Interpreter::new();
-        let result = interp.exec(&ast).expect("Exec failed");
-        println!("  {label}: {result}");
-    }
-}
-
-fn demo_layout() {
-    println!("=== Layout Engine ===");
-
-    let mut tree = FormTree::new();
-
-    // Create form fields
-    let name_field = tree.add_node(FormNode {
-        name: "CustomerName".to_string(),
-        node_type: FormNodeType::Field {
-            value: "Acme Corp".to_string(),
-        },
-        box_model: BoxModel {
-            width: Some(300.0),
-            height: Some(25.0),
-            max_width: f64::MAX,
-            max_height: f64::MAX,
-            ..Default::default()
-        },
-        layout: LayoutStrategy::Positioned,
-        children: vec![],
-        occur: Occur::once(),
-        font: FontMetrics::default(),
-        calculate: None,
-        validate: None,
-        column_widths: vec![],
-        col_span: 1,
-    });
-
-    let addr_field = tree.add_node(FormNode {
-        name: "Address".to_string(),
-        node_type: FormNodeType::Field {
-            value: "123 Main St".to_string(),
-        },
-        box_model: BoxModel {
-            width: Some(300.0),
-            height: Some(25.0),
-            max_width: f64::MAX,
-            max_height: f64::MAX,
-            ..Default::default()
-        },
-        layout: LayoutStrategy::Positioned,
-        children: vec![],
-        occur: Occur::once(),
-        font: FontMetrics::default(),
-        calculate: None,
-        validate: None,
-        column_widths: vec![],
-        col_span: 1,
-    });
-
-    let total_field = tree.add_node(FormNode {
-        name: "Total".to_string(),
-        node_type: FormNodeType::Field {
-            value: "112.50".to_string(),
-        },
-        box_model: BoxModel {
-            width: Some(150.0),
-            height: Some(25.0),
-            max_width: f64::MAX,
-            max_height: f64::MAX,
-            ..Default::default()
-        },
-        layout: LayoutStrategy::Positioned,
-        children: vec![],
-        occur: Occur::once(),
-        font: FontMetrics::default(),
-        calculate: None,
-        validate: None,
-        column_widths: vec![],
-        col_span: 1,
-    });
-
-    // Create a subform container
-    let detail_ids: Vec<FormNodeId> = vec![name_field, addr_field, total_field];
-    let form_subform = tree.add_node(FormNode {
-        name: "InvoiceForm".to_string(),
-        node_type: FormNodeType::Subform,
-        box_model: BoxModel {
-            width: Some(500.0),
-            height: Some(200.0),
-            max_width: f64::MAX,
-            max_height: f64::MAX,
-            ..Default::default()
-        },
-        layout: LayoutStrategy::TopToBottom,
-        children: detail_ids,
-        occur: Occur::once(),
-        font: FontMetrics::default(),
-        calculate: None,
-        validate: None,
-        column_widths: vec![],
-        col_span: 1,
-    });
-
-    // Root
-    let root = tree.add_node(FormNode {
-        name: "Root".to_string(),
-        node_type: FormNodeType::Root,
-        box_model: BoxModel {
-            width: Some(612.0),
-            height: Some(792.0),
-            max_width: f64::MAX,
-            max_height: f64::MAX,
-            ..Default::default()
-        },
-        layout: LayoutStrategy::TopToBottom,
-        children: vec![form_subform],
-        occur: Occur::once(),
-        font: FontMetrics::default(),
-        calculate: None,
-        validate: None,
-        column_widths: vec![],
-        col_span: 1,
-    });
-
-    let engine = LayoutEngine::new(&tree);
-    let layout = engine.layout(root).expect("Layout failed");
-
-    println!("  Pages: {}", layout.pages.len());
-    for (i, page) in layout.pages.iter().enumerate() {
-        println!("  Page {}: {}x{} pt", i + 1, page.width, page.height);
-        print_layout_tree(&page.nodes, 2);
-    }
-}
-
-fn print_layout_tree(nodes: &[xfa_layout_engine::layout::LayoutNode], indent: usize) {
-    for node in nodes {
-        let pad = " ".repeat(indent * 2);
-        let content = match &node.content {
-            xfa_layout_engine::layout::LayoutContent::Field { value } => {
-                format!(" = \"{value}\"")
-            }
-            xfa_layout_engine::layout::LayoutContent::Text(t) => format!(" text=\"{t}\""),
-            xfa_layout_engine::layout::LayoutContent::WrappedText {
-                ref lines,
-                font_size,
-            } => {
-                format!(" wrapped_text[{}lines, {font_size}pt]", lines.len())
-            }
-            xfa_layout_engine::layout::LayoutContent::None => String::new(),
-        };
-        println!(
-            "  {pad}{} @ ({:.0}, {:.0}) {}x{}{content}",
-            node.name, node.rect.x, node.rect.y, node.rect.width, node.rect.height
-        );
-        if !node.children.is_empty() {
-            print_layout_tree(&node.children, indent + 1);
-        }
-    }
+    Ok(result)
 }
