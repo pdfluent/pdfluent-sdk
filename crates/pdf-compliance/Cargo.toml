@@ -6,3 +6,6 @@ license = "MIT"
 description = "PDF compliance checking (PDF/A, PDF/UA)."
 
 [dependencies]
+pdf-syntax = { path = "../pdf-syntax" }
+thiserror = "2"
+log = "0.4"
