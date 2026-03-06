@@ -35,27 +35,56 @@ fn flatten_acroform(doc: &mut lopdf::Document) -> usize {
     }
 
     // Second pass: remove Widget refs from page Annots arrays.
+    // Annots can be an inline array or an indirect reference to an array.
     let page_ids: Vec<lopdf::ObjectId> = doc.page_iter().collect();
     for page_id in page_ids {
-        if let Ok(lopdf::Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
-            if let Ok(annots) = dict.get(b"Annots") {
-                if let Ok(arr) = annots.as_array() {
-                    let filtered: Vec<lopdf::Object> = arr
-                        .iter()
-                        .filter(|obj| {
-                            if let lopdf::Object::Reference(r) = obj {
-                                if widget_ids.contains(r) {
-                                    removed += 1;
-                                    return false;
-                                }
-                            }
-                            true
-                        })
-                        .cloned()
-                        .collect();
-                    dict.set("Annots", lopdf::Object::Array(filtered));
-                }
+        let annots_ref = {
+            let page_dict = match doc.get_dictionary(page_id) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            match page_dict.get(b"Annots") {
+                Ok(lopdf::Object::Reference(r)) => Some(*r),
+                Ok(lopdf::Object::Array(_)) => None,
+                _ => continue,
             }
+        };
+
+        // Resolve the array (inline or indirect)
+        let arr = if let Some(ref_id) = annots_ref {
+            match doc.get_object(ref_id) {
+                Ok(lopdf::Object::Array(arr)) => arr.clone(),
+                _ => continue,
+            }
+        } else {
+            match doc.get_dictionary(page_id) {
+                Ok(d) => match d.get(b"Annots") {
+                    Ok(lopdf::Object::Array(arr)) => arr.clone(),
+                    _ => continue,
+                },
+                Err(_) => continue,
+            }
+        };
+
+        let filtered: Vec<lopdf::Object> = arr
+            .iter()
+            .filter(|obj| {
+                if let lopdf::Object::Reference(r) = obj {
+                    if widget_ids.contains(r) {
+                        removed += 1;
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect();
+
+        // Write back: update indirect object or inline array
+        if let Some(ref_id) = annots_ref {
+            doc.objects.insert(ref_id, lopdf::Object::Array(filtered));
+        } else if let Ok(lopdf::Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
+            dict.set("Annots", lopdf::Object::Array(filtered));
         }
     }
 
