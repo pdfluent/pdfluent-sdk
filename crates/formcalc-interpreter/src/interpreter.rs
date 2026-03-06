@@ -150,6 +150,12 @@ impl Interpreter {
                 Ok(Signal::Value(val))
             }
 
+            Expr::MemberAccess { object, member } => {
+                let path = flatten_som_path(object, member);
+                let val = self.env.get(&path).cloned().unwrap_or(Value::Null);
+                Ok(Signal::Value(val))
+            }
+
             Expr::Negate(inner) => {
                 let val = self.eval(inner)?;
                 Ok(Signal::Value(Value::Number(-val.to_number())))
@@ -383,6 +389,24 @@ impl Interpreter {
             }
         }
         Ok(Signal::Value(result))
+    }
+}
+
+fn flatten_som_path(object: &Expr, member: &str) -> String {
+    let mut parts = Vec::new();
+    collect_path_parts(object, &mut parts);
+    parts.push(member.to_string());
+    parts.join(".")
+}
+
+fn collect_path_parts(expr: &Expr, parts: &mut Vec<String>) {
+    match expr {
+        Expr::Ident(name) => parts.push(name.clone()),
+        Expr::MemberAccess { object, member } => {
+            collect_path_parts(object, parts);
+            parts.push(member.clone());
+        }
+        _ => parts.push("<expr>".to_string()),
     }
 }
 
