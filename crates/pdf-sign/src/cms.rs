@@ -118,14 +118,15 @@ impl CmsSignedData {
         self.signing_time.as_deref()
     }
 
-    /// Verify the integrity of the CMS signature.
+    /// Check structural integrity of the CMS signature.
     ///
-    /// This checks that the signature value is structurally valid
-    /// (i.e., non-empty and from a known algorithm). Full RSA/ECDSA
-    /// verification requires an external crypto provider.
-    pub fn verify_signature_integrity(&self) -> bool {
-        // We verify structural integrity: signature bytes exist,
-        // digest algorithm is known, and message digest is present.
+    /// Returns `true` if the signature bytes exist, the digest algorithm
+    /// is known, and a message digest attribute is present.
+    ///
+    /// **Note:** This does NOT perform cryptographic verification
+    /// (RSA/ECDSA over signed attributes). Use an external crypto
+    /// provider for full signature verification.
+    pub fn verify_structural_integrity(&self) -> bool {
         !self.signature_value.is_empty()
             && self.digest_algo != DigestAlgorithm::Unknown
             && self.message_digest.is_some()

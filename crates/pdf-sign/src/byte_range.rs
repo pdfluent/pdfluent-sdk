@@ -21,13 +21,18 @@ pub fn verify_byte_range_digest(
 ) -> DigestVerification {
     let (off1, len1, off2, len2) = (byte_range[0], byte_range[1], byte_range[2], byte_range[3]);
 
-    // Bounds check.
-    if off1 + len1 > pdf_data.len() || off2 + len2 > pdf_data.len() {
-        return DigestVerification::Error("byte range exceeds PDF size".into());
-    }
+    // Bounds check (use checked_add to prevent overflow with crafted values).
+    let end1 = match off1.checked_add(len1) {
+        Some(e) if e <= pdf_data.len() => e,
+        _ => return DigestVerification::Error("byte range exceeds PDF size".into()),
+    };
+    let end2 = match off2.checked_add(len2) {
+        Some(e) if e <= pdf_data.len() => e,
+        _ => return DigestVerification::Error("byte range exceeds PDF size".into()),
+    };
 
-    let range1 = &pdf_data[off1..off1 + len1];
-    let range2 = &pdf_data[off2..off2 + len2];
+    let range1 = &pdf_data[off1..end1];
+    let range2 = &pdf_data[off2..end2];
 
     // The gap between range1 and range2 should be the hex-encoded /Contents.
     // Verify that range2 starts right after the /Contents hex string.

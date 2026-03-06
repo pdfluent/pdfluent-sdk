@@ -149,13 +149,17 @@ fn validate_one(sig: &SigDict<'_>, pdf_data: &[u8], field_name: &str) -> Validat
 
     let status = match digest_ok {
         DigestVerification::Ok => {
-            // Step 2: Verify the CMS signature itself.
+            // Step 2: Check CMS structural integrity.
+            // Full RSA/ECDSA verification requires an external crypto provider;
+            // we only confirm byte-range digest + structural validity here.
             match sig.cms_signed_data() {
                 Some(sd) => {
-                    if sd.verify_signature_integrity() {
-                        ValidationStatus::Valid
+                    if sd.verify_structural_integrity() {
+                        ValidationStatus::Unknown(
+                            "byte range digest valid; cryptographic signature verification not implemented".into(),
+                        )
                     } else {
-                        ValidationStatus::Invalid("CMS signature mismatch".into())
+                        ValidationStatus::Invalid("CMS signature structurally invalid".into())
                     }
                 }
                 None => ValidationStatus::Invalid("cannot parse CMS SignedData".into()),
