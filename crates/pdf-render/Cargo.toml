@@ -1,0 +1,24 @@
+[package]
+name = "pdf-render"
+version = "0.1.0"
+description = "A PDF rasterizer in pure Rust."
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
+repository = "https://github.com/LaurenzV/hayro"
+
+[dependencies]
+pdf-interpret = { path = "../pdf-interpret" }
+kurbo = "0.13.0"
+image = { version = "0.25", features = ["png"] }
+bytemuck = { version = "1", features = ["bytemuck_derive"] }
+vello_cpu = { version = "0.0.6", default-features = false, features = ["std", "png", "u8_pipeline"] }
+fast_image_resize = { version = "6.0", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+log = "0.4"
+
+[features]
+default = ["embed-fonts", "embed-cmaps"]
+embed-fonts = ["pdf-interpret/embed-fonts"]
+embed-cmaps = ["pdf-interpret/embed-cmaps"]

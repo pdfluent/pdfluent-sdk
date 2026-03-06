@@ -1,0 +1,31 @@
+[package]
+name = "pdf-syntax"
+version = "0.5.0"
+description = "A low-level crate for reading PDF files."
+authors = ["Laurenz Stampfl <laurenz.stampfl@gmail.com>"]
+edition = "2024"
+repository = "https://github.com/LaurenzV/hayro"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+
+[features]
+default = ["std", "images"]
+std = ["dep:flate2", "hayro-jbig2?/std", "hayro-jpeg2000?/std", "hayro-jpeg2000?/simd", "dep:rustc-hash", "zune-jpeg?/std"]
+images = ["dep:zune-jpeg", "dep:hayro-ccitt", "dep:hayro-jbig2", "dep:hayro-jpeg2000"]
+
+[dependencies]
+log = "0.4"
+rustc-hash = { version = "2", optional = true }
+smallvec = "1"
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"], optional = true }
+
+zune-jpeg = { version = "0.5", default-features = false, features = ["neon", "x86"], optional = true }
+hayro-ccitt = { path = "../hayro-ccitt", optional = true }
+hayro-jbig2 = { path = "../hayro-jbig2", optional = true }
+hayro-jpeg2000 = { path = "../hayro-jpeg2000", optional = true }
+
+[dev-dependencies]
+sha2 = "0.10"
+md5 = "0.8"
+aes = "0.8.4"
+cbc = "0.1.2"
