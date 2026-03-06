@@ -18,7 +18,7 @@ The crate is `no_std` compatible but requires an allocator to be available.
 # Example
 This short example shows you how to load a PDF file and iterate over the content streams of all
 pages.
-```rust
+```rust,no_run
 use pdf_syntax::Pdf;
 use std::path::PathBuf;
 
