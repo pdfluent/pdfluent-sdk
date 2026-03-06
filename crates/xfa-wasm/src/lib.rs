@@ -401,6 +401,136 @@ fn set_field_value_by_path(tree: &mut FormTree, root: FormNodeId, path: &str, va
     search_and_set(tree, root, &parts, 0, value)
 }
 
+// --- PdfDoc: PDF analysis via pdf-syntax (WASM-safe, no rayon) ---
+
+/// PDF document handle for analysis (metadata, signatures, compliance).
+///
+/// Uses pdf-syntax directly (pure Rust, no rayon) for WASM compatibility.
+#[wasm_bindgen]
+pub struct PdfDoc {
+    pdf: pdf_syntax::Pdf,
+}
+
+#[wasm_bindgen]
+impl PdfDoc {
+    /// Open a PDF from raw bytes.
+    pub fn open(data: &[u8]) -> Result<PdfDoc, JsError> {
+        let pdf =
+            pdf_syntax::Pdf::new(data.to_vec()).map_err(|e| JsError::new(&format!("{e:?}")))?;
+        Ok(PdfDoc { pdf })
+    }
+
+    /// Number of pages.
+    #[wasm_bindgen(js_name = "pageCount")]
+    pub fn page_count(&self) -> usize {
+        self.pdf.pages().len()
+    }
+
+    /// Document metadata as JSON.
+    pub fn metadata(&self) -> String {
+        let meta = self.pdf.metadata();
+        let result = serde_json::json!({
+            "title": meta.title.as_ref().map(|b| bytes_to_pdf_string(b)),
+            "author": meta.author.as_ref().map(|b| bytes_to_pdf_string(b)),
+            "subject": meta.subject.as_ref().map(|b| bytes_to_pdf_string(b)),
+            "keywords": meta.keywords.as_ref().map(|b| bytes_to_pdf_string(b)),
+            "creator": meta.creator.as_ref().map(|b| bytes_to_pdf_string(b)),
+            "producer": meta.producer.as_ref().map(|b| bytes_to_pdf_string(b)),
+        });
+        serde_json::to_string(&result).unwrap_or_default()
+    }
+
+    /// Signature info as JSON array.
+    pub fn signatures(&self) -> String {
+        let sigs = pdf_sign::signature_fields(&self.pdf);
+        let arr: Vec<serde_json::Value> = sigs
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "field_name": s.field_name,
+                    "signer": s.sig.signer_name(),
+                    "reason": s.sig.reason(),
+                    "location": s.sig.location(),
+                    "signing_time": s.sig.signing_time(),
+                    "sub_filter": s.sig.sub_filter().map(|sf| format!("{sf:?}")),
+                })
+            })
+            .collect();
+        serde_json::to_string(&arr).unwrap_or_default()
+    }
+
+    /// Validate against a PDF/A level. Returns compliance report as JSON.
+    #[wasm_bindgen(js_name = "validatePdfA")]
+    pub fn validate_pdfa(&self, level: &str) -> Result<String, JsError> {
+        let pdfa_level = match level.to_lowercase().replace(['-', '/'], "").as_str() {
+            "pdfa1a" | "a1a" => pdf_compliance::PdfALevel::A1a,
+            "pdfa1b" | "a1b" => pdf_compliance::PdfALevel::A1b,
+            "pdfa2a" | "a2a" => pdf_compliance::PdfALevel::A2a,
+            "pdfa2b" | "a2b" => pdf_compliance::PdfALevel::A2b,
+            "pdfa2u" | "a2u" => pdf_compliance::PdfALevel::A2u,
+            "pdfa3a" | "a3a" => pdf_compliance::PdfALevel::A3a,
+            "pdfa3b" | "a3b" => pdf_compliance::PdfALevel::A3b,
+            "pdfa3u" | "a3u" => pdf_compliance::PdfALevel::A3u,
+            other => return Err(JsError::new(&format!("unknown PDF/A level: {other}"))),
+        };
+        let report = pdf_compliance::validate_pdfa(&self.pdf, pdfa_level);
+        let result = serde_json::json!({
+            "compliant": report.is_compliant(),
+            "errors": report.error_count(),
+            "warnings": report.warning_count(),
+            "issues": report.issues.iter().map(|i| serde_json::json!({
+                "rule": i.rule,
+                "severity": format!("{:?}", i.severity),
+                "message": i.message,
+            })).collect::<Vec<_>>(),
+        });
+        serde_json::to_string(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Check if the document has any signatures.
+    #[wasm_bindgen(js_name = "hasSignatures")]
+    pub fn has_signatures(&self) -> bool {
+        !pdf_sign::signature_fields(&self.pdf).is_empty()
+    }
+
+    /// DSS (Document Security Store) info as JSON, or null if absent.
+    #[wasm_bindgen(js_name = "dssInfo")]
+    pub fn dss_info(&self) -> Option<String> {
+        let dss = pdf_sign::DocumentSecurityStore::from_pdf(&self.pdf)?;
+        let result = serde_json::json!({
+            "has_ltv": dss.has_ltv_data(),
+            "certificates": dss.certificates.len(),
+            "ocsp_responses": dss.ocsp_responses.len(),
+            "crls": dss.crls.len(),
+            "vri_entries": dss.vri_entries.len(),
+        });
+        Some(serde_json::to_string(&result).unwrap_or_default())
+    }
+}
+
+/// Convert PDF string bytes to a Rust String (UTF-8/UTF-16/Latin-1).
+fn bytes_to_pdf_string(bytes: &[u8]) -> String {
+    // UTF-16 BOM
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let chars: Vec<u16> = bytes[2..]
+            .chunks(2)
+            .filter_map(|c| {
+                if c.len() == 2 {
+                    Some(u16::from_be_bytes([c[0], c[1]]))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        return String::from_utf16_lossy(&chars);
+    }
+    // UTF-8 with Latin-1 fallback
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => bytes.iter().map(|&b| b as char).collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,5 +647,21 @@ mod tests {
     fn version_is_set() {
         let v = XfaEngine::version();
         assert!(!v.is_empty());
+    }
+    #[test]
+    fn bytes_to_pdf_string_utf8() {
+        assert_eq!(bytes_to_pdf_string(b"hello"), "hello");
+    }
+
+    #[test]
+    fn bytes_to_pdf_string_utf16() {
+        let bytes = &[0xFE, 0xFF, 0x00, 0x48, 0x00, 0x69]; // "Hi"
+        assert_eq!(bytes_to_pdf_string(bytes), "Hi");
+    }
+
+    #[test]
+    fn bytes_to_pdf_string_latin1() {
+        let bytes = &[0xC4, 0xD6, 0xDC]; // ÄÖÜ
+        assert_eq!(bytes_to_pdf_string(bytes), "ÄÖÜ");
     }
 }
