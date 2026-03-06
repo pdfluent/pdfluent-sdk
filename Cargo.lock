@@ -2331,12 +2331,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-ocr"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "image",
+ "lopdf",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "pdf-python"
 version = "0.1.0"
 dependencies = [
  "pdf-engine",
  "pdf-sign",
  "pyo3",
+]
+
+[[package]]
+name = "pdf-redact"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "lopdf",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
