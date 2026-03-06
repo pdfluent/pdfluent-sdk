@@ -79,7 +79,9 @@ pub fn get_docmdp_permission(pdf: &Pdf) -> Option<DocMdpInfo> {
 
 fn extract_docmdp_from_sig_refs(sig: &SigDict<'_>) -> Option<DocMdpPermission> {
     for ref_dict in sig.references() {
-        let method = ref_dict.get::<Name>(TRANSFORM_METHOD)?;
+        let Some(method) = ref_dict.get::<Name>(TRANSFORM_METHOD) else {
+            continue;
+        };
         if method.as_ref() != b"DocMDP" {
             continue;
         }
