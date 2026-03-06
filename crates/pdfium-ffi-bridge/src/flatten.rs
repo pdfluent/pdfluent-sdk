@@ -388,10 +388,19 @@ fn make_font_object(font_name: &str, embedded_font_id: Option<ObjectId>) -> Obje
 
 /// Embed a system font into the document for PDF/A compliance.
 ///
-/// Finds the font on the system via `FontResolver`, embeds it as TrueType
-/// with a complete `FontDescriptor` + `FontFile2`, and returns the font
-/// object's ID for shared referencing across pages and XObjects.
+/// Finds the font on the system via `FontResolver`, detects its outline type
+/// (TrueType vs CFF/OpenType), and embeds it with the correct PDF font
+/// stream type:
+///
+/// - **TrueType** (`glyf` outlines): `/Subtype /TrueType` + `FontFile2`
+/// - **CFF** (CFF/CFF2 outlines): `/Subtype /Type1` + `FontFile3` with
+///   `/Subtype /Type1C`
+///
+/// Returns the font object's ID for shared referencing across pages and
+/// XObjects.
 fn embed_font_for_pdfa(doc: &mut lopdf::Document, font_name: &str) -> Option<ObjectId> {
+    use crate::font::FontOutlineType;
+
     let mut resolver = crate::font::FontResolver::new();
     let loaded = resolver.resolve(font_name, false, false)?;
 
@@ -399,6 +408,7 @@ fn embed_font_for_pdfa(doc: &mut lopdf::Document, font_name: &str) -> Option<Obj
     let units_per_em = loaded.units_per_em;
     let ascender = loaded.ascender;
     let descender = loaded.descender;
+    let outline_type = loaded.outline_type;
     let scale = 1000.0 / units_per_em as f64;
 
     // Build widths for WinAnsiEncoding range (32..=255).
@@ -428,17 +438,29 @@ fn embed_font_for_pdfa(doc: &mut lopdf::Document, font_name: &str) -> Option<Obj
     // Drop the borrow on resolver before mutating doc.
     drop(resolver);
 
-    // Embed the raw TrueType font data.
-    let font_stream = Stream::new(
-        dictionary! {
+    // Embed the raw font data with the correct stream dictionary.
+    //
+    // ISO 32000-1:2008:
+    // - TrueType: FontFile2 with /Length1 (Table 127)
+    // - CFF: FontFile3 with /Subtype /Type1C (Table 127)
+    let font_stream_dict = match outline_type {
+        FontOutlineType::TrueType => dictionary! {
             "Length1" => Object::Integer(raw_data.len() as i64),
         },
-        raw_data,
-    );
+        FontOutlineType::Cff => dictionary! {
+            "Subtype" => Object::Name(b"Type1C".to_vec()),
+        },
+    };
+    let font_stream = Stream::new(font_stream_dict, raw_data);
     let font_file_id = doc.add_object(Object::Stream(font_stream));
 
     // FontDescriptor (ISO 32000-1:2008, Table 122).
-    let descriptor = dictionary! {
+    // Use the correct FontFile key based on outline type.
+    let font_file_key = match outline_type {
+        FontOutlineType::TrueType => "FontFile2",
+        FontOutlineType::Cff => "FontFile3",
+    };
+    let mut descriptor = dictionary! {
         "Type" => Object::Name(b"FontDescriptor".to_vec()),
         "FontName" => Object::Name(postscript_name.as_bytes().to_vec()),
         "Flags" => Object::Integer(32), // Nonsymbolic
@@ -453,14 +475,21 @@ fn embed_font_for_pdfa(doc: &mut lopdf::Document, font_name: &str) -> Option<Obj
         "Descent" => Object::Integer((descender as f64 * scale).round() as i64),
         "CapHeight" => Object::Integer(700),
         "StemV" => Object::Integer(80),
-        "FontFile2" => Object::Reference(font_file_id),
     };
+    descriptor.set(font_file_key, Object::Reference(font_file_id));
     let descriptor_id = doc.add_object(Object::Dictionary(descriptor));
 
-    // Complete TrueType font dictionary.
+    // Font dictionary with correct /Subtype based on outline type.
+    //
+    // TrueType outlines → /Subtype /TrueType
+    // CFF outlines → /Subtype /Type1 (simple font with CFF data)
+    let font_subtype = match outline_type {
+        FontOutlineType::TrueType => b"TrueType".to_vec(),
+        FontOutlineType::Cff => b"Type1".to_vec(),
+    };
     let font = dictionary! {
         "Type" => Object::Name(b"Font".to_vec()),
-        "Subtype" => Object::Name(b"TrueType".to_vec()),
+        "Subtype" => Object::Name(font_subtype),
         "BaseFont" => Object::Name(postscript_name.as_bytes().to_vec()),
         "FirstChar" => Object::Integer(first_char),
         "LastChar" => Object::Integer(last_char),
