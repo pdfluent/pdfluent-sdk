@@ -473,6 +473,41 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
                     span,
                 });
             }
+            '!' => {
+                chars.next();
+                col += 1;
+                if chars.peek() == Some(&'=') {
+                    chars.next();
+                    col += 1;
+                    tokens.push(Token {
+                        kind: TokenKind::Ne,
+                        span,
+                    });
+                } else {
+                    tokens.push(Token {
+                        kind: TokenKind::Not,
+                        span,
+                    });
+                }
+            }
+            '$' => {
+                chars.next();
+                col += 1;
+                let mut ident = String::from("$");
+                while let Some(&c) = chars.peek() {
+                    if c.is_alphanumeric() || c == '_' {
+                        ident.push(c);
+                        chars.next();
+                        col += 1;
+                    } else {
+                        break;
+                    }
+                }
+                tokens.push(Token {
+                    kind: TokenKind::Ident(ident),
+                    span,
+                });
+            }
             _ => {
                 return Err(FormCalcError::LexerError {
                     line,

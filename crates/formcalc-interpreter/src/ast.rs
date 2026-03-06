@@ -11,6 +11,11 @@ pub enum Expr {
     Null,
     /// Variable/identifier reference
     Ident(String),
+    /// Member access: object.member (SOM path resolution)
+    MemberAccess {
+        object: Box<Expr>,
+        member: String,
+    },
 
     /// Unary negation: -expr
     Negate(Box<Expr>),

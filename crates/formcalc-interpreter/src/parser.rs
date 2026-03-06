@@ -527,7 +527,26 @@ impl Parser {
                     self.expect(&TokenKind::RParen)?;
                     Ok(Expr::FuncCall { name, args })
                 } else {
-                    Ok(Expr::Ident(name))
+                    let mut expr = Expr::Ident(name);
+                    while self.peek() == &TokenKind::Dot {
+                        if let Some(next) = self.tokens.get(self.pos + 1) {
+                            if let TokenKind::Ident(_) = &next.kind {
+                                self.advance(); // consume dot
+                                if let TokenKind::Ident(member) = self.peek().clone() {
+                                    self.advance(); // consume member
+                                    expr = Expr::MemberAccess {
+                                        object: Box::new(expr),
+                                        member,
+                                    };
+                                }
+                            } else {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    Ok(expr)
                 }
             }
             TokenKind::LParen => {
