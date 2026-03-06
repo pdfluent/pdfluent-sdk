@@ -14,6 +14,22 @@ use lopdf::Object;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// The outline format of a font program.
+///
+/// PDF requires different font stream types depending on whether the font
+/// contains TrueType (`glyf`) or CFF outlines. Using the wrong subtype
+/// causes PDF/A validation failures and incorrect text rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FontOutlineType {
+    /// TrueType outlines (`glyf` table present).
+    /// Embedded via `/FontFile2` with `/Subtype /TrueType`.
+    TrueType,
+    /// CFF outlines (`CFF ` or `CFF2` table present).
+    /// Embedded via `/FontFile3` with `/Subtype /OpenType` (CIDFont)
+    /// or `/Subtype /Type1C` (simple font).
+    Cff,
+}
+
 /// A loaded font with metrics available for text measurement.
 #[derive(Debug)]
 pub struct LoadedFont {
@@ -35,6 +51,8 @@ pub struct LoadedFont {
     pub line_gap: i16,
     /// Number of glyphs in the font.
     pub glyph_count: u16,
+    /// The outline format (TrueType vs CFF).
+    pub outline_type: FontOutlineType,
     /// Glyph advance widths indexed by glyph ID.
     glyph_widths: Vec<u16>,
     /// Character to glyph ID mapping (cmap).
@@ -75,6 +93,15 @@ impl LoadedFont {
         let line_gap = face.line_gap();
         let glyph_count = face.number_of_glyphs();
 
+        // Detect outline type: TrueType fonts have a `glyf` table,
+        // CFF/OpenType fonts have a `CFF ` or `CFF2` table instead.
+        let outline_type = if face.tables().glyf.is_some() {
+            FontOutlineType::TrueType
+        } else {
+            // CFF, CFF2, or unknown — treat as CFF for PDF embedding purposes.
+            FontOutlineType::Cff
+        };
+
         // Extract glyph widths
         let mut glyph_widths = Vec::with_capacity(glyph_count as usize);
         for gid in 0..glyph_count {
@@ -109,6 +136,7 @@ impl LoadedFont {
             descender,
             line_gap,
             glyph_count,
+            outline_type,
             glyph_widths,
             cmap,
             raw_data: data,
