@@ -6,4 +6,9 @@ license = "MIT"
 description = "AcroForm engine for PDF interactive forms."
 
 [dependencies]
+pdf-syntax = { path = "../pdf-syntax" }
+lopdf = { workspace = true }
 thiserror = { workspace = true }
+log = "0.4"
+
+[dev-dependencies]

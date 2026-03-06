@@ -2184,6 +2184,9 @@ dependencies = [
 [[package]]
 name = "pdf-capi"
 version = "0.1.0"
+dependencies = [
+ "pdf-engine",
+]
 
 [[package]]
 name = "pdf-compliance"
@@ -2222,6 +2225,9 @@ dependencies = [
 name = "pdf-forms"
 version = "0.1.0"
 dependencies = [
+ "log",
+ "lopdf",
+ "pdf-syntax",
  "thiserror",
 ]
 
@@ -4189,7 +4195,12 @@ dependencies = [
  "base64",
  "clap",
  "formcalc-interpreter",
+ "image",
  "lopdf",
+ "pdf-compliance",
+ "pdf-engine",
+ "pdf-sign",
+ "pdf-syntax",
  "pdfium-ffi-bridge",
  "reqwest",
  "roxmltree",
@@ -4256,6 +4267,9 @@ dependencies = [
  "formcalc-interpreter",
  "indexmap",
  "js-sys",
+ "pdf-compliance",
+ "pdf-sign",
+ "pdf-syntax",
  "serde",
  "serde_json",
  "wasm-bindgen",

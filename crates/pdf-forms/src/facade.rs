@@ -4,7 +4,7 @@
 //! AcroForm and XFA form technologies.  Language bindings (C, Python, WASM,
 //! Node.js) wrap these traits instead of individual crate APIs.
 
-use crate::{FieldTree, FieldType, FieldValue};
+use crate::tree::{FieldTree, FieldType, FieldValue};
 
 /// The kind of forms in a PDF document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,36 +70,37 @@ impl FormAccess for FieldTree {
     }
 
     fn field_names(&self) -> Vec<String> {
-        self.fields.iter().map(|f| f.name.clone()).collect()
+        self.terminal_fields()
+            .into_iter()
+            .map(|id| self.fully_qualified_name(id))
+            .collect()
     }
 
     fn get_value(&self, path: &str) -> Option<String> {
-        let field = self.fields.iter().find(|f| f.name == path)?;
-        match &field.value {
-            Some(FieldValue::Text(s)) => Some(s.clone()),
-            Some(FieldValue::Choice(arr)) => Some(arr.join(", ")),
-            Some(FieldValue::Button(b)) => Some(b.to_string()),
-            None => None,
+        let id = self.find_by_name(path)?;
+        let value = self.effective_value(id)?;
+        match value {
+            FieldValue::Text(s) => Some(s.clone()),
+            FieldValue::StringArray(arr) => Some(arr.join(", ")),
         }
     }
 
     fn set_value(&mut self, path: &str, value: &str) -> Result<(), FormError> {
-        let field = self
-            .fields
-            .iter_mut()
-            .find(|f| f.name == path)
+        let id = self
+            .find_by_name(path)
             .ok_or_else(|| FormError::FieldNotFound(path.to_string()))?;
 
-        match field.field_type {
-            FieldType::Text => {
-                field.value = Some(FieldValue::Text(value.to_string()));
-            }
-            FieldType::Button => {
-                let b = matches!(value, "true" | "Yes" | "On" | "1");
-                field.value = Some(FieldValue::Button(b));
+        let ft = self
+            .effective_field_type(id)
+            .ok_or(FormError::InvalidValue)?;
+
+        match ft {
+            FieldType::Text | FieldType::Button => {
+                self.get_mut(id).value = Some(FieldValue::Text(value.to_string()));
             }
             FieldType::Choice => {
-                field.value = Some(FieldValue::Choice(vec![value.to_string()]));
+                self.get_mut(id).value =
+                    Some(FieldValue::StringArray(vec![value.to_string()]));
             }
             FieldType::Signature => {
                 return Err(FormError::ReadOnly(path.to_string()));
@@ -112,38 +113,79 @@ impl FormAccess for FieldTree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Field, FieldTree, FieldType, FieldValue};
+    use crate::flags::FieldFlags;
+    use crate::tree::{FieldNode, FieldTree, FieldType, FieldValue};
+
+    fn make_node(name: &str) -> FieldNode {
+        FieldNode {
+            partial_name: name.into(),
+            alternate_name: None,
+            mapping_name: None,
+            field_type: None,
+            flags: FieldFlags::empty(),
+            value: None,
+            default_value: None,
+            default_appearance: None,
+            quadding: None,
+            max_len: None,
+            options: vec![],
+            top_index: None,
+            rect: None,
+            appearance_state: None,
+            page_index: None,
+            parent: None,
+            children: vec![],
+            object_id: None,
+            has_actions: false,
+            mk: None,
+            border_style: None,
+        }
+    }
 
     fn sample_tree() -> FieldTree {
-        FieldTree {
-            fields: vec![
-                Field {
-                    name: "form.name".to_string(),
-                    field_type: FieldType::Text,
-                    value: Some(FieldValue::Text("Alice".to_string())),
-                },
-                Field {
-                    name: "form.agree".to_string(),
-                    field_type: FieldType::Button,
-                    value: Some(FieldValue::Button(true)),
-                },
-                Field {
-                    name: "form.country".to_string(),
-                    field_type: FieldType::Choice,
-                    value: Some(FieldValue::Choice(vec!["NL".to_string()])),
-                },
-                Field {
-                    name: "form.sig".to_string(),
-                    field_type: FieldType::Signature,
-                    value: None,
-                },
-                Field {
-                    name: "form.empty".to_string(),
-                    field_type: FieldType::Text,
-                    value: None,
-                },
-            ],
-        }
+        let mut tree = FieldTree::new();
+
+        // Root "form" node
+        let form_id = tree.alloc(make_node("form"));
+
+        // Text field: form.name = "Alice"
+        let mut name_node = make_node("name");
+        name_node.field_type = Some(FieldType::Text);
+        name_node.value = Some(FieldValue::Text("Alice".to_string()));
+        name_node.parent = Some(form_id);
+        let name_id = tree.alloc(name_node);
+
+        // Button field: form.agree = "true"
+        let mut agree_node = make_node("agree");
+        agree_node.field_type = Some(FieldType::Button);
+        agree_node.value = Some(FieldValue::Text("true".to_string()));
+        agree_node.parent = Some(form_id);
+        let agree_id = tree.alloc(agree_node);
+
+        // Choice field: form.country = ["NL"]
+        let mut country_node = make_node("country");
+        country_node.field_type = Some(FieldType::Choice);
+        country_node.value = Some(FieldValue::StringArray(vec!["NL".to_string()]));
+        country_node.parent = Some(form_id);
+        let country_id = tree.alloc(country_node);
+
+        // Signature field: form.sig (no value)
+        let mut sig_node = make_node("sig");
+        sig_node.field_type = Some(FieldType::Signature);
+        sig_node.parent = Some(form_id);
+        let sig_id = tree.alloc(sig_node);
+
+        // Empty text field: form.empty
+        let mut empty_node = make_node("empty");
+        empty_node.field_type = Some(FieldType::Text);
+        empty_node.parent = Some(form_id);
+        let empty_id = tree.alloc(empty_node);
+
+        // Wire children
+        let form = tree.get_mut(form_id);
+        form.children = vec![name_id, agree_id, country_id, sig_id, empty_id];
+
+        tree
     }
 
     #[test]
@@ -202,7 +244,6 @@ mod tests {
 
     #[test]
     fn object_safe() {
-        // Verify FormAccess is object-safe by creating a trait object.
         let tree = sample_tree();
         let _dyn_ref: &dyn FormAccess = &tree;
         assert_eq!(_dyn_ref.form_type(), FormKind::AcroForm);
