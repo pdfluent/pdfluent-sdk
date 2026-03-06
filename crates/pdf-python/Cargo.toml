@@ -3,6 +3,13 @@ name = "pdf-python"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Python bindings for the PDF engine."
+description = "Python bindings for the PDF engine via PyO3."
+
+[lib]
+name = "pdfengine"
+crate-type = ["cdylib"]
 
 [dependencies]
+pdf-engine = { path = "../pdf-engine" }
+pdf-sign = { path = "../pdf-sign" }
+pyo3 = { version = "0.24", features = ["extension-module"] }
