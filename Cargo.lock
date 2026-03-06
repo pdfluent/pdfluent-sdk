@@ -453,6 +453,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -2094,6 +2095,9 @@ dependencies = [
 [[package]]
 name = "pdf-capi"
 version = "0.1.0"
+dependencies = [
+ "pdf-engine",
+]
 
 [[package]]
 name = "pdf-compliance"
@@ -2116,6 +2120,17 @@ dependencies = [
  "pdf-syntax",
  "pdf-xfa",
  "rayon",
+ "thiserror",
+]
+
+[[package]]
+name = "pdf-extract"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "image",
+ "lopdf",
+ "tempfile",
  "thiserror",
 ]
 
@@ -2155,6 +2170,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-invoice"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "flate2",
+ "lopdf",
+ "quick-xml",
+ "roxmltree",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "pdf-manip"
 version = "0.1.0"
 dependencies = [
@@ -2172,8 +2202,29 @@ name = "pdf-node"
 version = "0.1.0"
 
 [[package]]
+name = "pdf-ocr"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "image",
+ "lopdf",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "pdf-python"
 version = "0.1.0"
+
+[[package]]
+name = "pdf-redact"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "lopdf",
+ "tempfile",
+ "thiserror",
+]
 
 [[package]]
 name = "pdf-render"
@@ -2514,6 +2565,16 @@ name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
+
+[[package]]
+name = "quick-xml"
+version = "0.37.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
+dependencies = [
+ "memchr",
+ "serde",
+]
 
 [[package]]
 name = "quote"
@@ -4061,7 +4122,12 @@ dependencies = [
  "base64",
  "clap",
  "formcalc-interpreter",
+ "image",
  "lopdf",
+ "pdf-compliance",
+ "pdf-engine",
+ "pdf-sign",
+ "pdf-syntax",
  "pdfium-ffi-bridge",
  "reqwest",
  "roxmltree",
@@ -4128,6 +4194,9 @@ dependencies = [
  "formcalc-interpreter",
  "indexmap",
  "js-sys",
+ "pdf-compliance",
+ "pdf-sign",
+ "pdf-syntax",
  "serde",
  "serde_json",
  "wasm-bindgen",
