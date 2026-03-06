@@ -1,7 +1,10 @@
-//! XFA (XML Forms Architecture) engine wrapper.
-//!
-//! Re-exports the XFA DOM resolver, FormCalc interpreter, layout engine,
-//! and JSON serialization as a unified crate.
+//! XFA engine — extraction, layout rendering, font resolution.
+
+pub mod appearance_bridge;
+pub mod error;
+pub mod extract;
+pub mod font_bridge;
+pub mod render_bridge;
 
 pub use formcalc_interpreter as formcalc;
 pub use xfa_dom_resolver as dom_resolver;
