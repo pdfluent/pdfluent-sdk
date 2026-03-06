@@ -117,13 +117,15 @@ impl X509Certificate {
     }
 
     /// Check if this certificate has the digital signature key usage bit set.
+    /// Bit 0 (digitalSignature) = 0x8000 in the u16 layout.
     pub fn has_digital_signature_usage(&self) -> bool {
-        self.key_usage.is_none_or(|ku| ku & 0x80 != 0)
+        self.key_usage.is_none_or(|ku| ku & 0x8000 != 0)
     }
 
     /// Check if this certificate has the key cert sign key usage bit set.
+    /// Bit 5 (keyCertSign) = 0x0400 in the u16 layout.
     pub fn has_key_cert_sign_usage(&self) -> bool {
-        self.key_usage.is_some_and(|ku| ku & 0x04 != 0)
+        self.key_usage.is_some_and(|ku| ku & 0x0400 != 0)
     }
 }
 
@@ -298,13 +300,18 @@ fn parse_single_extension(data: &[u8], is_ca: &mut bool, key_usage: &mut Option<
         }
     } else if oid == OID_KEY_USAGE {
         // KeyUsage ::= BIT STRING
+        // bits[0] = unused bit count (padding at low end of last byte),
+        // bits[1..] = the actual key usage bits in MSB order.
+        // Bit 0 (MSB, mask 0x80) = digitalSignature,
+        // Bit 5 (mask 0x04) = keyCertSign, etc.
+        // Do NOT shift — the unused bits are low-order padding.
         if let Some((_, bits)) = parse_tlv(ext_value) {
             if bits.len() >= 2 {
-                let unused = bits[0];
-                let usage = (bits[1] as u16) >> unused;
+                let mut usage = (bits[1] as u16) << 8;
+                if bits.len() >= 3 {
+                    usage |= bits[2] as u16;
+                }
                 *key_usage = Some(usage);
-            } else if bits.len() == 2 {
-                *key_usage = Some(bits[1] as u16);
             }
         }
     }
