@@ -4,6 +4,7 @@ pub mod appearance_bridge;
 pub mod error;
 pub mod extract;
 pub mod font_bridge;
+pub mod paint_bridge;
 pub mod render_bridge;
 
 pub use formcalc_interpreter as formcalc;

@@ -2,6 +2,10 @@
 //!
 //! Handles parsing, rendering, and manipulation of AcroForm (non-XFA) form fields.
 
+pub mod facade;
+
+pub use facade::{DocumentOps, FormAccess, FormError, FormKind};
+
 /// A form field value.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldValue {
