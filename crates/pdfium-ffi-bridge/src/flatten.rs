@@ -23,6 +23,14 @@ pub struct FlattenConfig {
     pub remove_acroform: bool,
     /// Whether to compress flattened content streams.
     pub compress: bool,
+    /// Whether to produce PDF/A-2b compliant output.
+    ///
+    /// When enabled, the flattened PDF will include:
+    /// - XMP metadata with PDF/A-2b conformance declaration
+    /// - sRGB output intent (ICC profile)
+    /// - JavaScript and embedded files removed
+    /// - CMYK colors converted to sRGB
+    pub pdfa: bool,
 }
 
 impl Default for FlattenConfig {
@@ -32,6 +40,7 @@ impl Default for FlattenConfig {
             remove_xfa: true,
             remove_acroform: true,
             compress: true,
+            pdfa: false,
         }
     }
 }
@@ -85,6 +94,11 @@ pub fn flatten_to_pdf(layout: &LayoutDom, config: &FlattenConfig) -> Result<Vec<
     };
     let catalog_id = doc.add_object(Object::Dictionary(catalog));
     doc.trailer.set("Root", Object::Reference(catalog_id));
+
+    // Apply PDF/A-2b compliance if requested.
+    if config.pdfa {
+        apply_pdfa2b(&mut doc)?;
+    }
 
     let mut buf = Vec::new();
     doc.save_to(&mut buf)
@@ -167,6 +181,11 @@ pub fn flatten_into_pdf(
     // Remove XFA/AcroForm metadata
     if config.remove_xfa || config.remove_acroform {
         remove_xfa_metadata(doc, config.remove_acroform);
+    }
+
+    // Apply PDF/A-2b compliance if requested.
+    if config.pdfa {
+        apply_pdfa2b(doc)?;
     }
 
     Ok(FlattenResult {
@@ -338,6 +357,46 @@ fn build_pages_dict(page_ids: &[ObjectId]) -> Dictionary {
         "Count" => Object::Integer(page_ids.len() as i64),
         "Kids" => Object::Array(kids),
     }
+}
+
+/// Apply PDF/A-2b compliance transformations to a document.
+///
+/// This performs all steps needed for PDF/A-2b:
+/// 1. Inject XMP metadata with conformance declaration
+/// 2. Add sRGB output intent (if not already present)
+/// 3. Convert CMYK colors to sRGB in content streams
+/// 4. Remove JavaScript and additional actions
+/// 5. Remove embedded files
+fn apply_pdfa2b(doc: &mut lopdf::Document) -> Result<()> {
+    // 1. XMP metadata
+    crate::xmp::inject_pdfa2b_metadata(doc, "XFA Flattened Document")?;
+
+    // 2. sRGB output intent
+    let color_report = crate::colorspace::detect_color_spaces(doc);
+    if !color_report.has_srgb_output_intent {
+        crate::colorspace::add_srgb_output_intent(doc)?;
+    }
+
+    // 3. CMYK → sRGB conversion in page content streams
+    if color_report.uses_cmyk {
+        let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+        for page_id in page_ids {
+            if let Ok(content) = doc.get_page_content(page_id) {
+                let converted = crate::colorspace::convert_cmyk_to_rgb_in_content(&content);
+                if converted != content {
+                    let _ = doc.change_page_content(page_id, converted);
+                }
+            }
+        }
+    }
+
+    // 4. Remove JavaScript and actions
+    crate::pdfa_sanitize::remove_javascript(doc);
+
+    // 5. Remove embedded files
+    crate::pdfa_sanitize::remove_embedded_files(doc);
+
+    Ok(())
 }
 
 /// Remove XFA metadata and optionally AcroForm from the document catalog.

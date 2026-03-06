@@ -10,6 +10,7 @@
 //! Uses `ttf-parser` for zero-copy font parsing.
 
 use crate::error::{PdfError, Result};
+use lopdf::Object;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -205,6 +206,185 @@ impl LoadedFont {
     pub fn has_char(&self, ch: char) -> bool {
         self.cmap.contains_key(&(ch as u32))
     }
+}
+
+/// Result of font embedding validation for PDF/A compliance.
+#[derive(Debug)]
+pub struct FontValidationReport {
+    /// Fonts that are referenced but not embedded.
+    pub missing_fonts: Vec<String>,
+    /// Fonts that are embedded but have missing glyphs for used text.
+    pub incomplete_fonts: Vec<FontGlyphIssue>,
+}
+
+/// A font with missing glyphs.
+#[derive(Debug)]
+pub struct FontGlyphIssue {
+    /// Font name.
+    pub font_name: String,
+    /// Characters that lack glyphs in the embedded font.
+    pub missing_chars: Vec<char>,
+}
+
+impl FontValidationReport {
+    /// Whether all fonts pass PDF/A validation.
+    pub fn is_valid(&self) -> bool {
+        self.missing_fonts.is_empty() && self.incomplete_fonts.is_empty()
+    }
+}
+
+/// Validate font embedding for PDF/A compliance.
+///
+/// PDF/A requires all fonts to be embedded with all used glyphs present.
+/// This function checks every font referenced in the document:
+/// 1. Verifies a FontFile stream exists in the FontDescriptor
+/// 2. Parses the embedded font data and checks glyph coverage
+pub fn validate_font_embedding(doc: &lopdf::Document) -> FontValidationReport {
+    let mut missing_fonts = Vec::new();
+    let mut incomplete_fonts = Vec::new();
+
+    for obj in doc.objects.values() {
+        let dict = match obj {
+            Object::Dictionary(d) => d,
+            Object::Stream(s) => &s.dict,
+            _ => continue,
+        };
+
+        // Look for Font dictionaries (not FontDescriptors).
+        let is_font = dict
+            .get(b"Type")
+            .ok()
+            .and_then(|t| t.as_name().ok())
+            .is_some_and(|n| n == b"Font");
+        if !is_font {
+            continue;
+        }
+
+        let base_font = dict
+            .get(b"BaseFont")
+            .ok()
+            .and_then(|n| n.as_name().ok())
+            .map(|n| String::from_utf8_lossy(n).to_string())
+            .unwrap_or_default();
+
+        // Standard 14 fonts don't need embedding (but PDF/A technically requires it;
+        // we flag them as missing so the caller can decide).
+        let font_descriptor_ref = match dict.get(b"FontDescriptor") {
+            Ok(Object::Reference(r)) => *r,
+            _ => {
+                // No FontDescriptor → likely a standard font or Type0 CID font.
+                // Type1 standard fonts without descriptors are not embedded.
+                let subtype = dict
+                    .get(b"Subtype")
+                    .ok()
+                    .and_then(|s| s.as_name().ok())
+                    .unwrap_or(b"");
+                if (subtype == b"Type1" || subtype == b"TrueType") && !base_font.is_empty() {
+                    missing_fonts.push(base_font);
+                }
+                continue;
+            }
+        };
+
+        let descriptor = match doc.get_object(font_descriptor_ref) {
+            Ok(Object::Dictionary(d)) => d,
+            Ok(Object::Stream(s)) => &s.dict,
+            _ => continue,
+        };
+
+        // Check for embedded font data.
+        let has_font_file = [b"FontFile".as_slice(), b"FontFile2", b"FontFile3"]
+            .iter()
+            .any(|key| {
+                matches!(
+                    descriptor.get(key),
+                    Ok(Object::Reference(_)) | Ok(Object::Stream(_))
+                )
+            });
+
+        if !has_font_file && !base_font.is_empty() {
+            missing_fonts.push(base_font.clone());
+            continue;
+        }
+
+        // If embedded, try to parse and check glyph coverage.
+        // We only check if there's a ToUnicode CMap (meaning we know what chars are used).
+        if let Ok(Object::Reference(tounicode_ref)) = dict.get(b"ToUnicode") {
+            if let Ok(Object::Stream(cmap_stream)) = doc.get_object(*tounicode_ref) {
+                let chars = extract_unicode_from_cmap(&cmap_stream.content);
+                if !chars.is_empty() {
+                    // Try to load the embedded font and check coverage.
+                    let font_data = extract_font_file(doc, descriptor);
+                    if let Some(data) = font_data {
+                        if let Ok(loaded) = LoadedFont::from_data(data) {
+                            let missing: Vec<char> =
+                                chars.into_iter().filter(|c| !loaded.has_char(*c)).collect();
+                            if !missing.is_empty() {
+                                incomplete_fonts.push(FontGlyphIssue {
+                                    font_name: base_font,
+                                    missing_chars: missing,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    FontValidationReport {
+        missing_fonts,
+        incomplete_fonts,
+    }
+}
+
+/// Extract font file data from a FontDescriptor.
+fn extract_font_file(doc: &lopdf::Document, descriptor: &lopdf::Dictionary) -> Option<Vec<u8>> {
+    for key in &[b"FontFile2".as_slice(), b"FontFile3", b"FontFile"] {
+        if let Ok(Object::Reference(r)) = descriptor.get(key) {
+            if let Ok(Object::Stream(s)) = doc.get_object(*r) {
+                let mut stream = s.clone();
+                let _ = stream.decompress();
+                return Some(stream.content.clone());
+            }
+        }
+    }
+    None
+}
+
+/// Extract Unicode characters from a ToUnicode CMap stream (best-effort).
+///
+/// Parses `beginbfchar` / `endbfchar` sections to find mapped characters.
+fn extract_unicode_from_cmap(cmap_data: &[u8]) -> Vec<char> {
+    let text = String::from_utf8_lossy(cmap_data);
+    let mut chars = Vec::new();
+
+    let mut in_bfchar = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("beginbfchar") {
+            in_bfchar = true;
+            continue;
+        }
+        if trimmed.contains("endbfchar") {
+            in_bfchar = false;
+            continue;
+        }
+        if in_bfchar {
+            // Lines look like: <0041> <0041>  (src → unicode)
+            let parts: Vec<&str> = trimmed.split('>').collect();
+            if parts.len() >= 2 {
+                let hex = parts[1].trim().trim_start_matches('<');
+                if let Ok(cp) = u32::from_str_radix(hex, 16) {
+                    if let Some(ch) = char::from_u32(cp) {
+                        chars.push(ch);
+                    }
+                }
+            }
+        }
+    }
+
+    chars
 }
 
 /// Font resolver — finds and loads fonts by name.
