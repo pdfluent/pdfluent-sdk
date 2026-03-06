@@ -15,6 +15,10 @@ on:
         default: '1.0'
         type: string
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   visual-regression:
     name: AVRT Pixel Diff
@@ -58,8 +62,11 @@ jobs:
         if: steps.gold-check.outputs.exists == 'true'
         run: |
           mkdir -p renders/
-          echo "Engine render generation would run here"
-          echo "TODO: cargo run --release --bin xfa-cli -- render --corpus corpus/ --output renders/"
+          cargo run --release --bin corpus-render -- \
+            --corpus corpus/ \
+            --output renders/ \
+            --scale 2.0 \
+            --json
 
       - name: Run AVRT
         if: steps.gold-check.outputs.exists == 'true'

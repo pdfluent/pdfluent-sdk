@@ -1,0 +1,104 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'crates/pdf-syntax/**'
+      - 'crates/pdf-interpret/**'
+      - 'crates/pdf-font/**'
+      - 'crates/pdfium-ffi-bridge/**'
+      - 'crates/formcalc-interpreter/**'
+      - 'crates/xfa-dom-resolver/**'
+      - 'crates/xfa-layout-engine/**'
+      - 'crates/pdf-bench/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Restore baseline
+        uses: actions/cache@v4
+        with:
+          path: target/criterion
+          key: bench-criterion-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            bench-criterion-${{ runner.os }}-
+
+      - name: Run benchmarks
+        run: |
+          cargo bench -p pdf-bench 2>&1 | tee bench-output.txt
+
+      - name: Check for regressions
+        if: github.event_name == 'pull_request'
+        run: |
+          # Parse criterion output for regressions (>10% slower)
+          if grep -q "regressed" bench-output.txt; then
+            echo "## Benchmark Regressions Detected" > bench-comment.md
+            echo "" >> bench-comment.md
+            echo '```' >> bench-comment.md
+            grep -A2 "regressed" bench-output.txt >> bench-comment.md
+            echo '```' >> bench-comment.md
+            echo "" >> bench-comment.md
+            echo "Please investigate performance regressions before merging." >> bench-comment.md
+          else
+            echo "## Benchmarks: No Regressions" > bench-comment.md
+            echo "" >> bench-comment.md
+            echo "All benchmarks within acceptable range." >> bench-comment.md
+          fi
+
+      - name: Comment PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('bench-comment.md')) return;
+            const body = fs.readFileSync('bench-comment.md', 'utf8');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes('Benchmark'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            target/criterion/
+            bench-output.txt
+          retention-days: 30

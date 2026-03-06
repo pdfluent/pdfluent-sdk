@@ -1,0 +1,12 @@
+[package]
+name = "pdf-xfa"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "XFA (XML Forms Architecture) engine wrapper."
+
+[dependencies]
+xfa-dom-resolver = { path = "../xfa-dom-resolver" }
+formcalc-interpreter = { path = "../formcalc-interpreter" }
+xfa-layout-engine = { path = "../xfa-layout-engine" }
+xfa-json = { path = "../xfa-json" }

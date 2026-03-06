@@ -1,0 +1,8 @@
+[package]
+name = "pdf-sign"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "PDF digital signature validation and signing."
+
+[dependencies]
