@@ -1014,6 +1014,29 @@ impl Color {
             opacity: c[3],
         }
     }
+
+    /// Create a color in the DeviceRGB color space.
+    pub fn from_device_rgb(r: f32, g: f32, b: f32) -> Self {
+        Self {
+            color_space: ColorSpace::device_rgb(),
+            components: smallvec![r, g, b],
+            opacity: 1.0,
+        }
+    }
+
+    /// Create a color in the DeviceRGB color space with custom opacity.
+    pub fn from_device_rgb_with_opacity(r: f32, g: f32, b: f32, opacity: f32) -> Self {
+        Self {
+            color_space: ColorSpace::device_rgb(),
+            components: smallvec![r, g, b],
+            opacity,
+        }
+    }
+
+    /// Returns the opacity of this color (0.0 = fully transparent, 1.0 = fully opaque).
+    pub fn opacity(&self) -> f32 {
+        self.opacity
+    }
 }
 
 static CMYK_TRANSFORM: LazyLock<ICCProfile> = LazyLock::new(|| {
