@@ -1,0 +1,24 @@
+[package]
+name = "pdf-invoice"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Form data exchange (FDF/XFDF) and ZUGFeRD/Factur-X e-invoicing"
+
+[dependencies]
+lopdf.workspace = true
+thiserror.workspace = true
+roxmltree.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+quick-xml = { version = "0.37", features = ["serialize"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
+flate2 = "1"
+
+[features]
+default = ["serde"]
+serde = ["dep:serde", "dep:serde_json"]
+
+[dev-dependencies]
+tempfile = "3"
