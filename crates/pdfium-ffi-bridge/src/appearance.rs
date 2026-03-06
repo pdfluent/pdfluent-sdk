@@ -36,7 +36,7 @@ pub struct AppearanceConfig {
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
-            default_font: "Helv".to_string(),
+            default_font: "Helvetica".to_string(),
             default_font_size: 10.0,
             border_width: 0.5,
             border_color: [0.0, 0.0, 0.0],

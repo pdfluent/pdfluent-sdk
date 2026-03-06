@@ -1,0 +1,132 @@
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+This project incorporates components from the projects listed below. The
+original copyright notices and license terms are included below.
+
+================================================================================
+hayro — A PDF interpreter and renderer in pure Rust
+https://github.com/LaurenzV/hayro
+================================================================================
+
+Copyright (c) Laurenz Stampfl
+
+Dual-licensed under MIT and Apache-2.0.
+
+Forked crates:
+  - hayro-syntax      → pdf-syntax
+  - hayro-interpret   → pdf-interpret
+  - hayro-font        → pdf-font (merged with hayro-cmap and hayro-postscript)
+  - hayro-cmap        → pdf-font::cmap
+  - hayro-postscript  → pdf-font::postscript
+  - hayro             → pdf-render
+  - hayro-jbig2       (retained as-is)
+  - hayro-jpeg2000    (retained as-is)
+  - hayro-ccitt       (retained as-is)
+
+--- MIT License ---
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--- Apache License, Version 2.0 ---
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+--- NOTICE (from hayro) ---
+
+The following parts of code have been adapted/translated from PDFBox
+(https://github.com/apache/pdfbox), available under the Apache 2.0 license:
+  - The encoding maps for some of the standard fonts.
+  - The evaluator for type 0 functions.
+  - The list of common dictionary keys.
+
+The following parts of code have been adapted/translated from pdf.js
+(https://github.com/mozilla/pdf.js), available under the Apache 2.0 license:
+  - The CalRGB and CalGray conversion code.
+  - The flate decoder.
+  - The implementation of AES, MD5, SHA and RC4.
+
+The following parts of code have been adapted/translated from the CFFDump
+utility tool (https://github.com/janpe2/CFFDump/), available under the
+Apache 2.0 license:
+  - The Type1 font parser.
+
+================================================================================
+Foxit Embedded Fonts (embedded in pdf-interpret)
+================================================================================
+
+The Foxit-branded Type1 fonts (FoxitSans, FoxitSerif, FoxitFixed, FoxitDingbats,
+FoxitSymbol) are used as substitutes for the 14 PDF standard fonts. These fonts
+are distributed under the Foxit license included in:
+  crates/pdf-interpret/assets/LICENSE_FOXIT
+
+================================================================================
+CGATS ICC Profile (embedded in pdf-interpret, hayro-jpeg2000)
+================================================================================
+
+CGATS001Compat-v2-micro.icc — CGATS.001 compatible CMYK ICC profile.
+See: crates/pdf-interpret/assets/CGATS_LICENSE.txt
+
+================================================================================
+Rust Crate Dependencies (non-exhaustive, key dependencies)
+================================================================================
+
+The following crates are used as dependencies. Each is available under the
+license(s) specified in their respective Cargo.toml files on crates.io:
+
+  vello_cpu          — Apache-2.0 OR MIT (Linebender)
+  skrifa             — Apache-2.0 OR MIT (Linebender / Google Fonts)
+  kurbo              — Apache-2.0 OR MIT (Linebender)
+  flate2             — Apache-2.0 OR MIT
+  image              — Apache-2.0 OR MIT
+  ttf-parser         — Apache-2.0 OR MIT
+  lopdf              — MIT
+  roxmltree          — Apache-2.0 OR MIT
+  thiserror          — Apache-2.0 OR MIT
+  serde              — Apache-2.0 OR MIT
+  serde_json         — Apache-2.0 OR MIT
+  indexmap           — Apache-2.0 OR MIT
+  clap               — Apache-2.0 OR MIT
+  anyhow             — Apache-2.0 OR MIT
+  moxcms             — Apache-2.0 OR MIT
+  phf                — MIT
+  bytemuck           — Apache-2.0 OR MIT OR Zlib
+  fast_image_resize  — Apache-2.0 OR MIT
+  fearless_simd      — Apache-2.0 OR MIT
+  brotli             — BSD-3-Clause OR MIT
+  zune-jpeg          — Apache-2.0 OR MIT OR Zlib
+  yoke               — Unicode-3.0
+  siphasher          — Apache-2.0 OR MIT
+  rustc-hash         — Apache-2.0 OR MIT
+  smallvec           — Apache-2.0 OR MIT
+  bitflags           — Apache-2.0 OR MIT
+  log                — Apache-2.0 OR MIT
+  pdfium-render      — Apache-2.0 OR MIT (optional, golden tests only)
+
+For the complete and authoritative license information for all transitive
+dependencies, run: cargo license --avoid-build-deps --avoid-dev-deps

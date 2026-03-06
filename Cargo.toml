@@ -1,13 +1,37 @@
 [workspace]
 members = [
+    # --- Forked from hayro (MIT + Apache-2.0) ---
+    "crates/pdf-syntax",
+    "crates/pdf-interpret",
+    "crates/pdf-font",
+    "crates/pdf-render",
+    "crates/hayro-jbig2",
+    "crates/hayro-jpeg2000",
+    "crates/hayro-ccitt",
+
+    # --- New engine crates ---
+    "crates/pdf-forms",
+    "crates/pdf-annot",
+    "crates/pdf-sign",
+    "crates/pdf-compliance",
+    "crates/pdf-capi",
+
+    # --- XFA engine (existing, wrapped) ---
+    "crates/pdf-xfa",
     "crates/xfa-dom-resolver",
     "crates/formcalc-interpreter",
     "crates/xfa-layout-engine",
-    "crates/pdfium-ffi-bridge",
-    "crates/xfa-cli",
     "crates/xfa-json",
-    "crates/xfa-api-server",
+
+    # --- Bindings & tools ---
+    "crates/pdf-python",
+    "crates/pdf-node",
     "crates/xfa-wasm",
+    "crates/xfa-cli",
+
+    # --- Existing support crates ---
+    "crates/pdfium-ffi-bridge",
+    "crates/xfa-api-server",
     "crates/xfa-license",
 ]
 resolver = "2"
@@ -33,10 +57,23 @@ serde_json = "1"
 indexmap = { version = "2", features = ["serde"] }
 ttf-parser = "0.25"
 
-# Internal crates
+# Internal crates (existing XFA)
 xfa-dom-resolver = { path = "crates/xfa-dom-resolver" }
 formcalc-interpreter = { path = "crates/formcalc-interpreter" }
 xfa-layout-engine = { path = "crates/xfa-layout-engine" }
 pdfium-ffi-bridge = { path = "crates/pdfium-ffi-bridge" }
 xfa-json = { path = "crates/xfa-json" }
 xfa-license = { path = "crates/xfa-license" }
+
+# Forked crates
+pdf-syntax = { path = "crates/pdf-syntax" }
+pdf-interpret = { path = "crates/pdf-interpret" }
+pdf-font = { path = "crates/pdf-font" }
+pdf-render = { path = "crates/pdf-render" }
+
+# New engine crates
+pdf-forms = { path = "crates/pdf-forms" }
+pdf-annot = { path = "crates/pdf-annot" }
+pdf-xfa = { path = "crates/pdf-xfa" }
+pdf-sign = { path = "crates/pdf-sign" }
+pdf-compliance = { path = "crates/pdf-compliance" }

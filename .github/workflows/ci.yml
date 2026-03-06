@@ -13,7 +13,10 @@ env:
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -22,7 +25,10 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -50,6 +56,17 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  wasm:
+    name: WASM Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --target wasm32-unknown-unknown -p xfa-wasm
+
   corpus-smoke:
     name: Corpus Smoke Test
     runs-on: ubuntu-latest
@@ -67,10 +84,8 @@ jobs:
             cargo run --release --bin accuracy-report -- \
               --corpus corpus \
               --output reports/accuracy/report.json
-            # Check parse rate from report
             PARSE_RATE=$(python3 -c "import json; print(json.load(open('reports/accuracy/report.json'))['parse_rate_pct'])")
             echo "Parse rate: ${PARSE_RATE}%"
-            # Fail if parse rate drops below 95%
             python3 -c "
             rate = float('${PARSE_RATE}')
             if rate < 95.0:

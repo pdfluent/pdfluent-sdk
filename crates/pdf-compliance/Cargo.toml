@@ -1,0 +1,8 @@
+[package]
+name = "pdf-compliance"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "PDF compliance checking (PDF/A, PDF/UA)."
+
+[dependencies]
