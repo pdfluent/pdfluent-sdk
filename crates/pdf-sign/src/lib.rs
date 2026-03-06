@@ -72,24 +72,22 @@ fn collect_sig_fields<'a>(
             (None, None) => String::new(),
         };
 
+        // Check if this dict itself is a /Sig field with /V, even if it has /Kids.
+        let is_sig = dict.get::<Name>(FT).is_some_and(|n| n.as_ref() == b"Sig");
+        if is_sig {
+            if let Some(v) = dict.get::<Dict<'_>>(V) {
+                let sig = SigDict::from_dict(v);
+                out.push(SignatureInfo {
+                    field_name: fq_name.clone(),
+                    sig,
+                    field_dict: dict.clone(),
+                });
+            }
+        }
+
         // Recurse into child fields (/Kids).
         if let Some(kids) = dict.get::<Array<'_>>(KIDS) {
             collect_sig_fields(&kids, out, Some(&fq_name));
-            continue;
-        }
-
-        let is_sig = dict.get::<Name>(FT).is_some_and(|n| n.as_ref() == b"Sig");
-        if !is_sig {
-            continue;
-        }
-
-        if let Some(v) = dict.get::<Dict<'_>>(V) {
-            let sig = SigDict::from_dict(v);
-            out.push(SignatureInfo {
-                field_name: fq_name,
-                sig,
-                field_dict: dict,
-            });
         }
     }
 }

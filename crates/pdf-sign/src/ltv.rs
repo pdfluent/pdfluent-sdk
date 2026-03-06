@@ -92,11 +92,28 @@ fn extract_binary_array(dict: &Dict<'_>, key: &[u8]) -> Vec<Vec<u8>> {
 ///
 /// VRI is a dictionary where keys are hex-encoded SHA-1 hashes of
 /// the signature /Contents value, and values are dictionaries.
-fn parse_vri_entries(_vri_dict: &Dict<'_>) -> Vec<VriEntry> {
-    // VRI entries are keyed by signature hash strings.
-    // Dict doesn't expose key iteration directly in pdf-syntax,
-    // so we return empty — the DSS-level arrays are the primary data source.
-    Vec::new()
+fn parse_vri_entries(vri_dict: &Dict<'_>) -> Vec<VriEntry> {
+    let mut entries = Vec::new();
+    for (name, _) in vri_dict.entries() {
+        let key = std::str::from_utf8(name.as_ref()).unwrap_or("").to_string();
+        if let Some(entry_dict) = vri_dict.get::<Dict<'_>>(name.as_ref()) {
+            // VRI entries use /Cert, /OCSP, /CRL (not /Certs, /OCSPs, /CRLs).
+            let certificates = extract_binary_array(&entry_dict, CERT);
+            let ocsp_responses = extract_binary_array(&entry_dict, OCSP);
+            let crls = extract_binary_array(&entry_dict, CRL);
+            let timestamp = entry_dict
+                .get::<pdf_syntax::object::String>(TU)
+                .map(|s| String::from_utf8_lossy(s.as_bytes()).to_string());
+            entries.push(VriEntry {
+                key,
+                certificates,
+                ocsp_responses,
+                crls,
+                timestamp,
+            });
+        }
+    }
+    entries
 }
 
 /// Compute the SHA-1 hash of signature contents for VRI lookup.

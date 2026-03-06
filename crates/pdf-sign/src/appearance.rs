@@ -67,24 +67,42 @@ pub fn generate_appearance_stream(
     match style {
         SignatureAppearanceStyle::Standard => {
             if let Some(name) = &info.signer_name {
-                write_text_line(&mut ops, margin, y, &format!("Signed by: {name}"));
+                write_text_line(
+                    &mut ops,
+                    margin,
+                    y,
+                    font_size,
+                    &format!("Signed by: {name}"),
+                );
                 y -= line_height;
             }
             if let Some(date) = &info.date {
-                write_text_line(&mut ops, margin, y, &format!("Date: {date}"));
+                write_text_line(&mut ops, margin, y, font_size, &format!("Date: {date}"));
                 y -= line_height;
             }
             if let Some(reason) = &info.reason {
-                write_text_line(&mut ops, margin, y, &format!("Reason: {reason}"));
+                write_text_line(&mut ops, margin, y, font_size, &format!("Reason: {reason}"));
                 y -= line_height;
             }
             if let Some(location) = &info.location {
-                write_text_line(&mut ops, margin, y, &format!("Location: {location}"));
+                write_text_line(
+                    &mut ops,
+                    margin,
+                    y,
+                    font_size,
+                    &format!("Location: {location}"),
+                );
             }
         }
         SignatureAppearanceStyle::Description(text) => {
             for (i, line) in text.lines().enumerate() {
-                write_text_line(&mut ops, margin, y - (i as f64 * line_height), line);
+                write_text_line(
+                    &mut ops,
+                    margin,
+                    y - (i as f64 * line_height),
+                    font_size,
+                    line,
+                );
             }
         }
     }
@@ -93,7 +111,7 @@ pub fn generate_appearance_stream(
     ops
 }
 
-fn write_text_line(ops: &mut Vec<u8>, x: f64, y: f64, text: &str) {
+fn write_text_line(ops: &mut Vec<u8>, x: f64, y: f64, font_size: f64, text: &str) {
     // Escape PDF string characters.
     let escaped: String = text
         .chars()
@@ -104,7 +122,10 @@ fn write_text_line(ops: &mut Vec<u8>, x: f64, y: f64, text: &str) {
             c => vec![c],
         })
         .collect();
-    ops.extend_from_slice(format!("{x:.2} {y:.2} Td ({escaped}) Tj\n").as_bytes());
+    // Use Tm (text matrix) for absolute positioning instead of cumulative Td.
+    ops.extend_from_slice(
+        format!("{font_size:.1} 0 0 {font_size:.1} {x:.2} {y:.2} Tm ({escaped}) Tj\n").as_bytes(),
+    );
 }
 
 /// Check if a signature field widget has an existing appearance stream.
