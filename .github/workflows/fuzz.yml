@@ -1,0 +1,85 @@
+name: Nightly Fuzzing
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzzing duration in seconds per target'
+        default: '300'
+        type: string
+      target:
+        description: 'Specific fuzz target (blank = all)'
+        default: ''
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_pdf_parser
+          - fuzz_content_stream
+          - fuzz_xref
+          - fuzz_filters
+          - fuzz_data_dom
+          - fuzz_formcalc
+          - fuzz_som_path
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_number }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Run fuzzer
+        working-directory: fuzz
+        run: |
+          DURATION="${{ inputs.duration || '300' }}"
+          TARGET="${{ inputs.target }}"
+
+          if [[ -n "$TARGET" && "$TARGET" != "${{ matrix.target }}" ]]; then
+            echo "Skipping ${{ matrix.target }} (only running $TARGET)"
+            exit 0
+          fi
+
+          echo "Fuzzing ${{ matrix.target }} for ${DURATION}s..."
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time="$DURATION" \
+            -max_len=65536
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/${{ matrix.target }}/
+          retention-days: 90
+
+      - name: Check for crashes
+        if: always()
+        run: |
+          CRASH_DIR="fuzz/artifacts/${{ matrix.target }}"
+          if [[ -d "$CRASH_DIR" ]] && [[ $(ls "$CRASH_DIR" 2>/dev/null | wc -l) -gt 0 ]]; then
+            echo "CRASHES FOUND in ${{ matrix.target }}:"
+            ls -la "$CRASH_DIR"
+            exit 1
+          fi
+          echo "No crashes found in ${{ matrix.target }}"

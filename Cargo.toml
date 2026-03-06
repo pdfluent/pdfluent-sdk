@@ -33,6 +33,9 @@ members = [
     "crates/pdfium-ffi-bridge",
     "crates/xfa-api-server",
     "crates/xfa-license",
+
+    # --- Benchmarks ---
+    "crates/pdf-bench",
 ]
 resolver = "2"
 
