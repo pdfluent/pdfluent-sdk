@@ -85,3 +85,4 @@ pdf-xfa = { path = "crates/pdf-xfa" }
 pdf-sign = { path = "crates/pdf-sign" }
 pdf-engine = { path = "crates/pdf-engine" }
 pdf-compliance = { path = "crates/pdf-compliance" }
+pdf-manip = { path = "crates/pdf-manip" }
