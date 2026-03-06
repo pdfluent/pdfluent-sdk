@@ -3,6 +3,8 @@ name = "pdf-annot"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "PDF annotation engine."
+description = "PDF annotation engine — parsing and typed access to all annotation types per ISO 32000-2 §12.5."
 
 [dependencies]
+pdf-syntax = { path = "../pdf-syntax" }
+log = "0.4"

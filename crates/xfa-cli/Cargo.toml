@@ -29,6 +29,10 @@ path = "src/bin/edge-case-analyzer.rs"
 name = "xfa-license-tool"
 path = "src/bin/license_tool.rs"
 
+[[bin]]
+name = "corpus-render"
+path = "src/bin/corpus-render.rs"
+
 [dependencies]
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
