@@ -2,7 +2,8 @@
 //!
 //! Provides per-page operations: render, text extraction, geometry.
 
-use crate::document::{PageGeometry, RenderOpts, RenderResult};
+use crate::annotation::{self, AnnotationInfo};
+use crate::document::{PageGeometry, RenderOpts, RenderResult, TextBlockInfo, TextSpanInfo};
 use crate::error::to_napi_error;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
@@ -127,5 +128,36 @@ impl PdfPage {
             .await
             .map_err(|e| napi::Error::from_reason(format!("join error: {e}")))?
             .map_err(to_napi_error)
+    }
+
+    /// Extract structured text blocks from this page.
+    #[napi]
+    pub fn text_blocks(&self) -> Result<Vec<TextBlockInfo>> {
+        let blocks = self
+            .doc
+            .extract_text_blocks(self.index as usize)
+            .map_err(to_napi_error)?;
+        Ok(blocks
+            .into_iter()
+            .map(|b| TextBlockInfo {
+                text: b.text(),
+                spans: b
+                    .spans
+                    .into_iter()
+                    .map(|s| TextSpanInfo {
+                        text: s.text,
+                        x: s.x,
+                        y: s.y,
+                        font_size: s.font_size,
+                    })
+                    .collect(),
+            })
+            .collect())
+    }
+
+    /// Get annotations on this page.
+    #[napi]
+    pub fn annotations(&self) -> Vec<AnnotationInfo> {
+        annotation::page_annotations(self.doc.pdf(), self.index as usize)
     }
 }

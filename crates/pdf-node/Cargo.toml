@@ -14,6 +14,9 @@ napi-derive = "2"
 pdf-engine = { path = "../pdf-engine" }
 pdf-forms = { path = "../pdf-forms" }
 pdf-annot = { path = "../pdf-annot" }
+pdf-sign = { path = "../pdf-sign" }
+pdf-compliance = { path = "../pdf-compliance" }
+pdf-syntax = { path = "../pdf-syntax" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt"] }
