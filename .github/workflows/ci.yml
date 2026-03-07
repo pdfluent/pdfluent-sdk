@@ -67,6 +67,38 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --target wasm32-unknown-unknown -p xfa-wasm
 
+  corpus-regression:
+    name: Corpus Regression Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build test runner
+        run: cargo build --release -p xfa-test-runner
+      - name: Run corpus subset
+        run: |
+          if [[ -d tests/corpus-subset/ ]] && [[ $(find tests/corpus-subset/ -name '*.pdf' 2>/dev/null | wc -l) -gt 0 ]]; then
+            ./target/release/xfa-test-runner run \
+              --corpus tests/corpus-subset/ \
+              --db /tmp/results.sqlite \
+              --workers 2 \
+              --timeout 10 \
+              --no-verapdf
+            PANICS=$(sqlite3 /tmp/results.sqlite \
+              "SELECT COUNT(*) FROM test_results WHERE status='crash'")
+            echo "Panics detected: $PANICS"
+            if [ "$PANICS" -gt 0 ]; then
+              echo "REGRESSION: $PANICS panics detected in corpus subset"
+              ./target/release/xfa-test-runner clusters --db /tmp/results.sqlite
+              exit 1
+            fi
+            echo "PASS: zero panics in corpus subset"
+          else
+            echo "No corpus-subset PDFs found, skipping"
+          fi
+
   corpus-smoke:
     name: Corpus Smoke Test
     runs-on: ubuntu-latest
