@@ -491,8 +491,12 @@ mod tests {
 
         let report: VeraPdfReport = serde_json::from_str(json).unwrap();
         let job = &report.report.jobs[0];
-        let vr = job.validation_result.as_ref().unwrap();
-        assert!(!vr.is_compliant);
+        let wrapper = job.validation_result.as_ref().unwrap();
+        let vr = match wrapper {
+            ValidationResultWrapper::Single(v) => v,
+            ValidationResultWrapper::Array(arr) => &arr[0],
+        };
+        assert!(!vr.compliant);
         assert_eq!(vr.profile_name, "PDF/A-2B");
         assert_eq!(vr.details.failed_rules, 2);
         // Only "failed" rules should be captured
