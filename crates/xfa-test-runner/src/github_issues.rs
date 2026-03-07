@@ -1,16 +1,21 @@
 use crate::clustering::{likely_crate_for_test, Cluster, Trend};
 
+fn truncate_utf8(s: &str, max_chars: usize) -> String {
+    let truncated: String = s.chars().take(max_chars).collect();
+    if truncated.len() < s.len() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
 pub fn generate_issue_body(cluster: &Cluster, run_id: &str) -> String {
     let example_table = cluster
         .example_pdfs
         .iter()
         .enumerate()
         .map(|(i, ex)| {
-            let err_short = if ex.error_message.len() > 60 {
-                format!("{}...", &ex.error_message[..60])
-            } else {
-                ex.error_message.clone()
-            };
+            let err_short = truncate_utf8(&ex.error_message, 60);
             format!(
                 "| {} | `{}` | {} KB | {} |",
                 i + 1,
@@ -91,11 +96,7 @@ pub fn generate_issue_body(cluster: &Cluster, run_id: &str) -> String {
 }
 
 pub fn generate_issue_title(cluster: &Cluster) -> String {
-    let pattern_short = if cluster.error_pattern.len() > 60 {
-        format!("{}...", &cluster.error_pattern[..60])
-    } else {
-        cluster.error_pattern.clone()
-    };
+    let pattern_short = truncate_utf8(&cluster.error_pattern, 60);
     format!(
         "[cluster] {}: {} ({} PDFs)",
         cluster.test_name, pattern_short, cluster.pdf_count
