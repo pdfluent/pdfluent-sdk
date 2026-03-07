@@ -33,10 +33,7 @@ impl Runner {
         let total = pdfs.len();
         let test_count = self.tests.len();
 
-        eprintln!(
-            "Found {} PDF files in {:?}",
-            total, self.config.corpus_dir
-        );
+        eprintln!("Found {} PDF files in {:?}", total, self.config.corpus_dir);
 
         self.db
             .start_run(
@@ -70,7 +67,9 @@ impl Runner {
 
                 // Resume: skip only if ALL tests are already completed for this PDF
                 if self.config.resume {
-                    let completed = self.db.tests_completed_for_pdf(&self.config.run_id, &path_str);
+                    let completed = self
+                        .db
+                        .tests_completed_for_pdf(&self.config.run_id, &path_str);
                     if completed >= test_count {
                         progress.inc(1);
                         return;
@@ -119,7 +118,7 @@ impl Runner {
                         .as_deref()
                         .map(|msg| classify_error(test.name(), msg));
 
-                    let row = TestResultRow::from_test_result(
+                    let mut row = TestResultRow::from_test_result(
                         &self.config.run_id,
                         &path_str,
                         &pdf_hash,
@@ -130,6 +129,10 @@ impl Runner {
                         error_category.as_ref(),
                         result.duration_ms,
                     );
+                    row.oracle_score = result.oracle_score;
+                    if !result.metadata.is_empty() {
+                        row.metadata_json = serde_json::to_string(&result.metadata).ok();
+                    }
 
                     if let Err(e) = self.db.insert_result(&row) {
                         eprintln!("DB write error: {}", e);

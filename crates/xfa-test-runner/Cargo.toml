@@ -9,6 +9,10 @@ repository.workspace = true
 name = "xfa-test-runner"
 path = "src/main.rs"
 
+[features]
+default = []
+pdfium-oracle = ["dep:pdfium-ffi-bridge", "dep:image"]
+
 [dependencies]
 # Workspace crates
 pdf-syntax = { path = "../pdf-syntax" }
@@ -18,6 +22,10 @@ pdf-annot = { path = "../pdf-annot" }
 pdf-sign = { path = "../pdf-sign" }
 pdf-extract = { path = "../pdf-extract" }
 pdf-compliance = { path = "../pdf-compliance" }
+
+# PDFium oracle (optional)
+pdfium-ffi-bridge = { path = "../pdfium-ffi-bridge", features = ["pdfium"], optional = true }
+image = { workspace = true, optional = true }
 
 # External PDF parsing (used by pdf-extract APIs)
 lopdf = { workspace = true }
@@ -33,3 +41,4 @@ chrono = { version = "0.4", features = ["serde"] }
 num_cpus = "1.16"
 indicatif = "0.17"
 walkdir = "2"
+strsim = "0.11"

@@ -49,7 +49,17 @@ impl TestStatus {
     }
 }
 
-pub fn all_tests() -> Vec<Box<dyn PdfTest>> {
+pub struct TestConfig {
+    pub verapdf_oracle: Option<std::sync::Arc<crate::oracles::verapdf::VeraPdfOracle>>,
+}
+
+pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
+    let compliance = if let Some(oracle) = config.verapdf_oracle {
+        compliance::ComplianceTest::new().with_verapdf(oracle)
+    } else {
+        compliance::ComplianceTest::new()
+    };
+
     vec![
         Box::new(parse::ParseTest),
         Box::new(metadata::MetadataTest),
@@ -58,7 +68,7 @@ pub fn all_tests() -> Vec<Box<dyn PdfTest>> {
         Box::new(form_fields::FormFieldsTest),
         Box::new(annotations::AnnotationsTest),
         Box::new(signatures::SignaturesTest),
-        Box::new(compliance::ComplianceTest),
+        Box::new(compliance),
         Box::new(bookmarks::BookmarksTest),
         Box::new(geometry::GeometryTest),
         Box::new(images::ImageExtractTest),
