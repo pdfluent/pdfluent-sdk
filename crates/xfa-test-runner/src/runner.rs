@@ -13,10 +13,15 @@ use crate::config::Config;
 use crate::db::{Database, RunSummary, TestResultRow};
 use crate::tests::{PdfTest, TestStatus};
 
+/// Maximum number of spawned test threads allowed in-flight at once.
+/// Prevents unbounded thread accumulation when tests repeatedly time out.
+const MAX_IN_FLIGHT_THREADS: usize = 256;
+
 pub struct Runner {
     config: Config,
     tests: Vec<Arc<dyn PdfTest>>,
     db: Arc<Database>,
+    in_flight: Arc<AtomicUsize>,
 }
 
 impl Runner {
@@ -25,6 +30,7 @@ impl Runner {
             config,
             tests: tests.into_iter().map(Arc::from).collect(),
             db: Arc::new(db),
+            in_flight: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -188,44 +194,54 @@ impl Runner {
         let timeout = self.config.timeout;
         let test_name = test.name().to_string();
 
+        // Backpressure: wait if too many timed-out threads are still running.
+        // Prevents unbounded thread accumulation on corpora with many hangs.
+        while self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT_THREADS {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        self.in_flight.fetch_add(1, Ordering::Relaxed);
+
         let data = pdf_data.to_vec();
         let path_buf = path.to_path_buf();
+        let in_flight = Arc::clone(&self.in_flight);
 
         // Spawn in a separate thread with preemptive timeout via recv_timeout.
-        // The thread continues running if it exceeds timeout (Rust can't kill threads),
-        // but the caller unblocks and reports Timeout immediately.
         let (tx, rx) = std::sync::mpsc::channel();
 
         std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024) // 8 MB — deep PDF object graphs can overflow 2 MB default
+            .stack_size(64 * 1024 * 1024)
             .spawn(move || {
-            let start = Instant::now();
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                test.run(&data, &path_buf)
-            }));
-            let elapsed = start.elapsed();
+                // Drop guard: decrement in_flight even on double-panic.
+                let _guard = InFlightGuard(in_flight);
 
-            let test_result = match result {
-                Ok(r) => r,
-                Err(panic_info) => {
-                    let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                        s.to_string()
-                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                        s.clone()
-                    } else {
-                        "Unknown panic".to_string()
-                    };
-                    crate::tests::TestResult {
-                        status: TestStatus::Crash,
-                        error_message: Some(msg),
-                        duration_ms: elapsed.as_millis() as u64,
-                        oracle_score: None,
-                        metadata: Default::default(),
+                let start = Instant::now();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    test.run(&data, &path_buf)
+                }));
+                let elapsed = start.elapsed();
+
+                let test_result = match result {
+                    Ok(r) => r,
+                    Err(panic_info) => {
+                        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "Unknown panic".to_string()
+                        };
+                        crate::tests::TestResult {
+                            status: TestStatus::Crash,
+                            error_message: Some(msg),
+                            duration_ms: elapsed.as_millis() as u64,
+                            oracle_score: None,
+                            metadata: Default::default(),
+                        }
                     }
-                }
-            };
-            let _ = tx.send(test_result);
-        }).expect("failed to spawn test thread");
+                };
+                let _ = tx.send(test_result);
+            })
+            .expect("failed to spawn test thread");
 
         match rx.recv_timeout(timeout) {
             Ok(result) => result,
@@ -272,6 +288,16 @@ impl Runner {
             }
         }
         set
+    }
+}
+
+/// RAII guard that decrements the in-flight counter on drop,
+/// ensuring cleanup even if the thread panics through catch_unwind.
+struct InFlightGuard(Arc<AtomicUsize>);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
