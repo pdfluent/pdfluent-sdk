@@ -174,7 +174,7 @@ fn check_br_co_15(inv: &ZugferdInvoice, issues: &mut Vec<ValidationIssue>) {
                 "Due payable ({:.2}) exceeds grand total ({:.2})",
                 inv.due_payable, inv.grand_total
             ),
-            severity: Severity::Warning,
+            severity: Severity::Error,
         });
     }
 }
@@ -343,11 +343,10 @@ mod tests {
     #[test]
     fn report_counts() {
         let mut inv = valid_invoice();
-        inv.due_payable = 99999.0; // warning
-        inv.currency = "BAD".into(); // error
+        inv.due_payable = 99999.0; // error (BR-CO-15)
+        inv.currency = "BAD".into(); // error (BR-CL-01)
         let report = validate_invoice(&inv);
-        assert!(report.error_count() >= 1);
-        assert!(report.warning_count() >= 1);
+        assert!(report.error_count() >= 2);
         assert!(!report.is_valid());
     }
 }

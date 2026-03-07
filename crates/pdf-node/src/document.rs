@@ -409,7 +409,7 @@ impl PdfDocument {
 
     /// Get annotations on a specific page (0-based index).
     #[napi]
-    pub fn annotations(&self, page_index: u32) -> Vec<AnnotationInfo> {
+    pub fn annotations(&self, page_index: u32) -> Result<Vec<AnnotationInfo>> {
         annotation::page_annotations(self.inner.pdf(), page_index as usize)
     }
 
