@@ -1,6 +1,12 @@
 mod classifier;
+#[allow(dead_code)]
+mod clustering;
 mod config;
+#[allow(dead_code)]
+mod dashboard;
 mod db;
+#[allow(dead_code)]
+mod github_issues;
 mod oracles;
 mod runner;
 mod tests;
@@ -105,6 +111,37 @@ enum Command {
         run_b: String,
     },
 
+    /// Download example PDFs from a cluster for regression test fixtures
+    DownloadExamples {
+        /// SQLite database path
+        #[arg(short, long, default_value = "results.sqlite")]
+        db: PathBuf,
+
+        /// Run ID (latest if not provided)
+        #[arg(long)]
+        run_id: Option<String>,
+
+        /// Test name (e.g. "parse", "text_extract")
+        #[arg(long)]
+        test: String,
+
+        /// Error category (e.g. "invalid_xref", "missing_font")
+        #[arg(long)]
+        category: String,
+
+        /// Output directory for fixtures
+        #[arg(short, long, default_value = "tests/regression/fixtures")]
+        output: PathBuf,
+
+        /// Maximum number of examples to download
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+
+        /// Maximum file size in KB per fixture
+        #[arg(long, default_value_t = 100)]
+        max_size_kb: usize,
+    },
+
     /// Export error cluster as GitHub Issue markdown
     Export {
         /// SQLite database path
@@ -118,6 +155,36 @@ enum Command {
         /// Error category to export
         #[arg(long)]
         category: String,
+    },
+
+    /// Generate GitHub Issue markdown for clusters
+    Issues {
+        /// SQLite database path
+        #[arg(short, long, default_value = "results.sqlite")]
+        db: PathBuf,
+
+        /// Run ID (latest if not provided)
+        #[arg(long)]
+        run_id: Option<String>,
+
+        /// Only show top N clusters
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+    },
+
+    /// Generate HTML dashboard
+    Dashboard {
+        /// SQLite database path
+        #[arg(short, long, default_value = "results.sqlite")]
+        db: PathBuf,
+
+        /// Run ID (latest if not provided)
+        #[arg(long)]
+        run_id: Option<String>,
+
+        /// Output directory for HTML files
+        #[arg(short, long, default_value = "dashboard")]
+        output: PathBuf,
     },
 }
 
@@ -237,8 +304,74 @@ fn main() {
 
         Command::Compare { db, run_a, run_b } => {
             let database = Database::open(&db).expect("Failed to open database");
-            let result = database.compare_runs(&run_a, &run_b);
+            let result = database.compare_runs_detailed(&run_a, &run_b);
             println!("{result}");
+
+            if result.verdict == db::Verdict::Regression {
+                std::process::exit(1);
+            }
+        }
+
+        Command::DownloadExamples {
+            db,
+            run_id,
+            test,
+            category,
+            output,
+            limit,
+            max_size_kb,
+        } => {
+            let database = Database::open(&db).expect("Failed to open database");
+            let run_id = run_id
+                .or_else(|| database.latest_run_id())
+                .expect("No runs found");
+
+            let examples = database.cluster_examples(&run_id, &test, &category, limit);
+
+            if examples.is_empty() {
+                eprintln!(
+                    "No examples found for test='{}' category='{}' in run '{}'",
+                    test, category, run_id
+                );
+                return;
+            }
+
+            std::fs::create_dir_all(&output).expect("Failed to create output directory");
+
+            let mut copied = 0usize;
+            for ex in &examples {
+                if ex.pdf_size > (max_size_kb as i64 * 1024) {
+                    eprintln!(
+                        "  skip {} ({}KB > {}KB limit)",
+                        ex.pdf_path,
+                        ex.pdf_size / 1024,
+                        max_size_kb
+                    );
+                    continue;
+                }
+
+                let src = std::path::Path::new(&ex.pdf_path);
+                if !src.exists() {
+                    eprintln!("  skip {} (file not found)", ex.pdf_path);
+                    continue;
+                }
+
+                let stem = src.file_stem().unwrap_or_default().to_string_lossy();
+                let hash_prefix = &ex.pdf_hash[..8.min(ex.pdf_hash.len())];
+                let dest_name = format!("{}_{}.pdf", stem, hash_prefix);
+                let dest = output.join(&dest_name);
+
+                std::fs::copy(src, &dest).expect("Failed to copy PDF");
+                copied += 1;
+                println!(
+                    "  {} -> {} ({}KB)",
+                    ex.pdf_path,
+                    dest.display(),
+                    ex.pdf_size / 1024
+                );
+            }
+
+            println!("\nCopied {} fixture(s) to {}", copied, output.display());
         }
 
         Command::Export {
@@ -269,6 +402,47 @@ fn main() {
             }
             let total: i64 = matching.iter().map(|c| c.pdf_count).sum();
             println!("**Total affected PDFs:** {total}");
+        }
+
+        Command::Issues { db, run_id, top } => {
+            let database = Database::open(&db).expect("Failed to open database");
+            let run_id = run_id
+                .or_else(|| database.latest_run_id())
+                .expect("No runs found");
+
+            let clusters = clustering::compute_clusters(&database, &run_id);
+
+            if clusters.is_empty() {
+                println!("No clusters found for run '{run_id}'");
+                return;
+            }
+
+            println!("{}", clustering::format_cluster_table(&clusters));
+
+            println!("\n--- GitHub Issue Markdown ---\n");
+            for cluster in clusters.iter().take(top) {
+                let title = github_issues::generate_issue_title(cluster);
+                let body = github_issues::generate_issue_body(cluster, &run_id);
+                println!("## {title}\n");
+                println!("{body}\n");
+                println!("{}\n", "-".repeat(80));
+            }
+        }
+
+        Command::Dashboard { db, run_id, output } => {
+            let database = Database::open(&db).expect("Failed to open database");
+            let run_id = run_id
+                .or_else(|| database.latest_run_id())
+                .expect("No runs found");
+
+            let clusters = clustering::compute_clusters(&database, &run_id);
+            let data = dashboard::collect_dashboard_data(&database, &run_id, clusters);
+            dashboard::generate_dashboard(&data, &output).expect("Failed to write dashboard");
+            println!(
+                "Dashboard generated in {} for run '{}'",
+                output.display(),
+                run_id
+            );
         }
     }
 }
