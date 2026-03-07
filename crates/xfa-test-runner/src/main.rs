@@ -188,6 +188,15 @@ enum Command {
     },
 }
 
+fn truncate_utf8(s: &str, max_chars: usize) -> String {
+    let truncated: String = s.chars().take(max_chars).collect();
+    if truncated.len() < s.len() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -290,11 +299,7 @@ fn main() {
             println!("{:<30} {:<25} {:>8}  Pattern", "Test", "Category", "Count");
             println!("{}", "-".repeat(90));
             for c in &clusters {
-                let pattern = if c.error_pattern.len() > 40 {
-                    format!("{}...", &c.error_pattern[..40])
-                } else {
-                    c.error_pattern.clone()
-                };
+                let pattern = truncate_utf8(&c.error_pattern, 40);
                 println!(
                     "{:<30} {:<25} {:>8}  {}",
                     c.test_name, c.error_category, c.pdf_count, pattern

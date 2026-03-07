@@ -199,11 +199,7 @@ th {{ color: #00d4ff; }}
 fn render_clusters(data: &DashboardData) -> String {
     let mut rows = String::new();
     for c in &data.clusters {
-        let pattern_short = if c.error_pattern.len() > 50 {
-            format!("{}...", &c.error_pattern[..50])
-        } else {
-            c.error_pattern.clone()
-        };
+        let pattern_short = truncate_utf8(&c.error_pattern, 50);
         let trend_class = match c.trend {
             crate::clustering::Trend::Growing => "delta-bad",
             crate::clustering::Trend::Shrinking | crate::clustering::Trend::Resolved => {
@@ -243,6 +239,15 @@ th {{ color: #00d4ff; }}
         run_id = data.run_id,
         rows = rows,
     )
+}
+
+fn truncate_utf8(s: &str, max_chars: usize) -> String {
+    let truncated: String = s.chars().take(max_chars).collect();
+    if truncated.len() < s.len() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 fn render_run_detail(data: &DashboardData) -> String {
