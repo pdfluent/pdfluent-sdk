@@ -4,7 +4,9 @@
 .DS_Store
 *.pdf
 !/tests/fixtures/*.pdf
+!/tests/corpus-mini/*.pdf
 !/corpus/*.pdf
+metadata.sqlite
 /reports/
 /renders/
 /crates/xfa-wasm/pkg/
