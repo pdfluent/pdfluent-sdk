@@ -192,6 +192,11 @@ impl Interpreter {
                         self.env.set(name, val.clone());
                         Ok(Signal::Value(val))
                     }
+                    Expr::MemberAccess { object, member } => {
+                        let path = flatten_som_path(object, member);
+                        self.env.set(&path, val.clone());
+                        Ok(Signal::Value(val))
+                    }
                     _ => Err(FormCalcError::RuntimeError(
                         "invalid assignment target".to_string(),
                     )),
@@ -236,7 +241,13 @@ impl Interpreter {
                     return Ok(Signal::Value(result?));
                 }
 
-                Err(FormCalcError::UnknownFunction(name.clone()))
+                // DOM method calls (dotted names like xfa.host.resetData) silently
+                // return Null — these are XFA host methods we don't implement.
+                if name.contains('.') {
+                    Ok(Signal::Value(Value::Null))
+                } else {
+                    Err(FormCalcError::UnknownFunction(name.clone()))
+                }
             }
 
             Expr::If {

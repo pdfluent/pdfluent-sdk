@@ -557,6 +557,11 @@ fn find_script(element: &roxmltree::Node, script_type: &str) -> Option<String> {
             // The script may be in a <script> child or directly as text
             for script_child in child.children() {
                 if script_child.is_element() && script_child.tag_name().name() == "script" {
+                    // Skip JavaScript scripts — we only handle FormCalc.
+                    let content_type = script_child.attribute("contentType").unwrap_or("");
+                    if content_type.contains("javascript") {
+                        continue;
+                    }
                     if let Some(text) = script_child.text() {
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
