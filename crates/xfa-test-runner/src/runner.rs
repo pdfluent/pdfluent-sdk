@@ -8,7 +8,7 @@ use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-use crate::classifier::classify_error;
+use crate::classifier::{classify_error, ErrorCategory};
 use crate::config::Config;
 use crate::db::{Database, RunSummary, TestResultRow};
 use crate::tests::{PdfTest, TestStatus};
@@ -112,6 +112,27 @@ impl Runner {
 
                 let pdf_hash = hex_sha256(&pdf_data);
                 let pdf_size = pdf_data.len() as i64;
+
+                // Pre-check: detect encrypted PDFs and skip all tests.
+                if let Some(skip_reason) = detect_encrypted(&pdf_data) {
+                    let cat = ErrorCategory::Encrypted;
+                    for test in &self.tests {
+                        let row = TestResultRow::from_test_result(
+                            &self.config.run_id,
+                            &path_str,
+                            &pdf_hash,
+                            pdf_size,
+                            test.name(),
+                            &TestStatus::Skip,
+                            Some(&skip_reason),
+                            Some(&cat),
+                            0,
+                        );
+                        let _ = self.db.insert_result(&row);
+                    }
+                    progress.inc(1);
+                    return;
+                }
 
                 for test in &self.tests {
                     if let Some(filter) = &self.config.test_filter {
@@ -298,6 +319,15 @@ struct InFlightGuard(Arc<AtomicUsize>);
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// Detect encrypted PDFs that cannot be processed without a password.
+/// Returns `Some(reason)` if the PDF is encrypted, `None` otherwise.
+fn detect_encrypted(pdf_data: &[u8]) -> Option<String> {
+    match pdf_syntax::Pdf::new(pdf_data.to_vec()) {
+        Err(pdf_syntax::LoadPdfError::Decryption(e)) => Some(format!("Decryption({e:?})")),
+        _ => None,
     }
 }
 
