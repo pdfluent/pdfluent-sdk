@@ -13,8 +13,11 @@
 pub mod embed;
 pub mod error;
 pub mod fdf;
+pub mod iso_codes;
+pub mod validation;
 pub mod xfdf;
 pub mod xml_form;
 pub mod zugferd;
 
 pub use error::{InvoiceError, Result};
+pub use validation::{validate_invoice, Severity, ValidationIssue, ValidationReport};
