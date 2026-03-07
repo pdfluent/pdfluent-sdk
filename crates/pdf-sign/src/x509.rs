@@ -28,6 +28,8 @@ pub struct X509Certificate {
     pub signature_algorithm: Vec<u8>,
     /// The signature value bytes.
     pub signature_value: Vec<u8>,
+    /// The raw DER-encoded SubjectPublicKeyInfo (tag+length+value).
+    pub spki_raw: Vec<u8>,
     /// The raw DER of the full certificate.
     pub raw: Vec<u8>,
 }
@@ -88,6 +90,7 @@ impl X509Certificate {
             is_self_signed,
             signature_algorithm,
             signature_value,
+            spki_raw: tbs.spki_raw,
             raw: data.to_vec(),
         })
     }
@@ -149,6 +152,7 @@ struct TbsFields {
     not_after: Option<String>,
     is_ca: bool,
     key_usage: Option<u16>,
+    spki_raw: Vec<u8>,
 }
 
 fn parse_tbs(data: &[u8]) -> Option<TbsFields> {
@@ -182,8 +186,11 @@ fn parse_tbs(data: &[u8]) -> Option<TbsFields> {
     let subject = parse_name(subject_data);
     pos = rest;
 
-    // subjectPublicKeyInfo SEQUENCE
+    // subjectPublicKeyInfo SEQUENCE — capture full DER (tag+length+value)
+    let spki_start = pos;
     let (rest, _spki) = parse_tlv(pos)?;
+    let spki_len = pos.len() - rest.len();
+    let spki_raw = spki_start[..spki_len].to_vec();
     pos = rest;
 
     // Extensions [3] EXPLICIT (optional)
@@ -212,6 +219,7 @@ fn parse_tbs(data: &[u8]) -> Option<TbsFields> {
         not_after,
         is_ca,
         key_usage,
+        spki_raw,
     })
 }
 

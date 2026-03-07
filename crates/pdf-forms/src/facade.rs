@@ -99,8 +99,7 @@ impl FormAccess for FieldTree {
                 self.get_mut(id).value = Some(FieldValue::Text(value.to_string()));
             }
             FieldType::Choice => {
-                self.get_mut(id).value =
-                    Some(FieldValue::StringArray(vec![value.to_string()]));
+                self.get_mut(id).value = Some(FieldValue::StringArray(vec![value.to_string()]));
             }
             FieldType::Signature => {
                 return Err(FormError::ReadOnly(path.to_string()));

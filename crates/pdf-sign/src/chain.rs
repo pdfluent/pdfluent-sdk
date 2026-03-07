@@ -212,19 +212,128 @@ pub fn check_revocation_embedded(
 /// This is a simplified check — we look for the cert's serial number
 /// in the OCSP response's single responses.
 fn parse_ocsp_response_status(
-    _resp_data: &[u8],
+    resp_data: &[u8],
     _cert: &X509Certificate,
 ) -> Option<RevocationStatus> {
-    // Full OCSP response parsing (RFC 6960) requires significant ASN.1
-    // work. For now, return None to indicate we couldn't determine status.
-    // The structure is: OCSPResponse → ResponseBytes → BasicOCSPResponse
-    //   → ResponseData → SingleResponse[] → CertStatus
+    use crate::cms::{parse_context_explicit, parse_context_implicit, parse_length, parse_tlv};
+    let (_, outer_seq) = parse_tlv(resp_data)?;
+    let (rest, status_enum) = parse_tlv(outer_seq)?;
+    if status_enum.is_empty() || status_enum[0] != 0 {
+        return None;
+    }
+    let (_, rbi) = parse_context_explicit(rest, 0)?;
+    let (_, rbs) = parse_tlv(rbi)?;
+    let (rest, _) = parse_tlv(rbs)?;
+    let (_, resp_octet) = parse_tlv(rest)?;
+    let (_, basic_seq) = parse_tlv(resp_octet)?;
+    let (_, tbs_resp) = parse_tlv(basic_seq)?;
+    let (_, tbs_seq) = parse_tlv(tbs_resp)?;
+    let mut pos = tbs_seq;
+    if let Some((r, _)) = parse_context_explicit(pos, 0) {
+        pos = r;
+    }
+    if !pos.is_empty() && (pos[0] == 0xA1 || pos[0] == 0xA2) {
+        let (len, inner) = parse_length(&pos[1..])?;
+        if inner.len() < len {
+            return None;
+        }
+        pos = &inner[len..];
+    }
+    let (rest, _) = parse_tlv(pos)?;
+    pos = rest;
+    let (_, responses_seq) = parse_tlv(pos)?;
+    let mut rpos = responses_seq;
+    while !rpos.is_empty() {
+        if let Some((next, sr)) = parse_tlv(rpos) {
+            if let Some(s) = check_single_response(sr) {
+                return Some(s);
+            }
+            rpos = next;
+        } else {
+            break;
+        }
+    }
+    if let Some((_, rd)) = parse_context_implicit(pos, 0) {
+        let mut rpos = rd;
+        while !rpos.is_empty() {
+            if let Some((next, sr)) = parse_tlv(rpos) {
+                if let Some(s) = check_single_response(sr) {
+                    return Some(s);
+                }
+                rpos = next;
+            } else {
+                break;
+            }
+        }
+    }
     None
 }
 
-/// Check if a certificate serial appears in a CRL.
-fn check_crl_for_cert(_crl_data: &[u8], _cert: &X509Certificate) -> Option<RevocationStatus> {
-    // Full CRL parsing (RFC 5280 §5) requires serial number matching.
-    // For now, return None to indicate we couldn't determine status.
-    None
+/// Check a SingleResponse for certificate status.
+fn check_single_response(data: &[u8]) -> Option<RevocationStatus> {
+    use crate::cms::parse_tlv;
+    let (rest, _cert_id) = parse_tlv(data)?;
+    if rest.is_empty() {
+        return None;
+    }
+    match rest[0] & 0xBF {
+        0x80 => Some(RevocationStatus::Good),
+        0xA1 | 0x81 => Some(RevocationStatus::Revoked),
+        0x82 => Some(RevocationStatus::Unknown),
+        _ => None,
+    }
+}
+
+/// Check if a certificate serial appears in a CRL (RFC 5280 Section 5).
+fn check_crl_for_cert(crl_data: &[u8], cert: &X509Certificate) -> Option<RevocationStatus> {
+    use crate::cms::parse_tlv;
+    let (_, crl_seq) = parse_tlv(crl_data)?;
+    let (_, tbs_crl) = parse_tlv(crl_seq)?;
+    let (_, tbs_seq) = parse_tlv(tbs_crl)?;
+    let mut pos = tbs_seq;
+    if !pos.is_empty() && pos[0] == 0x02 {
+        let (rest, _) = parse_tlv(pos)?;
+        pos = rest;
+    }
+    let (rest, _) = parse_tlv(pos)?;
+    pos = rest;
+    let (rest, _) = parse_tlv(pos)?;
+    pos = rest;
+    let (rest, _) = parse_tlv(pos)?;
+    pos = rest;
+    if !pos.is_empty() && (pos[0] == 0x17 || pos[0] == 0x18) {
+        let (rest, _) = parse_tlv(pos)?;
+        pos = rest;
+    }
+    if pos.is_empty() || pos[0] != 0x30 {
+        return Some(RevocationStatus::Good);
+    }
+    let (_, revoked_seq) = parse_tlv(pos)?;
+    let cert_serial = extract_serial_number(cert)?;
+    let mut rpos = revoked_seq;
+    while !rpos.is_empty() {
+        if let Some((next, entry_seq)) = parse_tlv(rpos) {
+            if let Some((_, serial)) = parse_tlv(entry_seq) {
+                if serial == cert_serial {
+                    return Some(RevocationStatus::Revoked);
+                }
+            }
+            rpos = next;
+        } else {
+            break;
+        }
+    }
+    Some(RevocationStatus::Good)
+}
+
+/// Extract the serial number from a certificate's TBS data.
+fn extract_serial_number(cert: &X509Certificate) -> Option<Vec<u8>> {
+    use crate::cms::{parse_context_explicit, parse_tlv};
+    let (_, tbs_seq) = parse_tlv(&cert.tbs_raw)?;
+    let mut pos = tbs_seq;
+    if let Some((rest, _)) = parse_context_explicit(pos, 0) {
+        pos = rest;
+    }
+    let (_, serial) = parse_tlv(pos)?;
+    Some(serial.to_vec())
 }

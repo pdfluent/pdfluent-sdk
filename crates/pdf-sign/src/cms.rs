@@ -25,6 +25,8 @@ pub struct CmsSignedData {
     signer_cn: Option<String>,
     /// The signed attributes bytes (for signature verification).
     signed_attrs_raw: Option<Vec<u8>>,
+    /// The signature algorithm OID from SignerInfo.
+    sig_algo_oid: Vec<u8>,
 }
 
 impl CmsSignedData {
@@ -94,6 +96,7 @@ impl CmsSignedData {
             signing_time: si.signing_time,
             signer_cn: si.signer_cn,
             signed_attrs_raw: si.signed_attrs_raw,
+            sig_algo_oid: si.sig_algo_oid,
         })
     }
 
@@ -149,6 +152,11 @@ impl CmsSignedData {
     /// Return the raw signed attributes bytes (for external verification).
     pub fn signed_attributes_raw(&self) -> Option<&[u8]> {
         self.signed_attrs_raw.as_deref()
+    }
+
+    /// Return the signature algorithm OID from the SignerInfo.
+    pub fn signature_algorithm_oid(&self) -> &[u8] {
+        &self.sig_algo_oid
     }
 }
 
@@ -288,6 +296,7 @@ struct SignerInfoFields {
     signing_time: Option<String>,
     signer_cn: Option<String>,
     signed_attrs_raw: Option<Vec<u8>>,
+    sig_algo_oid: Vec<u8>,
 }
 
 /// Parse a SignerInfo and extract relevant fields.
@@ -339,7 +348,10 @@ fn parse_signer_info(data: &[u8], certs: &[X509Certificate]) -> Option<SignerInf
     }
 
     // signatureAlgorithm AlgorithmIdentifier
-    let (rest, _sig_algo) = parse_tlv(pos)?;
+    let (rest, sig_algo_data) = parse_tlv(pos)?;
+    let sig_algo_oid = parse_tlv(sig_algo_data)
+        .map(|(_, oid)| oid.to_vec())
+        .unwrap_or_default();
     pos = rest;
 
     // signature OCTET STRING
@@ -355,6 +367,7 @@ fn parse_signer_info(data: &[u8], certs: &[X509Certificate]) -> Option<SignerInf
         signing_time,
         signer_cn,
         signed_attrs_raw,
+        sig_algo_oid,
     })
 }
 
