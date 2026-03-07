@@ -1,6 +1,7 @@
 mod classifier;
 mod config;
 mod db;
+mod oracles;
 mod runner;
 mod tests;
 
@@ -8,8 +9,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use std::sync::Arc;
+
 use config::Config;
 use db::Database;
+use oracles::verapdf::VeraPdfOracle;
 use runner::Runner;
 
 /// Corpus test runner for XFA-Native-Rust SDK
@@ -54,6 +58,14 @@ enum Command {
         /// Run ID (auto-generated if not provided)
         #[arg(long)]
         run_id: Option<String>,
+
+        /// Disable veraPDF oracle
+        #[arg(long)]
+        no_verapdf: bool,
+
+        /// Path to veraPDF binary
+        #[arg(long, default_value = "/usr/local/bin/verapdf")]
+        verapdf_path: PathBuf,
     },
 
     /// Generate summary report from results
@@ -121,6 +133,8 @@ fn main() {
             tests: test_filter,
             resume,
             run_id,
+            no_verapdf,
+            verapdf_path,
         } => {
             let database = Database::open(&db).expect("Failed to open database");
             let config = Config::new(
@@ -134,7 +148,35 @@ fn main() {
                 Some(&database),
             );
 
-            let mut available_tests = tests::all_tests();
+            // Set up veraPDF oracle if available and not disabled
+            let verapdf_oracle = if no_verapdf {
+                None
+            } else {
+                let oracle = VeraPdfOracle::new(verapdf_path);
+                if oracle.is_available() {
+                    eprintln!("veraPDF oracle: enabled");
+                    Some(Arc::new(oracle))
+                } else {
+                    eprintln!(
+                        "veraPDF oracle: not available (use --verapdf-path or install veraPDF)"
+                    );
+                    None
+                }
+            };
+
+            // Enable cache if oracle is present — re-open db as Arc for sharing
+            let verapdf_oracle = verapdf_oracle.map(|o| {
+                let db_arc =
+                    Arc::new(Database::open(&config.db_path).expect("Failed to open cache db"));
+                Arc::new(
+                    Arc::try_unwrap(o)
+                        .expect("single reference")
+                        .with_cache(db_arc),
+                )
+            });
+
+            let test_config = tests::TestConfig { verapdf_oracle };
+            let mut available_tests = tests::all_tests(test_config);
             if let Some(filter) = &config.test_filter {
                 available_tests.retain(|t| filter.iter().any(|f| f == t.name()));
             }

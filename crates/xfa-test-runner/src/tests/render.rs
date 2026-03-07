@@ -38,9 +38,7 @@ impl PdfTest for RenderTest {
                     if rendered.pixels.is_empty() {
                         return TestResult {
                             status: TestStatus::Fail,
-                            error_message: Some(format!(
-                                "Page {i} rendered to empty pixel data"
-                            )),
+                            error_message: Some(format!("Page {i} rendered to empty pixel data")),
                             duration_ms: start.elapsed().as_millis() as u64,
                             oracle_score: None,
                             metadata: HashMap::new(),
