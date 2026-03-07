@@ -8,6 +8,7 @@ mod appearance;
 mod byte_range;
 mod chain;
 pub mod cms;
+pub mod crypto;
 mod docmdp;
 mod ltv;
 mod sig_dict;
@@ -19,6 +20,7 @@ pub use appearance::*;
 pub use byte_range::*;
 pub use chain::*;
 pub use cms::CmsSignedData;
+pub use crypto::{verify_cms_signature, SignatureAlgorithm};
 pub use docmdp::*;
 pub use ltv::*;
 pub use sig_dict::*;
@@ -147,17 +149,39 @@ fn validate_one(sig: &SigDict<'_>, pdf_data: &[u8], field_name: &str) -> Validat
 
     let status = match digest_ok {
         DigestVerification::Ok => {
-            // Step 2: Check CMS structural integrity.
-            // Full RSA/ECDSA verification requires an external crypto provider;
-            // we only confirm byte-range digest + structural validity here.
+            // Step 2: Check CMS structural integrity and verify crypto signature.
             match sig.cms_signed_data() {
                 Some(sd) => {
-                    if sd.verify_structural_integrity() {
-                        ValidationStatus::Unknown(
-                            "byte range digest valid; cryptographic signature verification not implemented".into(),
-                        )
-                    } else {
+                    if !sd.verify_structural_integrity() {
                         ValidationStatus::Invalid("CMS signature structurally invalid".into())
+                    } else {
+                        let certs = sd.certificates();
+                        if certs.is_empty() {
+                            ValidationStatus::Invalid("no certificates in CMS".into())
+                        } else {
+                            let leaf = &certs[0];
+                            match sd.signed_attributes_raw() {
+                                Some(signed_attrs) => {
+                                    match crypto::verify_cms_signature(
+                                        signed_attrs,
+                                        sd.signature_value(),
+                                        &leaf.spki_raw,
+                                        sd.signature_algorithm_oid(),
+                                    ) {
+                                        Ok(true) => ValidationStatus::Valid,
+                                        Ok(false) => ValidationStatus::Invalid(
+                                            "cryptographic signature verification failed".into(),
+                                        ),
+                                        Err(e) => ValidationStatus::Unknown(format!(
+                                            "crypto verification error: {e}"
+                                        )),
+                                    }
+                                }
+                                None => ValidationStatus::Unknown(
+                                    "no signed attributes for verification".into(),
+                                ),
+                            }
+                        }
                     }
                 }
                 None => ValidationStatus::Invalid("cannot parse CMS SignedData".into()),

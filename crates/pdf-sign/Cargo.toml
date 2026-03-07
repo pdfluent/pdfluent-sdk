@@ -9,5 +9,12 @@ description = "PDF digital signature validation — PAdES, CMS, certificate chai
 pdf-syntax = { path = "../pdf-syntax" }
 log = "0.4"
 sha2 = "0.10"
-sha1 = "0.10"
+sha1 = { version = "0.10", features = ["oid"] }
 digest = "0.10"
+rsa = { version = "0.9", default-features = false, features = ["sha2"] }
+ecdsa = { version = "0.16", default-features = false }
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
+p384 = { version = "0.13", default-features = false, features = ["ecdsa", "pkcs8"] }
+spki = "0.7"
+der = "0.7"
+signature = "2.2"
