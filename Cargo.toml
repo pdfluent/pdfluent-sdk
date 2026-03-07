@@ -46,6 +46,9 @@ members = [
     # --- Data exchange + EU compliance (Fase O) ---
     "crates/pdf-invoice",
 
+    # --- Test infrastructure ---
+    "crates/xfa-test-runner",
+
     # --- Benchmarks ---
     "crates/pdf-bench",
 ]

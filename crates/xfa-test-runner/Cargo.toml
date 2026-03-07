@@ -1,0 +1,44 @@
+[package]
+name = "xfa-test-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "xfa-test-runner"
+path = "src/main.rs"
+
+[features]
+default = []
+pdfium-oracle = ["dep:pdfium-ffi-bridge", "dep:image"]
+
+[dependencies]
+# Workspace crates
+pdf-syntax = { path = "../pdf-syntax" }
+pdf-engine = { path = "../pdf-engine" }
+pdf-forms = { path = "../pdf-forms" }
+pdf-annot = { path = "../pdf-annot" }
+pdf-sign = { path = "../pdf-sign" }
+pdf-extract = { path = "../pdf-extract" }
+pdf-compliance = { path = "../pdf-compliance" }
+
+# PDFium oracle (optional)
+pdfium-ffi-bridge = { path = "../pdfium-ffi-bridge", features = ["pdfium"], optional = true }
+image = { workspace = true, optional = true }
+
+# External PDF parsing (used by pdf-extract APIs)
+lopdf = { workspace = true }
+
+# Infrastructure
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rayon = "1.10"
+rusqlite = { version = "0.31", features = ["bundled"] }
+sha2 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+num_cpus = "1.16"
+indicatif = "0.17"
+walkdir = "2"
+strsim = "0.11"
