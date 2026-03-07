@@ -58,6 +58,7 @@ impl Runner {
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.workers)
+            .stack_size(64 * 1024 * 1024) // 8 MB — deep PDF object graphs can overflow default
             .build()
             .expect("Failed to create thread pool");
 
@@ -195,7 +196,9 @@ impl Runner {
         // but the caller unblocks and reports Timeout immediately.
         let (tx, rx) = std::sync::mpsc::channel();
 
-        std::thread::spawn(move || {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024) // 8 MB — deep PDF object graphs can overflow 2 MB default
+            .spawn(move || {
             let start = Instant::now();
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 test.run(&data, &path_buf)
@@ -222,7 +225,7 @@ impl Runner {
                 }
             };
             let _ = tx.send(test_result);
-        });
+        }).expect("failed to spawn test thread");
 
         match rx.recv_timeout(timeout) {
             Ok(result) => result,
@@ -239,6 +242,7 @@ impl Runner {
     }
 
     fn enumerate_pdfs(&self) -> Vec<PathBuf> {
+        let skip_set = self.load_skip_list();
         WalkDir::new(&self.config.corpus_dir)
             .follow_links(true)
             .into_iter()
@@ -249,7 +253,25 @@ impl Runner {
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
             })
             .map(|e| e.into_path())
+            .filter(|p| !skip_set.contains(&p.to_string_lossy().to_string()))
             .collect()
+    }
+
+    fn load_skip_list(&self) -> std::collections::HashSet<String> {
+        let skip_path = self.config.corpus_dir.join("skip.txt");
+        let mut set = std::collections::HashSet::new();
+        if let Ok(contents) = std::fs::read_to_string(&skip_path) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if !line.is_empty() && !line.starts_with('#') {
+                    set.insert(line.to_string());
+                }
+            }
+            if !set.is_empty() {
+                eprintln!("Skipping {} PDFs from {}", set.len(), skip_path.display());
+            }
+        }
+        set
     }
 }
 
