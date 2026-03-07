@@ -456,6 +456,16 @@ impl Database {
         .ok()
     }
 
+    pub fn latest_run_id_for_corpus(&self, corpus_path: &str) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT run_id FROM runs WHERE corpus_path = ?1 AND finished_at IS NULL ORDER BY started_at DESC LIMIT 1",
+            params![corpus_path],
+            |row| row.get(0),
+        )
+        .ok()
+    }
+
     /// Query all failures for a run, returning (test_name, status, error_category, error_message, pdf_path, pdf_size).
     #[allow(dead_code)]
     pub fn query_failures(

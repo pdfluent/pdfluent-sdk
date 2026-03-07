@@ -15,7 +15,7 @@ use crate::tests::{PdfTest, TestStatus};
 
 pub struct Runner {
     config: Config,
-    tests: Vec<Box<dyn PdfTest>>,
+    tests: Vec<Arc<dyn PdfTest>>,
     db: Arc<Database>,
 }
 
@@ -23,7 +23,7 @@ impl Runner {
     pub fn new(config: Config, tests: Vec<Box<dyn PdfTest>>, db: Database) -> Self {
         Self {
             config,
-            tests,
+            tests: tests.into_iter().map(Arc::from).collect(),
             db: Arc::new(db),
         }
     }
@@ -80,6 +80,24 @@ impl Runner {
                     Ok(data) => data,
                     Err(e) => {
                         eprintln!("Failed to read {}: {}", path_str, e);
+                        // Record read failure for every test so it shows up in results
+                        let err_msg = format!("IO error: {e}");
+                        for test in &self.tests {
+                            let category = classify_error(test.name(), &err_msg);
+                            let row = TestResultRow::from_test_result(
+                                &self.config.run_id,
+                                &path_str,
+                                "",
+                                0,
+                                test.name(),
+                                &TestStatus::Fail,
+                                Some(&err_msg),
+                                Some(&category),
+                                0,
+                            );
+                            let _ = self.db.insert_result(&row);
+                        }
+                        fail_count.fetch_add(self.tests.len(), Ordering::Relaxed);
                         progress.inc(1);
                         return;
                     }
@@ -95,7 +113,7 @@ impl Runner {
                         }
                     }
 
-                    let result = self.run_single_test(test.as_ref(), &pdf_data, pdf_path);
+                    let result = self.run_single_test(Arc::clone(test), &pdf_data, pdf_path);
 
                     match result.status {
                         TestStatus::Pass => {
@@ -162,7 +180,7 @@ impl Runner {
 
     fn run_single_test(
         &self,
-        test: &dyn PdfTest,
+        test: Arc<dyn PdfTest>,
         pdf_data: &[u8],
         path: &Path,
     ) -> crate::tests::TestResult {
@@ -172,44 +190,51 @@ impl Runner {
         let data = pdf_data.to_vec();
         let path_buf = path.to_path_buf();
 
-        // catch_unwind for panic safety; post-hoc timeout check
-        let start = Instant::now();
+        // Spawn in a separate thread with preemptive timeout via recv_timeout.
+        // The thread continues running if it exceeds timeout (Rust can't kill threads),
+        // but the caller unblocks and reports Timeout immediately.
+        let (tx, rx) = std::sync::mpsc::channel();
 
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| test.run(&data, &path_buf)));
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                test.run(&data, &path_buf)
+            }));
+            let elapsed = start.elapsed();
 
-        let elapsed = start.elapsed();
+            let test_result = match result {
+                Ok(r) => r,
+                Err(panic_info) => {
+                    let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unknown panic".to_string()
+                    };
+                    crate::tests::TestResult {
+                        status: TestStatus::Crash,
+                        error_message: Some(msg),
+                        duration_ms: elapsed.as_millis() as u64,
+                        oracle_score: None,
+                        metadata: Default::default(),
+                    }
+                }
+            };
+            let _ = tx.send(test_result);
+        });
 
-        if elapsed > timeout {
-            return crate::tests::TestResult {
+        match rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(_) => crate::tests::TestResult {
                 status: TestStatus::Timeout,
                 error_message: Some(format!(
                     "Test '{test_name}' exceeded timeout of {timeout:?}"
                 )),
-                duration_ms: elapsed.as_millis() as u64,
+                duration_ms: timeout.as_millis() as u64,
                 oracle_score: None,
                 metadata: Default::default(),
-            };
-        }
-
-        match result {
-            Ok(test_result) => test_result,
-            Err(panic_info) => {
-                let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                    s.to_string()
-                } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                    s.clone()
-                } else {
-                    "Unknown panic".to_string()
-                };
-                crate::tests::TestResult {
-                    status: TestStatus::Crash,
-                    error_message: Some(msg),
-                    duration_ms: elapsed.as_millis() as u64,
-                    oracle_score: None,
-                    metadata: Default::default(),
-                }
-            }
+            },
         }
     }
 
