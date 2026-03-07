@@ -74,6 +74,11 @@ impl PdfDocument {
         })
     }
 
+    /// Access the underlying parsed PDF.
+    pub fn pdf(&self) -> &Pdf {
+        &self.pdf
+    }
+
     /// Set interpreter settings (font resolver, cmap resolver, etc.).
     pub fn set_settings(&mut self, settings: InterpreterSettings) {
         self.settings = settings;
