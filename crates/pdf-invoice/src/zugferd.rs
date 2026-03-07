@@ -223,14 +223,16 @@ impl ZugferdInvoice {
     ///
     /// Returns a list of validation issues (empty = valid).
     pub fn validate(&self) -> Vec<String> {
+        use crate::iso_codes::{is_valid_country, is_valid_currency};
+
         let mut issues = Vec::new();
 
         if self.invoice_number.is_empty() {
             issues.push("invoice_number is required".into());
         }
-        if self.currency.len() != 3 {
+        if !is_valid_currency(&self.currency) {
             issues.push(format!(
-                "currency must be 3-letter ISO 4217 code, got '{}'",
+                "currency '{}' is not a valid ISO 4217 code",
                 self.currency
             ));
         }
@@ -255,15 +257,30 @@ impl ZugferdInvoice {
             if self.seller.tax_id.is_none() {
                 issues.push("seller.tax_id is required for EN16931/Extended".into());
             }
-            if self.seller.address.country_code.len() != 2 {
-                issues.push("seller.address.country_code must be ISO 3166-1 alpha-2".into());
+            if !is_valid_country(&self.seller.address.country_code) {
+                issues.push(format!(
+                    "seller.address.country_code '{}' is not a valid ISO 3166-1 alpha-2 code",
+                    self.seller.address.country_code
+                ));
             }
-            if self.buyer.address.country_code.len() != 2 {
-                issues.push("buyer.address.country_code must be ISO 3166-1 alpha-2".into());
+            if !is_valid_country(&self.buyer.address.country_code) {
+                issues.push(format!(
+                    "buyer.address.country_code '{}' is not a valid ISO 3166-1 alpha-2 code",
+                    self.buyer.address.country_code
+                ));
             }
         }
 
         issues
+    }
+
+    /// Full EN 16931 business rule validation.
+    ///
+    /// This performs comprehensive validation including cross-field arithmetic
+    /// checks (BR-CO-10/11/13/15), tax category rules (BR-S-08), and
+    /// ISO code lookups (BR-CL-01/04).
+    pub fn validate_full(&self) -> crate::validation::ValidationReport {
+        crate::validation::validate_invoice(self)
     }
 
     /// Generate CII XML conforming to the invoice's profile.
@@ -1061,6 +1078,22 @@ mod tests {
         assert_eq!(format_amount(99.99), "99.99");
         assert_eq!(format_amount(21.0), "21.00");
         assert_eq!(format_amount(19.5), "19.50");
+    }
+
+    #[test]
+    fn validate_full_passes_for_valid() {
+        let inv = sample_invoice();
+        let report = inv.validate_full();
+        assert!(report.is_valid(), "issues: {:?}", report.issues);
+    }
+
+    #[test]
+    fn validate_full_catches_bad_currency() {
+        let mut inv = sample_invoice();
+        inv.currency = "BAD".into();
+        let report = inv.validate_full();
+        assert!(!report.is_valid());
+        assert!(report.issues.iter().any(|i| i.rule == "BR-CL-01"));
     }
 
     #[test]
