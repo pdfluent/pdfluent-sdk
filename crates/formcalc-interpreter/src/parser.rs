@@ -107,28 +107,42 @@ impl Parser {
     fn parse_expr(&mut self) -> Result<Expr> {
         self.skip_newlines();
         match self.peek().clone() {
-            // `If` followed by `(` is the built-in If() function, not a statement
+            // `if (` could be If(a,b,c) function OR if (cond) then...endif statement.
+            // Backtrack: try function call; if < 2 args, parse as statement.
             TokenKind::If
                 if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) =>
             {
+                let saved_pos = self.pos;
                 self.advance(); // consume `if`
                 self.advance(); // consume `(`
                 let mut args = Vec::new();
+                let mut ok = true;
                 if self.peek() != &TokenKind::RParen {
                     loop {
                         self.skip_newlines();
-                        args.push(self.parse_or()?);
+                        match self.parse_or() {
+                            Ok(expr) => args.push(expr),
+                            Err(_) => {
+                                ok = false;
+                                break;
+                            }
+                        }
                         if self.peek() != &TokenKind::Comma {
                             break;
                         }
                         self.advance();
                     }
                 }
-                self.expect(&TokenKind::RParen)?;
-                Ok(Expr::FuncCall {
-                    name: "If".to_string(),
-                    args,
-                })
+                if ok && self.peek() == &TokenKind::RParen && args.len() >= 2 {
+                    self.advance(); // consume `)`
+                    Ok(Expr::FuncCall {
+                        name: "If".to_string(),
+                        args,
+                    })
+                } else {
+                    self.pos = saved_pos;
+                    self.parse_if()
+                }
             }
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
@@ -170,7 +184,13 @@ impl Parser {
 
         let else_body = if self.peek() == &TokenKind::Else {
             self.advance();
-            Some(self.parse_body(&[TokenKind::EndIf])?)
+            // Handle `else if` as `elseif` (two-token variant)
+            if self.peek() == &TokenKind::If {
+                let inner_if = self.parse_if()?;
+                Some(vec![inner_if])
+            } else {
+                Some(self.parse_body(&[TokenKind::EndIf])?)
+            }
         } else {
             None
         };
@@ -534,6 +554,27 @@ impl Parser {
                                 self.advance(); // consume dot
                                 if let TokenKind::Ident(member) = self.peek().clone() {
                                     self.advance(); // consume member
+                                    // Method call: obj.member(args)
+                                    if self.peek() == &TokenKind::LParen {
+                                        self.advance(); // consume (
+                                        let mut args = Vec::new();
+                                        if self.peek() != &TokenKind::RParen {
+                                            loop {
+                                                self.skip_newlines();
+                                                args.push(self.parse_or()?);
+                                                if self.peek() != &TokenKind::Comma {
+                                                    break;
+                                                }
+                                                self.advance();
+                                            }
+                                        }
+                                        self.expect(&TokenKind::RParen)?;
+                                        let path = expr_to_som_path(&expr);
+                                        return Ok(Expr::FuncCall {
+                                            name: format!("{}.{}", path, member),
+                                            args,
+                                        });
+                                    }
                                     expr = Expr::MemberAccess {
                                         object: Box::new(expr),
                                         member,
@@ -572,6 +613,16 @@ impl Parser {
             col: span.col,
             message: message.to_string(),
         }
+    }
+}
+
+fn expr_to_som_path(expr: &Expr) -> String {
+    match expr {
+        Expr::Ident(name) => name.clone(),
+        Expr::MemberAccess { object, member } => {
+            format!("{}.{}", expr_to_som_path(object), member)
+        }
+        _ => "<expr>".to_string(),
     }
 }
 

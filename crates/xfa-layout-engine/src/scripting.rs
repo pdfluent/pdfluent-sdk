@@ -50,11 +50,13 @@ pub fn run_calculations(form: &mut FormTree) -> Result<ScriptResult, ScriptError
         })
         .collect();
 
-    for (id, name, script) in calc_nodes {
-        let value = eval_script(&mut interpreter, &script).map_err(|e| ScriptError::Execution {
-            node: name.clone(),
-            message: e,
-        })?;
+    for (id, _name, script) in calc_nodes {
+        // Gracefully skip scripts that fail (e.g. unrecognized JavaScript syntax,
+        // unsupported FormCalc constructs). Matches Adobe's best-effort behavior.
+        let value = match eval_script(&mut interpreter, &script) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
         // Convert the FormCalc result to a string and set the field value
         let value_str = value_to_string(&value);
