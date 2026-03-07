@@ -2,6 +2,9 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ErrorCategory {
+    // Access-level
+    Encrypted,
+
     // Parse-level
     InvalidXref,
     CorruptStream,
@@ -35,6 +38,7 @@ pub enum ErrorCategory {
 impl fmt::Display for ErrorCategory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
+            Self::Encrypted => "encrypted",
             Self::InvalidXref => "invalid_xref",
             Self::CorruptStream => "corrupt_stream",
             Self::UnsupportedFilter => "unsupported_filter",
@@ -61,6 +65,15 @@ impl fmt::Display for ErrorCategory {
 
 pub fn classify_error(test_name: &str, error: &str) -> ErrorCategory {
     let err_lower = error.to_lowercase();
+
+    // Encryption
+    if err_lower.contains("decryption")
+        || err_lower.contains("passwordprotected")
+        || err_lower.contains("password protected")
+        || err_lower.contains("encrypted")
+    {
+        return ErrorCategory::Encrypted;
+    }
 
     // System-level errors first
     if err_lower.contains("out of memory") || err_lower.contains("alloc") {
@@ -191,6 +204,18 @@ mod tests {
         assert_eq!(
             classify_error("render", "thread 'main' panicked at 'index out of bounds'"),
             ErrorCategory::Panic
+        );
+    }
+
+    #[test]
+    fn classify_encrypted() {
+        assert_eq!(
+            classify_error("parse", "Decryption(PasswordProtected)"),
+            ErrorCategory::Encrypted
+        );
+        assert_eq!(
+            classify_error("render", "invalid PDF: Decryption(UnsupportedAlgorithm)"),
+            ErrorCategory::Encrypted
         );
     }
 
