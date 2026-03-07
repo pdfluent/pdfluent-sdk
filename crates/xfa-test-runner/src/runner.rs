@@ -110,6 +110,34 @@ impl Runner {
                     }
                 };
 
+                // Pre-check: skip files that aren't actually PDFs (e.g. HTML error pages).
+                // PDF spec allows %PDF within first 1024 bytes.
+                let has_pdf_header = pdf_data
+                    .get(..1024.min(pdf_data.len()))
+                    .is_some_and(|window| window.windows(4).any(|w| w == b"%PDF"));
+                if !has_pdf_header {
+                    let pdf_hash = hex_sha256(&pdf_data);
+                    let pdf_size = pdf_data.len() as i64;
+                    let cat = ErrorCategory::InvalidHeader;
+                    let reason = "not a PDF file (missing %PDF header)".to_string();
+                    for test in &self.tests {
+                        let row = TestResultRow::from_test_result(
+                            &self.config.run_id,
+                            &path_str,
+                            &pdf_hash,
+                            pdf_size,
+                            test.name(),
+                            &TestStatus::Skip,
+                            Some(&reason),
+                            Some(&cat),
+                            0,
+                        );
+                        let _ = self.db.insert_result(&row);
+                    }
+                    progress.inc(1);
+                    return;
+                }
+
                 let pdf_hash = hex_sha256(&pdf_data);
                 let pdf_size = pdf_data.len() as i64;
 
@@ -215,8 +243,9 @@ impl Runner {
         let timeout = self.config.timeout;
         let test_name = test.name().to_string();
 
-        // Backpressure: wait if too many timed-out threads are still running.
-        // Prevents unbounded thread accumulation on corpora with many hangs.
+        // Backpressure: wait if too many test threads are actively being awaited.
+        // Counter is decremented by the *caller* after recv_timeout, so permanently
+        // hung threads don't prevent progress — only concurrent waiters count.
         while self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT_THREADS {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -224,7 +253,6 @@ impl Runner {
 
         let data = pdf_data.to_vec();
         let path_buf = path.to_path_buf();
-        let in_flight = Arc::clone(&self.in_flight);
 
         // Spawn in a separate thread with preemptive timeout via recv_timeout.
         let (tx, rx) = std::sync::mpsc::channel();
@@ -232,9 +260,6 @@ impl Runner {
         std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(move || {
-                // Drop guard: decrement in_flight even on double-panic.
-                let _guard = InFlightGuard(in_flight);
-
                 let start = Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     test.run(&data, &path_buf)
@@ -264,7 +289,7 @@ impl Runner {
             })
             .expect("failed to spawn test thread");
 
-        match rx.recv_timeout(timeout) {
+        let result = match rx.recv_timeout(timeout) {
             Ok(result) => result,
             Err(_) => crate::tests::TestResult {
                 status: TestStatus::Timeout,
@@ -275,7 +300,11 @@ impl Runner {
                 oracle_score: None,
                 metadata: Default::default(),
             },
-        }
+        };
+
+        // Decrement here (not in the thread) so hung threads don't hold the counter.
+        self.in_flight.fetch_sub(1, Ordering::Relaxed);
+        result
     }
 
     fn enumerate_pdfs(&self) -> Vec<PathBuf> {
@@ -309,16 +338,6 @@ impl Runner {
             }
         }
         set
-    }
-}
-
-/// RAII guard that decrements the in-flight counter on drop,
-/// ensuring cleanup even if the thread panics through catch_unwind.
-struct InFlightGuard(Arc<AtomicUsize>);
-
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
