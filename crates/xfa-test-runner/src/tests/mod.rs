@@ -7,6 +7,8 @@ pub mod images;
 pub mod metadata;
 pub mod parse;
 pub mod render;
+#[cfg(feature = "pdfium-oracle")]
+pub mod render_oracle;
 pub mod search;
 pub mod signatures;
 pub mod text_extract;
@@ -51,6 +53,8 @@ impl TestStatus {
 
 pub struct TestConfig {
     pub verapdf_oracle: Option<std::sync::Arc<crate::oracles::verapdf::VeraPdfOracle>>,
+    #[cfg(feature = "pdfium-oracle")]
+    pub diff_dir: Option<std::path::PathBuf>,
 }
 
 pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
@@ -60,7 +64,8 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         compliance::ComplianceTest::new()
     };
 
-    vec![
+    #[allow(unused_mut)]
+    let mut tests: Vec<Box<dyn PdfTest>> = vec![
         Box::new(parse::ParseTest),
         Box::new(metadata::MetadataTest),
         Box::new(render::RenderTest),
@@ -73,5 +78,14 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(geometry::GeometryTest),
         Box::new(images::ImageExtractTest),
         Box::new(search::SearchTest),
-    ]
+    ];
+
+    #[cfg(feature = "pdfium-oracle")]
+    {
+        tests.push(Box::new(render_oracle::RenderOracleTest {
+            diff_dir: config.diff_dir,
+        }));
+    }
+
+    tests
 }

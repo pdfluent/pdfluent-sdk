@@ -175,7 +175,11 @@ fn main() {
                 )
             });
 
-            let test_config = tests::TestConfig { verapdf_oracle };
+            let test_config = tests::TestConfig {
+                verapdf_oracle,
+                #[cfg(feature = "pdfium-oracle")]
+                diff_dir: std::env::var("XFA_DIFF_DIR").ok().map(PathBuf::from),
+            };
             let mut available_tests = tests::all_tests(test_config);
             if let Some(filter) = &config.test_filter {
                 available_tests.retain(|t| filter.iter().any(|f| f == t.name()));
