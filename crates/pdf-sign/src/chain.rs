@@ -213,7 +213,7 @@ pub fn check_revocation_embedded(
 /// in the OCSP response's single responses.
 fn parse_ocsp_response_status(
     resp_data: &[u8],
-    _cert: &X509Certificate,
+    cert: &X509Certificate,
 ) -> Option<RevocationStatus> {
     use crate::cms::{parse_context_explicit, parse_context_implicit, parse_length, parse_tlv};
     let (_, outer_seq) = parse_tlv(resp_data)?;
@@ -241,11 +241,12 @@ fn parse_ocsp_response_status(
     }
     let (rest, _) = parse_tlv(pos)?;
     pos = rest;
+    let cert_serial = extract_serial_number(cert)?;
     let (_, responses_seq) = parse_tlv(pos)?;
     let mut rpos = responses_seq;
     while !rpos.is_empty() {
         if let Some((next, sr)) = parse_tlv(rpos) {
-            if let Some(s) = check_single_response(sr) {
+            if let Some(s) = check_single_response(sr, &cert_serial) {
                 return Some(s);
             }
             rpos = next;
@@ -257,7 +258,7 @@ fn parse_ocsp_response_status(
         let mut rpos = rd;
         while !rpos.is_empty() {
             if let Some((next, sr)) = parse_tlv(rpos) {
-                if let Some(s) = check_single_response(sr) {
+                if let Some(s) = check_single_response(sr, &cert_serial) {
                     return Some(s);
                 }
                 rpos = next;
@@ -270,9 +271,29 @@ fn parse_ocsp_response_status(
 }
 
 /// Check a SingleResponse for certificate status.
-fn check_single_response(data: &[u8]) -> Option<RevocationStatus> {
+///
+/// Matches the cert serial number inside the CertID to ensure this
+/// response actually covers the target certificate.
+fn check_single_response(data: &[u8], cert_serial: &[u8]) -> Option<RevocationStatus> {
     use crate::cms::parse_tlv;
-    let (rest, _cert_id) = parse_tlv(data)?;
+    // SingleResponse ::= SEQUENCE { certID CertID, certStatus, ... }
+    // CertID ::= SEQUENCE { hashAlgorithm, issuerNameHash, issuerKeyHash, serialNumber }
+    let (rest, cert_id_seq) = parse_tlv(data)?;
+    // Extract serial from CertID (last field in the SEQUENCE).
+    let mut pos = cert_id_seq;
+    let mut last_value = &[][..];
+    while !pos.is_empty() {
+        if let Some((next, val)) = parse_tlv(pos) {
+            last_value = val;
+            pos = next;
+        } else {
+            break;
+        }
+    }
+    // Only match if this response's serial equals the target cert's serial.
+    if last_value != cert_serial {
+        return None;
+    }
     if rest.is_empty() {
         return None;
     }
@@ -306,7 +327,10 @@ fn check_crl_for_cert(crl_data: &[u8], cert: &X509Certificate) -> Option<Revocat
         pos = rest;
     }
     if pos.is_empty() || pos[0] != 0x30 {
-        return Some(RevocationStatus::Good);
+        // No revoked certificates list — but we haven't verified this
+        // CRL applies to the cert's issuer, so return None instead of
+        // assuming Good. The caller will continue checking other CRLs.
+        return None;
     }
     let (_, revoked_seq) = parse_tlv(pos)?;
     let cert_serial = extract_serial_number(cert)?;
@@ -323,7 +347,11 @@ fn check_crl_for_cert(crl_data: &[u8], cert: &X509Certificate) -> Option<Revocat
             break;
         }
     }
-    Some(RevocationStatus::Good)
+    // Serial not found in revoked list. We could return Good here, but
+    // without verifying the CRL issuer matches the cert's issuer, we
+    // can't be sure this CRL is authoritative. Return None to avoid
+    // short-circuiting with a false Good.
+    None
 }
 
 /// Extract the serial number from a certificate's TBS data.

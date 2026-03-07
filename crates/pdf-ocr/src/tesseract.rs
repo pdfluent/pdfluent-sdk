@@ -160,11 +160,10 @@ fn parse_hocr_words(hocr: &str) -> Vec<OcrWord> {
     let mut words = Vec::new();
 
     // HOCR format: <span class='ocrx_word' ... title='bbox x0 y0 x1 y1; x_wconf 95'>text</span>
-    for segment in hocr.split("ocrx_word") {
-        if !segment.contains("bbox") {
-            continue;
-        }
-
+    // Split on "ocrx_word" — the first segment is before any word span
+    // and may contain page/line-level bboxes that we must skip.
+    // All subsequent segments belong to actual word spans.
+    for segment in hocr.split("ocrx_word").skip(1) {
         let bbox = extract_hocr_bbox(segment);
         let conf = extract_hocr_confidence(segment);
         let text = extract_hocr_text(segment);
@@ -220,13 +219,23 @@ fn extract_hocr_text(s: &str) -> Option<String> {
     let tag_end = s.find('>')?;
     let after = &s[tag_end + 1..];
     let text_end = after.find("</").unwrap_or(after.len());
-    // Strip common inline HTML tags.
+    // Strip common inline HTML tags and decode HTML entities.
     let text = after[..text_end]
         .replace("<em>", "")
         .replace("</em>", "")
         .replace("<strong>", "")
         .replace("</strong>", "");
-    Some(text)
+    Some(decode_html_entities(&text))
+}
+
+/// Decode common HTML entities in HOCR text output.
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 #[cfg(test)]
@@ -270,6 +279,35 @@ mod tests {
         assert_eq!(words[0].text, "Bold");
         assert_eq!(words[0].bbox_px, [5, 10, 80, 30]);
         assert!((words[0].confidence - 0.88).abs() < 0.01);
+    }
+
+    #[test]
+    fn hocr_parse_skips_non_word_segments() {
+        // A page-level bbox should NOT produce a word entry.
+        let hocr = r#"<div class='ocr_page' title='bbox 0 0 600 800; ppageno 0'>
+        <span class='ocrx_word' title='bbox 10 20 100 50; x_wconf 95'>Hello</span>
+        </div>"#;
+        let words = parse_hocr_words(hocr);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].text, "Hello");
+    }
+
+    #[test]
+    fn hocr_parse_decodes_html_entities() {
+        let hocr =
+            r#"<span class='ocrx_word' title='bbox 10 20 100 50; x_wconf 90'>A &amp; B</span>"#;
+        let words = parse_hocr_words(hocr);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].text, "A & B");
+    }
+
+    #[test]
+    fn hocr_entity_decode_no_cascade() {
+        // &amp;lt; should decode to "&lt;", not "<".
+        let hocr = r#"<span class='ocrx_word' title='bbox 0 0 80 30; x_wconf 85'>&amp;lt;tag&amp;gt;</span>"#;
+        let words = parse_hocr_words(hocr);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].text, "&lt;tag&gt;");
     }
 
     #[test]

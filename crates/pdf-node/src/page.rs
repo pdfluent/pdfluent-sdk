@@ -157,7 +157,7 @@ impl PdfPage {
 
     /// Get annotations on this page.
     #[napi]
-    pub fn annotations(&self) -> Vec<AnnotationInfo> {
+    pub fn annotations(&self) -> Result<Vec<AnnotationInfo>> {
         annotation::page_annotations(self.doc.pdf(), self.index as usize)
     }
 }

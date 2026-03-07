@@ -94,6 +94,11 @@ impl FormAccess for FieldTree {
             .effective_field_type(id)
             .ok_or(FormError::InvalidValue)?;
 
+        // Reject writes to read-only fields (Ff bit 1) and signatures.
+        if ft == FieldType::Signature || self.effective_flags(id).read_only() {
+            return Err(FormError::ReadOnly(path.to_string()));
+        }
+
         match ft {
             FieldType::Text | FieldType::Button => {
                 self.get_mut(id).value = Some(FieldValue::Text(value.to_string()));
@@ -101,9 +106,7 @@ impl FormAccess for FieldTree {
             FieldType::Choice => {
                 self.get_mut(id).value = Some(FieldValue::StringArray(vec![value.to_string()]));
             }
-            FieldType::Signature => {
-                return Err(FormError::ReadOnly(path.to_string()));
-            }
+            FieldType::Signature => unreachable!(),
         }
         Ok(())
     }
@@ -180,9 +183,17 @@ mod tests {
         empty_node.parent = Some(form_id);
         let empty_id = tree.alloc(empty_node);
 
+        // Read-only text field: form.locked
+        let mut locked_node = make_node("locked");
+        locked_node.field_type = Some(FieldType::Text);
+        locked_node.flags = FieldFlags::from_bits(1); // Bit 1 = ReadOnly
+        locked_node.value = Some(FieldValue::Text("frozen".to_string()));
+        locked_node.parent = Some(form_id);
+        let locked_id = tree.alloc(locked_node);
+
         // Wire children
         let form = tree.get_mut(form_id);
-        form.children = vec![name_id, agree_id, country_id, sig_id, empty_id];
+        form.children = vec![name_id, agree_id, country_id, sig_id, empty_id, locked_id];
 
         tree
     }
@@ -191,7 +202,7 @@ mod tests {
     fn field_names_returns_all() {
         let tree = sample_tree();
         let names = tree.field_names();
-        assert_eq!(names.len(), 5);
+        assert_eq!(names.len(), 6);
         assert!(names.contains(&"form.name".to_string()));
         assert!(names.contains(&"form.agree".to_string()));
     }
@@ -233,6 +244,15 @@ mod tests {
         let mut tree = sample_tree();
         let err = tree.set_value("form.sig", "x").unwrap_err();
         assert!(matches!(err, FormError::ReadOnly(_)));
+    }
+
+    #[test]
+    fn set_value_readonly_field_errors() {
+        let mut tree = sample_tree();
+        let err = tree.set_value("form.locked", "new").unwrap_err();
+        assert!(matches!(err, FormError::ReadOnly(_)));
+        // Value should remain unchanged.
+        assert_eq!(tree.get_value("form.locked"), Some("frozen".to_string()));
     }
 
     #[test]

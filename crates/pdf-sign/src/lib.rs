@@ -159,7 +159,7 @@ fn validate_one(sig: &SigDict<'_>, pdf_data: &[u8], field_name: &str) -> Validat
                         if certs.is_empty() {
                             ValidationStatus::Invalid("no certificates in CMS".into())
                         } else {
-                            let leaf = &certs[0];
+                            let leaf = &certs[sd.signer_cert_index()];
                             match sd.signed_attributes_raw() {
                                 Some(signed_attrs) => {
                                     match crypto::verify_cms_signature(
@@ -167,6 +167,7 @@ fn validate_one(sig: &SigDict<'_>, pdf_data: &[u8], field_name: &str) -> Validat
                                         sd.signature_value(),
                                         &leaf.spki_raw,
                                         sd.signature_algorithm_oid(),
+                                        sd.signature_algorithm_params(),
                                     ) {
                                         Ok(true) => ValidationStatus::Valid,
                                         Ok(false) => ValidationStatus::Invalid(

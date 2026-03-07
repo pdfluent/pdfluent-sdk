@@ -27,6 +27,10 @@ pub struct CmsSignedData {
     signed_attrs_raw: Option<Vec<u8>>,
     /// The signature algorithm OID from SignerInfo.
     sig_algo_oid: Vec<u8>,
+    /// The signature algorithm parameters (raw DER, needed for RSA-PSS).
+    sig_algo_params: Vec<u8>,
+    /// Index of the signer certificate in the certificates array.
+    signer_cert_index: usize,
 }
 
 impl CmsSignedData {
@@ -97,6 +101,8 @@ impl CmsSignedData {
             signer_cn: si.signer_cn,
             signed_attrs_raw: si.signed_attrs_raw,
             sig_algo_oid: si.sig_algo_oid,
+            sig_algo_params: si.sig_algo_params,
+            signer_cert_index: si.signer_cert_index,
         })
     }
 
@@ -157,6 +163,21 @@ impl CmsSignedData {
     /// Return the signature algorithm OID from the SignerInfo.
     pub fn signature_algorithm_oid(&self) -> &[u8] {
         &self.sig_algo_oid
+    }
+
+    /// Return the signature algorithm parameters (raw DER).
+    ///
+    /// For RSA-PSS this contains the RSASSA-PSS-params SEQUENCE that
+    /// specifies the hash algorithm. Empty for most other algorithms.
+    pub fn signature_algorithm_params(&self) -> &[u8] {
+        &self.sig_algo_params
+    }
+
+    /// Return the index of the signer certificate in the certificates array.
+    ///
+    /// Resolved from the SignerIdentifier (SID) by matching the serial number.
+    pub fn signer_cert_index(&self) -> usize {
+        self.signer_cert_index
     }
 }
 
@@ -297,6 +318,9 @@ struct SignerInfoFields {
     signer_cn: Option<String>,
     signed_attrs_raw: Option<Vec<u8>>,
     sig_algo_oid: Vec<u8>,
+    sig_algo_params: Vec<u8>,
+    /// Index into the certificates array identifying the signer cert.
+    signer_cert_index: usize,
 }
 
 /// Parse a SignerInfo and extract relevant fields.
@@ -311,8 +335,10 @@ fn parse_signer_info(data: &[u8], certs: &[X509Certificate]) -> Option<SignerInf
     let (rest, _version) = parse_tlv(pos)?;
     pos = rest;
 
-    // sid (IssuerAndSerialNumber or SubjectKeyIdentifier)
-    let (rest, _sid) = parse_tlv(pos)?;
+    // sid (IssuerAndSerialNumber SEQUENCE or SubjectKeyIdentifier [0])
+    let (rest, sid) = parse_tlv(pos)?;
+    // Try to match SID to a certificate.
+    let signer_cert_index = find_cert_by_sid(sid, certs).unwrap_or(0);
     pos = rest;
 
     // digestAlgorithm AlgorithmIdentifier
@@ -349,17 +375,23 @@ fn parse_signer_info(data: &[u8], certs: &[X509Certificate]) -> Option<SignerInf
 
     // signatureAlgorithm AlgorithmIdentifier
     let (rest, sig_algo_data) = parse_tlv(pos)?;
-    let sig_algo_oid = parse_tlv(sig_algo_data)
-        .map(|(_, oid)| oid.to_vec())
-        .unwrap_or_default();
+    let (sig_algo_oid, sig_algo_params) = if let Some((params_rest, oid)) = parse_tlv(sig_algo_data)
+    {
+        // Remaining bytes in AlgorithmIdentifier after the OID are the parameters.
+        (oid.to_vec(), params_rest.to_vec())
+    } else {
+        (Vec::new(), Vec::new())
+    };
     pos = rest;
 
     // signature OCTET STRING
     let (_, sig_value) = parse_tlv(pos)?;
     let signature_value = sig_value.to_vec();
 
-    // Try to find the signer's CN from certificates.
-    let signer_cn = certs.first().and_then(|c| c.subject_common_name());
+    // Resolve signer CN from the matched certificate.
+    let signer_cn = certs
+        .get(signer_cert_index)
+        .and_then(|c| c.subject_common_name());
 
     Some(SignerInfoFields {
         signature_value,
@@ -368,7 +400,58 @@ fn parse_signer_info(data: &[u8], certs: &[X509Certificate]) -> Option<SignerInf
         signer_cn,
         signed_attrs_raw,
         sig_algo_oid,
+        sig_algo_params,
+        signer_cert_index,
     })
+}
+
+/// Match a SignerIdentifier (SID) to a certificate in the set.
+///
+/// The SID is either an IssuerAndSerialNumber SEQUENCE or a
+/// SubjectKeyIdentifier. We try to match by extracting the serial
+/// number from IssuerAndSerialNumber and comparing to each cert's
+/// serial in TBS.
+fn find_cert_by_sid(sid: &[u8], certs: &[X509Certificate]) -> Option<usize> {
+    if certs.len() <= 1 {
+        return Some(0);
+    }
+    // IssuerAndSerialNumber is a SEQUENCE containing issuer Name + serial INTEGER.
+    // Extract the serial (last element in the SEQUENCE).
+    let mut pos = sid;
+    let mut last_value = &[][..];
+    while !pos.is_empty() {
+        if let Some((rest, val)) = parse_tlv(pos) {
+            last_value = val;
+            pos = rest;
+        } else {
+            break;
+        }
+    }
+    if last_value.is_empty() {
+        return None;
+    }
+    // Compare serial to each certificate's serial number.
+    for (i, cert) in certs.iter().enumerate() {
+        if let Some(cert_serial) = extract_cert_serial(cert) {
+            if cert_serial == last_value {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Extract serial number from a certificate's TBS for SID matching.
+fn extract_cert_serial(cert: &X509Certificate) -> Option<&[u8]> {
+    let (_, tbs_seq) = parse_tlv(&cert.tbs_raw)?;
+    let mut pos = tbs_seq;
+    // Skip optional version [0] EXPLICIT.
+    if let Some((rest, _)) = parse_context_explicit(pos, 0) {
+        pos = rest;
+    }
+    // Next is the serial number INTEGER.
+    let (_, serial) = parse_tlv(pos)?;
+    Some(serial)
 }
 
 // OID for messageDigest: 1.2.840.113549.1.9.4
