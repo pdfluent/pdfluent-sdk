@@ -322,11 +322,7 @@ pub fn format_cluster_table(clusters: &[Cluster]) -> String {
     out.push_str(&"-".repeat(100));
     out.push('\n');
     for c in clusters {
-        let pattern_short = if c.error_pattern.len() > 35 {
-            format!("{}...", &c.error_pattern[..35])
-        } else {
-            c.error_pattern.clone()
-        };
+        let pattern_short = truncate_utf8(&c.error_pattern, 35);
         out.push_str(&format!(
             "{:<18} {:<22} {:>6} {:>8.0} {:<10} {}\n",
             c.test_name, c.error_category, c.pdf_count, c.priority_score, c.trend, pattern_short,
@@ -337,6 +333,15 @@ pub fn format_cluster_table(clusters: &[Cluster]) -> String {
 
 pub fn likely_crate_for_test(test_name: &str) -> &str {
     likely_crate(test_name)
+}
+
+fn truncate_utf8(s: &str, max_chars: usize) -> String {
+    let truncated: String = s.chars().take(max_chars).collect();
+    if truncated.len() < s.len() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
 }
 
 #[cfg(test)]
