@@ -72,6 +72,14 @@ impl Database {
                 status TEXT DEFAULT 'open'
             );
 
+            CREATE TABLE IF NOT EXISTS oracle_cache (
+                oracle_name TEXT NOT NULL,
+                pdf_hash TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                cached_at TEXT NOT NULL,
+                PRIMARY KEY (oracle_name, pdf_hash)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_results_category ON test_results(error_category);
             CREATE INDEX IF NOT EXISTS idx_results_hash ON test_results(pdf_hash);
@@ -201,10 +209,8 @@ impl Database {
         let rows = stmt
             .query_map(params![run_id], |row| {
                 let test_name: String = row.get(0)?;
-                let error_category: String =
-                    row.get::<_, Option<String>>(1)?.unwrap_or_default();
-                let error_pattern: String =
-                    row.get::<_, Option<String>>(2)?.unwrap_or_default();
+                let error_category: String = row.get::<_, Option<String>>(1)?.unwrap_or_default();
+                let error_pattern: String = row.get::<_, Option<String>>(2)?.unwrap_or_default();
                 let pdf_count: i64 = row.get(3)?;
                 let cluster_id = format!("{}-{}", test_name, error_category);
                 Ok(ClusterRow {
@@ -230,6 +236,36 @@ impl Database {
             summary_a: a,
             summary_b: b,
         }
+    }
+
+    pub fn get_oracle_cache(&self, oracle_name: &str, pdf_hash: &str) -> Option<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT result_json FROM oracle_cache WHERE oracle_name = ?1 AND pdf_hash = ?2",
+            params![oracle_name, pdf_hash],
+            |row| row.get(0),
+        )
+        .ok()
+    }
+
+    pub fn set_oracle_cache(
+        &self,
+        oracle_name: &str,
+        pdf_hash: &str,
+        result_json: &str,
+    ) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO oracle_cache (oracle_name, pdf_hash, result_json, cached_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                oracle_name,
+                pdf_hash,
+                result_json,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
     }
 
     pub fn latest_run_id(&self) -> Option<String> {

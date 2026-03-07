@@ -4927,6 +4927,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "image",
  "indicatif",
  "lopdf",
  "num_cpus",
@@ -4937,11 +4938,13 @@ dependencies = [
  "pdf-forms",
  "pdf-sign",
  "pdf-syntax",
+ "pdfium-ffi-bridge",
  "rayon",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
+ "strsim",
  "walkdir",
 ]
 

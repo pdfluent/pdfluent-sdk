@@ -69,8 +69,7 @@ pub fn classify_error(test_name: &str, error: &str) -> ErrorCategory {
     if err_lower.contains("timeout") || err_lower.contains("timed out") {
         return ErrorCategory::Timeout;
     }
-    if err_lower.contains("panic")
-        || err_lower.contains("thread") && err_lower.contains("panicked")
+    if err_lower.contains("panic") || err_lower.contains("thread") && err_lower.contains("panicked")
     {
         return ErrorCategory::Panic;
     }
@@ -110,8 +109,7 @@ pub fn classify_error(test_name: &str, error: &str) -> ErrorCategory {
     if err_lower.contains("font") || err_lower.contains("glyph") {
         return ErrorCategory::MissingFont;
     }
-    if err_lower.contains("encoding") || err_lower.contains("utf") || err_lower.contains("codec")
-    {
+    if err_lower.contains("encoding") || err_lower.contains("utf") || err_lower.contains("codec") {
         return ErrorCategory::EncodingError;
     }
 
@@ -139,8 +137,7 @@ pub fn classify_error(test_name: &str, error: &str) -> ErrorCategory {
         _ => {}
     }
 
-    if err_lower.contains("form") || err_lower.contains("field") || err_lower.contains("acroform")
-    {
+    if err_lower.contains("form") || err_lower.contains("field") || err_lower.contains("acroform") {
         return ErrorCategory::InvalidFormField;
     }
     if err_lower.contains("annot") {
