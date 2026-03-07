@@ -195,6 +195,7 @@ impl Parser {
             None
         };
 
+        self.skip_newlines();
         self.expect(&TokenKind::EndIf)?;
         Ok(Expr::If {
             condition: Box::new(condition),
@@ -554,7 +555,7 @@ impl Parser {
                                 self.advance(); // consume dot
                                 if let TokenKind::Ident(member) = self.peek().clone() {
                                     self.advance(); // consume member
-                                    // Method call: obj.member(args)
+                                                    // Method call: obj.member(args)
                                     if self.peek() == &TokenKind::LParen {
                                         self.advance(); // consume (
                                         let mut args = Vec::new();
