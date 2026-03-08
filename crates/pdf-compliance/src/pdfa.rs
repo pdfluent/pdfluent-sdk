@@ -114,6 +114,12 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 
     check_trailer_requirements(pdf, level, &mut report);
 
+    // Batch 7: Stream/syntax validation, XMP extension, image intent
+    check_stream_length_pdfa(pdf, &mut report);
+    check_object_syntax(pdf, &mut report);
+    check_xmp_extension_schema_pdfa(pdf, &mut report);
+    check_image_intent(pdf, &mut report);
+
     // Post-process: remap clause numbers per PDF/A part.
     // Clause numbering differs between ISO 19005 parts.
     remap_clause_numbers(&mut report, level);
@@ -685,6 +691,28 @@ fn check_trailer_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complian
     check::check_trailer_requirements(pdf, level.part(), report);
 }
 
+// ─── Batch 7: Stream/syntax validation, XMP extension, image intent ─────────
+
+/// §6.1.7 — Stream Length verification.
+fn check_stream_length_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_stream_length(pdf, report);
+}
+
+/// §6.1.8/6.1.9 — Object syntax spacing checks.
+fn check_object_syntax(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_object_syntax_spacing(pdf, report);
+}
+
+/// §6.7.8 — XMP extension schema validation.
+fn check_xmp_extension_schema_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_xmp_extension_schema(pdf, report);
+}
+
+/// §6.2.5/6.2.9 — Image XObject rendering intent.
+fn check_image_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_image_xobject_intent(pdf, report);
+}
+
 /// Remap clause numbers to match the correct ISO 19005 part numbering.
 ///
 /// Our checks use a canonical clause number (typically from PDF/A-2/4),
@@ -706,6 +734,25 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-4: §6.2.5
             (4, "6.2.10") => Some("6.2.5"),
             (4, "6.2.10.4.1") => Some("6.2.5"),
+
+            // Rendering intents
+            // PDF/A-1: §6.2.9, PDF/A-2/3/4: §6.2.5
+            (1, "6.2.5") => Some("6.2.9"),
+
+            // Annotation subtypes
+            // PDF/A-4: veraPDF reports 6.3.1 → normalized to 6.5.1
+            (4, "6.5.2") => Some("6.5.1"),
+
+            // Image XObject restrictions (OPI, Alternates, Interpolate)
+            // PDF/A-1: §6.2.4 sub-clauses mapped to 6.2.8.x in PDF/A-2/3
+            (1, "6.2.8.1") => Some("6.2.4"),
+            (1, "6.2.8.2") => Some("6.2.4"),
+            (1, "6.2.8.3") => Some("6.2.4"),
+
+            // Object syntax spacing
+            // PDF/A-1: §6.1.8, PDF/A-2/3/4: §6.1.8 (same)
+            // Stream length
+            // PDF/A-1: §6.1.7, PDF/A-2/3/4: §6.1.7 (same)
 
             _ => None,
         };

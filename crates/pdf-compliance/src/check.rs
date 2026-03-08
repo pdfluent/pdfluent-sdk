@@ -3780,6 +3780,8 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
 /// Deep annotation subtype validation (§6.5.2).
 pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let forbidden_all: &[&[u8]] = &[b"Sound", b"Movie", b"3D"];
+    // PDF/A-4 (ISO 19005-4 §6.3.1) also forbids Screen, RichMedia, FileAttachment
+    let forbidden_pdfa4: &[&[u8]] = &[b"Screen", b"RichMedia", b"FileAttachment"];
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
@@ -3807,6 +3809,16 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
                     report,
                     "6.5.2",
                     format!("FileAttachment annotation forbidden in PDF/A-{part}"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+
+            if part == 4 && forbidden_pdfa4.contains(&st) {
+                let name = std::str::from_utf8(st).unwrap_or("?");
+                error_at(
+                    report,
+                    "6.5.2",
+                    format!("Annotation type {name} forbidden in PDF/A-4"),
                     format!("page {}", page_idx + 1),
                 );
             }
@@ -4844,4 +4856,346 @@ fn check_trailer_info_key(pdf: &Pdf, report: &mut ComplianceReport) {
         "6.1.3",
         "Info key present in trailer without PieceInfo in catalog (forbidden in PDF/A-4)",
     );
+}
+
+// ─── §6.1.7 — Stream Length verification ─────────────────────────────────────
+
+/// Check that declared /Length of streams matches actual byte count (§6.1.7).
+///
+/// Scans raw PDF bytes for `stream` / `endstream` pairs and compares
+/// the actual byte count with the declared /Length value.
+pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+    let len = data.len();
+    let mut pos = 0;
+
+    while pos + 6 < len {
+        // Find "stream" keyword followed by CR, LF, or CRLF
+        let remaining = &data[pos..];
+        let Some(stream_off) = find_keyword(remaining, b"stream") else {
+            break;
+        };
+        let abs_stream = pos + stream_off;
+
+        // stream keyword must be followed by \r\n or \n
+        let data_start = abs_stream + 6; // skip "stream"
+        if data_start >= len {
+            break;
+        }
+        let data_start = if data[data_start] == b'\r' && data_start + 1 < len && data[data_start + 1] == b'\n' {
+            data_start + 2
+        } else if data[data_start] == b'\n' {
+            data_start + 1
+        } else {
+            pos = abs_stream + 6;
+            continue;
+        };
+
+        // Find "endstream" after the stream data
+        let search_from = if data_start + 10 < len { data_start } else { break };
+        let remaining = &data[search_from..];
+        let Some(endstream_off) = find_keyword(remaining, b"endstream") else {
+            break;
+        };
+        let abs_endstream = search_from + endstream_off;
+
+        // Actual length is bytes between data_start and endstream
+        // endstream may be preceded by EOL (\r\n or \n or \r)
+        let mut actual_end = abs_endstream;
+        if actual_end > data_start && data[actual_end - 1] == b'\n' {
+            actual_end -= 1;
+            if actual_end > data_start && data[actual_end - 1] == b'\r' {
+                actual_end -= 1;
+            }
+        } else if actual_end > data_start && data[actual_end - 1] == b'\r' {
+            actual_end -= 1;
+        }
+        let actual_len = actual_end - data_start;
+
+        // Find the /Length value by scanning backwards from "stream" to find the dict
+        let declared = find_length_value(data, abs_stream);
+        if let Some(declared_len) = declared {
+            if declared_len != actual_len {
+                error(
+                    report,
+                    "6.1.7",
+                    format!(
+                        "Stream Length mismatch: declared {declared_len}, actual {actual_len}"
+                    ),
+                );
+                return; // One violation is enough
+            }
+        }
+
+        pos = abs_endstream + 9;
+    }
+}
+
+/// Find a keyword in data that is not part of a longer word.
+fn find_keyword(data: &[u8], keyword: &[u8]) -> Option<usize> {
+    let klen = keyword.len();
+    let mut pos = 0;
+    while pos + klen <= data.len() {
+        if let Some(off) = data[pos..].windows(klen).position(|w| w == keyword) {
+            let abs = pos + off;
+            // Check it's not part of "endstream" when looking for "stream"
+            if keyword == b"stream" && abs > 0 && data[abs - 1] == b'd' {
+                // This is "endstream", skip
+                pos = abs + klen;
+                continue;
+            }
+            return Some(abs);
+        }
+        break;
+    }
+    None
+}
+
+/// Extract the /Length integer value from the stream dictionary, by scanning
+/// backwards from the "stream" keyword to find `/Length <number>`.
+fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
+    let start = stream_pos.saturating_sub(500);
+    let region = &data[start..stream_pos];
+    let region_str = std::str::from_utf8(region).ok()?;
+    let idx = region_str.rfind("/Length")?;
+    let after = &region_str[idx + 7..];
+    let after = after.trim_start();
+    // Parse the integer
+    let end = after.find(|c: char| !c.is_ascii_digit()).unwrap_or(after.len());
+    if end == 0 {
+        return None; // /Length might be an indirect reference
+    }
+    after[..end].parse().ok()
+}
+
+// ─── §6.1.8 / §6.1.9 — Object syntax spacing checks ────────────────────────
+
+/// Check spacing around obj/endobj keywords (§6.1.8, §6.1.9).
+///
+/// Requirements:
+/// - Object number and generation number separated by single space
+/// - Generation number and "obj" separated by single space
+/// - "obj" followed by EOL or whitespace
+/// - "endobj" preceded by EOL
+pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+    let len = data.len();
+    let mut pos = 0;
+    let mut found_violation = false;
+
+    while pos + 4 < len && !found_violation {
+        // Find " obj" pattern (space + "obj")
+        let remaining = &data[pos..];
+        let Some(obj_off) = remaining.windows(4).position(|w| {
+            w == b" obj" || w == b"\nobj" || w == b"\robj"
+        }) else {
+            break;
+        };
+        let abs_obj = pos + obj_off;
+
+        // "obj" is at abs_obj + 1
+        let obj_kw = abs_obj + 1;
+
+        // Check what follows "obj" — must be whitespace or EOL
+        let after_obj = obj_kw + 3;
+        if after_obj < len {
+            let c = data[after_obj];
+            if c != b' ' && c != b'\n' && c != b'\r' && c != b'\t' && c != b'<' && c != b'/' {
+                // Invalid: obj not followed by proper delimiter
+                found_violation = true;
+                error(report, "6.1.8", "Object keyword 'obj' not followed by proper whitespace/delimiter");
+                break;
+            }
+        }
+
+        // Check what precedes: should be "<gen> obj" with single spaces
+        // Scan backwards to find the generation number and object number
+        if abs_obj >= 3 {
+            let before = &data[abs_obj.saturating_sub(20)..abs_obj + 1];
+            // Pattern should be: <objnum><sp><gen><sp>obj
+            // Check for multiple spaces between gen and obj
+            if before.len() >= 2 && before[before.len() - 1] == b' ' && before[before.len() - 2] == b' ' {
+                found_violation = true;
+                error(report, "6.1.8", "Multiple spaces before 'obj' keyword");
+                break;
+            }
+        }
+
+        pos = after_obj;
+    }
+
+    // Check endobj spacing
+    if found_violation {
+        return;
+    }
+    pos = 0;
+    while pos + 6 < len {
+        let remaining = &data[pos..];
+        let Some(eobj_off) = remaining.windows(6).position(|w| w == b"endobj") else {
+            break;
+        };
+        let abs_eobj = pos + eobj_off;
+
+        // endobj must be preceded by EOL
+        if abs_eobj > 0 {
+            let before = data[abs_eobj - 1];
+            if before != b'\n' && before != b'\r' {
+                error(report, "6.1.8", "Keyword 'endobj' not preceded by EOL marker");
+                return;
+            }
+        }
+
+        // endobj must be followed by EOL or EOF
+        let after = abs_eobj + 6;
+        if after < len {
+            let c = data[after];
+            if c != b'\n' && c != b'\r' && c != b' ' {
+                error(report, "6.1.8", "Keyword 'endobj' not followed by EOL marker");
+                return;
+            }
+        }
+
+        pos = abs_eobj + 6;
+    }
+}
+
+// ─── §6.7.8 — XMP extension schema validation ──────────────────────────────
+
+/// Validate XMP extension schemas (§6.7.8).
+///
+/// Extension schemas must use correct namespace prefixes and have required fields:
+/// - pdfaSchema:schema, pdfaSchema:namespaceURI, pdfaSchema:prefix
+/// - pdfaProperty:name, pdfaProperty:valueType, pdfaProperty:category, pdfaProperty:description
+/// - pdfaType:type, pdfaType:namespaceURI, pdfaType:description
+pub fn check_xmp_extension_schema(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(xmp) = get_xmp_metadata(pdf) else {
+        return;
+    };
+    let xmp_str = String::from_utf8_lossy(&xmp);
+
+    // Check if extension schemas are present
+    if !xmp_str.contains("pdfaExtension:schemas") && !xmp_str.contains("pdfaSchema:") {
+        return; // No extension schemas — nothing to validate
+    }
+
+    // Use string-based parsing for extension schema validation
+    // (avoid roxmltree dependency complexity)
+    check_xmp_extension_schema_text(&xmp_str, report);
+}
+
+/// String-based XMP extension schema validation.
+fn check_xmp_extension_schema_text(xmp: &str, report: &mut ComplianceReport) {
+    // Check that pdfaProperty:valueType values are defined/valid
+    let standard_types = [
+        "Text", "URI", "URL", "Boolean", "Integer", "Real",
+        "Date", "MIMEType", "AgentName", "RenditionClass",
+        "ResourceEvent", "ResourceRef", "Version", "Rational",
+        "Lang Alt", "Bag Text", "Seq Text", "Bag ProperName",
+        "GUID", "Locale", "XPath", "Part", "GPSCoordinate",
+        "bag Text", "seq Text", "Bag Choice", "InternalRef",
+        "ExternalRef", "Field", "Dimensions",
+    ];
+
+    // Extract valueType values
+    for (tag_start, tag_end) in find_xml_element_values(xmp, "pdfaProperty:valueType") {
+        let val = xmp[tag_start..tag_end].trim();
+        if val.is_empty() {
+            continue;
+        }
+        if !standard_types.contains(&val) {
+            // Check if custom type is defined in pdfaType:type
+            let type_defined = find_xml_element_values(xmp, "pdfaType:type")
+                .any(|(s, e)| xmp[s..e].trim() == val);
+            if !type_defined {
+                error(
+                    report,
+                    "6.7.8",
+                    format!("Extension schema property valueType '{val}' is not defined"),
+                );
+                return;
+            }
+        }
+    }
+
+    // Check pdfaType:namespaceURI presence when value types exist
+    let has_value_types = xmp.contains("pdfaType:type") || xmp.contains("<pdfaType:");
+    if has_value_types {
+        let has_type_ns = xmp.contains("pdfaType:namespaceURI");
+        if !has_type_ns {
+            error(
+                report,
+                "6.7.8",
+                "Extension schema value type missing required pdfaType:namespaceURI",
+            );
+        }
+    }
+}
+
+/// Find XML element text content values: yields (start, end) byte offsets for each
+/// `<tag>value</tag>` occurrence.
+fn find_xml_element_values<'a>(
+    xml: &'a str,
+    element: &'a str,
+) -> impl Iterator<Item = (usize, usize)> + 'a {
+    let open_tag = format!("<{element}>");
+    let close_tag = format!("</{element}>");
+    let open_len = open_tag.len();
+    let mut pos = 0;
+    std::iter::from_fn(move || {
+        let rest = &xml[pos..];
+        let open_off = rest.find(&open_tag)?;
+        let val_start = pos + open_off + open_len;
+        let rest2 = &xml[val_start..];
+        let close_off = rest2.find(&close_tag)?;
+        let val_end = val_start + close_off;
+        pos = val_end + close_tag.len();
+        Some((val_start, val_end))
+    })
+}
+
+// ─── §6.2.5/6.2.9 — Image XObject rendering intent ─────────────────────────
+
+/// Check /Intent on Image XObjects for valid rendering intent values.
+///
+/// This complements `check_rendering_intents` which checks content stream `ri`
+/// operators and ExtGState /RI keys.
+pub fn check_image_xobject_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+    let valid_intents: &[&[u8]] = &[
+        b"RelativeColorimetric",
+        b"AbsoluteColorimetric",
+        b"Perceptual",
+        b"Saturation",
+    ];
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
+            continue;
+        };
+        let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
+            continue;
+        };
+        for (name, _) in xobj_dict.entries() {
+            let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let dict = stream.dict();
+            if dict.get::<Name>(keys::SUBTYPE).is_none_or(|s| s.as_ref() != keys::IMAGE) {
+                continue;
+            }
+
+            if let Some(intent) = dict.get::<Name>(b"Intent" as &[u8]) {
+                if !valid_intents.iter().any(|v| *v == intent.as_ref()) {
+                    let intent_str = std::str::from_utf8(intent.as_ref()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.2.5",
+                        format!("Image XObject has invalid rendering intent '{intent_str}'"),
+                        format!("page {}", page_idx + 1),
+                    );
+                    return;
+                }
+            }
+        }
+    }
 }
