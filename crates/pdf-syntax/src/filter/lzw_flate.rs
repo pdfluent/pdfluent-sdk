@@ -752,6 +752,9 @@ impl PredictorParams {
     }
 }
 
+/// Maximum allocation size for predictor output buffer (256 MB).
+const MAX_PREDICTOR_OUTPUT: usize = 256 * 1024 * 1024;
+
 fn apply_predictor(data: Vec<u8>, params: &PredictorParams) -> Option<Vec<u8>> {
     match params.predictor {
         1 => Some(data),
@@ -767,7 +770,20 @@ fn apply_predictor(data: Vec<u8>, params: &PredictorParams) -> Option<Vec<u8>> {
                 row_len
             };
 
+            if total_row_len == 0 {
+                return None;
+            }
+
             let num_rows = data.len() / total_row_len;
+
+            let output_size = num_rows.checked_mul(row_len)?;
+            if output_size > MAX_PREDICTOR_OUTPUT {
+                warn!(
+                    "predictor output size {} exceeds limit, skipping",
+                    output_size
+                );
+                return None;
+            }
 
             if !matches!(params.bits_per_component, 1 | 2 | 4 | 8 | 16) {
                 warn!("invalid bits per component {}", params.bits_per_component);
