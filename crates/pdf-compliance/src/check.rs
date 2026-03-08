@@ -1462,7 +1462,6 @@ fn stream_references_resources(content: &[u8]) -> bool {
 /// Check Info dict / XMP metadata consistency (§6.7.3).
 ///
 /// Properties in /Info dict must have matching values in XMP metadata.
-#[allow(dead_code)]
 pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(xmp_data) = get_xmp_metadata(pdf) else {
         return;
@@ -1497,6 +1496,41 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                 "/Info has Producer but XMP is missing pdf:Producer",
             );
         }
+    }
+
+    // Check CreationDate (/Info CreationDate vs xmp:CreateDate)
+    if metadata.creation_date.is_some() {
+        let xmp_create_date = extract_xmp_value(xmp_text, "xmp:CreateDate")
+            .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreateDate"));
+        if xmp_create_date.is_none() {
+            error(
+                report,
+                "6.7.3",
+                "/Info has CreationDate but XMP is missing xmp:CreateDate",
+            );
+        }
+    }
+
+    // Check ModDate (/Info ModDate vs xmp:ModifyDate)
+    if metadata.modification_date.is_some() {
+        let xmp_mod_date = extract_xmp_value(xmp_text, "xmp:ModifyDate")
+            .or_else(|| extract_xmp_attr(xmp_text, "xmp:ModifyDate"));
+        if xmp_mod_date.is_none() {
+            error(
+                report,
+                "6.7.3",
+                "/Info has ModDate but XMP is missing xmp:ModifyDate",
+            );
+        }
+    }
+
+    // Check Title (/Info Title vs dc:title)
+    if metadata.title.is_some() && !xmp_text.contains("dc:title") {
+        error(
+            report,
+            "6.7.3",
+            "/Info has Title but XMP is missing dc:title",
+        );
     }
 }
 
@@ -5371,6 +5405,81 @@ pub fn check_image_xobject_intent(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                     return;
                 }
+            }
+        }
+    }
+}
+
+// ─── §6.1.4 — Cross-reference table syntax ──────────────────────────────────
+
+/// Check xref keyword EOL markers (§6.1.4).
+pub fn check_xref_syntax(pdf: &Pdf, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+    let len = data.len();
+    let mut pos = 0;
+
+    while pos + 4 < len {
+        if &data[pos..pos + 4] != b"xref" {
+            pos += 1;
+            continue;
+        }
+        // Skip "startxref"
+        if pos >= 5 && data[pos - 5..pos] == *b"start" {
+            pos += 4;
+            continue;
+        }
+        // Found standalone "xref"
+        let after = pos + 4;
+        if after < len {
+            let c = data[after];
+            if c != b'\n' && c != b'\r' {
+                error(
+                    report,
+                    "6.1.4",
+                    "Keyword 'xref' not followed by proper EOL marker",
+                );
+                return;
+            }
+        }
+        break;
+    }
+}
+
+// ─── §6.9 — Embedded file specification keys ────────────────────────────────
+
+/// Check embedded file specifications have required F and UF keys (§6.9).
+pub fn check_embedded_file_spec_keys(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    if part < 3 {
+        return;
+    }
+
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) else {
+        return;
+    };
+    let Some(ef_tree) = names.get::<Dict<'_>>(keys::EMBEDDED_FILES) else {
+        return;
+    };
+
+    if let Some(names_arr) = ef_tree.get::<Array<'_>>(keys::NAMES) {
+        // Names array is [name1 spec1 name2 spec2 ...]
+        // Iterate through the file spec dicts
+        for spec in names_arr.iter::<Dict<'_>>() {
+            let has_ef = spec.contains_key(keys::EF);
+            if !has_ef {
+                continue;
+            }
+            let rule = if part == 4 { "6.9" } else { "6.8" };
+            if !spec.contains_key(keys::F) {
+                error(report, rule, "File specification missing /F key");
+            }
+            if !spec.contains_key(b"UF" as &[u8]) {
+                error(report, rule, "File specification missing /UF key");
+            }
+            if part >= 3 && !spec.contains_key(b"AFRelationship" as &[u8]) {
+                error(report, rule, "File specification missing /AFRelationship key");
             }
         }
     }
