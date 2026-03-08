@@ -818,6 +818,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.2.3.4, PDF/A-2/3/4: §6.2.4.4
             (1, "6.2.4.4") => Some("6.2.3.4"),
 
+            // Form XObject restrictions (PS, Subtype2, Ref)
+            // PDF/A-1: §6.2.5, PDF/A-2/3/4: §6.2.9
+            (1, "6.2.9") => Some("6.2.5"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
