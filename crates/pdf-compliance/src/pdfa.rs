@@ -114,11 +114,14 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 
     check_trailer_requirements(pdf, level, &mut report);
 
-    // Batch 7: Stream/syntax validation, XMP extension, image intent
+    // Batch 7: Info/XMP consistency, stream/syntax, XMP extension, image intent
+    check_info_xmp(pdf, &mut report);
     check_stream_length_pdfa(pdf, &mut report);
     check_object_syntax(pdf, &mut report);
     check_xmp_extension_schema_pdfa(pdf, &mut report);
     check_image_intent(pdf, &mut report);
+    check_xref_syntax_pdfa(pdf, &mut report);
+    check_embedded_file_spec(pdf, level, &mut report);
 
     // Post-process: remap clause numbers per PDF/A part.
     // Clause numbering differs between ISO 19005 parts.
@@ -693,6 +696,11 @@ fn check_trailer_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complian
 
 // ─── Batch 7: Stream/syntax validation, XMP extension, image intent ─────────
 
+/// §6.7.3 — Info dict / XMP metadata consistency.
+fn check_info_xmp(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_info_xmp_consistency(pdf, report);
+}
+
 /// §6.1.7 — Stream Length verification.
 fn check_stream_length_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_stream_length(pdf, report);
@@ -711,6 +719,16 @@ fn check_xmp_extension_schema_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.2.5/6.2.9 — Image XObject rendering intent.
 fn check_image_intent(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_image_xobject_intent(pdf, report);
+}
+
+/// §6.1.4 — xref keyword syntax.
+fn check_xref_syntax_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_xref_syntax(pdf, report);
+}
+
+/// §6.9 — Embedded file specification keys.
+fn check_embedded_file_spec(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_embedded_file_spec_keys(pdf, level.part(), report);
 }
 
 /// Remap clause numbers to match the correct ISO 19005 part numbering.
