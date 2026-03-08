@@ -836,25 +836,38 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
         // Scan SMask Form XObjects in ExtGState for device color operators
         scan_extgstate_smask_colors(&res.ext_g_states, rgb_ok, cmyk_ok, gray_ok, &loc, report);
 
-        // Also check ColorSpace resources for direct device CS references
+        // Check ColorSpace resources for device CS references (direct names and arrays)
         let cs_dict = &res.color_spaces;
-        if cs_dict.entries().next().is_some()
-        {
-            for (name, _) in cs_dict.entries() {
-                if let Some(cs_name) = cs_dict.get::<Name>(name.as_ref()) {
-                    let cs = cs_name.as_ref();
-                    if !rgb_ok && cs == keys::DEVICE_RGB {
-                        error_at(report, "6.2.4.3", "DeviceRGB in ColorSpace resources without DefaultRGB or matching OutputIntent", loc.clone());
-                    }
-                    if !cmyk_ok && cs == b"DeviceCMYK" {
-                        error_at(report, "6.2.4.3", "DeviceCMYK in ColorSpace resources without DefaultCMYK or matching OutputIntent", loc.clone());
-                    }
-                    if !gray_ok && cs == b"DeviceGray" {
-                        error_at(report, "6.2.4.3", "DeviceGray in ColorSpace resources without DefaultGray or OutputIntent", loc.clone());
-                    }
+        for (name, _) in cs_dict.entries() {
+            if let Some(cs_name) = cs_dict.get::<Name>(name.as_ref()) {
+                let cs = cs_name.as_ref();
+                if !rgb_ok && cs == keys::DEVICE_RGB {
+                    error_at(report, "6.2.4.3", "DeviceRGB in ColorSpace resources without DefaultRGB or matching OutputIntent", loc.clone());
+                }
+                if !cmyk_ok && cs == b"DeviceCMYK" {
+                    error_at(report, "6.2.4.3", "DeviceCMYK in ColorSpace resources without DefaultCMYK or matching OutputIntent", loc.clone());
+                }
+                if !gray_ok && cs == b"DeviceGray" {
+                    error_at(report, "6.2.4.3", "DeviceGray in ColorSpace resources without DefaultGray or OutputIntent", loc.clone());
+                }
+            } else if let Some(cs_arr) = cs_dict.get::<Array<'_>>(name.as_ref()) {
+                // Separation/DeviceN alternate or Indexed base may be a device CS
+                let kind = extract_base_device_cs_kind(&cs_arr);
+                let nstr = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+                if kind == 1 && !rgb_ok {
+                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceRGB alternate/base without DefaultRGB or matching OutputIntent"), loc.clone());
+                }
+                if kind == 2 && !cmyk_ok {
+                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceCMYK alternate/base without DefaultCMYK or matching OutputIntent"), loc.clone());
+                }
+                if kind == 3 && !gray_ok {
+                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceGray alternate/base without DefaultGray or OutputIntent"), loc.clone());
                 }
             }
         }
+
+        // Also scan Form XObject resources for named CS with device alternates/bases
+        scan_xobject_cs_arrays(&res.x_objects, rgb_ok, cmyk_ok, gray_ok, &loc, report);
     }
 }
 
@@ -895,6 +908,52 @@ fn scan_xobjects_device_colors(
             let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
             let xloc = format!("{base_loc} XObject {xname_str}");
             report_device_color_ops(&decoded, f_rgb, f_cmyk, f_gray, &xloc, report);
+        }
+    }
+}
+
+/// Scan Form XObject resources for named color spaces with device alternates/bases.
+fn scan_xobject_cs_arrays(
+    xobj_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    for (xname, _) in xobj_dict.entries() {
+        let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
+            continue;
+        };
+        let dict = stream.dict();
+        let is_form = dict
+            .get::<Name>(keys::SUBTYPE)
+            .is_some_and(|s| s.as_ref() == b"Form");
+        if !is_form {
+            continue;
+        }
+        let Some(form_res) = dict.get::<Dict<'_>>(keys::RESOURCES) else {
+            continue;
+        };
+        let Some(cs_dict) = form_res.get::<Dict<'_>>(keys::COLORSPACE) else {
+            continue;
+        };
+        let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+        let xloc = format!("{base_loc} XObject {xname_str}");
+        for (csname, _) in cs_dict.entries() {
+            if let Some(cs_arr) = cs_dict.get::<Array<'_>>(csname.as_ref()) {
+                let kind = extract_base_device_cs_kind(&cs_arr);
+                let nstr = std::str::from_utf8(csname.as_ref()).unwrap_or("?");
+                if kind == 1 && !rgb_ok {
+                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceRGB alternate/base"), xloc.clone());
+                }
+                if kind == 2 && !cmyk_ok {
+                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceCMYK alternate/base"), xloc.clone());
+                }
+                if kind == 3 && !gray_ok {
+                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceGray alternate/base"), xloc.clone());
+                }
+            }
         }
     }
 }
