@@ -122,6 +122,12 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_image_intent(pdf, &mut report);
     check_xref_syntax_pdfa(pdf, &mut report);
     check_embedded_file_spec(pdf, level, &mut report);
+    check_postscript_xobjects_pdfa(pdf, level, &mut report);
+    check::check_stream_external_refs(pdf, &mut report);
+    check::check_inline_image_filters(pdf, level.part(), &mut report);
+    check::check_no_data_after_eof(pdf, &mut report);
+    check::check_widget_no_action(pdf, &mut report);
+    check::check_output_intent_profile_class(pdf, &mut report);
 
     // Post-process: remap clause numbers per PDF/A part.
     // Clause numbering differs between ISO 19005 parts.
@@ -687,6 +693,8 @@ fn check_font_file_format(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRe
 /// §6.2.2 — Explicit Resources.
 fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_explicit_resources(pdf, report);
+    // TODO: check_resource_names_exist produces too many FPs — needs refinement
+    // check::check_resource_names_exist(pdf, report);
 }
 
 /// §6.1.3 — Trailer requirements.
@@ -729,6 +737,11 @@ fn check_xref_syntax_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.9 — Embedded file specification keys.
 fn check_embedded_file_spec(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_embedded_file_spec_keys(pdf, level.part(), report);
+}
+
+/// §6.2.9/6.2.10 — PostScript XObjects are forbidden.
+fn check_postscript_xobjects_pdfa(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_postscript_xobjects(pdf, level.part(), report);
 }
 
 /// Remap clause numbers to match the correct ISO 19005 part numbering.
