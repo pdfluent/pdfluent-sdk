@@ -210,7 +210,7 @@ fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_info_xmp_consistency(pdf, report);
 }
 
-/// §6.1.12 — Page dimensions must not exceed 14400 user units.
+/// §6.1.12 — Absolute real values must not exceed 32767.
 fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_page_dimensions(pdf, report);
 }

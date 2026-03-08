@@ -359,7 +359,8 @@ pub fn check_xmp_schemas(xmp: &[u8], rule: &str, report: &mut ComplianceReport) 
 
 /// Check for forbidden actions (§6.6.1).
 ///
-/// Launch, Sound, Movie, ResetForm, ImportData, and JavaScript actions are forbidden.
+/// Launch, Sound, Movie, ResetForm, ImportData, JavaScript actions are forbidden.
+/// Additionally, the deprecated set-state and no-op actions are forbidden.
 pub fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
     let forbidden: &[&[u8]] = &[
         b"Launch",
@@ -368,6 +369,9 @@ pub fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
         b"ResetForm",
         b"ImportData",
         keys::JAVA_SCRIPT,
+        b"SetState",
+        b"NoOp",
+        b"SetOCGState",
     ];
 
     // Check catalog OpenAction
@@ -461,10 +465,9 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
             .is_some();
 
         // Scan content stream for device color space operators
-        // (rg/RG = DeviceRGB, k/K = DeviceCMYK, g/G = DeviceGray)
         if let Some(content) = page.page_stream() {
-            let text = String::from_utf8_lossy(content);
-            if !has_default_rgb && (text.contains(" rg") || text.contains(" RG")) {
+            let ops = detect_device_color_ops(content);
+            if !has_default_rgb && ops.has_rgb {
                 error_at(
                     report,
                     "6.2.4.3",
@@ -472,12 +475,7 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
                     format!("page {}", page_idx + 1),
                 );
             }
-            if !has_default_cmyk
-                && (text.contains(" k\n")
-                    || text.contains(" K\n")
-                    || text.contains(" k ")
-                    || text.contains(" K "))
-            {
+            if !has_default_cmyk && ops.has_cmyk {
                 error_at(
                     report,
                     "6.2.4.3",
@@ -485,12 +483,7 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
                     format!("page {}", page_idx + 1),
                 );
             }
-            if !has_default_gray
-                && (text.contains(" g\n")
-                    || text.contains(" G\n")
-                    || text.contains(" g ")
-                    || text.contains(" G "))
-            {
+            if !has_default_gray && ops.has_gray {
                 error_at(
                     report,
                     "6.2.4.3",
@@ -499,7 +492,94 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
                 );
             }
         }
+
+        // Also check ColorSpace resources for direct device CS references
+        if let Some(cs_dict) = res_dict
+            .as_ref()
+            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+        {
+            for (name, _) in cs_dict.entries() {
+                if let Some(cs_name) = cs_dict.get::<Name>(name.as_ref()) {
+                    let cs = cs_name.as_ref();
+                    if !has_default_rgb && cs == keys::DEVICE_RGB {
+                        error_at(
+                            report,
+                            "6.2.4.3",
+                            "DeviceRGB referenced in ColorSpace resources without OutputIntent",
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                    if !has_default_cmyk && cs == b"DeviceCMYK" {
+                        error_at(
+                            report,
+                            "6.2.4.3",
+                            "DeviceCMYK referenced in ColorSpace resources without OutputIntent",
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                    if !has_default_gray && cs == b"DeviceGray" {
+                        error_at(
+                            report,
+                            "6.2.4.3",
+                            "DeviceGray referenced in ColorSpace resources without OutputIntent",
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
+            }
+        }
     }
+}
+
+/// Result of scanning a content stream for device-dependent color operators.
+struct DeviceColorOps {
+    has_rgb: bool,
+    has_cmyk: bool,
+    has_gray: bool,
+}
+
+/// Scan a PDF content stream for device-dependent color operators.
+///
+/// Operators: rg/RG (DeviceRGB), k/K (DeviceCMYK), g/G (DeviceGray),
+/// and cs/CS with DeviceRGB/DeviceCMYK/DeviceGray operand.
+fn detect_device_color_ops(content: &[u8]) -> DeviceColorOps {
+    let mut result = DeviceColorOps {
+        has_rgb: false,
+        has_cmyk: false,
+        has_gray: false,
+    };
+
+    // Tokenize the content stream by splitting on whitespace/newlines
+    let text = String::from_utf8_lossy(content);
+    let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+
+    for (i, &tok) in tokens.iter().enumerate() {
+        match tok {
+            // rg: set non-stroking DeviceRGB (3 operands + op)
+            "rg" | "RG" => result.has_rgb = true,
+            // k: set non-stroking DeviceCMYK (4 operands + op)
+            "k" | "K" => result.has_cmyk = true,
+            // g: set non-stroking DeviceGray (1 operand + op)
+            "g" | "G" => result.has_gray = true,
+            // cs/CS: set color space by name
+            "cs" | "CS" => {
+                if i > 0 {
+                    let operand = tokens[i - 1];
+                    // Operand may be /DeviceRGB or just DeviceRGB
+                    let name = operand.strip_prefix('/').unwrap_or(operand);
+                    match name {
+                        "DeviceRGB" => result.has_rgb = true,
+                        "DeviceCMYK" => result.has_cmyk = true,
+                        "DeviceGray" => result.has_gray = true,
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    result
 }
 
 /// Check Info dict / XMP metadata consistency (§6.7.3).
@@ -542,21 +622,40 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Check page dimensions don't exceed 14400 user units (§6.1.12).
+/// Check absolute real values don't exceed 32767 (§6.1.12).
+///
+/// The PDF/A spec requires that all absolute real values in content streams
+/// and page dictionaries must be ≤ 32767. We approximate this by checking
+/// MediaBox dimensions (the most common trigger).
 pub fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
-    const MAX_DIMENSION: f64 = 14400.0;
+    const MAX_REAL: f64 = 32767.0;
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let rect = page.media_box();
+        // Check all four MediaBox values individually
+        for val in [rect.x0, rect.y0, rect.x1, rect.y1] {
+            if val.abs() > MAX_REAL {
+                error_at(
+                    report,
+                    "6.1.12",
+                    format!(
+                        "Absolute real value {:.1} exceeds maximum 32767.0",
+                        val.abs()
+                    ),
+                    format!("page {}", page_idx + 1),
+                );
+                break; // One error per page is enough
+            }
+        }
+
         let width = (rect.x1 - rect.x0).abs();
         let height = (rect.y1 - rect.y0).abs();
-
-        if width > MAX_DIMENSION || height > MAX_DIMENSION {
+        if width > MAX_REAL || height > MAX_REAL {
             error_at(
                 report,
                 "6.1.12",
                 format!(
-                    "Page dimensions {:.0}x{:.0} exceed maximum 14400 user units",
+                    "Page dimensions {:.0}x{:.0} exceed maximum 32767.0",
                     width, height
                 ),
                 format!("page {}", page_idx + 1),
