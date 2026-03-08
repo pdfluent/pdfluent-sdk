@@ -95,7 +95,36 @@ fn main() {
                     .map(|s| std::str::from_utf8(s.as_ref()).unwrap_or("?"))
                     .unwrap_or("none");
                 let has_smask = dict.contains_key(keys::SMASK);
-                println!("    XObject {nm}: Subtype={st} SMask={has_smask}");
+                let has_group = dict.contains_key(b"Group" as &[u8]);
+                println!("    XObject {nm}: Subtype={st} SMask={has_smask} Group={has_group}");
+
+                // If Form XObject, check its resources
+                if st == "Form" {
+                    if let Some(form_res) = dict.get::<Dict<'_>>(keys::RESOURCES) {
+                        if let Some(gs) = form_res.get::<Dict<'_>>(keys::EXT_G_STATE) {
+                            for (gname, _) in gs.entries() {
+                                let gnm = std::str::from_utf8(gname.as_ref()).unwrap_or("?");
+                                if let Some(gs_d) = gs.get::<Dict<'_>>(gname.as_ref()) {
+                                    let ca = gs_d.get::<Object<'_>>(b"CA" as &[u8]);
+                                    let ca_lower = gs_d.get::<Object<'_>>(b"ca" as &[u8]);
+                                    let bm = gs_d.get::<Name>(keys::BM);
+                                    let smask = gs_d.get::<Object<'_>>(keys::SMASK);
+                                    println!("      Form {nm} GS {gnm}: CA={ca:?} ca={ca_lower:?} BM={bm:?} SMask={}", smask.is_some());
+                                }
+                            }
+                        } else {
+                            println!("      Form {nm}: no ExtGState in resources");
+                        }
+                    } else {
+                        println!("      Form {nm}: no Resources");
+                    }
+                    // Check Group on Form XObject
+                    if let Some(group) = dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+                        let s = group.get::<Name>(keys::S).map(|s| std::str::from_utf8(s.as_ref()).unwrap_or("?").to_string()).unwrap_or_default();
+                        let cs = group.get::<Name>(keys::CS).map(|cs| std::str::from_utf8(cs.as_ref()).unwrap_or("?").to_string()).unwrap_or_default();
+                        println!("      Form {nm} Group: S={s} CS={cs}");
+                    }
+                }
             }
         }
     }
