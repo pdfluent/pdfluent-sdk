@@ -26,6 +26,8 @@ pub struct SearchOptions {
     pub max_results: usize,
     /// Specific pages to search (empty = all pages).
     pub pages: Vec<u32>,
+    /// Skip bounding box extraction for faster search when only text matches are needed.
+    pub skip_bounding_boxes: bool,
 }
 
 impl Default for SearchOptions {
@@ -34,6 +36,7 @@ impl Default for SearchOptions {
             case_insensitive: true,
             max_results: 0,
             pages: Vec::new(),
+            skip_bounding_boxes: false,
         }
     }
 }
@@ -64,41 +67,45 @@ pub fn search_text(
             .collect()
     };
 
-    // Build searchable text per page.
-    let mut texts: Vec<(u32, String, Vec<text::PositionedChar>)> = Vec::new();
-    for page_num in &page_nums {
-        let page_text = text::extract_page_text(doc, *page_num).unwrap_or_default();
-        let positioned = text::extract_positioned_chars(doc, *page_num).unwrap_or_default();
-        texts.push((*page_num, page_text, positioned));
-    }
-
     let query_normalized = if options.case_insensitive {
         query.to_lowercase()
     } else {
         query.to_string()
     };
 
-    for text in &texts {
-        let (page_num, page_text, positioned) = text;
+    // Process pages lazily — extract text (and optionally positioned chars)
+    // one page at a time to avoid upfront cost on large documents.
+    for page_num in &page_nums {
+        let page_text = text::extract_page_text(doc, *page_num).unwrap_or_default();
 
-        let search_text = if options.case_insensitive {
+        let haystack = if options.case_insensitive {
             page_text.to_lowercase()
         } else {
             page_text.clone()
         };
 
+        // Only extract positioned chars when bounding boxes are actually needed.
+        let positioned = if options.skip_bounding_boxes {
+            Vec::new()
+        } else {
+            text::extract_positioned_chars(doc, *page_num).unwrap_or_default()
+        };
+
         let mut start = 0;
-        while let Some(pos) = search_text[start..].find(&query_normalized) {
+        while let Some(pos) = haystack[start..].find(&query_normalized) {
             let offset = start + pos;
             let end = offset + query_normalized.len();
 
-            // Collect bounding boxes for matched characters.
-            let bboxes: Vec<[f64; 4]> = positioned
-                .iter()
-                .skip(offset)
-                .take(end - offset)
-                .map(|c| c.bbox)
-                .collect();
+            let bboxes: Vec<[f64; 4]> = if options.skip_bounding_boxes {
+                Vec::new()
+            } else {
+                positioned
+                    .iter()
+                    .skip(offset)
+                    .take(end - offset)
+                    .map(|c| c.bbox)
+                    .collect()
+            };
 
             let matched_text = page_text
                 .chars()
@@ -126,18 +133,76 @@ pub fn search_text(
 
 /// Count the total number of occurrences of a query across all pages.
 pub fn count_occurrences(doc: &lopdf::Document, query: &str) -> usize {
-    let options = SearchOptions::default();
-    search_text(doc, query, &options).len()
+    count_text_only(doc, query, &SearchOptions::default())
+}
+
+/// Fast text-only occurrence count — skips all bounding box extraction.
+///
+/// Accepts `SearchOptions` for page filtering and case sensitivity,
+/// but ignores `max_results` (always counts all occurrences).
+pub fn count_text_only(doc: &lopdf::Document, query: &str, options: &SearchOptions) -> usize {
+    if query.is_empty() {
+        return 0;
+    }
+
+    let pages = doc.get_pages();
+    let total = pages.len() as u32;
+
+    let page_nums: Vec<u32> = if options.pages.is_empty() {
+        (1..=total).collect()
+    } else {
+        options
+            .pages
+            .iter()
+            .copied()
+            .filter(|&p| p >= 1 && p <= total)
+            .collect()
+    };
+
+    let query_normalized = if options.case_insensitive {
+        query.to_lowercase()
+    } else {
+        query.to_string()
+    };
+
+    let mut count = 0usize;
+    for page_num in &page_nums {
+        let page_text = text::extract_page_text(doc, *page_num).unwrap_or_default();
+        let haystack = if options.case_insensitive {
+            page_text.to_lowercase()
+        } else {
+            page_text
+        };
+
+        let mut start = 0;
+        while let Some(pos) = haystack[start..].find(&query_normalized) {
+            count += 1;
+            start += pos + 1;
+        }
+    }
+
+    count
 }
 
 /// Return a list of page numbers that contain the query text.
 pub fn pages_containing(doc: &lopdf::Document, query: &str) -> Vec<u32> {
-    let options = SearchOptions::default();
-    let results = search_text(doc, query, &options);
-    let mut pages: Vec<u32> = results.iter().map(|r| r.page).collect();
-    pages.sort();
-    pages.dedup();
-    pages
+    if query.is_empty() {
+        return Vec::new();
+    }
+
+    let pages = doc.get_pages();
+    let total = pages.len() as u32;
+    let query_lower = query.to_lowercase();
+    let mut result = Vec::new();
+
+    for page_num in 1..=total {
+        let page_text = text::extract_page_text(doc, page_num).unwrap_or_default();
+        if page_text.to_lowercase().contains(&query_lower) {
+            result.push(page_num);
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]

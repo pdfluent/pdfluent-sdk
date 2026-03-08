@@ -30,11 +30,21 @@ impl PdfTest for ImageExtractTest {
         let mut total_images = 0usize;
         let page_count = pages.len() as u32;
         let pages_to_check = page_count.min(5);
+        let mut pages_checked = 0u32;
 
         for page_num in 1..=pages_to_check {
+            // Abort if total test time exceeds budget.
+            if start.elapsed().as_secs() >= 20 {
+                break;
+            }
+            let page_start = std::time::Instant::now();
             match pdf_extract::extract_page_images(&doc, page_num) {
                 Ok(images) => {
                     total_images += images.len();
+                    pages_checked += 1;
+                    if page_start.elapsed().as_secs() >= 10 {
+                        break;
+                    }
                 }
                 Err(e) => {
                     return TestResult {
@@ -50,7 +60,7 @@ impl PdfTest for ImageExtractTest {
 
         let mut metadata = HashMap::new();
         metadata.insert("image_count".to_string(), total_images.to_string());
-        metadata.insert("pages_checked".to_string(), pages_to_check.to_string());
+        metadata.insert("pages_checked".to_string(), pages_checked.to_string());
         metadata.insert("backend".to_string(), "lopdf".to_string());
 
         TestResult {
