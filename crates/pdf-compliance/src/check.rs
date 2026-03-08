@@ -3,6 +3,7 @@
 use crate::{ComplianceIssue, ComplianceReport, Severity};
 use pdf_syntax::object::dict::keys;
 use pdf_syntax::object::{Array, Dict, Name, Object, Stream};
+use pdf_syntax::page::Resources;
 use pdf_syntax::Pdf;
 
 /// Helper to push an error into a report.
@@ -3155,8 +3156,8 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut Com
             }
         }
 
-        // Check 2: pages using transparency features need /Group
-        if !has_page_group && page_uses_transparency(page_dict) {
+        // Check 2: pages using transparency features need /Group with CS
+        if !has_page_group && page_uses_transparency(page.resources()) {
             error_at(
                 report,
                 page_group_rule,
@@ -3164,20 +3165,32 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut Com
                 format!("page {}", page_idx + 1),
             );
         }
+
+        // Check 3: Group exists with S=Transparency but no CS entry
+        if has_page_group && !has_oi {
+            if let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+                if group.get::<Name>(keys::CS).is_none()
+                    && group.get::<Array<'_>>(keys::CS).is_none()
+                {
+                    error_at(
+                        report,
+                        page_group_rule,
+                        "Transparency group missing /CS entry and no OutputIntent",
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
     }
 }
 
-/// Check if a page uses transparency features via ExtGState resources.
+/// Check if a page uses transparency features.
 ///
-/// Looks for: SMask != /None, CA < 1.0, ca < 1.0, BM != /Normal and != /Compatible.
-fn page_uses_transparency(page_dict: &Dict<'_>) -> bool {
-    let Some(res) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
-        return false;
-    };
-    let Some(gs_dict) = res.get::<Dict<'_>>(keys::EXT_G_STATE) else {
-        return false;
-    };
-
+/// Uses resolved Resources (handles inherited resources correctly).
+/// Checks ExtGState (SMask, CA, ca, BM) and Image XObjects with /SMask.
+fn page_uses_transparency(res: &Resources<'_>) -> bool {
+    // Check ExtGState entries for transparency features
+    let gs_dict = &res.ext_g_states;
     for (name, _) in gs_dict.entries() {
         let Some(gs) = gs_dict.get::<Dict<'_>>(name.as_ref()) else {
             continue;
@@ -3213,6 +3226,21 @@ fn page_uses_transparency(page_dict: &Dict<'_>) -> bool {
             if ca.as_f64() < 1.0 {
                 return true;
             }
+        }
+    }
+
+    // Check Image XObjects for /SMask (soft mask = transparency)
+    let xobj_dict = &res.x_objects;
+    for (name, _) in xobj_dict.entries() {
+        let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+            continue;
+        };
+        let dict = stream.dict();
+        let subtype = dict.get::<Name>(keys::SUBTYPE);
+        if subtype.as_ref().is_some_and(|s| s.as_ref() == keys::IMAGE)
+            && dict.contains_key(keys::SMASK)
+        {
+            return true;
         }
     }
 
