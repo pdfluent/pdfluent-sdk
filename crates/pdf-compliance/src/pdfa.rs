@@ -56,6 +56,12 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_optional_content(pdf, level, &mut report);
     check_linearization(pdf, &mut report);
 
+    // Iteration 11: Deeper 6.2.x fixes
+    check_image_xobject_colorspaces(pdf, &mut report);
+    check_output_intent_consistency(pdf, &mut report);
+    check_undefined_operators(pdf, &mut report);
+    check_transparency_vs_output_intent(pdf, &mut report);
+
     // Batch 4: Font & Annotation deep validation (§6.3.x, §6.5.x)
     check_font_type_key(pdf, &mut report);
     check_font_embedding_deep(pdf, level, &mut report);
@@ -462,6 +468,28 @@ fn check_embedded_files_a3(pdf: &Pdf, report: &mut ComplianceReport) {
             );
         }
     }
+}
+
+// ─── Iteration 11: Deeper 6.2.x fixes ───────────────────────────────────────
+
+/// §6.2.4.3 — Image XObject device color spaces.
+fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_image_xobject_colorspaces(pdf, report);
+}
+
+/// §6.2.2 — Multiple OutputIntents must have identical profiles.
+fn check_output_intent_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_output_intent_consistency(pdf, report);
+}
+
+/// §6.2.10 — Undefined operators in content streams.
+fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_undefined_operators(pdf, report);
+}
+
+/// §6.2.9 — Transparency groups vs OutputIntent.
+fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_transparency_vs_output_intent(pdf, report);
 }
 
 // ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
