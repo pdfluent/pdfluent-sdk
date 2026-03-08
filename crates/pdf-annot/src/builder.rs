@@ -117,10 +117,53 @@ pub struct AnnotationBuilder {
     contents: Option<String>,
     flags: u32,
     /// QuadPoints for markup annotations (Highlight, Underline, StrikeOut, Squiggly).
-    /// Each quad is 8 values: [x1,y1, x2,y2, x3,y3, x4,y4].
     quad_points: Option<Vec<f64>>,
+    /// Line endpoints /L [x1 y1 x2 y2] for Line annotations.
+    line_endpoints: Option<[f64; 4]>,
+    /// Line endings /LE for Line annotations.
+    line_endings: Option<[LineEnding; 2]>,
+    /// InkList for Ink annotations: list of stroke paths.
+    ink_list: Option<Vec<Vec<f64>>>,
+    /// Vertices for Polygon/PolyLine annotations.
+    vertices: Option<Vec<f64>>,
+    /// Dash pattern for stroked annotations.
+    dash_pattern: Option<Vec<f64>>,
     /// Custom appearance builder function. If None, a default appearance is generated.
     custom_appearance: Option<AppearanceFn>,
+}
+
+/// Line ending style for Line annotations (ISO 32000-2 Table 179).
+#[cfg(feature = "write")]
+#[derive(Debug, Clone, Copy)]
+pub enum LineEnding {
+    None,
+    Square,
+    Circle,
+    Diamond,
+    OpenArrow,
+    ClosedArrow,
+    Butt,
+    ROpenArrow,
+    RClosedArrow,
+    Slash,
+}
+
+#[cfg(feature = "write")]
+impl LineEnding {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Square => "Square",
+            Self::Circle => "Circle",
+            Self::Diamond => "Diamond",
+            Self::OpenArrow => "OpenArrow",
+            Self::ClosedArrow => "ClosedArrow",
+            Self::Butt => "Butt",
+            Self::ROpenArrow => "ROpenArrow",
+            Self::RClosedArrow => "RClosedArrow",
+            Self::Slash => "Slash",
+        }
+    }
 }
 
 #[cfg(feature = "write")]
@@ -137,8 +180,67 @@ impl AnnotationBuilder {
             contents: None,
             flags: 4, // Print flag set by default
             quad_points: None,
+            line_endpoints: None,
+            line_endings: None,
+            ink_list: None,
+            vertices: None,
+            dash_pattern: None,
             custom_appearance: None,
         }
+    }
+
+    /// Create a Square annotation.
+    pub fn square(rect: AnnotRect) -> Self {
+        Self::new(AnnotSubtype::Square, rect)
+    }
+
+    /// Create a Circle annotation.
+    pub fn circle(rect: AnnotRect) -> Self {
+        Self::new(AnnotSubtype::Circle, rect)
+    }
+
+    /// Create a Line annotation between two points.
+    ///
+    /// Automatically pads the bounding rect so it is never zero-area.
+    pub fn line(x1: f64, y1: f64, x2: f64, y2: f64) -> Self {
+        let pad = 1.0; // Minimum 1pt padding to prevent zero-area rect.
+        let mut min_x = x1.min(x2);
+        let mut min_y = y1.min(y2);
+        let mut max_x = x1.max(x2);
+        let mut max_y = y1.max(y2);
+        if (max_x - min_x).abs() < f64::EPSILON {
+            min_x -= pad;
+            max_x += pad;
+        }
+        if (max_y - min_y).abs() < f64::EPSILON {
+            min_y -= pad;
+            max_y += pad;
+        }
+        let rect = AnnotRect::new(min_x, min_y, max_x, max_y);
+        let mut b = Self::new(AnnotSubtype::Line, rect);
+        b.line_endpoints = Some([x1, y1, x2, y2]);
+        b
+    }
+
+    /// Create an Ink annotation from stroke paths.
+    pub fn ink(rect: AnnotRect, strokes: Vec<Vec<f64>>) -> Self {
+        let mut b = Self::new(AnnotSubtype::Ink, rect);
+        b.ink_list = Some(strokes);
+        b
+    }
+
+    /// Create a Polygon annotation from vertices.
+    pub fn polygon(rect: AnnotRect, vertices: Vec<f64>) -> Self {
+        let mut b = Self::new(AnnotSubtype::Polygon, rect);
+        b.vertices = Some(vertices);
+        b
+    }
+
+    /// Create a PolyLine annotation from vertices.
+    pub fn polyline(rect: AnnotRect, vertices: Vec<f64>) -> Self {
+        let mut b = Self::new(AnnotSubtype::PolyLine, rect);
+        b.vertices = Some(vertices);
+        b
     }
 
     /// Create a Highlight markup annotation.
@@ -196,6 +298,18 @@ impl AnnotationBuilder {
     /// Set the annotation flags (raw u32).
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
+        self
+    }
+
+    /// Set line endings for Line annotations.
+    pub fn line_endings(mut self, start: LineEnding, end: LineEnding) -> Self {
+        self.line_endings = Some([start, end]);
+        self
+    }
+
+    /// Set a dash pattern for stroked annotations.
+    pub fn dash(mut self, pattern: Vec<f64>) -> Self {
+        self.dash_pattern = Some(pattern);
         self
     }
 
@@ -296,12 +410,66 @@ impl AnnotationBuilder {
             annot_dict.set("QuadPoints", Object::Array(arr));
         }
 
+        // Line endpoints (/L) for Line annotations.
+        if let Some(ref l) = self.line_endpoints {
+            annot_dict.set(
+                "L",
+                Object::Array(vec![
+                    Object::Real(l[0] as f32),
+                    Object::Real(l[1] as f32),
+                    Object::Real(l[2] as f32),
+                    Object::Real(l[3] as f32),
+                ]),
+            );
+        }
+
+        // Line endings (/LE).
+        if let Some(ref le) = self.line_endings {
+            annot_dict.set(
+                "LE",
+                Object::Array(vec![
+                    Object::Name(le[0].as_str().as_bytes().to_vec()),
+                    Object::Name(le[1].as_str().as_bytes().to_vec()),
+                ]),
+            );
+        }
+
+        // InkList for Ink annotations.
+        if let Some(ref ink) = self.ink_list {
+            let ink_arr: Vec<Object> = ink
+                .iter()
+                .map(|stroke| {
+                    Object::Array(stroke.iter().map(|&v| Object::Real(v as f32)).collect())
+                })
+                .collect();
+            annot_dict.set("InkList", Object::Array(ink_arr));
+        }
+
+        // Vertices for Polygon/PolyLine annotations.
+        if let Some(ref verts) = self.vertices {
+            let arr: Vec<Object> = verts.iter().map(|&v| Object::Real(v as f32)).collect();
+            annot_dict.set("Vertices", Object::Array(arr));
+        }
+
         // Border style.
-        if (self.border_width - 1.0).abs() > f64::EPSILON {
-            let bs = dictionary! {
+        let has_dash = self.dash_pattern.is_some();
+        if (self.border_width - 1.0).abs() > f64::EPSILON || has_dash {
+            let mut bs = dictionary! {
                 "W" => Object::Real(self.border_width as f32),
-                "S" => "S",
             };
+            if has_dash {
+                bs.set("S", Object::Name(b"D".to_vec()));
+                let d_arr: Vec<Object> = self
+                    .dash_pattern
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|&v| Object::Real(v as f32))
+                    .collect();
+                bs.set("D", Object::Array(d_arr));
+            } else {
+                bs.set("S", Object::Name(b"S".to_vec()));
+            }
             annot_dict.set("BS", Object::Dictionary(bs));
         }
 
@@ -411,7 +579,19 @@ impl AnnotationBuilder {
                 builder.save_state();
                 builder.set_stroke_color(&stroke);
                 builder.set_line_width(self.border_width);
-                builder.line(0.0, h / 2.0, w, h / 2.0);
+                if let Some(ref dash) = self.dash_pattern {
+                    builder.set_dash_pattern(dash, 0.0);
+                }
+                // Convert page coordinates to local form XObject coordinates.
+                if let Some(ref l) = self.line_endpoints {
+                    let lx1 = l[0] - self.rect.x0;
+                    let ly1 = l[1] - self.rect.y0;
+                    let lx2 = l[2] - self.rect.x0;
+                    let ly2 = l[3] - self.rect.y0;
+                    builder.line(lx1, ly1, lx2, ly2);
+                } else {
+                    builder.line(0.0, h / 2.0, w, h / 2.0);
+                }
                 builder.stroke();
                 builder.restore_state();
             }
@@ -452,6 +632,66 @@ impl AnnotationBuilder {
                     up = !up;
                 }
                 builder.stroke();
+                builder.restore_state();
+            }
+            AnnotSubtype::Ink => {
+                builder.save_state();
+                builder.set_stroke_color(&stroke);
+                builder.set_line_width(self.border_width);
+                if let Some(ref ink) = self.ink_list {
+                    for path in ink {
+                        if path.len() >= 2 {
+                            let x0 = path[0] - self.rect.x0;
+                            let y0 = path[1] - self.rect.y0;
+                            builder.move_to(x0, y0);
+                            let mut i = 2;
+                            while i + 1 < path.len() {
+                                let x = path[i] - self.rect.x0;
+                                let y = path[i + 1] - self.rect.y0;
+                                builder.line_to(x, y);
+                                i += 2;
+                            }
+                            builder.stroke();
+                        }
+                    }
+                }
+                builder.restore_state();
+            }
+            AnnotSubtype::Polygon | AnnotSubtype::PolyLine => {
+                builder.save_state();
+                if let Some(ref fill) = self.interior_color {
+                    builder.set_fill_color(fill);
+                }
+                builder.set_stroke_color(&stroke);
+                builder.set_line_width(self.border_width);
+                if let Some(ref dash) = self.dash_pattern {
+                    builder.set_dash_pattern(dash, 0.0);
+                }
+                if let Some(ref verts) = self.vertices {
+                    if verts.len() >= 2 {
+                        let x0 = verts[0] - self.rect.x0;
+                        let y0 = verts[1] - self.rect.y0;
+                        builder.move_to(x0, y0);
+                        let mut i = 2;
+                        while i + 1 < verts.len() {
+                            let x = verts[i] - self.rect.x0;
+                            let y = verts[i + 1] - self.rect.y0;
+                            builder.line_to(x, y);
+                            i += 2;
+                        }
+                    }
+                }
+                let is_polygon = matches!(self.subtype, AnnotSubtype::Polygon);
+                if is_polygon {
+                    builder.close_path();
+                    if self.interior_color.is_some() {
+                        builder.fill_and_stroke();
+                    } else {
+                        builder.stroke();
+                    }
+                } else {
+                    builder.stroke();
+                }
                 builder.restore_state();
             }
             _ => {
@@ -878,6 +1118,197 @@ mod tests {
             } else {
                 panic!("Expected QuadPoints array");
             }
+        }
+    }
+
+    // --- Issue #304 tests: Geometric annotations ---
+
+    #[test]
+    fn square_convenience() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(100.0, 100.0, 200.0, 200.0);
+        let annot_id = AnnotationBuilder::square(rect)
+            .color(0.0, 0.0, 1.0)
+            .interior_color(0.9, 0.9, 1.0)
+            .border_width(2.0)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"Square".to_vec())
+            );
+            assert!(d.get(b"IC").is_ok());
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn circle_convenience() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(50.0, 50.0, 150.0, 150.0);
+        let annot_id = AnnotationBuilder::circle(rect)
+            .color(1.0, 0.0, 0.0)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"Circle".to_vec())
+            );
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn line_annotation_with_endpoints() {
+        let mut doc = make_test_doc();
+        let annot_id = AnnotationBuilder::line(100.0, 200.0, 400.0, 600.0)
+            .color(1.0, 0.0, 0.0)
+            .border_width(2.0)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(d.get(b"Subtype").unwrap(), &Object::Name(b"Line".to_vec()));
+            // Check /L array present.
+            let l = d.get(b"L").unwrap();
+            if let Object::Array(arr) = l {
+                assert_eq!(arr.len(), 4);
+            } else {
+                panic!("Expected /L array");
+            }
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn line_with_endings() {
+        let mut doc = make_test_doc();
+        let annot_id = AnnotationBuilder::line(100.0, 300.0, 500.0, 300.0)
+            .line_endings(LineEnding::ClosedArrow, LineEnding::OpenArrow)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            let le = d.get(b"LE").unwrap();
+            if let Object::Array(arr) = le {
+                assert_eq!(arr.len(), 2);
+                assert_eq!(arr[0], Object::Name(b"ClosedArrow".to_vec()));
+                assert_eq!(arr[1], Object::Name(b"OpenArrow".to_vec()));
+            } else {
+                panic!("Expected /LE array");
+            }
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn ink_annotation() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(50.0, 50.0, 200.0, 200.0);
+        let strokes = vec![
+            vec![60.0, 60.0, 100.0, 150.0, 180.0, 80.0],
+            vec![70.0, 70.0, 120.0, 160.0],
+        ];
+        let annot_id = AnnotationBuilder::ink(rect, strokes)
+            .color(0.0, 0.5, 0.0)
+            .border_width(3.0)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(d.get(b"Subtype").unwrap(), &Object::Name(b"Ink".to_vec()));
+            let ink = d.get(b"InkList").unwrap();
+            if let Object::Array(arr) = ink {
+                assert_eq!(arr.len(), 2); // Two strokes.
+            } else {
+                panic!("Expected InkList array");
+            }
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn polygon_annotation() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(100.0, 100.0, 300.0, 300.0);
+        let verts = vec![100.0, 100.0, 300.0, 100.0, 200.0, 300.0];
+        let annot_id = AnnotationBuilder::polygon(rect, verts)
+            .color(0.0, 0.0, 1.0)
+            .interior_color(0.8, 0.8, 1.0)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"Polygon".to_vec())
+            );
+            let v = d.get(b"Vertices").unwrap();
+            if let Object::Array(arr) = v {
+                assert_eq!(arr.len(), 6);
+            } else {
+                panic!("Expected Vertices array");
+            }
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn polyline_annotation() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(50.0, 50.0, 400.0, 200.0);
+        let verts = vec![50.0, 100.0, 200.0, 180.0, 350.0, 60.0, 400.0, 150.0];
+        let annot_id = AnnotationBuilder::polyline(rect, verts)
+            .color(1.0, 0.5, 0.0)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"PolyLine".to_vec())
+            );
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn dashed_line_annotation() {
+        let mut doc = make_test_doc();
+        let annot_id = AnnotationBuilder::line(72.0, 400.0, 540.0, 400.0)
+            .dash(vec![3.0, 2.0])
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            let bs = d.get(b"BS").unwrap();
+            if let Object::Dictionary(bs_dict) = bs {
+                assert_eq!(bs_dict.get(b"S").unwrap(), &Object::Name(b"D".to_vec()));
+                assert!(bs_dict.get(b"D").is_ok());
+            } else {
+                panic!("Expected BS dictionary");
+            }
+        } else {
+            panic!("Expected dictionary");
         }
     }
 }
