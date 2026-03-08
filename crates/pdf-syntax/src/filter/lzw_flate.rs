@@ -770,7 +770,7 @@ fn apply_predictor(data: Vec<u8>, params: &PredictorParams) -> Option<Vec<u8>> {
                 row_len
             };
 
-            if total_row_len == 0 {
+            if total_row_len == 0 || row_len > MAX_PREDICTOR_OUTPUT {
                 return None;
             }
 
