@@ -19,10 +19,13 @@ pub mod content_editor;
 pub mod downsample;
 pub mod encrypt;
 pub mod error;
+#[cfg(feature = "font-subset")]
+pub mod font_subset;
 #[cfg(feature = "image-insert")]
 pub mod image_insert;
 pub mod optimize;
 pub mod pages;
+pub mod text_replace;
 pub mod text_run;
 pub mod watermark;
 
