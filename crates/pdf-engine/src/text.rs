@@ -41,10 +41,12 @@ impl TextBlock {
         for pair in self.spans.windows(2) {
             let prev = &pair[0];
             let curr = &pair[1];
-            // Estimate the expected advance: font_size * 0.6 per character.
-            let char_width = prev.font_size * 0.6;
-            let gap = curr.x - (prev.x + char_width * prev.text.len() as f64);
-            if gap > char_width * 0.5 {
+            // Estimate the expected advance per character.
+            let avg_char_width = prev.font_size * 0.5;
+            let expected_end = prev.x + avg_char_width * prev.text.chars().count() as f64;
+            let gap = curr.x - expected_end;
+            // Insert space when gap exceeds ~30% of font size (typical word space).
+            if gap > prev.font_size * 0.25 {
                 result.push(' ');
             }
             result.push_str(&curr.text);
@@ -56,6 +58,10 @@ impl TextBlock {
 /// A Device implementation that captures text from draw_glyph calls.
 pub struct TextExtractionDevice {
     spans: Vec<TextSpan>,
+    /// Last glyph position for merging adjacent glyphs into spans.
+    last_x: f64,
+    last_y: f64,
+    last_font_size: f64,
 }
 
 impl Default for TextExtractionDevice {
@@ -67,7 +73,12 @@ impl Default for TextExtractionDevice {
 impl TextExtractionDevice {
     /// Create a new text extraction device.
     pub fn new() -> Self {
-        Self { spans: Vec::new() }
+        Self {
+            spans: Vec::new(),
+            last_x: f64::NEG_INFINITY,
+            last_y: f64::NEG_INFINITY,
+            last_font_size: 0.0,
+        }
     }
 
     /// Consume the device and return extracted text as a single string.
@@ -120,8 +131,27 @@ impl Device<'_> for TextExtractionDevice {
         let coeffs = composed.as_coeffs();
         let x = coeffs[4];
         let y = coeffs[5];
-        // Approximate font size from the composed transform matrix.
-        let font_size = (coeffs[0].powi(2) + coeffs[1].powi(2)).sqrt().abs();
+        // The composed transform includes glyph-space scaling (1/1000 of em).
+        // Multiply by 1000 to recover the effective font size in user space.
+        let glyph_scale = (coeffs[0].powi(2) + coeffs[1].powi(2)).sqrt().abs();
+        let font_size = glyph_scale * 1000.0;
+
+        let same_line = (y - self.last_y).abs() < font_size * 0.5;
+        let gap = x - self.last_x;
+        let adjacent = same_line && gap >= -font_size * 0.1 && gap < font_size;
+
+        if adjacent {
+            if let Some(last) = self.spans.last_mut() {
+                last.text.push_str(&text);
+                self.last_x = x;
+                self.last_font_size = font_size;
+                return;
+            }
+        }
+
+        self.last_x = x;
+        self.last_y = y;
+        self.last_font_size = font_size;
 
         self.spans.push(TextSpan {
             text,
