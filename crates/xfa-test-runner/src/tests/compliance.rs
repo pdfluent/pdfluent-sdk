@@ -47,8 +47,8 @@ impl PdfTest for ComplianceTest {
         };
 
         // Auto-detect PDF/A level from XMP, fall back to A1b
-        let level = pdf_compliance::detect_pdfa_level(&pdf)
-            .unwrap_or(pdf_compliance::PdfALevel::A1b);
+        let level =
+            pdf_compliance::detect_pdfa_level(&pdf).unwrap_or(pdf_compliance::PdfALevel::A1b);
 
         let report = pdf_compliance::validate_pdfa(&pdf, level);
 
