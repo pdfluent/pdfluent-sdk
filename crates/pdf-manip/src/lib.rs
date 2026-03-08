@@ -14,12 +14,18 @@
 //! - [`bookmarks`] — Bookmarks / outlines (M5)
 
 pub mod bookmarks;
+pub mod content_editor;
+#[cfg(feature = "image-insert")]
+pub mod downsample;
 pub mod encrypt;
 pub mod error;
 #[cfg(feature = "image-insert")]
 pub mod image_insert;
 pub mod optimize;
 pub mod pages;
+pub mod text_run;
 pub mod watermark;
 
+pub use content_editor::{ContentEditor, GraphicsSnapshot, GraphicsStateTracker};
 pub use error::{ManipError, Result};
+pub use text_run::{FontMap, TextRun};
