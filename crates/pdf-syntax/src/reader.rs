@@ -232,6 +232,14 @@ impl<'a> ReaderContext<'a> {
     }
 
     #[inline]
+    pub(crate) fn parent_chain_depth(&self) -> usize {
+        match &self.0 {
+            ReaderContextInner::Shared(inner) => inner.parent_chain.len(),
+            ReaderContextInner::Dummy { .. } => 0,
+        }
+    }
+
+    #[inline]
     pub(crate) fn parent_chain_push(&mut self, id: ObjectIdentifier) {
         match &mut self.0 {
             ReaderContextInner::Shared(inner) => Arc::make_mut(inner).parent_chain.push(id),
