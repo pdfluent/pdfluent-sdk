@@ -4437,6 +4437,30 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                 }
             }
+
+            // Widget/Btn: /AP /N must be a subdictionary, not a stream (§6.5.3 test 5)
+            let is_widget = annot
+                .get::<Name>(keys::SUBTYPE)
+                .is_some_and(|s| s.as_ref() == b"Widget");
+            let is_btn = annot
+                .get::<Name>(keys::FT)
+                .is_some_and(|s| s.as_ref() == b"Btn");
+            if is_widget && is_btn {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    // /N should be a dict (with state names as keys → streams)
+                    // NOT a single stream
+                    if ap.get::<Stream<'_>>(keys::N).is_some()
+                        && ap.get::<Dict<'_>>(keys::N).is_none()
+                    {
+                        error_at(
+                            report,
+                            "6.5.3",
+                            "Widget/Btn annotation /AP /N must be a subdictionary, not a stream",
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -4906,7 +4930,7 @@ pub fn check_marked_content_sequences(pdf: &Pdf, report: &mut ComplianceReport) 
 
 // ─── §6.9 — Interactive forms ────────────────────────────────────────────────
 
-/// Check interactive form /NeedAppearances must be false or absent (§6.9).
+/// Check interactive form /NeedAppearances must be false or absent (§6.4.1).
 pub fn check_need_appearances(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else {
         return;
@@ -4918,7 +4942,7 @@ pub fn check_need_appearances(pdf: &Pdf, report: &mut ComplianceReport) {
     if let Some(Object::Boolean(true)) = acroform.get::<Object<'_>>(keys::NEED_APPEARANCES) {
         error(
             report,
-            "6.9",
+            "6.4.1",
             "AcroForm /NeedAppearances is true; must be false or absent in PDF/A",
         );
     }

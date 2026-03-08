@@ -255,9 +255,11 @@ fn normalize_pdfa4_clause(clause: &str) -> String {
     } else if clause == "6.6" {
         "6.8".to_string()
     } else if let Some(rest) = clause.strip_prefix("6.7.") {
-        format!("6.3.{rest}")
+        // 6.7.x in PDF/A-4 is XMP metadata — same as in other parts.
+        // Do NOT remap to 6.3.x (which is about fonts/annotations).
+        format!("6.7.{rest}")
     } else if clause == "6.7" {
-        "6.3".to_string()
+        "6.7".to_string()
     } else if let Some(rest) = clause.strip_prefix("6.8.") {
         format!("6.4.{rest}")
     } else if clause == "6.8" {
@@ -511,7 +513,7 @@ mod tests {
         assert_eq!(normalize_pdfa4_clause("6.3.3"), "6.5.3"); // Annotations
         assert_eq!(normalize_pdfa4_clause("6.4.1"), "6.6.1"); // Actions
         assert_eq!(normalize_pdfa4_clause("6.5.2"), "6.7.2"); // Metadata
-        assert_eq!(normalize_pdfa4_clause("6.7.2"), "6.3.2"); // Fonts
+        assert_eq!(normalize_pdfa4_clause("6.7.2"), "6.7.2"); // Metadata (pdfaid etc.)
         assert_eq!(normalize_pdfa4_clause("6.8"), "6.4"); // Transparency
         assert_eq!(normalize_pdfa4_clause("6.6.1"), "6.8.1"); // Structure
                                                               // These stay the same
