@@ -112,6 +112,10 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_font_file_format(pdf, level, &mut report);
     check_explicit_resources(pdf, &mut report);
 
+    if level.part() == 4 {
+        check_trailer_info(pdf, &mut report);
+    }
+
     // Post-process: remap clause numbers per PDF/A part.
     // Clause numbering differs between ISO 19005 parts.
     remap_clause_numbers(&mut report, level);
@@ -678,6 +682,11 @@ fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_explicit_resources(pdf, report);
 }
 
+/// §6.1.3 — Trailer Info key forbidden in PDF/A-4.
+fn check_trailer_info(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_trailer_info_key(pdf, report);
+}
+
 /// Remap clause numbers to match the correct ISO 19005 part numbering.
 ///
 /// Our checks use a canonical clause number (typically from PDF/A-2/4),
@@ -689,6 +698,17 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Device color space restrictions
             // PDF/A-1: §6.2.3.3, PDF/A-2/3/4: §6.2.4.3
             (1, "6.2.4.3") => Some("6.2.3.3"),
+
+            // TR/TR2 transfer function restrictions
+            // PDF/A-1: §6.2.8, PDF/A-2/3: §6.2.10.5, PDF/A-4: §6.2.5
+            (1, "6.2.10.5") => Some("6.2.8"),
+            (4, "6.2.10.5") => Some("6.2.5"),
+
+            // Halftone restrictions
+            // PDF/A-4: §6.2.5
+            (4, "6.2.10") => Some("6.2.5"),
+            (4, "6.2.10.4.1") => Some("6.2.5"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
