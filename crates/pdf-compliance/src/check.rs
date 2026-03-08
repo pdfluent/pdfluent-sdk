@@ -246,6 +246,135 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
                 }
             }
         }
+
+        // Scan Shading/Pattern resources for device CS vs profile mismatch
+        if let Some(ref rd) = res_dict {
+            scan_shading_cs_vs_profile(rd, profile_components, &loc, report);
+            scan_pattern_cs_vs_profile(rd, profile_components, &loc, report);
+            // Scan Image XObject color spaces vs profile
+            scan_image_cs_vs_profile(rd, profile_components, &loc, report);
+        }
+    }
+}
+
+/// Scan Shading resources for device CS vs OutputIntent profile (§6.2.3.3).
+fn scan_shading_cs_vs_profile(
+    res_dict: &Dict<'_>,
+    profile_components: u32,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(shading_dict) = res_dict.get::<Dict<'_>>(b"Shading" as &[u8]) else {
+        return;
+    };
+    for (name, _) in shading_dict.entries() {
+        let sname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+        let loc = format!("{base_loc} Shading {sname}");
+        if let Some(sh) = shading_dict.get::<Dict<'_>>(name.as_ref()) {
+            if let Some(cs) = sh.get::<Name>(keys::COLORSPACE) {
+                report_cs_name_vs_profile(cs.as_ref(), profile_components, &loc, report);
+            }
+        } else if let Some(sh_stream) = shading_dict.get::<Stream<'_>>(name.as_ref()) {
+            if let Some(cs) = sh_stream.dict().get::<Name>(keys::COLORSPACE) {
+                report_cs_name_vs_profile(cs.as_ref(), profile_components, &loc, report);
+            }
+        }
+    }
+}
+
+/// Scan Pattern resources for device CS vs OutputIntent profile (§6.2.3.3).
+fn scan_pattern_cs_vs_profile(
+    res_dict: &Dict<'_>,
+    profile_components: u32,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(pat_dict) = res_dict.get::<Dict<'_>>(b"Pattern" as &[u8]) else {
+        return;
+    };
+    for (name, _) in pat_dict.entries() {
+        let pname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+        if let Some(pat) = pat_dict.get::<Dict<'_>>(name.as_ref()) {
+            if let Some(shading) = pat.get::<Dict<'_>>(b"Shading" as &[u8]) {
+                if let Some(cs) = shading.get::<Name>(keys::COLORSPACE) {
+                    let loc = format!("{base_loc} Pattern {pname}");
+                    report_cs_name_vs_profile(cs.as_ref(), profile_components, &loc, report);
+                }
+            }
+        }
+        if let Some(pat_stream) = pat_dict.get::<Stream<'_>>(name.as_ref()) {
+            if let Ok(decoded) = pat_stream.decoded() {
+                let ops = detect_device_color_ops(&decoded);
+                let loc = format!("{base_loc} Pattern {pname}");
+                report_color_vs_profile(&ops, profile_components, &loc, report);
+            }
+        }
+    }
+}
+
+/// Scan Image XObject color spaces vs OutputIntent profile (§6.2.3.3).
+fn scan_image_cs_vs_profile(
+    res_dict: &Dict<'_>,
+    profile_components: u32,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
+        return;
+    };
+    for (name, _) in xobj_dict.entries() {
+        let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+            continue;
+        };
+        let dict = stream.dict();
+        let is_image = dict
+            .get::<Name>(keys::SUBTYPE)
+            .is_some_and(|s| s.as_ref() == keys::IMAGE);
+        if !is_image {
+            continue;
+        }
+        if let Some(cs) = dict.get::<Name>(keys::COLORSPACE) {
+            let iname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+            let loc = format!("{base_loc} Image {iname}");
+            report_cs_name_vs_profile(cs.as_ref(), profile_components, &loc, report);
+        }
+    }
+}
+
+/// Report device CS name vs OutputIntent profile mismatch (§6.2.3.3).
+fn report_cs_name_vs_profile(
+    cs_bytes: &[u8],
+    profile_components: u32,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    if cs_bytes == keys::DEVICE_RGB && profile_components != 3 {
+        error_at(
+            report,
+            "6.2.3.3",
+            "DeviceRGB used but OutputIntent profile is not RGB",
+            location.to_string(),
+        );
+    }
+    if cs_bytes == b"DeviceCMYK" && profile_components != 4 {
+        error_at(
+            report,
+            "6.2.3.3",
+            "DeviceCMYK used but OutputIntent profile is not CMYK",
+            location.to_string(),
+        );
+    }
+    if cs_bytes == b"DeviceGray"
+        && profile_components != 1
+        && profile_components != 3
+        && profile_components != 4
+    {
+        error_at(
+            report,
+            "6.2.3.3",
+            "DeviceGray used but OutputIntent profile is incompatible",
+            location.to_string(),
+        );
     }
 }
 
