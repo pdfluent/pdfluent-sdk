@@ -1,0 +1,9 @@
+[package]
+name = "pdf-diff"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Visual PDF comparison — page-level SSIM similarity and diff image generation."
+
+[dependencies]
+thiserror = { workspace = true }
