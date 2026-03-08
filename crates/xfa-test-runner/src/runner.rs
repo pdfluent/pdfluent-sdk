@@ -363,8 +363,10 @@ impl Runner {
 /// Detect encrypted PDFs that cannot be processed without a password.
 /// Returns `Some(reason)` if the PDF is encrypted, `None` otherwise.
 fn detect_encrypted(pdf_data: &[u8]) -> Option<String> {
-    match pdf_syntax::Pdf::new(pdf_data.to_vec()) {
-        Err(pdf_syntax::LoadPdfError::Decryption(e)) => Some(format!("Decryption({e:?})")),
+    let data = pdf_data.to_vec();
+    match std::panic::catch_unwind(|| pdf_syntax::Pdf::new(data)) {
+        Ok(Err(pdf_syntax::LoadPdfError::Decryption(e))) => Some(format!("Decryption({e:?})")),
+        Err(_) => None, // Panic during parsing — treat as non-encrypted
         _ => None,
     }
 }
