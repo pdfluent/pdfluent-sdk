@@ -802,6 +802,11 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
             scan_type3_font_charprocs(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
         }
 
+        // Scan SMask Form XObjects in ExtGState for device color operators
+        if let Some(ref rd) = res_dict {
+            scan_smask_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+        }
+
         // Also check ColorSpace resources for direct device CS references
         if let Some(cs_dict) = res_dict
             .as_ref()
@@ -1007,6 +1012,48 @@ fn scan_type3_font_charprocs(
                     let cloc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
                     report_device_color_ops(&decoded, rgb_ok, cmyk_ok, gray_ok, &cloc, report);
                 }
+            }
+        }
+    }
+}
+
+/// Scan ExtGState /SMask Form XObjects for device color operators (§6.2.4.3).
+fn scan_smask_device_colors(
+    res_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
+        return;
+    };
+    for (gs_name, _) in gs_dict.entries() {
+        let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
+            continue;
+        };
+        // SMask can be a dict with /G pointing to a Form XObject stream
+        let Some(smask) = gs.get::<Dict<'_>>(keys::SMASK) else {
+            continue;
+        };
+        if let Some(g_stream) = smask.get::<Stream<'_>>(b"G" as &[u8]) {
+            if let Ok(decoded) = g_stream.decoded() {
+                let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
+                let sloc = format!("{base_loc} SMask {gs_str}");
+                report_device_color_ops(&decoded, rgb_ok, cmyk_ok, gray_ok, &sloc, report);
+            }
+            // Also check /ColorSpace on the SMask's Group dict
+            let g_dict = g_stream.dict();
+            if let Some(group) = g_dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+                if let Some(cs) = group.get::<Name>(keys::CS) {
+                    report_device_cs_name(cs.as_ref(), rgb_ok, cmyk_ok, gray_ok, base_loc, report);
+                }
+            }
+            // Check resources within the SMask form XObject
+            if let Some(smask_res) = g_dict.get::<Dict<'_>>(keys::RESOURCES) {
+                scan_shading_device_colors(&smask_res, rgb_ok, cmyk_ok, gray_ok, base_loc, report);
+                scan_pattern_device_colors(&smask_res, rgb_ok, cmyk_ok, gray_ok, base_loc, report);
             }
         }
     }
@@ -1676,66 +1723,117 @@ pub fn check_image_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
 // ─── §6.2.10 — Halftone and transfer function restrictions ──────────────────
 
 /// Check halftone and transfer function restrictions in ExtGState (§6.2.10).
+///
+/// Scans page resources, annotation appearances, and Form XObjects.
 pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
-        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
-            continue;
-        };
-        let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
-            continue;
-        };
-        for (gs_name, _) in gs_dict.entries() {
-            let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
-                continue;
-            };
-            let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
+        let loc = format!("page {}", page_idx + 1);
 
-            // §6.2.10: halftone type
-            if let Some(ht_dict) = gs.get::<Dict<'_>>(b"HT" as &[u8]) {
-                if let Some(ht_type) = ht_dict.get::<i32>(keys::TYPE) {
-                    if ht_type != 1 && ht_type != 5 {
-                        error_at(
-                            report,
-                            "6.2.10",
-                            format!("ExtGState {gs_str} uses HalftoneType {ht_type} (only 1 and 5 allowed)"),
-                            format!("page {}", page_idx + 1),
-                        );
+        // Page-level resources
+        if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
+            check_halftone_in_extgstate(&res_dict, &loc, report);
+
+            // Form XObjects in page resources
+            if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xo_name, _) in xobj_dict.entries() {
+                    if let Some(xo) = xobj_dict.get::<Dict<'_>>(xo_name.as_ref()) {
+                        if xo.get::<Name>(keys::SUBTYPE).is_some_and(|s| s.as_ref() == b"Form") {
+                            if let Some(xo_res) = xo.get::<Dict<'_>>(keys::RESOURCES) {
+                                let xo_loc = format!("{loc}/XObject");
+                                check_halftone_in_extgstate(&xo_res, &xo_loc, report);
+                            }
+                        }
                     }
                 }
-                // §6.2.10.4.1: No HalftoneName
-                if ht_dict.contains_key(b"HalftoneName" as &[u8]) {
+            }
+        }
+
+        // Annotation appearances
+        if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    for (ap_key, _) in ap.entries() {
+                        if let Some(ap_stream) = ap.get::<Dict<'_>>(ap_key.as_ref()) {
+                            if let Some(ap_res) =
+                                ap_stream.get::<Dict<'_>>(keys::RESOURCES)
+                            {
+                                let ap_loc = format!("{loc}/Annot/AP");
+                                check_halftone_in_extgstate(&ap_res, &ap_loc, report);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Check halftone and transfer function restrictions in a resource dict's ExtGState.
+fn check_halftone_in_extgstate(
+    res_dict: &Dict<'_>,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
+        return;
+    };
+    for (gs_name, _) in gs_dict.entries() {
+        let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
+            continue;
+        };
+        let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
+
+        // §6.2.10: halftone type
+        if let Some(ht_dict) = gs.get::<Dict<'_>>(b"HT" as &[u8]) {
+            if let Some(ht_type) = ht_dict.get::<i32>(keys::TYPE) {
+                if ht_type != 1 && ht_type != 5 {
                     error_at(
                         report,
-                        "6.2.10.4.1",
-                        format!("ExtGState {gs_str} halftone contains forbidden /HalftoneName"),
-                        format!("page {}", page_idx + 1),
+                        "6.2.10",
+                        format!(
+                            "ExtGState {gs_str} uses HalftoneType {ht_type} (only 1 and 5 allowed)"
+                        ),
+                        location,
                     );
                 }
             }
-
-            // §6.2.10.5: TR forbidden
-            if gs.contains_key(keys::TR) {
+            // §6.2.10.4.1: No HalftoneName
+            if ht_dict.contains_key(b"HalftoneName" as &[u8]) {
                 error_at(
                     report,
-                    "6.2.10.5",
-                    format!("ExtGState {gs_str} contains forbidden /TR (transfer function)"),
-                    format!("page {}", page_idx + 1),
+                    "6.2.10.4.1",
+                    format!(
+                        "ExtGState {gs_str} halftone contains forbidden /HalftoneName"
+                    ),
+                    location,
                 );
             }
+        }
 
-            // TR2 allowed only if /Default
-            if let Some(tr2) = gs.get::<Object<'_>>(keys::TR2) {
-                match tr2 {
-                    Object::Name(n) if n.as_ref() == keys::DEFAULT => {}
-                    _ => {
-                        error_at(
-                            report,
-                            "6.2.10.5",
-                            format!("ExtGState {gs_str} has /TR2 that is not /Default"),
-                            format!("page {}", page_idx + 1),
-                        );
-                    }
+        // §6.2.10.5: TR forbidden
+        if gs.contains_key(keys::TR) {
+            error_at(
+                report,
+                "6.2.10.5",
+                format!(
+                    "ExtGState {gs_str} contains forbidden /TR (transfer function)"
+                ),
+                location,
+            );
+        }
+
+        // TR2 allowed only if /Default
+        if let Some(tr2) = gs.get::<Object<'_>>(keys::TR2) {
+            match tr2 {
+                Object::Name(n) if n.as_ref() == keys::DEFAULT => {}
+                _ => {
+                    error_at(
+                        report,
+                        "6.2.10.5",
+                        format!("ExtGState {gs_str} has /TR2 that is not /Default"),
+                        location,
+                    );
                 }
             }
         }
@@ -1918,6 +2016,12 @@ pub fn check_page_dimensions(pdf: &Pdf, part: u8, report: &mut ComplianceReport)
 
     // String objects must not exceed 65535 bytes
     check_string_lengths(pdf, rule, report);
+
+    // Array objects must not exceed 8191 elements
+    check_array_sizes(pdf, rule, report);
+
+    // Dictionary objects must not exceed 4095 entries
+    check_dict_sizes(pdf, rule, report);
 
     // Graphics state nesting depth (q/Q) must not exceed 28
     for (page_idx, page) in pdf.pages().iter().enumerate() {
@@ -2413,6 +2517,39 @@ fn check_string_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
                     report,
                     rule,
                     format!("String object exceeds 65535 bytes ({})", s.as_bytes().len()),
+                );
+                return;
+            }
+        }
+    }
+}
+
+/// Array objects must not exceed 8191 elements.
+fn check_array_sizes(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        if let Object::Array(ref a) = obj {
+            let count = a.raw_iter().count();
+            if count > 8191 {
+                error(
+                    report,
+                    rule,
+                    format!("Array object exceeds 8191 elements ({count})"),
+                );
+                return;
+            }
+        }
+    }
+}
+
+/// Dictionary objects must not exceed 4095 entries.
+fn check_dict_sizes(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        if let Object::Dict(ref d) = obj {
+            if d.len() > 4095 {
+                error(
+                    report,
+                    rule,
+                    format!("Dictionary object exceeds 4095 entries ({})", d.len()),
                 );
                 return;
             }
