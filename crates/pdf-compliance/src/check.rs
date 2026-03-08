@@ -124,6 +124,51 @@ pub fn parse_xmp_pdfua(xmp: &[u8]) -> Option<u8> {
         .ok()
 }
 
+/// Check XMP metadata contains PDF/A Identification Schema (§6.7.11).
+pub fn check_xmp_pdfa_identification(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(xmp) = get_xmp_metadata(pdf) else {
+        error(report, "6.7.11", "Document missing XMP metadata stream");
+        return;
+    };
+    let text = String::from_utf8_lossy(&xmp);
+    // Check for pdfaid:part presence
+    if !text.contains("pdfaid:part") {
+        error(
+            report,
+            "6.7.11",
+            "XMP metadata missing PDF/A Identification Schema (pdfaid:part)",
+        );
+    }
+}
+
+/// Check MarkInfo/Marked is present and true (§6.8.2.2).
+pub fn check_mark_info(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    match cat.get::<Dict<'_>>(keys::MARK_INFO) {
+        Some(mark_info) => {
+            match mark_info.get::<Object<'_>>(b"Marked" as &[u8]) {
+                Some(Object::Boolean(true)) => {}
+                _ => {
+                    error(
+                        report,
+                        "6.8.2.2",
+                        "MarkInfo /Marked is not set to true",
+                    );
+                }
+            }
+        }
+        None => {
+            error(
+                report,
+                "6.8.2.2",
+                "MarkInfo dictionary missing from catalog",
+            );
+        }
+    }
+}
+
 /// Extract a value from an XMP element like `<ns:key>value</ns:key>`.
 fn extract_xmp_value(text: &str, key: &str) -> Option<String> {
     let open = format!("<{key}>");
@@ -4480,6 +4525,43 @@ pub fn check_tounicode_cmap(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
+/// Check ToUnicode CMap values for forbidden Unicode code points (§6.2.11.7.2).
+/// U+0000, U+FEFF (BOM), and U+FFFE are forbidden.
+pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        let Some(cmap_stream) = font_dict.get::<Stream<'_>>(keys::TO_UNICODE) else {
+            return;
+        };
+        let Ok(data) = cmap_stream.decoded() else {
+            return;
+        };
+        let text = String::from_utf8_lossy(&data);
+        // Parse "beginbfchar" and "beginbfrange" sections for hex Unicode values
+        // Format: <XXXX> <YYYY> where YYYY is the Unicode value
+        for cap in text.split('<') {
+            let Some(hex_end) = cap.find('>') else {
+                continue;
+            };
+            let hex = &cap[..hex_end];
+            if hex.len() != 4 {
+                continue;
+            }
+            let Ok(val) = u16::from_str_radix(hex, 16) else {
+                continue;
+            };
+            if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
+                error_at(
+                    report,
+                    "6.2.11.7.2",
+                    format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
+                    format!("page {}", page_idx + 1),
+                );
+                return; // one error per font is enough
+            }
+        }
+    });
+}
+
 const STANDARD_14: &[&str] = &[
     "Courier",
     "Courier-Bold",
@@ -4551,21 +4633,14 @@ pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport
         let symbolic = flags & 0x04 != 0;
 
         if symbolic {
-            if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
-                let enc = enc_name.as_ref();
-                if enc == keys::WIN_ANSI_ENCODING
-                    || enc == keys::MAC_ROMAN_ENCODING
-                    || enc == keys::STANDARD_ENCODING
-                    || enc == keys::MAC_EXPERT_ENCODING
-                    || enc == keys::PDF_DOC_ENCODING
-                {
-                    error_at(
-                        report,
-                        "6.3.6",
-                        format!("Symbolic TrueType font {name} should not have /Encoding"),
-                        format!("page {}", page_idx + 1),
-                    );
-                }
+            // Symbolic TrueType must not have ANY /Encoding entry
+            if font_dict.get::<Object<'_>>(keys::ENCODING).is_some() {
+                error_at(
+                    report,
+                    "6.3.6",
+                    format!("Symbolic TrueType font {name} should not have /Encoding"),
+                    format!("page {}", page_idx + 1),
+                );
             }
         }
     });
@@ -4684,6 +4759,26 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
                         report,
                         "6.5.3",
                         format!("{subtype_name} annotation /CA is {ca_val} (must be 1.0)"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+
+            // Appearance dict should not have /D or /R entries for Widget annotations (§6.5.3 test 2)
+            if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                if ap.get::<Object<'_>>(b"D" as &[u8]).is_some() {
+                    error_at(
+                        report,
+                        "6.5.3",
+                        format!("{subtype_name} annotation /AP contains forbidden /D (down) appearance"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+                if ap.get::<Object<'_>>(b"R" as &[u8]).is_some() {
+                    error_at(
+                        report,
+                        "6.5.3",
+                        format!("{subtype_name} annotation /AP contains forbidden /R (rollover) appearance"),
                         format!("page {}", page_idx + 1),
                     );
                 }

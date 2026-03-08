@@ -68,6 +68,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_font_type_key(pdf, &mut report);
     check_font_embedding_deep(pdf, level, &mut report);
     check_tounicode_cmap(pdf, &mut report);
+    check::check_tounicode_values(pdf, &mut report);
     check_font_widths(pdf, &mut report);
     check_symbolic_truetype_encoding(pdf, &mut report);
     check_cidtogidmap_identity(pdf, &mut report);
@@ -88,6 +89,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_signature_restrictions_pdfa(pdf, &mut report);
     check_document_structure_pdfa(pdf, &mut report);
     check_marked_content(pdf, &mut report);
+    check::check_xmp_pdfa_identification(pdf, &mut report);
 
     // PDF/A-4 requires tagged PDF for all conformance levels;
     // PDF/A-1a/2a/3a require it only for level 'a'
@@ -97,6 +99,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check_figure_alt(pdf, &mut report);
         check_lang(pdf, &mut report);
         check_role_mapping_pdfa(pdf, &mut report);
+        check::check_mark_info(pdf, &mut report);
     }
 
     match level.part() {
