@@ -1482,7 +1482,10 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
 ///
 /// All annotations (except Popup) must have /F key. When present, Print flag
 /// must be set, Hidden/Invisible/ToggleNoView/NoView flags must be clear.
-pub fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
+pub fn check_annotation_flags(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    // PDF/A-4: 6.3.2 → normalized 6.5.2; parts 1/2/3: 6.5.3
+    let rule = if part == 4 { "6.5.2" } else { "6.5.3" };
+
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
@@ -1509,7 +1512,7 @@ pub fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
                 if !print || invisible || hidden || no_view || toggle_no_view {
                     error_at(
                         report,
-                        "6.5.3",
+                        rule,
                         format!(
                             "Annotation /F flags {flags:#x}: Print must be set, Hidden/Invisible/NoView/ToggleNoView must be clear"
                         ),
@@ -1523,7 +1526,7 @@ pub fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
                     .unwrap_or_else(|| "unknown".to_string());
                 error_at(
                     report,
-                    "6.5.3",
+                    rule,
                     format!("{subtype_name} annotation missing required /F key"),
                     format!("page {}", page_idx + 1),
                 );
@@ -3783,6 +3786,9 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
     // PDF/A-4 (ISO 19005-4 §6.3.1) also forbids Screen, RichMedia, FileAttachment
     let forbidden_pdfa4: &[&[u8]] = &[b"Screen", b"RichMedia", b"FileAttachment"];
 
+    // PDF/A-4 uses 6.3.1 (normalized to 6.5.1); other parts use 6.5.2
+    let rule = if part == 4 { "6.5.1" } else { "6.5.2" };
+
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
@@ -3798,7 +3804,7 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
                 let name = std::str::from_utf8(st).unwrap_or("?");
                 error_at(
                     report,
-                    "6.5.2",
+                    rule,
                     format!("Annotation type {name} forbidden in PDF/A-{part}"),
                     format!("page {}", page_idx + 1),
                 );
@@ -3807,7 +3813,7 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
             if st == b"FileAttachment" && part <= 2 {
                 error_at(
                     report,
-                    "6.5.2",
+                    rule,
                     format!("FileAttachment annotation forbidden in PDF/A-{part}"),
                     format!("page {}", page_idx + 1),
                 );
@@ -3817,7 +3823,7 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
                 let name = std::str::from_utf8(st).unwrap_or("?");
                 error_at(
                     report,
-                    "6.5.2",
+                    rule,
                     format!("Annotation type {name} forbidden in PDF/A-4"),
                     format!("page {}", page_idx + 1),
                 );
@@ -3826,8 +3832,13 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
     }
 }
 
-/// Deep annotation flag validation per PDF/A part (§6.5.1).
+/// Deep annotation flag validation per PDF/A part (§6.5.1/§6.5.2).
+///
+/// PDF/A-4 uses clause 6.3.2 (normalized to 6.5.2); parts 2/3 use 6.5.1.
 pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    // PDF/A-4: 6.3.2 → normalized 6.5.2; parts 2/3: 6.5.1
+    let rule = if part == 4 { "6.5.2" } else { "6.5.1" };
+
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
@@ -3845,7 +3856,7 @@ pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceR
                 continue; // Missing F already reported by check_annotation_flags
             };
 
-            // PDF/A-2/3 §6.5.1: Widget annotations used as form fields
+            // PDF/A-2/3/4: Widget annotations used as form fields
             // must not have both Hidden and Print flags set simultaneously
             if part >= 2 && subtype.as_ref() == b"Widget" {
                 let hidden = flags & 0x02 != 0;
@@ -3853,7 +3864,7 @@ pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceR
                 if hidden && print {
                     error_at(
                         report,
-                        "6.5.1",
+                        rule,
                         "Widget annotation has both Hidden and Print flags set",
                         format!("page {}", page_idx + 1),
                     );

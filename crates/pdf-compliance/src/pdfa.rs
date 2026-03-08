@@ -29,7 +29,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_device_colorspaces(pdf, &mut report);
     check_device_color_vs_output_intent(pdf, &mut report);
     check_page_dimensions(pdf, level, &mut report);
-    check_annotation_flags(pdf, &mut report);
+    check_annotation_flags(pdf, level, &mut report);
     check_annotation_types(pdf, level, &mut report);
     check_annotation_color_arrays(pdf, &mut report);
     check_form_xobjects(pdf, &mut report);
@@ -309,8 +309,8 @@ fn check_page_dimensions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRep
 }
 
 /// §6.3.2 — Annotations must have /F key with correct flags.
-fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_annotation_flags(pdf, report);
+fn check_annotation_flags(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_annotation_flags(pdf, level.part(), report);
 }
 
 /// §6.5.2 — Only specific annotation types are permitted (PDF/A-1).
@@ -739,10 +739,6 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.2.9, PDF/A-2/3/4: §6.2.5
             (1, "6.2.5") => Some("6.2.9"),
 
-            // Annotation subtypes
-            // PDF/A-4: veraPDF reports 6.3.1 → normalized to 6.5.1
-            (4, "6.5.2") => Some("6.5.1"),
-
             // Image XObject restrictions (OPI, Alternates, Interpolate)
             // PDF/A-1: §6.2.4 sub-clauses mapped to 6.2.8.x in PDF/A-2/3
             (1, "6.2.8.1") => Some("6.2.4"),
@@ -750,9 +746,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.8.3") => Some("6.2.4"),
 
             // Object syntax spacing
-            // PDF/A-1: §6.1.8, PDF/A-2/3/4: §6.1.8 (same)
-            // Stream length
-            // PDF/A-1: §6.1.7, PDF/A-2/3/4: §6.1.7 (same)
+            // PDF/A-2/3/4: §6.1.9
+            (2..=4, "6.1.8") => Some("6.1.9"),
 
             _ => None,
         };
