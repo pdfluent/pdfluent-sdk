@@ -29,7 +29,11 @@ where
 
         if ctx.parent_chain_contains(&id) {
             warn!("cycle detected in indirect object: {id:?}");
+            return None;
+        }
 
+        if ctx.parent_chain_depth() > 512 {
+            warn!("indirect object resolution depth exceeds 512 for {id:?}");
             return None;
         }
 
