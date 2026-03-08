@@ -937,32 +937,11 @@ fn scan_shading_device_colors(
     };
     for (name, _) in shading_dict.entries() {
         let sname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
-        // Shading can be a dict or stream — both have /ColorSpace
+        let loc = format!("{base_loc} Shading {sname}");
         if let Some(sh) = shading_dict.get::<Dict<'_>>(name.as_ref()) {
-            if let Some(cs) = sh.get::<Name>(keys::COLORSPACE) {
-                let cs_bytes = cs.as_ref();
-                report_device_cs_name(
-                    cs_bytes,
-                    rgb_ok,
-                    cmyk_ok,
-                    gray_ok,
-                    &format!("{base_loc} Shading {sname}"),
-                    report,
-                );
-            }
+            report_dict_cs_device(&sh, rgb_ok, cmyk_ok, gray_ok, &loc, report);
         } else if let Some(sh_stream) = shading_dict.get::<Stream<'_>>(name.as_ref()) {
-            let sh_dict = sh_stream.dict();
-            if let Some(cs) = sh_dict.get::<Name>(keys::COLORSPACE) {
-                let cs_bytes = cs.as_ref();
-                report_device_cs_name(
-                    cs_bytes,
-                    rgb_ok,
-                    cmyk_ok,
-                    gray_ok,
-                    &format!("{base_loc} Shading {sname}"),
-                    report,
-                );
-            }
+            report_dict_cs_device(sh_stream.dict(), rgb_ok, cmyk_ok, gray_ok, &loc, report);
         }
     }
 }
@@ -984,17 +963,8 @@ fn scan_pattern_device_colors(
         // Type 2 patterns (shading patterns) have /Shading dict with /ColorSpace
         if let Some(pat) = pat_dict.get::<Dict<'_>>(name.as_ref()) {
             if let Some(shading) = pat.get::<Dict<'_>>(b"Shading" as &[u8]) {
-                if let Some(cs) = shading.get::<Name>(keys::COLORSPACE) {
-                    let cs_bytes = cs.as_ref();
-                    report_device_cs_name(
-                        cs_bytes,
-                        rgb_ok,
-                        cmyk_ok,
-                        gray_ok,
-                        &format!("{base_loc} Pattern {pname}"),
-                        report,
-                    );
-                }
+                let ploc = format!("{base_loc} Pattern {pname}");
+                report_dict_cs_device(&shading, rgb_ok, cmyk_ok, gray_ok, &ploc, report);
             }
         }
         // Pattern can also be a stream (tiling pattern) — scan its content
@@ -1120,6 +1090,144 @@ fn report_device_cs_name(
             "DeviceGray in Shading/Pattern without DefaultGray or OutputIntent",
             location.to_string(),
         );
+    }
+}
+
+/// 0=none, 1=DeviceRGB, 2=DeviceCMYK, 3=DeviceGray
+fn device_cs_kind(name: &[u8]) -> u8 {
+    if name == keys::DEVICE_RGB {
+        1
+    } else if name == b"DeviceCMYK" {
+        2
+    } else if name == b"DeviceGray" {
+        3
+    } else {
+        0
+    }
+}
+
+fn extract_base_device_cs_kind(cs_arr: &Array<'_>) -> u8 {
+    let mut items = cs_arr.iter::<Object<'_>>();
+    let Some(Object::Name(cs_type)) = items.next() else {
+        return 0;
+    };
+    let t = cs_type.as_ref();
+    let skip = if t == b"Indexed" {
+        0
+    } else if t == keys::SEPARATION || t == keys::DEVICE_N {
+        1
+    } else {
+        return device_cs_kind(t);
+    };
+    for _ in 0..skip {
+        let _ = items.next();
+    }
+    if let Some(Object::Name(base)) = items.next() {
+        return device_cs_kind(base.as_ref());
+    }
+    0
+}
+
+fn report_image_device_cs_kind(
+    kind: u8,
+    xn: &str,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    loc: &str,
+    report: &mut ComplianceReport,
+) {
+    if kind == 1 && !rgb_ok {
+        error_at(
+            report,
+            "6.2.4.3",
+            format!("Image {xn} uses DeviceRGB without DefaultRGB or matching OutputIntent"),
+            loc.to_string(),
+        );
+    }
+    if kind == 2 && !cmyk_ok {
+        error_at(
+            report,
+            "6.2.4.3",
+            format!("Image {xn} uses DeviceCMYK without DefaultCMYK or matching OutputIntent"),
+            loc.to_string(),
+        );
+    }
+    if kind == 3 && !gray_ok {
+        error_at(
+            report,
+            "6.2.4.3",
+            format!("Image {xn} uses DeviceGray without DefaultGray or OutputIntent"),
+            loc.to_string(),
+        );
+    }
+}
+
+fn check_image_cs_in_resources(
+    res_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
+        return;
+    };
+    for (name, _) in xobj_dict.entries() {
+        let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+            continue;
+        };
+        let dict = stream.dict();
+        let subtype = dict.get::<Name>(keys::SUBTYPE);
+        if subtype.as_ref().is_some_and(|s| s.as_ref() == keys::FORM) {
+            if let Some(fr) = dict.get::<Dict<'_>>(keys::RESOURCES) {
+                check_image_cs_in_resources(&fr, rgb_ok, cmyk_ok, gray_ok, location, report);
+            }
+            continue;
+        }
+        if subtype.is_none_or(|s| s.as_ref() != keys::IMAGE) {
+            continue;
+        }
+        let xn = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+        if let Some(cs_name) = dict.get::<Name>(keys::COLORSPACE) {
+            report_image_device_cs_kind(
+                device_cs_kind(cs_name.as_ref()),
+                xn,
+                rgb_ok,
+                cmyk_ok,
+                gray_ok,
+                location,
+                report,
+            );
+        } else if let Some(cs_arr) = dict.get::<Array<'_>>(keys::COLORSPACE) {
+            let kind = extract_base_device_cs_kind(&cs_arr);
+            if kind > 0 {
+                report_image_device_cs_kind(kind, xn, rgb_ok, cmyk_ok, gray_ok, location, report);
+            }
+        }
+    }
+}
+
+fn report_dict_cs_device(
+    dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    if let Some(cs) = dict.get::<Name>(keys::COLORSPACE) {
+        report_device_cs_name(cs.as_ref(), rgb_ok, cmyk_ok, gray_ok, location, report);
+    } else if let Some(cs_arr) = dict.get::<Array<'_>>(keys::COLORSPACE) {
+        let kind = extract_base_device_cs_kind(&cs_arr);
+        if kind == 1 {
+            report_device_cs_name(keys::DEVICE_RGB, rgb_ok, cmyk_ok, gray_ok, location, report);
+        } else if kind == 2 {
+            report_device_cs_name(b"DeviceCMYK", rgb_ok, cmyk_ok, gray_ok, location, report);
+        } else if kind == 3 {
+            report_device_cs_name(b"DeviceGray", rgb_ok, cmyk_ok, gray_ok, location, report);
+        }
     }
 }
 
@@ -1862,7 +1970,10 @@ pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
             if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
                 for (xo_name, _) in xobj_dict.entries() {
                     if let Some(xo) = xobj_dict.get::<Dict<'_>>(xo_name.as_ref()) {
-                        if xo.get::<Name>(keys::SUBTYPE).is_some_and(|s| s.as_ref() == b"Form") {
+                        if xo
+                            .get::<Name>(keys::SUBTYPE)
+                            .is_some_and(|s| s.as_ref() == b"Form")
+                        {
                             if let Some(xo_res) = xo.get::<Dict<'_>>(keys::RESOURCES) {
                                 let xo_loc = format!("{loc}/XObject");
                                 check_halftone_in_extgstate(&xo_res, &xo_loc, report);
@@ -1879,9 +1990,7 @@ pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
                 if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
                     for (ap_key, _) in ap.entries() {
                         if let Some(ap_stream) = ap.get::<Dict<'_>>(ap_key.as_ref()) {
-                            if let Some(ap_res) =
-                                ap_stream.get::<Dict<'_>>(keys::RESOURCES)
-                            {
+                            if let Some(ap_res) = ap_stream.get::<Dict<'_>>(keys::RESOURCES) {
                                 let ap_loc = format!("{loc}/Annot/AP");
                                 check_halftone_in_extgstate(&ap_res, &ap_loc, report);
                             }
@@ -1894,11 +2003,7 @@ pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// Check halftone and transfer function restrictions in a resource dict's ExtGState.
-fn check_halftone_in_extgstate(
-    res_dict: &Dict<'_>,
-    location: &str,
-    report: &mut ComplianceReport,
-) {
+fn check_halftone_in_extgstate(res_dict: &Dict<'_>, location: &str, report: &mut ComplianceReport) {
     let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
         return;
     };
@@ -1927,9 +2032,7 @@ fn check_halftone_in_extgstate(
                 error_at(
                     report,
                     "6.2.10.4.1",
-                    format!(
-                        "ExtGState {gs_str} halftone contains forbidden /HalftoneName"
-                    ),
+                    format!("ExtGState {gs_str} halftone contains forbidden /HalftoneName"),
                     location,
                 );
             }
@@ -1940,9 +2043,7 @@ fn check_halftone_in_extgstate(
             error_at(
                 report,
                 "6.2.10.5",
-                format!(
-                    "ExtGState {gs_str} contains forbidden /TR (transfer function)"
-                ),
+                format!("ExtGState {gs_str} contains forbidden /TR (transfer function)"),
                 location,
             );
         }
@@ -2754,50 +2855,23 @@ pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport)
         let gray_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_GRAY) || has_intent;
 
         let Some(ref rd) = res_dict else { continue };
-        let Some(xobj_dict) = rd.get::<Dict<'_>>(keys::XOBJECT) else {
-            continue;
-        };
+        let loc = format!("page {}", page_idx + 1);
+        check_image_cs_in_resources(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
 
-        for (name, _) in xobj_dict.entries() {
-            let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
-                continue;
-            };
-            let dict = stream.dict();
-            let is_image = dict
-                .get::<Name>(keys::SUBTYPE)
-                .is_some_and(|s| s.as_ref() == keys::IMAGE);
-            if !is_image {
-                continue;
-            }
-
-            if let Some(cs_name) = dict.get::<Name>(keys::COLORSPACE) {
-                let cs = cs_name.as_ref();
-                let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
-                if cs == keys::DEVICE_RGB && !rgb_ok {
-                    error_at(
-                        report,
-                        "6.2.4.3",
-                        format!("Image {xobj_name} uses DeviceRGB without DefaultRGB or matching OutputIntent"),
-                        format!("page {}", page_idx + 1),
-                    );
-                }
-                if cs == b"DeviceCMYK" && !cmyk_ok {
-                    error_at(
-                        report,
-                        "6.2.4.3",
-                        format!("Image {xobj_name} uses DeviceCMYK without DefaultCMYK or matching OutputIntent"),
-                        format!("page {}", page_idx + 1),
-                    );
-                }
-                if cs == b"DeviceGray" && !gray_ok {
-                    error_at(
-                        report,
-                        "6.2.4.3",
-                        format!(
-                            "Image {xobj_name} uses DeviceGray without DefaultGray or OutputIntent"
-                        ),
-                        format!("page {}", page_idx + 1),
-                    );
+        // Also scan annotation appearance streams for image XObjects
+        if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    for key in [b"N" as &[u8], b"R", b"D"] {
+                        if let Some(ap_stream) = ap.get::<Stream<'_>>(key) {
+                            let ap_dict = ap_stream.dict();
+                            if let Some(ap_res) = ap_dict.get::<Dict<'_>>(keys::RESOURCES) {
+                                check_image_cs_in_resources(
+                                    &ap_res, rgb_ok, cmyk_ok, gray_ok, &loc, report,
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
