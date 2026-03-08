@@ -61,7 +61,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_image_xobject_colorspaces(pdf, &mut report);
     check_output_intent_consistency(pdf, &mut report);
     check_undefined_operators(pdf, &mut report);
-    check_transparency_vs_output_intent(pdf, &mut report);
+    check_transparency_vs_output_intent(pdf, level, &mut report);
 
     // Batch 4: Font & Annotation deep validation (§6.3.x, §6.5.x)
     check_font_type_key(pdf, &mut report);
@@ -501,9 +501,9 @@ fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_undefined_operators(pdf, report);
 }
 
-/// §6.2.9 — Transparency groups vs OutputIntent.
-fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_transparency_vs_output_intent(pdf, report);
+/// §6.2.9/6.2.10 — Transparency groups vs OutputIntent.
+fn check_transparency_vs_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_transparency_vs_output_intent(pdf, level.part(), report);
 }
 
 // ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
