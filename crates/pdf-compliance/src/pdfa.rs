@@ -60,8 +60,20 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check_transparency_a1(pdf, &mut report);
     }
 
+    // Batch 5: Transparency deep, tagged PDF, remaining rules
+    check_transparency_deep(pdf, level, &mut report);
+    check_blending_modes_pdfa(pdf, level, &mut report);
+    check_soft_mask(pdf, &mut report);
+    check_need_appearances_pdfa(pdf, &mut report);
+    check_signature_restrictions_pdfa(pdf, &mut report);
+    check_document_structure_pdfa(pdf, &mut report);
+    check_marked_content(pdf, &mut report);
+
     if level.requires_tagged() {
         check_tagged_requirements(pdf, &mut report);
+        check_table_structure_pdfa(pdf, &mut report);
+        check_figure_alt(pdf, &mut report);
+        check_role_mapping_pdfa(pdf, &mut report);
     }
 
     if level.part() == 3 {
@@ -438,6 +450,58 @@ fn check_embedded_files_a3(pdf: &Pdf, report: &mut ComplianceReport) {
             );
         }
     }
+}
+
+// ─── Batch 5: Transparency, Tagged PDF, Remaining Rules ─────────────────────
+
+/// §6.4 — Deeper transparency validation.
+fn check_transparency_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_transparency_deep(pdf, level.part(), report);
+}
+
+/// §6.4.1 — Blending mode validation.
+fn check_blending_modes_pdfa(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_blending_modes(pdf, level.part(), report);
+}
+
+/// §6.4.2 — Soft mask structure validation.
+fn check_soft_mask(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_soft_mask_structure(pdf, report);
+}
+
+/// §6.8.2.2 — Table structure element nesting.
+fn check_table_structure_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_table_structure(pdf, report);
+}
+
+/// §6.8.4 — Figure elements must have Alt text.
+fn check_figure_alt(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_figure_alt_text(pdf, report);
+}
+
+/// §6.8.3.4 — Marked content sequence matching.
+fn check_marked_content(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_marked_content_sequences(pdf, report);
+}
+
+/// §6.9 — NeedAppearances and field appearances.
+fn check_need_appearances_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_need_appearances(pdf, report);
+}
+
+/// §6.10 — Digital signature restrictions.
+fn check_signature_restrictions_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_signature_restrictions(pdf, report);
+}
+
+/// §6.11 — Document structure requirements.
+fn check_document_structure_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_document_structure(pdf, report);
+}
+
+/// §6.12 — Role mapping check.
+fn check_role_mapping_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_role_mapping(pdf, report);
 }
 
 /// PDF/A-1 and PDF/A-2 forbid embedded files.
