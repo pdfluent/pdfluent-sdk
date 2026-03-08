@@ -1437,6 +1437,28 @@ fn detect_device_color_ops(content: &[u8]) -> DeviceColorOps {
     result
 }
 
+/// Check if a content stream references named resources (fonts, XObjects, color spaces, etc.).
+fn stream_references_resources(content: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(content);
+    let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+    // Operators that require named resources from the Resources dict
+    let resource_ops = [
+        "Tf",  // font
+        "Do",  // XObject
+        "cs", "CS",  // color space
+        "scn", "SCN", // pattern/separation color
+        "gs",  // ExtGState
+        "sh",  // shading
+        "BDC", // marked content with properties
+    ];
+    for (i, &tok) in tokens.iter().enumerate() {
+        if resource_ops.contains(&tok) && i > 0 && tokens[i - 1].starts_with('/') {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check Info dict / XMP metadata consistency (§6.7.3).
 ///
 /// Properties in /Info dict must have matching values in XMP metadata.
@@ -4780,13 +4802,14 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
                     // Form XObjects should have their own Resources if they use any
                     if !dict.contains_key(keys::RESOURCES) {
                         if let Ok(decoded) = stream.decoded() {
-                            let ops = detect_device_color_ops(&decoded);
-                            if ops.has_rgb || ops.has_cmyk || ops.has_gray {
+                            // Check for any resource-using operators
+                            let needs_resources = stream_references_resources(&decoded);
+                            if needs_resources {
                                 let xn = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
                                 error_at(
                                     report,
                                     "6.2.2",
-                                    format!("Form XObject {xn} uses color operators but has no explicit Resources"),
+                                    format!("Form XObject {xn} references resources but has no explicit Resources dictionary"),
                                     loc.clone(),
                                 );
                             }
@@ -4967,16 +4990,29 @@ fn find_keyword(data: &[u8], keyword: &[u8]) -> Option<usize> {
 fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
     let start = stream_pos.saturating_sub(500);
     let region = &data[start..stream_pos];
-    let region_str = std::str::from_utf8(region).ok()?;
-    let idx = region_str.rfind("/Length")?;
-    let after = &region_str[idx + 7..];
-    let after = after.trim_start();
-    // Parse the integer
-    let end = after.find(|c: char| !c.is_ascii_digit()).unwrap_or(after.len());
+    // Search for /Length as bytes (not UTF-8) to handle binary content
+    let length_key = b"/Length";
+    let mut last_idx = None;
+    let mut search = 0;
+    while search + length_key.len() <= region.len() {
+        if let Some(off) = region[search..].windows(length_key.len()).position(|w| w == length_key) {
+            last_idx = Some(search + off);
+            search = search + off + length_key.len();
+        } else {
+            break;
+        }
+    }
+    let idx = last_idx?;
+    let after = &region[idx + length_key.len()..];
+    // Skip whitespace
+    let skip = after.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(after.len());
+    let after = &after[skip..];
+    // Parse digits
+    let end = after.iter().position(|b| !b.is_ascii_digit()).unwrap_or(after.len());
     if end == 0 {
         return None; // /Length might be an indirect reference
     }
-    after[..end].parse().ok()
+    std::str::from_utf8(&after[..end]).ok()?.parse().ok()
 }
 
 // ─── §6.1.8 / §6.1.9 — Object syntax spacing checks ────────────────────────
@@ -5096,7 +5132,95 @@ pub fn check_xmp_extension_schema(pdf: &Pdf, report: &mut ComplianceReport) {
 
 /// String-based XMP extension schema validation.
 fn check_xmp_extension_schema_text(xmp: &str, report: &mut ComplianceReport) {
-    // Check that pdfaProperty:valueType values are defined/valid
+    // Check 1: Extension schema container must use prefix "pdfaExtension"
+    // The container element should be <pdfaExtension:schemas>
+    if xmp.contains("pdfaExt:schemas") && !xmp.contains("pdfaExtension:schemas") {
+        error(
+            report,
+            "6.7.8",
+            "Extension schema container uses wrong prefix (expected 'pdfaExtension')",
+        );
+        return;
+    }
+
+    // Check 2: Schema fields must use prefix "pdfaSchema"
+    // Look for common fields with wrong prefix
+    for field in ["schema", "namespaceURI", "prefix", "property"] {
+        // Check if the field exists with a non-standard pdfaSchema prefix
+        let correct = format!("pdfaSchema:{field}");
+        // Check for variations like nonpdfaSchema:field or pdfaSch:field
+        if !xmp.contains(&correct) {
+            // If the field doesn't appear at all with correct prefix, check for wrong prefix
+            // by looking for ":field" after a pdfaSchema-like prefix
+            continue;
+        }
+    }
+
+    // Check 3: Look for schema fields with wrong prefixes
+    // Pattern: <wrongprefix:schema>, <wrongprefix:namespaceURI>, etc.
+    let schema_fields = ["schema", "namespaceURI", "prefix"];
+    for field in schema_fields {
+        let correct_prefix = format!("pdfaSchema:{field}");
+        // Find all occurrences of this field with any prefix
+        let search = format!(":{field}>");
+        for (idx, _) in xmp.match_indices(&search) {
+            // Look backwards for '<' to find the tag
+            let before = &xmp[..idx];
+            if let Some(tag_start) = before.rfind('<') {
+                let tag = &xmp[tag_start..idx + search.len()];
+                // Skip closing tags
+                if tag.starts_with("</") {
+                    continue;
+                }
+                let elem_name = &xmp[tag_start + 1..idx + 1 + field.len()];
+                if !elem_name.starts_with(&correct_prefix) && elem_name.contains(':') {
+                    let prefix = elem_name.split(':').next().unwrap_or("?");
+                    if prefix.starts_with("pdfa") && prefix != "pdfaSchema" {
+                        error(
+                            report,
+                            "6.7.8",
+                            format!(
+                                "Extension schema field '{field}' uses wrong prefix '{prefix}' (expected 'pdfaSchema')"
+                            ),
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // Check 4: Property fields must use prefix "pdfaProperty"
+    let property_fields = ["name", "valueType", "category", "description"];
+    for field in property_fields {
+        let correct_prefix = format!("pdfaProperty:{field}");
+        let search = format!(":{field}>");
+        for (idx, _) in xmp.match_indices(&search) {
+            let before = &xmp[..idx];
+            if let Some(tag_start) = before.rfind('<') {
+                let tag = &xmp[tag_start..idx + search.len()];
+                if tag.starts_with("</") {
+                    continue;
+                }
+                let elem_name = &xmp[tag_start + 1..idx + 1 + field.len()];
+                if !elem_name.starts_with(&correct_prefix) && elem_name.contains(':') {
+                    let prefix = elem_name.split(':').next().unwrap_or("?");
+                    if prefix.starts_with("pdfa") && prefix != "pdfaProperty" {
+                        error(
+                            report,
+                            "6.7.8",
+                            format!(
+                                "Extension schema property field '{field}' uses wrong prefix '{prefix}' (expected 'pdfaProperty')"
+                            ),
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    // Check 5: valueType definitions
     let standard_types = [
         "Text", "URI", "URL", "Boolean", "Integer", "Real",
         "Date", "MIMEType", "AgentName", "RenditionClass",
@@ -5107,14 +5231,12 @@ fn check_xmp_extension_schema_text(xmp: &str, report: &mut ComplianceReport) {
         "ExternalRef", "Field", "Dimensions",
     ];
 
-    // Extract valueType values
     for (tag_start, tag_end) in find_xml_element_values(xmp, "pdfaProperty:valueType") {
         let val = xmp[tag_start..tag_end].trim();
         if val.is_empty() {
             continue;
         }
         if !standard_types.contains(&val) {
-            // Check if custom type is defined in pdfaType:type
             let type_defined = find_xml_element_values(xmp, "pdfaType:type")
                 .any(|(s, e)| xmp[s..e].trim() == val);
             if !type_defined {
@@ -5128,17 +5250,14 @@ fn check_xmp_extension_schema_text(xmp: &str, report: &mut ComplianceReport) {
         }
     }
 
-    // Check pdfaType:namespaceURI presence when value types exist
+    // Check 6: pdfaType fields must use prefix "pdfaType"
     let has_value_types = xmp.contains("pdfaType:type") || xmp.contains("<pdfaType:");
-    if has_value_types {
-        let has_type_ns = xmp.contains("pdfaType:namespaceURI");
-        if !has_type_ns {
-            error(
-                report,
-                "6.7.8",
-                "Extension schema value type missing required pdfaType:namespaceURI",
-            );
-        }
+    if has_value_types && !xmp.contains("pdfaType:namespaceURI") {
+        error(
+            report,
+            "6.7.8",
+            "Extension schema value type missing required pdfaType:namespaceURI",
+        );
     }
 }
 
