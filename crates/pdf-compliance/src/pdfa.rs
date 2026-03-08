@@ -28,6 +28,9 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_device_colorspaces(pdf, &mut report);
     check_info_xmp_consistency(pdf, &mut report);
     check_page_dimensions(pdf, &mut report);
+    check_annotation_flags(pdf, &mut report);
+    check_form_xobjects(pdf, &mut report);
+    check_page_boundary_sizes(pdf, &mut report);
 
     if level.part() == 1 {
         check_transparency_a1(pdf, &mut report);
@@ -213,6 +216,21 @@ fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.1.12 — Absolute real values must not exceed 32767.
 fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_page_dimensions(pdf, report);
+}
+
+/// §6.3.2 — Annotations must have /F key with correct flags.
+fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_annotation_flags(pdf, report);
+}
+
+/// §6.2.9 — Form XObjects must not contain OPI/PS/Ref keys.
+fn check_form_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_form_xobjects(pdf, report);
+}
+
+/// §6.1.13 — Page boundaries must be 3-14400 units.
+fn check_page_boundary_sizes(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_page_boundary_sizes(pdf, report);
 }
 
 /// §6.4 — PDF/A-1 forbids transparency.
