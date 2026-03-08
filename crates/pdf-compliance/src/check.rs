@@ -2526,6 +2526,7 @@ pub fn check_all_page_boundaries(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let boxes: &[(&[u8], &str)] = &[
+            (b"CropBox" as &[u8], "CropBox"),
             (keys::BLEED_BOX, "BleedBox"),
             (keys::TRIM_BOX, "TrimBox"),
             (keys::ART_BOX, "ArtBox"),
@@ -5020,61 +5021,106 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
 /// Check spacing around obj/endobj keywords (§6.1.8, §6.1.9).
 ///
 /// Requirements:
-/// - Object number and generation number separated by single space
-/// - Generation number and "obj" separated by single space
-/// - "obj" followed by EOL or whitespace
-/// - "endobj" preceded by EOL
+/// - Object number and generation number separated by single white-space
+/// - Generation number and "obj" separated by single white-space
+/// - "obj" followed by EOL marker
+/// - "endobj" preceded and followed by EOL marker
 pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
     let data = pdf.data().as_ref();
     let len = data.len();
-    let mut pos = 0;
-    let mut found_violation = false;
 
-    while pos + 4 < len && !found_violation {
-        // Find " obj" pattern (space + "obj")
+    // Use regex-like pattern matching: find `<digits><ws><digits><ws>obj`
+    // and verify spacing is exactly single space/whitespace
+    let mut pos = 0;
+    while pos + 5 < len {
+        // Find "obj" keyword (but not "endobj")
         let remaining = &data[pos..];
-        let Some(obj_off) = remaining.windows(4).position(|w| {
-            w == b" obj" || w == b"\nobj" || w == b"\robj"
-        }) else {
+        let Some(obj_off) = remaining.windows(3).position(|w| w == b"obj") else {
             break;
         };
         let abs_obj = pos + obj_off;
 
-        // "obj" is at abs_obj + 1
-        let obj_kw = abs_obj + 1;
+        // Skip if part of "endobj"
+        if abs_obj >= 3 && &data[abs_obj - 3..abs_obj] == b"end" {
+            pos = abs_obj + 3;
+            continue;
+        }
 
-        // Check what follows "obj" — must be whitespace or EOL
-        let after_obj = obj_kw + 3;
+        // Skip if not preceded by whitespace (must have `<gen> obj`)
+        if abs_obj == 0 || !data[abs_obj - 1].is_ascii_whitespace() {
+            pos = abs_obj + 3;
+            continue;
+        }
+
+        // Scan backwards: expect single-ws + digit(s) + single-ws + digit(s) + EOL
+        let before = &data[abs_obj.saturating_sub(30)..abs_obj];
+        if before.is_empty() {
+            pos = abs_obj + 3;
+            continue;
+        }
+
+        // Parse backwards: whitespace, then gen number, then whitespace, then obj number
+        let mut idx = before.len() - 1;
+
+        // Count whitespace before "obj"
+        let ws1_end = idx + 1;
+        while idx > 0 && before[idx].is_ascii_whitespace() {
+            idx -= 1;
+        }
+        let ws1_count = ws1_end - idx - 1;
+
+        // Check: must be exactly 1 whitespace char before "obj"
+        if ws1_count != 1 {
+            error(
+                report,
+                "6.1.8",
+                format!("Extra spacing before 'obj' keyword ({ws1_count} whitespace chars, expected 1)"),
+            );
+            return;
+        }
+
+        // Parse generation number
+        let gen_end = idx + 1;
+        while idx > 0 && before[idx].is_ascii_digit() {
+            idx -= 1;
+        }
+        let gen_start = idx + 1;
+        if gen_start == gen_end {
+            pos = abs_obj + 3;
+            continue; // Not a valid object header
+        }
+
+        // Count whitespace between obj number and gen number
+        let ws2_end = gen_start;
+        while idx > 0 && before[idx].is_ascii_whitespace() {
+            idx -= 1;
+        }
+        let ws2_count = ws2_end - idx - 1;
+
+        // Check: must be exactly 1 whitespace between obj num and gen num
+        if ws2_count > 1 {
+            error(
+                report,
+                "6.1.8",
+                format!("Extra spacing between object number and generation number ({ws2_count} whitespace chars, expected 1)"),
+            );
+            return;
+        }
+
+        // Check "obj" is followed by EOL or whitespace
+        let after_obj = abs_obj + 3;
         if after_obj < len {
             let c = data[after_obj];
-            if c != b' ' && c != b'\n' && c != b'\r' && c != b'\t' && c != b'<' && c != b'/' {
-                // Invalid: obj not followed by proper delimiter
-                found_violation = true;
-                error(report, "6.1.8", "Object keyword 'obj' not followed by proper whitespace/delimiter");
-                break;
+            if c != b'\n' && c != b'\r' && c != b' ' && c != b'\t' {
+                error(report, "6.1.8", "Keyword 'obj' not followed by proper whitespace/EOL");
+                return;
             }
         }
 
-        // Check what precedes: should be "<gen> obj" with single spaces
-        // Scan backwards to find the generation number and object number
-        if abs_obj >= 3 {
-            let before = &data[abs_obj.saturating_sub(20)..abs_obj + 1];
-            // Pattern should be: <objnum><sp><gen><sp>obj
-            // Check for multiple spaces between gen and obj
-            if before.len() >= 2 && before[before.len() - 1] == b' ' && before[before.len() - 2] == b' ' {
-                found_violation = true;
-                error(report, "6.1.8", "Multiple spaces before 'obj' keyword");
-                break;
-            }
-        }
-
-        pos = after_obj;
+        pos = abs_obj + 3;
     }
 
     // Check endobj spacing
-    if found_violation {
-        return;
-    }
     pos = 0;
     while pos + 6 < len {
         let remaining = &data[pos..];
@@ -5096,7 +5142,7 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
         let after = abs_eobj + 6;
         if after < len {
             let c = data[after];
-            if c != b'\n' && c != b'\r' && c != b' ' {
+            if c != b'\n' && c != b'\r' {
                 error(report, "6.1.8", "Keyword 'endobj' not followed by EOL marker");
                 return;
             }
