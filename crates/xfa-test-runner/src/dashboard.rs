@@ -8,6 +8,7 @@ pub struct DashboardData {
     pub summary: RunSummary,
     pub clusters: Vec<Cluster>,
     pub prev_summary: Option<RunSummary>,
+    pub quality_distribution: Vec<(String, String, usize)>,
 }
 
 pub fn generate_dashboard(
@@ -41,6 +42,7 @@ pub fn collect_dashboard_data(
         .run_info(run_id)
         .unwrap_or(("unknown".to_string(), "unknown".to_string()));
     let prev_summary = db.previous_run_id(run_id).map(|prev| db.summary(&prev));
+    let quality_distribution = db.oracle_score_distribution(run_id);
 
     DashboardData {
         run_id: run_id.to_string(),
@@ -49,7 +51,61 @@ pub fn collect_dashboard_data(
         summary,
         clusters,
         prev_summary,
+        quality_distribution,
     }
+}
+
+fn render_quality_section(data: &DashboardData) -> String {
+    if data.quality_distribution.is_empty() {
+        return String::new();
+    }
+
+    let mut tests: Vec<String> = data
+        .quality_distribution
+        .iter()
+        .map(|(t, _, _)| t.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    tests.sort();
+
+    let buckets = [
+        "0.0-0.5", "0.5-0.8", "0.8-0.9", "0.9-0.95", "0.95-1.0", "1.0",
+    ];
+
+    let mut rows = String::new();
+    for test in &tests {
+        rows.push_str(&format!("<tr><td><strong>{test}</strong></td>"));
+        for bucket in &buckets {
+            let count = data
+                .quality_distribution
+                .iter()
+                .find(|(t, b, _)| t == test && b == bucket)
+                .map(|(_, _, c)| *c)
+                .unwrap_or(0);
+            let class = if *bucket == "1.0" || *bucket == "0.95-1.0" {
+                "delta-good"
+            } else if *bucket == "0.0-0.5" {
+                "delta-bad"
+            } else {
+                ""
+            };
+            rows.push_str(&format!("<td class=\"{class}\">{count}</td>"));
+        }
+        rows.push_str("</tr>\n");
+    }
+
+    format!(
+        r#"
+<div class="card">
+  <h2>Quality Distribution (Oracle Scores)</h2>
+  <table>
+  <tr><th>Test</th><th>0-50%</th><th>50-80%</th><th>80-90%</th><th>90-95%</th><th>95-100%</th><th>100%</th></tr>
+  {rows}
+  </table>
+</div>"#,
+        rows = rows,
+    )
 }
 
 fn pct(n: usize, total: usize) -> f64 {
@@ -169,6 +225,8 @@ th {{ color: #00d4ff; }}
   </div>
 </div>
 
+{quality_section}
+
 <div class="card">
   <h2>Clusters</h2>
   <p>Open: {open_clusters} ({new_clusters} new, {resolved_clusters} resolved)</p>
@@ -192,6 +250,7 @@ th {{ color: #00d4ff; }}
         open_clusters = data.clusters.len(),
         new_clusters = new_clusters,
         resolved_clusters = resolved_clusters,
+        quality_section = render_quality_section(data),
         top_cluster = top_cluster,
     )
 }
