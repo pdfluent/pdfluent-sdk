@@ -1193,6 +1193,24 @@ fn scan_fonts_type3_charprocs(
                     let cstr = std::str::from_utf8(cname.as_ref()).unwrap_or("?");
                     let cloc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
                     report_device_color_ops(&decoded, rgb_ok, cmyk_ok, gray_ok, &cloc, report);
+                    // Also check implicit DeviceGray in CharProcs:
+                    // If no explicit color was set but painting operators are used,
+                    // the default color space is DeviceGray
+                    if !gray_ok {
+                        let ops = detect_device_color_ops(&decoded);
+                        if !ops.has_rgb
+                            && !ops.has_cmyk
+                            && !ops.has_gray
+                            && content_has_implicit_gray(&decoded)
+                        {
+                            error_at(
+                                report,
+                                "6.2.4.3",
+                                "Implicit DeviceGray (painting without setting color) in Type3 CharProc",
+                                cloc,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -1541,6 +1559,26 @@ fn detect_device_color_ops(content: &[u8]) -> DeviceColorOps {
     }
 
     result
+}
+
+/// Check if a content stream uses painting operators without setting an explicit color.
+/// When this happens, the implicit color space is DeviceGray.
+fn content_has_implicit_gray(content: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(content);
+    let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+    let has_painting = tokens.iter().any(|&t| {
+        matches!(
+            t,
+            "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "S" | "s"
+        )
+    });
+    let has_color = tokens.iter().any(|&t| {
+        matches!(
+            t,
+            "g" | "G" | "rg" | "RG" | "k" | "K" | "cs" | "CS" | "sc" | "SC" | "scn" | "SCN"
+        )
+    });
+    has_painting && !has_color
 }
 
 /// Check if a content stream references named resources (fonts, XObjects, color spaces, etc.).
