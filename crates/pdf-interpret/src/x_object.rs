@@ -189,8 +189,8 @@ pub(crate) fn draw_image_xobject<'a, 'b>(
         return;
     }
 
-    let width = x_object.width as f64;
-    let height = x_object.height as f64;
+    let width = (x_object.width as f64).max(1.0);
+    let height = (x_object.height as f64).max(1.0);
 
     context.save_state();
     context.pre_concat_affine(Affine::new([
@@ -391,8 +391,10 @@ impl DecodedImageXObject {
             .image_data
             .as_ref()
             .map(|d| {
-                scale_x = obj.width as f32 / d.width as f32;
-                scale_y = obj.height as f32 / d.height as f32;
+                if d.width > 0 && d.height > 0 {
+                    scale_x = obj.width as f32 / d.width as f32;
+                    scale_y = obj.height as f32 / d.height as f32;
+                }
 
                 (d.width, d.height)
             })
@@ -427,9 +429,10 @@ impl DecodedImageXObject {
         };
 
         if !matches!(bits_per_component, 1 | 2 | 4 | 8 | 16) {
-            bits_per_component = ((decoded.data.len() as u64 * 8)
-                / (width as u64 * height as u64 * color_space.num_components() as u64))
-                as u8;
+            let divisor = width as u64 * height as u64 * color_space.num_components() as u64;
+            if divisor > 0 {
+                bits_per_component = ((decoded.data.len() as u64 * 8) / divisor) as u8;
+            }
         }
 
         let is_luma = obj.is_image_mask || obj.force_luma;

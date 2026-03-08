@@ -73,8 +73,8 @@ impl Renderer {
         let mask = {
             let transform = *self.ctx.transform()
                 * Affine::scale_non_uniform(
-                    rgb_data.width as f64 / alpha_data.width as f64,
-                    rgb_data.height as f64 / alpha_data.height as f64,
+                    rgb_data.width as f64 / (alpha_data.width as f64).max(1.0),
+                    rgb_data.height as f64 / (alpha_data.height as f64).max(1.0),
                 );
             let mut renderer = Self::new(
                 self.ctx.width(),
@@ -337,10 +337,12 @@ impl Renderer {
                         const MIN_PIXMAP_SIZE: f32 = 1.0;
 
                         let bbox = t.bbox;
-                        let max_x_scale = MAX_PIXMAP_SIZE / bbox.width() as f32;
-                        let min_x_scale = MIN_PIXMAP_SIZE / bbox.width() as f32;
-                        let max_y_scale = MAX_PIXMAP_SIZE / bbox.height() as f32;
-                        let min_y_scale = MIN_PIXMAP_SIZE / bbox.height() as f32;
+                        let bw = (bbox.width() as f32).max(0.001);
+                        let bh = (bbox.height() as f32).max(0.001);
+                        let max_x_scale = MAX_PIXMAP_SIZE / bw;
+                        let min_x_scale = MIN_PIXMAP_SIZE / bw;
+                        let max_y_scale = MAX_PIXMAP_SIZE / bh;
+                        let min_y_scale = MIN_PIXMAP_SIZE / bh;
 
                         let (mut xs, mut ys) = {
                             let (x, y) = x_y_advances(&(t.matrix));
