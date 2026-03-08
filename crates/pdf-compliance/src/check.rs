@@ -622,6 +622,172 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Check annotation dictionaries have required /F key and correct flags (§6.3.2).
+///
+/// All annotations (except Popup) must have /F key. When present, Print flag
+/// must be set, Hidden/Invisible/ToggleNoView/NoView flags must be clear.
+pub fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            // Skip Popup annotations
+            if let Some(subtype) = annot.get::<Name>(keys::SUBTYPE) {
+                if subtype.as_ref() == b"Popup" {
+                    continue;
+                }
+            }
+
+            if let Some(flags) = annot.get::<i32>(keys::F) {
+                // Bit 1 (0x01) = Invisible, Bit 2 (0x02) = Hidden,
+                // Bit 3 (0x04) = Print, Bit 6 (0x20) = NoView,
+                // Bit 9 (0x100) = ToggleNoView
+                let invisible = flags & 0x01 != 0;
+                let hidden = flags & 0x02 != 0;
+                let print = flags & 0x04 != 0;
+                let no_view = flags & 0x20 != 0;
+                let toggle_no_view = flags & 0x100 != 0;
+
+                if !print || invisible || hidden || no_view || toggle_no_view {
+                    error_at(
+                        report,
+                        "6.3.2",
+                        format!(
+                            "Annotation /F flags {flags:#x}: Print must be set, Hidden/Invisible/NoView/ToggleNoView must be clear"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            } else {
+                let subtype_name = annot
+                    .get::<Name>(keys::SUBTYPE)
+                    .map(|n| {
+                        std::str::from_utf8(n.as_ref())
+                            .unwrap_or("?")
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+                error_at(
+                    report,
+                    "6.3.2",
+                    format!("{subtype_name} annotation missing required /F key"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
+}
+
+/// Check Form XObjects don't contain forbidden keys (§6.2.9).
+///
+/// Form XObjects must not contain OPI key, PS key, or Subtype2=PS.
+/// Reference XObjects (Ref key) are also forbidden.
+pub fn check_form_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
+
+        let xobj_dict = if let Some(ref rd) = res_dict {
+            rd.get::<Dict<'_>>(keys::XOBJECT)
+        } else {
+            None
+        };
+
+        let Some(xobj_dict) = xobj_dict else {
+            continue;
+        };
+
+        for (name, _) in xobj_dict.entries() {
+            let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let dict = stream.dict();
+
+            // Check it's a Form XObject
+            if let Some(subtype) = dict.get::<Name>(keys::SUBTYPE) {
+                if subtype.as_ref() != b"Form" {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+
+            if dict.contains_key(keys::OPI) {
+                error_at(
+                    report,
+                    "6.2.9",
+                    format!("Form XObject {xobj_name} contains forbidden /OPI key"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+            if dict.contains_key(keys::PS) {
+                error_at(
+                    report,
+                    "6.2.9",
+                    format!("Form XObject {xobj_name} contains forbidden /PS key"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+            if let Some(sub2) = dict.get::<Name>(b"Subtype2" as &[u8]) {
+                if sub2.as_ref() == keys::PS {
+                    error_at(
+                        report,
+                        "6.2.9",
+                        format!("Form XObject {xobj_name} has Subtype2=PS"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+            if dict.contains_key(b"Ref" as &[u8]) {
+                error_at(
+                    report,
+                    "6.2.9",
+                    format!("Form XObject {xobj_name} is a reference XObject (contains /Ref)"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
+}
+
+/// Check page boundary sizes are within spec limits (§6.1.13).
+///
+/// Page boundaries must be ≥ 3 units and ≤ 14400 units in each direction.
+pub fn check_page_boundary_sizes(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let rect = page.media_box();
+        let width = (rect.x1 - rect.x0).abs();
+        let height = (rect.y1 - rect.y0).abs();
+
+        if width < 3.0 || height < 3.0 {
+            error_at(
+                report,
+                "6.1.13",
+                format!(
+                    "Page boundary {:.1}x{:.1} is less than minimum 3 units",
+                    width, height
+                ),
+                format!("page {}", page_idx + 1),
+            );
+        }
+        if width > 14400.0 || height > 14400.0 {
+            error_at(
+                report,
+                "6.1.13",
+                format!(
+                    "Page boundary {:.0}x{:.0} exceeds maximum 14400 units",
+                    width, height
+                ),
+                format!("page {}", page_idx + 1),
+            );
+        }
+    }
+}
+
 /// Check absolute real values don't exceed 32767 (§6.1.12).
 ///
 /// The PDF/A spec requires that all absolute real values in content streams
