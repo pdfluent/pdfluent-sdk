@@ -784,6 +784,18 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-2/3/4: §6.1.9
             (2..=4, "6.1.8") => Some("6.1.9"),
 
+            // Implementation limits
+            // PDF/A-1: §6.1.12, PDF/A-2/3/4: §6.1.13
+            (1, "6.1.13") => Some("6.1.12"),
+
+            // Stream external file refs
+            // PDF/A-1: §6.1.7, PDF/A-2/3/4: §6.1.7.1
+            (1, "6.1.7.1") => Some("6.1.7"),
+
+            // Widget annotation actions
+            // PDF/A-1: §6.6.1, PDF/A-2/3: §6.4.1
+            (1, "6.4.1") => Some("6.6.1"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
