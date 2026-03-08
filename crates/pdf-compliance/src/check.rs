@@ -357,12 +357,17 @@ pub fn check_xmp_schemas(xmp: &[u8], rule: &str, report: &mut ComplianceReport) 
     }
 }
 
-/// Check for forbidden actions (§6.6.1).
+/// Check for forbidden actions with configurable rule clause.
 ///
-/// Launch, Sound, Movie, ResetForm, ImportData, JavaScript actions are forbidden.
-/// Additionally, the deprecated set-state and no-op actions are forbidden.
-pub fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
-    let forbidden: &[&[u8]] = &[
+/// PDF/A-1: Launch, Sound, Movie, ResetForm, ImportData, JavaScript + deprecated.
+/// PDF/A-2/3: additionally Hide, Rendition, Trans, GoTo3DView, SetOCGState.
+pub fn check_forbidden_actions_rule(
+    pdf: &Pdf,
+    part: u8,
+    rule: &str,
+    report: &mut ComplianceReport,
+) {
+    let mut forbidden: Vec<&[u8]> = vec![
         b"Launch",
         b"Sound",
         b"Movie",
@@ -371,19 +376,22 @@ pub fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
         keys::JAVA_SCRIPT,
         b"SetState",
         b"NoOp",
-        b"SetOCGState",
     ];
+
+    if part >= 2 {
+        forbidden.extend_from_slice(&[b"Hide", b"SetOCGState", b"Rendition", b"Trans", b"GoTo3DView"]);
+    }
 
     // Check catalog OpenAction
     if let Some(cat) = catalog(pdf) {
         if let Some(action) = cat.get::<Dict<'_>>(keys::OPEN_ACTION) {
-            check_action_forbidden(&action, forbidden, "catalog", report);
+            check_action_forbidden(&action, &forbidden, rule, "catalog", report);
         }
         // Check catalog AA
         if let Some(aa) = cat.get::<Dict<'_>>(keys::AA) {
             for (trigger, _) in aa.entries() {
                 if let Some(action) = aa.get::<Dict<'_>>(trigger.as_ref()) {
-                    check_action_forbidden(&action, forbidden, "catalog AA", report);
+                    check_action_forbidden(&action, &forbidden, rule, "catalog AA", report);
                 }
             }
         }
@@ -398,7 +406,7 @@ pub fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
             for (trigger, _) in aa.entries() {
                 if let Some(action) = aa.get::<Dict<'_>>(trigger.as_ref()) {
                     let loc = format!("page {}", page_idx + 1);
-                    check_action_forbidden(&action, forbidden, &loc, report);
+                    check_action_forbidden(&action, &forbidden, rule, &loc, report);
                 }
             }
         }
@@ -409,7 +417,7 @@ pub fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
         for annot in annots.iter::<Dict<'_>>() {
             if let Some(action) = annot.get::<Dict<'_>>(keys::A) {
                 let loc = format!("page {}", page_idx + 1);
-                check_action_forbidden(&action, forbidden, &loc, report);
+                check_action_forbidden(&action, &forbidden, rule, &loc, report);
             }
         }
     }
@@ -418,6 +426,7 @@ pub fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
 fn check_action_forbidden(
     action: &Dict<'_>,
     forbidden: &[&[u8]],
+    rule: &str,
     location: &str,
     report: &mut ComplianceReport,
 ) {
@@ -426,7 +435,7 @@ fn check_action_forbidden(
             let action_name = std::str::from_utf8(s.as_ref()).unwrap_or("?");
             error_at(
                 report,
-                "6.6.1",
+                rule,
                 format!("Forbidden action type: {action_name}"),
                 location.to_string(),
             );

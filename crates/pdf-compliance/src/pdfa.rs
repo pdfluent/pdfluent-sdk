@@ -21,14 +21,15 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_xmp_metadata(pdf, level, &mut report);
     check_xmp_schemas(pdf, level, &mut report);
     check_encryption(pdf, &mut report);
-    check_forbidden_actions(pdf, &mut report); // subsumes check_javascript (§6.1.6)
-    check_output_intent(pdf, &mut report);
+    check_forbidden_actions(pdf, level, &mut report);
+    check_output_intent(pdf, level, &mut report);
     check_font_embedding(pdf, &mut report);
     check_color_spaces(pdf, &mut report);
     check_device_colorspaces(pdf, &mut report);
     check_info_xmp_consistency(pdf, &mut report);
     check_page_dimensions(pdf, &mut report);
     check_annotation_flags(pdf, &mut report);
+    check_annotation_types(pdf, level, &mut report);
     check_form_xobjects(pdf, &mut report);
     check_page_boundary_sizes(pdf, &mut report);
 
@@ -50,17 +51,20 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     report
 }
 
-/// §6.6.4 — XMP metadata must declare the correct PDF/A part and conformance.
+/// XMP metadata must declare the correct PDF/A part and conformance.
+/// PDF/A-1: §6.7.11, PDF/A-2/3: §6.6.4.
 fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    let rule = if level.part() == 1 { "6.7.11" } else { "6.6.4" };
+
     let Some(xmp) = check::get_xmp_metadata(pdf) else {
-        check::error(report, "6.6.4", "No XMP metadata stream in catalog");
+        check::error(report, rule, "No XMP metadata stream in catalog");
         return;
     };
 
     let Some((part, conformance)) = check::parse_xmp_pdfa(&xmp) else {
         check::error(
             report,
-            "6.6.4",
+            rule,
             "XMP metadata missing pdfaid:part or pdfaid:conformance",
         );
         return;
@@ -69,7 +73,7 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     if part != level.part() {
         check::error(
             report,
-            "6.6.4",
+            rule,
             format!(
                 "XMP pdfaid:part={part} does not match expected {}",
                 level.part()
@@ -81,7 +85,7 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     if !conformance.eq_ignore_ascii_case(expected_conf) {
         check::error(
             report,
-            "6.6.4",
+            rule,
             format!("XMP pdfaid:conformance={conformance} does not match expected {expected_conf}"),
         );
     }
@@ -98,12 +102,19 @@ fn check_encryption(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// §6.2.3 — OutputIntents must include a GTS_PDFA1 entry with ICC profile.
-fn check_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+/// Forbidden action types. PDF/A-1: §6.6.1, PDF/A-2/3: §6.5.1.
+fn check_forbidden_actions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    let rule = if level.part() == 1 { "6.6.1" } else { "6.5.1" };
+    check::check_forbidden_actions_rule(pdf, level.part(), rule, report);
+}
+
+/// OutputIntents must include a GTS_PDFA1 entry. PDF/A-1: §6.2.2, PDF/A-2/3: §6.2.3.
+fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    let rule = if level.part() == 1 { "6.2.2" } else { "6.2.3" };
     if !check::has_output_intent(pdf) {
         check::error(
             report,
-            "6.2.3",
+            rule,
             "No OutputIntents with GTS_PDFA1 subtype found",
         );
     }
@@ -198,11 +209,6 @@ fn check_xmp_schemas(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport)
     }
 }
 
-/// §6.6.1 — Forbidden action types (Launch, Sound, Movie, ResetForm, ImportData, JavaScript).
-fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_forbidden_actions(pdf, report);
-}
-
 /// §6.2.4.3 — Device color spaces need Default alternatives or OutputIntent.
 fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_device_colorspaces(pdf, report);
@@ -221,6 +227,39 @@ fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.3.2 — Annotations must have /F key with correct flags.
 fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_annotation_flags(pdf, report);
+}
+
+/// §6.5.2 — Only specific annotation types are permitted (PDF/A-1).
+fn check_annotation_types(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    if level.part() != 1 {
+        return; // PDF/A-2/3 has different annotation restrictions
+    }
+
+    let allowed: &[&[u8]] = &[
+        b"Text", b"Link", b"FreeText", b"Line", b"Square", b"Circle",
+        b"Highlight", b"Underline", b"Squiggly", b"StrikeOut", b"Stamp",
+        b"Ink", b"Popup", b"Widget", b"PrinterMark", b"TrapNet",
+    ];
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(annots) = page_dict.get::<pdf_syntax::object::Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            if let Some(subtype) = annot.get::<Name>(keys::SUBTYPE) {
+                if !allowed.iter().any(|a| subtype.as_ref() == *a) {
+                    let name = std::str::from_utf8(subtype.as_ref()).unwrap_or("?");
+                    check::error_at(
+                        report,
+                        "6.5.2",
+                        format!("Annotation type {name} not permitted in PDF/A-1"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// §6.2.9 — Form XObjects must not contain OPI/PS/Ref keys.
