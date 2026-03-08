@@ -28,7 +28,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_color_spaces(pdf, &mut report);
     check_device_colorspaces(pdf, &mut report);
     check_device_color_vs_output_intent(pdf, &mut report);
-    check_page_dimensions(pdf, &mut report);
+    check_page_dimensions(pdf, level, &mut report);
     check_annotation_flags(pdf, &mut report);
     check_annotation_types(pdf, level, &mut report);
     check_annotation_color_arrays(pdf, &mut report);
@@ -270,9 +270,9 @@ fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport)
     check::check_device_color_vs_output_intent(pdf, report);
 }
 
-/// §6.1.12 — Absolute real values must not exceed 32767.
-fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_page_dimensions(pdf, report);
+/// §6.1.12/6.1.13 — Implementation limits (real values, name/string lengths, etc.).
+fn check_page_dimensions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_page_dimensions(pdf, level.part(), report);
 }
 
 /// §6.3.2 — Annotations must have /F key with correct flags.

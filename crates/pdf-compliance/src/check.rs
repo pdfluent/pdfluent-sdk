@@ -1858,12 +1858,14 @@ pub fn check_output_intent_profile(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Check absolute real values don't exceed 32767 (§6.1.12).
+/// Check implementation limits (§6.1.12 for PDF/A-1, §6.1.13 for PDF/A-2/3/4).
 ///
-/// The PDF/A spec requires that all absolute real values in content streams
-/// and page dictionaries must be ≤ 32767. We approximate this by checking
-/// MediaBox dimensions (the most common trigger).
-pub fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
+/// Real values ≤ 32767, name ≤ 127 bytes, string ≤ 65535/32767 bytes,
+/// graphics state nesting ≤ 28 levels.
+pub fn check_page_dimensions(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    // PDF/A-1 uses clause 6.1.12, PDF/A-2/3/4 uses 6.1.13
+    let rule = if part == 1 { "6.1.12" } else { "6.1.13" };
+
     const MAX_REAL: f64 = 32767.0;
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
@@ -1873,7 +1875,7 @@ pub fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
             if val.abs() > MAX_REAL {
                 error_at(
                     report,
-                    "6.1.12",
+                    rule,
                     format!(
                         "Absolute real value {:.1} exceeds maximum 32767.0",
                         val.abs()
@@ -1889,7 +1891,7 @@ pub fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
         if width > MAX_REAL || height > MAX_REAL {
             error_at(
                 report,
-                "6.1.12",
+                rule,
                 format!(
                     "Page dimensions {:.0}x{:.0} exceed maximum 32767.0",
                     width, height
@@ -1898,12 +1900,12 @@ pub fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
             );
         }
 
-        // §6.1.12: Also scan content stream numeric operands
+        // Scan content stream numeric operands
         if let Some(content) = page.page_stream() {
             if scan_content_stream_reals(content, MAX_REAL) {
                 error_at(
                     report,
-                    "6.1.12",
+                    rule,
                     "Content stream contains real value exceeding 32767",
                     format!("page {}", page_idx + 1),
                 );
@@ -1911,22 +1913,32 @@ pub fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
         }
     }
 
-    // §6.1.12 test 4: Name objects must not exceed 127 bytes
-    check_name_lengths(pdf, report);
+    // Name objects must not exceed 127 bytes
+    check_name_lengths(pdf, rule, report);
+
+    // String objects must not exceed 65535 bytes
+    check_string_lengths(pdf, rule, report);
+
+    // Graphics state nesting depth (q/Q) must not exceed 28
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        if let Some(content) = page.page_stream() {
+            check_gs_nesting_depth(content, page_idx, rule, report);
+        }
+    }
 }
 
-/// §6.1.12 test 4 — All Name objects must not exceed 127 bytes.
-fn check_name_lengths(pdf: &Pdf, report: &mut ComplianceReport) {
+/// All Name objects must not exceed 127 bytes.
+fn check_name_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
     for obj in pdf.objects() {
         if let Object::Dict(ref d) = obj {
             for (key, _) in d.entries() {
                 if key.as_ref().len() > 127 {
                     error(
                         report,
-                        "6.1.12",
+                        rule,
                         format!("Name key exceeds 127 bytes ({})", key.as_ref().len()),
                     );
-                    return; // One error is enough to flag non-compliance
+                    return;
                 }
             }
         }
@@ -1934,7 +1946,7 @@ fn check_name_lengths(pdf: &Pdf, report: &mut ComplianceReport) {
             if n.as_ref().len() > 127 {
                 error(
                     report,
-                    "6.1.12",
+                    rule,
                     format!("Name object exceeds 127 bytes ({})", n.as_ref().len()),
                 );
                 return;
@@ -2392,6 +2404,57 @@ pub fn check_linearization(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// String objects must not exceed 65535 bytes.
+fn check_string_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        if let Object::String(ref s) = obj {
+            if s.as_bytes().len() > 65535 {
+                error(
+                    report,
+                    rule,
+                    format!("String object exceeds 65535 bytes ({})", s.as_bytes().len()),
+                );
+                return;
+            }
+        }
+    }
+}
+
+/// Graphics state nesting (q/Q) must not exceed 28 levels.
+fn check_gs_nesting_depth(
+    content: &[u8],
+    page_idx: usize,
+    rule: &str,
+    report: &mut ComplianceReport,
+) {
+    let text = std::string::String::from_utf8_lossy(content);
+    let mut depth: i32 = 0;
+    let mut max_depth: i32 = 0;
+
+    for token in text.split_ascii_whitespace() {
+        if token == "q" {
+            depth += 1;
+            if depth > max_depth {
+                max_depth = depth;
+            }
+        } else if token == "Q" {
+            depth -= 1;
+        }
+    }
+
+    if max_depth > 28 {
+        error_at(
+            report,
+            rule,
+            format!(
+                "Graphics state nesting depth {} exceeds maximum 28",
+                max_depth
+            ),
+            format!("page {}", page_idx + 1),
+        );
+    }
+}
+
 /// Scan content stream for numeric tokens exceeding max (§6.1.12).
 fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
     let text = std::string::String::from_utf8_lossy(content);
@@ -2658,11 +2721,11 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
             }
         }
 
-        // Check 2: pages using transparency features need /Group
+        // Check 2: pages using transparency features need /Group (§6.2.10)
         if !has_page_group && page_uses_transparency(page_dict) {
             error_at(
                 report,
-                "6.2.9",
+                "6.2.10",
                 "Page uses transparency but has no /Group entry",
                 format!("page {}", page_idx + 1),
             );
