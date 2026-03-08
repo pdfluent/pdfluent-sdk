@@ -3117,16 +3117,23 @@ pub fn check_inline_image_filters(pdf: &Pdf, pdfa_part: u8, report: &mut Complia
             };
             let header = &text[abs_bi..abs_bi + id_pos];
             // Check for /F or /Filter with LZW or Crypt value (case-insensitive)
+            // Handles: /F /LZW, /F/LZW, /Filter /LZWDecode, /F[/LZW], etc.
             let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.9" };
             let header_lower = header.to_ascii_lowercase();
             let has_lzw = header_lower.contains("/f /lzw")
                 || header_lower.contains("/f/lzw")
                 || header_lower.contains("/filter /lzw")
-                || header_lower.contains("/filter/lzw");
+                || header_lower.contains("/filter/lzw")
+                || header_lower.contains("/f[/lzw")
+                || header_lower.contains("/filter[/lzw")
+                || header_lower.contains("/f [/lzw")
+                || header_lower.contains("/filter [/lzw");
             let has_crypt = header_lower.contains("/f /cr")
                 || header_lower.contains("/f/cr")
                 || header_lower.contains("/filter /cr")
-                || header_lower.contains("/filter/cr");
+                || header_lower.contains("/filter/cr")
+                || header_lower.contains("/f[/cr")
+                || header_lower.contains("/filter[/cr");
             if has_lzw {
                 error_at(
                     report,
