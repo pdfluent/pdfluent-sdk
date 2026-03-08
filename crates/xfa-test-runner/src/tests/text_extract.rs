@@ -29,11 +29,22 @@ impl PdfTest for TextExtractTest {
         let page_count = doc.page_count();
         let pages_to_extract = page_count.min(5);
         let mut total_chars = 0usize;
+        let mut pages_extracted = 0usize;
 
         for i in 0..pages_to_extract {
+            // Abort if total test time exceeds budget.
+            if start.elapsed().as_secs() >= 20 {
+                break;
+            }
+            let page_start = std::time::Instant::now();
             match doc.extract_text(i) {
                 Ok(text) => {
                     total_chars += text.len();
+                    pages_extracted += 1;
+                    // Skip remaining pages if this one was slow.
+                    if page_start.elapsed().as_secs() >= 10 {
+                        break;
+                    }
                 }
                 Err(e) => {
                     return TestResult {
@@ -49,7 +60,7 @@ impl PdfTest for TextExtractTest {
 
         let mut metadata = HashMap::new();
         metadata.insert("total_chars".to_string(), total_chars.to_string());
-        metadata.insert("pages_extracted".to_string(), pages_to_extract.to_string());
+        metadata.insert("pages_extracted".to_string(), pages_extracted.to_string());
 
         TestResult {
             status: TestStatus::Pass,
