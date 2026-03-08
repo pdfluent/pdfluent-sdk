@@ -1190,6 +1190,18 @@ fn check_image_cs_in_resources(
     let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
         return;
     };
+    check_image_cs_in_xobjects(&xobj_dict, rgb_ok, cmyk_ok, gray_ok, location, report);
+}
+
+/// Check image XObject color spaces from a resolved XObject dict.
+fn check_image_cs_in_xobjects(
+    xobj_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
     for (name, _) in xobj_dict.entries() {
         let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
             continue;
@@ -2090,17 +2102,15 @@ pub fn check_extgstate_restrictions(pdf: &Pdf, part: u8, report: &mut Compliance
     let has_cmyk_intent = output_intent_profile_components(pdf) == Some(4);
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
-        let page_dict = page.raw();
-        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
-            continue;
-        };
+        let res = page.resources();
 
         // Check if page uses ICCBased CMYK color spaces
-        let has_icc_cmyk = page_has_iccbased_cmyk(&res_dict);
+        let has_icc_cmyk = cs_dict_has_iccbased_cmyk(&res.color_spaces);
 
-        let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
+        let gs_dict = &res.ext_g_states;
+        if gs_dict.entries().next().is_none() {
             continue;
-        };
+        }
         for (gs_name, _) in gs_dict.entries() {
             let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
                 continue;
@@ -2159,11 +2169,8 @@ pub fn check_extgstate_restrictions(pdf: &Pdf, part: u8, report: &mut Compliance
     }
 }
 
-/// Check if a page's Resources contain any ICCBased CMYK color spaces.
-fn page_has_iccbased_cmyk(res_dict: &Dict<'_>) -> bool {
-    let Some(cs_dict) = res_dict.get::<Dict<'_>>(keys::COLORSPACE) else {
-        return false;
-    };
+/// Check if a ColorSpace dict contains any ICCBased CMYK color spaces.
+fn cs_dict_has_iccbased_cmyk(cs_dict: &Dict<'_>) -> bool {
     for (name, _) in cs_dict.entries() {
         let Some(cs_arr) = cs_dict.get::<Array<'_>>(name.as_ref()) else {
             continue;
@@ -2982,15 +2989,18 @@ pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport)
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
-        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
+        let res = page.resources();
+        let cs_dict = &res.color_spaces;
 
-        let rgb_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_RGB) || profile == Some(3);
-        let cmyk_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_CMYK) || profile == Some(4);
-        let gray_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_GRAY) || has_intent;
+        let rgb_ok = cs_dict.get::<Object<'_>>(keys::DEFAULT_RGB).is_some() || profile == Some(3);
+        let cmyk_ok = cs_dict.get::<Object<'_>>(keys::DEFAULT_CMYK).is_some()
+            || profile == Some(4);
+        let gray_ok = cs_dict.get::<Object<'_>>(keys::DEFAULT_GRAY).is_some() || has_intent;
 
-        let Some(ref rd) = res_dict else { continue };
+        let xobj_dict = &res.x_objects;
         let loc = format!("page {}", page_idx + 1);
-        check_image_cs_in_resources(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+        // Check image XObjects via resolved resources
+        check_image_cs_in_xobjects(xobj_dict, rgb_ok, cmyk_ok, gray_ok, &loc, report);
 
         // Also scan annotation appearance streams for image XObjects
         if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
@@ -3025,10 +3035,11 @@ pub fn check_page_group_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
         let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) else {
             continue;
         };
-        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
-        let rgb_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_RGB) || profile == Some(3);
-        let cmyk_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_CMYK) || profile == Some(4);
-        let gray_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_GRAY) || has_intent;
+        let cs_res = &page.resources().color_spaces;
+        let rgb_ok = cs_res.get::<Object<'_>>(keys::DEFAULT_RGB).is_some() || profile == Some(3);
+        let cmyk_ok =
+            cs_res.get::<Object<'_>>(keys::DEFAULT_CMYK).is_some() || profile == Some(4);
+        let gray_ok = cs_res.get::<Object<'_>>(keys::DEFAULT_GRAY).is_some() || has_intent;
         let loc = format!("page {} Group", page_idx + 1);
 
         if let Some(cs) = group.get::<Name>(keys::CS) {
