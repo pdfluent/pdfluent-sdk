@@ -10,9 +10,9 @@ pub(crate) mod flate {
     use crate::filter::lzw_flate::{PredictorParams, apply_predictor};
     use crate::object::Dict;
 
-    /// Maximum decompressed stream size (256 MB). Prevents zip-bomb style
-    /// attacks from consuming all available memory.
-    const MAX_DECODE_SIZE: u64 = 256 * 1024 * 1024;
+    /// Maximum decompressed stream size (64 MB). Prevents zip-bomb style
+    /// attacks and corrupt length values from consuming all available memory.
+    const MAX_DECODE_SIZE: u64 = 64 * 1024 * 1024;
 
     #[cfg(feature = "std")]
     pub(crate) fn decode(data: &[u8], params: Dict<'_>) -> Option<Vec<u8>> {
@@ -588,6 +588,7 @@ pub(crate) mod lzw {
     const EOD: usize = 257;
     const MAX_ENTRIES: usize = 4096;
     const INITIAL_SIZE: u16 = 258;
+    const MAX_LZW_OUTPUT: usize = 64 * 1024 * 1024;
 
     fn decode_impl(data: &[u8], early_change: bool) -> Option<Vec<u8>> {
         let mut table = Table::new(early_change);
@@ -636,6 +637,11 @@ pub(crate) mod lzw {
                     } else {
                         warn!("LZW decode error: code {new} not found and prev is None");
                         return None;
+                    }
+
+                    if decoded.len() > MAX_LZW_OUTPUT {
+                        warn!("LZW output exceeds {} bytes, truncating", MAX_LZW_OUTPUT);
+                        return Some(decoded);
                     }
 
                     bit_size = table.code_length();
