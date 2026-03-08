@@ -4517,58 +4517,50 @@ fn collect_struct_types(elem: &Dict<'_>, types: &mut Vec<Vec<u8>>, depth: usize)
 // ─── §6.1.13 — Name length limit ────────────────────────────────────────────
 
 /// Check that no PDF Name object exceeds 127 bytes (§6.1.13).
+///
+/// Non-recursive: checks top-level objects and one level of dict/array nesting
+/// to avoid OOM from shared indirect reference resolution.
 pub fn check_name_length_limit(pdf: &Pdf, report: &mut ComplianceReport) {
+    let mut found = false;
     for obj in pdf.objects() {
-        check_name_length_in_object(&obj, report);
+        if check_name_length_obj(&obj) {
+            found = true;
+            break;
+        }
+    }
+    if found {
+        error(report, "6.1.13", "Name length exceeded 127");
     }
 }
 
-fn check_name_length_in_object(obj: &Object<'_>, report: &mut ComplianceReport) {
+fn check_name_length_obj(obj: &Object<'_>) -> bool {
     match obj {
-        Object::Name(n) => {
-            let name_bytes = n.as_ref();
-            if name_bytes.len() > 127 {
-                error(
-                    report,
-                    "6.1.13",
-                    format!("Name length ({}) exceeded 127", name_bytes.len()),
-                );
-            }
-        }
+        Object::Name(n) => n.as_ref().len() > 127,
         Object::Dict(dict) => {
             for (key, _) in dict.entries() {
                 if key.as_ref().len() > 127 {
-                    error(
-                        report,
-                        "6.1.13",
-                        format!("Name length ({}) exceeded 127", key.as_ref().len()),
-                    );
-                }
-                if let Some(val) = dict.get::<Object<'_>>(key.as_ref()) {
-                    check_name_length_in_object(&val, report);
+                    return true;
                 }
             }
-        }
-        Object::Array(arr) => {
-            for item in arr.iter::<Object<'_>>() {
-                check_name_length_in_object(&item, report);
+            // Check name values one level deep
+            for (key, _) in dict.entries() {
+                if let Some(Object::Name(n)) = dict.get::<Object<'_>>(key.as_ref()) {
+                    if n.as_ref().len() > 127 {
+                        return true;
+                    }
+                }
             }
+            false
         }
         Object::Stream(s) => {
             for (key, _) in s.dict().entries() {
                 if key.as_ref().len() > 127 {
-                    error(
-                        report,
-                        "6.1.13",
-                        format!("Name length ({}) exceeded 127", key.as_ref().len()),
-                    );
-                }
-                if let Some(val) = s.dict().get::<Object<'_>>(key.as_ref()) {
-                    check_name_length_in_object(&val, report);
+                    return true;
                 }
             }
+            false
         }
-        _ => {}
+        _ => false,
     }
 }
 
@@ -4577,44 +4569,54 @@ fn check_name_length_in_object(obj: &Object<'_>, report: &mut ComplianceReport) 
 /// Check that real values are within the PDF/A limits (§6.1.12).
 ///
 /// Absolute real values must be <= 32767.0.
+/// Non-recursive: checks top-level objects and one level of dict/array nesting.
 pub fn check_real_value_limits(pdf: &Pdf, report: &mut ComplianceReport) {
+    let mut found = false;
     for obj in pdf.objects() {
-        check_real_limits_in_object(&obj, report);
+        if check_real_limit_obj(&obj) {
+            found = true;
+            break;
+        }
+    }
+    if found {
+        error(report, "6.1.12", "Real value out of range (exceeds 32767)");
     }
 }
 
-fn check_real_limits_in_object(obj: &Object<'_>, report: &mut ComplianceReport) {
+fn check_real_limit_obj(obj: &Object<'_>) -> bool {
     match obj {
-        Object::Number(n) => {
-            let v = n.as_f64();
-            if v.abs() > 32767.0 {
-                error(
-                    report,
-                    "6.1.12",
-                    format!("Real value {} out of range", v),
-                );
-            }
-        }
+        Object::Number(n) => n.as_f64().abs() > 32767.0,
         Object::Dict(dict) => {
             for (key, _) in dict.entries() {
-                if let Some(val) = dict.get::<Object<'_>>(key.as_ref()) {
-                    check_real_limits_in_object(&val, report);
+                if let Some(Object::Number(n)) = dict.get::<Object<'_>>(key.as_ref()) {
+                    if n.as_f64().abs() > 32767.0 {
+                        return true;
+                    }
                 }
             }
+            false
         }
         Object::Array(arr) => {
             for item in arr.iter::<Object<'_>>() {
-                check_real_limits_in_object(&item, report);
+                if let Object::Number(n) = &item {
+                    if n.as_f64().abs() > 32767.0 {
+                        return true;
+                    }
+                }
             }
+            false
         }
         Object::Stream(s) => {
             for (key, _) in s.dict().entries() {
-                if let Some(val) = s.dict().get::<Object<'_>>(key.as_ref()) {
-                    check_real_limits_in_object(&val, report);
+                if let Some(Object::Number(n)) = s.dict().get::<Object<'_>>(key.as_ref()) {
+                    if n.as_f64().abs() > 32767.0 {
+                        return true;
+                    }
                 }
             }
+            false
         }
-        _ => {}
+        _ => false,
     }
 }
 
