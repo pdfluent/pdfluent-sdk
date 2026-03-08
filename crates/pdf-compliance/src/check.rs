@@ -4428,8 +4428,25 @@ pub fn check_font_type_key(pdf: &Pdf, report: &mut ComplianceReport) {
 /// - FontFile3 subtype matches font type
 pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     for_each_font(pdf, |name, font_dict, page_idx| {
+        let subtype = font_dict.get::<Name>(keys::SUBTYPE);
+        let subtype_bytes = subtype.as_ref().map(|s| s.as_ref());
+
+        // Type3 fonts don't need embedding (they define glyphs inline)
+        if subtype_bytes == Some(b"Type3") {
+            return;
+        }
+
         // Check direct font descriptor
         if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
+            // Check font program is actually embedded (§6.3.4 test 1)
+            if !font_has_embedding(&desc) && !is_standard_14(name) {
+                error_at(
+                    report,
+                    "6.3.4",
+                    format!("Font {name} is not embedded (missing FontFile/FontFile2/FontFile3)"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
             check_fontfile_subtype_match(&desc, name, page_idx, report);
             if is_subset_font(name) {
                 let has_cidset = desc.get::<Stream<'_>>(keys::CID_SET).is_some();
@@ -4447,6 +4464,17 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
         // Check CIDFont descendants
         if let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) {
             for desc_font in descendants.iter::<Dict<'_>>() {
+                // Also check CIDFont embedding
+                if let Some(cid_desc) = desc_font.get::<Dict<'_>>(keys::FONT_DESC) {
+                    if !font_has_embedding(&cid_desc) && !is_standard_14(name) {
+                        error_at(
+                            report,
+                            "6.3.4",
+                            format!("CIDFont {name} is not embedded"),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
                 check_cidfont_descriptor_deep(&desc_font, name, page_idx, part, report);
             }
         }
@@ -5671,6 +5699,69 @@ fn check_string_length_obj(obj: &Object<'_>) -> bool {
         }
         _ => false,
     }
+}
+
+/// Check implementation limits: array capacity ≤ 8191 (§6.1.13).
+pub fn check_array_capacity_limit(pdf: &Pdf, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        match &obj {
+            Object::Array(arr) => {
+                let count = arr.iter::<Object<'_>>().count();
+                if count > 8191 {
+                    error(
+                        report,
+                        "6.1.13",
+                        format!("Array capacity ({count}) exceeded 8191"),
+                    );
+                    return;
+                }
+            }
+            Object::Dict(dict) => {
+                for (key, _) in dict.entries() {
+                    if let Some(inner_arr) = dict.get::<Array<'_>>(key.as_ref()) {
+                        let count = inner_arr.iter::<Object<'_>>().count();
+                        if count > 8191 {
+                            error(
+                                report,
+                                "6.1.13",
+                                format!("Array capacity ({count}) exceeded 8191"),
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Check CID values don't exceed 65535 (§6.1.13 test 10).
+pub fn check_cid_value_limit(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        // Check CIDFont descendants for /DW2 or /W entries with large CID values
+        if let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) {
+            for cid_font in descendants.iter::<Dict<'_>>() {
+                // /W array has entries like [cid [w1 w2 ...]] or [cid1 cid2 w]
+                if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
+                    for item in w_arr.iter::<Object<'_>>() {
+                        if let Object::Number(n) = &item {
+                            let val = n.as_f64() as i64;
+                            if val > 65535 {
+                                error_at(
+                                    report,
+                                    "6.1.13",
+                                    format!("CID value ({val}) exceeded 65535 in font {name}"),
+                                    format!("page {}", page_idx + 1),
+                                );
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 // ─── §6.1.12 — Real value limits ────────────────────────────────────────────
