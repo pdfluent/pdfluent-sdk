@@ -1546,6 +1546,37 @@ pub fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
     }
+
+    // §6.1.12 test 4: Name objects must not exceed 127 bytes
+    check_name_lengths(pdf, report);
+}
+
+/// §6.1.12 test 4 — All Name objects must not exceed 127 bytes.
+fn check_name_lengths(pdf: &Pdf, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        if let Object::Dict(ref d) = obj {
+            for (key, _) in d.entries() {
+                if key.as_ref().len() > 127 {
+                    error(
+                        report,
+                        "6.1.12",
+                        format!("Name key exceeds 127 bytes ({})", key.as_ref().len()),
+                    );
+                    return; // One error is enough to flag non-compliance
+                }
+            }
+        }
+        if let Object::Name(ref n) = obj {
+            if n.as_ref().len() > 127 {
+                error(
+                    report,
+                    "6.1.12",
+                    format!("Name object exceeds 127 bytes ({})", n.as_ref().len()),
+                );
+                return;
+            }
+        }
+    }
 }
 
 // ─── Batch 3: §6.1.x and §6.6.1 — File structure, actions, streams ─────────
