@@ -19,19 +19,40 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     };
 
     check_xmp_metadata(pdf, level, &mut report);
-    check_xmp_schemas(pdf, level, &mut report);
+    crate::xmp::validate_xmp(pdf, level, &mut report);
     check_encryption(pdf, &mut report);
     check_forbidden_actions(pdf, level, &mut report);
     check_output_intent(pdf, level, &mut report);
     check_font_embedding(pdf, &mut report);
     check_color_spaces(pdf, &mut report);
     check_device_colorspaces(pdf, &mut report);
-    check_info_xmp_consistency(pdf, &mut report);
     check_page_dimensions(pdf, &mut report);
     check_annotation_flags(pdf, &mut report);
     check_annotation_types(pdf, level, &mut report);
     check_form_xobjects(pdf, &mut report);
     check_page_boundary_sizes(pdf, &mut report);
+
+    // Batch 2: Color space & graphics state validation (§6.2.x)
+    check_icc_profile_version(pdf, level, &mut report);
+    check_iccbased_alternate(pdf, &mut report);
+    check_devicen_separation_alternate(pdf, &mut report);
+    check_rendering_intents(pdf, &mut report);
+    check_image_xobjects(pdf, &mut report);
+    check_halftone_and_transfer(pdf, &mut report);
+    check_extgstate_restrictions(pdf, level, &mut report);
+    check_cidfont_embedding(pdf, &mut report);
+    check_output_intent_profile(pdf, &mut report);
+
+    // Batch 3: File structure, actions, streams (§6.1.x, §6.6.1)
+    check_all_page_boundaries(pdf, &mut report);
+    check_stream_filters(pdf, level, &mut report);
+    check_embedded_file_streams(pdf, &mut report);
+    check_file_header(pdf, &mut report);
+    check_xref_format(pdf, &mut report);
+    check_actions_deep(pdf, level, &mut report);
+    check_form_xobject_geometry(pdf, &mut report);
+    check_optional_content(pdf, level, &mut report);
+    check_linearization(pdf, &mut report);
 
     if level.part() == 1 {
         check_transparency_a1(pdf, &mut report);
@@ -197,26 +218,9 @@ fn check_color_spaces(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// §6.6.2.3.1 / §6.7.9 — XMP properties must use predefined or extension schemas.
-fn check_xmp_schemas(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    if let Some(xmp) = check::get_xmp_metadata(pdf) {
-        let rule = if level.part() == 1 {
-            "6.7.9"
-        } else {
-            "6.6.2.3.1"
-        };
-        check::check_xmp_schemas(&xmp, rule, report);
-    }
-}
-
 /// §6.2.4.3 — Device color spaces need Default alternatives or OutputIntent.
 fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_device_colorspaces(pdf, report);
-}
-
-/// §6.7.3 — Info dictionary and XMP metadata must be consistent.
-fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_info_xmp_consistency(pdf, report);
 }
 
 /// §6.1.12 — Absolute real values must not exceed 32767.
@@ -236,9 +240,22 @@ fn check_annotation_types(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRe
     }
 
     let allowed: &[&[u8]] = &[
-        b"Text", b"Link", b"FreeText", b"Line", b"Square", b"Circle",
-        b"Highlight", b"Underline", b"Squiggly", b"StrikeOut", b"Stamp",
-        b"Ink", b"Popup", b"Widget", b"PrinterMark", b"TrapNet",
+        b"Text",
+        b"Link",
+        b"FreeText",
+        b"Line",
+        b"Square",
+        b"Circle",
+        b"Highlight",
+        b"Underline",
+        b"Squiggly",
+        b"StrikeOut",
+        b"Stamp",
+        b"Ink",
+        b"Popup",
+        b"Widget",
+        b"PrinterMark",
+        b"TrapNet",
     ];
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
@@ -270,6 +287,99 @@ fn check_form_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.1.13 — Page boundaries must be 3-14400 units.
 fn check_page_boundary_sizes(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_page_boundary_sizes(pdf, report);
+}
+
+/// §6.2.3.3 — ICC profile version must match PDF/A part.
+fn check_icc_profile_version(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_icc_profile_version(pdf, level.part(), report);
+}
+
+/// §6.2.4.2 — ICCBased Alternate CS must be consistent with profile.
+fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_iccbased_alternate(pdf, report);
+}
+
+/// §6.2.4.4 — DeviceN/Separation alternate CS restrictions.
+fn check_devicen_separation_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_devicen_separation_alternate(pdf, report);
+}
+
+/// §6.2.5 — Rendering intents must be valid.
+fn check_rendering_intents(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_rendering_intents(pdf, report);
+}
+
+/// §6.2.8 — Image XObject restrictions.
+fn check_image_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_image_xobjects(pdf, report);
+}
+
+/// §6.2.10 — Halftone and transfer function restrictions.
+fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_halftone_and_transfer(pdf, report);
+}
+
+/// §6.2.10.6-9 — ExtGState blend mode and soft mask restrictions.
+fn check_extgstate_restrictions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_extgstate_restrictions(pdf, level.part(), report);
+}
+
+/// §6.2.11 — CIDFont embedding requirements.
+fn check_cidfont_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_cidfont_embedding(pdf, report);
+}
+
+/// §6.2.3.2 — OutputIntent must have ICC profile.
+fn check_output_intent_profile(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_output_intent_profile(pdf, report);
+}
+
+// ─── Batch 3: File structure, actions, streams (§6.1.x, §6.6.1) ────────────
+
+/// §6.1.13 — All page boundaries (BleedBox, TrimBox, ArtBox).
+fn check_all_page_boundaries(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_all_page_boundaries(pdf, report);
+}
+
+/// §6.1.8, §6.1.9 — Stream filter validation.
+fn check_stream_filters(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_stream_filters(pdf, level.part(), report);
+}
+
+/// §6.1.7, §6.1.7.1 — Embedded file stream type.
+fn check_embedded_file_streams(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_embedded_file_streams(pdf, report);
+}
+
+/// §6.1.2 — File header binary comment.
+fn check_file_header(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_file_header(pdf, report);
+}
+
+/// §6.1.3 — Cross-reference table format.
+fn check_xref_format(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_xref_format(pdf, report);
+}
+
+/// §6.6.1, §6.1.6.x — Deep recursive action scanner.
+fn check_actions_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    let rule = if level.part() == 1 { "6.6.1" } else { "6.5.1" };
+    check::check_actions_deep(pdf, level.part(), rule, report);
+}
+
+/// §6.1.10 — Form XObject BBox validation.
+fn check_form_xobject_geometry(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_form_xobject_geometry(pdf, report);
+}
+
+/// §6.1.11 — Optional content restrictions.
+fn check_optional_content(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_optional_content(pdf, level.part(), report);
+}
+
+/// §6.1.5 — Linearization hints.
+fn check_linearization(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_linearization(pdf, report);
 }
 
 /// §6.4 — PDF/A-1 forbids transparency.
