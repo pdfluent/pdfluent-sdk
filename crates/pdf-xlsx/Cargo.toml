@@ -1,0 +1,16 @@
+[package]
+name = "pdf-xlsx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PDF table extraction and XLSX conversion"
+
+[dependencies]
+lopdf.workspace = true
+thiserror.workspace = true
+pdf-extract = { path = "../pdf-extract" }
+rust_xlsxwriter = "0.94"
+
+[dev-dependencies]
+tempfile = "3"
