@@ -112,9 +112,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_font_file_format(pdf, level, &mut report);
     check_explicit_resources(pdf, &mut report);
 
-    if level.part() == 4 {
-        check_trailer_info(pdf, &mut report);
-    }
+    check_trailer_requirements(pdf, level, &mut report);
 
     // Post-process: remap clause numbers per PDF/A part.
     // Clause numbering differs between ISO 19005 parts.
@@ -682,9 +680,9 @@ fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_explicit_resources(pdf, report);
 }
 
-/// §6.1.3 — Trailer Info key forbidden in PDF/A-4.
-fn check_trailer_info(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_trailer_info_key(pdf, report);
+/// §6.1.3 — Trailer requirements.
+fn check_trailer_requirements(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_trailer_requirements(pdf, level.part(), report);
 }
 
 /// Remap clause numbers to match the correct ISO 19005 part numbering.
