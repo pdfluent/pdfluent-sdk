@@ -689,33 +689,6 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Device color space restrictions
             // PDF/A-1: §6.2.3.3, PDF/A-2/3/4: §6.2.4.3
             (1, "6.2.4.3") => Some("6.2.3.3"),
-
-            // Annotation appearance/flags
-            // PDF/A-1: §6.5.3, PDF/A-2/3/4: §6.3.3
-            (2..=4, "6.5.3") => Some("6.3.3"),
-
-            // Annotation subtypes
-            // PDF/A-1: §6.5.2, PDF/A-4: §6.3.1
-            (4, "6.5.2") => Some("6.3.1"),
-
-            // Transfer function (TR key)
-            // PDF/A-1: §6.2.4, PDF/A-4: §6.2.5
-            (4, "6.2.10.5") => Some("6.2.5"),
-            (1, "6.2.10.5") => Some("6.2.4"),
-
-            // ExtGState/color restrictions
-            // PDF/A-1: §6.2.3.x, PDF/A-2/3/4: §6.2.4.x
-            (1, "6.2.4.2") => Some("6.2.3.2"),
-            (1, "6.2.4.1") => Some("6.2.3.1"),
-
-            // Halftone type
-            // PDF/A-1: §6.2.4, PDF/A-4: §6.2.5
-            (4, "6.2.10") => Some("6.2.5"),
-
-            // Syntax spacing
-            // PDF/A-1: §6.1.8, PDF/A-2/3: §6.1.9
-            (2 | 3, "6.1.8") => Some("6.1.9"),
-
             _ => None,
         };
         if let Some(r) = new_rule {
