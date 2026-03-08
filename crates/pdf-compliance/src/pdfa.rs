@@ -164,11 +164,11 @@ fn check_encryption(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Forbidden action types. PDF/A-1: §6.6.1, PDF/A-2/3: §6.5.1, PDF/A-4: §6.4.
+/// Forbidden action types. PDF/A-1: §6.6.1, PDF/A-2/3: §6.5.1, PDF/A-4: §6.6.1 (normalized from 6.4.1).
 fn check_forbidden_actions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // PDF/A-4 clause 6.4.1 normalizes to 6.6.1 in our common numbering
     let rule = match level.part() {
-        1 => "6.6.1",
-        4 => "6.4",
+        1 | 4 => "6.6.1",
         _ => "6.5.1",
     };
     check::check_forbidden_actions_rule(pdf, level.part(), rule, report);
