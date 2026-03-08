@@ -39,6 +39,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_icc_profile_version(pdf, level, &mut report);
     check_iccbased_alternate(pdf, &mut report);
     check_devicen_separation_alternate(pdf, &mut report);
+    check::check_devicen_colorants(pdf, &mut report);
     check_rendering_intents(pdf, &mut report);
     check_image_xobjects(pdf, &mut report);
     check_halftone_and_transfer(pdf, &mut report);
@@ -50,7 +51,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_all_page_boundaries(pdf, &mut report);
     check_stream_filters(pdf, level, &mut report);
     check_embedded_file_streams(pdf, &mut report);
-    check_file_header(pdf, &mut report);
+    check_file_header(pdf, level, &mut report);
     check_xref_format(pdf, &mut report);
     check_actions_deep(pdf, level, &mut report);
     check_form_xobject_geometry(pdf, &mut report);
@@ -94,6 +95,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check_tagged_requirements(pdf, level, &mut report);
         check_table_structure_pdfa(pdf, &mut report);
         check_figure_alt(pdf, &mut report);
+        check_lang(pdf, &mut report);
         check_role_mapping_pdfa(pdf, &mut report);
     }
 
@@ -445,9 +447,9 @@ fn check_embedded_file_streams(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_embedded_file_streams(pdf, report);
 }
 
-/// §6.1.2 — File header binary comment.
-fn check_file_header(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_file_header(pdf, report);
+/// §6.1.2 — File header binary comment and version format.
+fn check_file_header(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_file_header(pdf, level.part(), report);
 }
 
 /// §6.1.3 — Cross-reference table format.
@@ -628,6 +630,11 @@ fn check_figure_alt(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_figure_alt_text(pdf, report);
 }
 
+/// §6.8.4 — Lang values must be valid BCP-47 language tags.
+fn check_lang(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_lang_values(pdf, report);
+}
+
 /// §6.8.3.4 — Marked content sequence matching.
 fn check_marked_content(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_marked_content_sequences(pdf, report);
@@ -795,6 +802,18 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Widget annotation actions
             // PDF/A-1: §6.6.1, PDF/A-2/3: §6.4.1
             (1, "6.4.1") => Some("6.6.1"),
+
+            // Transparency (SMask) restrictions
+            // PDF/A-1: §6.4, PDF/A-2/3/4: §6.2.10.7
+            (1, "6.2.10.7") => Some("6.4"),
+
+            // Alternate CS consistency (ICCBased)
+            // PDF/A-1: §6.2.3.2, PDF/A-2/3/4: §6.2.4.2
+            (1, "6.2.4.2") => Some("6.2.3.2"),
+
+            // DeviceN/Separation alternate CS
+            // PDF/A-1: §6.2.3.4, PDF/A-2/3/4: §6.2.4.4
+            (1, "6.2.4.4") => Some("6.2.3.4"),
 
             _ => None,
         };
