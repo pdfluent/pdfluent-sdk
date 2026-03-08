@@ -1990,6 +1990,267 @@ fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
     false
 }
 
+// ─── Iteration 11: Deeper 6.2.x fixes ───────────────────────────────────────
+
+/// Check Image XObject color spaces (§6.2.4.3).
+///
+/// Image XObjects with direct device color spaces (DeviceRGB, DeviceCMYK,
+/// DeviceGray) as their /ColorSpace key violate 6.2.4.3 unless a Default
+/// color space or OutputIntent is present.
+pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
+    if has_output_intent(pdf) {
+        return;
+    }
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
+
+        let has_default_rgb = res_dict
+            .as_ref()
+            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_RGB))
+            .is_some();
+        let has_default_cmyk = res_dict
+            .as_ref()
+            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_CMYK))
+            .is_some();
+        let has_default_gray = res_dict
+            .as_ref()
+            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_GRAY))
+            .is_some();
+
+        let Some(ref rd) = res_dict else { continue };
+        let Some(xobj_dict) = rd.get::<Dict<'_>>(keys::XOBJECT) else {
+            continue;
+        };
+
+        for (name, _) in xobj_dict.entries() {
+            let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let dict = stream.dict();
+            let is_image = dict
+                .get::<Name>(keys::SUBTYPE)
+                .is_some_and(|s| s.as_ref() == keys::IMAGE);
+            if !is_image {
+                continue;
+            }
+
+            if let Some(cs_name) = dict.get::<Name>(keys::COLORSPACE) {
+                let cs = cs_name.as_ref();
+                let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+                if cs == keys::DEVICE_RGB && !has_default_rgb {
+                    error_at(
+                        report,
+                        "6.2.4.3",
+                        format!(
+                            "Image {xobj_name} uses DeviceRGB without DefaultRGB or OutputIntent"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+                if cs == b"DeviceCMYK" && !has_default_cmyk {
+                    error_at(
+                        report,
+                        "6.2.4.3",
+                        format!(
+                            "Image {xobj_name} uses DeviceCMYK without DefaultCMYK or OutputIntent"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+                if cs == b"DeviceGray" && !has_default_gray {
+                    error_at(
+                        report,
+                        "6.2.4.3",
+                        format!(
+                            "Image {xobj_name} uses DeviceGray without DefaultGray or OutputIntent"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Check multiple OutputIntents have identical profiles (§6.2.2).
+///
+/// If multiple OutputIntents with DestOutputProfile exist, they must
+/// reference the same ICC profile (identical data).
+pub fn check_output_intent_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else { return };
+    let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) else {
+        return;
+    };
+
+    let mut profile_hashes: Vec<u64> = Vec::new();
+    for intent in intents.iter::<Dict<'_>>() {
+        if let Some(profile_stream) = intent.get::<Stream<'_>>(keys::DEST_OUTPUT_PROFILE) {
+            if let Ok(data) = profile_stream.decoded() {
+                // Simple hash: use length + first/last bytes
+                let hash = data.len() as u64
+                    ^ (data.first().copied().unwrap_or(0) as u64) << 32
+                    ^ (data.last().copied().unwrap_or(0) as u64) << 40
+                    ^ (data.get(data.len() / 2).copied().unwrap_or(0) as u64) << 48;
+                profile_hashes.push(hash);
+            }
+        }
+    }
+
+    if profile_hashes.len() > 1 {
+        let first = profile_hashes[0];
+        if profile_hashes.iter().any(|h| *h != first) {
+            error(
+                report,
+                "6.2.2",
+                "Multiple OutputIntents have different DestOutputProfile ICC profiles",
+            );
+        }
+    }
+}
+
+/// Check content stream operators are valid PDF operators (§6.2.10).
+///
+/// Operators not defined in PDF Reference are forbidden even if
+/// bracketed by BX/EX compatibility markers.
+pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
+    // All valid PDF content stream operators
+    let valid_ops: &[&str] = &[
+        // General graphics state
+        "w", "J", "j", "M", "d", "ri", "i", "gs", // Special graphics state
+        "q", "Q", "cm", // Path construction
+        "m", "l", "c", "v", "y", "h", "re", // Path painting
+        "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n", // Clipping paths
+        "W", "W*", // Text objects
+        "BT", "ET", // Text state
+        "Tc", "Tw", "Tz", "TL", "Tf", "Tr", "Ts", // Text positioning
+        "Td", "TD", "Tm", "T*", // Text showing
+        "Tj", "TJ", "'", "\"", // Type 3 fonts
+        "d0", "d1", // Color
+        "CS", "cs", "SC", "SCN", "sc", "scn", "G", "g", "RG", "rg", "K", "k", // Shading
+        "sh", // Inline images
+        "BI", "ID", "EI", // XObjects
+        "Do", // Marked content
+        "MP", "DP", "BMC", "BDC", "EMC", // Compatibility
+        "BX", "EX",
+    ];
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        if scan_for_undefined_ops(content, valid_ops) {
+            error_at(
+                report,
+                "6.2.10",
+                "Content stream contains undefined operator",
+                format!("page {}", page_idx + 1),
+            );
+        }
+    }
+}
+
+fn scan_for_undefined_ops(content: &[u8], valid_ops: &[&str]) -> bool {
+    let text = String::from_utf8_lossy(content);
+    let mut in_inline_image = false;
+    for token in text.split_ascii_whitespace() {
+        // Skip inline image data
+        if token == "ID" {
+            in_inline_image = true;
+            continue;
+        }
+        if token == "EI" {
+            in_inline_image = false;
+            continue;
+        }
+        if in_inline_image {
+            continue;
+        }
+
+        // Skip operands (numbers, names, strings, arrays, dicts)
+        if token.starts_with('/')
+            || token.starts_with('(')
+            || token.starts_with('<')
+            || token.starts_with('[')
+            || token == "true"
+            || token == "false"
+            || token == "null"
+        {
+            continue;
+        }
+        // Skip numeric operands
+        if token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b'.' || b == b'-' || b == b'+')
+            && !token.is_empty()
+        {
+            continue;
+        }
+        // Check if it's a valid operator
+        if !token.is_empty()
+            && token
+                .bytes()
+                .all(|b| b.is_ascii_alphabetic() || b == b'*' || b == b'\'' || b == b'"')
+            && !valid_ops.contains(&token)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check transparency groups on pages without OutputIntent (§6.2.9 test 2).
+///
+/// If no OutputIntent, pages with transparency groups must not use
+/// device color spaces in the group.
+pub fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+    if has_output_intent(pdf) {
+        return;
+    }
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+
+        // Check page-level Group dict
+        if let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+            if let Some(s) = group.get::<Name>(keys::S) {
+                if s.as_ref() == b"Transparency" {
+                    // Check the CS of the transparency group
+                    if let Some(cs) = group.get::<Name>(keys::CS) {
+                        let cs_bytes = cs.as_ref();
+                        if cs_bytes == keys::DEVICE_RGB
+                            || cs_bytes == b"DeviceCMYK"
+                            || cs_bytes == b"DeviceGray"
+                        {
+                            error_at(
+                                report,
+                                "6.2.9",
+                                format!(
+                                    "Transparency group uses device CS {} without OutputIntent",
+                                    std::str::from_utf8(cs_bytes).unwrap_or("?")
+                                ),
+                                format!("page {}", page_idx + 1),
+                            );
+                        }
+                    } else {
+                        // No CS on transparency group without OutputIntent
+                        error_at(
+                            report,
+                            "6.2.9",
+                            "Transparency group without /CS and no OutputIntent",
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
 
 /// Check every font has a /Type key set to /Font (§6.3.1).
