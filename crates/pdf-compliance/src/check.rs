@@ -2676,8 +2676,10 @@ fn scan_for_undefined_ops(content: &[u8], valid_ops: &[&str]) -> bool {
 ///    device color spaces in the group.
 /// 2. Pages that use transparency features (via ExtGState) must have a
 ///    /Group entry when no OutputIntent is present.
-pub fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let has_oi = has_output_intent(pdf);
+    // PDF/A-4 merges transparency checks into 6.2.9; parts 2/3 use 6.2.10
+    let page_group_rule = if part == 4 { "6.2.9" } else { "6.2.10" };
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
@@ -2699,7 +2701,7 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
                             {
                                 error_at(
                                     report,
-                                    "6.2.9",
+                                    page_group_rule,
                                     format!(
                                         "Transparency group uses device CS {} without OutputIntent",
                                         std::str::from_utf8(cs_bytes).unwrap_or("?")
@@ -2708,10 +2710,9 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
                                 );
                             }
                         } else {
-                            // No CS on transparency group without OutputIntent
                             error_at(
                                 report,
-                                "6.2.9",
+                                page_group_rule,
                                 "Transparency group without /CS and no OutputIntent",
                                 format!("page {}", page_idx + 1),
                             );
@@ -2721,11 +2722,11 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
             }
         }
 
-        // Check 2: pages using transparency features need /Group (§6.2.10)
+        // Check 2: pages using transparency features need /Group
         if !has_page_group && page_uses_transparency(page_dict) {
             error_at(
                 report,
-                "6.2.10",
+                page_group_rule,
                 "Page uses transparency but has no /Group entry",
                 format!("page {}", page_idx + 1),
             );
@@ -3290,6 +3291,9 @@ pub fn check_blending_modes(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
         b"Luminosity",
     ];
 
+    // PDF/A-4 merges blend mode checks into 6.2.9; parts 1-3 use 6.4.1
+    let blend_rule = if part == 4 { "6.2.9" } else { "6.4.1" };
+
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
@@ -3311,7 +3315,7 @@ pub fn check_blending_modes(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
                         let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
                         error_at(
                             report,
-                            "6.4.1",
+                            blend_rule,
                             format!("ExtGState {gs_str} BM={bm_str} (only Normal/Compatible in PDF/A-1)"),
                             format!("page {}", page_idx + 1),
                         );
@@ -3321,7 +3325,7 @@ pub fn check_blending_modes(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
                     let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
                     error_at(
                         report,
-                        "6.4.1",
+                        blend_rule,
                         format!("ExtGState {gs_str} uses non-standard blend mode '{bm_str}'"),
                         format!("page {}", page_idx + 1),
                     );
