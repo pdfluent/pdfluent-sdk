@@ -14,6 +14,11 @@ pub use crate::object::string::String;
 use crate::reader::Reader;
 use crate::reader::{Readable, ReaderContext, ReaderExt, Skippable};
 use core::fmt::Debug;
+use log::warn;
+
+/// Maximum inline nesting depth for PDF objects (Dict/Array containing Dict/Array...).
+/// Prevents stack overflow on deeply nested malicious PDFs.
+const MAX_INLINE_NESTING_DEPTH: u16 = 256;
 
 mod bool;
 mod date;
@@ -143,58 +148,76 @@ impl<'a> ObjectLike<'a> for Object<'a> {}
 
 impl Skippable for Object<'_> {
     fn skip(r: &mut Reader<'_>, is_content_stream: bool) -> Option<()> {
-        match r.peek_byte()? {
-            b'n' => Null::skip(r, is_content_stream),
-            b't' | b'f' => bool::skip(r, is_content_stream),
-            b'/' => Name::skip(r, is_content_stream),
-            b'<' => match r.peek_bytes(2)? {
-                // A stream can never appear in a dict/array, so it should never be skipped.
-                b"<<" => Dict::skip(r, is_content_stream),
-                _ => String::skip(r, is_content_stream),
-            },
-            b'(' => String::skip(r, is_content_stream),
-            b'.' | b'+' | b'-' | b'0'..=b'9' => Number::skip(r, is_content_stream),
-            b'[' => Array::skip(r, is_content_stream),
-            // See test case operator-in-TJ-array-0: Be lenient and skip content operators in
-            // array
-            _ => skip_name_like(r, false),
+        if r.nesting_depth >= MAX_INLINE_NESTING_DEPTH {
+            warn!("Inline object nesting depth exceeds {MAX_INLINE_NESTING_DEPTH}, aborting skip");
+            return None;
         }
+        r.nesting_depth += 1;
+        let result = (|| {
+            match r.peek_byte()? {
+                b'n' => Null::skip(r, is_content_stream),
+                b't' | b'f' => bool::skip(r, is_content_stream),
+                b'/' => Name::skip(r, is_content_stream),
+                b'<' => match r.peek_bytes(2)? {
+                    // A stream can never appear in a dict/array, so it should never be skipped.
+                    b"<<" => Dict::skip(r, is_content_stream),
+                    _ => String::skip(r, is_content_stream),
+                },
+                b'(' => String::skip(r, is_content_stream),
+                b'.' | b'+' | b'-' | b'0'..=b'9' => Number::skip(r, is_content_stream),
+                b'[' => Array::skip(r, is_content_stream),
+                // See test case operator-in-TJ-array-0: Be lenient and skip content operators in
+                // array
+                _ => skip_name_like(r, false),
+            }
+        })();
+        r.nesting_depth -= 1;
+        result
     }
 }
 
 impl<'a> Readable<'a> for Object<'a> {
     fn read(r: &mut Reader<'a>, ctx: &ReaderContext<'a>) -> Option<Self> {
-        let object = match r.peek_byte()? {
-            b'n' => Self::Null(Null::read(r, ctx)?),
-            b't' | b'f' => Self::Boolean(bool::read(r, ctx)?),
-            b'/' => Self::Name(Name::read(r, ctx)?),
-            b'<' => match r.peek_bytes(2)? {
-                b"<<" => {
-                    let mut cloned = r.clone();
-                    let dict = Dict::read(&mut cloned, ctx)?;
-                    cloned.skip_white_spaces_and_comments();
+        if r.nesting_depth >= MAX_INLINE_NESTING_DEPTH {
+            warn!("Inline object nesting depth exceeds {MAX_INLINE_NESTING_DEPTH}, aborting read");
+            return None;
+        }
+        r.nesting_depth += 1;
+        let result = (|| -> Option<Self> {
+            let object = match r.peek_byte()? {
+                b'n' => Self::Null(Null::read(r, ctx)?),
+                b't' | b'f' => Self::Boolean(bool::read(r, ctx)?),
+                b'/' => Self::Name(Name::read(r, ctx)?),
+                b'<' => match r.peek_bytes(2)? {
+                    b"<<" => {
+                        let mut cloned = r.clone();
+                        let dict = Dict::read(&mut cloned, ctx)?;
+                        cloned.skip_white_spaces_and_comments();
 
-                    if cloned.forward_tag(b"stream").is_some() {
-                        Object::Stream(Stream::read(r, ctx)?)
-                    } else {
-                        r.jump(cloned.offset());
+                        if cloned.forward_tag(b"stream").is_some() {
+                            Object::Stream(Stream::read(r, ctx)?)
+                        } else {
+                            r.jump(cloned.offset());
 
-                        Object::Dict(dict)
+                            Object::Dict(dict)
+                        }
                     }
+                    _ => Self::String(String::read(r, ctx)?),
+                },
+                b'(' => Self::String(String::read(r, ctx)?),
+                b'.' | b'+' | b'-' | b'0'..=b'9' => Self::Number(Number::read(r, ctx)?),
+                b'[' => Self::Array(Array::read(r, ctx)?),
+                // See the comment in `skip`.
+                _ => {
+                    skip_name_like(r, false)?;
+                    Self::Null(Null)
                 }
-                _ => Self::String(String::read(r, ctx)?),
-            },
-            b'(' => Self::String(String::read(r, ctx)?),
-            b'.' | b'+' | b'-' | b'0'..=b'9' => Self::Number(Number::read(r, ctx)?),
-            b'[' => Self::Array(Array::read(r, ctx)?),
-            // See the comment in `skip`.
-            _ => {
-                skip_name_like(r, false)?;
-                Self::Null(Null)
-            }
-        };
+            };
 
-        Some(object)
+            Some(object)
+        })();
+        r.nesting_depth -= 1;
+        result
     }
 }
 

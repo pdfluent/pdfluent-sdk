@@ -9,19 +9,30 @@ pub struct Reader<'a> {
     pub data: &'a [u8],
     /// The current byte-offset.
     pub offset: usize,
+    /// Tracks inline object nesting depth (Dict/Array containing Dict/Array, etc.)
+    /// to prevent stack overflow on deeply nested malicious PDFs.
+    pub(crate) nesting_depth: u16,
 }
 
 impl<'a> Reader<'a> {
     /// Create a new reader.
     #[inline]
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, offset: 0 }
+        Self {
+            data,
+            offset: 0,
+            nesting_depth: 0,
+        }
     }
 
     /// Create a new reader at the given offset.
     #[inline]
     pub fn new_with(data: &'a [u8], offset: usize) -> Self {
-        Self { data, offset }
+        Self {
+            data,
+            offset,
+            nesting_depth: 0,
+        }
     }
 
     /// Returns `true` if the reader has reached the end of the data.
