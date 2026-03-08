@@ -89,8 +89,7 @@ impl Runner {
                 if let Ok(meta) = std::fs::metadata(pdf_path) {
                     if meta.len() > MAX_PDF_SIZE {
                         let cat = ErrorCategory::CorruptStream;
-                        let reason =
-                            format!("file too large ({} MB)", meta.len() / (1024 * 1024));
+                        let reason = format!("file too large ({} MB)", meta.len() / (1024 * 1024));
                         for test in &self.tests {
                             let row = TestResultRow::from_test_result(
                                 &self.config.run_id,

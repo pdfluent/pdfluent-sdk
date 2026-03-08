@@ -590,6 +590,107 @@ impl Database {
         .ok()
     }
 
+    /// Mark stale runs (no finished_at, older than given threshold) as abandoned.
+    /// Returns the number of runs cleaned up.
+    pub fn clean_stale_runs(&self, keep_run_id: Option<&str>) -> usize {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT run_id FROM runs WHERE finished_at IS NULL")
+            .unwrap();
+        let stale: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .flatten()
+            .filter(|id| keep_run_id.is_none_or(|keep| id != keep))
+            .collect();
+
+        let count = stale.len();
+        for id in &stale {
+            conn.execute(
+                "UPDATE runs SET finished_at = started_at WHERE run_id = ?1",
+                params![id],
+            )
+            .unwrap_or(0);
+        }
+        count
+    }
+
+    /// Merge runs and test_results from another SQLite database file.
+    /// Skips duplicates based on UNIQUE constraints.
+    /// Returns (runs_merged, results_merged).
+    pub fn merge_from(&self, source_path: &Path) -> rusqlite::Result<(usize, usize)> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "ATTACH DATABASE ?1 AS src",
+            params![source_path.to_string_lossy().as_ref()],
+        )?;
+
+        let runs_merged = conn.execute("INSERT OR IGNORE INTO runs SELECT * FROM src.runs", [])?;
+
+        // Source might use test_results or results as table name
+        let results_merged = conn
+            .execute(
+                "INSERT OR IGNORE INTO test_results
+                 SELECT * FROM src.test_results",
+                [],
+            )
+            .or_else(|_| {
+                conn.execute(
+                    "INSERT OR IGNORE INTO test_results
+                     (id, run_id, pdf_path, pdf_hash, pdf_size, test_name, status,
+                      error_message, error_category, duration_ms, oracle_score, metadata_json, timestamp)
+                     SELECT id, run_id, pdf_path, pdf_hash, pdf_size, test_name, status,
+                            error_message, error_category, duration_ms, oracle_score, metadata_json, timestamp
+                     FROM src.results",
+                    [],
+                )
+            })
+            .unwrap_or(0);
+
+        conn.execute("DETACH DATABASE src", [])?;
+        Ok((runs_merged, results_merged))
+    }
+
+    /// Get pass rate trend across all completed runs.
+    /// Returns Vec of (run_id, started_at, pass_rate, total, avg_oracle_score).
+    pub fn run_trend(&self) -> Vec<RunTrendEntry> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT r.run_id, r.started_at,
+                        SUM(CASE WHEN tr.status = 'pass' THEN 1 ELSE 0 END) as passes,
+                        COUNT(*) as total,
+                        AVG(tr.oracle_score) as avg_oracle
+                 FROM runs r
+                 JOIN test_results tr ON tr.run_id = r.run_id
+                 WHERE r.finished_at IS NOT NULL
+                 GROUP BY r.run_id
+                 ORDER BY r.started_at ASC",
+            )
+            .unwrap();
+
+        let rows = stmt
+            .query_map([], |row| {
+                let passes: i64 = row.get(2)?;
+                let total: i64 = row.get(3)?;
+                let rate = if total > 0 {
+                    passes as f64 / total as f64 * 100.0
+                } else {
+                    0.0
+                };
+                Ok(RunTrendEntry {
+                    run_id: row.get(0)?,
+                    started_at: row.get(1)?,
+                    pass_rate: rate,
+                    total: total as usize,
+                    avg_oracle_score: row.get(4)?,
+                })
+            })
+            .unwrap();
+
+        rows.flatten().collect()
+    }
+
     /// Get oracle score distribution per test for a run.
     ///
     /// Returns `(test_name, bucket, count)` where bucket is one of:
@@ -882,6 +983,15 @@ pub struct ClusterExample {
     pub pdf_size: i64,
     pub pdf_hash: String,
     pub error_message: Option<String>,
+}
+
+#[allow(dead_code)]
+pub struct RunTrendEntry {
+    pub run_id: String,
+    pub started_at: String,
+    pub pass_rate: f64,
+    pub total: usize,
+    pub avg_oracle_score: Option<f64>,
 }
 
 #[cfg(test)]
