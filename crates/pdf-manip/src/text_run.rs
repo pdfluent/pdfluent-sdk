@@ -38,19 +38,19 @@ pub struct TextRun {
 /// encoding type, and glyph widths.
 #[derive(Debug, Clone)]
 pub struct FontMap {
-    fonts: HashMap<String, FontInfo>,
+    pub(crate) fonts: HashMap<String, FontInfo>,
 }
 
 #[derive(Debug, Clone)]
-struct FontInfo {
-    to_unicode: Option<CMap>,
-    encoding: FontEncoding,
-    widths: GlyphWidths,
+pub(crate) struct FontInfo {
+    pub(crate) to_unicode: Option<CMap>,
+    pub(crate) encoding: FontEncoding,
+    pub(crate) widths: GlyphWidths,
 }
 
 /// Font encoding type.
 #[derive(Debug, Clone, PartialEq)]
-enum FontEncoding {
+pub(crate) enum FontEncoding {
     /// Standard built-in encoding or Differences-based.
     Builtin,
     /// Identity-H or Identity-V (2-byte CID).
@@ -61,7 +61,7 @@ enum FontEncoding {
 
 /// Glyph width information for estimating text run widths.
 #[derive(Debug, Clone)]
-struct GlyphWidths {
+pub(crate) struct GlyphWidths {
     first_char: u32,
     widths: Vec<f64>,
     default_width: f64,
@@ -144,7 +144,7 @@ impl FontMap {
     }
 
     /// Check if a font uses 2-byte CID encoding.
-    fn is_cid_font(&self, font_name: &str) -> bool {
+    pub(crate) fn is_cid_font(&self, font_name: &str) -> bool {
         self.fonts
             .get(font_name)
             .map(|info| {
@@ -154,6 +154,34 @@ impl FontMap {
                 )
             })
             .unwrap_or(false)
+    }
+
+    /// Build a reverse map (Unicode char → character code) for a font.
+    pub fn build_reverse_map(&self, font_name: &str) -> std::collections::HashMap<char, u32> {
+        let mut reverse = std::collections::HashMap::new();
+        let info = match self.fonts.get(font_name) {
+            Some(info) => info,
+            None => return reverse,
+        };
+
+        let cmap: &CMap = match &info.to_unicode {
+            Some(c) => c,
+            None => return reverse,
+        };
+
+        let max_code: u32 = if matches!(info.encoding, FontEncoding::Builtin) {
+            0xFF
+        } else {
+            0xFFFF
+        };
+
+        for code in 0..=max_code {
+            if let Some(BfString::Char(ch)) = cmap.lookup_bf_string(code) {
+                reverse.entry(ch).or_insert(code);
+            }
+        }
+
+        reverse
     }
 }
 
