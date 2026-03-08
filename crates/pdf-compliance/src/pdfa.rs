@@ -91,7 +91,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // PDF/A-4 requires tagged PDF for all conformance levels;
     // PDF/A-1a/2a/3a require it only for level 'a'
     if level.requires_tagged() || level.part() == 4 {
-        check_tagged_requirements(pdf, &mut report);
+        check_tagged_requirements(pdf, level, &mut report);
         check_table_structure_pdfa(pdf, &mut report);
         check_figure_alt(pdf, &mut report);
         check_role_mapping_pdfa(pdf, &mut report);
@@ -174,13 +174,22 @@ fn check_forbidden_actions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceR
     check::check_forbidden_actions_rule(pdf, level.part(), rule, report);
 }
 
-/// OutputIntents must include a GTS_PDFA1 entry (§6.2.2).
+/// OutputIntents must include a GTS_PDFA1 entry with DestOutputProfile (§6.2.2).
 fn check_output_intent(pdf: &Pdf, _level: PdfALevel, report: &mut ComplianceReport) {
     if !check::has_output_intent(pdf) {
         check::error(
             report,
             "6.2.2",
             "No OutputIntents with GTS_PDFA1 subtype found",
+        );
+        return;
+    }
+    // GTS_PDFA1 OutputIntent must have a DestOutputProfile
+    if check::output_intent_profile_components(pdf).is_none() {
+        check::error(
+            report,
+            "6.2.2",
+            "GTS_PDFA1 OutputIntent has no valid DestOutputProfile",
         );
     }
 }
@@ -451,14 +460,16 @@ fn check_transparency_a1(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Tagged PDF requirements (§6.8.1).
+/// Tagged PDF requirements (§6.8 / §6.8.1).
 ///
 /// Required for PDF/A-1a, PDF/A-2a, PDF/A-3a (level 'a'), and all PDF/A-4.
-fn check_tagged_requirements(pdf: &Pdf, report: &mut ComplianceReport) {
+/// PDF/A-4 uses clause 6.8.1 (mapped from ISO 19005-4 §6.6.1); parts 1-3 use 6.8.
+fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    let rule = if level.part() == 4 { "6.8.1" } else { "6.8" };
     if !check::is_marked(pdf) {
         check::error(
             report,
-            "6.8.1",
+            rule,
             "Document is not marked (MarkInfo/Marked missing or false)",
         );
     }
@@ -466,7 +477,7 @@ fn check_tagged_requirements(pdf: &Pdf, report: &mut ComplianceReport) {
     if check::struct_tree_root(pdf).is_none() {
         check::error(
             report,
-            "6.8.1",
+            rule,
             "No StructTreeRoot found",
         );
     }
