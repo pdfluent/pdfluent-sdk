@@ -15,13 +15,16 @@ serde_json = { workspace = true, optional = true }
 flate2 = "1"
 image = { workspace = true, optional = true }
 subsetter = { workspace = true, optional = true }
+xmp-writer = { workspace = true, optional = true }
+roxmltree.workspace = true
 
 [features]
-default = ["serde", "image-insert", "font-subset"]
+default = ["serde", "image-insert", "font-subset", "pdfa-convert"]
 serde = ["dep:serde", "dep:serde_json"]
 watermark-image = ["dep:image"]
 image-insert = ["dep:image"]
 font-subset = ["dep:subsetter"]
+pdfa-convert = ["dep:xmp-writer"]
 
 [dev-dependencies]
 tempfile = "3"
