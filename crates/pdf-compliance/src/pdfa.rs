@@ -56,6 +56,18 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_optional_content(pdf, level, &mut report);
     check_linearization(pdf, &mut report);
 
+    // Batch 4: Font & Annotation deep validation (§6.3.x, §6.5.x)
+    check_font_type_key(pdf, &mut report);
+    check_font_embedding_deep(pdf, level, &mut report);
+    check_tounicode_cmap(pdf, &mut report);
+    check_font_widths(pdf, &mut report);
+    check_symbolic_truetype_encoding(pdf, &mut report);
+    check_cidtogidmap_identity(pdf, &mut report);
+    check_cmap_embedding(pdf, &mut report);
+    check_annotation_appearance(pdf, &mut report);
+    check_annotation_subtypes_deep(pdf, level, &mut report);
+    check_annotation_flags_deep(pdf, level, &mut report);
+
     if level.part() == 1 {
         check_transparency_a1(pdf, &mut report);
     }
@@ -450,6 +462,58 @@ fn check_embedded_files_a3(pdf: &Pdf, report: &mut ComplianceReport) {
             );
         }
     }
+}
+
+// ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
+
+/// §6.3.1 — Font /Type key validation.
+fn check_font_type_key(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_font_type_key(pdf, report);
+}
+
+/// §6.3.3 — Deep font embedding validation.
+fn check_font_embedding_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_font_embedding_deep(pdf, level.part(), report);
+}
+
+/// §6.3.4 — ToUnicode CMap presence.
+fn check_tounicode_cmap(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_tounicode_cmap(pdf, report);
+}
+
+/// §6.3.5 — Font /Widths array.
+fn check_font_widths(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_font_widths(pdf, report);
+}
+
+/// §6.3.6 — Symbolic TrueType encoding.
+fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_symbolic_truetype_encoding(pdf, report);
+}
+
+/// §6.3.7 — CIDToGIDMap identity for Type2.
+fn check_cidtogidmap_identity(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_cidtogidmap_identity(pdf, report);
+}
+
+/// §6.3.8 — CMap embedding for Type0.
+fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_cmap_embedding(pdf, report);
+}
+
+/// §6.5.3 — Annotation appearance streams.
+fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_annotation_appearance(pdf, report);
+}
+
+/// §6.5.2 — Deep annotation subtype validation.
+fn check_annotation_subtypes_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_annotation_subtypes_deep(pdf, level.part(), report);
+}
+
+/// §6.5.1 — Deep annotation flag validation.
+fn check_annotation_flags_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_annotation_flags_deep(pdf, level.part(), report);
 }
 
 // ─── Batch 5: Transparency, Tagged PDF, Remaining Rules ─────────────────────
