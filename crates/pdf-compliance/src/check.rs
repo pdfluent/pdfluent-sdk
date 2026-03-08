@@ -4516,20 +4516,29 @@ fn collect_struct_types(elem: &Dict<'_>, types: &mut Vec<Vec<u8>>, depth: usize)
 
 // ─── §6.1.13 — Name length limit ────────────────────────────────────────────
 
-/// Check that no PDF Name object exceeds 127 bytes (§6.1.13).
+/// Check implementation limits (§6.1.13): name length ≤ 127 and string length ≤ 32767.
 ///
 /// Non-recursive: checks top-level objects and one level of dict/array nesting
 /// to avoid OOM from shared indirect reference resolution.
 pub fn check_name_length_limit(pdf: &Pdf, report: &mut ComplianceReport) {
-    let mut found = false;
+    let mut long_name = false;
+    let mut long_string = false;
     for obj in pdf.objects() {
-        if check_name_length_obj(&obj) {
-            found = true;
+        if !long_name && check_name_length_obj(&obj) {
+            long_name = true;
+        }
+        if !long_string && check_string_length_obj(&obj) {
+            long_string = true;
+        }
+        if long_name && long_string {
             break;
         }
     }
-    if found {
+    if long_name {
         error(report, "6.1.13", "Name length exceeded 127");
+    }
+    if long_string {
+        error(report, "6.1.13", "String length exceeded 32767");
     }
 }
 
@@ -4556,6 +4565,33 @@ fn check_name_length_obj(obj: &Object<'_>) -> bool {
             for (key, _) in s.dict().entries() {
                 if key.as_ref().len() > 127 {
                     return true;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn check_string_length_obj(obj: &Object<'_>) -> bool {
+    match obj {
+        Object::String(s) => s.as_ref().len() > 32767,
+        Object::Dict(dict) => {
+            for (key, _) in dict.entries() {
+                if let Some(Object::String(s)) = dict.get::<Object<'_>>(key.as_ref()) {
+                    if s.as_ref().len() > 32767 {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        Object::Array(arr) => {
+            for item in arr.iter::<Object<'_>>() {
+                if let Object::String(s) = &item {
+                    if s.as_ref().len() > 32767 {
+                        return true;
+                    }
                 }
             }
             false
