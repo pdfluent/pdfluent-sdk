@@ -128,8 +128,88 @@ pub struct AnnotationBuilder {
     vertices: Option<Vec<f64>>,
     /// Dash pattern for stroked annotations.
     dash_pattern: Option<Vec<f64>>,
+    /// Default appearance string (/DA) for FreeText annotations.
+    default_appearance_str: Option<String>,
+    /// Text alignment (/Q) for FreeText: 0=left, 1=center, 2=right.
+    text_alignment: Option<i64>,
+    /// Icon name (/Name) for Text (sticky note) and Stamp annotations.
+    icon_name: Option<String>,
+    /// URI action (/A) for Link annotations.
+    uri_action: Option<String>,
+    /// Named destination (/Dest) for Link annotations.
+    destination: Option<String>,
     /// Custom appearance builder function. If None, a default appearance is generated.
     custom_appearance: Option<AppearanceFn>,
+}
+
+/// Standard stamp names per ISO 32000-2 §12.5.6.12.
+#[cfg(feature = "write")]
+#[derive(Debug, Clone, Copy)]
+pub enum StampName {
+    Approved,
+    Experimental,
+    NotApproved,
+    AsIs,
+    Expired,
+    NotForPublicRelease,
+    Confidential,
+    Final,
+    Sold,
+    Departmental,
+    ForComment,
+    TopSecret,
+    Draft,
+    ForPublicRelease,
+}
+
+#[cfg(feature = "write")]
+impl StampName {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Approved => "Approved",
+            Self::Experimental => "Experimental",
+            Self::NotApproved => "NotApproved",
+            Self::AsIs => "AsIs",
+            Self::Expired => "Expired",
+            Self::NotForPublicRelease => "NotForPublicRelease",
+            Self::Confidential => "Confidential",
+            Self::Final => "Final",
+            Self::Sold => "Sold",
+            Self::Departmental => "Departmental",
+            Self::ForComment => "ForComment",
+            Self::TopSecret => "TopSecret",
+            Self::Draft => "Draft",
+            Self::ForPublicRelease => "ForPublicRelease",
+        }
+    }
+}
+
+/// Standard icon names for Text (sticky note) annotations.
+#[cfg(feature = "write")]
+#[derive(Debug, Clone, Copy)]
+pub enum TextIcon {
+    Comment,
+    Key,
+    Note,
+    Help,
+    NewParagraph,
+    Paragraph,
+    Insert,
+}
+
+#[cfg(feature = "write")]
+impl TextIcon {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Comment => "Comment",
+            Self::Key => "Key",
+            Self::Note => "Note",
+            Self::Help => "Help",
+            Self::NewParagraph => "NewParagraph",
+            Self::Paragraph => "Paragraph",
+            Self::Insert => "Insert",
+        }
+    }
 }
 
 /// Line ending style for Line annotations (ISO 32000-2 Table 179).
@@ -185,8 +265,58 @@ impl AnnotationBuilder {
             ink_list: None,
             vertices: None,
             dash_pattern: None,
+            default_appearance_str: None,
+            text_alignment: None,
+            icon_name: None,
+            uri_action: None,
+            destination: None,
             custom_appearance: None,
         }
+    }
+
+    /// Create a FreeText annotation with the given text and font size.
+    pub fn free_text(rect: AnnotRect, text: &str, font_size: f64) -> Self {
+        let da = format!("/Helv {font_size} Tf 0 g");
+        let mut b = Self::new(AnnotSubtype::FreeText, rect).contents(text);
+        b.default_appearance_str = Some(da);
+        b
+    }
+
+    /// Create a Text (sticky note) annotation.
+    pub fn sticky_note(rect: AnnotRect, icon: TextIcon) -> Self {
+        let mut b = Self::new(AnnotSubtype::Text, rect);
+        b.icon_name = Some(icon.as_str().to_string());
+        b
+    }
+
+    /// Create a Stamp annotation with a standard stamp name.
+    pub fn stamp(rect: AnnotRect, name: StampName) -> Self {
+        let mut b = Self::new(AnnotSubtype::Stamp, rect);
+        b.icon_name = Some(name.as_str().to_string());
+        b
+    }
+
+    /// Create a Stamp annotation with a custom name.
+    pub fn stamp_custom(rect: AnnotRect, name: &str) -> Self {
+        let mut b = Self::new(AnnotSubtype::Stamp, rect);
+        b.icon_name = Some(name.to_string());
+        b
+    }
+
+    /// Create a Link annotation with a URI action.
+    pub fn link_uri(rect: AnnotRect, uri: &str) -> Self {
+        let mut b = Self::new(AnnotSubtype::Link, rect);
+        b.uri_action = Some(uri.to_string());
+        b.border_width = 0.0; // Links typically have no border.
+        b
+    }
+
+    /// Create a Link annotation with a named destination.
+    pub fn link_dest(rect: AnnotRect, dest: &str) -> Self {
+        let mut b = Self::new(AnnotSubtype::Link, rect);
+        b.destination = Some(dest.to_string());
+        b.border_width = 0.0;
+        b
     }
 
     /// Create a Square annotation.
@@ -298,6 +428,12 @@ impl AnnotationBuilder {
     /// Set the annotation flags (raw u32).
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
+        self
+    }
+
+    /// Set text alignment for FreeText annotations (0=left, 1=center, 2=right).
+    pub fn alignment(mut self, q: i64) -> Self {
+        self.text_alignment = Some(q);
         self
     }
 
@@ -473,6 +609,41 @@ impl AnnotationBuilder {
             annot_dict.set("BS", Object::Dictionary(bs));
         }
 
+        // Default appearance string (/DA) for FreeText.
+        if let Some(ref da) = self.default_appearance_str {
+            annot_dict.set(
+                "DA",
+                Object::String(da.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+            );
+        }
+
+        // Text alignment (/Q) for FreeText.
+        if let Some(q) = self.text_alignment {
+            annot_dict.set("Q", Object::Integer(q));
+        }
+
+        // Icon name (/Name) for Text, Stamp.
+        if let Some(ref name) = self.icon_name {
+            annot_dict.set("Name", Object::Name(name.as_bytes().to_vec()));
+        }
+
+        // URI action (/A) for Link.
+        if let Some(ref uri) = self.uri_action {
+            let action = dictionary! {
+                "S" => "URI",
+                "URI" => Object::String(uri.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+            };
+            annot_dict.set("A", Object::Dictionary(action));
+        }
+
+        // Named destination (/Dest) for Link.
+        if let Some(ref dest) = self.destination {
+            annot_dict.set(
+                "Dest",
+                Object::String(dest.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+            );
+        }
+
         // Normal appearance.
         let ap = dictionary! {
             "N" => Object::Reference(ap_stream_id),
@@ -513,25 +684,43 @@ impl AnnotationBuilder {
             ]),
         };
 
-        // Build ExtGState if opacity or Multiply blend mode is needed.
+        // Build resources for the form XObject.
         let needs_multiply = matches!(self.subtype, AnnotSubtype::Highlight);
-        if self.opacity.is_some() || needs_multiply {
-            let mut gs_dict = dictionary! {
-                "Type" => "ExtGState",
-            };
-            if let Some(alpha) = self.opacity {
-                gs_dict.set("ca", Object::Real(alpha as f32));
-                gs_dict.set("CA", Object::Real(alpha as f32));
-            }
-            if needs_multiply {
-                gs_dict.set("BM", Object::Name(b"Multiply".to_vec()));
-            }
-            let gs_id = doc.add_object(Object::Dictionary(gs_dict));
+        let needs_gs = self.opacity.is_some() || needs_multiply;
+        let needs_font = matches!(self.subtype, AnnotSubtype::FreeText | AnnotSubtype::Stamp);
 
-            let mut gs_res = lopdf::Dictionary::new();
-            gs_res.set("GS0", Object::Reference(gs_id));
+        if needs_gs || needs_font {
             let mut resources = lopdf::Dictionary::new();
-            resources.set("ExtGState", Object::Dictionary(gs_res));
+
+            if needs_gs {
+                let mut gs_dict = dictionary! {
+                    "Type" => "ExtGState",
+                };
+                if let Some(alpha) = self.opacity {
+                    gs_dict.set("ca", Object::Real(alpha as f32));
+                    gs_dict.set("CA", Object::Real(alpha as f32));
+                }
+                if needs_multiply {
+                    gs_dict.set("BM", Object::Name(b"Multiply".to_vec()));
+                }
+                let gs_id = doc.add_object(Object::Dictionary(gs_dict));
+                let mut gs_res = lopdf::Dictionary::new();
+                gs_res.set("GS0", Object::Reference(gs_id));
+                resources.set("ExtGState", Object::Dictionary(gs_res));
+            }
+
+            if needs_font {
+                let font_dict = dictionary! {
+                    "Type" => "Font",
+                    "Subtype" => "Type1",
+                    "BaseFont" => "Helvetica",
+                };
+                let font_id = doc.add_object(Object::Dictionary(font_dict));
+                let mut font_res = lopdf::Dictionary::new();
+                font_res.set("Helv", Object::Reference(font_id));
+                resources.set("Font", Object::Dictionary(font_res));
+            }
+
             stream_dict.set("Resources", Object::Dictionary(resources));
         }
 
@@ -694,9 +883,34 @@ impl AnnotationBuilder {
                 }
                 builder.restore_state();
             }
-            _ => {
-                // Generic: stroked rect fallback.
-                builder.stroked_rect(&stroke, self.border_width);
+            AnnotSubtype::FreeText => {
+                // White background with border.
+                let white = AppearanceColor::new(1.0, 1.0, 1.0);
+                builder.filled_stroked_rect(&white, &stroke, self.border_width);
+                // Text is rendered via /DA by the viewer; the appearance stream
+                // provides the background rectangle.
+                if let Some(ref text) = self.contents {
+                    let text_color = self.color.unwrap_or(AppearanceColor::new(0.0, 0.0, 0.0));
+                    let margin = self.border_width + 2.0;
+                    builder.text(text, "Helv", 12.0, margin, h - margin - 12.0, &text_color);
+                }
+            }
+            AnnotSubtype::Text => {
+                // Sticky note icon — simplified as a filled square with a border.
+                let fill = AppearanceColor::new(1.0, 1.0, 0.6); // Light yellow
+                builder.filled_stroked_rect(&fill, &stroke, self.border_width);
+            }
+            AnnotSubtype::Stamp => {
+                // Stamp: red border with text.
+                let red = AppearanceColor::new(1.0, 0.0, 0.0);
+                builder.stroked_rect(&red, 2.0);
+                if let Some(ref name) = self.icon_name {
+                    builder.text(name, "Helv", 18.0, 4.0, h / 2.0 - 9.0, &red);
+                }
+            }
+            AnnotSubtype::Link => {
+                // Links are typically invisible — no appearance needed.
+                // Empty appearance stream (viewer draws the link area).
             }
         }
 
@@ -1307,6 +1521,125 @@ mod tests {
             } else {
                 panic!("Expected BS dictionary");
             }
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    // --- Issue #305 tests: Text annotations ---
+
+    #[test]
+    fn free_text_annotation() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 700.0, 300.0, 730.0);
+        let annot_id = AnnotationBuilder::free_text(rect, "Hello World", 14.0)
+            .alignment(1) // Center
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"FreeText".to_vec())
+            );
+            assert!(d.get(b"DA").is_ok());
+            assert_eq!(d.get(b"Q").unwrap(), &Object::Integer(1));
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn sticky_note_annotation() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(500.0, 700.0, 524.0, 724.0);
+        let annot_id = AnnotationBuilder::sticky_note(rect, TextIcon::Comment)
+            .contents("This is a comment")
+            .color(1.0, 1.0, 0.0)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(d.get(b"Subtype").unwrap(), &Object::Name(b"Text".to_vec()));
+            assert_eq!(d.get(b"Name").unwrap(), &Object::Name(b"Comment".to_vec()));
+            assert!(d.get(b"Contents").is_ok());
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn stamp_annotation() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 600.0, 250.0, 650.0);
+        let annot_id = AnnotationBuilder::stamp(rect, StampName::Approved)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(d.get(b"Subtype").unwrap(), &Object::Name(b"Stamp".to_vec()));
+            assert_eq!(d.get(b"Name").unwrap(), &Object::Name(b"Approved".to_vec()));
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn stamp_custom_name() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 500.0, 250.0, 550.0);
+        let annot_id = AnnotationBuilder::stamp_custom(rect, "ReviewNeeded")
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Name").unwrap(),
+                &Object::Name(b"ReviewNeeded".to_vec())
+            );
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn link_uri_annotation() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 700.0, 200.0, 712.0);
+        let annot_id = AnnotationBuilder::link_uri(rect, "https://example.com")
+            .color(0.0, 0.0, 1.0)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(d.get(b"Subtype").unwrap(), &Object::Name(b"Link".to_vec()));
+            let action = d.get(b"A").unwrap();
+            if let Object::Dictionary(a) = action {
+                assert_eq!(a.get(b"S").unwrap(), &Object::Name(b"URI".to_vec()));
+            } else {
+                panic!("Expected action dictionary");
+            }
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn link_destination_annotation() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 650.0, 200.0, 662.0);
+        let annot_id = AnnotationBuilder::link_dest(rect, "chapter1")
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert!(d.get(b"Dest").is_ok());
         } else {
             panic!("Expected dictionary");
         }
