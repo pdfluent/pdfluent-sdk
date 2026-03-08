@@ -1,9 +1,13 @@
 //! PDF annotation engine.
 //!
-//! Provides typed access to all annotation types defined in ISO 32000-2 §12.5.
+//! Provides typed access to all annotation types defined in ISO 32000-2 §12.5,
+//! and annotation creation via the `write` feature (backed by lopdf).
 
 mod annotation;
 mod appearance;
+pub mod appearance_writer;
+pub mod builder;
+pub mod error;
 mod geometric;
 mod link;
 mod markup;

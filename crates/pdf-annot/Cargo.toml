@@ -7,4 +7,10 @@ description = "PDF annotation engine — parsing and typed access to all annotat
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax" }
+lopdf = { workspace = true, optional = true }
 log = "0.4"
+thiserror = { workspace = true }
+
+[features]
+default = ["write"]
+write = ["dep:lopdf"]
