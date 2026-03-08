@@ -46,6 +46,7 @@ members = [
     # --- Conversions (Fase 3) ---
     "crates/pdf-docx",
     "crates/pdf-xlsx",
+    "crates/pdf-pptx",
 
     # --- Data exchange + EU compliance (Fase O) ---
     "crates/pdf-invoice",
