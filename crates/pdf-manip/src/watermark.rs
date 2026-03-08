@@ -223,7 +223,7 @@ pub fn apply_stamp(
 }
 
 /// Resolve a `PageSelection` to a list of 1-based page numbers.
-fn resolve_page_selection(doc: &Document, selection: &PageSelection) -> Result<Vec<u32>> {
+pub(crate) fn resolve_page_selection(doc: &Document, selection: &PageSelection) -> Result<Vec<u32>> {
     let total = doc.get_pages().len() as u32;
     let pages = match selection {
         PageSelection::All => (1..=total).collect(),
@@ -248,7 +248,7 @@ fn resolve_page_selection(doc: &Document, selection: &PageSelection) -> Result<V
 }
 
 /// Get page width and height from its MediaBox.
-fn get_page_dimensions(doc: &Document, page_id: ObjectId) -> Result<(f32, f32)> {
+pub(crate) fn get_page_dimensions(doc: &Document, page_id: ObjectId) -> Result<(f32, f32)> {
     if let Some(Object::Dictionary(dict)) = doc.objects.get(&page_id) {
         if let Ok(Object::Array(media_box)) = dict.get(b"MediaBox") {
             if media_box.len() >= 4 {
@@ -387,7 +387,7 @@ fn resolve_position(pos: &Position, page_width: f32, page_height: f32) -> (f32, 
 }
 
 /// Ensure a page has a named resource entry in the given sub-dictionary.
-fn ensure_page_resource(
+pub(crate) fn ensure_page_resource(
     doc: &mut Document,
     page_id: ObjectId,
     category: &str,
@@ -424,7 +424,7 @@ fn ensure_page_resource(
 }
 
 /// Ensure a page has a Helvetica font registered as the given name.
-fn ensure_page_font(doc: &mut Document, page_id: ObjectId, name: &str) {
+pub(crate) fn ensure_page_font(doc: &mut Document, page_id: ObjectId, name: &str) {
     let font_dict = dictionary! {
         "Type" => "Font",
         "Subtype" => "Type1",
@@ -435,7 +435,7 @@ fn ensure_page_font(doc: &mut Document, page_id: ObjectId, name: &str) {
 }
 
 /// Add a content stream to a page, either prepending (background) or appending (foreground).
-fn add_content_to_page(doc: &mut Document, page_id: ObjectId, stream_id: ObjectId, layer: Layer) {
+pub(crate) fn add_content_to_page(doc: &mut Document, page_id: ObjectId, stream_id: ObjectId, layer: Layer) {
     if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
         let existing = page_dict.get(b"Contents").ok().cloned();
 

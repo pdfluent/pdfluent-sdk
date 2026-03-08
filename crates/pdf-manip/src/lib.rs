@@ -21,6 +21,7 @@ pub mod encrypt;
 pub mod error;
 #[cfg(feature = "font-subset")]
 pub mod font_subset;
+pub mod header_footer;
 #[cfg(feature = "image-insert")]
 pub mod image_insert;
 pub mod optimize;
