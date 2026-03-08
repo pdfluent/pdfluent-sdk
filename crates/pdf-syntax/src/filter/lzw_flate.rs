@@ -10,19 +10,23 @@ pub(crate) mod flate {
     use crate::filter::lzw_flate::{PredictorParams, apply_predictor};
     use crate::object::Dict;
 
+    /// Maximum decompressed stream size (256 MB). Prevents zip-bomb style
+    /// attacks from consuming all available memory.
+    const MAX_DECODE_SIZE: u64 = 256 * 1024 * 1024;
+
     #[cfg(feature = "std")]
     pub(crate) fn decode(data: &[u8], params: Dict<'_>) -> Option<Vec<u8>> {
         use flate2::read::{DeflateDecoder, ZlibDecoder};
         use std::io::Read;
 
         fn zlib_stream(data: &[u8]) -> Option<Vec<u8>> {
-            let mut decoder = ZlibDecoder::new(data);
+            let mut decoder = ZlibDecoder::new(data).take(MAX_DECODE_SIZE);
             let mut result = Vec::new();
             decoder.read_to_end(&mut result).ok().map(|_| result)
         }
 
         fn deflate_stream(data: &[u8]) -> Option<Vec<u8>> {
-            let mut decoder = DeflateDecoder::new(data);
+            let mut decoder = DeflateDecoder::new(data).take(MAX_DECODE_SIZE);
             let mut result = Vec::new();
             decoder.read_to_end(&mut result).ok().map(|_| result)
         }
