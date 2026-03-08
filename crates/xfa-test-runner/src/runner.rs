@@ -257,6 +257,8 @@ impl Runner {
         // Spawn in a separate thread with preemptive timeout via recv_timeout.
         let (tx, rx) = std::sync::mpsc::channel();
 
+        let rss_before = current_rss_bytes();
+
         std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(move || {
@@ -266,7 +268,9 @@ impl Runner {
                 }));
                 let elapsed = start.elapsed();
 
-                let test_result = match result {
+                let rss_after = current_rss_bytes();
+
+                let mut test_result = match result {
                     Ok(r) => r,
                     Err(panic_info) => {
                         let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
@@ -285,6 +289,21 @@ impl Runner {
                         }
                     }
                 };
+
+                // Inject RSS measurement into metadata.
+                if let (Some(before), Some(after)) = (rss_before, rss_after) {
+                    test_result
+                        .metadata
+                        .insert("rss_before_kb".to_string(), (before / 1024).to_string());
+                    test_result
+                        .metadata
+                        .insert("rss_after_kb".to_string(), (after / 1024).to_string());
+                    let delta = after as i64 - before as i64;
+                    test_result
+                        .metadata
+                        .insert("rss_delta_kb".to_string(), (delta / 1024).to_string());
+                }
+
                 let _ = tx.send(test_result);
             })
             .expect("failed to spawn test thread");
@@ -354,4 +373,20 @@ fn hex_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     format!("{:x}", hasher.finalize())
+}
+
+/// Read current process RSS in bytes.
+/// Returns `None` on unsupported platforms or if reading fails.
+fn current_rss_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        // /proc/self/statm: fields are in pages; RSS is field index 1.
+        let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
+        let rss_pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+        Some(rss_pages * 4096)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
 }

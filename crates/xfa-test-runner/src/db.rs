@@ -589,6 +589,56 @@ impl Database {
         )
         .ok()
     }
+
+    /// Get oracle score distribution per test for a run.
+    ///
+    /// Returns `(test_name, bucket, count)` where bucket is one of:
+    /// "0.0-0.5", "0.5-0.8", "0.8-0.9", "0.9-0.95", "0.95-1.0", "1.0".
+    #[allow(dead_code)]
+    pub fn oracle_score_distribution(&self, run_id: &str) -> Vec<(String, String, usize)> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT test_name, oracle_score FROM test_results
+                 WHERE run_id = ?1 AND oracle_score IS NOT NULL",
+            )
+            .unwrap();
+
+        let rows = stmt
+            .query_map(params![run_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            })
+            .unwrap();
+
+        let mut buckets: std::collections::HashMap<(String, String), usize> =
+            std::collections::HashMap::new();
+
+        for row in rows.flatten() {
+            let (test_name, score) = row;
+            let bucket = if score >= 1.0 {
+                "1.0"
+            } else if score >= 0.95 {
+                "0.95-1.0"
+            } else if score >= 0.9 {
+                "0.9-0.95"
+            } else if score >= 0.8 {
+                "0.8-0.9"
+            } else if score >= 0.5 {
+                "0.5-0.8"
+            } else {
+                "0.0-0.5"
+            };
+
+            *buckets.entry((test_name, bucket.to_string())).or_insert(0) += 1;
+        }
+
+        let mut result: Vec<(String, String, usize)> = buckets
+            .into_iter()
+            .map(|((test, bucket), count)| (test, bucket, count))
+            .collect();
+        result.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        result
+    }
 }
 
 pub struct TestResultRow {
