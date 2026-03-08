@@ -141,6 +141,55 @@ pub fn check_xmp_pdfa_identification(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Check PDF/A-4 conformance property is absent (§6.7.3).
+/// For PDF/A-4, pdfaid:conformance must not be present.
+pub fn check_pdfa4_conformance_absent(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(xmp) = get_xmp_metadata(pdf) else {
+        return;
+    };
+    let text = String::from_utf8_lossy(&xmp);
+    // Check if conformance is present
+    if let Some(val) = extract_xmp_value(&text, "pdfaid:conformance") {
+        if val.is_empty() || val.trim().is_empty() {
+            error(
+                report,
+                "6.7.3",
+                "PDF/A-4 must not have pdfaid:conformance (found empty value)",
+            );
+        } else {
+            error(
+                report,
+                "6.7.3",
+                format!("PDF/A-4 must not have pdfaid:conformance (found '{val}')"),
+            );
+        }
+    } else if extract_xmp_attr(&text, "pdfaid:conformance").is_some() {
+        error(
+            report,
+            "6.7.3",
+            "PDF/A-4 must not have pdfaid:conformance attribute",
+        );
+    }
+}
+
+/// Check stream dicts for empty name keys (§6.1.7.1 t3, §6.1.6.1).
+pub fn check_stream_empty_keys(pdf: &Pdf, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        if let Object::Stream(s) = obj {
+            for (key, _) in s.dict().entries() {
+                if key.as_ref().is_empty() {
+                    error(
+                        report,
+                        "6.1.7.1",
+                        "Stream dictionary contains empty key",
+                    );
+                    return; // one error is enough
+                }
+            }
+        }
+    }
+}
+
 /// Check MarkInfo/Marked is present and true (§6.8.2.2).
 pub fn check_mark_info(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else {
