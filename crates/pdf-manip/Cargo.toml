@@ -8,6 +8,7 @@ description = "PDF manipulation: pages, encryption, watermarks, optimization, bo
 
 [dependencies]
 lopdf.workspace = true
+pdf-font.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -15,9 +16,10 @@ flate2 = "1"
 image = { workspace = true, optional = true }
 
 [features]
-default = ["serde"]
+default = ["serde", "image-insert"]
 serde = ["dep:serde", "dep:serde_json"]
 watermark-image = ["dep:image"]
+image-insert = ["dep:image"]
 
 [dev-dependencies]
 tempfile = "3"

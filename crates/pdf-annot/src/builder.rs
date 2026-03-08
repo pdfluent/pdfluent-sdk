@@ -116,6 +116,9 @@ pub struct AnnotationBuilder {
     border_width: f64,
     contents: Option<String>,
     flags: u32,
+    /// QuadPoints for markup annotations (Highlight, Underline, StrikeOut, Squiggly).
+    /// Each quad is 8 values: [x1,y1, x2,y2, x3,y3, x4,y4].
+    quad_points: Option<Vec<f64>>,
     /// Custom appearance builder function. If None, a default appearance is generated.
     custom_appearance: Option<AppearanceFn>,
 }
@@ -133,8 +136,31 @@ impl AnnotationBuilder {
             border_width: 1.0,
             contents: None,
             flags: 4, // Print flag set by default
+            quad_points: None,
             custom_appearance: None,
         }
+    }
+
+    /// Create a Highlight markup annotation.
+    pub fn highlight(rect: AnnotRect) -> Self {
+        Self::new(AnnotSubtype::Highlight, rect)
+            .color(1.0, 1.0, 0.0) // Yellow
+            .opacity(0.4)
+    }
+
+    /// Create an Underline markup annotation.
+    pub fn underline(rect: AnnotRect) -> Self {
+        Self::new(AnnotSubtype::Underline, rect).color(0.0, 0.0, 1.0)
+    }
+
+    /// Create a StrikeOut markup annotation.
+    pub fn strikeout(rect: AnnotRect) -> Self {
+        Self::new(AnnotSubtype::StrikeOut, rect).color(1.0, 0.0, 0.0)
+    }
+
+    /// Create a Squiggly markup annotation.
+    pub fn squiggly(rect: AnnotRect) -> Self {
+        Self::new(AnnotSubtype::Squiggly, rect).color(0.0, 0.8, 0.0)
     }
 
     /// Set the annotation color (RGB, 0.0–1.0).
@@ -171,6 +197,28 @@ impl AnnotationBuilder {
     pub fn flags(mut self, flags: u32) -> Self {
         self.flags = flags;
         self
+    }
+
+    /// Set QuadPoints for text markup annotations.
+    ///
+    /// Each quadrilateral is defined by 8 values in page coordinates:
+    /// `[x1,y1, x2,y2, x3,y3, x4,y4]` where the points define the
+    /// corners of the marked text region. Multiple quads can be
+    /// concatenated for multi-line selections.
+    pub fn quad_points(mut self, points: Vec<f64>) -> Self {
+        self.quad_points = Some(points);
+        self
+    }
+
+    /// Set QuadPoints from a simple rectangle (single quad).
+    pub fn quad_points_from_rect(self, rect: &AnnotRect) -> Self {
+        // PDF QuadPoints order: top-left, top-right, bottom-left, bottom-right
+        self.quad_points(vec![
+            rect.x0, rect.y1, // top-left
+            rect.x1, rect.y1, // top-right
+            rect.x0, rect.y0, // bottom-left
+            rect.x1, rect.y0, // bottom-right
+        ])
     }
 
     /// Provide a custom appearance builder closure.
@@ -242,6 +290,12 @@ impl AnnotationBuilder {
             );
         }
 
+        // QuadPoints for markup annotations.
+        if let Some(ref qp) = self.quad_points {
+            let arr: Vec<Object> = qp.iter().map(|&v| Object::Real(v as f32)).collect();
+            annot_dict.set("QuadPoints", Object::Array(arr));
+        }
+
         // Border style.
         if (self.border_width - 1.0).abs() > f64::EPSILON {
             let bs = dictionary! {
@@ -291,13 +345,19 @@ impl AnnotationBuilder {
             ]),
         };
 
-        // If opacity is used, add ExtGState resource.
-        if let Some(alpha) = self.opacity {
-            let gs_dict = dictionary! {
+        // Build ExtGState if opacity or Multiply blend mode is needed.
+        let needs_multiply = matches!(self.subtype, AnnotSubtype::Highlight);
+        if self.opacity.is_some() || needs_multiply {
+            let mut gs_dict = dictionary! {
                 "Type" => "ExtGState",
-                "ca" => Object::Real(alpha as f32),
-                "CA" => Object::Real(alpha as f32),
             };
+            if let Some(alpha) = self.opacity {
+                gs_dict.set("ca", Object::Real(alpha as f32));
+                gs_dict.set("CA", Object::Real(alpha as f32));
+            }
+            if needs_multiply {
+                gs_dict.set("BM", Object::Name(b"Multiply".to_vec()));
+            }
             let gs_id = doc.add_object(Object::Dictionary(gs_dict));
 
             let mut gs_res = lopdf::Dictionary::new();
@@ -314,8 +374,9 @@ impl AnnotationBuilder {
     /// Generate a default appearance based on the annotation subtype.
     fn default_appearance(&self, builder: &mut AppearanceStreamBuilder, w: f64, h: f64) {
         let stroke = self.color.unwrap_or(AppearanceColor::new(0.0, 0.0, 0.0));
+        let needs_gs = self.opacity.is_some() || matches!(self.subtype, AnnotSubtype::Highlight);
 
-        if self.opacity.is_some() {
+        if needs_gs {
             builder.save_state();
             builder.ops_push_raw(lopdf::content::Operation::new(
                 "gs",
@@ -399,7 +460,7 @@ impl AnnotationBuilder {
             }
         }
 
-        if self.opacity.is_some() {
+        if needs_gs {
             builder.restore_state();
         }
     }
@@ -669,5 +730,154 @@ mod tests {
             .unwrap();
 
         assert!(doc.get_object(annot_id).is_ok());
+    }
+
+    // --- Issue #303 tests: Markup annotations ---
+
+    #[test]
+    fn highlight_with_quad_points() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 700.0, 400.0, 712.0);
+        let annot_id = AnnotationBuilder::highlight(rect)
+            .quad_points_from_rect(&rect)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"Highlight".to_vec())
+            );
+            // Check QuadPoints present.
+            let qp = d.get(b"QuadPoints").unwrap();
+            if let Object::Array(arr) = qp {
+                assert_eq!(arr.len(), 8); // Single quad = 8 values.
+            } else {
+                panic!("Expected QuadPoints array");
+            }
+            // Check opacity is set.
+            assert!(d.get(b"CA").is_ok());
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn highlight_has_multiply_blend() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 700.0, 400.0, 712.0);
+        let annot_id = AnnotationBuilder::highlight(rect).build(&mut doc).unwrap();
+
+        // Get the appearance stream and verify its resources contain BM /Multiply.
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            let ap = d.get(b"AP").unwrap();
+            if let Object::Dictionary(ap_dict) = ap {
+                let n_ref = ap_dict.get(b"N").unwrap();
+                if let Object::Reference(stream_id) = n_ref {
+                    let stream = doc.get_object(*stream_id).unwrap();
+                    if let Object::Stream(s) = stream {
+                        let res = s.dict.get(b"Resources").unwrap();
+                        if let Object::Dictionary(res_dict) = res {
+                            let gs = res_dict.get(b"ExtGState").unwrap();
+                            if let Object::Dictionary(gs_dict) = gs {
+                                let gs0_ref = gs_dict.get(b"GS0").unwrap();
+                                if let Object::Reference(gs0_id) = gs0_ref {
+                                    let gs0 = doc.get_object(*gs0_id).unwrap();
+                                    if let Object::Dictionary(gs0_dict) = gs0 {
+                                        assert_eq!(
+                                            gs0_dict.get(b"BM").unwrap(),
+                                            &Object::Name(b"Multiply".to_vec())
+                                        );
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        panic!("Could not find BM /Multiply in ExtGState");
+    }
+
+    #[test]
+    fn underline_convenience() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 700.0, 400.0, 712.0);
+        let annot_id = AnnotationBuilder::underline(rect)
+            .quad_points_from_rect(&rect)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"Underline".to_vec())
+            );
+            assert!(d.get(b"QuadPoints").is_ok());
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn strikeout_convenience() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 700.0, 400.0, 712.0);
+        let annot_id = AnnotationBuilder::strikeout(rect).build(&mut doc).unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"StrikeOut".to_vec())
+            );
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn squiggly_convenience() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 700.0, 400.0, 712.0);
+        let annot_id = AnnotationBuilder::squiggly(rect).build(&mut doc).unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            assert_eq!(
+                d.get(b"Subtype").unwrap(),
+                &Object::Name(b"Squiggly".to_vec())
+            );
+        } else {
+            panic!("Expected dictionary");
+        }
+    }
+
+    #[test]
+    fn multi_quad_points() {
+        let mut doc = make_test_doc();
+        let rect = AnnotRect::new(72.0, 688.0, 400.0, 712.0);
+        // Two quads for two lines of text.
+        let qp = vec![
+            72.0, 712.0, 400.0, 712.0, 72.0, 700.0, 400.0, 700.0, // line 1
+            72.0, 700.0, 300.0, 700.0, 72.0, 688.0, 300.0, 688.0, // line 2
+        ];
+        let annot_id = AnnotationBuilder::highlight(rect)
+            .quad_points(qp)
+            .build(&mut doc)
+            .unwrap();
+
+        let annot = doc.get_object(annot_id).unwrap();
+        if let Object::Dictionary(d) = annot {
+            if let Object::Array(arr) = d.get(b"QuadPoints").unwrap() {
+                assert_eq!(arr.len(), 16); // 2 quads × 8 values.
+            } else {
+                panic!("Expected QuadPoints array");
+            }
+        }
     }
 }

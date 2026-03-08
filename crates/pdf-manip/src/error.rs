@@ -31,6 +31,9 @@ pub enum ManipError {
     #[error("watermark error: {0}")]
     Watermark(String),
 
+    #[error("image error: {0}")]
+    Image(String),
+
     #[error("{0}")]
     Other(String),
 }
