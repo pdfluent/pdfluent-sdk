@@ -699,7 +699,24 @@ impl XRefEntry {
     }
 }
 
+/// Maximum depth for following xref Prev/XRefStm chains to prevent stack
+/// overflow on circular or deeply chained xref tables.
+const MAX_XREF_CHAIN_DEPTH: usize = 64;
+
 fn populate_xref_impl<'a>(data: &'a [u8], pos: usize, xref_map: &mut XrefMap) -> Option<&'a [u8]> {
+    populate_xref_depth(data, pos, xref_map, 0)
+}
+
+fn populate_xref_depth<'a>(
+    data: &'a [u8],
+    pos: usize,
+    xref_map: &mut XrefMap,
+    depth: usize,
+) -> Option<&'a [u8]> {
+    if depth > MAX_XREF_CHAIN_DEPTH {
+        log::warn!("Xref chain depth exceeds {MAX_XREF_CHAIN_DEPTH}, stopping traversal");
+        return None;
+    }
     let mut reader = Reader::new(data);
     reader.jump(pos);
     // In case the position points to before the object number of a xref stream.
@@ -711,9 +728,9 @@ fn populate_xref_impl<'a>(data: &'a [u8], pos: usize, xref_map: &mut XrefMap) ->
         .read_without_context::<ObjectIdentifier>()
         .is_some()
     {
-        populate_from_xref_stream(data, &mut r2, xref_map)
+        populate_from_xref_stream(data, &mut r2, xref_map, depth)
     } else {
-        populate_from_xref_table(data, &mut r2, xref_map)
+        populate_from_xref_table(data, &mut r2, xref_map, depth)
     }
 }
 
@@ -739,6 +756,7 @@ fn populate_from_xref_table<'a>(
     data: &'a [u8],
     reader: &mut Reader<'a>,
     insert_map: &mut XrefMap,
+    depth: usize,
 ) -> Option<&'a [u8]> {
     let trailer = {
         let mut reader = reader.clone();
@@ -753,13 +771,13 @@ fn populate_from_xref_table<'a>(
 
     if let Some(prev) = trailer.get::<i32>(PREV) {
         // First insert the entries from any previous xref tables.
-        populate_xref_impl(data, prev as usize, insert_map)?;
+        populate_xref_depth(data, prev as usize, insert_map, depth + 1)?;
     }
 
     // In hybrid files, entries in `XRefStm` should have higher priority, therefore we insert them
     // after looking at `PREV`.
     if let Some(xref_stm) = trailer.get::<i32>(XREF_STM) {
-        populate_xref_impl(data, xref_stm as usize, insert_map)?;
+        populate_xref_depth(data, xref_stm as usize, insert_map, depth + 1)?;
     }
 
     while let Some(header) = reader.read_without_context::<SubsectionHeader>() {
@@ -791,6 +809,7 @@ fn populate_from_xref_stream<'a>(
     data: &'a [u8],
     reader: &mut Reader<'a>,
     insert_map: &mut XrefMap,
+    depth: usize,
 ) -> Option<&'a [u8]> {
     let stream = reader
         .read_with_context::<IndirectObject<Stream<'_>>>(&ReaderContext::dummy())?
@@ -798,7 +817,7 @@ fn populate_from_xref_stream<'a>(
 
     if let Some(prev) = stream.dict().get::<i32>(PREV) {
         // First insert the entries from any previous xref tables.
-        let _ = populate_xref_impl(data, prev as usize, insert_map)?;
+        let _ = populate_xref_depth(data, prev as usize, insert_map, depth + 1)?;
     }
 
     let size = stream.dict().get::<u32>(SIZE)?;

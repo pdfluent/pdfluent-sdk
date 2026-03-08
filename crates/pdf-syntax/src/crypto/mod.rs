@@ -455,6 +455,10 @@ fn decryption_key_rev1234(
     permissions: u32,
     id: &[u8],
 ) -> Result<Vec<u8>, DecryptionError> {
+    // PDF spec allows key lengths of 40–128 bits (5–16 bytes). Clamp to MD5
+    // output size (16) to prevent out-of-bounds access on corrupt Length values.
+    let byte_length = byte_length.min(16);
+
     let mut md5_input = vec![];
 
     // TODO: Convert to PDFDocEncoding.
