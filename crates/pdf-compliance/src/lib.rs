@@ -7,7 +7,7 @@ pub mod pdfa;
 pub mod pdfua;
 pub mod tagged;
 
-mod check;
+pub mod check;
 mod xmp;
 
 use pdf_syntax::Pdf;
