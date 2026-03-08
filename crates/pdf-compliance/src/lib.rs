@@ -8,6 +8,7 @@ pub mod pdfua;
 pub mod pdfx;
 pub mod pdfx_gen;
 pub mod tagged;
+pub mod tagged_gen;
 
 pub mod check;
 mod xmp;
