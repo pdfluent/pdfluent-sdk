@@ -543,7 +543,7 @@ fn check_property_namespaces(
 
 /// §6.7.3 — Deep Info dict / XMP consistency check.
 ///
-/// Validates all mappings from Info dict to XMP:
+/// Validates all mappings from Info dict to XMP, checking both presence and value:
 /// - /Title ↔ dc:title
 /// - /Author ↔ dc:creator
 /// - /Subject ↔ dc:description
@@ -555,64 +555,139 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     let metadata = pdf.metadata();
 
     // /Title ↔ dc:title (§6.7.8)
-    if metadata.title.is_some() {
+    if let Some(ref title) = metadata.title {
         let dc_title = extract_rdf_alt_value(xmp, "dc:title");
-        if dc_title.is_none() {
-            error(
-                report,
-                "6.7.3",
-                "/Info has Title but XMP is missing dc:title",
-            );
+        match dc_title {
+            None => {
+                error(
+                    report,
+                    "6.7.3",
+                    "/Info has Title but XMP is missing dc:title",
+                );
+            }
+            Some(ref xmp_val) => {
+                let info_str = decode_pdf_string(title);
+                if !values_match(&info_str, xmp_val) {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "Info /Title '{}' does not match XMP dc:title '{}'",
+                            info_str, xmp_val
+                        ),
+                    );
+                }
+            }
         }
     }
 
     // /Author ↔ dc:creator
-    if metadata.author.is_some() {
+    if let Some(ref author) = metadata.author {
         let dc_creator = extract_rdf_seq_value(xmp, "dc:creator")
             .or_else(|| extract_nested_value(xmp, "dc:creator"));
-        if dc_creator.is_none() {
-            error(
-                report,
-                "6.7.3",
-                "/Info has Author but XMP is missing dc:creator",
-            );
+        match dc_creator {
+            None => {
+                error(
+                    report,
+                    "6.7.3",
+                    "/Info has Author but XMP is missing dc:creator",
+                );
+            }
+            Some(ref xmp_val) => {
+                let info_str = decode_pdf_string(author);
+                if !values_match(&info_str, xmp_val) {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "Info /Author '{}' does not match XMP dc:creator '{}'",
+                            info_str, xmp_val
+                        ),
+                    );
+                }
+            }
         }
     }
 
     // /Subject ↔ dc:description
-    if metadata.subject.is_some() {
+    if let Some(ref subject) = metadata.subject {
         let dc_desc = extract_rdf_alt_value(xmp, "dc:description")
             .or_else(|| extract_nested_value(xmp, "dc:description"));
-        if dc_desc.is_none() {
-            error(
-                report,
-                "6.7.3",
-                "/Info has Subject but XMP is missing dc:description",
-            );
+        match dc_desc {
+            None => {
+                error(
+                    report,
+                    "6.7.3",
+                    "/Info has Subject but XMP is missing dc:description",
+                );
+            }
+            Some(ref xmp_val) => {
+                let info_str = decode_pdf_string(subject);
+                if !values_match(&info_str, xmp_val) {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "Info /Subject '{}' does not match XMP dc:description '{}'",
+                            info_str, xmp_val
+                        ),
+                    );
+                }
+            }
         }
     }
 
-    // /Creator ↔ xmp:CreatorTool (already in check.rs but we add here for completeness)
-    if metadata.creator.is_some() {
+    // /Creator ↔ xmp:CreatorTool
+    if let Some(ref creator) = metadata.creator {
         let xmp_creator = extract_nested_value(xmp, "xmp:CreatorTool");
-        if xmp_creator.is_none() {
-            error(
-                report,
-                "6.7.3",
-                "/Info has Creator but XMP is missing xmp:CreatorTool",
-            );
+        match xmp_creator {
+            None => {
+                error(
+                    report,
+                    "6.7.3",
+                    "/Info has Creator but XMP is missing xmp:CreatorTool",
+                );
+            }
+            Some(ref xmp_val) => {
+                let info_str = decode_pdf_string(creator);
+                if !values_match(&info_str, xmp_val) {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "Info /Creator '{}' does not match XMP xmp:CreatorTool '{}'",
+                            info_str, xmp_val
+                        ),
+                    );
+                }
+            }
         }
     }
 
     // /Producer ↔ pdf:Producer
-    if metadata.producer.is_some() {
+    if let Some(ref producer) = metadata.producer {
         let xmp_producer = extract_nested_value(xmp, "pdf:Producer");
-        if xmp_producer.is_none() {
-            error(
-                report,
-                "6.7.3",
-                "/Info has Producer but XMP is missing pdf:Producer",
-            );
+        match xmp_producer {
+            None => {
+                error(
+                    report,
+                    "6.7.3",
+                    "/Info has Producer but XMP is missing pdf:Producer",
+                );
+            }
+            Some(ref xmp_val) => {
+                let info_str = decode_pdf_string(producer);
+                if !values_match(&info_str, xmp_val) {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "Info /Producer '{}' does not match XMP pdf:Producer '{}'",
+                            info_str, xmp_val
+                        ),
+                    );
+                }
+            }
         }
     }
 
@@ -639,6 +714,29 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
             );
         }
     }
+}
+
+/// Decode a PDF string (which may be UTF-16BE with BOM, or PDFDocEncoding).
+fn decode_pdf_string(bytes: &[u8]) -> String {
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        // UTF-16BE with BOM
+        let u16s: Vec<u16> = bytes[2..]
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&u16s)
+    } else {
+        // PDFDocEncoding (Latin-1 superset) — approximate as ISO 8859-1
+        bytes.iter().map(|&b| b as char).collect()
+    }
+}
+
+/// Compare Info dict value with XMP value, allowing for encoding differences.
+fn values_match(info_val: &str, xmp_val: &str) -> bool {
+    let info_trimmed = info_val.trim();
+    let xmp_trimmed = xmp_val.trim();
+    info_trimmed == xmp_trimmed
 }
 
 /// Extract a value from an rdf:Alt container (used for dc:title, dc:description).

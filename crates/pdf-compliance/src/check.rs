@@ -625,6 +625,12 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
 
+        // Scan Shading resources for device color spaces
+        if let Some(ref rd) = res_dict {
+            scan_shading_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+            scan_pattern_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+        }
+
         // Also check ColorSpace resources for direct device CS references
         if let Some(cs_dict) = res_dict
             .as_ref()
@@ -712,6 +718,125 @@ fn scan_appearance_dict_colors(
     }
 }
 
+/// Scan Shading resources for device-dependent color spaces (§6.2.4.3).
+fn scan_shading_device_colors(
+    res_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(shading_dict) = res_dict.get::<Dict<'_>>(b"Shading" as &[u8]) else {
+        return;
+    };
+    for (name, _) in shading_dict.entries() {
+        let sname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+        // Shading can be a dict or stream — both have /ColorSpace
+        if let Some(sh) = shading_dict.get::<Dict<'_>>(name.as_ref()) {
+            if let Some(cs) = sh.get::<Name>(keys::COLORSPACE) {
+                let cs_bytes = cs.as_ref();
+                report_device_cs_name(
+                    cs_bytes,
+                    rgb_ok,
+                    cmyk_ok,
+                    gray_ok,
+                    &format!("{base_loc} Shading {sname}"),
+                    report,
+                );
+            }
+        } else if let Some(sh_stream) = shading_dict.get::<Stream<'_>>(name.as_ref()) {
+            let sh_dict = sh_stream.dict();
+            if let Some(cs) = sh_dict.get::<Name>(keys::COLORSPACE) {
+                let cs_bytes = cs.as_ref();
+                report_device_cs_name(
+                    cs_bytes,
+                    rgb_ok,
+                    cmyk_ok,
+                    gray_ok,
+                    &format!("{base_loc} Shading {sname}"),
+                    report,
+                );
+            }
+        }
+    }
+}
+
+/// Scan Pattern resources for device-dependent color spaces (§6.2.4.3).
+fn scan_pattern_device_colors(
+    res_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(pat_dict) = res_dict.get::<Dict<'_>>(b"Pattern" as &[u8]) else {
+        return;
+    };
+    for (name, _) in pat_dict.entries() {
+        let pname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+        // Type 2 patterns (shading patterns) have /Shading dict with /ColorSpace
+        if let Some(pat) = pat_dict.get::<Dict<'_>>(name.as_ref()) {
+            if let Some(shading) = pat.get::<Dict<'_>>(b"Shading" as &[u8]) {
+                if let Some(cs) = shading.get::<Name>(keys::COLORSPACE) {
+                    let cs_bytes = cs.as_ref();
+                    report_device_cs_name(
+                        cs_bytes,
+                        rgb_ok,
+                        cmyk_ok,
+                        gray_ok,
+                        &format!("{base_loc} Pattern {pname}"),
+                        report,
+                    );
+                }
+            }
+        }
+        // Pattern can also be a stream (tiling pattern) — scan its content
+        if let Some(pat_stream) = pat_dict.get::<Stream<'_>>(name.as_ref()) {
+            if let Ok(decoded) = pat_stream.decoded() {
+                let ploc = format!("{base_loc} Pattern {pname}");
+                report_device_color_ops(&decoded, rgb_ok, cmyk_ok, gray_ok, &ploc, report);
+            }
+        }
+    }
+}
+
+/// Report a device CS name violation for 6.2.4.3.
+fn report_device_cs_name(
+    cs_bytes: &[u8],
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    if !rgb_ok && cs_bytes == keys::DEVICE_RGB {
+        error_at(
+            report,
+            "6.2.4.3",
+            "DeviceRGB in Shading/Pattern without DefaultRGB or matching OutputIntent",
+            location.to_string(),
+        );
+    }
+    if !cmyk_ok && cs_bytes == b"DeviceCMYK" {
+        error_at(
+            report,
+            "6.2.4.3",
+            "DeviceCMYK in Shading/Pattern without DefaultCMYK or matching OutputIntent",
+            location.to_string(),
+        );
+    }
+    if !gray_ok && cs_bytes == b"DeviceGray" {
+        error_at(
+            report,
+            "6.2.4.3",
+            "DeviceGray in Shading/Pattern without DefaultGray or OutputIntent",
+            location.to_string(),
+        );
+    }
+}
+
 /// Helper: report device color ops found in a content stream.
 ///
 /// Parameters `rgb_ok`, `cmyk_ok`, `gray_ok` indicate whether each device
@@ -761,7 +886,8 @@ struct DeviceColorOps {
 /// Scan a PDF content stream for device-dependent color operators.
 ///
 /// Operators: rg/RG (DeviceRGB), k/K (DeviceCMYK), g/G (DeviceGray),
-/// and cs/CS with DeviceRGB/DeviceCMYK/DeviceGray operand.
+/// cs/CS with DeviceRGB/DeviceCMYK/DeviceGray operand,
+/// and inline images (BI ... /CS /DeviceRGB ... ID ... EI).
 fn detect_device_color_ops(content: &[u8]) -> DeviceColorOps {
     let mut result = DeviceColorOps {
         has_rgb: false,
@@ -773,7 +899,35 @@ fn detect_device_color_ops(content: &[u8]) -> DeviceColorOps {
     let text = String::from_utf8_lossy(content);
     let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
 
+    let mut in_inline_image = false;
+
     for (i, &tok) in tokens.iter().enumerate() {
+        // Track inline image state (BI ... ID ... EI)
+        if tok == "BI" {
+            in_inline_image = true;
+            continue;
+        }
+        if tok == "ID" || tok == "EI" {
+            in_inline_image = false;
+            continue;
+        }
+
+        if in_inline_image {
+            // Inside BI block: check for /CS or /ColorSpace keys
+            if (tok == "/CS" || tok == "/ColorSpace" || tok == "CS" || tok == "ColorSpace")
+                && i + 1 < tokens.len()
+            {
+                let cs_val = tokens[i + 1].strip_prefix('/').unwrap_or(tokens[i + 1]);
+                match cs_val {
+                    "DeviceRGB" | "RGB" => result.has_rgb = true,
+                    "DeviceCMYK" | "CMYK" => result.has_cmyk = true,
+                    "DeviceGray" | "G" => result.has_gray = true,
+                    _ => {}
+                }
+            }
+            continue;
+        }
+
         match tok {
             // rg: set non-stroking DeviceRGB (3 operands + op)
             "rg" | "RG" => result.has_rgb = true,
@@ -2242,52 +2396,120 @@ fn scan_for_undefined_ops(content: &[u8], valid_ops: &[&str]) -> bool {
     false
 }
 
-/// Check transparency groups on pages without OutputIntent (§6.2.9 test 2).
+/// Check transparency groups on pages without OutputIntent (§6.2.9).
 ///
-/// If no OutputIntent, pages with transparency groups must not use
-/// device color spaces in the group.
+/// Two checks:
+/// 1. If no OutputIntent, pages with transparency groups must not use
+///    device color spaces in the group.
+/// 2. Pages that use transparency features (via ExtGState) must have a
+///    /Group entry when no OutputIntent is present.
 pub fn check_transparency_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
-    if has_output_intent(pdf) {
-        return;
-    }
+    let has_oi = has_output_intent(pdf);
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
+        let has_page_group = page_dict
+            .get::<Dict<'_>>(b"Group" as &[u8])
+            .and_then(|g| g.get::<Name>(keys::S))
+            .is_some_and(|s| s.as_ref() == b"Transparency");
 
-        // Check page-level Group dict
-        if let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) {
-            if let Some(s) = group.get::<Name>(keys::S) {
-                if s.as_ref() == b"Transparency" {
-                    // Check the CS of the transparency group
-                    if let Some(cs) = group.get::<Name>(keys::CS) {
-                        let cs_bytes = cs.as_ref();
-                        if cs_bytes == keys::DEVICE_RGB
-                            || cs_bytes == b"DeviceCMYK"
-                            || cs_bytes == b"DeviceGray"
-                        {
+        if !has_oi {
+            // Check 1: existing transparency group must not use device CS
+            if let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+                if let Some(s) = group.get::<Name>(keys::S) {
+                    if s.as_ref() == b"Transparency" {
+                        if let Some(cs) = group.get::<Name>(keys::CS) {
+                            let cs_bytes = cs.as_ref();
+                            if cs_bytes == keys::DEVICE_RGB
+                                || cs_bytes == b"DeviceCMYK"
+                                || cs_bytes == b"DeviceGray"
+                            {
+                                error_at(
+                                    report,
+                                    "6.2.9",
+                                    format!(
+                                        "Transparency group uses device CS {} without OutputIntent",
+                                        std::str::from_utf8(cs_bytes).unwrap_or("?")
+                                    ),
+                                    format!("page {}", page_idx + 1),
+                                );
+                            }
+                        } else {
+                            // No CS on transparency group without OutputIntent
                             error_at(
                                 report,
                                 "6.2.9",
-                                format!(
-                                    "Transparency group uses device CS {} without OutputIntent",
-                                    std::str::from_utf8(cs_bytes).unwrap_or("?")
-                                ),
+                                "Transparency group without /CS and no OutputIntent",
                                 format!("page {}", page_idx + 1),
                             );
                         }
-                    } else {
-                        // No CS on transparency group without OutputIntent
-                        error_at(
-                            report,
-                            "6.2.9",
-                            "Transparency group without /CS and no OutputIntent",
-                            format!("page {}", page_idx + 1),
-                        );
                     }
                 }
             }
         }
+
+        // Check 2: pages using transparency features need /Group
+        if !has_page_group && page_uses_transparency(page_dict) {
+            error_at(
+                report,
+                "6.2.9",
+                "Page uses transparency but has no /Group entry",
+                format!("page {}", page_idx + 1),
+            );
+        }
     }
+}
+
+/// Check if a page uses transparency features via ExtGState resources.
+///
+/// Looks for: SMask != /None, CA < 1.0, ca < 1.0, BM != /Normal and != /Compatible.
+fn page_uses_transparency(page_dict: &Dict<'_>) -> bool {
+    let Some(res) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
+        return false;
+    };
+    let Some(gs_dict) = res.get::<Dict<'_>>(keys::EXT_G_STATE) else {
+        return false;
+    };
+
+    for (name, _) in gs_dict.entries() {
+        let Some(gs) = gs_dict.get::<Dict<'_>>(name.as_ref()) else {
+            continue;
+        };
+
+        // Check SMask (not /None)
+        if let Some(smask) = gs.get::<Object<'_>>(keys::SMASK) {
+            match smask {
+                Object::Name(n) if n.as_ref() == b"None" => {}
+                Object::Name(_) => return true,
+                Object::Dict(_) => return true,
+                _ => {}
+            }
+        }
+
+        // Check BM (blend mode) — not Normal/Compatible means transparency
+        if let Some(bm) = gs.get::<Name>(keys::BM) {
+            let bm_bytes = bm.as_ref();
+            if bm_bytes != b"Normal" && bm_bytes != b"Compatible" {
+                return true;
+            }
+        }
+
+        // Check CA (stroking alpha) < 1.0
+        if let Some(Object::Number(ca)) = gs.get::<Object<'_>>(b"CA" as &[u8]) {
+            if ca.as_f64() < 1.0 {
+                return true;
+            }
+        }
+
+        // Check ca (non-stroking alpha) < 1.0
+        if let Some(Object::Number(ca)) = gs.get::<Object<'_>>(b"ca" as &[u8]) {
+            if ca.as_f64() < 1.0 {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 // ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
