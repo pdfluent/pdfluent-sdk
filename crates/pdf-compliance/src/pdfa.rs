@@ -19,11 +19,17 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     };
 
     check_xmp_metadata(pdf, level, &mut report);
+    check_xmp_dates(pdf, &mut report);
     check_encryption(pdf, &mut report);
     check_javascript(pdf, &mut report);
     check_output_intent(pdf, &mut report);
     check_font_embedding(pdf, &mut report);
     check_color_spaces(pdf, &mut report);
+    check_rendering_intents(pdf, &mut report);
+    check_info_xmp_consistency(pdf, &mut report);
+    check_page_dimensions(pdf, &mut report);
+    check_widget_appearances(pdf, &mut report);
+    check_named_actions(pdf, &mut report);
 
     if level.part() == 1 {
         check_transparency_a1(pdf, &mut report);
@@ -188,6 +194,38 @@ fn check_color_spaces(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
     }
+}
+
+/// §6.6.2.3.1 — XMP date properties must use valid ISO 8601 format.
+fn check_xmp_dates(pdf: &Pdf, report: &mut ComplianceReport) {
+    if let Some(xmp) = check::get_xmp_metadata(pdf) {
+        check::validate_xmp_dates(&xmp, report);
+    }
+}
+
+/// §6.7.9 — Widget annotations must have appearance dictionaries.
+fn check_widget_appearances(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_widget_appearances(pdf, report);
+}
+
+/// §6.2.4.3 — Rendering intents must be one of the four standard values.
+fn check_rendering_intents(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_rendering_intents(pdf, report);
+}
+
+/// §6.6.1 — Info dictionary and XMP metadata must be consistent.
+fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_info_xmp_consistency(pdf, report);
+}
+
+/// §6.1.12 — Page dimensions must not exceed 14400 user units.
+fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_page_dimensions(pdf, report);
+}
+
+/// §6.7.3 — Only standard named actions are allowed.
+fn check_named_actions(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_named_actions(pdf, report);
 }
 
 /// §6.4 — PDF/A-1 forbids transparency.
