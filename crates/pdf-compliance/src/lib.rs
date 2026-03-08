@@ -8,6 +8,7 @@ pub mod pdfua;
 pub mod tagged;
 
 mod check;
+mod xmp;
 
 use pdf_syntax::Pdf;
 
