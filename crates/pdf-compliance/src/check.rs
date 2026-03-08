@@ -4777,10 +4777,47 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
 
 // ─── §6.1.3 — Trailer Info key for PDF/A-4 ──────────────────────────────────
 
+/// Check trailer requirements (§6.1.3).
+///
+/// PDF/A-1: trailer must have /ID keyword.
+/// PDF/A-4: trailer must not have /Info unless catalog has /PieceInfo.
+pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+
+    if part == 1 {
+        // PDF/A-1: trailer must contain /ID
+        let has_id = if let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") {
+            let end = data.len().min(trailer_pos + 2000);
+            let trailer_region = &data[trailer_pos..end];
+            trailer_region.windows(3).any(|w| w == b"/ID")
+        } else {
+            // Cross-reference stream — check for /ID in xref stream dicts
+            pdf.objects().into_iter().any(|obj| {
+                if let Object::Stream(s) = obj {
+                    let dict = s.dict();
+                    dict.get::<Name>(keys::TYPE)
+                        .is_some_and(|t| t.as_ref() == keys::XREF)
+                        && dict.contains_key(b"ID" as &[u8])
+                } else {
+                    false
+                }
+            })
+        };
+        if !has_id {
+            error(report, "6.1.3", "Trailer dictionary missing required /ID key");
+        }
+        return;
+    }
+
+    if part == 4 {
+        check_trailer_info_key(pdf, report);
+    }
+}
+
 /// Check that Info key is not present in trailer for PDF/A-4 (§6.1.3).
 ///
 /// Unless there's a PieceInfo entry in the document catalog.
-pub fn check_trailer_info_key(pdf: &Pdf, report: &mut ComplianceReport) {
+fn check_trailer_info_key(pdf: &Pdf, report: &mut ComplianceReport) {
     // Check if trailer has /Info by scanning raw bytes
     let data = pdf.data().as_ref();
     let has_info = if let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") {

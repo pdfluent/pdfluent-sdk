@@ -4942,6 +4942,7 @@ dependencies = [
  "pdf-engine",
  "pdf-extract",
  "pdf-forms",
+ "pdf-manip",
  "pdf-sign",
  "pdf-syntax",
  "pdfium-ffi-bridge",
