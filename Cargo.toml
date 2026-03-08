@@ -43,6 +43,9 @@ members = [
     "crates/pdf-redact",
     "crates/pdf-ocr",
 
+    # --- Conversions (Fase 3) ---
+    "crates/pdf-docx",
+
     # --- Data exchange + EU compliance (Fase O) ---
     "crates/pdf-invoice",
 

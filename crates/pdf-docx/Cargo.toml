@@ -1,0 +1,17 @@
+[package]
+name = "pdf-docx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PDF to DOCX conversion with text, tables, and images"
+
+[dependencies]
+lopdf.workspace = true
+thiserror.workspace = true
+pdf-extract = { path = "../pdf-extract" }
+quick-xml = { version = "0.37", features = ["serialize"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"
