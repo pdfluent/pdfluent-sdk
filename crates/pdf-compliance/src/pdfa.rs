@@ -88,7 +88,9 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_document_structure_pdfa(pdf, &mut report);
     check_marked_content(pdf, &mut report);
 
-    if level.requires_tagged() {
+    // PDF/A-4 requires tagged PDF for all conformance levels;
+    // PDF/A-1a/2a/3a require it only for level 'a'
+    if level.requires_tagged() || level.part() == 4 {
         check_tagged_requirements(pdf, &mut report);
         check_table_structure_pdfa(pdf, &mut report);
         check_figure_alt(pdf, &mut report);
@@ -449,21 +451,23 @@ fn check_transparency_a1(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Level "a" requires tagged PDF.
+/// Tagged PDF requirements (§6.8.1).
+///
+/// Required for PDF/A-1a, PDF/A-2a, PDF/A-3a (level 'a'), and all PDF/A-4.
 fn check_tagged_requirements(pdf: &Pdf, report: &mut ComplianceReport) {
     if !check::is_marked(pdf) {
         check::error(
             report,
-            "6.8",
-            "Document is not marked (MarkInfo/Marked missing or false); required for level 'a'",
+            "6.8.1",
+            "Document is not marked (MarkInfo/Marked missing or false)",
         );
     }
 
     if check::struct_tree_root(pdf).is_none() {
         check::error(
             report,
-            "6.8",
-            "No StructTreeRoot found; required for level 'a'",
+            "6.8.1",
+            "No StructTreeRoot found",
         );
     }
 }

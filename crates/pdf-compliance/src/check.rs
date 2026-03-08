@@ -253,6 +253,7 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
             scan_pattern_cs_vs_profile(rd, profile_components, &loc, report);
             scan_image_cs_vs_profile(rd, profile_components, &loc, report);
             scan_type3_charprocs_vs_profile(rd, profile_components, &loc, report);
+            scan_smask_cs_vs_profile(rd, profile_components, &loc, report);
         }
     }
 }
@@ -373,6 +374,34 @@ fn scan_type3_charprocs_vs_profile(
                     let loc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
                     report_color_vs_profile(&ops, profile_components, &loc, report);
                 }
+            }
+        }
+    }
+}
+
+/// Scan SMask Form XObjects for device color vs OutputIntent profile (§6.2.3.3).
+fn scan_smask_cs_vs_profile(
+    res_dict: &Dict<'_>,
+    profile_components: u32,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
+        return;
+    };
+    for (gs_name, _) in gs_dict.entries() {
+        let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
+            continue;
+        };
+        let Some(smask) = gs.get::<Dict<'_>>(keys::SMASK) else {
+            continue;
+        };
+        if let Some(g_stream) = smask.get::<Stream<'_>>(b"G" as &[u8]) {
+            if let Ok(decoded) = g_stream.decoded() {
+                let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
+                let sloc = format!("{base_loc} SMask {gs_str}");
+                let ops = detect_device_color_ops(&decoded);
+                report_color_vs_profile(&ops, profile_components, &sloc, report);
             }
         }
     }
