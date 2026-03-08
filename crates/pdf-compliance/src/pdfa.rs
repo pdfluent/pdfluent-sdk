@@ -625,6 +625,8 @@ fn check_need_appearances_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.10 — Digital signature restrictions.
 fn check_signature_restrictions_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_signature_restrictions(pdf, report);
+    // §6.1.12 (PDF/A-2/3/4): DocMDP signature reference restrictions
+    check::check_docmdp_signature_restriction(pdf, report);
 }
 
 /// §6.11 — Document structure requirements.

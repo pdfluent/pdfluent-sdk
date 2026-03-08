@@ -1448,12 +1448,13 @@ pub fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
 
 /// Check annotation /C and /IC color arrays (§6.5.3).
 ///
-/// In PDF/A-1, annotation /C (color) and /IC (interior color) arrays must not
-/// use device-dependent colors when no matching OutputIntent is present.
-/// Annotations must not contain /C or /IC unless the OutputIntent profile
-/// matches the color space.
+/// Annotation /C (color) and /IC (interior color) arrays are RGB-based.
+/// They must not be present unless the OutputIntent destination profile
+/// is RGB-based (3 components).
 pub fn check_annotation_color_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
-    let has_intent = has_output_intent(pdf);
+    let profile_components = output_intent_profile_components(pdf);
+    // C/IC are RGB (3 components); only OK if OutputIntent is also RGB-based
+    let rgb_intent = profile_components == Some(3);
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
@@ -1462,7 +1463,7 @@ pub fn check_annotation_color_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
         for annot in annots.iter::<Dict<'_>>() {
             let has_c = annot.get::<Array<'_>>(b"C" as &[u8]).is_some();
             let has_ic = annot.get::<Array<'_>>(b"IC" as &[u8]).is_some();
-            if (has_c || has_ic) && !has_intent {
+            if (has_c || has_ic) && !rgb_intent {
                 let subtype_name = annot
                     .get::<Name>(keys::SUBTYPE)
                     .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or("?").to_string())
@@ -1477,7 +1478,7 @@ pub fn check_annotation_color_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
                     report,
                     "6.5.3",
                     format!(
-                        "{subtype_name} annotation has {which} color array without matching OutputIntent"
+                        "{subtype_name} annotation has {which} color array without RGB-based OutputIntent"
                     ),
                     format!("page {}", page_idx + 1),
                 );
@@ -2070,11 +2071,18 @@ fn check_halftone_in_extgstate(res_dict: &Dict<'_>, location: &str, report: &mut
 
 /// Check ExtGState blend mode and soft mask restrictions (§6.2.10.6-9).
 pub fn check_extgstate_restrictions(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    // Check if there's an ICCBased CMYK OutputIntent profile
+    let has_cmyk_intent = output_intent_profile_components(pdf) == Some(4);
+
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
             continue;
         };
+
+        // Check if page uses ICCBased CMYK color spaces
+        let has_icc_cmyk = page_has_iccbased_cmyk(&res_dict);
+
         let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
             continue;
         };
@@ -2112,8 +2120,55 @@ pub fn check_extgstate_restrictions(pdf: &Pdf, part: u8, report: &mut Compliance
                     }
                 }
             }
+
+            // §6.2.4.2 — OPM must not be 1 when ICCBased CMYK is in use with overprinting
+            if has_icc_cmyk || has_cmyk_intent {
+                let overprint_on = matches!(
+                    gs.get::<Object<'_>>(b"OP" as &[u8]),
+                    Some(Object::Boolean(true))
+                );
+                if overprint_on {
+                    if let Some(Object::Number(opm)) = gs.get::<Object<'_>>(b"OPM" as &[u8]) {
+                        if opm.as_f64() as i64 == 1 {
+                            error_at(
+                                report,
+                                "6.2.4.2",
+                                format!("ExtGState {gs_str} has OPM=1 with ICCBased CMYK and overprinting enabled"),
+                                format!("page {}", page_idx + 1),
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
+}
+
+/// Check if a page's Resources contain any ICCBased CMYK color spaces.
+fn page_has_iccbased_cmyk(res_dict: &Dict<'_>) -> bool {
+    let Some(cs_dict) = res_dict.get::<Dict<'_>>(keys::COLORSPACE) else {
+        return false;
+    };
+    for (name, _) in cs_dict.entries() {
+        let Some(cs_arr) = cs_dict.get::<Array<'_>>(name.as_ref()) else {
+            continue;
+        };
+        let mut items = cs_arr.iter::<Object<'_>>();
+        let Some(Object::Name(cs_type)) = items.next() else {
+            continue;
+        };
+        if cs_type.as_ref() != keys::ICC_BASED {
+            continue;
+        }
+        if let Some(Object::Stream(icc_stream)) = items.next() {
+            if let Some(n) = icc_stream.dict().get::<i32>(keys::N) {
+                if n == 4 {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 // ─── §6.2.11 — CIDFont embedding requirements ──────────────────────────────
@@ -4168,6 +4223,67 @@ fn check_sig_fields(fields: &Array<'_>, report: &mut ComplianceReport, depth: us
         }
         if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
             check_sig_fields(&kids, report, depth + 1);
+        }
+    }
+}
+
+/// Check DocMDP signature restriction (§6.1.12 for PDF/A-2/3/4).
+///
+/// If DocMDP permission is present, Signature Reference dicts must not
+/// contain DigestLocation, DigestMethod, or DigestValue keys.
+pub fn check_docmdp_signature_restriction(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    // Check if Perms dict has DocMDP
+    let Some(perms) = cat.get::<Dict<'_>>(b"Perms" as &[u8]) else {
+        return;
+    };
+    if perms.get::<Object<'_>>(b"DocMDP" as &[u8]).is_none() {
+        return;
+    }
+
+    // DocMDP is present — check all signature Reference dicts
+    let Some(acroform) = cat.get::<Dict<'_>>(keys::ACRO_FORM) else {
+        return;
+    };
+    let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) else {
+        return;
+    };
+    check_sig_ref_digest_keys(&fields, report, 0);
+}
+
+fn check_sig_ref_digest_keys(fields: &Array<'_>, report: &mut ComplianceReport, depth: usize) {
+    if depth > 50 {
+        return;
+    }
+    for field in fields.iter::<Dict<'_>>() {
+        if let Some(ft) = field.get::<Name>(b"FT" as &[u8]) {
+            if ft.as_ref() == b"Sig" {
+                if let Some(v) = field.get::<Dict<'_>>(keys::V) {
+                    if let Some(refs) = v.get::<Array<'_>>(b"Reference" as &[u8]) {
+                        for sig_ref in refs.iter::<Dict<'_>>() {
+                            for key in [
+                                &b"DigestLocation"[..],
+                                b"DigestMethod",
+                                b"DigestValue",
+                            ] {
+                                if sig_ref.contains_key(key) {
+                                    let ks = std::str::from_utf8(key).unwrap_or("?");
+                                    error(
+                                        report,
+                                        "6.1.12",
+                                        format!("Signature Reference dict contains /{ks} with DocMDP present"),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
+            check_sig_ref_digest_keys(&kids, report, depth + 1);
         }
     }
 }
