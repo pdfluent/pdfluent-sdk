@@ -178,11 +178,7 @@ pub fn check_stream_empty_keys(pdf: &Pdf, report: &mut ComplianceReport) {
         if let Object::Stream(s) = obj {
             for (key, _) in s.dict().entries() {
                 if key.as_ref().is_empty() {
-                    error(
-                        report,
-                        "6.1.7.1",
-                        "Stream dictionary contains empty key",
-                    );
+                    error(report, "6.1.7.1", "Stream dictionary contains empty key");
                     return; // one error is enough
                 }
             }
@@ -196,18 +192,12 @@ pub fn check_mark_info(pdf: &Pdf, report: &mut ComplianceReport) {
         return;
     };
     match cat.get::<Dict<'_>>(keys::MARK_INFO) {
-        Some(mark_info) => {
-            match mark_info.get::<Object<'_>>(b"Marked" as &[u8]) {
-                Some(Object::Boolean(true)) => {}
-                _ => {
-                    error(
-                        report,
-                        "6.8.2.2",
-                        "MarkInfo /Marked is not set to true",
-                    );
-                }
+        Some(mark_info) => match mark_info.get::<Object<'_>>(b"Marked" as &[u8]) {
+            Some(Object::Boolean(true)) => {}
+            _ => {
+                error(report, "6.8.2.2", "MarkInfo /Marked is not set to true");
             }
-        }
+        },
         None => {
             error(
                 report,
@@ -288,9 +278,17 @@ fn parse_xmp_datetime(s: &str) -> Option<(u16, u8, u8, u8, u8, u8)> {
     // Remove timezone suffix for component parsing
     let s = s.trim();
     let base = if let Some(idx) = s.rfind('+') {
-        if idx > 10 { &s[..idx] } else { s }
+        if idx > 10 {
+            &s[..idx]
+        } else {
+            s
+        }
     } else if let Some(idx) = s.rfind('-') {
-        if idx > 10 { &s[..idx] } else { s }
+        if idx > 10 {
+            &s[..idx]
+        } else {
+            s
+        }
     } else {
         s.trim_end_matches('Z')
     };
@@ -323,12 +321,18 @@ fn check_date_equivalence(
     report: &mut ComplianceReport,
 ) {
     let Some(dt) = pdf_date else { return };
-    let xmp_val = extract_xmp_value(xmp_text, xmp_key)
-        .or_else(|| extract_xmp_attr(xmp_text, xmp_key));
+    let xmp_val =
+        extract_xmp_value(xmp_text, xmp_key).or_else(|| extract_xmp_attr(xmp_text, xmp_key));
     let Some(xmp_str) = xmp_val else { return };
 
     if let Some((y, mo, d, h, mi, s)) = parse_xmp_datetime(&xmp_str) {
-        if dt.year != y || dt.month != mo || dt.day != d || dt.hour != h || dt.minute != mi || dt.second != s {
+        if dt.year != y
+            || dt.month != mo
+            || dt.day != d
+            || dt.hour != h
+            || dt.minute != mi
+            || dt.second != s
+        {
             error(
                 report,
                 "6.7.3",
@@ -770,8 +774,7 @@ fn is_valid_lang_tag(tag: &str) -> bool {
         return false;
     }
     let primary = tag.split('-').next().unwrap_or("");
-    (primary.len() == 2 || primary.len() == 3)
-        && primary.bytes().all(|b| b.is_ascii_alphabetic())
+    (primary.len() == 2 || primary.len() == 3) && primary.bytes().all(|b| b.is_ascii_alphabetic())
 }
 
 /// Check /Lang entries in catalog and structure elements are valid BCP-47 (§6.8.4).
@@ -1044,15 +1047,9 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
 
         // Check if Default color spaces are defined in resolved resources
         let cs_dict_ref = &res.color_spaces;
-        let has_default_rgb = cs_dict_ref
-            .get::<Object<'_>>(keys::DEFAULT_RGB)
-            .is_some();
-        let has_default_cmyk = cs_dict_ref
-            .get::<Object<'_>>(keys::DEFAULT_CMYK)
-            .is_some();
-        let has_default_gray = cs_dict_ref
-            .get::<Object<'_>>(keys::DEFAULT_GRAY)
-            .is_some();
+        let has_default_rgb = cs_dict_ref.get::<Object<'_>>(keys::DEFAULT_RGB).is_some();
+        let has_default_cmyk = cs_dict_ref.get::<Object<'_>>(keys::DEFAULT_CMYK).is_some();
+        let has_default_gray = cs_dict_ref.get::<Object<'_>>(keys::DEFAULT_GRAY).is_some();
 
         // A device color is "covered" if there's a Default* CS or matching profile.
         // DeviceGray is covered by any OutputIntent (gray maps to any profile).
@@ -1101,7 +1098,12 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
                     error_at(report, "6.2.4.3", "DeviceCMYK in ColorSpace resources without DefaultCMYK or matching OutputIntent", loc.clone());
                 }
                 if !gray_ok && cs == b"DeviceGray" {
-                    error_at(report, "6.2.4.3", "DeviceGray in ColorSpace resources without DefaultGray or OutputIntent", loc.clone());
+                    error_at(
+                        report,
+                        "6.2.4.3",
+                        "DeviceGray in ColorSpace resources without DefaultGray or OutputIntent",
+                        loc.clone(),
+                    );
                 }
             } else if let Some(cs_arr) = cs_dict.get::<Array<'_>>(name.as_ref()) {
                 // Separation/DeviceN alternate or Indexed base may be a device CS
@@ -1198,13 +1200,28 @@ fn scan_xobject_cs_arrays(
                 let kind = extract_base_device_cs_kind(&cs_arr);
                 let nstr = std::str::from_utf8(csname.as_ref()).unwrap_or("?");
                 if kind == 1 && !rgb_ok {
-                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceRGB alternate/base"), xloc.clone());
+                    error_at(
+                        report,
+                        "6.2.4.3",
+                        format!("ColorSpace {nstr} has DeviceRGB alternate/base"),
+                        xloc.clone(),
+                    );
                 }
                 if kind == 2 && !cmyk_ok {
-                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceCMYK alternate/base"), xloc.clone());
+                    error_at(
+                        report,
+                        "6.2.4.3",
+                        format!("ColorSpace {nstr} has DeviceCMYK alternate/base"),
+                        xloc.clone(),
+                    );
                 }
                 if kind == 3 && !gray_ok {
-                    error_at(report, "6.2.4.3", format!("ColorSpace {nstr} has DeviceGray alternate/base"), xloc.clone());
+                    error_at(
+                        report,
+                        "6.2.4.3",
+                        format!("ColorSpace {nstr} has DeviceGray alternate/base"),
+                        xloc.clone(),
+                    );
                 }
             }
         }
@@ -1713,12 +1730,9 @@ fn detect_device_color_ops(content: &[u8]) -> DeviceColorOps {
 fn content_has_implicit_gray(content: &[u8]) -> bool {
     let text = String::from_utf8_lossy(content);
     let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
-    let has_painting = tokens.iter().any(|&t| {
-        matches!(
-            t,
-            "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "S" | "s"
-        )
-    });
+    let has_painting = tokens
+        .iter()
+        .any(|&t| matches!(t, "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "S" | "s"));
     let has_color = tokens.iter().any(|&t| {
         matches!(
             t,
@@ -1734,9 +1748,9 @@ fn stream_references_resources(content: &[u8]) -> bool {
     let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
     // Operators that require named resources from the Resources dict
     let resource_ops = [
-        "Tf",  // font
-        "Do",  // XObject
-        "cs", "CS",  // color space
+        "Tf", // font
+        "Do", // XObject
+        "cs", "CS", // color space
         "scn", "SCN", // pattern/separation color
         "gs",  // ExtGState
         "sh",  // shading
@@ -2605,7 +2619,7 @@ fn check_halftone_in_extgstate(res_dict: &Dict<'_>, location: &str, report: &mut
 
         // §6.2.10: halftone type
         if let Some(ht_dict) = gs.get::<Dict<'_>>(b"HT" as &[u8]) {
-            if let Some(ht_type) = ht_dict.get::<i32>(keys::TYPE) {
+            if let Some(ht_type) = ht_dict.get::<i32>(b"HalftoneType" as &[u8]) {
                 if ht_type != 1 && ht_type != 5 {
                     error_at(
                         report,
@@ -2642,7 +2656,8 @@ fn check_halftone_in_extgstate(res_dict: &Dict<'_>, location: &str, report: &mut
             for (key, _) in ht_dict.entries() {
                 if let Some(sub_ht) = ht_dict.get::<Dict<'_>>(key.as_ref()) {
                     if let Some(tf) = sub_ht.get::<Object<'_>>(b"TransferFunction" as &[u8]) {
-                        let is_identity = matches!(tf, Object::Name(n) if n.as_ref() == b"Identity");
+                        let is_identity =
+                            matches!(tf, Object::Name(n) if n.as_ref() == b"Identity");
                         if !is_identity {
                             let kstr = std::str::from_utf8(key.as_ref()).unwrap_or("?");
                             error_at(
@@ -3173,8 +3188,7 @@ pub fn check_inline_image_filters(pdf: &Pdf, pdfa_part: u8, report: &mut Complia
         while let Some(bi_pos) = text[pos..].find("BI") {
             let abs_bi = pos + bi_pos;
             // Make sure BI is at a word boundary
-            let before_ok = abs_bi == 0
-                || text.as_bytes()[abs_bi - 1].is_ascii_whitespace();
+            let before_ok = abs_bi == 0 || text.as_bytes()[abs_bi - 1].is_ascii_whitespace();
             let after_ok = abs_bi + 2 >= text.len()
                 || text.as_bytes()[abs_bi + 2].is_ascii_whitespace()
                 || text.as_bytes()[abs_bi + 2] == b'/';
@@ -3242,11 +3256,7 @@ pub fn check_no_data_after_eof(pdf: &Pdf, report: &mut ComplianceReport) {
         // Allow trailing whitespace/EOL markers but nothing else
         let has_trailing_data = after.iter().any(|&b| !b.is_ascii_whitespace());
         if has_trailing_data {
-            error(
-                report,
-                "6.1.3",
-                "Data found after last %%EOF marker",
-            );
+            error(report, "6.1.3", "Data found after last %%EOF marker");
         }
     }
 }
@@ -3898,8 +3908,7 @@ pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport)
         let cs_dict = &res.color_spaces;
 
         let rgb_ok = cs_dict.get::<Object<'_>>(keys::DEFAULT_RGB).is_some() || profile == Some(3);
-        let cmyk_ok = cs_dict.get::<Object<'_>>(keys::DEFAULT_CMYK).is_some()
-            || profile == Some(4);
+        let cmyk_ok = cs_dict.get::<Object<'_>>(keys::DEFAULT_CMYK).is_some() || profile == Some(4);
         let gray_ok = cs_dict.get::<Object<'_>>(keys::DEFAULT_GRAY).is_some() || has_intent;
 
         let xobj_dict = &res.x_objects;
@@ -3942,8 +3951,7 @@ pub fn check_page_group_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
         };
         let cs_res = &page.resources().color_spaces;
         let rgb_ok = cs_res.get::<Object<'_>>(keys::DEFAULT_RGB).is_some() || profile == Some(3);
-        let cmyk_ok =
-            cs_res.get::<Object<'_>>(keys::DEFAULT_CMYK).is_some() || profile == Some(4);
+        let cmyk_ok = cs_res.get::<Object<'_>>(keys::DEFAULT_CMYK).is_some() || profile == Some(4);
         let gray_ok = cs_res.get::<Object<'_>>(keys::DEFAULT_GRAY).is_some() || has_intent;
         let loc = format!("page {} Group", page_idx + 1);
 
@@ -4523,11 +4531,14 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
         // Check direct font descriptor
         if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
             // Check font program is actually embedded (§6.3.4 test 1)
-            if !font_has_embedding(&desc) && !is_standard_14(font_name) {
+            // PDF/A requires ALL fonts to be embedded — no standard-14 exemption
+            if !font_has_embedding(&desc) {
                 error_at(
                     report,
                     "6.3.4",
-                    format!("Font {font_name} is not embedded (missing FontFile/FontFile2/FontFile3)"),
+                    format!(
+                        "Font {font_name} is not embedded (missing FontFile/FontFile2/FontFile3)"
+                    ),
                     format!("page {}", page_idx + 1),
                 );
             }
@@ -4551,7 +4562,7 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
             for desc_font in descendants.iter::<Dict<'_>>() {
                 // Also check CIDFont embedding
                 if let Some(cid_desc) = desc_font.get::<Dict<'_>>(keys::FONT_DESC) {
-                    if !font_has_embedding(&cid_desc) && !is_standard_14(name) {
+                    if !font_has_embedding(&cid_desc) {
                         error_at(
                             report,
                             "6.3.4",
@@ -4896,7 +4907,9 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
                     error_at(
                         report,
                         "6.5.3",
-                        format!("{subtype_name} annotation /AP contains forbidden /D (down) appearance"),
+                        format!(
+                            "{subtype_name} annotation /AP contains forbidden /D (down) appearance"
+                        ),
                         format!("page {}", page_idx + 1),
                     );
                 }
@@ -4914,9 +4927,14 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
             let is_widget = annot
                 .get::<Name>(keys::SUBTYPE)
                 .is_some_and(|s| s.as_ref() == b"Widget");
+            // FT might be in the annotation or inherited from /Parent field
             let is_btn = annot
                 .get::<Name>(keys::FT)
-                .is_some_and(|s| s.as_ref() == b"Btn");
+                .is_some_and(|s| s.as_ref() == b"Btn")
+                || annot
+                    .get::<Dict<'_>>(keys::PARENT)
+                    .and_then(|p| p.get::<Name>(keys::FT))
+                    .is_some_and(|s| s.as_ref() == b"Btn");
             if is_widget && is_btn {
                 if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
                     // /N should be a dict (with state names as keys → streams)
@@ -5540,11 +5558,7 @@ fn check_sig_ref_digest_keys(fields: &Array<'_>, report: &mut ComplianceReport, 
                 if let Some(v) = field.get::<Dict<'_>>(keys::V) {
                     if let Some(refs) = v.get::<Array<'_>>(b"Reference" as &[u8]) {
                         for sig_ref in refs.iter::<Dict<'_>>() {
-                            for key in [
-                                &b"DigestLocation"[..],
-                                b"DigestMethod",
-                                b"DigestValue",
-                            ] {
+                            for key in [&b"DigestLocation"[..], b"DigestMethod", b"DigestValue"] {
                                 if sig_ref.contains_key(key) {
                                     let ks = std::str::from_utf8(key).unwrap_or("?");
                                     error(
@@ -5792,6 +5806,64 @@ fn check_string_length_obj(obj: &Object<'_>) -> bool {
     }
 }
 
+/// Check that all Name objects contain valid UTF-8 sequences (§6.1.7 t1).
+///
+/// PDF/A requires name values to be valid UTF-8 byte sequences.
+/// Names with null bytes or invalid UTF-8 must be flagged.
+pub fn check_name_utf8(pdf: &Pdf, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        if check_name_utf8_obj(&obj) {
+            error(
+                report,
+                "6.1.7.1",
+                "Name value is not a valid UTF-8 sequence",
+            );
+            return;
+        }
+    }
+}
+
+fn check_name_utf8_obj(obj: &Object<'_>) -> bool {
+    match obj {
+        Object::Name(n) => {
+            let bytes = n.as_ref();
+            // Check for null bytes or invalid UTF-8
+            bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
+        }
+        Object::Dict(dict) => {
+            for (key, _) in dict.entries() {
+                let kb = key.as_ref();
+                if kb.contains(&0) || std::str::from_utf8(kb).is_err() {
+                    return true;
+                }
+                if let Some(Object::Name(n)) = dict.get::<Object<'_>>(kb) {
+                    let nb = n.as_ref();
+                    if nb.contains(&0) || std::str::from_utf8(nb).is_err() {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        Object::Stream(s) => {
+            for (key, _) in s.dict().entries() {
+                let kb = key.as_ref();
+                if kb.contains(&0) || std::str::from_utf8(kb).is_err() {
+                    return true;
+                }
+                if let Some(Object::Name(n)) = s.dict().get::<Object<'_>>(kb) {
+                    let nb = n.as_ref();
+                    if nb.contains(&0) || std::str::from_utf8(nb).is_err() {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Check implementation limits: array capacity ≤ 8191 (§6.1.13).
 pub fn check_array_capacity_limit(pdf: &Pdf, report: &mut ComplianceReport) {
     for obj in pdf.objects() {
@@ -5874,15 +5946,31 @@ pub fn check_real_value_limits(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+fn is_real_over_limit(v: f64) -> bool {
+    v.abs() > 32767.0
+}
+
 fn check_real_limit_obj(obj: &Object<'_>) -> bool {
     match obj {
-        Object::Number(n) => n.as_f64().abs() > 32767.0,
+        Object::Number(n) => is_real_over_limit(n.as_f64()),
         Object::Dict(dict) => {
             for (key, _) in dict.entries() {
-                if let Some(Object::Number(n)) = dict.get::<Object<'_>>(key.as_ref()) {
-                    if n.as_f64().abs() > 32767.0 {
-                        return true;
+                match dict.get::<Object<'_>>(key.as_ref()) {
+                    Some(Object::Number(n)) => {
+                        if is_real_over_limit(n.as_f64()) {
+                            return true;
+                        }
                     }
+                    Some(Object::Array(arr)) => {
+                        for item in arr.iter::<Object<'_>>() {
+                            if let Object::Number(n) = &item {
+                                if is_real_over_limit(n.as_f64()) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             false
@@ -5890,7 +5978,7 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
         Object::Array(arr) => {
             for item in arr.iter::<Object<'_>>() {
                 if let Object::Number(n) = &item {
-                    if n.as_f64().abs() > 32767.0 {
+                    if is_real_over_limit(n.as_f64()) {
                         return true;
                     }
                 }
@@ -5900,7 +5988,7 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
         Object::Stream(s) => {
             for (key, _) in s.dict().entries() {
                 if let Some(Object::Number(n)) = s.dict().get::<Object<'_>>(key.as_ref()) {
-                    if n.as_f64().abs() > 32767.0 {
+                    if is_real_over_limit(n.as_f64()) {
                         return true;
                     }
                 }
@@ -5918,11 +6006,7 @@ pub fn check_near_zero_reals(pdf: &Pdf, report: &mut ComplianceReport) {
     const MIN_POSITIVE: f64 = 1.175e-38;
     for obj in pdf.objects() {
         if check_near_zero_obj(&obj, MIN_POSITIVE) {
-            error(
-                report,
-                "6.1.13",
-                "Non-zero real value too close to 0.0",
-            );
+            error(report, "6.1.13", "Non-zero real value too close to 0.0");
             return;
         }
     }
@@ -5974,20 +6058,31 @@ pub fn check_integer_range(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+fn is_int_out_of_range(v: f64, min: f64, max: f64) -> bool {
+    v.fract() == 0.0 && (v > max || v < min)
+}
+
 fn check_integer_range_obj(obj: &Object<'_>, min: f64, max: f64) -> bool {
     match obj {
-        Object::Number(n) => {
-            let v = n.as_f64();
-            // Only check values that look like integers (no fractional part)
-            v.fract() == 0.0 && (v > max || v < min)
-        }
+        Object::Number(n) => is_int_out_of_range(n.as_f64(), min, max),
         Object::Dict(dict) => {
             for (key, _) in dict.entries() {
-                if let Some(Object::Number(n)) = dict.get::<Object<'_>>(key.as_ref()) {
-                    let v = n.as_f64();
-                    if v.fract() == 0.0 && (v > max || v < min) {
-                        return true;
+                match dict.get::<Object<'_>>(key.as_ref()) {
+                    Some(Object::Number(n)) => {
+                        if is_int_out_of_range(n.as_f64(), min, max) {
+                            return true;
+                        }
                     }
+                    Some(Object::Array(arr)) => {
+                        for item in arr.iter::<Object<'_>>() {
+                            if let Object::Number(n) = &item {
+                                if is_int_out_of_range(n.as_f64(), min, max) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             false
@@ -5995,8 +6090,7 @@ fn check_integer_range_obj(obj: &Object<'_>, min: f64, max: f64) -> bool {
         Object::Array(arr) => {
             for item in arr.iter::<Object<'_>>() {
                 if let Object::Number(n) = &item {
-                    let v = n.as_f64();
-                    if v.fract() == 0.0 && (v > max || v < min) {
+                    if is_int_out_of_range(n.as_f64(), min, max) {
                         return true;
                     }
                 }
@@ -6024,9 +6118,7 @@ pub fn check_font_file_subtype(pdf: &Pdf, part: u8, report: &mut ComplianceRepor
         };
         let st = subtype.as_ref();
         // FontFile3 streams have subtypes like Type1C, CIDFontType0C, OpenType
-        let is_font_stream = st == b"Type1C"
-            || st == b"CIDFontType0C"
-            || st == b"OpenType";
+        let is_font_stream = st == b"Type1C" || st == b"CIDFontType0C" || st == b"OpenType";
         if !is_font_stream {
             continue;
         }
@@ -6127,8 +6219,17 @@ pub fn check_resource_names_exist(pdf: &Pdf, report: &mut ComplianceReport) {
         };
         let res = page.resources();
         let loc = format!("page {}", page_idx + 1);
-        check_resource_refs_in_stream(content, &res.fonts, &res.x_objects, &res.ext_g_states,
-            &res.color_spaces, &res.shadings, &res.patterns, &loc, report);
+        check_resource_refs_in_stream(
+            content,
+            &res.fonts,
+            &res.x_objects,
+            &res.ext_g_states,
+            &res.color_spaces,
+            &res.shadings,
+            &res.patterns,
+            &loc,
+            report,
+        );
     }
 }
 
@@ -6208,15 +6309,15 @@ fn check_resource_refs_in_stream(
                 if i >= 1 {
                     if let Some(name) = tokens[i - 1].strip_prefix('/') {
                         // Built-in color spaces don't need Resources entry
-                        let builtin = matches!(
-                            name,
-                            "DeviceGray" | "DeviceRGB" | "DeviceCMYK" | "Pattern"
-                        );
+                        let builtin =
+                            matches!(name, "DeviceGray" | "DeviceRGB" | "DeviceCMYK" | "Pattern");
                         if !builtin && !colorspaces.contains_key(name.as_bytes()) {
                             error_at(
                                 report,
                                 "6.2.2",
-                                format!("ColorSpace /{name} referenced but not in Resources/ColorSpace"),
+                                format!(
+                                    "ColorSpace /{name} referenced but not in Resources/ColorSpace"
+                                ),
                                 location.to_string(),
                             );
                         }
@@ -6277,7 +6378,11 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
             })
         };
         if !has_id {
-            error(report, "6.1.3", "Trailer dictionary missing required /ID key");
+            error(
+                report,
+                "6.1.3",
+                "Trailer dictionary missing required /ID key",
+            );
         }
         return;
     }
@@ -6343,17 +6448,22 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         if data_start >= len {
             break;
         }
-        let data_start = if data[data_start] == b'\r' && data_start + 1 < len && data[data_start + 1] == b'\n' {
-            data_start + 2
-        } else if data[data_start] == b'\n' {
-            data_start + 1
-        } else {
-            pos = abs_stream + 6;
-            continue;
-        };
+        let data_start =
+            if data[data_start] == b'\r' && data_start + 1 < len && data[data_start + 1] == b'\n' {
+                data_start + 2
+            } else if data[data_start] == b'\n' {
+                data_start + 1
+            } else {
+                pos = abs_stream + 6;
+                continue;
+            };
 
         // Find "endstream" after the stream data
-        let search_from = if data_start + 10 < len { data_start } else { break };
+        let search_from = if data_start + 10 < len {
+            data_start
+        } else {
+            break;
+        };
         let remaining = &data[search_from..];
         let Some(endstream_off) = find_keyword(remaining, b"endstream") else {
             break;
@@ -6380,9 +6490,7 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
                 error(
                     report,
                     "6.1.7",
-                    format!(
-                        "Stream Length mismatch: declared {declared_len}, actual {actual_len}"
-                    ),
+                    format!("Stream Length mismatch: declared {declared_len}, actual {actual_len}"),
                 );
                 return; // One violation is enough
             }
@@ -6422,7 +6530,10 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
     let mut last_idx = None;
     let mut search = 0;
     while search + length_key.len() <= region.len() {
-        if let Some(off) = region[search..].windows(length_key.len()).position(|w| w == length_key) {
+        if let Some(off) = region[search..]
+            .windows(length_key.len())
+            .position(|w| w == length_key)
+        {
             last_idx = Some(search + off);
             search = search + off + length_key.len();
         } else {
@@ -6432,10 +6543,16 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
     let idx = last_idx?;
     let after = &region[idx + length_key.len()..];
     // Skip whitespace
-    let skip = after.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(after.len());
+    let skip = after
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(after.len());
     let after = &after[skip..];
     // Parse digits
-    let end = after.iter().position(|b| !b.is_ascii_digit()).unwrap_or(after.len());
+    let end = after
+        .iter()
+        .position(|b| !b.is_ascii_digit())
+        .unwrap_or(after.len());
     if end == 0 {
         return None; // /Length might be an indirect reference
     }
@@ -6500,7 +6617,9 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
             error(
                 report,
                 "6.1.8",
-                format!("Extra spacing before 'obj' keyword ({ws1_count} whitespace chars, expected 1)"),
+                format!(
+                    "Extra spacing before 'obj' keyword ({ws1_count} whitespace chars, expected 1)"
+                ),
             );
             return;
         }
@@ -6550,11 +6669,7 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
         if abs_obj_num_start > 0 {
             let before_obj = data[abs_obj_num_start - 1];
             if before_obj != b'\n' && before_obj != b'\r' {
-                error(
-                    report,
-                    "6.1.8",
-                    "Object number not preceded by EOL marker",
-                );
+                error(report, "6.1.8", "Object number not preceded by EOL marker");
                 return;
             }
         }
@@ -6564,7 +6679,11 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
         if after_obj < len {
             let c = data[after_obj];
             if c != b'\n' && c != b'\r' && c != b' ' && c != b'\t' {
-                error(report, "6.1.8", "Keyword 'obj' not followed by proper whitespace/EOL");
+                error(
+                    report,
+                    "6.1.8",
+                    "Keyword 'obj' not followed by proper whitespace/EOL",
+                );
                 return;
             }
         }
@@ -6585,7 +6704,11 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
         if abs_eobj > 0 {
             let before = data[abs_eobj - 1];
             if before != b'\n' && before != b'\r' {
-                error(report, "6.1.8", "Keyword 'endobj' not preceded by EOL marker");
+                error(
+                    report,
+                    "6.1.8",
+                    "Keyword 'endobj' not preceded by EOL marker",
+                );
                 return;
             }
         }
@@ -6595,7 +6718,11 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
         if after < len {
             let c = data[after];
             if c != b'\n' && c != b'\r' {
-                error(report, "6.1.8", "Keyword 'endobj' not followed by EOL marker");
+                error(
+                    report,
+                    "6.1.8",
+                    "Keyword 'endobj' not followed by EOL marker",
+                );
                 return;
             }
         }
@@ -6720,13 +6847,36 @@ fn check_xmp_extension_schema_text(xmp: &str, report: &mut ComplianceReport) {
 
     // Check 5: valueType definitions
     let standard_types = [
-        "Text", "URI", "URL", "Boolean", "Integer", "Real",
-        "Date", "MIMEType", "AgentName", "RenditionClass",
-        "ResourceEvent", "ResourceRef", "Version", "Rational",
-        "Lang Alt", "Bag Text", "Seq Text", "Bag ProperName",
-        "GUID", "Locale", "XPath", "Part", "GPSCoordinate",
-        "bag Text", "seq Text", "Bag Choice", "InternalRef",
-        "ExternalRef", "Field", "Dimensions",
+        "Text",
+        "URI",
+        "URL",
+        "Boolean",
+        "Integer",
+        "Real",
+        "Date",
+        "MIMEType",
+        "AgentName",
+        "RenditionClass",
+        "ResourceEvent",
+        "ResourceRef",
+        "Version",
+        "Rational",
+        "Lang Alt",
+        "Bag Text",
+        "Seq Text",
+        "Bag ProperName",
+        "GUID",
+        "Locale",
+        "XPath",
+        "Part",
+        "GPSCoordinate",
+        "bag Text",
+        "seq Text",
+        "Bag Choice",
+        "InternalRef",
+        "ExternalRef",
+        "Field",
+        "Dimensions",
     ];
 
     for (tag_start, tag_end) in find_xml_element_values(xmp, "pdfaProperty:valueType") {
@@ -6735,8 +6885,8 @@ fn check_xmp_extension_schema_text(xmp: &str, report: &mut ComplianceReport) {
             continue;
         }
         if !standard_types.contains(&val) {
-            let type_defined = find_xml_element_values(xmp, "pdfaType:type")
-                .any(|(s, e)| xmp[s..e].trim() == val);
+            let type_defined =
+                find_xml_element_values(xmp, "pdfaType:type").any(|(s, e)| xmp[s..e].trim() == val);
             if !type_defined {
                 error(
                     report,
@@ -6808,7 +6958,10 @@ pub fn check_image_xobject_intent(pdf: &Pdf, report: &mut ComplianceReport) {
                 continue;
             };
             let dict = stream.dict();
-            if dict.get::<Name>(keys::SUBTYPE).is_none_or(|s| s.as_ref() != keys::IMAGE) {
+            if dict
+                .get::<Name>(keys::SUBTYPE)
+                .is_none_or(|s| s.as_ref() != keys::IMAGE)
+            {
                 continue;
             }
 
@@ -6866,6 +7019,11 @@ pub fn check_xref_syntax(pdf: &Pdf, report: &mut ComplianceReport) {
 // ─── §6.9 — Embedded file specification keys ────────────────────────────────
 
 /// Check embedded file specifications have required F and UF keys (§6.9).
+/// Check if a dict key is present with a non-null value.
+fn is_present_nonnull(dict: &Dict<'_>, key: &[u8]) -> bool {
+    matches!(dict.get::<Object<'_>>(key), Some(obj) if !matches!(obj, Object::Null(_)))
+}
+
 pub fn check_embedded_file_spec_keys(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     if part < 3 {
         return;
@@ -6890,14 +7048,19 @@ pub fn check_embedded_file_spec_keys(pdf: &Pdf, part: u8, report: &mut Complianc
                 continue;
             }
             let rule = if part == 4 { "6.9" } else { "6.8" };
-            if !spec.contains_key(keys::F) {
+            // F/UF must be present AND non-null (veraPDF t2: F=null counts as missing)
+            if !is_present_nonnull(&spec, keys::F) {
                 error(report, rule, "File specification missing /F key");
             }
-            if !spec.contains_key(b"UF" as &[u8]) {
+            if !is_present_nonnull(&spec, b"UF" as &[u8]) {
                 error(report, rule, "File specification missing /UF key");
             }
-            if part >= 3 && !spec.contains_key(b"AFRelationship" as &[u8]) {
-                error(report, rule, "File specification missing /AFRelationship key");
+            if part >= 3 && !is_present_nonnull(&spec, b"AFRelationship" as &[u8]) {
+                error(
+                    report,
+                    rule,
+                    "File specification missing /AFRelationship key",
+                );
             }
             // Check embedded file stream has valid MIME type (§6.9 test 1)
             if let Some(ef_dict) = spec.get::<Dict<'_>>(keys::EF) {
@@ -7018,9 +7181,7 @@ pub fn check_hex_strings(pdf: &Pdf, report: &mut ComplianceReport) {
         }
 
         // Only check if we actually found a closing >
-        if data[end] == b'>' && !invalid_char
-            && hex_count > 0 && hex_count % 2 != 0
-        {
+        if data[end] == b'>' && !invalid_char && hex_count > 0 && hex_count % 2 != 0 {
             error(
                 report,
                 "6.1.6",
