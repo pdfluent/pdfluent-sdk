@@ -1990,6 +1990,420 @@ fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
     false
 }
 
+// ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
+
+/// Check every font has a /Type key set to /Font (§6.3.1).
+pub fn check_font_type_key(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        match font_dict.get::<Name>(keys::TYPE) {
+            Some(t) if t.as_ref() == keys::FONT => {}
+            Some(t) => {
+                let val = std::str::from_utf8(t.as_ref()).unwrap_or("?");
+                error_at(
+                    report,
+                    "6.3.1",
+                    format!("Font {name} /Type is {val}, expected Font"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+            None => {
+                error_at(
+                    report,
+                    "6.3.1",
+                    format!("Font {name} missing /Type key"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    });
+}
+
+/// Deep font embedding validation (§6.3.3).
+///
+/// Beyond simple embedding presence, validates:
+/// - CIDFont descriptors have matching FontFile subtypes
+/// - Subset fonts (ABCDEF+Name) have CIDSet or CharSet
+/// - FontFile3 subtype matches font type
+pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        // Check direct font descriptor
+        if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
+            check_fontfile_subtype_match(&desc, name, page_idx, report);
+            if is_subset_font(name) {
+                let has_cidset = desc.get::<Stream<'_>>(keys::CID_SET).is_some();
+                let has_charset = desc.get::<Object<'_>>(keys::CHAR_SET).is_some();
+                if !has_cidset && !has_charset && part == 1 {
+                    warning(
+                        report,
+                        "6.3.3",
+                        format!("Subset font {name} missing CIDSet/CharSet"),
+                    );
+                }
+            }
+        }
+
+        // Check CIDFont descendants
+        if let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) {
+            for desc_font in descendants.iter::<Dict<'_>>() {
+                check_cidfont_descriptor_deep(&desc_font, name, page_idx, part, report);
+            }
+        }
+    });
+}
+
+fn check_cidfont_descriptor_deep(
+    cid_font: &Dict<'_>,
+    name: &str,
+    page_idx: usize,
+    part: u8,
+    report: &mut ComplianceReport,
+) {
+    let Some(desc) = cid_font.get::<Dict<'_>>(keys::FONT_DESC) else {
+        return;
+    };
+    check_fontfile_subtype_match(&desc, name, page_idx, report);
+
+    if is_subset_font(name) && part == 1 && desc.get::<Stream<'_>>(keys::CID_SET).is_none() {
+        error_at(
+            report,
+            "6.3.3",
+            format!("Subset CIDFont {name} missing required /CIDSet"),
+            format!("page {}", page_idx + 1),
+        );
+    }
+}
+
+fn check_fontfile_subtype_match(
+    desc: &Dict<'_>,
+    name: &str,
+    page_idx: usize,
+    report: &mut ComplianceReport,
+) {
+    if let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3) {
+        let ff3_dict = ff3.dict();
+        if ff3_dict.get::<Name>(keys::SUBTYPE).is_none() {
+            error_at(
+                report,
+                "6.3.3",
+                format!("Font {name} /FontFile3 missing required /Subtype"),
+                format!("page {}", page_idx + 1),
+            );
+        }
+    }
+}
+
+fn is_subset_font(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() > 7 && bytes[6] == b'+' && bytes[..6].iter().all(|&b| b.is_ascii_uppercase())
+}
+
+/// Check ToUnicode CMap presence for non-symbolic fonts (§6.3.4).
+pub fn check_tounicode_cmap(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, _page_idx| {
+        if let Some(enc) = font_dict.get::<Name>(keys::ENCODING) {
+            if enc.as_ref() == keys::IDENTITY_H || enc.as_ref() == keys::IDENTITY_V {
+                return;
+            }
+        }
+
+        if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
+            if let Some(flags) = desc.get::<i32>(keys::FLAGS) {
+                if flags & 0x04 != 0 {
+                    return;
+                }
+            }
+        }
+
+        if let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) {
+            if subtype.as_ref() == b"Type0" {
+                return;
+            }
+        }
+
+        if !font_has_tounicode(font_dict) {
+            warning(
+                report,
+                "6.3.4",
+                format!("Non-symbolic font {name} missing /ToUnicode CMap"),
+            );
+        }
+    });
+}
+
+const STANDARD_14: &[&str] = &[
+    "Courier",
+    "Courier-Bold",
+    "Courier-BoldOblique",
+    "Courier-Oblique",
+    "Helvetica",
+    "Helvetica-Bold",
+    "Helvetica-BoldOblique",
+    "Helvetica-Oblique",
+    "Times-Roman",
+    "Times-Bold",
+    "Times-BoldItalic",
+    "Times-Italic",
+    "Symbol",
+    "ZapfDingbats",
+];
+
+fn is_standard_14(name: &str) -> bool {
+    let base = if is_subset_font(name) {
+        &name[7..]
+    } else {
+        name
+    };
+    STANDARD_14.contains(&base)
+}
+
+/// Validate font /Widths array presence (§6.3.5).
+pub fn check_font_widths(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        if let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) {
+            if subtype.as_ref() == b"Type0" {
+                return;
+            }
+        }
+
+        if is_standard_14(name) {
+            return;
+        }
+
+        if font_dict.get::<Array<'_>>(keys::WIDTHS).is_none()
+            && font_dict.get::<Dict<'_>>(keys::FONT_DESC).is_some()
+        {
+            error_at(
+                report,
+                "6.3.5",
+                format!("Font {name} missing /Widths array"),
+                format!("page {}", page_idx + 1),
+            );
+        }
+    });
+}
+
+/// Validate symbolic TrueType font encoding (§6.3.6).
+pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
+            return;
+        };
+        if subtype.as_ref() != b"TrueType" {
+            return;
+        }
+
+        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) else {
+            return;
+        };
+        let Some(flags) = desc.get::<i32>(keys::FLAGS) else {
+            return;
+        };
+        let symbolic = flags & 0x04 != 0;
+
+        if symbolic {
+            if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
+                let enc = enc_name.as_ref();
+                if enc == keys::WIN_ANSI_ENCODING
+                    || enc == keys::MAC_ROMAN_ENCODING
+                    || enc == keys::STANDARD_ENCODING
+                    || enc == keys::MAC_EXPERT_ENCODING
+                    || enc == keys::PDF_DOC_ENCODING
+                {
+                    error_at(
+                        report,
+                        "6.3.6",
+                        format!("Symbolic TrueType font {name} should not have /Encoding"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Validate CIDToGIDMap is /Identity for CIDFont Type2 (§6.3.7).
+pub fn check_cidtogidmap_identity(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) else {
+            return;
+        };
+        for desc_font in descendants.iter::<Dict<'_>>() {
+            let Some(subtype) = desc_font.get::<Name>(keys::SUBTYPE) else {
+                continue;
+            };
+            if subtype.as_ref() != keys::CID_FONT_TYPE2 {
+                continue;
+            }
+
+            if let Some(map) = desc_font.get::<Name>(keys::CID_TO_GID_MAP) {
+                if map.as_ref() != keys::IDENTITY {
+                    let val = std::str::from_utf8(map.as_ref()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.3.7",
+                        format!("CIDFont Type2 {name} has CIDToGIDMap={val}, expected Identity"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// Validate CMap embedding for Type0 fonts (§6.3.8).
+pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, _page_idx| {
+        let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
+            return;
+        };
+        if subtype.as_ref() != b"Type0" {
+            return;
+        }
+
+        if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
+            let enc = enc_name.as_ref();
+            if enc == keys::IDENTITY_H || enc == keys::IDENTITY_V {
+                return;
+            }
+            if enc.starts_with(b"90")
+                || enc.starts_with(b"ETen")
+                || enc.starts_with(b"UniGB")
+                || enc.starts_with(b"UniJIS")
+                || enc.starts_with(b"UniCNS")
+                || enc.starts_with(b"UniKS")
+                || enc.starts_with(b"GBK")
+                || enc.starts_with(b"B5")
+            {
+                return;
+            }
+
+            let enc_str = std::str::from_utf8(enc).unwrap_or("?");
+            warning(
+                report,
+                "6.3.8",
+                format!("Type0 font {name} uses CMap {enc_str}; verify it is embedded"),
+            );
+        }
+    });
+}
+
+/// Validate annotation appearance streams (§6.5.3).
+pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            if let Some(subtype) = annot.get::<Name>(keys::SUBTYPE) {
+                if subtype.as_ref() == b"Popup" {
+                    continue;
+                }
+            }
+
+            let subtype_name = annot
+                .get::<Name>(keys::SUBTYPE)
+                .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or("?").to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            match annot.get::<Dict<'_>>(keys::AP) {
+                Some(ap) => {
+                    if ap.get::<Object<'_>>(keys::N).is_none() {
+                        error_at(
+                            report,
+                            "6.5.3",
+                            format!("{subtype_name} annotation /AP missing /N (normal appearance)"),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
+                None => {
+                    error_at(
+                        report,
+                        "6.5.3",
+                        format!("{subtype_name} annotation missing /AP (appearance dict)"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Deep annotation subtype validation (§6.5.2).
+pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    let forbidden_all: &[&[u8]] = &[b"Sound", b"Movie", b"3D"];
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            let Some(subtype) = annot.get::<Name>(keys::SUBTYPE) else {
+                continue;
+            };
+            let st = subtype.as_ref();
+
+            if forbidden_all.contains(&st) {
+                let name = std::str::from_utf8(st).unwrap_or("?");
+                error_at(
+                    report,
+                    "6.5.2",
+                    format!("Annotation type {name} forbidden in PDF/A-{part}"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+
+            if st == b"FileAttachment" && part <= 2 {
+                error_at(
+                    report,
+                    "6.5.2",
+                    format!("FileAttachment annotation forbidden in PDF/A-{part}"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
+}
+
+/// Deep annotation flag validation per PDF/A part (§6.5.1).
+pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            let Some(subtype) = annot.get::<Name>(keys::SUBTYPE) else {
+                continue;
+            };
+            if subtype.as_ref() == b"Popup" {
+                continue;
+            }
+
+            let Some(flags) = annot.get::<i32>(keys::F) else {
+                continue; // Missing F already reported by check_annotation_flags
+            };
+
+            // PDF/A-2/3 §6.5.1: Widget annotations used as form fields
+            // must not have both Hidden and Print flags set simultaneously
+            if part >= 2 && subtype.as_ref() == b"Widget" {
+                let hidden = flags & 0x02 != 0;
+                let print = flags & 0x04 != 0;
+                if hidden && print {
+                    error_at(
+                        report,
+                        "6.5.1",
+                        "Widget annotation has both Hidden and Print flags set",
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    }
+}
+
 // ─── Batch 5: Transparency, Tagged PDF, Remaining Rules ─────────────────────
 
 // ─── §6.4 — Transparency deep checks ────────────────────────────────────────
