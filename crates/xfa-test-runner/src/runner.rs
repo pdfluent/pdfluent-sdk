@@ -84,6 +84,32 @@ impl Runner {
                     }
                 }
 
+                // Pre-check: skip extremely large files to prevent OOM.
+                const MAX_PDF_SIZE: u64 = 256 * 1024 * 1024; // 256 MB
+                if let Ok(meta) = std::fs::metadata(pdf_path) {
+                    if meta.len() > MAX_PDF_SIZE {
+                        let cat = ErrorCategory::CorruptStream;
+                        let reason =
+                            format!("file too large ({} MB)", meta.len() / (1024 * 1024));
+                        for test in &self.tests {
+                            let row = TestResultRow::from_test_result(
+                                &self.config.run_id,
+                                &path_str,
+                                "",
+                                meta.len() as i64,
+                                test.name(),
+                                &TestStatus::Skip,
+                                Some(&reason),
+                                Some(&cat),
+                                0,
+                            );
+                            let _ = self.db.insert_result(&row);
+                        }
+                        progress.inc(1);
+                        return;
+                    }
+                }
+
                 let pdf_data = match std::fs::read(pdf_path) {
                     Ok(data) => data,
                     Err(e) => {
