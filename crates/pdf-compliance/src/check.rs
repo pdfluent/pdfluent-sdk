@@ -141,6 +141,112 @@ fn extract_xmp_attr(text: &str, key: &str) -> Option<String> {
     Some(text[start..end].trim().to_string())
 }
 
+/// Extract the first value from an rdf:Alt container (e.g., dc:title).
+fn extract_rdf_alt_value(text: &str, key: &str) -> Option<String> {
+    let open = format!("<{key}>");
+    let start = text.find(&open)?;
+    let close = format!("</{key}>");
+    let end = text.find(&close)?;
+    let region = &text[start..end];
+    // Find first <rdf:li ...>value</rdf:li>
+    let li_start = region.find("<rdf:li")?;
+    let content_start = region[li_start..].find('>')? + li_start + 1;
+    let content_end = region[content_start..].find("</rdf:li>")? + content_start;
+    Some(region[content_start..content_end].trim().to_string())
+}
+
+/// Extract all values from an rdf:Seq container and count entries.
+fn extract_rdf_seq_values(text: &str, key: &str) -> (Vec<String>, usize) {
+    let open = format!("<{key}>");
+    let close = format!("</{key}>");
+    let Some(start) = text.find(&open) else {
+        return (vec![], 0);
+    };
+    let Some(end) = text[start..].find(&close) else {
+        return (vec![], 0);
+    };
+    let region = &text[start..start + end];
+    let mut values = Vec::new();
+    let mut search = 0;
+    while let Some(li_start) = region[search..].find("<rdf:li") {
+        let abs_start = search + li_start;
+        if let Some(gt) = region[abs_start..].find('>') {
+            let content_start = abs_start + gt + 1;
+            if let Some(li_end) = region[content_start..].find("</rdf:li>") {
+                let content_end = content_start + li_end;
+                values.push(region[content_start..content_end].trim().to_string());
+                search = content_end;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    let count = values.len();
+    (values, count)
+}
+
+/// Parse an XMP ISO 8601 datetime string into components.
+///
+/// Format: `YYYY-MM-DDThh:mm:ss[±hh:mm]`
+fn parse_xmp_datetime(s: &str) -> Option<(u16, u8, u8, u8, u8, u8)> {
+    // Remove timezone suffix for component parsing
+    let s = s.trim();
+    let base = if let Some(idx) = s.rfind('+') {
+        if idx > 10 { &s[..idx] } else { s }
+    } else if let Some(idx) = s.rfind('-') {
+        if idx > 10 { &s[..idx] } else { s }
+    } else {
+        s.trim_end_matches('Z')
+    };
+
+    let parts: Vec<&str> = base.split('T').collect();
+    let date_parts: Vec<&str> = parts.first()?.split('-').collect();
+    let year: u16 = date_parts.first()?.parse().ok()?;
+    let month: u8 = date_parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
+    let day: u8 = date_parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(1);
+
+    let (hour, minute, second) = if let Some(time) = parts.get(1) {
+        let time_parts: Vec<&str> = time.split(':').collect();
+        let h: u8 = time_parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+        let m: u8 = time_parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let s: u8 = time_parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        (h, m, s)
+    } else {
+        (0, 0, 0)
+    };
+
+    Some((year, month, day, hour, minute, second))
+}
+
+/// Check date value equivalence between Info dict and XMP.
+fn check_date_equivalence(
+    pdf_date: &Option<pdf_syntax::object::DateTime>,
+    info_key: &str,
+    xmp_key: &str,
+    xmp_text: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(dt) = pdf_date else { return };
+    let xmp_val = extract_xmp_value(xmp_text, xmp_key)
+        .or_else(|| extract_xmp_attr(xmp_text, xmp_key));
+    let Some(xmp_str) = xmp_val else { return };
+
+    if let Some((y, mo, d, h, mi, s)) = parse_xmp_datetime(&xmp_str) {
+        if dt.year != y || dt.month != mo || dt.day != d || dt.hour != h || dt.minute != mi || dt.second != s {
+            error(
+                report,
+                "6.7.3",
+                format!(
+                    "{info_key} mismatch: Info={:04}-{:02}-{:02}T{:02}:{:02}:{:02} vs XMP={xmp_str}",
+                    dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+                ),
+            );
+        }
+    }
+}
+
 /// Check if the catalog has an OutputIntents array with GTS_PDFA1 subtype.
 pub fn has_output_intent(pdf: &Pdf) -> bool {
     let Some(cat) = catalog(pdf) else {
@@ -1525,13 +1631,102 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 
     // Check Title (/Info Title vs dc:title)
-    if metadata.title.is_some() && !xmp_text.contains("dc:title") {
-        error(
-            report,
-            "6.7.3",
-            "/Info has Title but XMP is missing dc:title",
-        );
+    if let Some(title) = &metadata.title {
+        if !xmp_text.contains("dc:title") {
+            error(
+                report,
+                "6.7.3",
+                "/Info has Title but XMP is missing dc:title",
+            );
+        } else {
+            // Extract dc:title value (usually in rdf:Alt/rdf:li)
+            let xmp_title = extract_rdf_alt_value(xmp_text, "dc:title");
+            if let Some(xmp_val) = &xmp_title {
+                let info_val = String::from_utf8_lossy(title);
+                if info_val.trim() != xmp_val.trim() {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "Title mismatch: Info='{}' vs XMP='{}'",
+                            info_val.chars().take(50).collect::<String>(),
+                            xmp_val.chars().take(50).collect::<String>()
+                        ),
+                    );
+                }
+            }
+        }
     }
+
+    // Check Author (/Info Author vs dc:creator)
+    if let Some(author) = &metadata.author {
+        if xmp_text.contains("dc:creator") {
+            let (xmp_vals, count) = extract_rdf_seq_values(xmp_text, "dc:creator");
+            if count != 1 {
+                error(
+                    report,
+                    "6.7.3",
+                    format!("dc:creator has {count} entries, expected exactly 1"),
+                );
+            }
+            if let Some(xmp_val) = xmp_vals.first() {
+                let info_val = String::from_utf8_lossy(author);
+                if info_val.as_ref() != xmp_val.as_str() {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "Author mismatch: Info='{}' vs XMP='{}'",
+                            info_val.chars().take(50).collect::<String>(),
+                            xmp_val.chars().take(50).collect::<String>()
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    // Check Keywords (/Info Keywords vs pdf:Keywords)
+    if let Some(keywords) = &metadata.keywords {
+        let xmp_keywords = extract_xmp_value(xmp_text, "pdf:Keywords")
+            .or_else(|| extract_xmp_attr(xmp_text, "pdf:Keywords"));
+        if let Some(xmp_val) = &xmp_keywords {
+            let info_val = String::from_utf8_lossy(keywords);
+            if info_val.as_ref() != xmp_val.as_str() {
+                error(
+                    report,
+                    "6.7.3",
+                    format!(
+                        "Keywords mismatch: Info='{}' vs XMP='{}'",
+                        info_val.chars().take(50).collect::<String>(),
+                        xmp_val.chars().take(50).collect::<String>()
+                    ),
+                );
+            }
+        } else {
+            error(
+                report,
+                "6.7.3",
+                "/Info has Keywords but XMP is missing pdf:Keywords",
+            );
+        }
+    }
+
+    // Check date VALUE equivalence (not just presence)
+    check_date_equivalence(
+        &metadata.creation_date,
+        "CreationDate",
+        "xmp:CreateDate",
+        xmp_text,
+        report,
+    );
+    check_date_equivalence(
+        &metadata.modification_date,
+        "ModDate",
+        "xmp:ModifyDate",
+        xmp_text,
+        report,
+    );
 }
 
 /// Check annotation dictionaries have required /F key and correct flags (§6.3.2).
@@ -2559,6 +2754,26 @@ fn check_devicen_components(pdf: &Pdf, max: usize, rule: &str, report: &mut Comp
 pub fn check_all_page_boundaries(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
+        // Check MediaBox via page.media_box() which handles inheritance
+        let mb = page.media_box();
+        let mw = (mb.x1 - mb.x0).abs();
+        let mh = (mb.y1 - mb.y0).abs();
+        if mw < 3.0 || mh < 3.0 {
+            error_at(
+                report,
+                "6.1.13",
+                format!("MediaBox {mw:.1}x{mh:.1} less than 3 units"),
+                format!("page {}", page_idx + 1),
+            );
+        }
+        if mw > 14400.0 || mh > 14400.0 {
+            error_at(
+                report,
+                "6.1.13",
+                format!("MediaBox {mw:.0}x{mh:.0} exceeds 14400 units"),
+                format!("page {}", page_idx + 1),
+            );
+        }
         let boxes: &[(&[u8], &str)] = &[
             (b"CropBox" as &[u8], "CropBox"),
             (keys::BLEED_BOX, "BleedBox"),
@@ -2639,6 +2854,143 @@ fn check_single_filter(
     }
 }
 
+/// Check inline image filters in content streams (§6.1.9).
+///
+/// LZW and Crypt filters are forbidden in inline images too.
+pub fn check_inline_image_filters(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(content);
+        let loc = format!("page {}", page_idx + 1);
+        // Find BI ... ID sequences and check /F or /Filter keys within them
+        let mut pos = 0;
+        while let Some(bi_pos) = text[pos..].find("BI") {
+            let abs_bi = pos + bi_pos;
+            // Make sure BI is at a word boundary
+            let before_ok = abs_bi == 0
+                || text.as_bytes()[abs_bi - 1].is_ascii_whitespace();
+            let after_ok = abs_bi + 2 >= text.len()
+                || text.as_bytes()[abs_bi + 2].is_ascii_whitespace()
+                || text.as_bytes()[abs_bi + 2] == b'/';
+            if !before_ok || !after_ok {
+                pos = abs_bi + 2;
+                continue;
+            }
+            // Find ID marker
+            let Some(id_pos) = text[abs_bi..].find(" ID") else {
+                pos = abs_bi + 2;
+                continue;
+            };
+            let header = &text[abs_bi..abs_bi + id_pos];
+            // Check for /F or /Filter with LZW or Crypt value
+            let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.9" };
+            for filter_indicator in ["/F /LZW", "/F /Cr", "/Filter /LZW", "/Filter /Cr",
+                                     "/F/LZW", "/F/Cr", "/Filter/LZW", "/Filter/Cr"] {
+                if header.contains(filter_indicator) {
+                    let filter_name = if filter_indicator.contains("LZW") {
+                        "LZWDecode"
+                    } else {
+                        "Crypt"
+                    };
+                    error_at(
+                        report,
+                        rule,
+                        format!("Inline image uses forbidden {filter_name} filter"),
+                        loc.clone(),
+                    );
+                    break;
+                }
+            }
+            pos = abs_bi + id_pos;
+        }
+    }
+}
+
+/// Check no data after last %%EOF marker (§6.1.3 test 3).
+pub fn check_no_data_after_eof(pdf: &Pdf, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+    // Find last %%EOF
+    if let Some(eof_pos) = data.windows(5).rposition(|w| w == b"%%EOF") {
+        let after = &data[eof_pos + 5..];
+        // Allow trailing whitespace/EOL markers but nothing else
+        let has_trailing_data = after.iter().any(|&b| !b.is_ascii_whitespace());
+        if has_trailing_data {
+            error(
+                report,
+                "6.1.3",
+                "Data found after last %%EOF marker",
+            );
+        }
+    }
+}
+
+/// Check Widget annotations don't have /A or /AA keys (§6.4.1 test 1).
+pub fn check_widget_no_action(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            let subtype = annot.get::<Name>(keys::SUBTYPE);
+            let is_widget = subtype.as_ref().is_some_and(|s| s.as_ref() == b"Widget");
+            if !is_widget {
+                continue;
+            }
+            if annot.contains_key(b"A" as &[u8]) {
+                error_at(
+                    report,
+                    "6.4.1",
+                    "Widget annotation contains /A key (forbidden action)",
+                    format!("page {}", page_idx + 1),
+                );
+            }
+            if annot.contains_key(b"AA" as &[u8]) {
+                error_at(
+                    report,
+                    "6.4.1",
+                    "Widget annotation contains /AA key (forbidden additional actions)",
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
+}
+
+/// Check OutputIntent profile class (§6.2.3 test 1).
+///
+/// DestOutputProfile ICC profile must be output ("prtr") or monitor ("mntr") class.
+pub fn check_output_intent_profile_class(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) else {
+        return;
+    };
+    for dict in intents.iter::<Dict<'_>>() {
+        if let Some(stream) = dict.get::<Stream<'_>>(keys::DEST_OUTPUT_PROFILE) {
+            if let Ok(data) = stream.decoded() {
+                if data.len() >= 20 {
+                    // ICC profile device class is at bytes 12-15
+                    let class = &data[12..16];
+                    if class != b"prtr" && class != b"mntr" {
+                        let class_str = std::str::from_utf8(class).unwrap_or("?");
+                        error(
+                            report,
+                            "6.2.3",
+                            format!(
+                                "OutputIntent profile device class is '{class_str}', expected 'prtr' or 'mntr'"
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Check embedded file streams have /Type /EmbeddedFile (§6.1.7, §6.1.7.1).
 pub fn check_embedded_file_streams(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else {
@@ -2680,6 +3032,47 @@ fn walk_name_tree_filespec(node: &Dict<'_>, report: &mut ComplianceReport) {
     if let Some(kids) = node.get::<Array<'_>>(keys::KIDS) {
         for kid in kids.iter::<Dict<'_>>() {
             walk_name_tree_filespec(&kid, report);
+        }
+    }
+}
+
+/// Check stream dicts for external file reference keys (§6.1.7.1 test 3).
+///
+/// Stream dictionaries must not contain /F, /FFilter, or /FDecodeParms keys
+/// (these reference external files, forbidden in PDF/A).
+pub fn check_stream_external_refs(pdf: &Pdf, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        if let Object::Stream(s) = obj {
+            let dict = s.dict();
+            // /FFilter and /FDecodeParms are unambiguously external-file keys
+            if dict.contains_key(b"FFilter" as &[u8]) {
+                error(
+                    report,
+                    "6.1.7.1",
+                    "Stream dictionary contains /FFilter key (external file reference)",
+                );
+            }
+            if dict.contains_key(b"FDecodeParms" as &[u8]) {
+                error(
+                    report,
+                    "6.1.7.1",
+                    "Stream dictionary contains /FDecodeParms key (external file reference)",
+                );
+            }
+            // /F as a file specification (string value) in a stream = external reference
+            // Skip if /Type is EmbeddedFile (that's legitimate)
+            let is_embedded = dict
+                .get::<Name>(keys::TYPE)
+                .is_some_and(|t| t.as_ref() == b"EmbeddedFile");
+            if !is_embedded {
+                if let Some(Object::String(_)) = dict.get::<Object<'_>>(keys::F) {
+                    error(
+                        report,
+                        "6.1.7.1",
+                        "Stream dictionary contains /F file specification (external file reference)",
+                    );
+                }
+            }
         }
     }
 }
@@ -3252,16 +3645,61 @@ pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
     ];
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
-        let Some(content) = page.page_stream() else {
-            continue;
-        };
-        if scan_for_undefined_ops(content, valid_ops) {
-            error_at(
-                report,
-                "6.2.10",
-                "Content stream contains undefined operator",
-                format!("page {}", page_idx + 1),
-            );
+        let loc = format!("page {}", page_idx + 1);
+        if let Some(content) = page.page_stream() {
+            if scan_for_undefined_ops(content, valid_ops) {
+                error_at(
+                    report,
+                    "6.2.2",
+                    "Content stream contains undefined operator",
+                    loc.clone(),
+                );
+            }
+        }
+        // Also scan annotation appearance streams
+        let page_dict = page.raw();
+        if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    if let Some(n_stream) = ap.get::<Stream<'_>>(keys::N) {
+                        if let Ok(decoded) = n_stream.decoded() {
+                            if scan_for_undefined_ops(&decoded, valid_ops) {
+                                error_at(
+                                    report,
+                                    "6.2.2",
+                                    "Annotation appearance stream contains undefined operator",
+                                    loc.clone(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Scan Form XObjects on the page
+        let xobjects = &page.resources().x_objects;
+        for (name, _) in xobjects.entries() {
+            let Some(stream) = xobjects.get::<Stream<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let is_form = stream
+                .dict()
+                .get::<Name>(keys::SUBTYPE)
+                .is_some_and(|s| s.as_ref() == b"Form");
+            if !is_form {
+                continue;
+            }
+            if let Ok(decoded) = stream.decoded() {
+                if scan_for_undefined_ops(&decoded, valid_ops) {
+                    let xn = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.2.2",
+                        format!("Form XObject {xn} contains undefined operator"),
+                        loc.clone(),
+                    );
+                }
+            }
         }
     }
 }
@@ -3369,7 +3807,10 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut Com
         }
 
         // Check 2: pages using transparency features need /Group with CS
-        if !has_page_group && page_uses_transparency(page.resources()) {
+        let uses_transparency = page_uses_transparency(page.resources())
+            || page_annots_use_transparency(page_dict)
+            || page_fonts_use_transparency(page.resources());
+        if !has_page_group && uses_transparency {
             error_at(
                 report,
                 page_group_rule,
@@ -3406,6 +3847,9 @@ fn page_uses_transparency(res: &Resources<'_>) -> bool {
         return true;
     }
     if xobjects_use_transparency(&res.x_objects) {
+        return true;
+    }
+    if patterns_use_transparency(&res.patterns) {
         return true;
     }
     false
@@ -3483,6 +3927,166 @@ fn xobjects_use_transparency(xobj_dict: &Dict<'_>) -> bool {
         }
     }
     false
+}
+
+/// Check if any Pattern resource uses transparency features.
+///
+/// Tiling patterns can have their own Resources with ExtGState
+/// entries that use transparency (SMask, CA, ca, BM).
+fn patterns_use_transparency(pat_dict: &Dict<'_>) -> bool {
+    for (name, _) in pat_dict.entries() {
+        // Tiling patterns are streams, shading patterns are dicts
+        if let Some(stream) = pat_dict.get::<Stream<'_>>(name.as_ref()) {
+            let dict = stream.dict();
+            // Check the pattern's own Resources for transparency
+            if let Some(res) = dict.get::<Dict<'_>>(keys::RESOURCES) {
+                if let Some(gs) = res.get::<Dict<'_>>(keys::EXT_G_STATE) {
+                    if extgstate_uses_transparency(&gs) {
+                        return true;
+                    }
+                }
+                if let Some(xobj) = res.get::<Dict<'_>>(keys::XOBJECT) {
+                    if xobjects_use_transparency(&xobj) {
+                        return true;
+                    }
+                }
+            }
+            // Check if the pattern itself has a transparency Group
+            if let Some(group) = dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+                if group
+                    .get::<Name>(keys::S)
+                    .is_some_and(|s| s.as_ref() == b"Transparency")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if page annotations use transparency features.
+///
+/// Annotations can use transparency via:
+/// - /BM (blend mode) key directly in the annotation dict
+/// - Appearance streams (/AP /N) that use ExtGState with transparency
+fn page_annots_use_transparency(page_dict: &Dict<'_>) -> bool {
+    let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+        return false;
+    };
+    for annot in annots.iter::<Dict<'_>>() {
+        // Check /BM directly on the annotation
+        if let Some(bm) = annot.get::<Name>(keys::BM) {
+            let bm_bytes = bm.as_ref();
+            if bm_bytes != b"Normal" && bm_bytes != b"Compatible" {
+                return true;
+            }
+        }
+        // Check /CA and /ca on annotation dict
+        if let Some(Object::Number(ca)) = annot.get::<Object<'_>>(b"CA" as &[u8]) {
+            if ca.as_f64() < 1.0 {
+                return true;
+            }
+        }
+        if let Some(Object::Number(ca)) = annot.get::<Object<'_>>(b"ca" as &[u8]) {
+            if ca.as_f64() < 1.0 {
+                return true;
+            }
+        }
+        // Check appearance stream resources for transparency
+        if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+            if let Some(n_stream) = ap.get::<Stream<'_>>(keys::N) {
+                let ap_dict = n_stream.dict();
+                if let Some(res) = ap_dict.get::<Dict<'_>>(keys::RESOURCES) {
+                    if let Some(gs) = res.get::<Dict<'_>>(keys::EXT_G_STATE) {
+                        if extgstate_uses_transparency(&gs) {
+                            return true;
+                        }
+                    }
+                    // Check XObjects in appearance stream resources
+                    if let Some(xobj) = res.get::<Dict<'_>>(keys::XOBJECT) {
+                        if xobjects_use_transparency(&xobj) {
+                            return true;
+                        }
+                    }
+                }
+                // Check if the appearance Form XObject itself has a Transparency group
+                if let Some(group) = ap_dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+                    if group
+                        .get::<Name>(keys::S)
+                        .is_some_and(|s| s.as_ref() == b"Transparency")
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if any Type3 font on the page uses transparency in its char proc resources.
+fn page_fonts_use_transparency(res: &Resources<'_>) -> bool {
+    let fonts = &res.fonts;
+    for (name, _) in fonts.entries() {
+        let Some(font_dict) = fonts.get::<Dict<'_>>(name.as_ref()) else {
+            continue;
+        };
+        // Only check Type3 fonts
+        let is_type3 = font_dict
+            .get::<Name>(keys::SUBTYPE)
+            .is_some_and(|s| s.as_ref() == b"Type3");
+        if !is_type3 {
+            continue;
+        }
+        // Check the font's own Resources for transparency
+        if let Some(font_res) = font_dict.get::<Dict<'_>>(keys::RESOURCES) {
+            if let Some(gs) = font_res.get::<Dict<'_>>(keys::EXT_G_STATE) {
+                if extgstate_uses_transparency(&gs) {
+                    return true;
+                }
+            }
+        }
+        // Check CharProcs for embedded resources
+        if let Some(char_procs) = font_dict.get::<Dict<'_>>(b"CharProcs" as &[u8]) {
+            for (cp_name, _) in char_procs.entries() {
+                if let Some(stream) = char_procs.get::<Stream<'_>>(cp_name.as_ref()) {
+                    let cp_dict = stream.dict();
+                    if let Some(cp_res) = cp_dict.get::<Dict<'_>>(keys::RESOURCES) {
+                        if let Some(gs) = cp_res.get::<Dict<'_>>(keys::EXT_G_STATE) {
+                            if extgstate_uses_transparency(&gs) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check for PostScript XObjects (forbidden in PDF/A, §6.2.9 test 3).
+pub fn check_postscript_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    let rule = if part == 4 { "6.2.9" } else { "6.2.10" };
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let xobjects = &page.resources().x_objects;
+        for (name, _) in xobjects.entries() {
+            let Some(stream) = xobjects.get::<Stream<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let subtype = stream.dict().get::<Name>(keys::SUBTYPE);
+            if subtype.is_some_and(|s| s.as_ref() == b"PS") {
+                let xn = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+                error_at(
+                    report,
+                    rule,
+                    format!("PostScript XObject {xn} is not allowed in PDF/A"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
 }
 
 // ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
@@ -4856,6 +5460,139 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Check that resource names referenced in content streams exist in the
+/// Resources dictionary (§6.2.2 test 2).
+///
+/// Maps operators to their resource sub-dictionary:
+/// - Tf → Font, Do → XObject, gs → ExtGState, cs/CS → ColorSpace, sh → Shading
+pub fn check_resource_names_exist(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        let res = page.resources();
+        let loc = format!("page {}", page_idx + 1);
+        check_resource_refs_in_stream(content, &res.fonts, &res.x_objects, &res.ext_g_states,
+            &res.color_spaces, &res.shadings, &res.patterns, &loc, report);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_resource_refs_in_stream(
+    content: &[u8],
+    fonts: &Dict<'_>,
+    xobjects: &Dict<'_>,
+    extgstates: &Dict<'_>,
+    colorspaces: &Dict<'_>,
+    shadings: &Dict<'_>,
+    patterns: &Dict<'_>,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    let text = String::from_utf8_lossy(content);
+    let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+    let mut i = 0;
+    let mut in_inline = false;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        if tok == "ID" {
+            in_inline = true;
+            i += 1;
+            continue;
+        }
+        if tok == "EI" {
+            in_inline = false;
+            i += 1;
+            continue;
+        }
+        if in_inline {
+            i += 1;
+            continue;
+        }
+
+        // Match operator and check the preceding name operand
+        match tok {
+            "Tf" => {
+                // /Name size Tf — name is 2 tokens before
+                if i >= 2 {
+                    if let Some(name) = tokens[i - 2].strip_prefix('/') {
+                        if !fonts.contains_key(name.as_bytes()) {
+                            error_at(
+                                report,
+                                "6.2.2",
+                                format!("Font /{name} referenced but not in Resources/Font"),
+                                location.to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+            "Do" | "gs" | "sh" => {
+                // /Name op — name is 1 token before
+                if i >= 1 {
+                    if let Some(name) = tokens[i - 1].strip_prefix('/') {
+                        let (dict, cat) = match tok {
+                            "Do" => (xobjects, "XObject"),
+                            "gs" => (extgstates, "ExtGState"),
+                            "sh" => (shadings, "Shading"),
+                            _ => unreachable!(),
+                        };
+                        if !dict.contains_key(name.as_bytes()) {
+                            error_at(
+                                report,
+                                "6.2.2",
+                                format!("/{name} referenced by {tok} but not in Resources/{cat}"),
+                                location.to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+            "cs" | "CS" => {
+                // /Name cs|CS — name is 1 token before
+                if i >= 1 {
+                    if let Some(name) = tokens[i - 1].strip_prefix('/') {
+                        // Built-in color spaces don't need Resources entry
+                        let builtin = matches!(
+                            name,
+                            "DeviceGray" | "DeviceRGB" | "DeviceCMYK" | "Pattern"
+                        );
+                        if !builtin && !colorspaces.contains_key(name.as_bytes()) {
+                            error_at(
+                                report,
+                                "6.2.2",
+                                format!("ColorSpace /{name} referenced but not in Resources/ColorSpace"),
+                                location.to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+            "scn" | "SCN" => {
+                // For pattern color space: /Name scn|SCN — name is 1 token before
+                // Only check if the operand is a name (starts with /), not a number
+                if i >= 1 {
+                    if let Some(name) = tokens[i - 1].strip_prefix('/') {
+                        // This is a pattern name reference
+                        if !patterns.contains_key(name.as_bytes())
+                            && !colorspaces.contains_key(name.as_bytes())
+                        {
+                            error_at(
+                                report,
+                                "6.2.2",
+                                format!("/{name} referenced by {tok} but not in Resources"),
+                                location.to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+}
+
 // ─── §6.1.3 — Trailer Info key for PDF/A-4 ──────────────────────────────────
 
 /// Check trailer requirements (§6.1.3).
@@ -5480,6 +6217,18 @@ pub fn check_embedded_file_spec_keys(pdf: &Pdf, part: u8, report: &mut Complianc
             }
             if part >= 3 && !spec.contains_key(b"AFRelationship" as &[u8]) {
                 error(report, rule, "File specification missing /AFRelationship key");
+            }
+            // Check embedded file stream has MIME type (§6.9 test 1)
+            if let Some(ef_dict) = spec.get::<Dict<'_>>(keys::EF) {
+                if let Some(f_stream) = ef_dict.get::<Stream<'_>>(keys::F) {
+                    if f_stream.dict().get::<Name>(keys::SUBTYPE).is_none() {
+                        error(
+                            report,
+                            rule,
+                            "Embedded file stream missing /Subtype (MIME type)",
+                        );
+                    }
+                }
             }
         }
     }
