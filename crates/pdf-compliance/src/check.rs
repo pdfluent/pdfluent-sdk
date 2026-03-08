@@ -154,6 +154,113 @@ pub fn has_output_intent(pdf: &Pdf) -> bool {
     false
 }
 
+/// Determine the number of components in the OutputIntent's DestOutputProfile ICC profile.
+/// Returns None if no GTS_PDFA1 OutputIntent or no parseable profile.
+pub fn output_intent_profile_components(pdf: &Pdf) -> Option<u32> {
+    let cat = catalog(pdf)?;
+    let intents = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS)?;
+    for dict in intents.iter::<Dict<'_>>() {
+        if let Some(s) = dict.get::<Name>(keys::S) {
+            if s.as_ref() == b"GTS_PDFA1" {
+                let stream = dict.get::<Stream<'_>>(keys::DEST_OUTPUT_PROFILE)?;
+                let data = stream.decoded().ok()?;
+                if data.len() < 20 {
+                    return None;
+                }
+                // ICC profile header: bytes 16-19 = color space signature
+                let cs_sig = &data[16..20];
+                return Some(match cs_sig {
+                    b"RGB " => 3,
+                    b"CMYK" => 4,
+                    b"GRAY" => 1,
+                    _ => 0, // unknown
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Check device color usage matches OutputIntent profile color space (§6.2.3.3).
+///
+/// Even with an OutputIntent, device colors may only be used if the profile's
+/// color space matches (e.g., DeviceCMYK only with CMYK OutputIntent).
+pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(profile_components) = output_intent_profile_components(pdf) else {
+        return; // No OutputIntent profile — handled by other checks
+    };
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let loc = format!("page {}", page_idx + 1);
+
+        // Scan page content stream
+        if let Some(content) = page.page_stream() {
+            let ops = detect_device_color_ops(content);
+            report_color_vs_profile(&ops, profile_components, &loc, report);
+        }
+
+        // Scan Form XObject content streams
+        let page_dict = page.raw();
+        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
+        if let Some(ref rd) = res_dict {
+            if let Some(xobj_dict) = rd.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xname, _) in xobj_dict.entries() {
+                    let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
+                        continue;
+                    };
+                    let dict = stream.dict();
+                    let is_form = dict
+                        .get::<Name>(keys::SUBTYPE)
+                        .is_some_and(|s| s.as_ref() == b"Form");
+                    if !is_form {
+                        continue;
+                    }
+                    if let Ok(decoded) = stream.decoded() {
+                        let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+                        let xloc = format!("{loc} XObject {xname_str}");
+                        let ops = detect_device_color_ops(&decoded);
+                        report_color_vs_profile(&ops, profile_components, &xloc, report);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn report_color_vs_profile(
+    ops: &DeviceColorOps,
+    profile_components: u32,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    if ops.has_rgb && profile_components != 3 {
+        error_at(
+            report,
+            "6.2.3.3",
+            "DeviceRGB used but OutputIntent profile is not RGB",
+            location.to_string(),
+        );
+    }
+    if ops.has_cmyk && profile_components != 4 {
+        error_at(
+            report,
+            "6.2.3.3",
+            "DeviceCMYK used but OutputIntent profile is not CMYK",
+            location.to_string(),
+        );
+    }
+    if ops.has_gray && profile_components != 1 && profile_components != 3 && profile_components != 4
+    {
+        // DeviceGray is implicitly compatible with RGB and CMYK profiles
+        error_at(
+            report,
+            "6.2.3.3",
+            "DeviceGray used but OutputIntent profile is incompatible",
+            location.to_string(),
+        );
+    }
+}
+
 /// Check if a font descriptor has embedded font data.
 pub fn font_has_embedding(desc: &Dict<'_>) -> bool {
     desc.get::<Stream<'_>>(keys::FONT_FILE).is_some()
@@ -480,32 +587,68 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
             .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_GRAY))
             .is_some();
 
+        let loc = format!("page {}", page_idx + 1);
+
         // Scan content stream for device color space operators
         if let Some(content) = page.page_stream() {
-            let ops = detect_device_color_ops(content);
-            if !has_default_rgb && ops.has_rgb {
-                error_at(
-                    report,
-                    "6.2.4.3",
-                    "DeviceRGB used without DefaultRGB color space or OutputIntent",
-                    format!("page {}", page_idx + 1),
-                );
-            }
-            if !has_default_cmyk && ops.has_cmyk {
-                error_at(
-                    report,
-                    "6.2.4.3",
-                    "DeviceCMYK used without DefaultCMYK color space or OutputIntent",
-                    format!("page {}", page_idx + 1),
-                );
-            }
-            if !has_default_gray && ops.has_gray {
-                error_at(
-                    report,
-                    "6.2.4.3",
-                    "DeviceGray used without DefaultGray color space or OutputIntent",
-                    format!("page {}", page_idx + 1),
-                );
+            report_device_color_ops(
+                content,
+                has_default_rgb,
+                has_default_cmyk,
+                has_default_gray,
+                &loc,
+                report,
+            );
+        }
+
+        // Scan Form XObject content streams too
+        if let Some(ref rd) = res_dict {
+            if let Some(xobj_dict) = rd.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xname, _) in xobj_dict.entries() {
+                    let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
+                        continue;
+                    };
+                    let dict = stream.dict();
+                    let is_form = dict
+                        .get::<Name>(keys::SUBTYPE)
+                        .is_some_and(|s| s.as_ref() == b"Form");
+                    if !is_form {
+                        continue;
+                    }
+                    // Form XObjects may have their own Resources with Default CS
+                    let form_res = dict.get::<Dict<'_>>(keys::RESOURCES);
+                    let form_default_rgb = has_default_rgb
+                        || form_res
+                            .as_ref()
+                            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+                            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_RGB))
+                            .is_some();
+                    let form_default_cmyk = has_default_cmyk
+                        || form_res
+                            .as_ref()
+                            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+                            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_CMYK))
+                            .is_some();
+                    let form_default_gray = has_default_gray
+                        || form_res
+                            .as_ref()
+                            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+                            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_GRAY))
+                            .is_some();
+
+                    if let Ok(decoded) = stream.decoded() {
+                        let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+                        let xloc = format!("{loc} XObject {xname_str}");
+                        report_device_color_ops(
+                            &decoded,
+                            form_default_rgb,
+                            form_default_cmyk,
+                            form_default_gray,
+                            &xloc,
+                            report,
+                        );
+                    }
+                }
             }
         }
 
@@ -522,7 +665,7 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
                             report,
                             "6.2.4.3",
                             "DeviceRGB referenced in ColorSpace resources without OutputIntent",
-                            format!("page {}", page_idx + 1),
+                            loc.clone(),
                         );
                     }
                     if !has_default_cmyk && cs == b"DeviceCMYK" {
@@ -530,7 +673,7 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
                             report,
                             "6.2.4.3",
                             "DeviceCMYK referenced in ColorSpace resources without OutputIntent",
-                            format!("page {}", page_idx + 1),
+                            loc.clone(),
                         );
                     }
                     if !has_default_gray && cs == b"DeviceGray" {
@@ -538,12 +681,48 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
                             report,
                             "6.2.4.3",
                             "DeviceGray referenced in ColorSpace resources without OutputIntent",
-                            format!("page {}", page_idx + 1),
+                            loc.clone(),
                         );
                     }
                 }
             }
         }
+    }
+}
+
+/// Helper: report device color ops found in a content stream.
+fn report_device_color_ops(
+    content: &[u8],
+    has_default_rgb: bool,
+    has_default_cmyk: bool,
+    has_default_gray: bool,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    let ops = detect_device_color_ops(content);
+    if !has_default_rgb && ops.has_rgb {
+        error_at(
+            report,
+            "6.2.4.3",
+            "DeviceRGB used without DefaultRGB color space or OutputIntent",
+            location.to_string(),
+        );
+    }
+    if !has_default_cmyk && ops.has_cmyk {
+        error_at(
+            report,
+            "6.2.4.3",
+            "DeviceCMYK used without DefaultCMYK color space or OutputIntent",
+            location.to_string(),
+        );
+    }
+    if !has_default_gray && ops.has_gray {
+        error_at(
+            report,
+            "6.2.4.3",
+            "DeviceGray used without DefaultGray color space or OutputIntent",
+            location.to_string(),
+        );
     }
 }
 
@@ -686,6 +865,46 @@ pub fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
                     report,
                     "6.3.2",
                     format!("{subtype_name} annotation missing required /F key"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
+}
+
+/// Check annotation /C and /IC color arrays (§6.5.3).
+///
+/// In PDF/A-1, annotation /C (color) and /IC (interior color) arrays must not
+/// use device-dependent colors when no matching OutputIntent is present.
+/// Annotations must not contain /C or /IC unless the OutputIntent profile
+/// matches the color space.
+pub fn check_annotation_color_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
+    let has_intent = has_output_intent(pdf);
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            let has_c = annot.get::<Array<'_>>(b"C" as &[u8]).is_some();
+            let has_ic = annot.get::<Array<'_>>(b"IC" as &[u8]).is_some();
+            if (has_c || has_ic) && !has_intent {
+                let subtype_name = annot
+                    .get::<Name>(keys::SUBTYPE)
+                    .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or("?").to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let which = match (has_c, has_ic) {
+                    (true, true) => "/C and /IC",
+                    (true, false) => "/C",
+                    (false, true) => "/IC",
+                    _ => unreachable!(),
+                };
+                error_at(
+                    report,
+                    "6.5.3",
+                    format!(
+                        "{subtype_name} annotation has {which} color array without matching OutputIntent"
+                    ),
                     format!("page {}", page_idx + 1),
                 );
             }
@@ -1560,6 +1779,10 @@ pub fn check_actions_deep(pdf: &Pdf, part: u8, rule: &str, report: &mut Complian
                 check_form_fields_actions(&fields, &forbidden, report);
             }
         }
+        // Check outline (bookmark) actions
+        if let Some(outlines) = cat.get::<Dict<'_>>(keys::OUTLINES) {
+            check_outline_actions(&outlines, &forbidden, rule, report, 0);
+        }
     }
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
@@ -1649,6 +1872,29 @@ fn check_action_recursive(
         for next_a in next_arr.iter::<Dict<'_>>() {
             check_action_recursive(&next_a, forbidden, rule, location, report);
         }
+    }
+}
+
+/// Walk outline tree checking for forbidden actions.
+fn check_outline_actions(
+    item: &Dict<'_>,
+    forbidden: &[&[u8]],
+    rule: &str,
+    report: &mut ComplianceReport,
+    depth: usize,
+) {
+    if depth > 100 {
+        return; // Prevent infinite loops in circular outline trees
+    }
+    if let Some(action) = item.get::<Dict<'_>>(keys::A) {
+        check_action_recursive(&action, forbidden, rule, "outline item", report);
+    }
+    // Walk children: First → Next chain
+    if let Some(first) = item.get::<Dict<'_>>(keys::FIRST) {
+        check_outline_actions(&first, forbidden, rule, report, depth + 1);
+    }
+    if let Some(next) = item.get::<Dict<'_>>(keys::NEXT) {
+        check_outline_actions(&next, forbidden, rule, report, depth + 1);
     }
 }
 

@@ -829,6 +829,17 @@ fn check_pdfa_id_properties(xmp: &str, level: PdfALevel, report: &mut Compliance
             );
         }
     }
+
+    // §6.7.3: if pdfaid:rev is present, it must be a valid 4-digit year
+    if let Some(rev) = extract_nested_value(xmp, "pdfaid:rev") {
+        if rev.len() != 4 || rev.parse::<u32>().is_err() {
+            error(
+                report,
+                "6.7.3",
+                format!("pdfaid:rev value '{}' is not a valid four-digit year", rev),
+            );
+        }
+    }
 }
 
 /// §6.7.8 — dc:title must be present if /Title exists in Info dict.

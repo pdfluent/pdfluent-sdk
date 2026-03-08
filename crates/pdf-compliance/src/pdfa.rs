@@ -26,9 +26,11 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_font_embedding(pdf, &mut report);
     check_color_spaces(pdf, &mut report);
     check_device_colorspaces(pdf, &mut report);
+    check_device_color_vs_output_intent(pdf, &mut report);
     check_page_dimensions(pdf, &mut report);
     check_annotation_flags(pdf, &mut report);
     check_annotation_types(pdf, level, &mut report);
+    check_annotation_color_arrays(pdf, &mut report);
     check_form_xobjects(pdf, &mut report);
     check_page_boundary_sizes(pdf, &mut report);
 
@@ -223,6 +225,11 @@ fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_device_colorspaces(pdf, report);
 }
 
+/// §6.2.3.3 — Device colors must match OutputIntent profile color space.
+fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_device_color_vs_output_intent(pdf, report);
+}
+
 /// §6.1.12 — Absolute real values must not exceed 32767.
 fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_page_dimensions(pdf, report);
@@ -277,6 +284,11 @@ fn check_annotation_types(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRe
             }
         }
     }
+}
+
+/// §6.5.3 — Annotation /C and /IC color arrays restricted.
+fn check_annotation_color_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_annotation_color_arrays(pdf, report);
 }
 
 /// §6.2.9 — Form XObjects must not contain OPI/PS/Ref keys.
