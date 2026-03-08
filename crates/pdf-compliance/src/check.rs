@@ -2275,6 +2275,11 @@ pub fn check_page_dimensions(pdf: &Pdf, part: u8, report: &mut ComplianceReport)
             check_gs_nesting_depth(content, page_idx, rule, report);
         }
     }
+
+    // DeviceN color spaces must not have more than 8 components (PDF/A-1)
+    // or 32 components (PDF/A-2/3/4)
+    let max_components: usize = if part == 1 { 8 } else { 32 };
+    check_devicen_components(pdf, max_components, rule, report);
 }
 
 /// All Name objects must not exceed 127 bytes.
@@ -2300,6 +2305,43 @@ fn check_name_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
                     format!("Name object exceeds 127 bytes ({})", n.as_ref().len()),
                 );
                 return;
+            }
+        }
+    }
+}
+
+/// DeviceN color spaces must not exceed max components.
+fn check_devicen_components(pdf: &Pdf, max: usize, rule: &str, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
+            continue;
+        };
+        let Some(cs_dict) = res_dict.get::<Dict<'_>>(keys::COLORSPACE) else {
+            continue;
+        };
+        for (name, _) in cs_dict.entries() {
+            let Some(cs_arr) = cs_dict.get::<Array<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let mut items = cs_arr.iter::<Object<'_>>();
+            let Some(Object::Name(cs_type)) = items.next() else {
+                continue;
+            };
+            if cs_type.as_ref() != keys::DEVICE_N {
+                continue;
+            }
+            // Second element is the names array
+            if let Some(Object::Array(names_arr)) = items.next() {
+                let count = names_arr.raw_iter().count();
+                if count > max {
+                    error_at(
+                        report,
+                        rule,
+                        format!("DeviceN has {count} components (max {max})"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
             }
         }
     }
@@ -3509,6 +3551,18 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
                         report,
                         "6.5.3",
                         format!("{subtype_name} annotation missing /AP (appearance dict)"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+
+            // CA key must be 1.0 if present (§6.5.3)
+            if let Some(ca_val) = annot.get::<f64>(b"CA" as &[u8]) {
+                if (ca_val - 1.0).abs() > f64::EPSILON {
+                    error_at(
+                        report,
+                        "6.5.3",
+                        format!("{subtype_name} annotation /CA is {ca_val} (must be 1.0)"),
                         format!("page {}", page_idx + 1),
                     );
                 }
