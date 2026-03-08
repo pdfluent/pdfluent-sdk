@@ -2744,6 +2744,29 @@ pub fn check_extgstate_restrictions(pdf: &Pdf, part: u8, report: &mut Compliance
                         }
                     }
                 }
+
+                // §6.4 — CA (stroke alpha) must be 1.0 in PDF/A-1
+                if let Some(ca_val) = gs.get::<f64>(b"CA" as &[u8]) {
+                    if (ca_val - 1.0).abs() > 0.001 {
+                        error_at(
+                            report,
+                            "6.4",
+                            format!("ExtGState {gs_str} has CA={ca_val} (must be 1.0 in PDF/A-1)"),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
+                // §6.4 — ca (fill alpha) must be 1.0 in PDF/A-1
+                if let Some(ca_val) = gs.get::<f64>(b"ca" as &[u8]) {
+                    if (ca_val - 1.0).abs() > 0.001 {
+                        error_at(
+                            report,
+                            "6.4",
+                            format!("ExtGState {gs_str} has ca={ca_val} (must be 1.0 in PDF/A-1)"),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
             }
 
             // §6.2.4.2 — OPM must not be 1 when ICCBased CMYK is in use with overprinting
@@ -6946,6 +6969,96 @@ pub fn check_embedded_file_af_association(pdf: &Pdf, part: u8, report: &mut Comp
                     }
                 }
             }
+        }
+    }
+}
+
+// ─── §6.1.6 — Hex string validation ──────────────────────────────────────────
+
+/// Check hex strings for validity (§6.1.6).
+///
+/// Hex strings must contain only valid hex characters (0-9, a-f, A-F)
+/// and whitespace. Also checks for odd-length hex strings.
+pub fn check_hex_strings(pdf: &Pdf, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+    let len = data.len();
+    let mut pos = 0;
+
+    while pos < len {
+        if data[pos] != b'<' {
+            pos += 1;
+            continue;
+        }
+        // Skip dict markers <<
+        if pos + 1 < len && data[pos + 1] == b'<' {
+            pos += 2;
+            continue;
+        }
+        // Found potential hex string start
+        let start = pos + 1;
+        let mut end = start;
+        let mut hex_count = 0;
+        let mut invalid_char = false;
+
+        while end < len && data[end] != b'>' {
+            let c = data[end];
+            if c.is_ascii_hexdigit() {
+                hex_count += 1;
+            } else if c.is_ascii_whitespace() {
+                // whitespace is allowed
+            } else {
+                invalid_char = true;
+                break;
+            }
+            end += 1;
+        }
+
+        if end >= len {
+            break;
+        }
+
+        // Only check if we actually found a closing >
+        if data[end] == b'>' && !invalid_char
+            && hex_count > 0 && hex_count % 2 != 0
+        {
+            error(
+                report,
+                "6.1.6",
+                format!("Hexadecimal string contains odd number ({hex_count}) of non-whitespace characters"),
+            );
+            return;
+        }
+        if invalid_char && hex_count > 0 {
+            error(
+                report,
+                "6.1.6",
+                "Hexadecimal string contains non-hex characters",
+            );
+            return;
+        }
+
+        pos = end + 1;
+    }
+}
+
+// ─── §6.2.3 — Output intent restrictions ─────────────────────────────────────
+
+/// Check OutputIntent has no forbidden DestOutputProfileRef key (§6.2.3 test 3).
+pub fn check_output_intent_destref(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) else {
+        return;
+    };
+    for intent in intents.iter::<Dict<'_>>() {
+        if intent.contains_key(b"DestOutputProfileRef" as &[u8]) {
+            error(
+                report,
+                "6.2.3",
+                "OutputIntent contains forbidden /DestOutputProfileRef entry",
+            );
+            return;
         }
     }
 }

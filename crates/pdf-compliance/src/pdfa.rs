@@ -138,6 +138,8 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check::check_no_data_after_eof(pdf, &mut report);
     check::check_widget_no_action(pdf, &mut report);
     check::check_output_intent_profile_class(pdf, &mut report);
+    check::check_hex_strings(pdf, &mut report);
+    check::check_output_intent_destref(pdf, &mut report);
 
     // Post-process: remap clause numbers per PDF/A part.
     // Clause numbering differs between ISO 19005 parts.
@@ -832,6 +834,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Form XObject restrictions (PS, Subtype2, Ref)
             // PDF/A-1: §6.2.5, PDF/A-2/3/4: §6.2.9
             (1, "6.2.9") => Some("6.2.5"),
+
+            // Lang tag validation
+            // Our canonical: 6.8.4, PDF/A-1/2/3: 6.7.4
+            (1..=3, "6.8.4") => Some("6.7.4"),
 
             _ => None,
         };
