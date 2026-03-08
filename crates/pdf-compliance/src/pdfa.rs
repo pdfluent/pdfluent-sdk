@@ -475,11 +475,7 @@ fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
     }
 
     if check::struct_tree_root(pdf).is_none() {
-        check::error(
-            report,
-            rule,
-            "No StructTreeRoot found",
-        );
+        check::error(report, rule, "No StructTreeRoot found");
     }
 }
 
@@ -504,6 +500,7 @@ fn check_embedded_files_a3(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.2.4.3 — Image XObject device color spaces.
 fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_image_xobject_colorspaces(pdf, report);
+    check::check_page_group_colorspaces(pdf, report);
 }
 
 /// §6.2.2 — Multiple OutputIntents must have identical profiles.

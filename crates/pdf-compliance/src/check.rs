@@ -1071,7 +1071,7 @@ fn report_device_cs_name(
         error_at(
             report,
             "6.2.4.3",
-            "DeviceRGB in Shading/Pattern without DefaultRGB or matching OutputIntent",
+            "DeviceRGB without DefaultRGB or matching OutputIntent",
             location.to_string(),
         );
     }
@@ -1079,7 +1079,7 @@ fn report_device_cs_name(
         error_at(
             report,
             "6.2.4.3",
-            "DeviceCMYK in Shading/Pattern without DefaultCMYK or matching OutputIntent",
+            "DeviceCMYK without DefaultCMYK or matching OutputIntent",
             location.to_string(),
         );
     }
@@ -1087,7 +1087,7 @@ fn report_device_cs_name(
         error_at(
             report,
             "6.2.4.3",
-            "DeviceGray in Shading/Pattern without DefaultGray or OutputIntent",
+            "DeviceGray without DefaultGray or OutputIntent",
             location.to_string(),
         );
     }
@@ -2873,6 +2873,41 @@ pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport)
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Check page-level Group color spaces for device CS violations (§6.2.4.3).
+///
+/// Pages with a /Group dict (transparency group) may have a /CS entry
+/// with a device color space (DeviceRGB, DeviceCMYK, DeviceGray).
+pub fn check_page_group_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
+    let profile = output_intent_profile_components(pdf);
+    let has_intent = profile.is_some();
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) else {
+            continue;
+        };
+        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
+        let rgb_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_RGB) || profile == Some(3);
+        let cmyk_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_CMYK) || profile == Some(4);
+        let gray_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_GRAY) || has_intent;
+        let loc = format!("page {} Group", page_idx + 1);
+
+        if let Some(cs) = group.get::<Name>(keys::CS) {
+            let cs_bytes = cs.as_ref();
+            report_device_cs_name(cs_bytes, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+        } else if let Some(cs_arr) = group.get::<Array<'_>>(keys::CS) {
+            let kind = extract_base_device_cs_kind(&cs_arr);
+            if kind == 1 {
+                report_device_cs_name(keys::DEVICE_RGB, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+            } else if kind == 2 {
+                report_device_cs_name(b"DeviceCMYK", rgb_ok, cmyk_ok, gray_ok, &loc, report);
+            } else if kind == 3 {
+                report_device_cs_name(b"DeviceGray", rgb_ok, cmyk_ok, gray_ok, &loc, report);
             }
         }
     }
