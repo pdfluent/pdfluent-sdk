@@ -692,6 +692,8 @@ fn check_name_length(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_name_length_limit(pdf, report);
     check::check_array_capacity_limit(pdf, report);
     check::check_cid_value_limit(pdf, report);
+    check::check_near_zero_reals(pdf, report);
+    check::check_integer_range(pdf, report);
 }
 
 /// §6.1.12 — Real value range.
@@ -754,6 +756,7 @@ fn check_xref_syntax_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.9 — Embedded file specification keys.
 fn check_embedded_file_spec(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_embedded_file_spec_keys(pdf, level.part(), report);
+    check::check_embedded_file_af_association(pdf, level.part(), report);
 }
 
 /// §6.2.9/6.2.10 — PostScript XObjects are forbidden.
@@ -805,9 +808,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.1.12, PDF/A-2/3/4: §6.1.13
             (1, "6.1.13") => Some("6.1.12"),
 
-            // Stream external file refs
+            // Stream checks: Length, EOL, empty keys, external refs
             // PDF/A-1: §6.1.7, PDF/A-2/3/4: §6.1.7.1
             (1, "6.1.7.1") => Some("6.1.7"),
+            (2..=4, "6.1.7") => Some("6.1.7.1"),
 
             // Widget annotation actions
             // PDF/A-1: §6.6.1, PDF/A-2/3: §6.4.1
