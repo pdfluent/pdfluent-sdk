@@ -106,6 +106,17 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         _ => check_no_embedded_files(pdf, level, &mut report),
     }
 
+    // Post-process: remap clause numbers per PDF/A part.
+    // PDF/A-1 uses §6.2.3.3 for device color space restrictions;
+    // PDF/A-2/3/4 use §6.2.4.3 for the same check.
+    if level.part() == 1 {
+        for issue in &mut report.issues {
+            if issue.rule == "6.2.4.3" {
+                issue.rule = "6.2.3.3".to_string();
+            }
+        }
+    }
+
     report.compliant = report.is_compliant();
     report
 }
