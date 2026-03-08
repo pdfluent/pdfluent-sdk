@@ -28,6 +28,13 @@ pub enum ErrorCategory {
     InvalidSignature,
     ComplianceViolation,
 
+    // Manipulation
+    ManipulationError,
+
+    // Oracle
+    OracleQuality,
+    OracleMissing,
+
     // System
     OutOfMemory,
     Timeout,
@@ -54,6 +61,9 @@ impl fmt::Display for ErrorCategory {
             Self::BrokenAnnotation => "broken_annotation",
             Self::InvalidSignature => "invalid_signature",
             Self::ComplianceViolation => "compliance_violation",
+            Self::ManipulationError => "manipulation_error",
+            Self::OracleQuality => "oracle_quality",
+            Self::OracleMissing => "oracle_missing",
             Self::OutOfMemory => "out_of_memory",
             Self::Timeout => "timeout",
             Self::Panic => "panic",
@@ -82,6 +92,44 @@ pub fn classify_error(test_name: &str, error: &str) -> ErrorCategory {
     if err_lower.contains("timeout") || err_lower.contains("timed out") {
         return ErrorCategory::Timeout;
     }
+
+    // Manipulation-specific: lopdf panics during merge/split
+    if err_lower.contains("insertion index")
+        || err_lower.contains("merge panic")
+        || err_lower.contains("split panic")
+        || err_lower.contains("merge failed")
+        || err_lower.contains("split failed")
+    {
+        return ErrorCategory::ManipulationError;
+    }
+    if test_name == "manipulation"
+        && (err_lower.contains("page count") || err_lower.contains("parts, expected"))
+    {
+        return ErrorCategory::ManipulationError;
+    }
+
+    // Oracle-specific patterns
+    if err_lower.contains("similarity")
+        || err_lower.contains("text similarity")
+        || err_lower.contains("oracle")
+    {
+        return ErrorCategory::OracleQuality;
+    }
+    if err_lower.contains("pdftotext") || err_lower.contains("pdfinfo") {
+        return ErrorCategory::OracleMissing;
+    }
+    if (test_name == "text_oracle" || test_name == "metadata_oracle")
+        && (err_lower.contains("our engine failed")
+            || err_lower.contains("extraction")
+            || err_lower.contains("mismatch")
+            || err_lower.contains("page_count:")
+            || err_lower.contains("title:")
+            || err_lower.contains("author:"))
+    {
+        return ErrorCategory::OracleQuality;
+    }
+
+    // Panic detection
     if err_lower.contains("panic") || err_lower.contains("thread") && err_lower.contains("panicked")
     {
         return ErrorCategory::Panic;
@@ -216,6 +264,49 @@ mod tests {
         assert_eq!(
             classify_error("render", "invalid PDF: Decryption(UnsupportedAlgorithm)"),
             ErrorCategory::Encrypted
+        );
+    }
+
+    #[test]
+    fn classify_manipulation_errors() {
+        assert_eq!(
+            classify_error(
+                "manipulation",
+                "insertion index (is 12) should be <= len (is 2)"
+            ),
+            ErrorCategory::ManipulationError
+        );
+        assert_eq!(
+            classify_error("manipulation", "merge panic: some error"),
+            ErrorCategory::ManipulationError
+        );
+        assert_eq!(
+            classify_error("manipulation", "split failed: invalid page range"),
+            ErrorCategory::ManipulationError
+        );
+        assert_eq!(
+            classify_error("manipulation", "merge page count 5, expected 4"),
+            ErrorCategory::ManipulationError
+        );
+    }
+
+    #[test]
+    fn classify_oracle_errors() {
+        assert_eq!(
+            classify_error("text_oracle", "Text similarity 0.5789 < 0.95"),
+            ErrorCategory::OracleQuality
+        );
+        assert_eq!(
+            classify_error("text_oracle", "Our engine failed: parse error"),
+            ErrorCategory::OracleQuality
+        );
+        assert_eq!(
+            classify_error("metadata_oracle", "page_count: ours=5 poppler=6"),
+            ErrorCategory::OracleQuality
+        );
+        assert_eq!(
+            classify_error("text_oracle", "pdftotext failed: segfault"),
+            ErrorCategory::OracleMissing
         );
     }
 

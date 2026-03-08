@@ -1,5 +1,5 @@
 use crate::clustering::Cluster;
-use crate::db::{Database, RunSummary};
+use crate::db::{Database, RunSummary, RunTrendEntry};
 
 pub struct DashboardData {
     pub run_id: String,
@@ -9,6 +9,7 @@ pub struct DashboardData {
     pub clusters: Vec<Cluster>,
     pub prev_summary: Option<RunSummary>,
     pub quality_distribution: Vec<(String, String, usize)>,
+    pub trend: Vec<RunTrendEntry>,
 }
 
 pub fn generate_dashboard(
@@ -43,6 +44,7 @@ pub fn collect_dashboard_data(
         .unwrap_or(("unknown".to_string(), "unknown".to_string()));
     let prev_summary = db.previous_run_id(run_id).map(|prev| db.summary(&prev));
     let quality_distribution = db.oracle_score_distribution(run_id);
+    let trend = db.run_trend();
 
     DashboardData {
         run_id: run_id.to_string(),
@@ -52,7 +54,110 @@ pub fn collect_dashboard_data(
         clusters,
         prev_summary,
         quality_distribution,
+        trend,
     }
+}
+
+fn render_trend_section(data: &DashboardData) -> String {
+    if data.trend.len() < 2 {
+        return String::new();
+    }
+
+    // Build SVG trend chart
+    let entries = &data.trend;
+    let width = 700;
+    let height = 200;
+    let margin = 40;
+    let plot_w = width - 2 * margin;
+    let plot_h = height - 2 * margin;
+
+    let min_rate = entries
+        .iter()
+        .map(|e| e.pass_rate)
+        .fold(100.0_f64, f64::min)
+        .max(0.0);
+    let max_rate = entries
+        .iter()
+        .map(|e| e.pass_rate)
+        .fold(0.0_f64, f64::max)
+        .min(100.0);
+
+    // Ensure some vertical range
+    let y_min = (min_rate - 5.0).max(0.0);
+    let y_max = (max_rate + 2.0).min(100.0);
+    let y_range = (y_max - y_min).max(1.0);
+
+    let n = entries.len();
+    let points: Vec<String> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let x = margin + (i * plot_w) / (n - 1).max(1);
+            let y_frac = (e.pass_rate - y_min) / y_range;
+            let y = margin + plot_h - (y_frac * plot_h as f64) as usize;
+            format!("{x},{y}")
+        })
+        .collect();
+    let polyline = points.join(" ");
+
+    // Labels for first and last points
+    let first = &entries[0];
+    let last = entries.last().unwrap();
+
+    // Table rows
+    let mut rows = String::new();
+    for entry in entries.iter().rev().take(10) {
+        let oracle = entry
+            .avg_oracle_score
+            .map(|s| format!("{s:.3}"))
+            .unwrap_or_else(|| "-".to_string());
+        let short_id = if entry.run_id.len() > 30 {
+            &entry.run_id[..30]
+        } else {
+            &entry.run_id
+        };
+        rows.push_str(&format!(
+            "<tr><td>{}</td><td>{:.1}%</td><td>{}</td><td>{}</td></tr>\n",
+            short_id, entry.pass_rate, entry.total, oracle
+        ));
+    }
+
+    let first_label = &first.run_id[..first.run_id.len().min(20)];
+    let last_label = &last.run_id[..last.run_id.len().min(20)];
+    let y_first = margin - 5;
+    let x_last = width - margin;
+    let y_bottom = height - 5;
+
+    let mut svg = String::new();
+    svg.push_str(&format!(
+        "<div class=\"card\">\n  <h2>Pass Rate Trend</h2>\n  \
+         <svg width=\"{width}\" height=\"{height}\" style=\"background: rgba(15,22,41,1); border-radius: 4px;\">\n"
+    ));
+    svg.push_str(&format!(
+        "    <polyline points=\"{polyline}\" fill=\"none\" stroke=\"rgba(0,212,255,1)\" stroke-width=\"2\"/>\n"
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{margin}\" y=\"{y_first}\" fill=\"rgba(136,136,136,1)\" font-size=\"10\">{:.1}%</text>\n",
+        first.pass_rate
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{x_last}\" y=\"{y_first}\" fill=\"rgba(136,136,136,1)\" font-size=\"10\">{:.1}%</text>\n",
+        last.pass_rate
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{margin}\" y=\"{y_bottom}\" fill=\"rgba(102,102,102,1)\" font-size=\"9\">{first_label}</text>\n"
+    ));
+    svg.push_str(&format!(
+        "    <text x=\"{x_last}\" y=\"{y_bottom}\" fill=\"rgba(102,102,102,1)\" font-size=\"9\">{last_label}</text>\n"
+    ));
+    svg.push_str("  </svg>\n");
+    svg.push_str(
+        "  <table>\n    <tr><th>Run</th><th>Pass Rate</th><th>Total</th><th>Avg Oracle</th></tr>\n",
+    );
+    svg.push_str(&rows);
+    svg.push_str("  </table>\n</div>");
+
+    svg
 }
 
 fn render_quality_section(data: &DashboardData) -> String {
@@ -227,6 +332,8 @@ th {{ color: #00d4ff; }}
 
 {quality_section}
 
+{trend_section}
+
 <div class="card">
   <h2>Clusters</h2>
   <p>Open: {open_clusters} ({new_clusters} new, {resolved_clusters} resolved)</p>
@@ -251,6 +358,7 @@ th {{ color: #00d4ff; }}
         new_clusters = new_clusters,
         resolved_clusters = resolved_clusters,
         quality_section = render_quality_section(data),
+        trend_section = render_trend_section(data),
         top_cluster = top_cluster,
     )
 }

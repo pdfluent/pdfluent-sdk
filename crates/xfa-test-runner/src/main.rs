@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 
 use std::sync::Arc;
 
-use config::Config;
+use config::{Config, TestTier};
 use db::Database;
 use oracles::verapdf::VeraPdfOracle;
 use runner::Runner;
@@ -45,9 +45,9 @@ enum Command {
         #[arg(short, long, default_value = "results.sqlite")]
         db: PathBuf,
 
-        /// Number of parallel workers
-        #[arg(short = 'j', long, default_value_t = num_cpus::get())]
-        workers: usize,
+        /// Number of parallel workers ("auto" for nproc-2)
+        #[arg(short = 'j', long, default_value = "auto")]
+        workers: String,
 
         /// Timeout per PDF in seconds
         #[arg(short, long, default_value_t = 30)]
@@ -72,6 +72,10 @@ enum Command {
         /// Path to veraPDF binary
         #[arg(long, default_value = "/usr/local/bin/verapdf")]
         verapdf_path: PathBuf,
+
+        /// Test tier: fast, standard, full, oracle
+        #[arg(long, default_value = "full")]
+        tier: String,
     },
 
     /// Generate summary report from results
@@ -186,6 +190,50 @@ enum Command {
         #[arg(short, long, default_value = "dashboard")]
         output: PathBuf,
     },
+
+    /// Clean up stale/abandoned runs
+    CleanStale {
+        /// SQLite database path
+        #[arg(short, long, default_value = "results.sqlite")]
+        db: PathBuf,
+
+        /// Keep this run_id active (don't mark as stale)
+        #[arg(long)]
+        keep: Option<String>,
+    },
+
+    /// Merge results from another database
+    MergeDb {
+        /// Target SQLite database path
+        #[arg(short, long, default_value = "results.sqlite")]
+        db: PathBuf,
+
+        /// Source database to merge from
+        #[arg(long)]
+        source: PathBuf,
+    },
+
+    /// Show pass rate trend across runs
+    Trend {
+        /// SQLite database path
+        #[arg(short, long, default_value = "results.sqlite")]
+        db: PathBuf,
+    },
+
+    /// Check for regression between two runs (exit code 1 = regression)
+    CheckRegression {
+        /// SQLite database path
+        #[arg(short, long, default_value = "results.sqlite")]
+        db: PathBuf,
+
+        /// First run ID (baseline)
+        #[arg(long)]
+        run_a: String,
+
+        /// Second run ID (current)
+        #[arg(long)]
+        run_b: String,
+    },
 }
 
 fn truncate_utf8(s: &str, max_chars: usize) -> String {
@@ -195,6 +243,38 @@ fn truncate_utf8(s: &str, max_chars: usize) -> String {
     } else {
         truncated
     }
+}
+
+/// Try to acquire a lockfile. Returns Ok(lockfile_path) or Err with message.
+fn acquire_lock() -> Result<PathBuf, String> {
+    let lock_path = std::env::temp_dir().join("xfa-runner.lock");
+    if lock_path.exists() {
+        if let Ok(pid_str) = std::fs::read_to_string(&lock_path) {
+            let pid = pid_str.trim();
+            // Check if process is still alive
+            if !pid.is_empty() {
+                if let Ok(status) = std::process::Command::new("kill")
+                    .args(["-0", pid])
+                    .status()
+                {
+                    if status.success() {
+                        return Err(format!(
+                            "Another runner is active (PID {pid}). Use --force or kill it first."
+                        ));
+                    }
+                }
+            }
+        }
+        // Stale lock — remove it
+        let _ = std::fs::remove_file(&lock_path);
+    }
+    std::fs::write(&lock_path, std::process::id().to_string())
+        .map_err(|e| format!("Failed to create lockfile: {e}"))?;
+    Ok(lock_path)
+}
+
+fn release_lock(lock_path: &PathBuf) {
+    let _ = std::fs::remove_file(lock_path);
 }
 
 fn main() {
@@ -211,17 +291,34 @@ fn main() {
             run_id,
             no_verapdf,
             verapdf_path,
+            tier,
         } => {
+            // Lockfile: prevent concurrent runners
+            let lock_path = match acquire_lock() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("ERROR: {e}");
+                    std::process::exit(1);
+                }
+            };
+
+            let resolved_workers = config::resolve_workers(&workers);
+            let tier: TestTier = tier.parse().unwrap_or_else(|e| {
+                eprintln!("WARNING: {e}, defaulting to 'full'");
+                TestTier::Full
+            });
+
             let database = Database::open(&db).expect("Failed to open database");
             let config = Config::new(
                 corpus,
                 db,
-                workers,
+                resolved_workers,
                 timeout,
                 test_filter,
                 resume,
                 run_id,
                 Some(&database),
+                tier,
             );
 
             // Set up veraPDF oracle if available and not disabled
@@ -257,20 +354,28 @@ fn main() {
                 diff_dir: std::env::var("XFA_DIFF_DIR").ok().map(PathBuf::from),
             };
             let mut available_tests = tests::all_tests(test_config);
+
+            // Apply tier filter
+            available_tests.retain(|t| config.tier.includes(t.name()));
+
+            // Apply explicit test filter on top
             if let Some(filter) = &config.test_filter {
                 available_tests.retain(|t| filter.iter().any(|f| f == t.name()));
             }
 
             eprintln!(
-                "Starting run '{}' with {} workers, {} tests",
+                "Starting run '{}' with {} workers, {} tests (tier: {})",
                 config.run_id,
                 config.workers,
-                available_tests.len()
+                available_tests.len(),
+                config.tier,
             );
 
             let runner = Runner::new(config, available_tests, database);
             let summary = runner.run_corpus();
             eprintln!("\n{summary}");
+
+            release_lock(&lock_path);
         }
 
         Command::Report { db, run_id } => {
@@ -448,6 +553,77 @@ fn main() {
                 output.display(),
                 run_id
             );
+        }
+
+        Command::CleanStale { db, keep } => {
+            let database = Database::open(&db).expect("Failed to open database");
+            let cleaned = database.clean_stale_runs(keep.as_deref());
+            println!("Marked {cleaned} stale run(s) as abandoned");
+        }
+
+        Command::MergeDb { db, source } => {
+            let database = Database::open(&db).expect("Failed to open database");
+            match database.merge_from(&source) {
+                Ok((runs, results)) => {
+                    println!(
+                        "Merged {} run(s) and {} result(s) from {}",
+                        runs,
+                        results,
+                        source.display()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Merge failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        Command::Trend { db } => {
+            let database = Database::open(&db).expect("Failed to open database");
+            let trend = database.run_trend();
+
+            if trend.is_empty() {
+                println!("No completed runs found");
+                return;
+            }
+
+            println!(
+                "{:<35} {:>10} {:>10} {:>12}",
+                "Run ID", "Pass Rate", "Total", "Avg Oracle"
+            );
+            println!("{}", "-".repeat(70));
+            for entry in &trend {
+                let oracle = entry
+                    .avg_oracle_score
+                    .map(|s| format!("{s:.3}"))
+                    .unwrap_or_else(|| "n/a".to_string());
+                println!(
+                    "{:<35} {:>9.1}% {:>10} {:>12}",
+                    entry.run_id, entry.pass_rate, entry.total, oracle
+                );
+            }
+        }
+
+        Command::CheckRegression { db, run_a, run_b } => {
+            let database = Database::open(&db).expect("Failed to open database");
+            let result = database.compare_runs_detailed(&run_a, &run_b);
+            println!("{result}");
+
+            match result.verdict {
+                db::Verdict::Regression => {
+                    eprintln!("REGRESSION DETECTED");
+                    std::process::exit(1);
+                }
+                db::Verdict::NetImprovement => {
+                    eprintln!("Improvement confirmed");
+                    std::process::exit(0);
+                }
+                db::Verdict::Neutral => {
+                    eprintln!("No significant changes");
+                    std::process::exit(0);
+                }
+            }
         }
     }
 }
