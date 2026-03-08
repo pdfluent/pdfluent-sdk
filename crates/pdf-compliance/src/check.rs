@@ -3159,8 +3159,14 @@ pub fn check_inline_image_filters(pdf: &Pdf, pdfa_part: u8, report: &mut Complia
                 pos = abs_bi + 2;
                 continue;
             }
-            // Find ID marker
-            let Some(id_pos) = text[abs_bi..].find(" ID") else {
+            // Find ID marker (preceded by any whitespace: space, newline, etc.)
+            let search_region = &text[abs_bi..];
+            let id_pos = search_region
+                .find(" ID")
+                .or_else(|| search_region.find("\nID"))
+                .or_else(|| search_region.find("\rID"))
+                .or_else(|| search_region.find("\tID"));
+            let Some(id_pos) = id_pos else {
                 pos = abs_bi + 2;
                 continue;
             };
@@ -4485,26 +4491,33 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
             return;
         }
 
+        // Get the actual font name (BaseFont) for subset detection
+        let base_font_name = font_dict
+            .get::<Name>(keys::BASE_FONT)
+            .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or(name).to_string());
+        let font_name = base_font_name.as_deref().unwrap_or(name);
+
         // Check direct font descriptor
         if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
             // Check font program is actually embedded (§6.3.4 test 1)
-            if !font_has_embedding(&desc) && !is_standard_14(name) {
+            if !font_has_embedding(&desc) && !is_standard_14(font_name) {
                 error_at(
                     report,
                     "6.3.4",
-                    format!("Font {name} is not embedded (missing FontFile/FontFile2/FontFile3)"),
+                    format!("Font {font_name} is not embedded (missing FontFile/FontFile2/FontFile3)"),
                     format!("page {}", page_idx + 1),
                 );
             }
-            check_fontfile_subtype_match(&desc, name, page_idx, report);
-            if is_subset_font(name) {
-                let has_cidset = desc.get::<Stream<'_>>(keys::CID_SET).is_some();
-                let has_charset = desc.get::<Object<'_>>(keys::CHAR_SET).is_some();
-                if !has_cidset && !has_charset && part == 1 {
-                    warning(
+            check_fontfile_subtype_match(&desc, font_name, page_idx, report);
+            if is_subset_font(font_name) {
+                // §6.3.5 t2: Type1 font subsets must have /CharSet
+                let is_type1 = subtype_bytes == Some(b"Type1");
+                if is_type1 && desc.get::<Object<'_>>(keys::CHAR_SET).is_none() {
+                    error_at(
                         report,
-                        "6.3.3",
-                        format!("Subset font {name} missing CIDSet/CharSet"),
+                        "6.3.5",
+                        format!("Type1 font subset {font_name} missing /CharSet in descriptor"),
+                        format!("page {}", page_idx + 1),
                     );
                 }
             }
@@ -4534,19 +4547,25 @@ fn check_cidfont_descriptor_deep(
     cid_font: &Dict<'_>,
     name: &str,
     page_idx: usize,
-    part: u8,
+    _part: u8,
     report: &mut ComplianceReport,
 ) {
     let Some(desc) = cid_font.get::<Dict<'_>>(keys::FONT_DESC) else {
         return;
     };
-    check_fontfile_subtype_match(&desc, name, page_idx, report);
+    // Use BaseFont name for subset detection
+    let cid_base = cid_font
+        .get::<Name>(keys::BASE_FONT)
+        .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or(name).to_string());
+    let cid_name = cid_base.as_deref().unwrap_or(name);
 
-    if is_subset_font(name) && part == 1 && desc.get::<Stream<'_>>(keys::CID_SET).is_none() {
+    check_fontfile_subtype_match(&desc, cid_name, page_idx, report);
+
+    if is_subset_font(cid_name) && desc.get::<Stream<'_>>(keys::CID_SET).is_none() {
         error_at(
             report,
-            "6.3.3",
-            format!("Subset CIDFont {name} missing required /CIDSet"),
+            "6.3.5",
+            format!("Subset CIDFont {cid_name} missing required /CIDSet"),
             format!("page {}", page_idx + 1),
         );
     }
@@ -5869,6 +5888,102 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
     }
 }
 
+/// Check for non-zero real values too close to 0 (§6.1.13 test 5).
+///
+/// PDF implementation limit: non-zero real values must have absolute value >= ~1.175e-38.
+pub fn check_near_zero_reals(pdf: &Pdf, report: &mut ComplianceReport) {
+    const MIN_POSITIVE: f64 = 1.175e-38;
+    for obj in pdf.objects() {
+        if check_near_zero_obj(&obj, MIN_POSITIVE) {
+            error(
+                report,
+                "6.1.13",
+                "Non-zero real value too close to 0.0",
+            );
+            return;
+        }
+    }
+}
+
+fn check_near_zero_obj(obj: &Object<'_>, min: f64) -> bool {
+    match obj {
+        Object::Number(n) => {
+            let v = n.as_f64();
+            v != 0.0 && v.abs() < min
+        }
+        Object::Dict(dict) => {
+            for (key, _) in dict.entries() {
+                if let Some(Object::Number(n)) = dict.get::<Object<'_>>(key.as_ref()) {
+                    let v = n.as_f64();
+                    if v != 0.0 && v.abs() < min {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        Object::Array(arr) => {
+            for item in arr.iter::<Object<'_>>() {
+                if let Object::Number(n) = &item {
+                    let v = n.as_f64();
+                    if v != 0.0 && v.abs() < min {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Check integer values are within 32-bit signed range (§6.1.13 test 1).
+///
+/// PDF integers must be in [-2147483648, 2147483647].
+pub fn check_integer_range(pdf: &Pdf, report: &mut ComplianceReport) {
+    const MAX_INT: f64 = 2_147_483_647.0;
+    const MIN_INT: f64 = -2_147_483_648.0;
+    for obj in pdf.objects() {
+        if check_integer_range_obj(&obj, MIN_INT, MAX_INT) {
+            error(report, "6.1.13", "Integer value out of range");
+            return;
+        }
+    }
+}
+
+fn check_integer_range_obj(obj: &Object<'_>, min: f64, max: f64) -> bool {
+    match obj {
+        Object::Number(n) => {
+            let v = n.as_f64();
+            // Only check values that look like integers (no fractional part)
+            v.fract() == 0.0 && (v > max || v < min)
+        }
+        Object::Dict(dict) => {
+            for (key, _) in dict.entries() {
+                if let Some(Object::Number(n)) = dict.get::<Object<'_>>(key.as_ref()) {
+                    let v = n.as_f64();
+                    if v.fract() == 0.0 && (v > max || v < min) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        Object::Array(arr) => {
+            for item in arr.iter::<Object<'_>>() {
+                if let Object::Number(n) = &item {
+                    let v = n.as_f64();
+                    if v.fract() == 0.0 && (v > max || v < min) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 // ─── §6.3.2 — Font program format ───────────────────────────────────────────
 
 /// Check font file stream /Subtype is valid for PDF/A-1 (§6.3.2).
@@ -6395,6 +6510,32 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
             return;
         }
 
+        // Parse object number digits
+        let obj_num_end = idx + 1;
+        while idx > 0 && before[idx].is_ascii_digit() {
+            idx -= 1;
+        }
+        let obj_num_start = idx + 1;
+        if obj_num_start == obj_num_end {
+            pos = abs_obj + 3;
+            continue; // Not a valid object header
+        }
+
+        // Check: object number must be preceded by EOL marker
+        // (except for the very first object which may follow the header)
+        let abs_obj_num_start = abs_obj.saturating_sub(30) + obj_num_start;
+        if abs_obj_num_start > 0 {
+            let before_obj = data[abs_obj_num_start - 1];
+            if before_obj != b'\n' && before_obj != b'\r' {
+                error(
+                    report,
+                    "6.1.8",
+                    "Object number not preceded by EOL marker",
+                );
+                return;
+            }
+        }
+
         // Check "obj" is followed by EOL or whitespace
         let after_obj = abs_obj + 3;
         if after_obj < len {
@@ -6757,6 +6898,51 @@ pub fn check_embedded_file_spec_keys(pdf: &Pdf, part: u8, report: &mut Complianc
                                 );
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Check that embedded file specs are associated via /AF arrays (§6.8 test 4).
+///
+/// In PDF/A-3+, every file specification dictionary with /EF must be
+/// referenced from an /AF array in the catalog, a page, or an annotation.
+pub fn check_embedded_file_af_association(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    if part < 3 {
+        return;
+    }
+
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) else {
+        return;
+    };
+    let Some(ef_tree) = names.get::<Dict<'_>>(keys::EMBEDDED_FILES) else {
+        return;
+    };
+
+    let rule = if part == 4 { "6.9" } else { "6.8" };
+
+    // Walk the name tree and check each file spec with /EF
+    if let Some(names_arr) = ef_tree.get::<Array<'_>>(keys::NAMES) {
+        let items: Vec<Object<'_>> = names_arr.iter::<Object<'_>>().collect();
+        for chunk in items.chunks(2) {
+            if chunk.len() == 2 {
+                if let Object::Dict(ref spec) = chunk[1] {
+                    if !spec.contains_key(keys::EF) {
+                        continue;
+                    }
+                    // The catalog must have an /AF array referencing this file spec
+                    if cat.get::<Array<'_>>(b"AF" as &[u8]).is_none() {
+                        error(
+                            report,
+                            rule,
+                            "Embedded file specification not associated with document (no /AF array in catalog)",
+                        );
+                        return;
                     }
                 }
             }
