@@ -102,12 +102,31 @@ impl<'a> Deref for Pages<'a> {
     }
 }
 
+/// Maximum depth for recursive page tree traversal.
+/// Prevents stack overflow on malformed PDFs with deeply nested or circular page trees.
+const MAX_PAGE_TREE_DEPTH: usize = 256;
+
 fn resolve_pages<'a>(
+    pages_dict: &Dict<'a>,
+    entries: &mut Vec<Page<'a>>,
+    ctx: PagesContext,
+    resources: Resources<'a>,
+) -> Option<()> {
+    resolve_pages_depth(pages_dict, entries, ctx, resources, 0)
+}
+
+fn resolve_pages_depth<'a>(
     pages_dict: &Dict<'a>,
     entries: &mut Vec<Page<'a>>,
     mut ctx: PagesContext,
     resources: Resources<'a>,
+    depth: usize,
 ) -> Option<()> {
+    if depth > MAX_PAGE_TREE_DEPTH {
+        log::warn!("Page tree depth exceeds {MAX_PAGE_TREE_DEPTH}, stopping traversal");
+        return None;
+    }
+
     if let Some(media_box) = pages_dict.get::<Rect>(MEDIA_BOX) {
         ctx.media_box = Some(media_box);
     }
@@ -130,7 +149,7 @@ fn resolve_pages<'a>(
     for dict in kids.iter::<Dict<'_>>() {
         match dict.get::<Name>(TYPE).as_deref() {
             Some(PAGES) => {
-                resolve_pages(&dict, entries, ctx.clone(), resources.clone());
+                resolve_pages_depth(&dict, entries, ctx.clone(), resources.clone(), depth + 1);
             }
             // Let's be lenient and assume it's a `Page` in case it's `None` or something else
             // (see corpus test case 0083781).
