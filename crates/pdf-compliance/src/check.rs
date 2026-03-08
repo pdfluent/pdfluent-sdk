@@ -2150,6 +2150,16 @@ fn check_halftone_in_extgstate(res_dict: &Dict<'_>, location: &str, report: &mut
                 }
             }
         }
+
+        // §6.2.5: HTO key forbidden (PDF/A-4)
+        if gs.contains_key(b"HTO" as &[u8]) {
+            error_at(
+                report,
+                "6.2.5",
+                format!("ExtGState {gs_str} contains forbidden /HTO key"),
+                location,
+            );
+        }
     }
 }
 
@@ -2553,7 +2563,9 @@ fn check_single_filter(
     report: &mut ComplianceReport,
 ) {
     if filter_name == keys::LZW_DECODE || filter_name == keys::LZW_DECODE_ABBREVIATION {
-        error(report, "6.1.8", "LZWDecode filter is forbidden in PDF/A");
+        // PDF/A-1: §6.1.10, PDF/A-2/3: §6.1.8
+        let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.8" };
+        error(report, rule, "LZWDecode filter is forbidden in PDF/A");
     }
     if filter_name == keys::JBIG2_DECODE {
         if let Some(params) = dict.get::<Dict<'_>>(keys::DECODE_PARMS) {
@@ -4761,4 +4773,38 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
     }
+}
+
+// ─── §6.1.3 — Trailer Info key for PDF/A-4 ──────────────────────────────────
+
+/// Check that Info key is not present in trailer for PDF/A-4 (§6.1.3).
+///
+/// Unless there's a PieceInfo entry in the document catalog.
+pub fn check_trailer_info_key(pdf: &Pdf, report: &mut ComplianceReport) {
+    // Check if trailer has /Info by scanning raw bytes
+    let data = pdf.data().as_ref();
+    let has_info = if let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") {
+        let end = data.len().min(trailer_pos + 2000);
+        let trailer_region = &data[trailer_pos..end];
+        trailer_region.windows(5).any(|w| w == b"/Info")
+    } else {
+        false
+    };
+
+    if !has_info {
+        return;
+    }
+
+    // Check if catalog has /PieceInfo (exemption)
+    if let Some(cat) = catalog(pdf) {
+        if cat.contains_key(b"PieceInfo" as &[u8]) {
+            return;
+        }
+    }
+
+    error(
+        report,
+        "6.1.3",
+        "Info key present in trailer without PieceInfo in catalog (forbidden in PDF/A-4)",
+    );
 }
