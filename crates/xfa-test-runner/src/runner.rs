@@ -15,7 +15,8 @@ use crate::tests::{PdfTest, TestStatus};
 
 /// Maximum number of spawned test threads allowed in-flight at once.
 /// Prevents unbounded thread accumulation when tests repeatedly time out.
-const MAX_IN_FLIGHT_THREADS: usize = 256;
+/// With 8 MB stacks, 64 threads = 512 MB max thread stack usage.
+const MAX_IN_FLIGHT_THREADS: usize = 64;
 
 pub struct Runner {
     config: Config,
@@ -64,7 +65,7 @@ impl Runner {
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.workers)
-            .stack_size(64 * 1024 * 1024) // 8 MB — deep PDF object graphs can overflow default
+            .stack_size(8 * 1024 * 1024) // 8 MB — inline nesting depth limit prevents stack overflow
             .build()
             .expect("Failed to create thread pool");
 
@@ -260,7 +261,7 @@ impl Runner {
         let rss_before = current_rss_bytes();
 
         std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024)
+            .stack_size(8 * 1024 * 1024)
             .spawn(move || {
                 let start = Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
