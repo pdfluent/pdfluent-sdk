@@ -787,12 +787,19 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
-        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
+        let res = page.resources();
 
-        // Check if Default color spaces are defined
-        let has_default_rgb = has_default_cs(res_dict.as_ref(), keys::DEFAULT_RGB);
-        let has_default_cmyk = has_default_cs(res_dict.as_ref(), keys::DEFAULT_CMYK);
-        let has_default_gray = has_default_cs(res_dict.as_ref(), keys::DEFAULT_GRAY);
+        // Check if Default color spaces are defined in resolved resources
+        let cs_dict_ref = &res.color_spaces;
+        let has_default_rgb = cs_dict_ref
+            .get::<Object<'_>>(keys::DEFAULT_RGB)
+            .is_some();
+        let has_default_cmyk = cs_dict_ref
+            .get::<Object<'_>>(keys::DEFAULT_CMYK)
+            .is_some();
+        let has_default_gray = cs_dict_ref
+            .get::<Object<'_>>(keys::DEFAULT_GRAY)
+            .is_some();
 
         // A device color is "covered" if there's a Default* CS or matching profile.
         // DeviceGray is covered by any OutputIntent (gray maps to any profile).
@@ -807,10 +814,8 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
             report_device_color_ops(content, rgb_ok, cmyk_ok, gray_ok, &loc, report);
         }
 
-        // Scan Form XObject content streams
-        if let Some(ref rd) = res_dict {
-            scan_form_xobjects_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
-        }
+        // Scan Form XObject content streams (using resolved resources)
+        scan_xobjects_device_colors(&res.x_objects, rgb_ok, cmyk_ok, gray_ok, &loc, report);
 
         // Scan annotation appearance streams
         if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
@@ -821,26 +826,19 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
 
-        // Scan Shading resources for device color spaces
-        if let Some(ref rd) = res_dict {
-            scan_shading_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
-            scan_pattern_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
-        }
+        // Scan Shading resources for device color spaces (using resolved resources)
+        scan_shading_dict_device_colors(&res.shadings, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+        scan_pattern_dict_device_colors(&res.patterns, rgb_ok, cmyk_ok, gray_ok, &loc, report);
 
         // Scan Type 3 font CharProcs for device color operators
-        if let Some(ref rd) = res_dict {
-            scan_type3_font_charprocs(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
-        }
+        scan_fonts_type3_charprocs(&res.fonts, rgb_ok, cmyk_ok, gray_ok, &loc, report);
 
         // Scan SMask Form XObjects in ExtGState for device color operators
-        if let Some(ref rd) = res_dict {
-            scan_smask_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
-        }
+        scan_extgstate_smask_colors(&res.ext_g_states, rgb_ok, cmyk_ok, gray_ok, &loc, report);
 
         // Also check ColorSpace resources for direct device CS references
-        if let Some(cs_dict) = res_dict
-            .as_ref()
-            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+        let cs_dict = &res.color_spaces;
+        if cs_dict.entries().next().is_some()
         {
             for (name, _) in cs_dict.entries() {
                 if let Some(cs_name) = cs_dict.get::<Name>(name.as_ref()) {
@@ -867,18 +865,15 @@ fn has_default_cs(res: Option<&Dict<'_>>, key: &[u8]) -> bool {
         .is_some()
 }
 
-/// Scan Form XObjects in a resource dict for device color operators.
-fn scan_form_xobjects_device_colors(
-    res_dict: &Dict<'_>,
+/// Scan XObject dict for device color operators.
+fn scan_xobjects_device_colors(
+    xobj_dict: &Dict<'_>,
     rgb_ok: bool,
     cmyk_ok: bool,
     gray_ok: bool,
     base_loc: &str,
     report: &mut ComplianceReport,
 ) {
-    let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
-        return;
-    };
     for (xname, _) in xobj_dict.entries() {
         let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
             continue;
@@ -936,6 +931,18 @@ fn scan_shading_device_colors(
     let Some(shading_dict) = res_dict.get::<Dict<'_>>(b"Shading" as &[u8]) else {
         return;
     };
+    scan_shading_dict_device_colors(&shading_dict, rgb_ok, cmyk_ok, gray_ok, base_loc, report);
+}
+
+/// Scan a resolved Shading dict for device color spaces.
+fn scan_shading_dict_device_colors(
+    shading_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
     for (name, _) in shading_dict.entries() {
         let sname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
         let loc = format!("{base_loc} Shading {sname}");
@@ -959,6 +966,18 @@ fn scan_pattern_device_colors(
     let Some(pat_dict) = res_dict.get::<Dict<'_>>(b"Pattern" as &[u8]) else {
         return;
     };
+    scan_pattern_dict_device_colors(&pat_dict, rgb_ok, cmyk_ok, gray_ok, base_loc, report);
+}
+
+/// Scan a resolved Pattern dict for device color spaces.
+fn scan_pattern_dict_device_colors(
+    pat_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
     for (name, _) in pat_dict.entries() {
         let pname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
         // Type 2 patterns (shading patterns) have /Shading dict with /ColorSpace
@@ -979,17 +998,15 @@ fn scan_pattern_device_colors(
 }
 
 /// Scan Type 3 font CharProcs for device color operators (§6.2.4.3).
-fn scan_type3_font_charprocs(
-    res_dict: &Dict<'_>,
+/// Scan a resolved Font dict for Type 3 CharProc device color operators.
+fn scan_fonts_type3_charprocs(
+    font_dict: &Dict<'_>,
     rgb_ok: bool,
     cmyk_ok: bool,
     gray_ok: bool,
     base_loc: &str,
     report: &mut ComplianceReport,
 ) {
-    let Some(font_dict) = res_dict.get::<Dict<'_>>(keys::FONT) else {
-        return;
-    };
     for (fname, _) in font_dict.entries() {
         let Some(font) = font_dict.get::<Dict<'_>>(fname.as_ref()) else {
             continue;
@@ -1018,17 +1035,15 @@ fn scan_type3_font_charprocs(
 }
 
 /// Scan ExtGState /SMask Form XObjects for device color operators (§6.2.4.3).
-fn scan_smask_device_colors(
-    res_dict: &Dict<'_>,
+/// Scan a resolved ExtGState dict for SMask Form XObject device color operators.
+fn scan_extgstate_smask_colors(
+    gs_dict: &Dict<'_>,
     rgb_ok: bool,
     cmyk_ok: bool,
     gray_ok: bool,
     base_loc: &str,
     report: &mut ComplianceReport,
 ) {
-    let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
-        return;
-    };
     for (gs_name, _) in gs_dict.entries() {
         let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
             continue;
