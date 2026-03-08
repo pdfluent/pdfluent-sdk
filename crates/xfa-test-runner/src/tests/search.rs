@@ -14,13 +14,19 @@ impl PdfTest for SearchTest {
         let start = std::time::Instant::now();
 
         // Try lopdf first for full search capability.
+        // Use count_text_only with a page limit — bounding boxes are not needed
+        // for corpus validation and positioned char extraction is very expensive.
         match lopdf::Document::load_mem(pdf_data) {
             Ok(doc) => {
-                let options = pdf_extract::SearchOptions::default();
-                let results = pdf_extract::search_text(&doc, "the", &options);
+                let pages_to_search = (doc.get_pages().len() as u32).min(20);
+                let options = pdf_extract::SearchOptions {
+                    pages: (1..=pages_to_search).collect(),
+                    ..Default::default()
+                };
+                let match_count = pdf_extract::count_text_only(&doc, "the", &options);
 
                 let mut metadata = HashMap::new();
-                metadata.insert("match_count".to_string(), results.len().to_string());
+                metadata.insert("match_count".to_string(), match_count.to_string());
                 metadata.insert("backend".to_string(), "lopdf".to_string());
 
                 TestResult {
