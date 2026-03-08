@@ -228,6 +228,24 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
                 }
             }
         }
+
+        // Scan annotation appearance streams
+        if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    for key in [b"N" as &[u8], b"R", b"D"] {
+                        if let Some(stream) = ap.get::<Stream<'_>>(key) {
+                            if let Ok(decoded) = stream.decoded() {
+                                let ops = detect_device_color_ops(&decoded);
+                                let kloc =
+                                    format!("{loc} AP/{}", std::str::from_utf8(key).unwrap_or("?"));
+                                report_color_vs_profile(&ops, profile_components, &kloc, report);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -566,92 +584,43 @@ fn check_action_forbidden(
 /// DeviceRGB/CMYK/Gray may only be used if DefaultRGB/DefaultCMYK/DefaultGray
 /// is set in the ColorSpace resources (unless an OutputIntent is present).
 pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
-    if has_output_intent(pdf) {
-        return; // OutputIntent provides the fallback
-    }
+    // OutputIntent profile covers matching device colors but NOT all colors.
+    // E.g., an RGB OutputIntent covers DeviceRGB but NOT DeviceCMYK.
+    let profile = output_intent_profile_components(pdf);
+    let has_intent = profile.is_some();
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
 
         // Check if Default color spaces are defined
-        let has_default_rgb = res_dict
-            .as_ref()
-            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_RGB))
-            .is_some();
-        let has_default_cmyk = res_dict
-            .as_ref()
-            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_CMYK))
-            .is_some();
-        let has_default_gray = res_dict
-            .as_ref()
-            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_GRAY))
-            .is_some();
+        let has_default_rgb = has_default_cs(res_dict.as_ref(), keys::DEFAULT_RGB);
+        let has_default_cmyk = has_default_cs(res_dict.as_ref(), keys::DEFAULT_CMYK);
+        let has_default_gray = has_default_cs(res_dict.as_ref(), keys::DEFAULT_GRAY);
+
+        // A device color is "covered" if there's a Default* CS or matching profile.
+        // DeviceGray is covered by any OutputIntent (gray maps to any profile).
+        let rgb_ok = has_default_rgb || profile == Some(3);
+        let cmyk_ok = has_default_cmyk || profile == Some(4);
+        let gray_ok = has_default_gray || has_intent;
 
         let loc = format!("page {}", page_idx + 1);
 
-        // Scan content stream for device color space operators
+        // Scan page content stream
         if let Some(content) = page.page_stream() {
-            report_device_color_ops(
-                content,
-                has_default_rgb,
-                has_default_cmyk,
-                has_default_gray,
-                &loc,
-                report,
-            );
+            report_device_color_ops(content, rgb_ok, cmyk_ok, gray_ok, &loc, report);
         }
 
-        // Scan Form XObject content streams too
+        // Scan Form XObject content streams
         if let Some(ref rd) = res_dict {
-            if let Some(xobj_dict) = rd.get::<Dict<'_>>(keys::XOBJECT) {
-                for (xname, _) in xobj_dict.entries() {
-                    let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
-                        continue;
-                    };
-                    let dict = stream.dict();
-                    let is_form = dict
-                        .get::<Name>(keys::SUBTYPE)
-                        .is_some_and(|s| s.as_ref() == b"Form");
-                    if !is_form {
-                        continue;
-                    }
-                    // Form XObjects may have their own Resources with Default CS
-                    let form_res = dict.get::<Dict<'_>>(keys::RESOURCES);
-                    let form_default_rgb = has_default_rgb
-                        || form_res
-                            .as_ref()
-                            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-                            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_RGB))
-                            .is_some();
-                    let form_default_cmyk = has_default_cmyk
-                        || form_res
-                            .as_ref()
-                            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-                            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_CMYK))
-                            .is_some();
-                    let form_default_gray = has_default_gray
-                        || form_res
-                            .as_ref()
-                            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-                            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_GRAY))
-                            .is_some();
+            scan_form_xobjects_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+        }
 
-                    if let Ok(decoded) = stream.decoded() {
-                        let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
-                        let xloc = format!("{loc} XObject {xname_str}");
-                        report_device_color_ops(
-                            &decoded,
-                            form_default_rgb,
-                            form_default_cmyk,
-                            form_default_gray,
-                            &xloc,
-                            report,
-                        );
-                    }
+        // Scan annotation appearance streams
+        if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    scan_appearance_dict_colors(&ap, rgb_ok, cmyk_ok, gray_ok, &loc, report);
                 }
             }
         }
@@ -664,29 +633,14 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
             for (name, _) in cs_dict.entries() {
                 if let Some(cs_name) = cs_dict.get::<Name>(name.as_ref()) {
                     let cs = cs_name.as_ref();
-                    if !has_default_rgb && cs == keys::DEVICE_RGB {
-                        error_at(
-                            report,
-                            "6.2.4.3",
-                            "DeviceRGB referenced in ColorSpace resources without OutputIntent",
-                            loc.clone(),
-                        );
+                    if !rgb_ok && cs == keys::DEVICE_RGB {
+                        error_at(report, "6.2.4.3", "DeviceRGB in ColorSpace resources without DefaultRGB or matching OutputIntent", loc.clone());
                     }
-                    if !has_default_cmyk && cs == b"DeviceCMYK" {
-                        error_at(
-                            report,
-                            "6.2.4.3",
-                            "DeviceCMYK referenced in ColorSpace resources without OutputIntent",
-                            loc.clone(),
-                        );
+                    if !cmyk_ok && cs == b"DeviceCMYK" {
+                        error_at(report, "6.2.4.3", "DeviceCMYK in ColorSpace resources without DefaultCMYK or matching OutputIntent", loc.clone());
                     }
-                    if !has_default_gray && cs == b"DeviceGray" {
-                        error_at(
-                            report,
-                            "6.2.4.3",
-                            "DeviceGray referenced in ColorSpace resources without OutputIntent",
-                            loc.clone(),
-                        );
+                    if !gray_ok && cs == b"DeviceGray" {
+                        error_at(report, "6.2.4.3", "DeviceGray in ColorSpace resources without DefaultGray or OutputIntent", loc.clone());
                     }
                 }
             }
@@ -694,37 +648,104 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Check if a resource dict has a Default color space defined.
+fn has_default_cs(res: Option<&Dict<'_>>, key: &[u8]) -> bool {
+    res.and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+        .and_then(|cs| cs.get::<Object<'_>>(key))
+        .is_some()
+}
+
+/// Scan Form XObjects in a resource dict for device color operators.
+fn scan_form_xobjects_device_colors(
+    res_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
+        return;
+    };
+    for (xname, _) in xobj_dict.entries() {
+        let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
+            continue;
+        };
+        let dict = stream.dict();
+        let is_form = dict
+            .get::<Name>(keys::SUBTYPE)
+            .is_some_and(|s| s.as_ref() == b"Form");
+        if !is_form {
+            continue;
+        }
+        // Form XObjects may have their own Default CS
+        let form_res = dict.get::<Dict<'_>>(keys::RESOURCES);
+        let f_rgb = rgb_ok || has_default_cs(form_res.as_ref(), keys::DEFAULT_RGB);
+        let f_cmyk = cmyk_ok || has_default_cs(form_res.as_ref(), keys::DEFAULT_CMYK);
+        let f_gray = gray_ok || has_default_cs(form_res.as_ref(), keys::DEFAULT_GRAY);
+
+        if let Ok(decoded) = stream.decoded() {
+            let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+            let xloc = format!("{base_loc} XObject {xname_str}");
+            report_device_color_ops(&decoded, f_rgb, f_cmyk, f_gray, &xloc, report);
+        }
+    }
+}
+
+/// Scan an annotation's /AP appearance dict for device color operators.
+fn scan_appearance_dict_colors(
+    ap: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    // /N (normal), /R (rollover), /D (down) can each be a stream or dict of streams
+    for key in [b"N" as &[u8], b"R", b"D"] {
+        if let Some(stream) = ap.get::<Stream<'_>>(key) {
+            if let Ok(decoded) = stream.decoded() {
+                let kloc = format!("{base_loc} AP/{}", std::str::from_utf8(key).unwrap_or("?"));
+                report_device_color_ops(&decoded, rgb_ok, cmyk_ok, gray_ok, &kloc, report);
+            }
+        }
+    }
+}
+
 /// Helper: report device color ops found in a content stream.
+///
+/// Parameters `rgb_ok`, `cmyk_ok`, `gray_ok` indicate whether each device
+/// color is covered (either by a Default* color space or a matching OutputIntent).
 fn report_device_color_ops(
     content: &[u8],
-    has_default_rgb: bool,
-    has_default_cmyk: bool,
-    has_default_gray: bool,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
     location: &str,
     report: &mut ComplianceReport,
 ) {
     let ops = detect_device_color_ops(content);
-    if !has_default_rgb && ops.has_rgb {
+    if !rgb_ok && ops.has_rgb {
         error_at(
             report,
             "6.2.4.3",
-            "DeviceRGB used without DefaultRGB color space or OutputIntent",
+            "DeviceRGB used without DefaultRGB or matching OutputIntent",
             location.to_string(),
         );
     }
-    if !has_default_cmyk && ops.has_cmyk {
+    if !cmyk_ok && ops.has_cmyk {
         error_at(
             report,
             "6.2.4.3",
-            "DeviceCMYK used without DefaultCMYK color space or OutputIntent",
+            "DeviceCMYK used without DefaultCMYK or matching OutputIntent",
             location.to_string(),
         );
     }
-    if !has_default_gray && ops.has_gray {
+    if !gray_ok && ops.has_gray {
         error_at(
             report,
             "6.2.4.3",
-            "DeviceGray used without DefaultGray color space or OutputIntent",
+            "DeviceGray used without DefaultGray or OutputIntent",
             location.to_string(),
         );
     }
@@ -2002,29 +2023,16 @@ fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
 /// DeviceGray) as their /ColorSpace key violate 6.2.4.3 unless a Default
 /// color space or OutputIntent is present.
 pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
-    if has_output_intent(pdf) {
-        return;
-    }
+    let profile = output_intent_profile_components(pdf);
+    let has_intent = profile.is_some();
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
 
-        let has_default_rgb = res_dict
-            .as_ref()
-            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_RGB))
-            .is_some();
-        let has_default_cmyk = res_dict
-            .as_ref()
-            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_CMYK))
-            .is_some();
-        let has_default_gray = res_dict
-            .as_ref()
-            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
-            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_GRAY))
-            .is_some();
+        let rgb_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_RGB) || profile == Some(3);
+        let cmyk_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_CMYK) || profile == Some(4);
+        let gray_ok = has_default_cs(res_dict.as_ref(), keys::DEFAULT_GRAY) || has_intent;
 
         let Some(ref rd) = res_dict else { continue };
         let Some(xobj_dict) = rd.get::<Dict<'_>>(keys::XOBJECT) else {
@@ -2046,27 +2054,23 @@ pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport)
             if let Some(cs_name) = dict.get::<Name>(keys::COLORSPACE) {
                 let cs = cs_name.as_ref();
                 let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
-                if cs == keys::DEVICE_RGB && !has_default_rgb {
+                if cs == keys::DEVICE_RGB && !rgb_ok {
                     error_at(
                         report,
                         "6.2.4.3",
-                        format!(
-                            "Image {xobj_name} uses DeviceRGB without DefaultRGB or OutputIntent"
-                        ),
+                        format!("Image {xobj_name} uses DeviceRGB without DefaultRGB or matching OutputIntent"),
                         format!("page {}", page_idx + 1),
                     );
                 }
-                if cs == b"DeviceCMYK" && !has_default_cmyk {
+                if cs == b"DeviceCMYK" && !cmyk_ok {
                     error_at(
                         report,
                         "6.2.4.3",
-                        format!(
-                            "Image {xobj_name} uses DeviceCMYK without DefaultCMYK or OutputIntent"
-                        ),
+                        format!("Image {xobj_name} uses DeviceCMYK without DefaultCMYK or matching OutputIntent"),
                         format!("page {}", page_idx + 1),
                     );
                 }
-                if cs == b"DeviceGray" && !has_default_gray {
+                if cs == b"DeviceGray" && !gray_ok {
                     error_at(
                         report,
                         "6.2.4.3",
