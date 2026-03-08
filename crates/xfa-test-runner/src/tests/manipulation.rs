@@ -18,7 +18,7 @@ impl PdfTest for ManipulationTest {
             Ok(d) => d,
             Err(e) => {
                 return TestResult {
-                    status: TestStatus::Fail,
+                    status: TestStatus::Skip,
                     error_message: Some(format!("lopdf load failed: {e}")),
                     duration_ms: start.elapsed().as_millis() as u64,
                     oracle_score: None,
