@@ -106,6 +106,12 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         _ => check_no_embedded_files(pdf, level, &mut report),
     }
 
+    // Batch 6: Implementation limits & structural checks
+    check_name_length(pdf, &mut report);
+    check_real_value_range(pdf, level, &mut report);
+    check_font_file_format(pdf, level, &mut report);
+    check_explicit_resources(pdf, &mut report);
+
     // Post-process: remap clause numbers per PDF/A part.
     // PDF/A-1 uses §6.2.3.3 for device color space restrictions;
     // PDF/A-2/3/4 use §6.2.4.3 for the same check.
@@ -652,6 +658,31 @@ fn check_no_embedded_files(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceR
             ),
         );
     }
+}
+
+// ─── Batch 6: Implementation limits & structural checks ─────────────────────
+
+/// §6.1.13 — Name length limit.
+fn check_name_length(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_name_length_limit(pdf, report);
+}
+
+/// §6.1.12 — Real value range.
+fn check_real_value_range(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // Only PDF/A-1 has the strict 32767 limit; later parts relax it
+    if level.part() == 1 {
+        check::check_real_value_limits(pdf, report);
+    }
+}
+
+/// §6.3.2 — Font file stream format.
+fn check_font_file_format(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_font_file_subtype(pdf, level.part(), report);
+}
+
+/// §6.2.2 — Explicit Resources.
+fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_explicit_resources(pdf, report);
 }
 
 #[cfg(test)]

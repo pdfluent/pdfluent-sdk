@@ -1509,7 +1509,7 @@ pub fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
                 if !print || invisible || hidden || no_view || toggle_no_view {
                     error_at(
                         report,
-                        "6.3.2",
+                        "6.5.3",
                         format!(
                             "Annotation /F flags {flags:#x}: Print must be set, Hidden/Invisible/NoView/ToggleNoView must be clear"
                         ),
@@ -1523,7 +1523,7 @@ pub fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
                     .unwrap_or_else(|| "unknown".to_string());
                 error_at(
                     report,
-                    "6.3.2",
+                    "6.5.3",
                     format!("{subtype_name} annotation missing required /F key"),
                     format!("page {}", page_idx + 1),
                 );
@@ -4511,5 +4511,216 @@ fn collect_struct_types(elem: &Dict<'_>, types: &mut Vec<Vec<u8>>, depth: usize)
         }
     } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
         collect_struct_types(&kid, types, depth + 1);
+    }
+}
+
+// ─── §6.1.13 — Name length limit ────────────────────────────────────────────
+
+/// Check that no PDF Name object exceeds 127 bytes (§6.1.13).
+pub fn check_name_length_limit(pdf: &Pdf, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        check_name_length_in_object(&obj, report);
+    }
+}
+
+fn check_name_length_in_object(obj: &Object<'_>, report: &mut ComplianceReport) {
+    match obj {
+        Object::Name(n) => {
+            let name_bytes = n.as_ref();
+            if name_bytes.len() > 127 {
+                error(
+                    report,
+                    "6.1.13",
+                    format!("Name length ({}) exceeded 127", name_bytes.len()),
+                );
+            }
+        }
+        Object::Dict(dict) => {
+            for (key, _) in dict.entries() {
+                if key.as_ref().len() > 127 {
+                    error(
+                        report,
+                        "6.1.13",
+                        format!("Name length ({}) exceeded 127", key.as_ref().len()),
+                    );
+                }
+                if let Some(val) = dict.get::<Object<'_>>(key.as_ref()) {
+                    check_name_length_in_object(&val, report);
+                }
+            }
+        }
+        Object::Array(arr) => {
+            for item in arr.iter::<Object<'_>>() {
+                check_name_length_in_object(&item, report);
+            }
+        }
+        Object::Stream(s) => {
+            for (key, _) in s.dict().entries() {
+                if key.as_ref().len() > 127 {
+                    error(
+                        report,
+                        "6.1.13",
+                        format!("Name length ({}) exceeded 127", key.as_ref().len()),
+                    );
+                }
+                if let Some(val) = s.dict().get::<Object<'_>>(key.as_ref()) {
+                    check_name_length_in_object(&val, report);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+// ─── §6.1.12 — Real value limits ────────────────────────────────────────────
+
+/// Check that real values are within the PDF/A limits (§6.1.12).
+///
+/// Absolute real values must be <= 32767.0.
+pub fn check_real_value_limits(pdf: &Pdf, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        check_real_limits_in_object(&obj, report);
+    }
+}
+
+fn check_real_limits_in_object(obj: &Object<'_>, report: &mut ComplianceReport) {
+    match obj {
+        Object::Number(n) => {
+            let v = n.as_f64();
+            if v.abs() > 32767.0 {
+                error(
+                    report,
+                    "6.1.12",
+                    format!("Real value {} out of range", v),
+                );
+            }
+        }
+        Object::Dict(dict) => {
+            for (key, _) in dict.entries() {
+                if let Some(val) = dict.get::<Object<'_>>(key.as_ref()) {
+                    check_real_limits_in_object(&val, report);
+                }
+            }
+        }
+        Object::Array(arr) => {
+            for item in arr.iter::<Object<'_>>() {
+                check_real_limits_in_object(&item, report);
+            }
+        }
+        Object::Stream(s) => {
+            for (key, _) in s.dict().entries() {
+                if let Some(val) = s.dict().get::<Object<'_>>(key.as_ref()) {
+                    check_real_limits_in_object(&val, report);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+// ─── §6.3.2 — Font program format ───────────────────────────────────────────
+
+/// Check font file stream /Subtype is valid for PDF/A-1 (§6.3.2).
+///
+/// Valid font file subtypes: Type1C, CIDFontType0C.
+/// (OpenType added in PDF/A-2+).
+pub fn check_font_file_subtype(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        let Object::Stream(s) = obj else { continue };
+        let dict = s.dict();
+        // Only check font file streams (identified by having Subtype in
+        // a font descriptor's FontFile3 stream)
+        let Some(subtype) = dict.get::<Name>(keys::SUBTYPE) else {
+            continue;
+        };
+        let st = subtype.as_ref();
+        // FontFile3 streams have subtypes like Type1C, CIDFontType0C, OpenType
+        let is_font_stream = st == b"Type1C"
+            || st == b"CIDFontType0C"
+            || st == b"OpenType";
+        if !is_font_stream {
+            continue;
+        }
+        // PDF/A-1 only allows Type1C and CIDFontType0C
+        if part == 1 && st == b"OpenType" {
+            let st_str = std::str::from_utf8(st).unwrap_or("?");
+            error(
+                report,
+                "6.3.2",
+                format!("Font file stream has Subtype {st_str}, not allowed in PDF/A-1"),
+            );
+        }
+    }
+}
+
+// ─── §6.2.2 — Explicit Resources ────────────────────────────────────────────
+
+/// Check that content streams have explicitly associated Resources (§6.2.2).
+///
+/// In PDF/A, resources used by a content stream must be defined in an
+/// explicitly associated Resources dict, not inherited from parent Pages.
+pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let loc = format!("page {}", page_idx + 1);
+
+        // Check if page has its own /Resources entry (not inherited)
+        let has_own_resources = page_dict.contains_key(keys::RESOURCES);
+
+        // If page has content stream but no own Resources, check if it
+        // would need to inherit them
+        if !has_own_resources && page.page_stream().is_some() {
+            // page.resources() returns resolved (possibly inherited) resources
+            // If the resolved resources have entries, they must be inherited
+            let res = page.resources();
+            let has_any_resource = res.fonts.entries().next().is_some()
+                || res.x_objects.entries().next().is_some()
+                || res.ext_g_states.entries().next().is_some()
+                || res.color_spaces.entries().next().is_some()
+                || res.patterns.entries().next().is_some()
+                || res.shadings.entries().next().is_some();
+
+            if has_any_resource {
+                error_at(
+                    report,
+                    "6.2.2",
+                    "Content stream uses resources not defined in an explicitly associated Resources dictionary",
+                    loc.clone(),
+                );
+            }
+        }
+
+        // Check Form XObjects for missing Resources
+        if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
+            if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xname, _) in xobj_dict.entries() {
+                    let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
+                        continue;
+                    };
+                    let dict = stream.dict();
+                    let is_form = dict
+                        .get::<Name>(keys::SUBTYPE)
+                        .is_some_and(|s| s.as_ref() == b"Form");
+                    if !is_form {
+                        continue;
+                    }
+                    // Form XObjects should have their own Resources if they use any
+                    if !dict.contains_key(keys::RESOURCES) {
+                        if let Ok(decoded) = stream.decoded() {
+                            let ops = detect_device_color_ops(&decoded);
+                            if ops.has_rgb || ops.has_cmyk || ops.has_gray {
+                                let xn = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+                                error_at(
+                                    report,
+                                    "6.2.2",
+                                    format!("Form XObject {xn} uses color operators but has no explicit Resources"),
+                                    loc.clone(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
