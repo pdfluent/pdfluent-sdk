@@ -456,7 +456,7 @@ fn is_valid_value_type(vtype: &str, custom_types: &HashSet<String>) -> bool {
     custom_types.contains(vtype)
 }
 
-/// §6.7.9 / §6.6.2.3.1 — Validate all XMP properties use known or declared namespaces.
+/// §6.7.9 / §6.6.2.3.1 / §6.5.2 — Validate all XMP properties use known or declared namespaces.
 ///
 /// Replaces the simpler check in check.rs with one that actually
 /// parses extension schemas and validates specific properties.
@@ -466,10 +466,10 @@ fn check_property_namespaces(
     level: PdfALevel,
     report: &mut ComplianceReport,
 ) {
-    let rule = if level.part() == 1 {
-        "6.7.9"
-    } else {
-        "6.6.2.3.1"
+    let rule = match level.part() {
+        1 => "6.7.9",
+        4 => "6.5.2",
+        _ => "6.6.2.3.1",
     };
 
     // Build set of valid prefixes: predefined + declared extensions
@@ -802,19 +802,19 @@ fn is_valid_iso8601(date: &str) -> bool {
     true
 }
 
-/// §6.7.4 — pdfaid:amd must not be present in PDF/A-2 and PDF/A-3.
+/// §6.7.4 — pdfaid:amd must not be present in PDF/A-2, PDF/A-3, or PDF/A-4.
 ///
 /// §6.7.5 — pdfaid:corr handling.
 fn check_pdfa_id_properties(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     if level.part() >= 2 {
-        // §6.7.4: pdfaid:amd forbidden in PDF/A-2 and PDF/A-3
+        // §6.7.4: pdfaid:amd forbidden in PDF/A-2, PDF/A-3, and PDF/A-4
         let has_amd =
             extract_nested_value(xmp, "pdfaid:amd").is_some() || xmp.contains("pdfaid:amd=");
         if has_amd {
             error(
                 report,
                 "6.7.4",
-                "pdfaid:amd must not be present in PDF/A-2 or PDF/A-3",
+                format!("pdfaid:amd must not be present in PDF/A-{}", level.part()),
             );
         }
     }

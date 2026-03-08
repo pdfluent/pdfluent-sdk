@@ -1,9 +1,10 @@
-//! PDF/A validation (ISO 19005 parts 1–3).
+//! PDF/A validation (ISO 19005 parts 1–4).
 //!
-//! Validates PDF documents against all six conformance levels:
+//! Validates PDF documents against all conformance levels:
 //! - PDF/A-1a, PDF/A-1b (ISO 19005-1)
 //! - PDF/A-2a, PDF/A-2b, PDF/A-2u (ISO 19005-2)
 //! - PDF/A-3a, PDF/A-3b, PDF/A-3u (ISO 19005-3)
+//! - PDF/A-4, PDF/A-4f, PDF/A-4e (ISO 19005-4)
 
 use crate::check;
 use crate::{ComplianceReport, PdfALevel};
@@ -94,10 +95,13 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check_role_mapping_pdfa(pdf, &mut report);
     }
 
-    if level.part() == 3 {
-        check_embedded_files_a3(pdf, &mut report);
-    } else {
-        check_no_embedded_files(pdf, level, &mut report);
+    match level.part() {
+        3 => check_embedded_files_a3(pdf, &mut report),
+        4 => {
+            // PDF/A-4f allows embedded files; base and 4e do not restrict
+            // (PDF/A-4 inherits PDF 2.0 which allows associated files)
+        }
+        _ => check_no_embedded_files(pdf, level, &mut report),
     }
 
     report.compliant = report.is_compliant();
@@ -105,9 +109,13 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 }
 
 /// XMP metadata must declare the correct PDF/A part and conformance.
-/// PDF/A-1: §6.7.11, PDF/A-2/3: §6.6.4.
+/// PDF/A-1: §6.7.11, PDF/A-2/3: §6.6.4, PDF/A-4: §6.5.2.
 fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    let rule = if level.part() == 1 { "6.7.11" } else { "6.6.4" };
+    let rule = match level.part() {
+        1 => "6.7.11",
+        4 => "6.5.2",
+        _ => "6.6.4",
+    };
 
     let Some(xmp) = check::get_xmp_metadata(pdf) else {
         check::error(report, rule, "No XMP metadata stream in catalog");
@@ -115,11 +123,7 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     };
 
     let Some((part, conformance)) = check::parse_xmp_pdfa(&xmp) else {
-        check::error(
-            report,
-            rule,
-            "XMP metadata missing pdfaid:part or pdfaid:conformance",
-        );
+        check::error(report, rule, "XMP metadata missing pdfaid:part");
         return;
     };
 
@@ -135,7 +139,10 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     }
 
     let expected_conf = level.conformance();
-    if !conformance.eq_ignore_ascii_case(expected_conf) {
+    // PDF/A-4 base level has no conformance letter — empty is valid
+    if !(conformance.eq_ignore_ascii_case(expected_conf)
+        || (expected_conf.is_empty() && conformance.is_empty()))
+    {
         check::error(
             report,
             rule,
@@ -155,19 +162,22 @@ fn check_encryption(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Forbidden action types. PDF/A-1: §6.6.1, PDF/A-2/3: §6.5.1.
+/// Forbidden action types. PDF/A-1: §6.6.1, PDF/A-2/3: §6.5.1, PDF/A-4: §6.4.
 fn check_forbidden_actions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    let rule = if level.part() == 1 { "6.6.1" } else { "6.5.1" };
+    let rule = match level.part() {
+        1 => "6.6.1",
+        4 => "6.4",
+        _ => "6.5.1",
+    };
     check::check_forbidden_actions_rule(pdf, level.part(), rule, report);
 }
 
-/// OutputIntents must include a GTS_PDFA1 entry. PDF/A-1: §6.2.2, PDF/A-2/3: §6.2.3.
-fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    let rule = if level.part() == 1 { "6.2.2" } else { "6.2.3" };
+/// OutputIntents must include a GTS_PDFA1 entry (§6.2.2).
+fn check_output_intent(pdf: &Pdf, _level: PdfALevel, report: &mut ComplianceReport) {
     if !check::has_output_intent(pdf) {
         check::error(
             report,
-            rule,
+            "6.2.2",
             "No OutputIntents with GTS_PDFA1 subtype found",
         );
     }
@@ -273,7 +283,7 @@ fn check_annotation_flags(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.5.2 — Only specific annotation types are permitted (PDF/A-1).
 fn check_annotation_types(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     if level.part() != 1 {
-        return; // PDF/A-2/3 has different annotation restrictions
+        return; // PDF/A-2/3/4 have different annotation restrictions
     }
 
     let allowed: &[&[u8]] = &[
@@ -405,7 +415,11 @@ fn check_xref_format(pdf: &Pdf, report: &mut ComplianceReport) {
 
 /// §6.6.1, §6.1.6.x — Deep recursive action scanner.
 fn check_actions_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    let rule = if level.part() == 1 { "6.6.1" } else { "6.5.1" };
+    let rule = match level.part() {
+        1 => "6.6.1",
+        4 => "6.4",
+        _ => "6.5.1",
+    };
     check::check_actions_deep(pdf, level.part(), rule, report);
 }
 
@@ -628,6 +642,27 @@ mod tests {
         assert_eq!(PdfALevel::A3u.part(), 3);
         assert_eq!(PdfALevel::A3u.conformance(), "U");
         assert!(!PdfALevel::A3u.requires_tagged());
+
+        assert_eq!(PdfALevel::A4.part(), 4);
+        assert_eq!(PdfALevel::A4.conformance(), "");
+        assert!(!PdfALevel::A4.requires_tagged());
+
+        assert_eq!(PdfALevel::A4f.part(), 4);
+        assert_eq!(PdfALevel::A4f.conformance(), "F");
+        assert!(!PdfALevel::A4f.requires_tagged());
+
+        assert_eq!(PdfALevel::A4e.part(), 4);
+        assert_eq!(PdfALevel::A4e.conformance(), "E");
+        assert!(!PdfALevel::A4e.requires_tagged());
+    }
+
+    #[test]
+    fn pdfa4_from_parts() {
+        assert_eq!(PdfALevel::from_parts(4, ""), Some(PdfALevel::A4));
+        assert_eq!(PdfALevel::from_parts(4, "F"), Some(PdfALevel::A4f));
+        assert_eq!(PdfALevel::from_parts(4, "f"), Some(PdfALevel::A4f));
+        assert_eq!(PdfALevel::from_parts(4, "E"), Some(PdfALevel::A4e));
+        assert_eq!(PdfALevel::from_parts(4, "e"), Some(PdfALevel::A4e));
     }
 
     #[test]

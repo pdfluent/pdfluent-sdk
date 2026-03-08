@@ -12,7 +12,7 @@ mod xmp;
 
 use pdf_syntax::Pdf;
 
-/// PDF/A conformance level (ISO 19005 parts 1–3).
+/// PDF/A conformance level (ISO 19005 parts 1–4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdfALevel {
     A1a,
@@ -23,6 +23,12 @@ pub enum PdfALevel {
     A3a,
     A3b,
     A3u,
+    /// PDF/A-4 base (ISO 19005-4, no conformance letter).
+    A4,
+    /// PDF/A-4f — allows file attachments.
+    A4f,
+    /// PDF/A-4e — allows engineering content (3D, rich media).
+    A4e,
 }
 
 impl PdfALevel {
@@ -32,15 +38,19 @@ impl PdfALevel {
             Self::A1a | Self::A1b => 1,
             Self::A2a | Self::A2b | Self::A2u => 2,
             Self::A3a | Self::A3b | Self::A3u => 3,
+            Self::A4 | Self::A4f | Self::A4e => 4,
         }
     }
 
-    /// Conformance letter (a, b, u).
+    /// Conformance letter (a, b, u, f, e, or empty for PDF/A-4 base).
     pub fn conformance(self) -> &'static str {
         match self {
             Self::A1a | Self::A2a | Self::A3a => "A",
             Self::A1b | Self::A2b | Self::A3b => "B",
             Self::A2u | Self::A3u => "U",
+            Self::A4 => "",
+            Self::A4f => "F",
+            Self::A4e => "E",
         }
     }
 
@@ -60,6 +70,9 @@ impl PdfALevel {
             (3, "A") => Some(Self::A3a),
             (3, "U") => Some(Self::A3u),
             (3, "B") | (3, _) => Some(Self::A3b),
+            (4, "F") => Some(Self::A4f),
+            (4, "E") => Some(Self::A4e),
+            (4, _) => Some(Self::A4),
             _ => None,
         }
     }
