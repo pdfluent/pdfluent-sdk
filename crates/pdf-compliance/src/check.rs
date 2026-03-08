@@ -2181,6 +2181,27 @@ pub fn check_output_intent_profile(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Check catalog Version key for PDF/A-4 (§6.1.12).
+///
+/// PDF/A-4 (ISO 19005-4) requires the Version key in the catalog dictionary
+/// to match the pattern "2.n" where n is a single digit (0-9). Exactly 3 chars.
+pub fn check_catalog_version_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else { return };
+    if let Some(version) = cat.get::<Name>(b"Version" as &[u8]) {
+        let v = version.as_ref();
+        let valid = v.len() == 3 && v[0] == b'2' && v[1] == b'.' && v[2].is_ascii_digit();
+        if !valid {
+            let vs = std::str::from_utf8(v).unwrap_or("?");
+            error(
+                report,
+                "6.1.12",
+                format!("Catalog Version key '{vs}' does not match required pattern '2.n'"),
+            );
+        }
+    }
+    // Note: absence of Version key is acceptable (PDF header version is used)
+}
+
 /// Check implementation limits (§6.1.12 for PDF/A-1, §6.1.13 for PDF/A-2/3/4).
 ///
 /// Real values ≤ 32767, name ≤ 127 bytes, string ≤ 65535/32767 bytes,

@@ -284,6 +284,10 @@ fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport)
 /// §6.1.12/6.1.13 — Implementation limits (real values, name/string lengths, etc.).
 fn check_page_dimensions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_page_dimensions(pdf, level.part(), report);
+    // PDF/A-4: catalog Version must match "2.n"
+    if level.part() == 4 {
+        check::check_catalog_version_pdfa4(pdf, report);
+    }
 }
 
 /// §6.3.2 — Annotations must have /F key with correct flags.
