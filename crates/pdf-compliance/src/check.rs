@@ -1637,6 +1637,8 @@ pub fn check_devicen_separation_alternate(pdf: &Pdf, report: &mut ComplianceRepo
 // ─── §6.2.5 — Rendering intent validation ───────────────────────────────────
 
 /// Check rendering intents are valid (§6.2.5).
+///
+/// Scans page content, annotation appearances, and Form XObjects.
 pub fn check_rendering_intents(pdf: &Pdf, report: &mut ComplianceReport) {
     let valid_intents: &[&[u8]] = &[
         b"RelativeColorimetric",
@@ -1646,46 +1648,111 @@ pub fn check_rendering_intents(pdf: &Pdf, report: &mut ComplianceReport) {
     ];
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let loc = format!("page {}", page_idx + 1);
+
+        // Scan page content stream for 'ri' operator
         if let Some(content) = page.page_stream() {
-            let text = String::from_utf8_lossy(content);
-            let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
-            for (i, &tok) in tokens.iter().enumerate() {
-                if tok == "ri" && i > 0 {
-                    let operand = tokens[i - 1];
-                    let name = operand.strip_prefix('/').unwrap_or(operand);
-                    if !valid_intents.iter().any(|v| v == &name.as_bytes()) {
-                        error_at(
-                            report,
-                            "6.2.5",
-                            format!("Invalid rendering intent '{name}'"),
-                            format!("page {}", page_idx + 1),
-                        );
+            check_ri_in_content(content, &valid_intents, &loc, report);
+        }
+
+        let page_dict = page.raw();
+
+        // Check ExtGState /RI in page resources
+        if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
+            check_ri_in_extgstate(&res_dict, &valid_intents, &loc, report);
+
+            // Check Form XObjects
+            if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xname, _) in xobj_dict.entries() {
+                    if let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) {
+                        let dict = stream.dict();
+                        if dict
+                            .get::<Name>(keys::SUBTYPE)
+                            .is_some_and(|s| s.as_ref() == b"Form")
+                        {
+                            if let Ok(decoded) = stream.decoded() {
+                                let xloc = format!("{loc}/XObject");
+                                check_ri_in_content(&decoded, &valid_intents, &xloc, report);
+                            }
+                            if let Some(xo_res) = dict.get::<Dict<'_>>(keys::RESOURCES) {
+                                check_ri_in_extgstate(&xo_res, &valid_intents, &loc, report);
+                            }
+                        }
                     }
                 }
             }
         }
 
-        let page_dict = page.raw();
-        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
-            continue;
-        };
-        let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
-            continue;
-        };
-        for (gs_name, _) in gs_dict.entries() {
-            let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
-                continue;
-            };
-            if let Some(ri) = gs.get::<Name>(keys::RI) {
-                if !valid_intents.iter().any(|v| *v == ri.as_ref()) {
-                    let ri_str = std::str::from_utf8(ri.as_ref()).unwrap_or("?");
-                    error_at(
-                        report,
-                        "6.2.5",
-                        format!("Invalid rendering intent '{ri_str}' in ExtGState"),
-                        format!("page {}", page_idx + 1),
-                    );
+        // Check annotation appearances
+        if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    for key in [b"N" as &[u8], b"R", b"D"] {
+                        if let Some(stream) = ap.get::<Stream<'_>>(key) {
+                            if let Ok(decoded) = stream.decoded() {
+                                let ap_loc = format!("{loc}/Annot/AP");
+                                check_ri_in_content(&decoded, &valid_intents, &ap_loc, report);
+                            }
+                            let ap_dict = stream.dict();
+                            if let Some(ap_res) = ap_dict.get::<Dict<'_>>(keys::RESOURCES) {
+                                check_ri_in_extgstate(&ap_res, &valid_intents, &loc, report);
+                            }
+                        }
+                    }
                 }
+            }
+        }
+    }
+}
+
+/// Check 'ri' operators in a content stream.
+fn check_ri_in_content(
+    content: &[u8],
+    valid_intents: &&[&[u8]],
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    let text = String::from_utf8_lossy(content);
+    let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+    for (i, &tok) in tokens.iter().enumerate() {
+        if tok == "ri" && i > 0 {
+            let operand = tokens[i - 1];
+            let name = operand.strip_prefix('/').unwrap_or(operand);
+            if !valid_intents.iter().any(|v| v == &name.as_bytes()) {
+                error_at(
+                    report,
+                    "6.2.5",
+                    format!("Invalid rendering intent '{name}'"),
+                    location,
+                );
+            }
+        }
+    }
+}
+
+/// Check /RI in ExtGState resources.
+fn check_ri_in_extgstate(
+    res_dict: &Dict<'_>,
+    valid_intents: &&[&[u8]],
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
+        return;
+    };
+    for (gs_name, _) in gs_dict.entries() {
+        let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
+            continue;
+        };
+        if let Some(ri) = gs.get::<Name>(keys::RI) {
+            if !valid_intents.iter().any(|v| *v == ri.as_ref()) {
+                let ri_str = std::str::from_utf8(ri.as_ref()).unwrap_or("?");
+                error_at(
+                    report,
+                    "6.2.5",
+                    format!("Invalid rendering intent '{ri_str}' in ExtGState"),
+                    location,
+                );
             }
         }
     }
@@ -1694,57 +1761,85 @@ pub fn check_rendering_intents(pdf: &Pdf, report: &mut ComplianceReport) {
 // ─── §6.2.8 — Image XObject restrictions ────────────────────────────────────
 
 /// Check Image XObject restrictions (§6.2.8).
+///
+/// Scans page resources and annotation appearance resources.
 pub fn check_image_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
-        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
-            continue;
-        };
-        let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
-            continue;
-        };
-        for (name, _) in xobj_dict.entries() {
-            let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
-                continue;
-            };
-            let dict = stream.dict();
+        let loc = format!("page {}", page_idx + 1);
 
-            if let Some(subtype) = dict.get::<Name>(keys::SUBTYPE) {
-                if subtype.as_ref() != keys::IMAGE {
-                    continue;
+        if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
+            check_image_restrictions_in_res(&res_dict, &loc, report);
+        }
+
+        // Check annotation appearances
+        if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    for key in [b"N" as &[u8], b"R", b"D"] {
+                        if let Some(stream) = ap.get::<Stream<'_>>(key) {
+                            let ap_dict = stream.dict();
+                            if let Some(ap_res) = ap_dict.get::<Dict<'_>>(keys::RESOURCES) {
+                                let ap_loc = format!("{loc}/Annot/AP");
+                                check_image_restrictions_in_res(&ap_res, &ap_loc, report);
+                            }
+                        }
+                    }
                 }
-            } else {
-                continue;
             }
+        }
+    }
+}
 
-            let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+/// Check image XObject restrictions within a resource dict.
+fn check_image_restrictions_in_res(
+    res_dict: &Dict<'_>,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
+        return;
+    };
+    for (name, _) in xobj_dict.entries() {
+        let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+            continue;
+        };
+        let dict = stream.dict();
 
-            if let Some(Object::Boolean(true)) = dict.get::<Object<'_>>(keys::INTERPOLATE) {
-                error_at(
-                    report,
-                    "6.2.8.1",
-                    format!("Image XObject {xobj_name} has /Interpolate true"),
-                    format!("page {}", page_idx + 1),
-                );
-            }
+        if dict
+            .get::<Name>(keys::SUBTYPE)
+            .is_none_or(|s| s.as_ref() != keys::IMAGE)
+        {
+            continue;
+        }
 
-            if dict.contains_key(b"Alternates" as &[u8]) {
-                error_at(
-                    report,
-                    "6.2.8.2",
-                    format!("Image XObject {xobj_name} contains forbidden /Alternates key"),
-                    format!("page {}", page_idx + 1),
-                );
-            }
+        let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
 
-            if dict.contains_key(keys::OPI) {
-                error_at(
-                    report,
-                    "6.2.8.3",
-                    format!("Image XObject {xobj_name} contains forbidden /OPI key"),
-                    format!("page {}", page_idx + 1),
-                );
-            }
+        if let Some(Object::Boolean(true)) = dict.get::<Object<'_>>(keys::INTERPOLATE) {
+            error_at(
+                report,
+                "6.2.8.1",
+                format!("Image XObject {xobj_name} has /Interpolate true"),
+                location,
+            );
+        }
+
+        if dict.contains_key(b"Alternates" as &[u8]) {
+            error_at(
+                report,
+                "6.2.8.2",
+                format!("Image XObject {xobj_name} contains forbidden /Alternates key"),
+                location,
+            );
+        }
+
+        if dict.contains_key(keys::OPI) {
+            error_at(
+                report,
+                "6.2.8.3",
+                format!("Image XObject {xobj_name} contains forbidden /OPI key"),
+                location,
+            );
         }
     }
 }
