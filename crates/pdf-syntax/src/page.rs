@@ -106,6 +106,11 @@ impl<'a> Deref for Pages<'a> {
 /// Prevents stack overflow on malformed PDFs with deeply nested or circular page trees.
 const MAX_PAGE_TREE_DEPTH: usize = 256;
 
+/// Maximum number of pages to collect from the page tree.
+/// Prevents exponential blowup from "page tree bombs" where shared Kids nodes
+/// cause the same subtrees to be visited multiple times (e.g., 8 KB PDF → 2^27 pages).
+const MAX_PAGE_COUNT: usize = 100_000;
+
 fn resolve_pages<'a>(
     pages_dict: &Dict<'a>,
     entries: &mut Vec<Page<'a>>,
@@ -147,6 +152,11 @@ fn resolve_pages_depth<'a>(
     let kids = pages_dict.get::<Array<'a>>(KIDS)?;
 
     for dict in kids.iter::<Dict<'_>>() {
+        if entries.len() >= MAX_PAGE_COUNT {
+            log::warn!("Page count exceeds {MAX_PAGE_COUNT}, stopping page tree traversal");
+            return Some(());
+        }
+
         match dict.get::<Name>(TYPE).as_deref() {
             Some(PAGES) => {
                 resolve_pages_depth(&dict, entries, ctx.clone(), resources.clone(), depth + 1);
