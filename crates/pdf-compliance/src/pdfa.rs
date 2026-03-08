@@ -73,6 +73,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_symbolic_truetype_encoding(pdf, &mut report);
     check_cidtogidmap_identity(pdf, &mut report);
     check_cmap_embedding(pdf, &mut report);
+    check::check_cidsysteminfo_compat(pdf, &mut report);
     check_annotation_appearance(pdf, &mut report);
     check_annotation_subtypes_deep(pdf, level, &mut report);
     check_annotation_flags_deep(pdf, level, &mut report);
@@ -811,9 +812,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.1.13") => Some("6.1.12"),
 
             // Stream checks: Length, EOL, empty keys, external refs
-            // PDF/A-1: §6.1.7, PDF/A-2/3/4: §6.1.7.1
+            // PDF/A-1: §6.1.7, PDF/A-2/3: §6.1.7.1, PDF/A-4: §6.1.6.1
             (1, "6.1.7.1") => Some("6.1.7"),
-            (2..=4, "6.1.7") => Some("6.1.7.1"),
+            (4, "6.1.7.1") => Some("6.1.6.1"),
+            (4, "6.1.7") => Some("6.1.6.1"),
+            (2..=3, "6.1.7") => Some("6.1.7.1"),
 
             // Widget annotation actions
             // PDF/A-1: §6.6.1, PDF/A-2/3: §6.4.1
@@ -836,8 +839,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.9") => Some("6.2.5"),
 
             // Lang tag validation
-            // Our canonical: 6.8.4, PDF/A-1/2/3: 6.7.4
-            (1..=3, "6.8.4") => Some("6.7.4"),
+            // Our canonical: 6.8.4, PDF/A-2/3: 6.7.4 (PDF/A-1 uses 6.8.4 natively)
+            (2..=3, "6.8.4") => Some("6.7.4"),
+
+            // CIDSystemInfo compatibility
+            // PDF/A-2/3: §6.2.11.3.1
+            (2..=3, "6.3.3.1") => Some("6.2.11.3.1"),
 
             _ => None,
         };

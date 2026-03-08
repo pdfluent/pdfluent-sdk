@@ -7062,3 +7062,70 @@ pub fn check_output_intent_destref(pdf: &Pdf, report: &mut ComplianceReport) {
         }
     }
 }
+
+// ─── §6.3.3.1 — CIDSystemInfo compatibility ──────────────────────────────────
+
+/// Check CIDSystemInfo compatibility between CIDFont and CMap (§6.3.3.1 / §6.2.11.3.1).
+///
+/// For Type0 fonts, the Registry and Ordering entries in the CIDFont's
+/// CIDSystemInfo must be compatible with those in the CMap dictionary.
+pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
+            return;
+        };
+        if subtype.as_ref() != b"Type0" {
+            return;
+        }
+
+        // Get the CMap's CIDSystemInfo
+        let cmap_ordering = font_dict
+            .get::<Dict<'_>>(keys::ENCODING)
+            .and_then(|cmap| cmap.get::<Dict<'_>>(keys::CIDSYSTEMINFO))
+            .and_then(|csi| csi.get::<pdf_syntax::object::String>(keys::ORDERING))
+            .map(|o| String::from_utf8_lossy(o.as_bytes()).to_string());
+
+        let cmap_registry = font_dict
+            .get::<Dict<'_>>(keys::ENCODING)
+            .and_then(|cmap| cmap.get::<Dict<'_>>(keys::CIDSYSTEMINFO))
+            .and_then(|csi| csi.get::<pdf_syntax::object::String>(keys::REGISTRY))
+            .map(|r| String::from_utf8_lossy(r.as_bytes()).to_string());
+
+        // Get CIDFont's CIDSystemInfo
+        let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) else {
+            return;
+        };
+        for cid_font in descendants.iter::<Dict<'_>>() {
+            let Some(cid_si) = cid_font.get::<Dict<'_>>(keys::CIDSYSTEMINFO) else {
+                continue;
+            };
+            let font_ordering = cid_si
+                .get::<pdf_syntax::object::String>(keys::ORDERING)
+                .map(|o| String::from_utf8_lossy(o.as_bytes()).to_string());
+            let font_registry = cid_si
+                .get::<pdf_syntax::object::String>(keys::REGISTRY)
+                .map(|r| String::from_utf8_lossy(r.as_bytes()).to_string());
+
+            if let (Some(ref co), Some(ref fo)) = (&cmap_ordering, &font_ordering) {
+                if co != fo {
+                    error_at(
+                        report,
+                        "6.3.3.1",
+                        format!("CIDSystemInfo Ordering mismatch: CMap='{co}', CIDFont='{fo}' in font {name}"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+            if let (Some(ref cr), Some(ref fr)) = (&cmap_registry, &font_registry) {
+                if cr != fr {
+                    error_at(
+                        report,
+                        "6.3.3.1",
+                        format!("CIDSystemInfo Registry mismatch: CMap='{cr}', CIDFont='{fr}' in font {name}"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    });
+}
