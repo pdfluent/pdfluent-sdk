@@ -8,6 +8,9 @@ description = "GDPR-compliant PDF redaction: permanent content removal"
 
 [dependencies]
 lopdf.workspace = true
+pdf-extract = { path = "../pdf-extract" }
+pdf-manip = { path = "../pdf-manip", default-features = false }
+regex = "1"
 thiserror.workspace = true
 flate2 = "1"
 
