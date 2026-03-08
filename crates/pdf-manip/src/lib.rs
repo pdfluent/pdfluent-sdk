@@ -16,6 +16,8 @@
 pub mod bookmarks;
 pub mod encrypt;
 pub mod error;
+#[cfg(feature = "image-insert")]
+pub mod image_insert;
 pub mod optimize;
 pub mod pages;
 pub mod watermark;
