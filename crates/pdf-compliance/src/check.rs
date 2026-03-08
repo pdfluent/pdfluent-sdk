@@ -669,6 +669,58 @@ pub fn document_lang(pdf: &Pdf) -> Option<String> {
     std::string::String::from_utf8(lang.as_bytes().to_vec()).ok()
 }
 
+/// Validate that a language tag follows basic BCP-47 format.
+/// Primary subtag must be 2-3 ASCII letters.
+fn is_valid_lang_tag(tag: &str) -> bool {
+    if tag.is_empty() {
+        return false;
+    }
+    let primary = tag.split('-').next().unwrap_or("");
+    (primary.len() == 2 || primary.len() == 3)
+        && primary.bytes().all(|b| b.is_ascii_alphabetic())
+}
+
+/// Check /Lang entries in catalog and structure elements are valid BCP-47 (§6.8.4).
+pub fn check_lang_values(pdf: &Pdf, report: &mut ComplianceReport) {
+    // Check catalog /Lang
+    if let Some(cat) = catalog(pdf) {
+        if let Some(lang_str) = cat.get::<pdf_syntax::object::String>(keys::LANG) {
+            if let Ok(tag) = std::str::from_utf8(lang_str.as_bytes()) {
+                if !is_valid_lang_tag(tag) {
+                    error(
+                        report,
+                        "6.8.4",
+                        format!("Catalog /Lang value '{tag}' is not a valid Language-Tag"),
+                    );
+                }
+            }
+        }
+        // Check structure tree /Lang entries
+        if let Some(struct_root) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) {
+            check_struct_elem_lang(&struct_root, report);
+        }
+    }
+}
+
+fn check_struct_elem_lang(elem: &Dict<'_>, report: &mut ComplianceReport) {
+    if let Some(lang_str) = elem.get::<pdf_syntax::object::String>(keys::LANG) {
+        if let Ok(tag) = std::str::from_utf8(lang_str.as_bytes()) {
+            if !is_valid_lang_tag(tag) {
+                error(
+                    report,
+                    "6.8.4",
+                    format!("Structure element /Lang value '{tag}' is not a valid Language-Tag"),
+                );
+            }
+        }
+    }
+    if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
+        for kid in kids.iter::<Dict<'_>>() {
+            check_struct_elem_lang(&kid, report);
+        }
+    }
+}
+
 /// Check ViewerPreferences/DisplayDocTitle.
 pub fn display_doc_title(pdf: &Pdf) -> bool {
     let Some(cat) = catalog(pdf) else {
@@ -808,6 +860,7 @@ pub fn check_forbidden_actions_rule(
         keys::JAVA_SCRIPT,
         b"SetState",
         b"NoOp",
+        b"NOP",
     ];
 
     if part >= 2 {
@@ -2122,6 +2175,69 @@ pub fn check_devicen_separation_alternate(pdf: &Pdf, report: &mut ComplianceRepo
     }
 }
 
+/// Check DeviceN/NChannel colorants are defined in the Colorants dictionary (§6.2.4.4).
+pub fn check_devicen_colorants(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
+            continue;
+        };
+        let Some(cs_dict) = res_dict.get::<Dict<'_>>(keys::COLORSPACE) else {
+            continue;
+        };
+        for (name, _) in cs_dict.entries() {
+            let Some(cs_arr) = cs_dict.get::<Array<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let items: Vec<Object<'_>> = cs_arr.iter::<Object<'_>>().collect();
+            let Some(Object::Name(cs_type)) = items.first() else {
+                continue;
+            };
+            if cs_type.as_ref() != keys::DEVICE_N {
+                continue;
+            }
+            // DeviceN array: [/DeviceN names alternateCS tintTransform attributes?]
+            // Colorant names are at index 1 (an Array of Names)
+            let Some(Object::Array(colorant_names)) = items.get(1) else {
+                continue;
+            };
+            // Attributes dict (if present) at index 4
+            let attrs = items.get(4).and_then(|o| {
+                if let Object::Dict(d) = o {
+                    Some(d)
+                } else {
+                    None
+                }
+            });
+            // Get Colorants dictionary from attributes
+            let colorants_dict = attrs.and_then(|a| a.get::<Dict<'_>>(b"Colorants" as &[u8]));
+            // Each colorant name (except None and All) must be in Colorants dict
+            for cn in colorant_names.iter::<Name>() {
+                let cn_bytes = cn.as_ref();
+                if cn_bytes == b"None" || cn_bytes == b"All" {
+                    continue;
+                }
+                let defined = colorants_dict
+                    .as_ref()
+                    .map(|d| d.contains_key(cn_bytes))
+                    .unwrap_or(false);
+                if !defined {
+                    let cn_str = std::str::from_utf8(cn_bytes).unwrap_or("?");
+                    let cs_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.2.4.4",
+                        format!(
+                            "DeviceN CS '{cs_name}' colorant '{cn_str}' not defined in Colorants dictionary"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    }
+}
+
 // ─── §6.2.5 — Rendering intent validation ───────────────────────────────────
 
 /// Check rendering intents are valid (§6.2.5).
@@ -2416,6 +2532,35 @@ fn check_halftone_in_extgstate(res_dict: &Dict<'_>, location: &str, report: &mut
                     location,
                 );
             }
+            // §6.2.10.5: TransferFunction in halftone must be /Identity or absent
+            if let Some(tf) = ht_dict.get::<Object<'_>>(b"TransferFunction" as &[u8]) {
+                let is_identity = matches!(tf, Object::Name(n) if n.as_ref() == b"Identity");
+                if !is_identity {
+                    error_at(
+                        report,
+                        "6.2.10.5",
+                        format!("ExtGState {gs_str} halftone has custom /TransferFunction"),
+                        location,
+                    );
+                }
+            }
+            // For Type 5 halftones, check sub-halftones too
+            for (key, _) in ht_dict.entries() {
+                if let Some(sub_ht) = ht_dict.get::<Dict<'_>>(key.as_ref()) {
+                    if let Some(tf) = sub_ht.get::<Object<'_>>(b"TransferFunction" as &[u8]) {
+                        let is_identity = matches!(tf, Object::Name(n) if n.as_ref() == b"Identity");
+                        if !is_identity {
+                            let kstr = std::str::from_utf8(key.as_ref()).unwrap_or("?");
+                            error_at(
+                                report,
+                                "6.2.10.5",
+                                format!("ExtGState {gs_str} halftone/{kstr} has custom /TransferFunction"),
+                                location,
+                            );
+                        }
+                    }
+                }
+            }
         }
 
         // §6.2.10.5: TR forbidden
@@ -2509,11 +2654,15 @@ pub fn check_extgstate_restrictions(pdf: &Pdf, part: u8, report: &mut Compliance
 
             // §6.2.4.2 — OPM must not be 1 when ICCBased CMYK is in use with overprinting
             if has_icc_cmyk || has_cmyk_intent {
-                let overprint_on = matches!(
+                let stroke_overprint = matches!(
                     gs.get::<Object<'_>>(b"OP" as &[u8]),
                     Some(Object::Boolean(true))
                 );
-                if overprint_on {
+                let fill_overprint = matches!(
+                    gs.get::<Object<'_>>(b"op" as &[u8]),
+                    Some(Object::Boolean(true))
+                );
+                if stroke_overprint || fill_overprint {
                     if let Some(Object::Number(opm)) = gs.get::<Object<'_>>(b"OPM" as &[u8]) {
                         if opm.as_f64() as i64 == 1 {
                             error_at(
@@ -2922,24 +3071,32 @@ pub fn check_inline_image_filters(pdf: &Pdf, pdfa_part: u8, report: &mut Complia
                 continue;
             };
             let header = &text[abs_bi..abs_bi + id_pos];
-            // Check for /F or /Filter with LZW or Crypt value
+            // Check for /F or /Filter with LZW or Crypt value (case-insensitive)
             let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.9" };
-            for filter_indicator in ["/F /LZW", "/F /Cr", "/Filter /LZW", "/Filter /Cr",
-                                     "/F/LZW", "/F/Cr", "/Filter/LZW", "/Filter/Cr"] {
-                if header.contains(filter_indicator) {
-                    let filter_name = if filter_indicator.contains("LZW") {
-                        "LZWDecode"
-                    } else {
-                        "Crypt"
-                    };
-                    error_at(
-                        report,
-                        rule,
-                        format!("Inline image uses forbidden {filter_name} filter"),
-                        loc.clone(),
-                    );
-                    break;
-                }
+            let header_lower = header.to_ascii_lowercase();
+            let has_lzw = header_lower.contains("/f /lzw")
+                || header_lower.contains("/f/lzw")
+                || header_lower.contains("/filter /lzw")
+                || header_lower.contains("/filter/lzw");
+            let has_crypt = header_lower.contains("/f /cr")
+                || header_lower.contains("/f/cr")
+                || header_lower.contains("/filter /cr")
+                || header_lower.contains("/filter/cr");
+            if has_lzw {
+                error_at(
+                    report,
+                    rule,
+                    "Inline image uses forbidden LZWDecode filter",
+                    loc.clone(),
+                );
+            }
+            if has_crypt {
+                error_at(
+                    report,
+                    rule,
+                    "Inline image uses forbidden Crypt filter",
+                    loc.clone(),
+                );
             }
             pos = abs_bi + id_pos;
         }
@@ -3115,12 +3272,43 @@ pub fn check_stream_external_refs(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Check PDF header binary comment (§6.1.2).
-pub fn check_file_header(pdf: &Pdf, report: &mut ComplianceReport) {
+/// Check PDF header binary comment and version format (§6.1.2).
+pub fn check_file_header(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceReport) {
     let data = pdf.data().as_ref();
+    // Check header starts at offset 0
     if !data.starts_with(b"%PDF-") {
         error(report, "6.1.2", "File does not start with %PDF- header");
         return;
+    }
+    // Validate version format: %PDF-M.N where M and N are single digits
+    if data.len() >= 9 {
+        let ver = &data[5..9]; // should be "M.N\n" or similar
+        let major_ok = ver[0].is_ascii_digit();
+        let dot_ok = ver[1] == b'.';
+        let minor_ok = ver[2].is_ascii_digit();
+        let end_ok = !ver[3].is_ascii_digit(); // no extra digits
+        if !(major_ok && dot_ok && minor_ok && end_ok) {
+            let ver_str = std::str::from_utf8(&data[5..data.len().min(12)])
+                .unwrap_or("?")
+                .trim();
+            error(
+                report,
+                "6.1.2",
+                format!("File header version '{ver_str}' does not match %PDF-M.N pattern"),
+            );
+        }
+        // For PDF/A-4: must be PDF 2.0
+        if pdfa_part == 4 && !(ver[0] == b'2' && ver[2] == b'0') {
+            // Only valid: %PDF-2.0
+            let ver_str = std::str::from_utf8(&data[5..data.len().min(12)])
+                .unwrap_or("?")
+                .trim();
+            error(
+                report,
+                "6.1.2",
+                format!("PDF/A-4 requires %PDF-2.0 header, found '{ver_str}'"),
+            );
+        }
     }
     if let Some(eol) = data.iter().position(|&b| b == b'\n' || b == b'\r') {
         let after = &data[eol..];
@@ -3218,6 +3406,7 @@ pub fn check_actions_deep(pdf: &Pdf, part: u8, rule: &str, report: &mut Complian
         keys::JAVA_SCRIPT,
         b"SetState",
         b"NoOp",
+        b"NOP",
         b"Named",
         b"GoToR",
     ];
@@ -3419,6 +3608,30 @@ pub fn check_optional_content(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceR
                 if evt == b"Export" || evt == b"Print" {
                     let e = std::str::from_utf8(evt).unwrap_or("?");
                     error(report, "6.1.11", format!("OCProperties /AS event '{e}'"));
+                }
+            }
+        }
+    }
+    // §6.10 (PDF/A-4): OCG configuration dicts must have /Name entry
+    if pdfa_part >= 2 {
+        let rule = if pdfa_part == 4 { "6.10" } else { "6.1.11" };
+        if let Some(d_dict) = ocprops.get::<Dict<'_>>(b"D" as &[u8]) {
+            if d_dict.get::<Object<'_>>(keys::NAME).is_none() {
+                error(
+                    report,
+                    rule,
+                    "Default OCG configuration dictionary missing /Name entry",
+                );
+            }
+        }
+        if let Some(configs) = ocprops.get::<Array<'_>>(b"Configs" as &[u8]) {
+            for (idx, cfg) in configs.iter::<Dict<'_>>().enumerate() {
+                if cfg.get::<Object<'_>>(keys::NAME).is_none() {
+                    error(
+                        report,
+                        rule,
+                        format!("OCG configuration {idx} missing /Name entry"),
+                    );
                 }
             }
         }
@@ -6280,15 +6493,28 @@ pub fn check_embedded_file_spec_keys(pdf: &Pdf, part: u8, report: &mut Complianc
             if part >= 3 && !spec.contains_key(b"AFRelationship" as &[u8]) {
                 error(report, rule, "File specification missing /AFRelationship key");
             }
-            // Check embedded file stream has MIME type (§6.9 test 1)
+            // Check embedded file stream has valid MIME type (§6.9 test 1)
             if let Some(ef_dict) = spec.get::<Dict<'_>>(keys::EF) {
                 if let Some(f_stream) = ef_dict.get::<Stream<'_>>(keys::F) {
-                    if f_stream.dict().get::<Name>(keys::SUBTYPE).is_none() {
-                        error(
-                            report,
-                            rule,
-                            "Embedded file stream missing /Subtype (MIME type)",
-                        );
+                    match f_stream.dict().get::<Name>(keys::SUBTYPE) {
+                        None => {
+                            error(
+                                report,
+                                rule,
+                                "Embedded file stream missing /Subtype (MIME type)",
+                            );
+                        }
+                        Some(mime_name) => {
+                            // MIME type must contain "/" (e.g. "application/pdf")
+                            let mime = std::str::from_utf8(mime_name.as_ref()).unwrap_or("");
+                            if !mime.contains('/') {
+                                error(
+                                    report,
+                                    rule,
+                                    format!("Embedded file stream has invalid MIME type '{mime}' (missing subtype)"),
+                                );
+                            }
+                        }
                     }
                 }
             }
