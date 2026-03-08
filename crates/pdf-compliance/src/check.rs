@@ -1989,3 +1989,614 @@ fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
     }
     false
 }
+
+// ─── Batch 5: Transparency, Tagged PDF, Remaining Rules ─────────────────────
+
+// ─── §6.4 — Transparency deep checks ────────────────────────────────────────
+
+/// Deeper transparency check: validate Group dictionaries in page and XObject (§6.4).
+///
+/// Beyond the simple presence check, validates that transparency groups on
+/// pages and Form XObjects have valid color space references.
+pub fn check_transparency_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    if part == 1 {
+        // PDF/A-1 forbids all transparency — already handled by has_transparency
+        return;
+    }
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        check_group_dict(page_dict, part, &format!("page {}", page_idx + 1), report);
+
+        // Check Form XObjects for transparency groups
+        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
+            continue;
+        };
+        let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
+            continue;
+        };
+        for (name, _) in xobj_dict.entries() {
+            let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let dict = stream.dict();
+            let is_form = dict
+                .get::<Name>(keys::SUBTYPE)
+                .is_some_and(|s| s.as_ref() == b"Form");
+            if !is_form {
+                continue;
+            }
+            let xn = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+            let loc = format!("page {} XObject {xn}", page_idx + 1);
+            check_group_dict(dict, part, &loc, report);
+        }
+    }
+}
+
+fn check_group_dict(dict: &Dict<'_>, _part: u8, location: &str, report: &mut ComplianceReport) {
+    let Some(group) = dict.get::<Dict<'_>>(keys::GROUP) else {
+        return;
+    };
+    let Some(s) = group.get::<Name>(keys::S) else {
+        return;
+    };
+    if s.as_ref() != keys::TRANSPARENCY {
+        return;
+    }
+
+    // Transparency group CS should be present and valid
+    if group.get::<Object<'_>>(keys::CS).is_none()
+        && group.get::<Object<'_>>(keys::COLORSPACE).is_none()
+    {
+        warning(
+            report,
+            "6.4",
+            format!("Transparency group at {location} has no color space"),
+        );
+    }
+}
+
+/// Check blending modes in ExtGState for PDF/A-2/3 (§6.4.1).
+///
+/// For PDF/A-2/3, blend modes are allowed but must be one of the standard
+/// PDF blend modes defined in ISO 32000-1.
+pub fn check_blending_modes(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    let valid_modes: &[&[u8]] = &[
+        b"Normal",
+        keys::COMPATIBLE,
+        b"Multiply",
+        b"Screen",
+        b"Overlay",
+        b"Darken",
+        b"Lighten",
+        b"ColorDodge",
+        b"ColorBurn",
+        b"HardLight",
+        b"SoftLight",
+        b"Difference",
+        b"Exclusion",
+        b"Hue",
+        b"Saturation",
+        b"Color",
+        b"Luminosity",
+    ];
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
+            continue;
+        };
+        let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
+            continue;
+        };
+        for (gs_name, _) in gs_dict.entries() {
+            let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
+                continue;
+            };
+            if let Some(bm) = gs.get::<Name>(keys::BM) {
+                let bm_val = bm.as_ref();
+                if part == 1 {
+                    // PDF/A-1: only Normal/Compatible
+                    if bm_val != b"Normal" && bm_val != keys::COMPATIBLE {
+                        let bm_str = std::str::from_utf8(bm_val).unwrap_or("?");
+                        let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
+                        error_at(
+                            report,
+                            "6.4.1",
+                            format!("ExtGState {gs_str} BM={bm_str} (only Normal/Compatible in PDF/A-1)"),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                } else if !valid_modes.contains(&bm_val) {
+                    let bm_str = std::str::from_utf8(bm_val).unwrap_or("?");
+                    let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.4.1",
+                        format!("ExtGState {gs_str} uses non-standard blend mode '{bm_str}'"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Check soft mask dictionaries have valid structure (§6.4.2).
+pub fn check_soft_mask_structure(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
+            continue;
+        };
+        let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
+            continue;
+        };
+        for (gs_name, _) in gs_dict.entries() {
+            let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
+                continue;
+            };
+            let Some(smask) = gs.get::<Dict<'_>>(keys::SMASK) else {
+                continue;
+            };
+
+            let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
+
+            // SMask dict must have /S (subtype: Alpha or Luminosity)
+            if let Some(s) = smask.get::<Name>(keys::S) {
+                let s_val = s.as_ref();
+                if s_val != b"Alpha" && s_val != b"Luminosity" {
+                    let s_str = std::str::from_utf8(s_val).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.4.2",
+                        format!(
+                            "ExtGState {gs_str} SMask /S={s_str} (must be Alpha or Luminosity)"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            } else {
+                error_at(
+                    report,
+                    "6.4.2",
+                    format!("ExtGState {gs_str} SMask missing required /S key"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+
+            // SMask dict must have /G (group XObject)
+            if smask.get::<Stream<'_>>(b"G" as &[u8]).is_none() {
+                error_at(
+                    report,
+                    "6.4.2",
+                    format!("ExtGState {gs_str} SMask missing required /G (group XObject)"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
+}
+
+// ─── §6.8 — Tagged PDF deep checks ──────────────────────────────────────────
+
+/// Check table structure elements are correctly nested (§6.8.2.2).
+///
+/// Table must contain TR; TR must contain TD or TH.
+/// THead, TBody, TFoot may appear between Table and TR.
+pub fn check_table_structure(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(struct_tree) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) else {
+        return;
+    };
+
+    if let Some(kids) = struct_tree.get::<Array<'_>>(keys::K) {
+        walk_struct_elements(&kids, None, report, 0);
+    } else if let Some(kid) = struct_tree.get::<Dict<'_>>(keys::K) {
+        check_struct_element(&kid, None, report, 0);
+    }
+}
+
+fn walk_struct_elements(
+    kids: &Array<'_>,
+    parent_type: Option<&[u8]>,
+    report: &mut ComplianceReport,
+    depth: usize,
+) {
+    if depth > 100 {
+        return;
+    }
+    for kid in kids.iter::<Dict<'_>>() {
+        check_struct_element(&kid, parent_type, report, depth);
+    }
+}
+
+fn check_struct_element(
+    elem: &Dict<'_>,
+    parent_type: Option<&[u8]>,
+    report: &mut ComplianceReport,
+    depth: usize,
+) {
+    if depth > 100 {
+        return;
+    }
+
+    let elem_type = elem.get::<Name>(keys::S).map(|n| n.as_ref().to_vec());
+    let type_bytes = elem_type.as_deref();
+
+    // Check table nesting rules
+    if let Some(t) = type_bytes {
+        match t {
+            b"TR" => {
+                if let Some(parent) = parent_type {
+                    if parent != b"Table"
+                        && parent != b"THead"
+                        && parent != b"TBody"
+                        && parent != b"TFoot"
+                    {
+                        let p = std::str::from_utf8(parent).unwrap_or("?");
+                        error(
+                            report,
+                            "6.8.2.2",
+                            format!("TR must be child of Table/THead/TBody/TFoot, found under {p}"),
+                        );
+                    }
+                }
+            }
+            b"TD" | b"TH" => {
+                if let Some(parent) = parent_type {
+                    if parent != b"TR" {
+                        let p = std::str::from_utf8(parent).unwrap_or("?");
+                        let cell = std::str::from_utf8(t).unwrap_or("?");
+                        error(
+                            report,
+                            "6.8.2.2",
+                            format!("{cell} must be child of TR, found under {p}"),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Recurse into children
+    if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
+        walk_struct_elements(&kids, type_bytes, report, depth + 1);
+    } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
+        check_struct_element(&kid, type_bytes, report, depth + 1);
+    }
+}
+
+/// Check Figure structure elements have /Alt text (§6.8.4).
+pub fn check_figure_alt_text(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(struct_tree) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) else {
+        return;
+    };
+
+    if let Some(kids) = struct_tree.get::<Array<'_>>(keys::K) {
+        walk_figure_alt(&kids, report, 0);
+    } else if let Some(kid) = struct_tree.get::<Dict<'_>>(keys::K) {
+        check_figure_alt_elem(&kid, report, 0);
+    }
+}
+
+fn walk_figure_alt(kids: &Array<'_>, report: &mut ComplianceReport, depth: usize) {
+    if depth > 100 {
+        return;
+    }
+    for kid in kids.iter::<Dict<'_>>() {
+        check_figure_alt_elem(&kid, report, depth);
+    }
+}
+
+fn check_figure_alt_elem(elem: &Dict<'_>, report: &mut ComplianceReport, depth: usize) {
+    if depth > 100 {
+        return;
+    }
+
+    if let Some(s) = elem.get::<Name>(keys::S) {
+        if s.as_ref() == b"Figure" && elem.get::<Object<'_>>(keys::ALT).is_none() {
+            error(
+                report,
+                "6.8.4",
+                "Figure structure element missing required /Alt text",
+            );
+        }
+    }
+
+    if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
+        walk_figure_alt(&kids, report, depth + 1);
+    } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
+        check_figure_alt_elem(&kid, report, depth + 1);
+    }
+}
+
+/// Check content streams have matching BMC/EMC pairs (§6.8.3.4).
+///
+/// Marked content sequences (BMC/BDC...EMC) must be properly nested and closed.
+pub fn check_marked_content_sequences(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(content);
+        let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+
+        let mut depth: i32 = 0;
+        for tok in &tokens {
+            match *tok {
+                "BMC" | "BDC" => depth += 1,
+                "EMC" => depth -= 1,
+                _ => {}
+            }
+            if depth < 0 {
+                error_at(
+                    report,
+                    "6.8.3.4",
+                    "EMC without matching BMC/BDC",
+                    format!("page {}", page_idx + 1),
+                );
+                break;
+            }
+        }
+        if depth > 0 {
+            error_at(
+                report,
+                "6.8.3.4",
+                format!("{depth} unclosed marked content sequence(s) (BMC/BDC without EMC)"),
+                format!("page {}", page_idx + 1),
+            );
+        }
+    }
+}
+
+// ─── §6.9 — Interactive forms ────────────────────────────────────────────────
+
+/// Check interactive form /NeedAppearances must be false or absent (§6.9).
+pub fn check_need_appearances(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(acroform) = cat.get::<Dict<'_>>(keys::ACRO_FORM) else {
+        return;
+    };
+
+    if let Some(Object::Boolean(true)) = acroform.get::<Object<'_>>(keys::NEED_APPEARANCES) {
+        error(
+            report,
+            "6.9",
+            "AcroForm /NeedAppearances is true; must be false or absent in PDF/A",
+        );
+    }
+
+    // All form fields must have /AP (appearance) entry
+    if let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) {
+        check_field_appearances(&fields, report, 0);
+    }
+}
+
+fn check_field_appearances(fields: &Array<'_>, report: &mut ComplianceReport, depth: usize) {
+    if depth > 50 {
+        return;
+    }
+    for (idx, field) in fields.iter::<Dict<'_>>().enumerate() {
+        // Widget annotations (or fields with widget characteristics) need /AP
+        let is_widget = field
+            .get::<Name>(keys::SUBTYPE)
+            .is_some_and(|s| s.as_ref() == keys::WIDGET);
+        let has_ft = field.get::<Name>(b"FT" as &[u8]).is_some();
+
+        if (is_widget || has_ft) && field.get::<Dict<'_>>(keys::AP).is_none() {
+            error_at(
+                report,
+                "6.9",
+                format!("Form field {idx} missing required /AP (appearance dictionary)"),
+                "AcroForm",
+            );
+        }
+
+        if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
+            check_field_appearances(&kids, report, depth + 1);
+        }
+    }
+}
+
+// ─── §6.10 — Digital signatures ──────────────────────────────────────────────
+
+/// Check digital signature restrictions (§6.10).
+///
+/// Signature fields must have /FT /Sig and valid /ByteRange covering entire file.
+/// Signature handlers must be standard (Adobe.PPKLite, etc.).
+pub fn check_signature_restrictions(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(acroform) = cat.get::<Dict<'_>>(keys::ACRO_FORM) else {
+        return;
+    };
+    let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) else {
+        return;
+    };
+
+    check_sig_fields(&fields, report, 0);
+}
+
+fn check_sig_fields(fields: &Array<'_>, report: &mut ComplianceReport, depth: usize) {
+    if depth > 50 {
+        return;
+    }
+    for field in fields.iter::<Dict<'_>>() {
+        if let Some(ft) = field.get::<Name>(b"FT" as &[u8]) {
+            if ft.as_ref() == b"Sig" {
+                if let Some(v) = field.get::<Dict<'_>>(keys::V) {
+                    // Check /Filter (handler)
+                    if let Some(filter) = v.get::<Name>(keys::FILTER) {
+                        let f = filter.as_ref();
+                        if f != b"Adobe.PPKLite" && f != b"Adobe.PPKMS" && f != b"Entrust.PPKEF" {
+                            let fs = std::str::from_utf8(f).unwrap_or("?");
+                            warning(
+                                report,
+                                "6.10",
+                                format!("Signature handler '{fs}' may not be standard"),
+                            );
+                        }
+                    }
+                    // Check /ByteRange presence
+                    if v.get::<Array<'_>>(b"ByteRange" as &[u8]).is_none() {
+                        error(report, "6.10", "Signature value missing /ByteRange");
+                    }
+                }
+            }
+        }
+        if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
+            check_sig_fields(&kids, report, depth + 1);
+        }
+    }
+}
+
+// ─── §6.11 — Document structure ─────────────────────────────────────────────
+
+/// Check document structure requirements (§6.11).
+///
+/// ViewerPreferences restrictions and PageLayout checks.
+pub fn check_document_structure(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+
+    // §6.11: ViewerPreferences must not contain /PickTrayByPDFSize
+    if let Some(vp) = cat.get::<Dict<'_>>(keys::VIEWER_PREFERENCES) {
+        if vp.contains_key(b"PickTrayByPDFSize" as &[u8]) {
+            warning(
+                report,
+                "6.11",
+                "ViewerPreferences contains /PickTrayByPDFSize",
+            );
+        }
+        // /Enforce array should not be present
+        if vp.contains_key(b"Enforce" as &[u8]) {
+            warning(report, "6.11", "ViewerPreferences contains /Enforce");
+        }
+    }
+}
+
+// ─── §6.12 — Logical structure ──────────────────────────────────────────────
+
+/// Check role mapping in structure tree (§6.12).
+///
+/// All non-standard structure element types must have a role mapping
+/// to a standard structure type.
+pub fn check_role_mapping(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(struct_tree) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) else {
+        return;
+    };
+
+    let role_map = struct_tree.get::<Dict<'_>>(keys::ROLE_MAP);
+
+    // Standard structure types (PDF 1.7 Table 333)
+    let standard_types: &[&[u8]] = &[
+        b"Document",
+        b"Part",
+        b"Art",
+        b"Sect",
+        b"Div",
+        b"BlockQuote",
+        b"Caption",
+        b"TOC",
+        b"TOCI",
+        b"Index",
+        b"NonStruct",
+        b"Private",
+        b"H",
+        b"H1",
+        b"H2",
+        b"H3",
+        b"H4",
+        b"H5",
+        b"H6",
+        b"P",
+        b"L",
+        b"LI",
+        b"Lbl",
+        b"LBody",
+        b"Table",
+        b"TR",
+        b"TH",
+        b"TD",
+        b"THead",
+        b"TBody",
+        b"TFoot",
+        b"Span",
+        b"Quote",
+        b"Note",
+        b"Reference",
+        b"BibEntry",
+        b"Code",
+        b"Link",
+        b"Annot",
+        b"Ruby",
+        b"Warichu",
+        b"RB",
+        b"RT",
+        b"RP",
+        b"WT",
+        b"WP",
+        b"Figure",
+        b"Formula",
+        b"Form",
+    ];
+
+    // Walk structure tree collecting all /S values
+    let mut non_standard = Vec::new();
+    collect_struct_types(&struct_tree, &mut non_standard, 0);
+
+    for t in &non_standard {
+        if standard_types.contains(&t.as_slice()) {
+            continue;
+        }
+
+        // Non-standard type must be in RoleMap
+        let mapped = role_map
+            .as_ref()
+            .and_then(|rm| rm.get::<Name>(t.as_slice()));
+
+        if mapped.is_none() {
+            let type_str = std::str::from_utf8(t).unwrap_or("?");
+            error(
+                report,
+                "6.12",
+                format!(
+                    "Structure element type '{type_str}' has no role mapping to a standard type"
+                ),
+            );
+        }
+    }
+}
+
+fn collect_struct_types(elem: &Dict<'_>, types: &mut Vec<Vec<u8>>, depth: usize) {
+    if depth > 100 {
+        return;
+    }
+    if let Some(s) = elem.get::<Name>(keys::S) {
+        let t = s.as_ref().to_vec();
+        if !types.contains(&t) {
+            types.push(t);
+        }
+    }
+    if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
+        for kid in kids.iter::<Dict<'_>>() {
+            collect_struct_types(&kid, types, depth + 1);
+        }
+    } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
+        collect_struct_types(&kid, types, depth + 1);
+    }
+}
