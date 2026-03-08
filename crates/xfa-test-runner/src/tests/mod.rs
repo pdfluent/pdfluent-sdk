@@ -4,7 +4,9 @@ pub mod compliance;
 pub mod form_fields;
 pub mod geometry;
 pub mod images;
+pub mod manipulation;
 pub mod metadata;
+pub mod metadata_oracle;
 pub mod parse;
 pub mod render;
 #[cfg(feature = "pdfium-oracle")]
@@ -12,6 +14,7 @@ pub mod render_oracle;
 pub mod search;
 pub mod signatures;
 pub mod text_extract;
+pub mod text_oracle;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -78,6 +81,9 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(geometry::GeometryTest),
         Box::new(images::ImageExtractTest),
         Box::new(search::SearchTest),
+        Box::new(text_oracle::TextOracleTest),
+        Box::new(metadata_oracle::MetadataOracleTest),
+        Box::new(manipulation::ManipulationTest),
     ];
 
     #[cfg(feature = "pdfium-oracle")]
