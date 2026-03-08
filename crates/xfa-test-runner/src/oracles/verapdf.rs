@@ -173,10 +173,16 @@ impl VeraPdfOracle {
 }
 
 /// Compare our compliance report with veraPDF's result.
+///
+/// For PDF/A-4 files, veraPDF uses ISO 19005-4 clause numbering while our
+/// engine uses ISO 19005-2/3 numbering internally. This function normalizes
+/// veraPDF's clause numbers to our system before comparing.
 pub fn compare_compliance(
     our_report: &pdf_compliance::ComplianceReport,
     verapdf_result: &VeraPdfResult,
 ) -> ComplianceComparison {
+    let is_pdfa4 = verapdf_result.profile_name.contains("PDF/A-4");
+
     let our_rules: std::collections::HashSet<&str> = our_report
         .issues
         .iter()
@@ -184,11 +190,21 @@ pub fn compare_compliance(
         .map(|i| i.rule.as_str())
         .collect();
 
-    let verapdf_rules: std::collections::HashSet<&str> = verapdf_result
+    // Normalize veraPDF clause numbers (for PDF/A-4, translate to our system)
+    let verapdf_clauses: Vec<String> = verapdf_result
         .rule_failures
         .iter()
-        .map(|r| r.clause.as_str())
+        .map(|r| {
+            if is_pdfa4 {
+                normalize_pdfa4_clause(&r.clause)
+            } else {
+                r.clause.clone()
+            }
+        })
         .collect();
+
+    let verapdf_rules: std::collections::HashSet<&str> =
+        verapdf_clauses.iter().map(|s| s.as_str()).collect();
 
     // False negatives: veraPDF says FAIL but we don't flag it
     let false_negatives: Vec<String> = verapdf_rules
@@ -213,6 +229,41 @@ pub fn compare_compliance(
         false_negatives,
         false_positives,
         agreement_rate,
+    }
+}
+
+/// Normalize ISO 19005-4 clause numbers to our internal ISO 19005-2/3 numbering.
+///
+/// ISO 19005-4 reorganized the clause structure.
+/// Clauses 6.1.x and 6.2.x remain the same, but sections 6.3–6.8 were renumbered.
+fn normalize_pdfa4_clause(clause: &str) -> String {
+    // Order matters: check longest prefixes first to avoid partial matches
+    if let Some(rest) = clause.strip_prefix("6.3.") {
+        format!("6.5.{rest}")
+    } else if clause == "6.3" {
+        "6.5".to_string()
+    } else if let Some(rest) = clause.strip_prefix("6.4.") {
+        format!("6.6.{rest}")
+    } else if clause == "6.4" {
+        "6.6".to_string()
+    } else if let Some(rest) = clause.strip_prefix("6.5.") {
+        format!("6.7.{rest}")
+    } else if clause == "6.5" {
+        "6.7".to_string()
+    } else if let Some(rest) = clause.strip_prefix("6.6.") {
+        format!("6.8.{rest}")
+    } else if clause == "6.6" {
+        "6.8".to_string()
+    } else if let Some(rest) = clause.strip_prefix("6.7.") {
+        format!("6.3.{rest}")
+    } else if clause == "6.7" {
+        "6.3".to_string()
+    } else if let Some(rest) = clause.strip_prefix("6.8.") {
+        format!("6.4.{rest}")
+    } else if clause == "6.8" {
+        "6.4".to_string()
+    } else {
+        clause.to_string()
     }
 }
 
@@ -452,6 +503,20 @@ mod tests {
         assert!(cmp.false_negatives.is_empty());
         assert_eq!(cmp.false_positives.len(), 1);
         assert_eq!(cmp.agreement_rate, 1.0);
+    }
+
+    #[test]
+    fn normalize_pdfa4_clauses() {
+        // ISO 19005-4 → ISO 19005-2/3 mapping
+        assert_eq!(normalize_pdfa4_clause("6.3.3"), "6.5.3"); // Annotations
+        assert_eq!(normalize_pdfa4_clause("6.4.1"), "6.6.1"); // Actions
+        assert_eq!(normalize_pdfa4_clause("6.5.2"), "6.7.2"); // Metadata
+        assert_eq!(normalize_pdfa4_clause("6.7.2"), "6.3.2"); // Fonts
+        assert_eq!(normalize_pdfa4_clause("6.8"), "6.4"); // Transparency
+        assert_eq!(normalize_pdfa4_clause("6.6.1"), "6.8.1"); // Structure
+                                                              // These stay the same
+        assert_eq!(normalize_pdfa4_clause("6.1.2"), "6.1.2");
+        assert_eq!(normalize_pdfa4_clause("6.2.3"), "6.2.3");
     }
 
     #[test]

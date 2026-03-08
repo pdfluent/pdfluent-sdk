@@ -96,6 +96,9 @@ pub fn get_xmp_metadata(pdf: &Pdf) -> Option<Vec<u8>> {
 }
 
 /// Parse XMP metadata to find pdfaid:part and pdfaid:conformance.
+///
+/// PDF/A-4 (ISO 19005-4) may omit pdfaid:conformance entirely;
+/// in that case, conformance defaults to an empty string.
 pub fn parse_xmp_pdfa(xmp: &[u8]) -> Option<(u8, String)> {
     let text = std::str::from_utf8(xmp).ok()?;
 
@@ -105,7 +108,8 @@ pub fn parse_xmp_pdfa(xmp: &[u8]) -> Option<(u8, String)> {
         .ok()?;
 
     let conformance = extract_xmp_value(text, "pdfaid:conformance")
-        .or_else(|| extract_xmp_attr(text, "pdfaid:conformance"))?;
+        .or_else(|| extract_xmp_attr(text, "pdfaid:conformance"))
+        .unwrap_or_default();
 
     Some((part, conformance))
 }
@@ -2131,7 +2135,7 @@ pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
         "Td", "TD", "Tm", "T*", // Text showing
         "Tj", "TJ", "'", "\"", // Type 3 fonts
         "d0", "d1", // Color
-        "CS", "cs", "SC", "SCN", "sc", "scn", "G", "g", "RG", "rg", "K", "k", // Shading
+        "CS", "cs", "SC", "SCN", "sc", "scn", "G", "g", "RG", "rg", "K", "k",  // Shading
         "sh", // Inline images
         "BI", "ID", "EI", // XObjects
         "Do", // Marked content
