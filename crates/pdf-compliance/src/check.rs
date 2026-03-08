@@ -182,36 +182,6 @@ pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>,
     }
 }
 
-/// Check if the document has JavaScript (Names/JavaScript or OpenAction with JS).
-pub fn has_javascript(pdf: &Pdf) -> bool {
-    let Some(cat) = catalog(pdf) else {
-        return false;
-    };
-
-    // Check Names → JavaScript
-    if let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) {
-        if names.get::<Object<'_>>(keys::JAVA_SCRIPT).is_some() {
-            return true;
-        }
-    }
-
-    // Check OpenAction for JS action
-    if let Some(action) = cat.get::<Dict<'_>>(keys::OPEN_ACTION) {
-        if let Some(s) = action.get::<Name>(keys::S) {
-            if s.as_ref() == keys::JAVA_SCRIPT {
-                return true;
-            }
-        }
-    }
-
-    // Check AA (Additional Actions) on catalog
-    if cat.get::<Dict<'_>>(keys::AA).is_some() {
-        return true;
-    }
-
-    false
-}
-
 /// Check if the document has embedded files.
 pub fn has_embedded_files(pdf: &Pdf) -> bool {
     let Some(cat) = catalog(pdf) else {
@@ -291,179 +261,250 @@ pub fn page_has_tab_order_s(page_dict: &Dict<'_>) -> bool {
     }
 }
 
-/// Validate XMP date strings conform to ISO 8601 / XMP date format.
+/// Check XMP properties use only predefined or declared extension schemas (§6.6.2.3.1 / §6.7.9).
 ///
-/// Valid formats:
-/// - YYYY
-/// - YYYY-MM
-/// - YYYY-MM-DD
-/// - YYYY-MM-DDThh:mmTZD
-/// - YYYY-MM-DDThh:mm:ssTZD
-/// - YYYY-MM-DDThh:mm:ss.sTZD
-///
-/// TZD = Z | +hh:mm | -hh:mm
-pub fn validate_xmp_dates(xmp: &[u8], report: &mut ComplianceReport) {
+/// All XMP properties must come from known schemas (xmp, dc, xmpMM, pdf, pdfaid, etc.)
+/// or be declared via pdfaExtension:schemas.
+pub fn check_xmp_schemas(xmp: &[u8], rule: &str, report: &mut ComplianceReport) {
     let Ok(text) = std::str::from_utf8(xmp) else {
         return;
     };
 
-    let date_keys = ["xmp:CreateDate", "xmp:ModifyDate", "xmp:MetadataDate"];
-    for key in &date_keys {
-        if let Some(value) = extract_xmp_value(text, key).or_else(|| extract_xmp_attr(text, key)) {
-            if !is_valid_xmp_date(&value) {
-                error(
-                    report,
-                    "6.6.2.3.1",
-                    format!("{key} has invalid date format: {value}"),
-                );
-            }
-        }
-    }
-}
-
-/// Check if a date string is a valid XMP/ISO 8601 date.
-fn is_valid_xmp_date(date: &str) -> bool {
-    let date = date.trim();
-    if date.is_empty() {
-        return false;
-    }
-
-    // Must start with 4-digit year
-    if date.len() < 4 || !date[..4].chars().all(|c| c.is_ascii_digit()) {
-        return false;
-    }
-
-    // YYYY
-    if date.len() == 4 {
-        return true;
-    }
-
-    // YYYY-MM
-    if date.len() >= 7 && &date[4..5] == "-" {
-        let month = &date[5..7];
-        if !month.chars().all(|c| c.is_ascii_digit()) {
-            return false;
-        }
-        if date.len() == 7 {
-            return true;
-        }
-    } else {
-        return false;
-    }
-
-    // YYYY-MM-DD
-    if date.len() >= 10 && &date[7..8] == "-" {
-        let day = &date[8..10];
-        if !day.chars().all(|c| c.is_ascii_digit()) {
-            return false;
-        }
-        if date.len() == 10 {
-            return true;
-        }
-    } else {
-        return false;
-    }
-
-    // After date, expect T for time
-    if date.len() > 10 && &date[10..11] != "T" {
-        return false;
-    }
-
-    // The time portion after T should have hh:mm at minimum
-    if date.len() > 11 {
-        let time_part = &date[11..];
-        // Basic check: contains digits and valid timezone
-        let has_tz = time_part.ends_with('Z')
-            || time_part.contains('+')
-            || time_part.matches('-').count() >= 1;
-        // Must have at least hh:mm (5 chars) + timezone
-        return time_part.len() >= 5 && has_tz;
-    }
-
-    false
-}
-
-/// Check widget annotations for required /AP (appearance) dictionaries.
-pub fn check_widget_appearances(pdf: &Pdf, report: &mut ComplianceReport) {
-    for (page_idx, page) in pdf.pages().iter().enumerate() {
-        let page_dict = page.raw();
-        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
-            continue;
-        };
-        for annot_dict in annots.iter::<Dict<'_>>() {
-            let subtype = annot_dict.get::<Name>(keys::SUBTYPE);
-            let is_widget = subtype.as_ref().is_some_and(|s| s.as_ref() == keys::WIDGET);
-            if !is_widget {
-                continue;
-            }
-            if annot_dict.get::<Dict<'_>>(keys::AP).is_none() {
-                error_at(
-                    report,
-                    "6.7.9",
-                    "Widget annotation missing /AP (appearance dictionary)",
-                    format!("page {}", page_idx + 1),
-                );
-            }
-        }
-    }
-}
-
-/// Check that rendering intents are valid PDF/A values.
-///
-/// PDF/A allows only: RelativeColorimetric, AbsoluteColorimetric, Perceptual, Saturation.
-pub fn check_rendering_intents(pdf: &Pdf, report: &mut ComplianceReport) {
-    let valid_intents: &[&[u8]] = &[
-        keys::RELATIVE_COLORIMETRIC,
-        keys::ABSOLUTE_COLORIMETRIC,
-        keys::PERCEPTUAL,
-        keys::SATURATION,
+    // Known predefined XMP namespaces (PDF/A-1 §6.7.9, PDF/A-2 §6.6.2.3.1)
+    let predefined_prefixes = [
+        "dc:",
+        "xmp:",
+        "xmpMM:",
+        "xmpRights:",
+        "xmpTPg:",
+        "xmpDM:",
+        "pdf:",
+        "pdfaid:",
+        "pdfuaid:",
+        "pdfx:",
+        "pdfxid:",
+        "pdfa:",
+        "pdfaExtension:",
+        "pdfaSchema:",
+        "pdfaProperty:",
+        "pdfaType:",
+        "pdfaField:",
+        "photoshop:",
+        "tiff:",
+        "exif:",
+        "stRef:",
+        "stEvt:",
+        "stFnt:",
+        "stDim:",
+        "xmpG:",
+        "xmpBJ:",
+        "rdf:",
+        "xml:",
+        "x:",
     ];
 
-    for (page_idx, page) in pdf.pages().iter().enumerate() {
-        let page_dict = page.raw();
-        // Check page-level RI
-        if let Some(ri) = page_dict.get::<Name>(keys::RI) {
-            if !valid_intents.iter().any(|v| ri.as_ref() == *v) {
-                error_at(
-                    report,
-                    "6.2.4.3",
-                    format!(
-                        "Invalid rendering intent: {}",
-                        std::str::from_utf8(ri.as_ref()).unwrap_or("?")
-                    ),
-                    format!("page {}", page_idx + 1),
-                );
-            }
-        }
+    // Check if extension schemas are declared
+    let has_extension_schemas = text.contains("pdfaExtension:schemas");
 
-        // Check ExtGState rendering intents
-        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
-            continue;
-        };
-        let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
-            continue;
-        };
-        for (gs_name, _) in gs_dict.entries() {
-            if let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) {
-                if let Some(ri) = gs.get::<Name>(keys::RI) {
-                    if !valid_intents.iter().any(|v| ri.as_ref() == *v) {
-                        error_at(
-                            report,
-                            "6.2.4.3",
-                            format!(
-                                "Invalid rendering intent in ExtGState: {}",
-                                std::str::from_utf8(ri.as_ref()).unwrap_or("?")
-                            ),
-                            format!("page {}", page_idx + 1),
-                        );
+    // Find all namespace-prefixed properties in XMP
+    // Look for patterns like <prefix:property> or prefix:property="value"
+    let mut pos = 0;
+    let bytes = text.as_bytes();
+    while pos < bytes.len() {
+        // Look for '<' or space followed by a namespace prefix
+        if bytes[pos] == b'<' || bytes[pos] == b' ' {
+            let start = pos + 1;
+            if start < bytes.len() && bytes[start].is_ascii_alphabetic() {
+                // Find the colon
+                if let Some(colon_offset) = text[start..].find(':') {
+                    let prefix_end = start + colon_offset + 1;
+                    let prefix = &text[start..prefix_end];
+
+                    // Skip closing tags
+                    if prefix.starts_with('/') {
+                        pos = prefix_end;
+                        continue;
+                    }
+
+                    // Check if it's a known prefix
+                    if !predefined_prefixes.contains(&prefix)
+                        && !has_extension_schemas
+                        && prefix
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == ':')
+                        && prefix.len() < 30
+                    {
+                        let prop_end = text[prefix_end..]
+                            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+                            .map(|i| prefix_end + i)
+                            .unwrap_or(prefix_end);
+                        let full_prop = &text[start..prop_end];
+                        if !full_prop.is_empty() && full_prop.contains(':') {
+                            error(
+                                report,
+                                rule,
+                                format!(
+                                    "XMP property '{full_prop}' uses undeclared schema prefix without extension schema"
+                                ),
+                            );
+                            return; // Report once per document
+                        }
                     }
                 }
             }
         }
+        pos += 1;
     }
 }
 
-/// Check Info dict dates match XMP metadata dates (§6.6.1).
+/// Check for forbidden actions (§6.6.1).
+///
+/// Launch, Sound, Movie, ResetForm, ImportData, and JavaScript actions are forbidden.
+pub fn check_forbidden_actions(pdf: &Pdf, report: &mut ComplianceReport) {
+    let forbidden: &[&[u8]] = &[
+        b"Launch",
+        b"Sound",
+        b"Movie",
+        b"ResetForm",
+        b"ImportData",
+        keys::JAVA_SCRIPT,
+    ];
+
+    // Check catalog OpenAction
+    if let Some(cat) = catalog(pdf) {
+        if let Some(action) = cat.get::<Dict<'_>>(keys::OPEN_ACTION) {
+            check_action_forbidden(&action, forbidden, "catalog", report);
+        }
+        // Check catalog AA
+        if let Some(aa) = cat.get::<Dict<'_>>(keys::AA) {
+            for (trigger, _) in aa.entries() {
+                if let Some(action) = aa.get::<Dict<'_>>(trigger.as_ref()) {
+                    check_action_forbidden(&action, forbidden, "catalog AA", report);
+                }
+            }
+        }
+    }
+
+    // Check page annotations
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+
+        // Check page-level AA
+        if let Some(aa) = page_dict.get::<Dict<'_>>(keys::AA) {
+            for (trigger, _) in aa.entries() {
+                if let Some(action) = aa.get::<Dict<'_>>(trigger.as_ref()) {
+                    let loc = format!("page {}", page_idx + 1);
+                    check_action_forbidden(&action, forbidden, &loc, report);
+                }
+            }
+        }
+
+        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            if let Some(action) = annot.get::<Dict<'_>>(keys::A) {
+                let loc = format!("page {}", page_idx + 1);
+                check_action_forbidden(&action, forbidden, &loc, report);
+            }
+        }
+    }
+}
+
+fn check_action_forbidden(
+    action: &Dict<'_>,
+    forbidden: &[&[u8]],
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    if let Some(s) = action.get::<Name>(keys::S) {
+        if forbidden.iter().any(|f| s.as_ref() == *f) {
+            let action_name = std::str::from_utf8(s.as_ref()).unwrap_or("?");
+            error_at(
+                report,
+                "6.6.1",
+                format!("Forbidden action type: {action_name}"),
+                location.to_string(),
+            );
+        }
+    }
+}
+
+/// Check device-dependent color spaces have Default alternatives (§6.2.4.3).
+///
+/// DeviceRGB/CMYK/Gray may only be used if DefaultRGB/DefaultCMYK/DefaultGray
+/// is set in the ColorSpace resources (unless an OutputIntent is present).
+pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
+    if has_output_intent(pdf) {
+        return; // OutputIntent provides the fallback
+    }
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
+
+        // Check if Default color spaces are defined
+        let has_default_rgb = res_dict
+            .as_ref()
+            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_RGB))
+            .is_some();
+        let has_default_cmyk = res_dict
+            .as_ref()
+            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_CMYK))
+            .is_some();
+        let has_default_gray = res_dict
+            .as_ref()
+            .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+            .and_then(|cs| cs.get::<Object<'_>>(keys::DEFAULT_GRAY))
+            .is_some();
+
+        // Scan content stream for device color space operators
+        // (rg/RG = DeviceRGB, k/K = DeviceCMYK, g/G = DeviceGray)
+        if let Some(content) = page.page_stream() {
+            let text = String::from_utf8_lossy(content);
+            if !has_default_rgb && (text.contains(" rg") || text.contains(" RG")) {
+                error_at(
+                    report,
+                    "6.2.4.3",
+                    "DeviceRGB used without DefaultRGB color space or OutputIntent",
+                    format!("page {}", page_idx + 1),
+                );
+            }
+            if !has_default_cmyk
+                && (text.contains(" k\n")
+                    || text.contains(" K\n")
+                    || text.contains(" k ")
+                    || text.contains(" K "))
+            {
+                error_at(
+                    report,
+                    "6.2.4.3",
+                    "DeviceCMYK used without DefaultCMYK color space or OutputIntent",
+                    format!("page {}", page_idx + 1),
+                );
+            }
+            if !has_default_gray
+                && (text.contains(" g\n")
+                    || text.contains(" G\n")
+                    || text.contains(" g ")
+                    || text.contains(" G "))
+            {
+                error_at(
+                    report,
+                    "6.2.4.3",
+                    "DeviceGray used without DefaultGray color space or OutputIntent",
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
+}
+
+/// Check Info dict / XMP metadata consistency (§6.7.3).
+///
+/// Properties in /Info dict must have matching values in XMP metadata.
 pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(xmp_data) = get_xmp_metadata(pdf) else {
         return;
@@ -472,27 +513,32 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         return;
     };
 
-    // Check that if /Info has CreationDate, XMP has xmp:CreateDate (and vice versa)
-    let xmp_create = extract_xmp_value(xmp_text, "xmp:CreateDate")
-        .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreateDate"));
-    let xmp_modify = extract_xmp_value(xmp_text, "xmp:ModifyDate")
-        .or_else(|| extract_xmp_attr(xmp_text, "xmp:ModifyDate"));
-
     let metadata = pdf.metadata();
 
-    if metadata.creation_date.is_some() && xmp_create.is_none() {
-        error(
-            report,
-            "6.6.1",
-            "/Info has CreationDate but XMP is missing xmp:CreateDate",
-        );
+    // Check Creator (/Info Creator vs xmp:CreatorTool)
+    if metadata.creator.is_some() {
+        let xmp_creator = extract_xmp_value(xmp_text, "xmp:CreatorTool")
+            .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreatorTool"));
+        if xmp_creator.is_none() {
+            error(
+                report,
+                "6.7.3",
+                "/Info has Creator but XMP is missing xmp:CreatorTool",
+            );
+        }
     }
-    if metadata.modification_date.is_some() && xmp_modify.is_none() {
-        error(
-            report,
-            "6.6.1",
-            "/Info has ModDate but XMP is missing xmp:ModifyDate",
-        );
+
+    // Check Producer (/Info Producer vs pdf:Producer)
+    if metadata.producer.is_some() {
+        let xmp_producer = extract_xmp_value(xmp_text, "pdf:Producer")
+            .or_else(|| extract_xmp_attr(xmp_text, "pdf:Producer"));
+        if xmp_producer.is_none() {
+            error(
+                report,
+                "6.7.3",
+                "/Info has Producer but XMP is missing pdf:Producer",
+            );
+        }
     }
 }
 
@@ -515,58 +561,6 @@ pub fn check_page_dimensions(pdf: &Pdf, report: &mut ComplianceReport) {
                 ),
                 format!("page {}", page_idx + 1),
             );
-        }
-    }
-}
-
-/// Check for forbidden named actions (§6.7.3).
-///
-/// Only NextPage, PrevPage, FirstPage, LastPage are allowed.
-pub fn check_named_actions(pdf: &Pdf, report: &mut ComplianceReport) {
-    let allowed: &[&[u8]] = &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
-
-    for (page_idx, page) in pdf.pages().iter().enumerate() {
-        let page_dict = page.raw();
-        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
-            continue;
-        };
-        for annot in annots.iter::<Dict<'_>>() {
-            check_action_dict_named(&annot, allowed, page_idx, report);
-        }
-    }
-
-    // Also check catalog OpenAction
-    if let Some(cat) = catalog(pdf) {
-        if let Some(action) = cat.get::<Dict<'_>>(keys::OPEN_ACTION) {
-            check_action_dict_named(&action, allowed, 0, report);
-        }
-    }
-}
-
-fn check_action_dict_named(
-    dict: &Dict<'_>,
-    allowed: &[&[u8]],
-    page_idx: usize,
-    report: &mut ComplianceReport,
-) {
-    // Check /A (action) dict
-    if let Some(action) = dict.get::<Dict<'_>>(keys::A) {
-        if let Some(s) = action.get::<Name>(keys::S) {
-            if s.as_ref() == b"Named" {
-                if let Some(n) = action.get::<Name>(keys::N) {
-                    if !allowed.iter().any(|a| n.as_ref() == *a) {
-                        error_at(
-                            report,
-                            "6.7.3",
-                            format!(
-                                "Forbidden named action: {}",
-                                std::str::from_utf8(n.as_ref()).unwrap_or("?")
-                            ),
-                            format!("page {}", page_idx + 1),
-                        );
-                    }
-                }
-            }
         }
     }
 }
