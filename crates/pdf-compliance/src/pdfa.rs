@@ -685,6 +685,8 @@ fn check_no_embedded_files(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceR
 /// §6.1.13 — Name length limit.
 fn check_name_length(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_name_length_limit(pdf, report);
+    check::check_array_capacity_limit(pdf, report);
+    check::check_cid_value_limit(pdf, report);
 }
 
 /// §6.1.12 — Real value range.
