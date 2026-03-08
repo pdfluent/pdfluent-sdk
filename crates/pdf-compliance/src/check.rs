@@ -3187,16 +3187,24 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut Com
 /// Check if a page uses transparency features.
 ///
 /// Uses resolved Resources (handles inherited resources correctly).
-/// Checks ExtGState (SMask, CA, ca, BM) and Image XObjects with /SMask.
+/// Checks ExtGState (SMask, CA, ca, BM), Image XObjects with /SMask,
+/// and recursively checks Form XObject resources.
 fn page_uses_transparency(res: &Resources<'_>) -> bool {
-    // Check ExtGState entries for transparency features
-    let gs_dict = &res.ext_g_states;
+    if extgstate_uses_transparency(&res.ext_g_states) {
+        return true;
+    }
+    if xobjects_use_transparency(&res.x_objects) {
+        return true;
+    }
+    false
+}
+
+/// Check if any ExtGState entry uses transparency features.
+fn extgstate_uses_transparency(gs_dict: &Dict<'_>) -> bool {
     for (name, _) in gs_dict.entries() {
         let Some(gs) = gs_dict.get::<Dict<'_>>(name.as_ref()) else {
             continue;
         };
-
-        // Check SMask (not /None)
         if let Some(smask) = gs.get::<Object<'_>>(keys::SMASK) {
             match smask {
                 Object::Name(n) if n.as_ref() == b"None" => {}
@@ -3205,45 +3213,63 @@ fn page_uses_transparency(res: &Resources<'_>) -> bool {
                 _ => {}
             }
         }
-
-        // Check BM (blend mode) — not Normal/Compatible means transparency
         if let Some(bm) = gs.get::<Name>(keys::BM) {
             let bm_bytes = bm.as_ref();
             if bm_bytes != b"Normal" && bm_bytes != b"Compatible" {
                 return true;
             }
         }
-
-        // Check CA (stroking alpha) < 1.0
         if let Some(Object::Number(ca)) = gs.get::<Object<'_>>(b"CA" as &[u8]) {
             if ca.as_f64() < 1.0 {
                 return true;
             }
         }
-
-        // Check ca (non-stroking alpha) < 1.0
         if let Some(Object::Number(ca)) = gs.get::<Object<'_>>(b"ca" as &[u8]) {
             if ca.as_f64() < 1.0 {
                 return true;
             }
         }
     }
+    false
+}
 
-    // Check Image XObjects for /SMask (soft mask = transparency)
-    let xobj_dict = &res.x_objects;
+/// Check XObjects for transparency: images with /SMask or Form XObjects
+/// containing transparency features in their own resources.
+fn xobjects_use_transparency(xobj_dict: &Dict<'_>) -> bool {
     for (name, _) in xobj_dict.entries() {
         let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
             continue;
         };
         let dict = stream.dict();
         let subtype = dict.get::<Name>(keys::SUBTYPE);
-        if subtype.as_ref().is_some_and(|s| s.as_ref() == keys::IMAGE)
-            && dict.contains_key(keys::SMASK)
-        {
+        let st = subtype.as_ref().map(|s| s.as_ref());
+
+        // Image with soft mask = transparency
+        if st == Some(keys::IMAGE) && dict.contains_key(keys::SMASK) {
             return true;
         }
-    }
 
+        // Form XObject: check its internal resources for transparency
+        if st == Some(keys::FORM) {
+            // Form XObject with its own transparency Group
+            if let Some(group) = dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+                if group
+                    .get::<Name>(keys::S)
+                    .is_some_and(|s| s.as_ref() == b"Transparency")
+                {
+                    return true;
+                }
+            }
+            // Check Form XObject's own ExtGState resources
+            if let Some(form_res) = dict.get::<Dict<'_>>(keys::RESOURCES) {
+                if let Some(gs) = form_res.get::<Dict<'_>>(keys::EXT_G_STATE) {
+                    if extgstate_uses_transparency(&gs) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
     false
 }
 
