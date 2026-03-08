@@ -25,6 +25,8 @@ pub mod font_subset;
 pub mod image_insert;
 pub mod optimize;
 pub mod pages;
+#[cfg(feature = "pdfa-convert")]
+pub mod pdfa_xmp;
 pub mod text_replace;
 pub mod text_run;
 pub mod watermark;
