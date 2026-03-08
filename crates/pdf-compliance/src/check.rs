@@ -251,8 +251,8 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
         if let Some(ref rd) = res_dict {
             scan_shading_cs_vs_profile(rd, profile_components, &loc, report);
             scan_pattern_cs_vs_profile(rd, profile_components, &loc, report);
-            // Scan Image XObject color spaces vs profile
             scan_image_cs_vs_profile(rd, profile_components, &loc, report);
+            scan_type3_charprocs_vs_profile(rd, profile_components, &loc, report);
         }
     }
 }
@@ -337,6 +337,43 @@ fn scan_image_cs_vs_profile(
             let iname = std::str::from_utf8(name.as_ref()).unwrap_or("?");
             let loc = format!("{base_loc} Image {iname}");
             report_cs_name_vs_profile(cs.as_ref(), profile_components, &loc, report);
+        }
+    }
+}
+
+/// Scan Type 3 font CharProcs for device color vs OutputIntent profile (§6.2.3.3).
+fn scan_type3_charprocs_vs_profile(
+    res_dict: &Dict<'_>,
+    profile_components: u32,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(font_dict) = res_dict.get::<Dict<'_>>(keys::FONT) else {
+        return;
+    };
+    for (fname, _) in font_dict.entries() {
+        let Some(font) = font_dict.get::<Dict<'_>>(fname.as_ref()) else {
+            continue;
+        };
+        let is_type3 = font
+            .get::<Name>(keys::SUBTYPE)
+            .is_some_and(|s| s.as_ref() == b"Type3");
+        if !is_type3 {
+            continue;
+        }
+        let Some(charprocs) = font.get::<Dict<'_>>(b"CharProcs" as &[u8]) else {
+            continue;
+        };
+        let fstr = std::str::from_utf8(fname.as_ref()).unwrap_or("?");
+        for (cname, _) in charprocs.entries() {
+            if let Some(stream) = charprocs.get::<Stream<'_>>(cname.as_ref()) {
+                if let Ok(decoded) = stream.decoded() {
+                    let cstr = std::str::from_utf8(cname.as_ref()).unwrap_or("?");
+                    let ops = detect_device_color_ops(&decoded);
+                    let loc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
+                    report_color_vs_profile(&ops, profile_components, &loc, report);
+                }
+            }
         }
     }
 }
@@ -760,6 +797,11 @@ pub fn check_device_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
             scan_pattern_device_colors(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
         }
 
+        // Scan Type 3 font CharProcs for device color operators
+        if let Some(ref rd) = res_dict {
+            scan_type3_font_charprocs(rd, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+        }
+
         // Also check ColorSpace resources for direct device CS references
         if let Some(cs_dict) = res_dict
             .as_ref()
@@ -926,6 +968,45 @@ fn scan_pattern_device_colors(
             if let Ok(decoded) = pat_stream.decoded() {
                 let ploc = format!("{base_loc} Pattern {pname}");
                 report_device_color_ops(&decoded, rgb_ok, cmyk_ok, gray_ok, &ploc, report);
+            }
+        }
+    }
+}
+
+/// Scan Type 3 font CharProcs for device color operators (§6.2.4.3).
+fn scan_type3_font_charprocs(
+    res_dict: &Dict<'_>,
+    rgb_ok: bool,
+    cmyk_ok: bool,
+    gray_ok: bool,
+    base_loc: &str,
+    report: &mut ComplianceReport,
+) {
+    let Some(font_dict) = res_dict.get::<Dict<'_>>(keys::FONT) else {
+        return;
+    };
+    for (fname, _) in font_dict.entries() {
+        let Some(font) = font_dict.get::<Dict<'_>>(fname.as_ref()) else {
+            continue;
+        };
+        // Only Type 3 fonts have CharProcs
+        let is_type3 = font
+            .get::<Name>(keys::SUBTYPE)
+            .is_some_and(|s| s.as_ref() == b"Type3");
+        if !is_type3 {
+            continue;
+        }
+        let Some(charprocs) = font.get::<Dict<'_>>(b"CharProcs" as &[u8]) else {
+            continue;
+        };
+        let fstr = std::str::from_utf8(fname.as_ref()).unwrap_or("?");
+        for (cname, _) in charprocs.entries() {
+            if let Some(stream) = charprocs.get::<Stream<'_>>(cname.as_ref()) {
+                if let Ok(decoded) = stream.decoded() {
+                    let cstr = std::str::from_utf8(cname.as_ref()).unwrap_or("?");
+                    let cloc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
+                    report_device_color_ops(&decoded, rgb_ok, cmyk_ok, gray_ok, &cloc, report);
+                }
             }
         }
     }
