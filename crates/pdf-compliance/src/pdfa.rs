@@ -113,15 +113,8 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_explicit_resources(pdf, &mut report);
 
     // Post-process: remap clause numbers per PDF/A part.
-    // PDF/A-1 uses §6.2.3.3 for device color space restrictions;
-    // PDF/A-2/3/4 use §6.2.4.3 for the same check.
-    if level.part() == 1 {
-        for issue in &mut report.issues {
-            if issue.rule == "6.2.4.3" {
-                issue.rule = "6.2.3.3".to_string();
-            }
-        }
-    }
+    // Clause numbering differs between ISO 19005 parts.
+    remap_clause_numbers(&mut report, level);
 
     report.compliant = report.is_compliant();
     report
@@ -683,6 +676,52 @@ fn check_font_file_format(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRe
 /// §6.2.2 — Explicit Resources.
 fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_explicit_resources(pdf, report);
+}
+
+/// Remap clause numbers to match the correct ISO 19005 part numbering.
+///
+/// Our checks use a canonical clause number (typically from PDF/A-2/4),
+/// but each ISO part has its own numbering for the same requirement.
+fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
+    let part = level.part();
+    for issue in &mut report.issues {
+        let new_rule = match (part, issue.rule.as_str()) {
+            // Device color space restrictions
+            // PDF/A-1: §6.2.3.3, PDF/A-2/3/4: §6.2.4.3
+            (1, "6.2.4.3") => Some("6.2.3.3"),
+
+            // Annotation appearance/flags
+            // PDF/A-1: §6.5.3, PDF/A-2/3/4: §6.3.3
+            (2..=4, "6.5.3") => Some("6.3.3"),
+
+            // Annotation subtypes
+            // PDF/A-1: §6.5.2, PDF/A-4: §6.3.1
+            (4, "6.5.2") => Some("6.3.1"),
+
+            // Transfer function (TR key)
+            // PDF/A-1: §6.2.4, PDF/A-4: §6.2.5
+            (4, "6.2.10.5") => Some("6.2.5"),
+            (1, "6.2.10.5") => Some("6.2.4"),
+
+            // ExtGState/color restrictions
+            // PDF/A-1: §6.2.3.x, PDF/A-2/3/4: §6.2.4.x
+            (1, "6.2.4.2") => Some("6.2.3.2"),
+            (1, "6.2.4.1") => Some("6.2.3.1"),
+
+            // Halftone type
+            // PDF/A-1: §6.2.4, PDF/A-4: §6.2.5
+            (4, "6.2.10") => Some("6.2.5"),
+
+            // Syntax spacing
+            // PDF/A-1: §6.1.8, PDF/A-2/3: §6.1.9
+            (2 | 3, "6.1.8") => Some("6.1.9"),
+
+            _ => None,
+        };
+        if let Some(r) = new_rule {
+            issue.rule = r.to_string();
+        }
+    }
 }
 
 #[cfg(test)]
