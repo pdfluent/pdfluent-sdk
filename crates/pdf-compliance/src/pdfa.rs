@@ -122,6 +122,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_real_value_range(pdf, level, &mut report);
     check_font_file_format(pdf, level, &mut report);
     check_explicit_resources(pdf, &mut report);
+    check::check_name_utf8(pdf, &mut report);
 
     check_trailer_requirements(pdf, level, &mut report);
 
@@ -845,6 +846,16 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // CIDSystemInfo compatibility
             // PDF/A-2/3: §6.2.11.3.1
             (2..=3, "6.3.3.1") => Some("6.2.11.3.1"),
+
+            // Font embedding
+            // PDF/A-1: §6.3.3 → §6.3.4 (veraPDF uses 6.3.4 for font embedding in PDF/A-1)
+            (1, "6.3.3") => Some("6.3.4"),
+            // PDF/A-2/3: §6.3.4 → §6.2.11.4.1
+            (2..=3, "6.3.4") => Some("6.2.11.4.1"),
+            (2..=3, "6.3.3") => Some("6.2.11.4.1"),
+            // PDF/A-4: §6.3.4 → §6.2.10.4.1 (different numbering in ISO 19005-4)
+            (4, "6.3.4") => Some("6.2.10.4.1"),
+            (4, "6.3.3") => Some("6.2.10.4.1"),
 
             _ => None,
         };
