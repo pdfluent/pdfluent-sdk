@@ -47,6 +47,21 @@ impl PdfALevel {
     pub fn requires_tagged(self) -> bool {
         matches!(self, Self::A1a | Self::A2a | Self::A3a)
     }
+
+    /// Detect PDF/A level from part number and conformance letter.
+    pub fn from_parts(part: u8, conformance: &str) -> Option<Self> {
+        match (part, conformance.to_ascii_uppercase().as_str()) {
+            (1, "A") => Some(Self::A1a),
+            (1, "B") | (1, _) => Some(Self::A1b),
+            (2, "A") => Some(Self::A2a),
+            (2, "U") => Some(Self::A2u),
+            (2, "B") | (2, _) => Some(Self::A2b),
+            (3, "A") => Some(Self::A3a),
+            (3, "U") => Some(Self::A3u),
+            (3, "B") | (3, _) => Some(Self::A3b),
+            _ => None,
+        }
+    }
 }
 
 /// A single compliance issue found during checking.
@@ -110,6 +125,13 @@ impl ComplianceReport {
 /// Validate a PDF against a PDF/A conformance level.
 pub fn validate_pdfa(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     pdfa::validate(pdf, level)
+}
+
+/// Detect the PDF/A level declared in XMP metadata.
+pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
+    let xmp = check::get_xmp_metadata(pdf)?;
+    let (part, conformance) = check::parse_xmp_pdfa(&xmp)?;
+    PdfALevel::from_parts(part, &conformance)
 }
 
 /// Validate a PDF against PDF/UA-1 (ISO 14289-1).
