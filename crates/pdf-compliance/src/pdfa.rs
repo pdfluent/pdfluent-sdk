@@ -90,14 +90,17 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_document_structure_pdfa(pdf, &mut report);
     check_marked_content(pdf, &mut report);
     check::check_xmp_pdfa_identification(pdf, &mut report);
+    check::check_stream_empty_keys(pdf, &mut report);
 
     // PDF/A-4 requires tagged PDF for all conformance levels;
     // PDF/A-1a/2a/3a require it only for level 'a'
+    // Lang validation applies to all PDF/A levels (not just tagged)
+    check_lang(pdf, &mut report);
+
     if level.requires_tagged() || level.part() == 4 {
         check_tagged_requirements(pdf, level, &mut report);
         check_table_structure_pdfa(pdf, &mut report);
         check_figure_alt(pdf, &mut report);
-        check_lang(pdf, &mut report);
         check_role_mapping_pdfa(pdf, &mut report);
         check::check_mark_info(pdf, &mut report);
     }
@@ -107,6 +110,8 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         4 => {
             // PDF/A-4f allows embedded files; base and 4e do not restrict
             // (PDF/A-4 inherits PDF 2.0 which allows associated files)
+            // PDF/A-4 must not have pdfaid:conformance
+            check::check_pdfa4_conformance_absent(pdf, &mut report);
         }
         _ => check_no_embedded_files(pdf, level, &mut report),
     }
