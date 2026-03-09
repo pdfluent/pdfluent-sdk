@@ -1,0 +1,13 @@
+[package]
+name = "pdf-java"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Java JNI bindings for the XFA PDF engine."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pdf-engine = { path = "../pdf-engine" }
+jni = "0.21"
