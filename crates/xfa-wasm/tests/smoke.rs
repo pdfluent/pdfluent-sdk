@@ -89,8 +89,8 @@ fn test_07_annotations_read() {
     let doc = PdfDoc::open(SAMPLE_PDF).expect("open");
     let annots_json = doc.get_annotations(0).expect("get annotations");
     let annots: Vec<serde_json::Value> = serde_json::from_str(&annots_json).expect("valid JSON");
-    // simple.pdf may or may not have annotations
-    assert!(annots.len() >= 0); // just verify it parses
+    // simple.pdf may or may not have annotations; just verify it parses
+    let _ = annots.len();
 }
 
 // ---------- Scenario 8: Add highlight, save ----------
