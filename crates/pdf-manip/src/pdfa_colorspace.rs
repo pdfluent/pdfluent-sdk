@@ -168,15 +168,19 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
         unique_names.iter().any(|n| n.contains("DeviceCMYK")) || has_device_cmyk_in_objects(doc);
 
     let output_intent_added = if !had_output_intent {
-        if has_cmyk {
-            add_cmyk_output_intent(doc)?;
-        } else {
-            add_srgb_output_intent(doc)?;
-        }
+        // Always add sRGB OutputIntent — DeviceRGB is used implicitly by most PDFs.
+        // Only one GTS_PDFA1 OutputIntent is allowed, so we use sRGB.
+        add_srgb_output_intent(doc)?;
         true
     } else {
         false
     };
+
+    // If DeviceCMYK is used, add DefaultCMYK ICCBased colorspace to page resources
+    // so veraPDF accepts DeviceCMYK usage alongside the sRGB OutputIntent.
+    if has_cmyk {
+        add_default_cmyk_colorspace(doc);
+    }
 
     let separations_unified = normalize_separation_colorspaces(doc);
     let overprint_mode_fixed = fix_overprint_mode(doc);
@@ -228,6 +232,7 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
 }
 
 /// Add a CMYK OutputIntent to the document for PDF/A compliance.
+#[allow(dead_code)]
 fn add_cmyk_output_intent(doc: &mut Document) -> Result<()> {
     let icc_bytes = cmyk_icc_profile_bytes();
 
@@ -532,6 +537,84 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
     debug_assert_eq!(p.len(), 444);
 
     p
+}
+
+/// Add DefaultCMYK ICCBased colorspace to all page resources.
+/// This allows DeviceCMYK usage when the OutputIntent is sRGB (not CMYK).
+fn add_default_cmyk_colorspace(doc: &mut Document) {
+    let icc_bytes = cmyk_icc_profile_bytes();
+    let icc_dict = dictionary! {
+        "N" => Object::Integer(4),
+        "Alternate" => Object::Name(b"DeviceCMYK".to_vec()),
+    };
+    let icc_stream = Stream::new(icc_dict, icc_bytes);
+    let icc_id = doc.add_object(Object::Stream(icc_stream));
+
+    // Create ICCBased colorspace array: [/ICCBased <ref>]
+    let cs_array = Object::Array(vec![
+        Object::Name(b"ICCBased".to_vec()),
+        Object::Reference(icc_id),
+    ]);
+    let cs_id = doc.add_object(cs_array);
+
+    // Add DefaultCMYK to each page's ColorSpace resources.
+    let page_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if get_name(dict, b"Type").as_deref() == Some("Page") {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for page_id in page_ids {
+        // Get or create Resources dict.
+        let res_id = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&page_id) else {
+                continue;
+            };
+            match dict.get(b"Resources").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                Some(Object::Dictionary(_)) => None, // inline resources — handle below
+                _ => None,
+            }
+        };
+
+        if let Some(res_id) = res_id {
+            // Resources is a reference — modify the referenced dict.
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultCMYK") {
+                    cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else {
+            // Resources is inline in the page dict.
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
+                let mut res = match dict.get(b"Resources") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultCMYK") {
+                    cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                    dict.set("Resources", Object::Dictionary(res));
+                }
+            }
+        }
+    }
 }
 
 /// Normalize Separation colorspaces so all with the same name use identical
