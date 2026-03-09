@@ -1030,6 +1030,75 @@ mod tests {
     }
 
     #[test]
+    fn test_output_intent_survives_roundtrip() {
+        let mut doc = make_doc_with_device_rgb();
+        let report = normalize_colorspaces(&mut doc).unwrap();
+        assert!(report.output_intent_added);
+        assert!(has_pdfa_output_intent(&doc));
+
+        // Save and reload
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf).unwrap();
+        let doc2 = Document::load_mem(&buf).unwrap();
+
+        // Check OutputIntent survives serialization
+        assert!(
+            has_pdfa_output_intent(&doc2),
+            "OutputIntent must survive save/load roundtrip"
+        );
+
+        // Check the DestOutputProfile ICC profile is present
+        let catalog = get_catalog(&doc2).unwrap();
+        let intents = match catalog.get(b"OutputIntents").unwrap() {
+            Object::Array(arr) => arr.clone(),
+            Object::Reference(id) => {
+                if let Object::Array(arr) = doc2.objects.get(id).unwrap() {
+                    arr.clone()
+                } else {
+                    panic!("expected array")
+                }
+            }
+            _ => panic!("expected array"),
+        };
+        assert_eq!(intents.len(), 1);
+        let intent = match &intents[0] {
+            Object::Reference(id) => {
+                if let Object::Dictionary(d) = doc2.objects.get(id).unwrap() {
+                    d
+                } else {
+                    panic!("expected dict")
+                }
+            }
+            Object::Dictionary(d) => d,
+            _ => panic!("expected dict"),
+        };
+
+        // Must have DestOutputProfile reference
+        let profile_ref = intent.get(b"DestOutputProfile").unwrap();
+        match profile_ref {
+            Object::Reference(id) => {
+                let profile_obj = doc2.objects.get(id).expect("profile object must exist");
+                match profile_obj {
+                    Object::Stream(stream) => {
+                        // Verify ICC profile size
+                        let content = &stream.content;
+                        assert!(
+                            content.len() > 100,
+                            "ICC profile must be non-trivial, got {} bytes",
+                            content.len()
+                        );
+                        // Verify N=3 (RGB)
+                        let n = stream.dict.get(b"N").unwrap();
+                        assert_eq!(*n, Object::Integer(3));
+                    }
+                    _ => panic!("expected stream for ICC profile"),
+                }
+            }
+            _ => panic!("expected reference for DestOutputProfile"),
+        }
+    }
+
+    #[test]
     fn test_overprint_mode_fixed() {
         let mut doc = Document::with_version("1.7");
         let gs = dictionary! {

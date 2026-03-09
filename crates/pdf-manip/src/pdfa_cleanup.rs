@@ -86,8 +86,11 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_widget_actions(doc);
     remove_xfa_from_acroform(doc);
     fix_widget_btn_appearance(doc);
-    fix_font_descriptor_keys(doc);
-    fix_font_lastchar_widths(doc);
+    // NOTE: fix_font_descriptor_keys and fix_font_lastchar_widths disabled —
+    // they run before embed_fonts and create incorrect state (zero widths,
+    // wrong FontFile key). Font fixes are handled by embed_fonts instead.
+    // fix_font_descriptor_keys(doc);
+    // fix_font_lastchar_widths(doc);
     ensure_xmp_dc_title(doc);
     truncate_long_names(doc);
     fix_soft_mask_colorspace(doc);
@@ -1088,6 +1091,7 @@ fn fix_widget_btn_appearance(doc: &mut Document) {
 /// - CIDFontType0 (CFF) → FontFile3
 ///
 /// If a font descriptor has the wrong FontFile key, rename it to the correct one.
+#[allow(dead_code)]
 fn fix_font_descriptor_keys(doc: &mut Document) {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
 
@@ -1153,6 +1157,7 @@ fn fix_font_descriptor_keys(doc: &mut Document) {
 }
 
 /// Fix simple fonts: ensure LastChar exists and Widths array has correct length (6.2.11.2:5, 6.2.11.2:6).
+#[allow(dead_code)]
 fn fix_font_lastchar_widths(doc: &mut Document) {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
