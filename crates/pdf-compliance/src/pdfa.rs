@@ -19,16 +19,20 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         ..Default::default()
     };
 
+    // Pre-collect all objects once to avoid repeated O(n) parsing per pdf.objects() call.
+    // Skip caching for very large PDFs (>20K objects) where the parse cost dominates.
+    let obj_cache = check::ObjectCache::new_bounded(pdf, 20_000);
+
     check_xmp_metadata(pdf, level, &mut report);
     crate::xmp::validate_xmp(pdf, level, &mut report);
-    check_encryption(pdf, &mut report);
+    check_encryption(pdf, &obj_cache, &mut report);
     check_forbidden_actions(pdf, level, &mut report);
     check_output_intent(pdf, level, &mut report);
     check_font_embedding(pdf, &mut report);
     check_color_spaces(pdf, &mut report);
     check_device_colorspaces(pdf, &mut report);
     check_device_color_vs_output_intent(pdf, &mut report);
-    check_page_dimensions(pdf, level, &mut report);
+    check_page_dimensions(pdf, &obj_cache, level, &mut report);
     check_annotation_flags(pdf, level, &mut report);
     check_annotation_types(pdf, level, &mut report);
     check_annotation_color_arrays(pdf, &mut report);
@@ -49,7 +53,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 
     // Batch 3: File structure, actions, streams (§6.1.x, §6.6.1)
     check_all_page_boundaries(pdf, &mut report);
-    check_stream_filters(pdf, level, &mut report);
+    check_stream_filters_cached(&obj_cache, level, &mut report);
     check_embedded_file_streams(pdf, &mut report);
     check_file_header(pdf, level, &mut report);
     check_xref_format(pdf, &mut report);
@@ -91,7 +95,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_document_structure_pdfa(pdf, &mut report);
     check_marked_content(pdf, &mut report);
     check::check_xmp_pdfa_identification(pdf, &mut report);
-    check::check_stream_empty_keys(pdf, &mut report);
+    check::check_stream_empty_keys_cached(&obj_cache, &mut report);
 
     // PDF/A-4 requires tagged PDF for all conformance levels;
     // PDF/A-1a/2a/3a require it only for level 'a'
@@ -107,22 +111,22 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     }
 
     match level.part() {
-        3 => check_embedded_files_a3(pdf, &mut report),
+        3 => check_embedded_files_a3(pdf, &obj_cache, &mut report),
         4 => {
             // PDF/A-4f allows embedded files; base and 4e do not restrict
             // (PDF/A-4 inherits PDF 2.0 which allows associated files)
             // PDF/A-4 must not have pdfaid:conformance
             check::check_pdfa4_conformance_absent(pdf, &mut report);
         }
-        _ => check_no_embedded_files(pdf, level, &mut report),
+        _ => check_no_embedded_files(pdf, &obj_cache, level, &mut report),
     }
 
     // Batch 6: Implementation limits & structural checks
-    check_name_length(pdf, &mut report);
-    check_real_value_range(pdf, level, &mut report);
-    check_font_file_format(pdf, level, &mut report);
+    check_name_length_cached(pdf, &obj_cache, &mut report);
+    check_real_value_range_cached(&obj_cache, level, &mut report);
+    check_font_file_format_cached(&obj_cache, level, &mut report);
     check_explicit_resources(pdf, &mut report);
-    check::check_name_utf8(pdf, &mut report);
+    check::check_name_utf8_cached(&obj_cache, &mut report);
 
     check_trailer_requirements(pdf, level, &mut report);
 
@@ -135,7 +139,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_xref_syntax_pdfa(pdf, &mut report);
     check_embedded_file_spec(pdf, level, &mut report);
     check_postscript_xobjects_pdfa(pdf, level, &mut report);
-    check::check_stream_external_refs(pdf, &mut report);
+    check::check_stream_external_refs_cached(&obj_cache, &mut report);
     check::check_inline_image_filters(pdf, level.part(), &mut report);
     check::check_no_data_after_eof(pdf, &mut report);
     check::check_widget_no_action(pdf, &mut report);
@@ -147,6 +151,140 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // Clause numbering differs between ISO 19005 parts.
     remap_clause_numbers(&mut report, level);
 
+    report.compliant = report.is_compliant();
+    report
+}
+
+/// Validate with per-check timing output to stderr (for profiling).
+pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
+    use std::time::Instant;
+    let mut report = ComplianceReport {
+        pdfa_level: Some(level),
+        ..Default::default()
+    };
+
+    macro_rules! timed {
+        ($label:expr, $e:expr) => {{
+            let t = Instant::now();
+            $e;
+            let d = t.elapsed();
+            if d.as_millis() > 10 {
+                eprintln!("  {:>8.1?}  {}", d, $label);
+            }
+        }};
+    }
+
+    let t_cache = Instant::now();
+    let obj_cache = check::ObjectCache::new_bounded(pdf, 20_000);
+    eprintln!("  {:>8.1?}  ObjectCache ({})", t_cache.elapsed(),
+        if obj_cache.is_empty() { "skipped" } else { "built" });
+
+    // Batch 1
+    timed!("check_xmp_metadata", check_xmp_metadata(pdf, level, &mut report));
+    timed!("validate_xmp", crate::xmp::validate_xmp(pdf, level, &mut report));
+    timed!("check_encryption", check_encryption(pdf, &obj_cache, &mut report));
+    timed!("check_forbidden_actions", check_forbidden_actions(pdf, level, &mut report));
+    timed!("check_output_intent", check_output_intent(pdf, level, &mut report));
+    timed!("check_font_embedding", check_font_embedding(pdf, &mut report));
+    timed!("check_color_spaces", check_color_spaces(pdf, &mut report));
+    timed!("check_device_colorspaces", check_device_colorspaces(pdf, &mut report));
+    timed!("check_device_color_vs_output_intent", check_device_color_vs_output_intent(pdf, &mut report));
+    timed!("check_page_dimensions", check_page_dimensions(pdf, &obj_cache, level, &mut report));
+    timed!("check_annotation_flags", check_annotation_flags(pdf, level, &mut report));
+    timed!("check_annotation_types", check_annotation_types(pdf, level, &mut report));
+    timed!("check_annotation_color_arrays", check_annotation_color_arrays(pdf, &mut report));
+    timed!("check_form_xobjects", check_form_xobjects(pdf, &mut report));
+    timed!("check_page_boundary_sizes", check_page_boundary_sizes(pdf, &mut report));
+
+    // Batch 2
+    timed!("check_icc_profile_version", check_icc_profile_version(pdf, level, &mut report));
+    timed!("check_iccbased_alternate", check_iccbased_alternate(pdf, &mut report));
+    timed!("check_devicen_separation_alternate", check_devicen_separation_alternate(pdf, &mut report));
+    timed!("check_devicen_colorants", check::check_devicen_colorants(pdf, &mut report));
+    timed!("check_rendering_intents", check_rendering_intents(pdf, &mut report));
+    timed!("check_image_xobjects", check_image_xobjects(pdf, &mut report));
+    timed!("check_halftone_and_transfer", check_halftone_and_transfer(pdf, &mut report));
+    timed!("check_extgstate_restrictions", check_extgstate_restrictions(pdf, level, &mut report));
+    timed!("check_cidfont_embedding", check_cidfont_embedding(pdf, &mut report));
+    timed!("check_output_intent_profile", check_output_intent_profile(pdf, &mut report));
+
+    // Batch 3
+    timed!("check_all_page_boundaries", check_all_page_boundaries(pdf, &mut report));
+    timed!("check_stream_filters", check_stream_filters_cached(&obj_cache, level, &mut report));
+    timed!("check_embedded_file_streams", check_embedded_file_streams(pdf, &mut report));
+    timed!("check_file_header", check_file_header(pdf, level, &mut report));
+    timed!("check_xref_format", check_xref_format(pdf, &mut report));
+    timed!("check_actions_deep", check_actions_deep(pdf, level, &mut report));
+    timed!("check_form_xobject_geometry", check_form_xobject_geometry(pdf, &mut report));
+    timed!("check_optional_content", check_optional_content(pdf, level, &mut report));
+    timed!("check_linearization", check_linearization(pdf, &mut report));
+
+    // Iteration 11
+    timed!("check_image_xobject_colorspaces", check_image_xobject_colorspaces(pdf, &mut report));
+    timed!("check_output_intent_consistency", check_output_intent_consistency(pdf, &mut report));
+    timed!("check_undefined_operators", check_undefined_operators(pdf, &mut report));
+    timed!("check_transparency_vs_output_intent", check_transparency_vs_output_intent(pdf, level, &mut report));
+
+    // Batch 4
+    timed!("check_font_type_key", check_font_type_key(pdf, &mut report));
+    timed!("check_font_embedding_deep", check_font_embedding_deep(pdf, level, &mut report));
+    timed!("check_tounicode_cmap", check_tounicode_cmap(pdf, &mut report));
+    timed!("check_tounicode_values", check::check_tounicode_values(pdf, &mut report));
+    timed!("check_font_widths", check_font_widths(pdf, &mut report));
+    timed!("check_symbolic_truetype_encoding", check_symbolic_truetype_encoding(pdf, &mut report));
+    timed!("check_cidtogidmap_identity", check_cidtogidmap_identity(pdf, &mut report));
+    timed!("check_cmap_embedding", check_cmap_embedding(pdf, &mut report));
+    timed!("check_cidsysteminfo_compat", check::check_cidsysteminfo_compat(pdf, &mut report));
+    timed!("check_annotation_appearance", check_annotation_appearance(pdf, &mut report));
+    timed!("check_annotation_subtypes_deep", check_annotation_subtypes_deep(pdf, level, &mut report));
+    timed!("check_annotation_flags_deep", check_annotation_flags_deep(pdf, level, &mut report));
+
+    if level.part() == 1 {
+        timed!("check_transparency_a1", check_transparency_a1(pdf, &mut report));
+    }
+
+    // Batch 5
+    timed!("check_transparency_deep", check_transparency_deep(pdf, level, &mut report));
+    timed!("check_blending_modes_pdfa", check_blending_modes_pdfa(pdf, level, &mut report));
+    timed!("check_soft_mask", check_soft_mask(pdf, &mut report));
+    timed!("check_need_appearances_pdfa", check_need_appearances_pdfa(pdf, &mut report));
+    timed!("check_signature_restrictions_pdfa", check_signature_restrictions_pdfa(pdf, &mut report));
+    timed!("check_document_structure_pdfa", check_document_structure_pdfa(pdf, &mut report));
+    timed!("check_marked_content", check_marked_content(pdf, &mut report));
+    timed!("check_xmp_pdfa_identification", check::check_xmp_pdfa_identification(pdf, &mut report));
+    timed!("check_stream_empty_keys", check::check_stream_empty_keys_cached(&obj_cache, &mut report));
+    timed!("check_lang", check_lang(pdf, &mut report));
+
+    // Batch 6
+    timed!("check_name_length_limit", check::check_name_length_limit_cached(&obj_cache, &mut report));
+    timed!("check_array_capacity_limit", check::check_array_capacity_limit_cached(&obj_cache, &mut report));
+    timed!("check_cid_value_limit", check::check_cid_value_limit(pdf, &mut report));
+    timed!("check_near_zero_reals", check::check_near_zero_reals_cached(&obj_cache, &mut report));
+    timed!("check_integer_range", check::check_integer_range_cached(&obj_cache, &mut report));
+    timed!("check_real_value_range", check_real_value_range_cached(&obj_cache, level, &mut report));
+    timed!("check_font_file_format", check_font_file_format_cached(&obj_cache, level, &mut report));
+    timed!("check_explicit_resources", check_explicit_resources(pdf, &mut report));
+    timed!("check_name_utf8", check::check_name_utf8_cached(&obj_cache, &mut report));
+    timed!("check_trailer_requirements", check_trailer_requirements(pdf, level, &mut report));
+
+    // Batch 7
+    timed!("check_info_xmp", check_info_xmp(pdf, &mut report));
+    timed!("check_stream_length_pdfa", check_stream_length_pdfa(pdf, &mut report));
+    timed!("check_object_syntax", check_object_syntax(pdf, &mut report));
+    timed!("check_xmp_extension_schema", check_xmp_extension_schema_pdfa(pdf, &mut report));
+    timed!("check_image_intent", check_image_intent(pdf, &mut report));
+    timed!("check_xref_syntax_pdfa", check_xref_syntax_pdfa(pdf, &mut report));
+    timed!("check_embedded_file_spec", check_embedded_file_spec(pdf, level, &mut report));
+    timed!("check_postscript_xobjects", check_postscript_xobjects_pdfa(pdf, level, &mut report));
+    timed!("check_stream_external_refs", check::check_stream_external_refs_cached(&obj_cache, &mut report));
+    timed!("check_inline_image_filters", check::check_inline_image_filters(pdf, level.part(), &mut report));
+    timed!("check_no_data_after_eof", check::check_no_data_after_eof(pdf, &mut report));
+    timed!("check_widget_no_action", check::check_widget_no_action(pdf, &mut report));
+    timed!("check_output_intent_profile_class", check::check_output_intent_profile_class(pdf, &mut report));
+    timed!("check_hex_strings", check::check_hex_strings(pdf, &mut report));
+    timed!("check_output_intent_destref", check::check_output_intent_destref(pdf, &mut report));
+
+    remap_clause_numbers(&mut report, level);
     report.compliant = report.is_compliant();
     report
 }
@@ -195,8 +333,8 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
 }
 
 /// §6.1.1 — PDF/A documents shall not be encrypted.
-fn check_encryption(pdf: &Pdf, report: &mut ComplianceReport) {
-    if check::is_encrypted(pdf) {
+fn check_encryption(pdf: &Pdf, cache: &check::ObjectCache<'_>, report: &mut ComplianceReport) {
+    if check::is_encrypted_cached(pdf, cache) {
         check::error(
             report,
             "6.1.1",
@@ -323,8 +461,8 @@ fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport)
 }
 
 /// §6.1.12/6.1.13 — Implementation limits (real values, name/string lengths, etc.).
-fn check_page_dimensions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    check::check_page_dimensions(pdf, level.part(), report);
+fn check_page_dimensions(pdf: &Pdf, cache: &check::ObjectCache<'_>, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_page_dimensions_with_cache(pdf, cache, level.part(), report);
     // PDF/A-4: catalog Version must match "2.n"
     if level.part() == 4 {
         check::check_catalog_version_pdfa4(pdf, report);
@@ -450,8 +588,12 @@ fn check_all_page_boundaries(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// §6.1.8, §6.1.9 — Stream filter validation.
-fn check_stream_filters(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    check::check_stream_filters(pdf, level.part(), report);
+fn check_stream_filters_cached(
+    cache: &check::ObjectCache<'_>,
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
+    check::check_stream_filters_cached(cache, level.part(), report);
 }
 
 /// §6.1.7, §6.1.7.1 — Embedded file stream type.
@@ -525,8 +667,12 @@ fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
 }
 
 /// PDF/A-3 allows embedded files; check they have proper AF relationships.
-fn check_embedded_files_a3(pdf: &Pdf, report: &mut ComplianceReport) {
-    if check::has_embedded_files(pdf) {
+fn check_embedded_files_a3(
+    pdf: &Pdf,
+    cache: &check::ObjectCache<'_>,
+    report: &mut ComplianceReport,
+) {
+    if check::has_embedded_files_cached(pdf, cache) {
         let Some(cat) = check::catalog(pdf) else {
             return;
         };
@@ -675,11 +821,18 @@ fn check_role_mapping_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// PDF/A-1 and PDF/A-2 forbid embedded files.
-fn check_no_embedded_files(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    if check::has_embedded_files(pdf) {
+fn check_no_embedded_files(
+    pdf: &Pdf,
+    cache: &check::ObjectCache<'_>,
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
+    if check::has_embedded_files_cached(pdf, cache) {
+        // PDF/A-1: §6.1.11, PDF/A-2: §6.1.7
+        let rule = if level.part() == 1 { "6.1.11" } else { "6.1.7" };
         check::error(
             report,
-            "6.1.7",
+            rule,
             format!(
                 "Document contains embedded files; forbidden in PDF/A-{}{}",
                 level.part(),
@@ -692,6 +845,7 @@ fn check_no_embedded_files(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceR
 // ─── Batch 6: Implementation limits & structural checks ─────────────────────
 
 /// §6.1.13 — Name length limit.
+#[allow(dead_code)]
 fn check_name_length(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_name_length_limit(pdf, report);
     check::check_array_capacity_limit(pdf, report);
@@ -700,17 +854,37 @@ fn check_name_length(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_integer_range(pdf, report);
 }
 
+/// §6.1.13 — Name length limit (using pre-cached objects for the hot path).
+fn check_name_length_cached(
+    pdf: &Pdf,
+    cache: &check::ObjectCache<'_>,
+    report: &mut ComplianceReport,
+) {
+    check::check_name_length_limit_cached(cache, report);
+    check::check_array_capacity_limit_cached(cache, report);
+    check::check_cid_value_limit(pdf, report);
+    check::check_near_zero_reals_cached(cache, report);
+    check::check_integer_range_cached(cache, report);
+}
+
 /// §6.1.12 — Real value range.
-fn check_real_value_range(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    // Only PDF/A-1 has the strict 32767 limit; later parts relax it
+fn check_real_value_range_cached(
+    cache: &check::ObjectCache<'_>,
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
     if level.part() == 1 {
-        check::check_real_value_limits(pdf, report);
+        check::check_real_value_limits_cached(cache, report);
     }
 }
 
 /// §6.3.2 — Font file stream format.
-fn check_font_file_format(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    check::check_font_file_subtype(pdf, level.part(), report);
+fn check_font_file_format_cached(
+    cache: &check::ObjectCache<'_>,
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
+    check::check_font_file_subtype_cached(cache, level.part(), report);
 }
 
 /// §6.2.2 — Explicit Resources.
@@ -846,6 +1020,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // CIDSystemInfo compatibility
             // PDF/A-2/3: §6.2.11.3.1
             (2..=3, "6.3.3.1") => Some("6.2.11.3.1"),
+
+            // Name UTF-8 validation — always maps to 6.1.7 for all PDF/A parts
+            (_, "6.1.7-names") => Some("6.1.7"),
 
             // Font embedding
             // PDF/A-1: §6.3.3 → §6.3.4 (veraPDF uses 6.3.4 for font embedding in PDF/A-1)
