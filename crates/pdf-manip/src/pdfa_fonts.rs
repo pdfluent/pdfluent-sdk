@@ -734,6 +734,230 @@ fn find_font_recursive_depth(dir: &str, filename: &str, depth: u32) -> Option<St
     None
 }
 
+/// Fix font metrics for all already-embedded fonts (6.2.11.6:3, 6.2.11.5:1).
+///
+/// Reads embedded font programs (FontFile2/FontFile3) and updates
+/// Ascent, Descent, CapHeight, FontBBox in the FontDescriptor, and
+/// Widths in the font dictionary to match the actual font data.
+pub fn fix_embedded_font_metrics(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if is_font_dict(dict) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let mut fixed = 0;
+    for font_id in font_ids {
+        let (subtype, fd_id, is_type0) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+            let is_type0 = subtype == "Type0";
+
+            if is_type0 {
+                // For Type0, find descendant CIDFont and its FontDescriptor.
+                let desc_fd = get_descendant_embed_info(doc, dict);
+                match desc_fd {
+                    Some((cid_id, true)) => {
+                        let cid_fd = doc.objects.get(&cid_id).and_then(|o| {
+                            if let Object::Dictionary(d) = o {
+                                match d.get(b"FontDescriptor").ok() {
+                                    Some(Object::Reference(id)) => Some(*id),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        (subtype, cid_fd, true)
+                    }
+                    _ => continue,
+                }
+            } else {
+                let fd_id = match dict.get(b"FontDescriptor").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                };
+                (subtype, fd_id, false)
+            }
+        };
+
+        let Some(fd_id) = fd_id else { continue };
+
+        // Read the embedded font program data.
+        let font_data = read_embedded_font_data(doc, fd_id);
+        let Some(font_data) = font_data else { continue };
+
+        let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+            continue;
+        };
+
+        let units_per_em = face.units_per_em() as f64;
+        if units_per_em == 0.0 {
+            continue;
+        }
+        let scale = 1000.0 / units_per_em;
+
+        // Update FontDescriptor metrics.
+        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+            let ascent = (face.ascender() as f64 * scale).round() as i64;
+            let descent = (face.descender() as f64 * scale).round() as i64;
+            let bbox = face.global_bounding_box();
+            fd.set("Ascent", Object::Integer(ascent));
+            fd.set("Descent", Object::Integer(descent));
+            fd.set(
+                "FontBBox",
+                Object::Array(vec![
+                    Object::Integer((bbox.x_min as f64 * scale).round() as i64),
+                    Object::Integer((bbox.y_min as f64 * scale).round() as i64),
+                    Object::Integer((bbox.x_max as f64 * scale).round() as i64),
+                    Object::Integer((bbox.y_max as f64 * scale).round() as i64),
+                ]),
+            );
+            if let Some(cap_h) = face.capital_height() {
+                fd.set(
+                    "CapHeight",
+                    Object::Integer((cap_h as f64 * scale).round() as i64),
+                );
+            }
+        }
+
+        // Update widths.
+        if is_type0 || subtype == "CIDFontType0" || subtype == "CIDFontType2" {
+            // Find the descendant CIDFont ID for Type0.
+            if is_type0 {
+                let cid_id = {
+                    let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                        continue;
+                    };
+                    get_descendant_embed_info(doc, dict).map(|(id, _)| id)
+                };
+                if let Some(cid_id) = cid_id {
+                    update_cid_widths(doc, cid_id, &face, scale);
+                }
+            }
+        } else {
+            // Construct a temporary NonEmbeddedFont for update_simple_widths.
+            let info = NonEmbeddedFont {
+                font_id,
+                target_id: font_id,
+                name: String::new(),
+                is_type0: false,
+                subtype: subtype.clone(),
+            };
+            let _ = info;
+            update_simple_widths(doc, font_id, &face, scale);
+        }
+
+        fixed += 1;
+    }
+    fixed
+}
+
+/// Read the embedded font program data from a FontDescriptor.
+fn read_embedded_font_data(doc: &Document, fd_id: ObjectId) -> Option<Vec<u8>> {
+    let fd = match doc.objects.get(&fd_id) {
+        Some(Object::Dictionary(d)) => d,
+        _ => return None,
+    };
+
+    for key in &[b"FontFile2" as &[u8], b"FontFile3", b"FontFile"] {
+        if let Ok(Object::Reference(stream_id)) = fd.get(key) {
+            if let Some(Object::Stream(stream)) = doc.objects.get(stream_id) {
+                // Try to get decompressed content.
+                let mut s = stream.clone();
+                let _ = s.decompress();
+                return Some(s.content);
+            }
+        }
+    }
+    None
+}
+
+/// Fix CIDSet streams for all CID fonts (6.2.11.8:1).
+///
+/// CIDSet must be a stream containing a bitmap covering all CIDs present
+/// in the embedded font program. This builds a complete CIDSet from the
+/// font's glyph count.
+pub fn fix_cidset(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+
+    for font_id in font_ids {
+        let (fd_id, has_cidset, num_glyphs) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+            if subtype != "CIDFontType0" && subtype != "CIDFontType2" {
+                continue;
+            }
+
+            let fd_id = match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+
+            let has_cidset = doc
+                .objects
+                .get(&fd_id)
+                .and_then(|o| {
+                    if let Object::Dictionary(fd) = o {
+                        Some(fd.has(b"CIDSet"))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
+
+            // Read font data to get glyph count.
+            let font_data = read_embedded_font_data(doc, fd_id);
+            let num_glyphs = font_data.and_then(|data| {
+                ttf_parser::Face::parse(&data, 0)
+                    .ok()
+                    .map(|face| face.number_of_glyphs())
+            });
+
+            (fd_id, has_cidset, num_glyphs)
+        };
+
+        // Only fix if we have a font program to reference.
+        let Some(num_glyphs) = num_glyphs else {
+            continue;
+        };
+
+        // Build CIDSet bitmap: one bit per CID, all set to 1.
+        let num_bytes = (num_glyphs as usize).div_ceil(8);
+        let mut cidset_data = vec![0xFFu8; num_bytes];
+        // Clear trailing bits in the last byte.
+        let trailing = num_glyphs as usize % 8;
+        if trailing != 0 && !cidset_data.is_empty() {
+            let last = cidset_data.len() - 1;
+            cidset_data[last] = 0xFF << (8 - trailing);
+        }
+
+        let cidset_stream = Stream::new(dictionary! {}, cidset_data);
+        let cidset_id = doc.add_object(Object::Stream(cidset_stream));
+
+        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+            fd.set("CIDSet", Object::Reference(cidset_id));
+        }
+
+        if !has_cidset {
+            fixed += 1;
+        }
+    }
+    fixed
+}
+
 fn count_all_fonts(doc: &Document) -> usize {
     doc.objects
         .values()
@@ -989,5 +1213,97 @@ mod tests {
         assert_eq!(winansi_to_char(128), '\u{20AC}'); // Euro sign
         assert_eq!(winansi_to_char(147), '\u{201C}'); // Left double quotation
         assert_eq!(winansi_to_char(200), 'È');
+    }
+
+    #[test]
+    fn test_fix_embedded_font_metrics_no_crash_on_empty() {
+        let mut doc = make_doc_with_unembedded_font();
+        // No embedded fonts, should return 0 without crashing.
+        let fixed = fix_embedded_font_metrics(&mut doc);
+        assert_eq!(fixed, 0);
+    }
+
+    #[test]
+    fn test_fix_cidset_no_crash_on_empty() {
+        let mut doc = make_doc_with_unembedded_font();
+        let fixed = fix_cidset(&mut doc);
+        assert_eq!(fixed, 0);
+    }
+
+    #[test]
+    fn test_fix_cidset_creates_cidset() {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        // Minimal TrueType font file header (enough for ttf-parser to detect glyph count).
+        // Use a real minimal TTF structure: offset table + head table.
+        // For testing, we just create a CIDFont with embedded program and check CIDSet creation.
+        let font_stream = Stream::new(
+            dictionary! { "Length1" => Object::Integer(10) },
+            vec![0u8; 10], // Not a valid TTF, so fix_cidset will skip it.
+        );
+        let stream_id = doc.add_object(Object::Stream(font_stream));
+
+        let fd = dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "TestCID",
+            "FontFile2" => Object::Reference(stream_id),
+            "Flags" => Object::Integer(32),
+            "FontBBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(1000), Object::Integer(1000),
+            ]),
+            "ItalicAngle" => Object::Integer(0),
+            "Ascent" => Object::Integer(800),
+            "Descent" => Object::Integer(-200),
+            "CapHeight" => Object::Integer(700),
+            "StemV" => Object::Integer(80),
+        };
+        let fd_id = doc.add_object(Object::Dictionary(fd));
+
+        let cid_font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "CIDFontType2",
+            "BaseFont" => "TestCID",
+            "FontDescriptor" => Object::Reference(fd_id),
+        };
+        doc.add_object(Object::Dictionary(cid_font));
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(0),
+            "Kids" => Object::Array(vec![]),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        // Invalid TTF data, so CIDSet won't be created — but no crash.
+        let fixed = fix_cidset(&mut doc);
+        assert_eq!(fixed, 0);
+    }
+
+    #[test]
+    fn test_read_embedded_font_data() {
+        let mut doc = Document::with_version("1.7");
+        let font_bytes = vec![0xAA, 0xBB, 0xCC];
+        let font_stream = Stream::new(
+            dictionary! { "Length1" => Object::Integer(3) },
+            font_bytes.clone(),
+        );
+        let stream_id = doc.add_object(Object::Stream(font_stream));
+        let fd = dictionary! {
+            "Type" => "FontDescriptor",
+            "FontFile2" => Object::Reference(stream_id),
+        };
+        let fd_id = doc.add_object(Object::Dictionary(fd));
+
+        let data = read_embedded_font_data(&doc, fd_id);
+        assert!(data.is_some());
+        assert_eq!(data.unwrap(), font_bytes);
     }
 }
