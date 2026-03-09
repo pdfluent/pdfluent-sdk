@@ -19,6 +19,10 @@ pub struct ColorSpaceReport {
     pub pages_scanned: usize,
     /// Number of Separation colorspaces unified (rule 6.2.4.4:2).
     pub separations_unified: usize,
+    /// Number of ExtGState OPM values fixed (rule 6.2.4.2:2).
+    pub overprint_mode_fixed: usize,
+    /// Number of ICCBased /N values corrected (rule 6.2.4.2:1).
+    pub icc_n_fixed: usize,
 }
 
 /// Detect device-dependent color spaces used in page resources.
@@ -175,6 +179,8 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     };
 
     let separations_unified = normalize_separation_colorspaces(doc);
+    let overprint_mode_fixed = fix_overprint_mode(doc);
+    let icc_n_fixed = fix_iccbased_n_value(doc);
 
     Ok(ColorSpaceReport {
         had_output_intent,
@@ -182,6 +188,8 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
         device_colorspaces_found: unique_names,
         pages_scanned,
         separations_unified,
+        overprint_mode_fixed,
+        icc_n_fixed,
     })
 }
 
@@ -635,6 +643,77 @@ fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &
     }
 }
 
+/// Fix overprint mode: set OPM to 0 when overprinting is enabled (PDF/A rule 6.2.4.2:2).
+///
+/// When ICCBased CMYK is in use, OPM=1 is forbidden if overprinting is on.
+/// Safest fix: set OPM to 0 in all ExtGState dictionaries.
+fn fix_overprint_mode(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+            matches!(dict.get(b"OPM").ok(), Some(Object::Integer(1)))
+        } else {
+            false
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.set("OPM", Object::Integer(0));
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Fix ICCBased colorspace streams: ensure /N matches the profile header (rule 6.2.4.2:1).
+///
+/// If an ICCBased stream has /N that doesn't match the ICC header's color space,
+/// update /N to the correct value.
+fn fix_iccbased_n_value(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let correct_n = if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+            // ICCBased streams typically have /N. Check if it matches the profile.
+            let declared_n = match stream.dict.get(b"N").ok() {
+                Some(Object::Integer(n)) => Some(*n),
+                _ => None,
+            };
+            let Some(declared) = declared_n else {
+                continue;
+            };
+            // Read ICC header: bytes 16..20 contain the color space signature.
+            let content = &stream.content;
+            if content.len() < 20 {
+                continue;
+            }
+            let cs_sig = &content[16..20];
+            let expected_n: i64 = match cs_sig {
+                b"GRAY" => 1,
+                b"RGB " => 3,
+                b"CMYK" => 4,
+                b"Lab " => 3,
+                _ => continue,
+            };
+            if declared != expected_n {
+                Some(expected_n)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(n) = correct_n {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.dict.set("N", Object::Integer(n));
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 fn is_device_dependent(name: &str) -> bool {
     matches!(name, "DeviceRGB" | "DeviceCMYK" | "DeviceGray")
 }
@@ -948,5 +1027,75 @@ mod tests {
         } else {
             panic!("expected dictionary");
         }
+    }
+
+    #[test]
+    fn test_overprint_mode_fixed() {
+        let mut doc = Document::with_version("1.7");
+        let gs = dictionary! {
+            "Type" => "ExtGState",
+            "OPM" => Object::Integer(1),
+            "OP" => Object::Boolean(true),
+        };
+        let gs_id = doc.add_object(Object::Dictionary(gs));
+
+        let count = fix_overprint_mode(&mut doc);
+        assert_eq!(count, 1);
+
+        if let Object::Dictionary(dict) = &doc.objects[&gs_id] {
+            assert_eq!(*dict.get(b"OPM").unwrap(), Object::Integer(0));
+        }
+    }
+
+    #[test]
+    fn test_overprint_mode_zero_untouched() {
+        let mut doc = Document::with_version("1.7");
+        let gs = dictionary! {
+            "Type" => "ExtGState",
+            "OPM" => Object::Integer(0),
+        };
+        doc.add_object(Object::Dictionary(gs));
+
+        let count = fix_overprint_mode(&mut doc);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_icc_n_value_mismatch() {
+        let mut doc = Document::with_version("1.7");
+        // Create a minimal ICC profile header with RGB color space (bytes 16..20 = "RGB ")
+        let mut icc_data = vec![0u8; 128];
+        icc_data[16..20].copy_from_slice(b"RGB ");
+        icc_data[36..40].copy_from_slice(b"acsp");
+
+        let icc_dict = dictionary! {
+            "N" => Object::Integer(4), // Wrong: should be 3 for RGB
+        };
+        let stream = Stream::new(icc_dict, icc_data);
+        let stream_id = doc.add_object(Object::Stream(stream));
+
+        let count = fix_iccbased_n_value(&mut doc);
+        assert_eq!(count, 1);
+
+        if let Object::Stream(s) = &doc.objects[&stream_id] {
+            assert_eq!(*s.dict.get(b"N").unwrap(), Object::Integer(3));
+        }
+    }
+
+    #[test]
+    fn test_icc_n_value_correct() {
+        let mut doc = Document::with_version("1.7");
+        let mut icc_data = vec![0u8; 128];
+        icc_data[16..20].copy_from_slice(b"CMYK");
+        icc_data[36..40].copy_from_slice(b"acsp");
+
+        let icc_dict = dictionary! {
+            "N" => Object::Integer(4), // Correct for CMYK
+        };
+        let stream = Stream::new(icc_dict, icc_data);
+        doc.add_object(Object::Stream(stream));
+
+        let count = fix_iccbased_n_value(&mut doc);
+        assert_eq!(count, 0);
     }
 }
