@@ -116,8 +116,8 @@ fn bench_compliance_check(c: &mut Criterion) {
             Err(_) => continue,
         };
 
-        let level = pdf_compliance::detect_pdfa_level(&pdf)
-            .unwrap_or(pdf_compliance::PdfALevel::A2b);
+        let level =
+            pdf_compliance::detect_pdfa_level(&pdf).unwrap_or(pdf_compliance::PdfALevel::A2b);
 
         let label = format!("{} ({}KB)", name, data.len() / 1024);
         group.bench_with_input(BenchmarkId::new("pdfa", &label), &(), |b, _| {
