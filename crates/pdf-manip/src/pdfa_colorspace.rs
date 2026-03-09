@@ -189,7 +189,7 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
     profile.extend_from_slice(b"    "); // model
     profile.extend_from_slice(&[0u8; 8]); // device attributes
     profile.extend_from_slice(&[0u8; 4]); // rendering intent
-    // PCS illuminant D50
+                                          // PCS illuminant D50
     profile.extend_from_slice(&[0, 0, 0xF6, 0xD6]); // X
     profile.extend_from_slice(&[0, 1, 0, 0]); // Y
     profile.extend_from_slice(&[0, 0, 0xD3, 0x2D]); // Z

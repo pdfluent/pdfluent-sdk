@@ -84,9 +84,7 @@ pub fn remove_javascript(doc: &mut Document) -> usize {
         };
 
         if has_inline_js {
-            if let Some(Object::Dictionary(ref mut catalog)) =
-                doc.objects.get_mut(&catalog_id)
-            {
+            if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
                 if let Ok(Object::Dictionary(ref mut names)) = catalog.get_mut(b"Names") {
                     names.remove(b"JavaScript");
                     count += 1;
@@ -161,9 +159,7 @@ pub fn remove_additional_actions(doc: &mut Document) -> usize {
         };
 
         if remove_open_action {
-            if let Some(Object::Dictionary(ref mut catalog)) =
-                doc.objects.get_mut(&catalog_id)
-            {
+            if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
                 catalog.remove(b"OpenAction");
                 count += 1;
             }
