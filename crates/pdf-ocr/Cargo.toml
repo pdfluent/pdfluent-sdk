@@ -9,11 +9,17 @@ description = "OCR integration for scanned PDFs with pluggable engine support"
 [features]
 default = []
 tesseract = ["leptess"]
+paddle = ["ort", "ndarray", "image", "ureq", "dirs-next"]
 
 [dependencies]
 lopdf.workspace = true
 thiserror.workspace = true
 leptess = { version = "0.14", optional = true }
+ort = { version = "=2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
+ndarray = { version = "0.17", optional = true }
+image = { workspace = true, optional = true }
+ureq = { version = "3", optional = true }
+dirs-next = { version = "2", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
