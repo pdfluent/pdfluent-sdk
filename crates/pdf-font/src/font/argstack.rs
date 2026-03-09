@@ -37,7 +37,9 @@ impl<'a> ArgumentsStack<'a> {
 
     #[inline]
     pub(crate) fn pop(&mut self) -> f32 {
-        debug_assert!(!self.is_empty());
+        if self.is_empty() {
+            return 0.0;
+        }
         self.len -= 1;
         self.data[self.len]
     }
@@ -65,7 +67,9 @@ impl<'a> ArgumentsStack<'a> {
     #[inline]
     pub(crate) fn exch(&mut self) {
         let len = self.len();
-        debug_assert!(len > 1);
+        if len < 2 {
+            return;
+        }
         self.data.swap(len - 1, len - 2);
     }
 }

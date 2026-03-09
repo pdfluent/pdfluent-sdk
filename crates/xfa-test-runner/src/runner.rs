@@ -365,6 +365,7 @@ impl Runner {
             })
             .map(|e| e.into_path())
             .filter(|p| !skip_set.contains(&p.to_string_lossy().to_string()))
+            .take(self.config.limit.unwrap_or(usize::MAX))
             .collect()
     }
 

@@ -71,6 +71,7 @@ pub struct Config {
     pub resume: bool,
     pub run_id: String,
     pub tier: TestTier,
+    pub limit: Option<usize>,
 }
 
 impl Config {
@@ -85,6 +86,7 @@ impl Config {
         run_id: Option<String>,
         db: Option<&crate::db::Database>,
         tier: TestTier,
+        limit: Option<usize>,
     ) -> Self {
         let run_id = run_id.unwrap_or_else(|| {
             if resume {
@@ -109,6 +111,7 @@ impl Config {
             resume,
             run_id,
             tier,
+            limit,
         }
     }
 }

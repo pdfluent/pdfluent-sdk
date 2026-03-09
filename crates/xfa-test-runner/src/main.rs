@@ -76,6 +76,10 @@ enum Command {
         /// Test tier: fast, standard, full, oracle
         #[arg(long, default_value = "full")]
         tier: String,
+
+        /// Maximum number of PDF files to process
+        #[arg(long)]
+        limit: Option<usize>,
     },
 
     /// Generate summary report from results
@@ -292,6 +296,7 @@ fn main() {
             no_verapdf,
             verapdf_path,
             tier,
+            limit,
         } => {
             // Lockfile: prevent concurrent runners
             let lock_path = match acquire_lock() {
@@ -319,6 +324,7 @@ fn main() {
                 run_id,
                 Some(&database),
                 tier,
+                limit,
             );
 
             // Set up veraPDF oracle if available and not disabled
