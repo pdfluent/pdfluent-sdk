@@ -4095,6 +4095,7 @@ dependencies = [
  "subsetter",
  "tempfile",
  "thiserror 2.0.18",
+ "ttf-parser",
  "xmp-writer",
 ]
 
@@ -8320,6 +8321,7 @@ dependencies = [
  "pdf-extract",
  "pdf-forms",
  "pdf-manip",
+ "pdf-ocr",
  "pdf-redact",
  "pdf-sign",
  "pdf-syntax",

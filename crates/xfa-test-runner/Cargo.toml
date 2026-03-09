@@ -12,6 +12,7 @@ path = "src/main.rs"
 [features]
 default = []
 pdfium-oracle = ["dep:pdfium-ffi-bridge", "dep:image"]
+paddle-ocr = ["dep:pdf-ocr", "dep:image"]
 
 [dependencies]
 # Workspace crates
@@ -28,6 +29,9 @@ pdf-redact = { path = "../pdf-redact" }
 # PDFium oracle (optional)
 pdfium-ffi-bridge = { path = "../pdfium-ffi-bridge", features = ["pdfium"], optional = true }
 image = { workspace = true, optional = true }
+
+# OCR (optional, requires ONNX Runtime)
+pdf-ocr = { path = "../pdf-ocr", features = ["paddle"], optional = true }
 
 # External PDF parsing (used by pdf-extract APIs)
 lopdf = { workspace = true }

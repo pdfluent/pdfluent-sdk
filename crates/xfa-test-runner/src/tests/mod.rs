@@ -10,6 +10,7 @@ pub mod images;
 pub mod manipulation;
 pub mod metadata;
 pub mod metadata_oracle;
+pub mod ocr;
 pub mod parse;
 pub mod pdfa_convert;
 pub mod redact;
@@ -17,6 +18,7 @@ pub mod render;
 #[cfg(feature = "pdfium-oracle")]
 pub mod render_oracle;
 pub mod search;
+pub mod sign_roundtrip;
 pub mod sign_verify;
 pub mod signatures;
 pub mod text_extract;
@@ -113,6 +115,8 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(text_replace::TextReplaceTest),
         Box::new(redact::RedactTest),
         Box::new(pdfa_convert),
+        Box::new(sign_roundtrip::SignRoundtripTest),
+        Box::new(ocr::OcrTest),
     ];
 
     #[cfg(feature = "pdfium-oracle")]
