@@ -8,11 +8,14 @@ mod appearance;
 mod byte_range;
 mod chain;
 pub mod cms;
+pub mod cms_builder;
 pub mod crypto;
 mod docmdp;
 mod ltv;
 mod sig_dict;
+pub mod signer;
 mod string_util;
+pub mod tsa;
 mod types;
 pub mod x509;
 
@@ -20,10 +23,12 @@ pub use appearance::*;
 pub use byte_range::*;
 pub use chain::*;
 pub use cms::CmsSignedData;
+pub use cms_builder::build_cms_signed_data;
 pub use crypto::{verify_cms_signature, SignatureAlgorithm};
 pub use docmdp::*;
 pub use ltv::*;
 pub use sig_dict::*;
+pub use signer::{PdfSigner, Pkcs12Signer, SignError};
 pub use types::*;
 pub use x509::X509Certificate;
 
