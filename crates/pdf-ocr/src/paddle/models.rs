@@ -79,15 +79,27 @@ impl Language {
         }
     }
 
-    /// HuggingFace directory path for this language.
+    /// HuggingFace directory path for this language (used for downloads).
     fn hf_dir(self) -> &'static str {
         match self {
-            Self::English => "ppocr_v5/english",
-            Self::Latin => "ppocr_v5/latin",
-            Self::Chinese => "ppocr_v5/chinese",
-            Self::Japanese => "ppocr_v5/japan",
-            Self::Korean => "ppocr_v5/korean",
-            Self::Arabic => "ppocr_v5/arabic",
+            Self::English => "languages/english",
+            Self::Latin => "languages/latin",
+            Self::Chinese => "languages/chinese",
+            Self::Japanese => "languages/japan",
+            Self::Korean => "languages/korean",
+            Self::Arabic => "languages/arabic",
+        }
+    }
+
+    /// Local directory name for cached models.
+    fn local_dir(self) -> &'static str {
+        match self {
+            Self::English => "english",
+            Self::Latin => "latin",
+            Self::Chinese => "chinese",
+            Self::Japanese => "japan",
+            Self::Korean => "korean",
+            Self::Arabic => "arabic",
         }
     }
 }
@@ -140,8 +152,8 @@ fn default_cache_dir() -> PathBuf {
 /// Get the local path for the detection model.
 pub fn detection_model_path(config: &PaddleOcrConfig) -> PathBuf {
     let dir = match config.detection_model {
-        DetectionModel::V3 => "ppocr_v3",
-        DetectionModel::V5 => "ppocr_v5",
+        DetectionModel::V3 => "det_v3",
+        DetectionModel::V5 => "det_v5",
     };
     config.model_dir.join(dir).join("det.onnx")
 }
@@ -149,18 +161,18 @@ pub fn detection_model_path(config: &PaddleOcrConfig) -> PathBuf {
 /// Get the local path for the recognition model (first language).
 pub fn recognition_model_path(config: &PaddleOcrConfig) -> PathBuf {
     let lang = config.languages.first().copied().unwrap_or(Language::Latin);
-    config.model_dir.join(lang.hf_dir()).join("rec.onnx")
+    config.model_dir.join(lang.local_dir()).join("rec.onnx")
 }
 
 /// Get the local path for the dictionary file (first language).
 pub fn dictionary_path(config: &PaddleOcrConfig) -> PathBuf {
     let lang = config.languages.first().copied().unwrap_or(Language::Latin);
-    config.model_dir.join(lang.hf_dir()).join("dict.txt")
+    config.model_dir.join(lang.local_dir()).join("dict.txt")
 }
 
 /// Get the local path for the angle classifier model.
 pub fn classifier_model_path(config: &PaddleOcrConfig) -> PathBuf {
-    config.model_dir.join("ppocr_v5").join("cls.onnx")
+    config.model_dir.join("cls").join("cls.onnx")
 }
 
 /// Check if required models are available locally.
@@ -178,13 +190,13 @@ pub fn models_available(config: &PaddleOcrConfig) -> bool {
 
 /// Download required models from HuggingFace to the model directory.
 pub fn download_models(config: &PaddleOcrConfig) -> Result<(), ModelError> {
-    let det_dir = match config.detection_model {
-        DetectionModel::V3 => "ppocr_v3",
-        DetectionModel::V5 => "ppocr_v5",
+    let det_hf_dir = match config.detection_model {
+        DetectionModel::V3 => "detection/v3",
+        DetectionModel::V5 => "detection/v5",
     };
 
     download_file_if_missing(
-        &format!("{det_dir}/det.onnx"),
+        &format!("{det_hf_dir}/det.onnx"),
         &detection_model_path(config),
     )?;
 
@@ -199,7 +211,7 @@ pub fn download_models(config: &PaddleOcrConfig) -> Result<(), ModelError> {
     )?;
 
     if config.use_angle_classifier {
-        download_file_if_missing("ppocr_v5/cls.onnx", &classifier_model_path(config))?;
+        download_file_if_missing("preprocessing/cls.onnx", &classifier_model_path(config))?;
     }
 
     Ok(())
@@ -310,7 +322,7 @@ mod tests {
             ..Default::default()
         };
         let det_path = detection_model_path(&config);
-        assert!(det_path.to_str().unwrap().contains("ppocr_v3"));
+        assert!(det_path.to_str().unwrap().contains("det_v3"));
         assert!(det_path.to_str().unwrap().ends_with("det.onnx"));
     }
 
@@ -323,7 +335,7 @@ mod tests {
             ..Default::default()
         };
         let det_path = detection_model_path(&config);
-        assert!(det_path.to_str().unwrap().contains("ppocr_v5"));
+        assert!(det_path.to_str().unwrap().contains("det_v5"));
 
         let rec_path = recognition_model_path(&config);
         assert!(rec_path.to_str().unwrap().contains("latin"));
