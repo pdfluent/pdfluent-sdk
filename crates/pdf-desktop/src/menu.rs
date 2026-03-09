@@ -40,8 +40,19 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<Wry>> {
                 .accelerator("CmdOrCtrl+Shift+Z")
                 .build(app)?,
             &tauri::menu::PredefinedMenuItem::separator(app)?,
-            &tauri::menu::PredefinedMenuItem::copy(app, Some("Copy"))?,
-            &tauri::menu::PredefinedMenuItem::select_all(app, Some("Select All"))?,
+            &MenuItemBuilder::new("Copy")
+                .id("copy")
+                .accelerator("CmdOrCtrl+C")
+                .build(app)?,
+            &MenuItemBuilder::new("Select All")
+                .id("select_all")
+                .accelerator("CmdOrCtrl+A")
+                .build(app)?,
+            &tauri::menu::PredefinedMenuItem::separator(app)?,
+            &MenuItemBuilder::new("Find...")
+                .id("find")
+                .accelerator("CmdOrCtrl+F")
+                .build(app)?,
         ])
         .build()?;
 

@@ -35,6 +35,9 @@ pub fn run() {
             commands::get_bookmarks,
             commands::rotate_page,
             commands::delete_page,
+            commands::extract_page_text,
+            commands::extract_text_blocks,
+            commands::search_document,
         ])
         .run(tauri::generate_context!())
         .expect("error running XFA PDF Viewer");
