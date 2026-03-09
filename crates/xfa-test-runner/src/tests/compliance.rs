@@ -1,18 +1,20 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::{PdfTest, TestResult, TestStatus};
 use crate::oracles::verapdf::{self, VeraPdfOracle};
 
 pub struct ComplianceTest {
     pub verapdf_oracle: Option<Arc<VeraPdfOracle>>,
+    progress: Arc<Mutex<String>>,
 }
 
 impl ComplianceTest {
     pub fn new() -> Self {
         Self {
             verapdf_oracle: None,
+            progress: Arc::new(Mutex::new(String::new())),
         }
     }
 
@@ -25,6 +27,10 @@ impl ComplianceTest {
 impl PdfTest for ComplianceTest {
     fn name(&self) -> &str {
         "compliance"
+    }
+
+    fn progress_tracker(&self) -> Option<Arc<Mutex<String>>> {
+        Some(Arc::clone(&self.progress))
     }
 
     fn run(&self, pdf_data: &[u8], path: &Path) -> TestResult {
@@ -50,7 +56,7 @@ impl PdfTest for ComplianceTest {
         let level =
             pdf_compliance::detect_pdfa_level(&pdf).unwrap_or(pdf_compliance::PdfALevel::A1b);
 
-        let report = pdf_compliance::validate_pdfa(&pdf, level);
+        let report = pdf_compliance::validate_pdfa_with_progress(&pdf, level, &self.progress);
 
         let mut metadata = HashMap::new();
         metadata.insert("compliant".to_string(), report.compliant.to_string());

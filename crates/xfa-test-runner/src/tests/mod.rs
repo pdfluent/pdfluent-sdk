@@ -18,10 +18,17 @@ pub mod text_oracle;
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 pub trait PdfTest: Send + Sync {
     fn name(&self) -> &str;
     fn run(&self, pdf_data: &[u8], path: &Path) -> TestResult;
+
+    /// Optional progress tracker: returns the name of the last-started sub-check.
+    /// Used by the runner to include diagnostic info in timeout error messages.
+    fn progress_tracker(&self) -> Option<Arc<Mutex<String>>> {
+        None
+    }
 }
 
 #[allow(dead_code)]

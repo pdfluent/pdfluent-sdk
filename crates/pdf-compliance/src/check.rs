@@ -7494,3 +7494,196 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
         }
     });
 }
+
+// ─── Combined content stream checks (shared page stream cache) ──────────────
+
+/// Run all three page-content-stream checks in a single page loop, avoiding
+/// redundant decompression of the same streams.  Replaces separate calls to
+/// `check_undefined_operators`, `check_marked_content_sequences`, and
+/// `check_inline_image_filters`.
+pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceReport) {
+    // ── valid operators list (same as check_undefined_operators) ──
+    let valid_ops: &[&str] = &[
+        "w", "J", "j", "M", "d", "ri", "i", "gs", "q", "Q", "cm", "m", "l", "c", "v", "y", "h",
+        "re", "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n", "W", "W*", "BT", "ET", "Tc",
+        "Tw", "Tz", "TL", "Tf", "Tr", "Ts", "Td", "TD", "Tm", "T*", "Tj", "TJ", "'", "\"", "d0",
+        "d1", "CS", "cs", "SC", "SCN", "sc", "scn", "G", "g", "RG", "rg", "K", "k", "sh", "BI",
+        "ID", "EI", "Do", "MP", "DP", "BMC", "BDC", "EMC", "BX", "EX",
+    ];
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let loc = format!("page {}", page_idx + 1);
+
+        // Decompress page content stream ONCE
+        if let Some(content) = page.page_stream() {
+            if content.len() <= MAX_CONTENT_STREAM_SCAN_SIZE {
+                // 1. Undefined operators
+                if scan_for_undefined_ops(content, valid_ops) {
+                    error_at(
+                        report,
+                        "6.2.2",
+                        "Content stream contains undefined operator",
+                        loc.clone(),
+                    );
+                }
+
+                // 2. Marked content BMC/EMC nesting
+                check_bmc_emc_nesting(content, page_idx, report);
+
+                // 3. Inline image filters
+                check_inline_images_in_content(content, page_idx, pdfa_part, report);
+            }
+        }
+
+        // Annotation appearance streams — only for undefined operators
+        let page_dict = page.raw();
+        if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                    if let Some(n_stream) = ap.get::<Stream<'_>>(keys::N) {
+                        if let Ok(decoded) = n_stream.decoded() {
+                            if scan_for_undefined_ops(&decoded, valid_ops) {
+                                error_at(
+                                    report,
+                                    "6.2.2",
+                                    "Annotation appearance stream contains undefined operator",
+                                    loc.clone(),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Form XObjects — only for undefined operators
+        let xobjects = &page.resources().x_objects;
+        for (name, _) in xobjects.entries() {
+            let Some(stream) = xobjects.get::<Stream<'_>>(name.as_ref()) else {
+                continue;
+            };
+            let is_form = stream
+                .dict()
+                .get::<Name>(keys::SUBTYPE)
+                .is_some_and(|s| s.as_ref() == b"Form");
+            if !is_form {
+                continue;
+            }
+            if let Ok(decoded) = stream.decoded() {
+                if scan_for_undefined_ops(&decoded, valid_ops) {
+                    let xn = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.2.2",
+                        format!("Form XObject {xn} contains undefined operator"),
+                        loc.clone(),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Check BMC/EMC nesting for a single page content stream.
+fn check_bmc_emc_nesting(content: &[u8], page_idx: usize, report: &mut ComplianceReport) {
+    let text = String::from_utf8_lossy(content);
+    let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+
+    let mut depth: i32 = 0;
+    for tok in &tokens {
+        match *tok {
+            "BMC" | "BDC" => depth += 1,
+            "EMC" => depth -= 1,
+            _ => {}
+        }
+        if depth < 0 {
+            error_at(
+                report,
+                "6.8.3.4",
+                "EMC without matching BMC/BDC",
+                format!("page {}", page_idx + 1),
+            );
+            return;
+        }
+    }
+    if depth > 0 {
+        error_at(
+            report,
+            "6.8.3.4",
+            format!("{depth} unclosed marked content sequence(s) (BMC/BDC without EMC)"),
+            format!("page {}", page_idx + 1),
+        );
+    }
+}
+
+/// Check inline image filters for a single page content stream.
+fn check_inline_images_in_content(
+    content: &[u8],
+    page_idx: usize,
+    pdfa_part: u8,
+    report: &mut ComplianceReport,
+) {
+    let text = String::from_utf8_lossy(content);
+    let loc = format!("page {}", page_idx + 1);
+    let mut pos = 0;
+    let mut inline_count = 0usize;
+    while let Some(bi_pos) = text[pos..].find("BI") {
+        let abs_bi = pos + bi_pos;
+        let before_ok = abs_bi == 0 || text.as_bytes()[abs_bi - 1].is_ascii_whitespace();
+        let after_ok = abs_bi + 2 >= text.len()
+            || text.as_bytes()[abs_bi + 2].is_ascii_whitespace()
+            || text.as_bytes()[abs_bi + 2] == b'/';
+        if !before_ok || !after_ok {
+            pos = abs_bi + 2;
+            continue;
+        }
+        inline_count += 1;
+        if inline_count > 200 {
+            break;
+        }
+        let search_region = &text[abs_bi..];
+        let id_pos = search_region
+            .find(" ID")
+            .or_else(|| search_region.find("\nID"))
+            .or_else(|| search_region.find("\rID"))
+            .or_else(|| search_region.find("\tID"));
+        let Some(id_pos) = id_pos else {
+            pos = abs_bi + 2;
+            continue;
+        };
+        let header = &text[abs_bi..abs_bi + id_pos];
+        let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.9" };
+        let header_lower = header.to_ascii_lowercase();
+        let has_lzw = header_lower.contains("/f /lzw")
+            || header_lower.contains("/f/lzw")
+            || header_lower.contains("/filter /lzw")
+            || header_lower.contains("/filter/lzw")
+            || header_lower.contains("/f[/lzw")
+            || header_lower.contains("/filter[/lzw")
+            || header_lower.contains("/f [/lzw")
+            || header_lower.contains("/filter [/lzw");
+        let has_crypt = header_lower.contains("/f /cr")
+            || header_lower.contains("/f/cr")
+            || header_lower.contains("/filter /cr")
+            || header_lower.contains("/filter/cr")
+            || header_lower.contains("/f[/cr")
+            || header_lower.contains("/filter[/cr");
+        if has_lzw {
+            error_at(
+                report,
+                rule,
+                "Inline image uses forbidden LZWDecode filter",
+                loc.clone(),
+            );
+        }
+        if has_crypt {
+            error_at(
+                report,
+                rule,
+                "Inline image uses forbidden Crypt filter",
+                loc.clone(),
+            );
+        }
+        pos = abs_bi + id_pos;
+    }
+}
