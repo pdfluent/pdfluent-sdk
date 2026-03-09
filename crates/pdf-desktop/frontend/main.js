@@ -189,10 +189,37 @@ function computeDpi(tab) {
   return BASE_DPI * (pct / 100);
 }
 
-// ── Thumbnails ──────────────────────────────────────────────────────
+// ── Thumbnails (lazy loading via IntersectionObserver) ──────────────
 
-async function loadThumbnails(handle, pageCount) {
+let thumbnailObserver = null;
+
+function loadThumbnails(handle, pageCount) {
   dom.thumbnailPanel.innerHTML = '';
+
+  // Disconnect previous observer
+  if (thumbnailObserver) thumbnailObserver.disconnect();
+
+  // Create IntersectionObserver for lazy loading
+  thumbnailObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const item = entry.target;
+      const img = item.querySelector('img');
+      if (img.dataset.loaded === 'true') continue;
+
+      const pageIndex = parseInt(item.dataset.page, 10);
+      const tab = activeTab();
+      if (!tab) continue;
+
+      const thumbKey = `${tab.handle}-${pageIndex}`;
+      if (state.thumbnailCache[thumbKey]) {
+        applyThumbnail(img, state.thumbnailCache[thumbKey]);
+      } else {
+        loadThumbnailAsync(tab.handle, pageIndex, img, thumbKey);
+      }
+    }
+  }, { root: dom.thumbnailPanel, rootMargin: '200px' });
+
   for (let i = 0; i < pageCount; i++) {
     const item = document.createElement('div');
     item.className = 'thumbnail-item';
@@ -201,9 +228,10 @@ async function loadThumbnails(handle, pageCount) {
 
     const img = document.createElement('img');
     img.alt = `Page ${i + 1}`;
+    img.dataset.loaded = 'false';
     img.style.width = '150px';
     img.style.height = '200px';
-    img.style.background = '#f0f0f0';
+    img.style.background = 'var(--bg-tertiary)';
 
     const label = document.createElement('div');
     label.className = 'thumbnail-label';
@@ -212,29 +240,27 @@ async function loadThumbnails(handle, pageCount) {
     item.appendChild(img);
     item.appendChild(label);
     item.addEventListener('click', () => goToPage(i));
+    item.addEventListener('contextmenu', (e) => showThumbnailContextMenu(e, i));
     dom.thumbnailPanel.appendChild(item);
 
-    // Load thumbnail asynchronously
-    const thumbKey = `${handle}-${i}`;
-    if (state.thumbnailCache[thumbKey]) {
-      img.src = `data:image/png;base64,${state.thumbnailCache[thumbKey]}`;
-      img.style.width = '';
-      img.style.height = '';
-      img.style.background = '';
-    } else {
-      loadThumbnailAsync(handle, i, img, thumbKey);
-    }
+    // Observe for lazy loading
+    thumbnailObserver.observe(item);
   }
+}
+
+function applyThumbnail(img, b64) {
+  img.src = `data:image/png;base64,${b64}`;
+  img.style.width = '';
+  img.style.height = '';
+  img.style.background = '';
+  img.dataset.loaded = 'true';
 }
 
 async function loadThumbnailAsync(handle, pageIndex, imgElement, cacheKey) {
   try {
     const b64 = await invoke('render_thumbnail', { handle, pageIndex });
     state.thumbnailCache[cacheKey] = b64;
-    imgElement.src = `data:image/png;base64,${b64}`;
-    imgElement.style.width = '';
-    imgElement.style.height = '';
-    imgElement.style.background = '';
+    applyThumbnail(imgElement, b64);
   } catch (err) {
     console.error(`Failed to load thumbnail ${pageIndex}:`, err);
   }
@@ -243,12 +269,119 @@ async function loadThumbnailAsync(handle, pageIndex, imgElement, cacheKey) {
 function updateThumbnailHighlight() {
   const tab = activeTab();
   if (!tab) return;
-  $$('.thumbnail-item').forEach((el, i) => {
+  $$('.thumbnail-item').forEach((el) => {
     el.classList.toggle('active', parseInt(el.dataset.page) === tab.currentPage);
   });
-  // Scroll active thumbnail into view
   const active = $('.thumbnail-item.active');
   if (active) active.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// ── Thumbnail Context Menu ──────────────────────────────────────────
+
+function showThumbnailContextMenu(event, pageIndex) {
+  event.preventDefault();
+  hideContextMenu();
+
+  const tab = activeTab();
+  if (!tab) return;
+
+  const menu = document.createElement('div');
+  menu.className = 'context-menu';
+  menu.style.left = event.clientX + 'px';
+  menu.style.top = event.clientY + 'px';
+
+  const items = [
+    { label: `Go to Page ${pageIndex + 1}`, action: () => goToPage(pageIndex) },
+    { label: 'separator' },
+    { label: 'Rotate Clockwise', action: () => rotatePage(pageIndex, 90) },
+    { label: 'Rotate Counter-clockwise', action: () => rotatePage(pageIndex, 270) },
+    { label: 'separator' },
+    { label: 'Delete Page', action: () => deletePage(pageIndex), danger: true },
+  ];
+
+  for (const item of items) {
+    if (item.label === 'separator') {
+      const sep = document.createElement('div');
+      sep.className = 'context-menu-separator';
+      menu.appendChild(sep);
+      continue;
+    }
+    const el = document.createElement('div');
+    el.className = 'context-menu-item' + (item.danger ? ' danger' : '');
+    el.textContent = item.label;
+    el.addEventListener('click', () => {
+      hideContextMenu();
+      item.action();
+    });
+    menu.appendChild(el);
+  }
+
+  document.body.appendChild(menu);
+
+  // Ensure menu stays in viewport
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 4) + 'px';
+  if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 4) + 'px';
+
+  // Close on click outside
+  setTimeout(() => {
+    document.addEventListener('click', hideContextMenu, { once: true });
+  }, 0);
+}
+
+function hideContextMenu() {
+  const existing = $('.context-menu');
+  if (existing) existing.remove();
+}
+
+async function rotatePage(pageIndex, degrees) {
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    await invoke('rotate_page', { handle: tab.handle, pageIndex, degrees });
+    invalidateCaches(tab.handle, pageIndex);
+    await refreshAfterPageChange(tab);
+  } catch (err) {
+    console.error('Rotate failed:', err);
+  }
+}
+
+async function deletePage(pageIndex) {
+  const tab = activeTab();
+  if (!tab || tab.pageCount <= 1) return;
+  try {
+    await invoke('delete_page', { handle: tab.handle, pageIndex });
+    tab.pageCount--;
+    if (tab.currentPage >= tab.pageCount) tab.currentPage = tab.pageCount - 1;
+    invalidateCaches(tab.handle);
+    await refreshAfterPageChange(tab);
+  } catch (err) {
+    console.error('Delete failed:', err);
+  }
+}
+
+function invalidateCaches(handle, specificPage) {
+  if (specificPage !== undefined) {
+    // Invalidate specific page
+    for (const key of Object.keys(state.renderCache)) {
+      if (key.startsWith(`${handle}-${specificPage}-`)) delete state.renderCache[key];
+    }
+    delete state.thumbnailCache[`${handle}-${specificPage}`];
+  } else {
+    // Invalidate all pages for this handle
+    for (const key of Object.keys(state.renderCache)) {
+      if (key.startsWith(`${handle}-`)) delete state.renderCache[key];
+    }
+    for (const key of Object.keys(state.thumbnailCache)) {
+      if (key.startsWith(`${handle}-`)) delete state.thumbnailCache[key];
+    }
+  }
+}
+
+async function refreshAfterPageChange(tab) {
+  updatePageIndicator();
+  await renderCurrentView();
+  loadThumbnails(tab.handle, tab.pageCount);
 }
 
 // ── Bookmarks ───────────────────────────────────────────────────────
