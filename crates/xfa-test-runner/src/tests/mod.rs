@@ -11,6 +11,7 @@ pub mod manipulation;
 pub mod metadata;
 pub mod metadata_oracle;
 pub mod parse;
+pub mod redact;
 pub mod render;
 #[cfg(feature = "pdfium-oracle")]
 pub mod render_oracle;
@@ -101,6 +102,7 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(annot_create::AnnotCreateTest),
         Box::new(content_roundtrip::ContentRoundtripTest),
         Box::new(text_replace::TextReplaceTest),
+        Box::new(redact::RedactTest),
     ];
 
     #[cfg(feature = "pdfium-oracle")]

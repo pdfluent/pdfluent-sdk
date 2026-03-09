@@ -23,6 +23,7 @@ pdf-sign = { path = "../pdf-sign" }
 pdf-extract = { path = "../pdf-extract" }
 pdf-compliance = { path = "../pdf-compliance" }
 pdf-manip = { path = "../pdf-manip" }
+pdf-redact = { path = "../pdf-redact" }
 
 # PDFium oracle (optional)
 pdfium-ffi-bridge = { path = "../pdfium-ffi-bridge", features = ["pdfium"], optional = true }
