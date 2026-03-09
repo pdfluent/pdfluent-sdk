@@ -284,7 +284,33 @@ fn encode_text_for_font(font_name: &str, text: &str, fonts: &FontMap) -> Result<
         return encode_cid_text(font_name, text, fonts);
     }
 
-    // For builtin single-byte fonts, try Latin-1 encoding.
+    // For builtin single-byte fonts, prefer the reverse CMap (if available)
+    // over raw Latin-1 encoding. The reverse CMap respects font-specific
+    // Encoding/Differences and produces correct glyph codes.
+    let reverse = fonts.build_reverse_map(font_name);
+    if !reverse.is_empty() {
+        let mut bytes = Vec::with_capacity(text.len());
+        let mut all_found = true;
+        for ch in text.chars() {
+            if let Some(&code) = reverse.get(&ch) {
+                if code <= 0xFF {
+                    bytes.push(code as u8);
+                } else {
+                    all_found = false;
+                    break;
+                }
+            } else {
+                all_found = false;
+                break;
+            }
+        }
+        if all_found {
+            return Ok(bytes);
+        }
+        // Fall through to Latin-1 if reverse CMap was incomplete
+    }
+
+    // Fallback: Latin-1 encoding (assume Unicode code point = byte value).
     let mut bytes = Vec::with_capacity(text.len());
     for ch in text.chars() {
         let code = ch as u32;
