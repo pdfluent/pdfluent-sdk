@@ -223,7 +223,10 @@ pub fn apply_stamp(
 }
 
 /// Resolve a `PageSelection` to a list of 1-based page numbers.
-pub(crate) fn resolve_page_selection(doc: &Document, selection: &PageSelection) -> Result<Vec<u32>> {
+pub(crate) fn resolve_page_selection(
+    doc: &Document,
+    selection: &PageSelection,
+) -> Result<Vec<u32>> {
     let total = doc.get_pages().len() as u32;
     let pages = match selection {
         PageSelection::All => (1..=total).collect(),
@@ -435,7 +438,12 @@ pub(crate) fn ensure_page_font(doc: &mut Document, page_id: ObjectId, name: &str
 }
 
 /// Add a content stream to a page, either prepending (background) or appending (foreground).
-pub(crate) fn add_content_to_page(doc: &mut Document, page_id: ObjectId, stream_id: ObjectId, layer: Layer) {
+pub(crate) fn add_content_to_page(
+    doc: &mut Document,
+    page_id: ObjectId,
+    stream_id: ObjectId,
+    layer: Layer,
+) {
     if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
         let existing = page_dict.get(b"Contents").ok().cloned();
 

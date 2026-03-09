@@ -69,6 +69,7 @@ pub struct Config {
     pub timeout: Duration,
     pub test_filter: Option<Vec<String>>,
     pub resume: bool,
+    pub rerun_failures: bool,
     pub run_id: String,
     pub tier: TestTier,
     pub limit: Option<usize>,
@@ -83,6 +84,7 @@ impl Config {
         timeout_secs: u64,
         tests: Option<String>,
         resume: bool,
+        rerun_failures: bool,
         run_id: Option<String>,
         db: Option<&crate::db::Database>,
         tier: TestTier,
@@ -109,10 +111,25 @@ impl Config {
             timeout: Duration::from_secs(timeout_secs),
             test_filter,
             resume,
+            rerun_failures,
             run_id,
             tier,
             limit,
         }
+    }
+
+    /// Per-test timeout: fast tests get a shorter timeout, heavy tests get the full timeout.
+    pub fn timeout_for_test(&self, test_name: &str) -> Duration {
+        let base = self.timeout.as_secs();
+        let secs = match test_name {
+            // Fast tests: 1/5 of base, minimum 2s
+            "parse" | "metadata" | "geometry" => (base / 5).max(2),
+            // Medium tests: 1/3 of base, minimum 5s
+            "bookmarks" | "annotations" | "form_fields" | "signatures" => (base / 3).max(5),
+            // Heavy tests: full base timeout
+            _ => base,
+        };
+        Duration::from_secs(secs)
     }
 }
 
