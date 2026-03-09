@@ -3863,6 +3863,8 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "image",
+ "lopdf",
+ "pdf-annot",
  "pdf-engine",
  "serde",
  "serde_json",

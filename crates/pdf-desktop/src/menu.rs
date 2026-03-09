@@ -15,6 +15,10 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<Wry>> {
                 .id("close_tab")
                 .accelerator("CmdOrCtrl+W")
                 .build(app)?,
+            &MenuItemBuilder::new("Save")
+                .id("save")
+                .accelerator("CmdOrCtrl+S")
+                .build(app)?,
             &MenuItemBuilder::new("Save As...")
                 .id("save_as")
                 .accelerator("CmdOrCtrl+Shift+S")

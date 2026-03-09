@@ -92,6 +92,12 @@ async function closeTab(index) {
   const tab = state.tabs[index];
   if (!tab) return;
 
+  // Confirm close if there are unsaved changes.
+  if (tab.dirty) {
+    const ok = confirm(`"${tab.fileName}" has unsaved changes. Close without saving?`);
+    if (!ok) return;
+  }
+
   try {
     await invoke('close_document', { handle: tab.handle });
   } catch (_) { /* ignore */ }
@@ -510,7 +516,7 @@ function renderTabs() {
 
     const title = document.createElement('span');
     title.className = 'tab-title';
-    title.textContent = tab.fileName;
+    title.textContent = (tab.dirty ? '* ' : '') + tab.fileName;
     title.title = tab.title;
 
     const close = document.createElement('button');
@@ -600,6 +606,10 @@ function setupKeyboardShortcuts() {
     if (mod && e.key === '-') { e.preventDefault(); zoomOut(); }
     if (mod && e.key === '1') { e.preventDefault(); setZoom('fit-width'); }
     if (mod && e.key === '2') { e.preventDefault(); setZoom('fit-page'); }
+    if (mod && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undoAction(); }
+    if (mod && e.key === 'z' && e.shiftKey) { e.preventDefault(); redoAction(); }
+    if (mod && e.key === 'Z') { e.preventDefault(); redoAction(); }
+    if (mod && e.key === 's' && !e.shiftKey) { e.preventDefault(); saveDocument(); }
     if (mod && e.key === 'p') { e.preventDefault(); printDocument(); }
     if (mod && e.shiftKey && e.key === 'S') { e.preventDefault(); saveDocumentAs(); }
     if (mod && e.key === 'c') { e.preventDefault(); copyPageText(); }
@@ -649,6 +659,9 @@ async function setupMenuEvents() {
       case 'fit_page': setZoom('fit-page'); break;
       case 'toggle_sidebar': toggleSidebar(); break;
       case 'toggle_dark': toggleDarkMode(); break;
+      case 'undo': undoAction(); break;
+      case 'redo': redoAction(); break;
+      case 'save': saveDocument(); break;
       case 'print': printDocument(); break;
       case 'save_as': saveDocumentAs(); break;
       case 'copy': copyPageText(); break;
@@ -710,6 +723,59 @@ async function showDocumentInfo() {
   } catch (err) {
     console.error('Failed to get document info:', err);
   }
+}
+
+// ── Undo / Redo / Save ───────────────────────────────────────────────
+
+async function undoAction() {
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    const success = await invoke('undo_document', { handle: tab.handle });
+    if (success) {
+      invalidateCaches(tab.handle);
+      await renderCurrentView();
+      if (state.annotTool !== 'select') addDrawOverlay();
+      await updateDirtyIndicator(tab);
+    }
+  } catch (err) {
+    console.error('Undo failed:', err);
+  }
+}
+
+async function redoAction() {
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    const success = await invoke('redo_document', { handle: tab.handle });
+    if (success) {
+      invalidateCaches(tab.handle);
+      await renderCurrentView();
+      if (state.annotTool !== 'select') addDrawOverlay();
+      await updateDirtyIndicator(tab);
+    }
+  } catch (err) {
+    console.error('Redo failed:', err);
+  }
+}
+
+async function saveDocument() {
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    await invoke('save_document', { handle: tab.handle });
+    await updateDirtyIndicator(tab);
+  } catch (err) {
+    console.error('Save failed:', err);
+  }
+}
+
+async function updateDirtyIndicator(tab) {
+  if (!tab) return;
+  try {
+    tab.dirty = await invoke('is_document_dirty', { handle: tab.handle });
+    renderTabs();
+  } catch (_) { /* ignore */ }
 }
 
 // ── Print & Save ─────────────────────────────────────────────────────
@@ -1119,11 +1185,10 @@ async function sendAnnotation(tab, pageIndex, x0, y0, x1, y1) {
 
   try {
     await invoke('add_annotation', { request });
-    // Invalidate render cache and re-render to show the annotation
     invalidateCaches(tab.handle, pageIndex);
     await renderCurrentView();
-    // Re-add draw overlays since renderCurrentView rebuilds page wrappers
     if (state.annotTool !== 'select') addDrawOverlay();
+    await updateDirtyIndicator(tab);
   } catch (err) {
     console.error('Failed to add annotation:', err);
   }
@@ -1162,6 +1227,7 @@ async function createInkAnnotation(pageIndex, bounds, inkPaths) {
     invalidateCaches(tab.handle, pageIndex);
     await renderCurrentView();
     if (state.annotTool !== 'select') addDrawOverlay();
+    await updateDirtyIndicator(tab);
   } catch (err) {
     console.error('Failed to add ink annotation:', err);
   }
@@ -1187,6 +1253,7 @@ async function deleteSelectedAnnotation() {
     invalidateCaches(tab.handle, tab.currentPage);
     await renderCurrentView();
     if (state.annotTool !== 'select') addDrawOverlay();
+    await updateDirtyIndicator(tab);
   } catch (err) {
     console.error('Failed to delete annotation:', err);
   }
