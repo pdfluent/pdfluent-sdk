@@ -126,12 +126,15 @@ pub fn text_similarity(a: &str, b: &str) -> f64 {
     const MAX_CHARS: usize = 10_000;
 
     let a_capped = if a.len() > MAX_CHARS {
-        &a[..MAX_CHARS]
+        // Find a valid char boundary at or before MAX_CHARS.
+        let end = a.floor_char_boundary(MAX_CHARS);
+        &a[..end]
     } else {
         a
     };
     let b_capped = if b.len() > MAX_CHARS {
-        &b[..MAX_CHARS]
+        let end = b.floor_char_boundary(MAX_CHARS);
+        &b[..end]
     } else {
         b
     };
