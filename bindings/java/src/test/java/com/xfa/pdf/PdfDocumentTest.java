@@ -151,4 +151,92 @@ class PdfDocumentTest {
             assertTrue(img.getHeight() <= 100);
         }
     }
+
+    // ---------- Scenario 5: Read AcroForm fields ----------
+
+    @Test
+    @org.junit.jupiter.api.Disabled("TODO: AcroForm field reading not yet exposed in Java binding")
+    void readFormFields() {
+        // TODO: try (PdfDocument doc = PdfDocument.open(loadFixture("acroform.pdf"))) {
+        //     var fields = doc.getFormFields();
+        //     assertFalse(fields.isEmpty());
+        // }
+    }
+
+    // ---------- Scenario 6: Fill text field, save ----------
+
+    @Test
+    @org.junit.jupiter.api.Disabled("TODO: Form field writing not yet exposed in Java binding")
+    void writeFormField() {
+        // TODO: try (PdfDocument doc = PdfDocument.open(loadFixture("acroform.pdf"))) {
+        //     doc.setFieldValue("name", "test");
+        //     byte[] saved = doc.save();
+        //     try (PdfDocument doc2 = PdfDocument.open(saved)) {
+        //         assertEquals("test", doc2.getFieldValue("name"));
+        //     }
+        // }
+    }
+
+    // ---------- Scenario 7: Read annotations ----------
+
+    @Test
+    @org.junit.jupiter.api.Disabled("TODO: Annotation reading not yet exposed in Java binding")
+    void readAnnotations() {
+        // TODO: try (PdfDocument doc = PdfDocument.open(loadFixture("sample.pdf"))) {
+        //     var annots = doc.getAnnotations(0);
+        //     assertNotNull(annots);
+        // }
+    }
+
+    // ---------- Scenario 8: Add highlight, save ----------
+
+    @Test
+    @org.junit.jupiter.api.Disabled("TODO: Annotation creation not yet exposed in Java binding")
+    void addHighlightAnnotation() {
+        // TODO: Create highlight annotation, save, reopen, verify
+    }
+
+    // ---------- Scenario 9: Validate PDF/A ----------
+
+    @Test
+    @org.junit.jupiter.api.Disabled("TODO: PDF/A validation not yet exposed in Java binding")
+    void validatePdfA() {
+        // TODO: try (PdfDocument doc = PdfDocument.open(createTestPdf())) {
+        //     var report = doc.validatePdfA("2b");
+        //     assertNotNull(report);
+        // }
+    }
+
+    // ---------- Scenario 10: Merge 2 PDFs ----------
+
+    @Test
+    @org.junit.jupiter.api.Disabled("TODO: PDF merge not yet exposed in Java binding")
+    void mergePdfs() {
+        // TODO: byte[] merged = PdfDocument.merge(pdf1, pdf2);
+        //     try (PdfDocument doc = PdfDocument.open(merged)) {
+        //         assertEquals(2, doc.getPageCount());
+        //     }
+    }
+
+    // ---------- Scenario 11: Verify signature ----------
+
+    @Test
+    @org.junit.jupiter.api.Disabled("TODO: Signature verification not yet exposed in Java binding")
+    void verifySignature() {
+        // TODO: try (PdfDocument doc = PdfDocument.open(loadFixture("signed.pdf"))) {
+        //     var sigs = doc.verifySignatures();
+        //     assertFalse(sigs.isEmpty());
+        // }
+    }
+
+    // ---------- Scenario 12: Extract images ----------
+
+    @Test
+    @org.junit.jupiter.api.Disabled("TODO: Image extraction not yet exposed in Java binding")
+    void extractImages() {
+        // TODO: try (PdfDocument doc = PdfDocument.open(loadFixture("sample.pdf"))) {
+        //     var images = doc.extractImages(0);
+        //     assertNotNull(images);
+        // }
+    }
 }

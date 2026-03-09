@@ -116,4 +116,70 @@ final class PdfDocumentTests: XCTestCase {
         XCTAssertEqual(cgImage?.width, img.width)
         XCTAssertEqual(cgImage?.height, img.height)
     }
+
+    // MARK: - Scenario 5: Read AcroForm fields
+
+    // TODO: AcroForm field reading not yet exposed in Swift binding
+    // func testReadFormFields() throws {
+    //     let doc = try PdfDocument(data: loadFixture("acroform.pdf"))
+    //     let fields = doc.formFields()
+    //     XCTAssertFalse(fields.isEmpty)
+    // }
+
+    // MARK: - Scenario 6: Fill text field, save
+
+    // TODO: Form field writing not yet exposed in Swift binding
+    // func testWriteFormField() throws {
+    //     let doc = try PdfDocument(data: loadFixture("acroform.pdf"))
+    //     doc.setFieldValue("name", value: "test")
+    //     let saved = doc.save()
+    //     let doc2 = try PdfDocument(data: saved)
+    //     XCTAssertEqual(doc2.fieldValue("name"), "test")
+    // }
+
+    // MARK: - Scenario 7: Read annotations
+
+    // TODO: Annotation reading not yet exposed in Swift binding
+    // func testReadAnnotations() throws {
+    //     let doc = try PdfDocument(data: Self.createTestPdf())
+    //     let annots = try doc.annotations(page: 0)
+    //     XCTAssertNotNil(annots)
+    // }
+
+    // MARK: - Scenario 8: Add highlight, save
+
+    // TODO: Annotation creation not yet exposed in Swift binding
+    // func testAddHighlightAnnotation() throws { }
+
+    // MARK: - Scenario 9: Validate PDF/A
+
+    // TODO: PDF/A validation not yet exposed in Swift binding
+    // func testValidatePdfA() throws {
+    //     let doc = try PdfDocument(data: Self.createTestPdf())
+    //     let report = try doc.validatePdfA(level: "2b")
+    //     XCTAssertNotNil(report)
+    // }
+
+    // MARK: - Scenario 10: Merge 2 PDFs
+
+    // TODO: PDF merge not yet exposed in Swift binding
+    // func testMergePdfs() throws { }
+
+    // MARK: - Scenario 11: Verify signature
+
+    // TODO: Signature verification not yet exposed in Swift binding
+    // func testVerifySignature() throws {
+    //     let doc = try PdfDocument(data: loadFixture("signed.pdf"))
+    //     let sigs = doc.verifySignatures()
+    //     XCTAssertFalse(sigs.isEmpty)
+    // }
+
+    // MARK: - Scenario 12: Extract images
+
+    // TODO: Image extraction not yet exposed in Swift binding
+    // func testExtractImages() throws {
+    //     let doc = try PdfDocument(data: Self.createTestPdf())
+    //     let images = try doc.extractImages(page: 0)
+    //     XCTAssertNotNil(images)
+    // }
 }
