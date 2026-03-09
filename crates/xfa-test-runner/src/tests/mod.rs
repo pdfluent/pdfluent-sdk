@@ -1,7 +1,10 @@
+pub mod annot_create;
 pub mod annotations;
 pub mod bookmarks;
 pub mod compliance;
+pub mod content_roundtrip;
 pub mod form_fields;
+pub mod form_write;
 pub mod geometry;
 pub mod images;
 pub mod manipulation;
@@ -16,6 +19,7 @@ pub mod sign_verify;
 pub mod signatures;
 pub mod text_extract;
 pub mod text_oracle;
+pub mod text_replace;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -93,6 +97,10 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(metadata_oracle::MetadataOracleTest),
         Box::new(manipulation::ManipulationTest),
         Box::new(sign_verify::SignVerifyTest),
+        Box::new(form_write::FormWriteTest),
+        Box::new(annot_create::AnnotCreateTest),
+        Box::new(content_roundtrip::ContentRoundtripTest),
+        Box::new(text_replace::TextReplaceTest),
     ];
 
     #[cfg(feature = "pdfium-oracle")]
