@@ -5,7 +5,7 @@
 
 use crate::error::{RedactError, Result};
 use crate::redact::{RedactionArea, Redactor};
-use lopdf::Document;
+use lopdf::{Document, Object, ObjectId};
 use regex::Regex;
 
 /// Options for search-and-redact operations.
@@ -290,6 +290,9 @@ fn compute_bounding_rect(chars: &[pdf_extract::PositionedChar]) -> [f64; 4] {
 // ---------------------------------------------------------------------------
 
 /// Remove text-showing operations whose decoded text matches the pattern.
+///
+/// Processes both the page's direct content stream and any Form XObjects
+/// referenced in the page's Resources.
 fn remove_text_ops_for_page(
     doc: &mut Document,
     page_num: u32,
@@ -319,24 +322,159 @@ fn remove_text_ops_for_page(
         }
     }
 
-    if indices_to_remove.is_empty() {
+    let mut removed = 0;
+
+    if !indices_to_remove.is_empty() {
+        indices_to_remove.sort_unstable();
+        indices_to_remove.dedup();
+
+        // Remove ops in reverse order to preserve indices.
+        let mut new_editor = editor;
+        for &idx in indices_to_remove.iter().rev() {
+            new_editor.remove_range(idx..idx + 1);
+        }
+
+        removed = indices_to_remove.len();
+        pdf_manip::content_editor::write_editor_to_page(doc, page_num, &new_editor)
+            .map_err(|e| RedactError::Other(format!("write content: {e}")))?;
+    }
+
+    // Also process Form XObjects referenced in the page's Resources.
+    removed += remove_text_ops_from_xobjects(doc, page_num, &matcher, &fonts)?;
+
+    Ok(removed)
+}
+
+/// Find and process Form XObjects in the page's Resources/XObject dictionary.
+fn remove_text_ops_from_xobjects(
+    doc: &mut Document,
+    page_num: u32,
+    matcher: &TextMatcher,
+    fonts: &pdf_manip::text_run::FontMap,
+) -> Result<usize> {
+    let pages = doc.get_pages();
+    let &page_id = match pages.get(&page_num) {
+        Some(id) => id,
+        None => return Ok(0),
+    };
+
+    // Collect Form XObject IDs from the page's Resources/XObject dict.
+    let xobject_ids = collect_form_xobject_ids(doc, page_id);
+    if xobject_ids.is_empty() {
         return Ok(0);
     }
 
-    indices_to_remove.sort_unstable();
-    indices_to_remove.dedup();
+    let mut total_removed = 0;
 
-    // Remove ops in reverse order to preserve indices.
-    let mut new_editor = editor;
-    for &idx in indices_to_remove.iter().rev() {
-        new_editor.remove_range(idx..idx + 1);
+    for xobj_id in xobject_ids {
+        // Decode the XObject's content stream.
+        let content_bytes = match doc.get_object(xobj_id) {
+            Ok(Object::Stream(ref s)) => {
+                let mut stream = s.clone();
+                let _ = stream.decompress();
+                stream.content.clone()
+            }
+            _ => continue,
+        };
+
+        let editor = match pdf_manip::content_editor::ContentEditor::from_stream(&content_bytes) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let runs = pdf_manip::text_run::extract_text_runs(&editor, fonts);
+
+        let mut indices_to_remove: Vec<usize> = Vec::new();
+        for run in &runs {
+            if !matcher.find_all(&run.text).is_empty() {
+                for idx in run.ops_range.clone() {
+                    indices_to_remove.push(idx);
+                }
+            }
+        }
+
+        if indices_to_remove.is_empty() {
+            continue;
+        }
+
+        indices_to_remove.sort_unstable();
+        indices_to_remove.dedup();
+
+        let mut new_editor = editor;
+        for &idx in indices_to_remove.iter().rev() {
+            new_editor.remove_range(idx..idx + 1);
+        }
+
+        total_removed += indices_to_remove.len();
+
+        // Write back the modified content stream.
+        let encoded = new_editor
+            .encode()
+            .map_err(|e| RedactError::Other(format!("encode xobject: {e}")))?;
+
+        if let Ok(Object::Stream(ref mut s)) = doc.get_object_mut(xobj_id) {
+            s.dict.remove(b"Filter");
+            s.content = encoded;
+            s.dict
+                .set("Length", Object::Integer(s.content.len() as i64));
+        }
     }
 
-    let removed = indices_to_remove.len();
-    pdf_manip::content_editor::write_editor_to_page(doc, page_num, &new_editor)
-        .map_err(|e| RedactError::Other(format!("write content: {e}")))?;
+    Ok(total_removed)
+}
 
-    Ok(removed)
+/// Collect ObjectIds of Form XObjects from a page's Resources/XObject dictionary.
+fn collect_form_xobject_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
+    let mut result = Vec::new();
+
+    let page_dict = match doc.get_object(page_id) {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        _ => return result,
+    };
+
+    let resources = match page_dict.get(b"Resources") {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => return result,
+        },
+        _ => return result,
+    };
+
+    let xobject_dict = match resources.get(b"XObject") {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => return result,
+        },
+        _ => return result,
+    };
+
+    for (_key, value) in xobject_dict.iter() {
+        let obj_id = match value {
+            Object::Reference(id) => *id,
+            _ => continue,
+        };
+
+        // Check if it's a Form XObject (Subtype == Form).
+        if let Ok(Object::Stream(ref s)) = doc.get_object(obj_id) {
+            let is_form = s
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|v| match v {
+                    Object::Name(ref n) => Some(n.as_slice()),
+                    _ => None,
+                })
+                .map(|n| n == b"Form")
+                .unwrap_or(false);
+            if is_form {
+                result.push(obj_id);
+            }
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
