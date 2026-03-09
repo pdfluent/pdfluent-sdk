@@ -29,6 +29,46 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace -- -D warnings
 
+      - name: Run corpus tests (extended matrix)
+        run: |
+          if [[ -d corpus/ ]] && [[ $(find corpus/ -name '*.pdf' 2>/dev/null | head -1) ]]; then
+            ./target/release/xfa-test-runner run \
+              --corpus corpus/ \
+              --db /tmp/nightly-results.sqlite \
+              --workers 2 \
+              --timeout 15 \
+              --tier full \
+              --no-verapdf
+
+            # Check for crashes.
+            CRASHES=$(sqlite3 /tmp/nightly-results.sqlite \
+              "SELECT COUNT(*) FROM test_results WHERE status='crash'" 2>/dev/null || echo "0")
+            echo "Crashes: ${CRASHES}"
+            if [ "${CRASHES}" -gt 0 ]; then
+              echo "REGRESSION: ${CRASHES} crashes detected"
+              ./target/release/xfa-test-runner clusters --db /tmp/nightly-results.sqlite || true
+              exit 1
+            fi
+
+            # Report pass rate.
+            TOTAL=$(sqlite3 /tmp/nightly-results.sqlite \
+              "SELECT COUNT(*) FROM test_results")
+            PASS=$(sqlite3 /tmp/nightly-results.sqlite \
+              "SELECT COUNT(*) FROM test_results WHERE status='pass'")
+            echo "Pass rate: ${PASS}/${TOTAL}"
+          else
+            echo "No corpus PDFs found, skipping"
+          fi
+
+      - name: Upload corpus results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-corpus-results
+          path: /tmp/nightly-results.sqlite
+          retention-days: 90
+          if-no-files-found: ignore
+
       - name: Run accuracy report
         run: |
           if [[ -d corpus/ ]] && [[ $(ls corpus/*.pdf 2>/dev/null | wc -l) -gt 0 ]]; then
@@ -50,9 +90,34 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
+  benchmarks:
+    name: Nightly Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Restore baseline
+        uses: actions/cache@v4
+        with:
+          path: target/criterion
+          key: bench-nightly-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            bench-nightly-${{ runner.os }}-
+
       - name: Run benchmarks
         run: |
-          cargo bench --package pdf-bench -- --output-format bencher 2>&1 | tee reports/bench-results.txt || true
+          cargo bench --package pdf-bench 2>&1 | tee reports/bench-results.txt || true
+
+      - name: Check for regressions
+        run: |
+          if grep -q "regressed" reports/bench-results.txt 2>/dev/null; then
+            echo "WARNING: benchmark regressions detected"
+            grep -A2 "regressed" reports/bench-results.txt
+          else
+            echo "No benchmark regressions"
+          fi
 
       - name: Upload benchmark results
         if: always()
@@ -64,6 +129,40 @@ jobs:
             target/criterion/
           retention-days: 90
           if-no-files-found: ignore
+
+  desktop-tests:
+    name: Nightly Desktop Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Backend tests
+        run: cargo test --package pdf-desktop
+
+      - name: Frontend tests
+        run: |
+          cd crates/pdf-desktop
+          npm install
+          npx vitest run
+
+  conversion-tests:
+    name: Nightly Conversion Quality Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run conversion tests
+        run: |
+          cargo test --package pdf-docx
+          cargo test --package pdf-xlsx
+          cargo test --package pdf-pptx
 
   conformance:
     name: Nightly Conformance (veraPDF)
