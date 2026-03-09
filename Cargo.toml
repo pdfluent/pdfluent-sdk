@@ -38,6 +38,9 @@ members = [
     # --- PDF manipulation ---
     "crates/pdf-manip",
 
+    # --- Desktop application (Fase 4) ---
+    "crates/pdf-desktop",
+
     # --- Content intelligence (Fase N) ---
     "crates/pdf-extract",
     "crates/pdf-redact",

@@ -1,0 +1,23 @@
+[package]
+name = "pdf-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Tauri v2 desktop PDF viewer with native rendering."
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+image = { workspace = true }
+base64 = "0.22"
+pdf-engine = { path = "../pdf-engine" }
+
+[build-dependencies]
+tauri-build = "2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

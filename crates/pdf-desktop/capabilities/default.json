@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "Default capabilities for the PDF viewer",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "shell:default"
+  ]
+}
