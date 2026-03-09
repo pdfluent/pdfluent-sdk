@@ -21,6 +21,8 @@ pub struct PdfACleanupReport {
     pub aa_entries_removed: usize,
     /// Number of TR keys removed from ExtGState dictionaries.
     pub transfer_functions_removed: usize,
+    /// Number of invalid rendering intents normalized.
+    pub rendering_intents_fixed: usize,
     /// Whether the trailer /ID was added.
     pub trailer_id_added: bool,
     /// Number of annotation flag fixes applied.
@@ -44,6 +46,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
         encryption_removed: false,
         aa_entries_removed: 0,
         transfer_functions_removed: 0,
+        rendering_intents_fixed: 0,
         trailer_id_added: false,
         annotation_flags_fixed: 0,
         lzw_streams_reencoded: 0,
@@ -67,6 +70,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
 
     report.encryption_removed = remove_encryption(doc);
     report.transfer_functions_removed = remove_transfer_functions(doc);
+    report.rendering_intents_fixed = normalize_rendering_intents(doc);
     report.trailer_id_added = ensure_trailer_id(doc);
     report.annotation_flags_fixed = fix_annotation_flags(doc);
     report.lzw_streams_reencoded = reencode_lzw_streams(doc);
@@ -79,6 +83,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_ocg_order(doc);
     fix_annotation_contents(doc);
     remove_halftone_names(doc);
+    strip_signatures(doc);
 
     Ok(report)
 }
@@ -334,6 +339,41 @@ fn remove_transfer_functions(doc: &mut Document) -> usize {
                     dict.remove(b"TR2");
                     count += 1;
                 }
+            }
+        }
+    }
+    count
+}
+
+/// Normalize rendering intents in ExtGState dictionaries (6.2.6).
+///
+/// Replaces invalid /RI values with "RelativeColorimetric" (the default).
+/// Valid values: RelativeColorimetric, AbsoluteColorimetric, Perceptual, Saturation.
+fn normalize_rendering_intents(doc: &mut Document) -> usize {
+    let valid = [
+        b"RelativeColorimetric" as &[u8],
+        b"AbsoluteColorimetric",
+        b"Perceptual",
+        b"Saturation",
+    ];
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                if let Ok(Object::Name(ri)) = dict.get(b"RI") {
+                    !valid.contains(&ri.as_slice())
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.set("RI", Object::Name(b"RelativeColorimetric".to_vec()));
+                count += 1;
             }
         }
     }
@@ -910,6 +950,76 @@ fn remove_halftone_names(doc: &mut Document) {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.remove(b"HalftoneName");
                 dict.remove(b"TransferFunction");
+            }
+        }
+    }
+}
+
+/// Strip digital signatures that become invalid after PDF modification (6.4.3).
+fn strip_signatures(doc: &mut Document) {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return,
+    };
+
+    // 1. Remove /Perms from catalog (signature-based permissions).
+    if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+        catalog.remove(b"Perms");
+    }
+
+    // 2. Remove /SigFlags from AcroForm.
+    let acroform_id = {
+        if let Some(Object::Dictionary(catalog)) = doc.objects.get(&catalog_id) {
+            match catalog.get(b"AcroForm").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    };
+    if let Some(af_id) = acroform_id {
+        if let Some(Object::Dictionary(ref mut af)) = doc.objects.get_mut(&af_id) {
+            af.remove(b"SigFlags");
+        }
+    }
+
+    // 3. Clear signature values from all Sig fields and Sig value dicts.
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let is_sig_field = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                matches!(
+                    dict.get(b"FT").ok(),
+                    Some(Object::Name(ref n)) if n == b"Sig"
+                ) && dict.has(b"V")
+            } else {
+                false
+            }
+        };
+        if is_sig_field {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"V");
+            }
+        }
+
+        // Also clear ByteRange/Contents from any Sig value dicts.
+        let is_sig_dict = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                matches!(
+                    dict.get(b"Type").ok(),
+                    Some(Object::Name(ref n)) if n == b"Sig"
+                ) && (dict.has(b"ByteRange") || dict.has(b"Contents"))
+            } else {
+                false
+            }
+        };
+        if is_sig_dict {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"ByteRange");
+                dict.remove(b"Contents");
+                dict.remove(b"Filter");
+                dict.remove(b"SubFilter");
             }
         }
     }

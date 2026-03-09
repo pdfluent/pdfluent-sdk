@@ -122,6 +122,16 @@ impl PdfTest for PdfAConvertTest {
             }
         };
 
+        // 3a. Embed non-embedded fonts.
+        set_progress("font_embed");
+        let font_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::embed_fonts(&mut doc)
+        }));
+        let font_report = match font_result {
+            Ok(Ok(r)) => Some(r),
+            _ => None,
+        };
+
         // 3b. Normalize color spaces: add sRGB OutputIntent if missing.
         set_progress("colorspace");
         let colorspace_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -229,6 +239,10 @@ impl PdfTest for PdfAConvertTest {
             cleanup_report.cidtogidmap_added.to_string(),
         );
         metadata.insert("ap_fixes".into(), cleanup_report.ap_fixes.to_string());
+        if let Some(ref fr) = font_report {
+            metadata.insert("fonts_embedded".into(), fr.fonts_embedded.to_string());
+            metadata.insert("fonts_failed".into(), fr.failed.len().to_string());
+        }
 
         // 6. Validate with veraPDF oracle if available.
         if let Some(verapdf) = &self.verapdf {
