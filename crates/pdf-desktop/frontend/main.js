@@ -14,6 +14,12 @@ const state = {
   renderCache: {},   // `${handle}-${page}-${dpi}` → base64
   thumbnailCache: {},// `${handle}-${page}` → base64
   darkMode: false,
+  annotToolbarVisible: false,
+  annotTool: 'select',        // current annotation tool
+  annotDrawing: false,        // currently drawing?
+  annotStartX: 0,
+  annotStartY: 0,
+  inkPoints: [],              // current ink stroke points
 };
 
 const ZOOM_LEVELS = [50, 75, 100, 125, 150, 200, 300];
@@ -53,6 +59,7 @@ async function init() {
   setupDragDrop();
   setupMenuEvents();
   setupSearchEvents();
+  setupAnnotationToolbar();
   updateUI();
 }
 
@@ -487,6 +494,12 @@ function updateUI() {
     const tab = activeTab();
     dom.zoomSelect.value = tab.zoom;
   }
+
+  // Show annotation toggle only when doc is open
+  const btnAnnotate = $('#btn-annotate');
+  if (btnAnnotate) btnAnnotate.disabled = !hasDoc;
+  const deleteBtn = $('#annot-delete');
+  if (deleteBtn) deleteBtn.disabled = !hasDoc;
 }
 
 function renderTabs() {
@@ -545,6 +558,8 @@ function setupToolbarEvents() {
   dom.zoomSelect.addEventListener('change', () => setZoom(dom.zoomSelect.value));
   dom.btnZoomIn.addEventListener('click', zoomIn);
   dom.btnZoomOut.addEventListener('click', zoomOut);
+  const btnAnnotate = $('#btn-annotate');
+  if (btnAnnotate) btnAnnotate.addEventListener('click', toggleAnnotationToolbar);
 }
 
 function setupSidebarEvents() {
@@ -596,6 +611,8 @@ function setupKeyboardShortcuts() {
     if (!mod && e.key === 'ArrowRight') { const t = activeTab(); if (t) goToPage(t.currentPage + 1); }
     if (e.key === 'Home') { goToPage(0); }
     if (e.key === 'End') { const t = activeTab(); if (t) goToPage(t.pageCount - 1); }
+    if (e.key === 'Escape' && state.annotToolbarVisible) { selectAnnotTool('select'); }
+    if (e.key === 'v' && !mod && state.annotToolbarVisible) { selectAnnotTool('select'); }
   });
 }
 
@@ -808,6 +825,338 @@ function updateSearchIndicator() {
 
 function clearSearchHighlights() {
   $$('.search-highlight').forEach(el => el.remove());
+}
+
+// ── Annotation Toolbar ───────────────────────────────────────────────
+
+function toggleAnnotationToolbar() {
+  state.annotToolbarVisible = !state.annotToolbarVisible;
+  const bar = $('#annot-toolbar');
+  bar.classList.toggle('hidden', !state.annotToolbarVisible);
+  if (!state.annotToolbarVisible) {
+    selectAnnotTool('select');
+    removeDrawOverlay();
+  }
+}
+
+function setupAnnotationToolbar() {
+  $$('.annot-tool').forEach(btn => {
+    btn.addEventListener('click', () => selectAnnotTool(btn.dataset.tool));
+  });
+
+  $('#annot-delete').addEventListener('click', deleteSelectedAnnotation);
+}
+
+function selectAnnotTool(tool) {
+  state.annotTool = tool;
+  $$('.annot-tool').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
+
+  // Show/hide conditional property controls
+  const fontsizeLabel = $('#annot-fontsize-label');
+  const stampLabel = $('#annot-stamp-label');
+  if (fontsizeLabel) fontsizeLabel.classList.toggle('hidden', tool !== 'freetext');
+  if (stampLabel) stampLabel.classList.toggle('hidden', tool !== 'stamp');
+
+  // Add or remove draw overlay based on tool
+  if (tool === 'select') {
+    removeDrawOverlay();
+  } else {
+    addDrawOverlay();
+  }
+}
+
+function addDrawOverlay() {
+  removeDrawOverlay();
+  const wrappers = dom.pageContainer.querySelectorAll('.page-wrapper');
+  wrappers.forEach(wrapper => {
+    if (state.annotTool === 'ink') {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'annot-ink-canvas';
+      canvas.width = wrapper.offsetWidth;
+      canvas.height = wrapper.offsetHeight;
+      setupInkCanvas(canvas, wrapper);
+      wrapper.appendChild(canvas);
+    } else {
+      const overlay = document.createElement('div');
+      overlay.className = 'annot-draw-overlay';
+      setupDrawOverlay(overlay, wrapper);
+      wrapper.appendChild(overlay);
+    }
+  });
+}
+
+function removeDrawOverlay() {
+  $$('.annot-draw-overlay').forEach(el => el.remove());
+  $$('.annot-ink-canvas').forEach(el => el.remove());
+  $$('.annot-draw-preview').forEach(el => el.remove());
+}
+
+function setupDrawOverlay(overlay, wrapper) {
+  let preview = null;
+
+  overlay.addEventListener('mousedown', (e) => {
+    state.annotDrawing = true;
+    const rect = overlay.getBoundingClientRect();
+    state.annotStartX = e.clientX - rect.left;
+    state.annotStartY = e.clientY - rect.top;
+
+    preview = document.createElement('div');
+    preview.className = 'annot-draw-preview';
+    preview.style.left = state.annotStartX + 'px';
+    preview.style.top = state.annotStartY + 'px';
+    preview.style.width = '0px';
+    preview.style.height = '0px';
+    wrapper.appendChild(preview);
+  });
+
+  overlay.addEventListener('mousemove', (e) => {
+    if (!state.annotDrawing || !preview) return;
+    const rect = overlay.getBoundingClientRect();
+    const curX = e.clientX - rect.left;
+    const curY = e.clientY - rect.top;
+    const x = Math.min(state.annotStartX, curX);
+    const y = Math.min(state.annotStartY, curY);
+    const w = Math.abs(curX - state.annotStartX);
+    const h = Math.abs(curY - state.annotStartY);
+    preview.style.left = x + 'px';
+    preview.style.top = y + 'px';
+    preview.style.width = w + 'px';
+    preview.style.height = h + 'px';
+  });
+
+  overlay.addEventListener('mouseup', async (e) => {
+    if (!state.annotDrawing) return;
+    state.annotDrawing = false;
+    if (preview) preview.remove();
+    preview = null;
+
+    const rect = overlay.getBoundingClientRect();
+    const endX = e.clientX - rect.left;
+    const endY = e.clientY - rect.top;
+    const pageIndex = parseInt(wrapper.dataset.page, 10);
+    await createAnnotation(wrapper, pageIndex, state.annotStartX, state.annotStartY, endX, endY);
+  });
+}
+
+function setupInkCanvas(canvas, wrapper) {
+  const ctx = canvas.getContext('2d');
+  let drawing = false;
+  let points = [];
+
+  canvas.addEventListener('mousedown', (e) => {
+    drawing = true;
+    points = [];
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    points.push(x, y);
+    ctx.strokeStyle = $('#annot-color').value;
+    ctx.lineWidth = parseFloat($('#annot-border-width').value) || 1;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    if (!drawing) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    points.push(x, y);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  });
+
+  canvas.addEventListener('mouseup', async () => {
+    if (!drawing) return;
+    drawing = false;
+    if (points.length < 4) return; // Need at least 2 points
+
+    const pageIndex = parseInt(wrapper.dataset.page, 10);
+    const pdfPoints = screenPointsToPdf(wrapper, points);
+    const bounds = getPointsBounds(pdfPoints);
+    await createInkAnnotation(pageIndex, bounds, [pdfPoints]);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  });
+}
+
+function screenPointsToPdf(wrapper, points) {
+  const img = wrapper.querySelector('img');
+  if (!img) return points;
+  const imgW = img.naturalWidth || img.width;
+  const imgH = img.naturalHeight || img.height;
+  const displayW = img.clientWidth;
+  const displayH = img.clientHeight;
+  // Scale from screen to PDF coordinates (72 DPI basis)
+  const scaleX = (imgW / displayW);
+  const scaleY = (imgH / displayH);
+  const result = [];
+  for (let i = 0; i < points.length; i += 2) {
+    result.push(points[i] * scaleX);
+    // PDF y-axis is inverted (origin at bottom-left)
+    result.push(imgH - (points[i + 1] * scaleY));
+  }
+  return result;
+}
+
+function getPointsBounds(points) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i < points.length; i += 2) {
+    minX = Math.min(minX, points[i]);
+    minY = Math.min(minY, points[i + 1]);
+    maxX = Math.max(maxX, points[i]);
+    maxY = Math.max(maxY, points[i + 1]);
+  }
+  return { x0: minX, y0: minY, x1: maxX, y1: maxY };
+}
+
+async function createAnnotation(wrapper, pageIndex, sx, sy, ex, ey) {
+  const tab = activeTab();
+  if (!tab) return;
+
+  const img = wrapper.querySelector('img');
+  if (!img) return;
+  const imgW = img.naturalWidth || img.width;
+  const imgH = img.naturalHeight || img.height;
+  const displayW = img.clientWidth;
+  const displayH = img.clientHeight;
+  const scaleX = imgW / displayW;
+  const scaleY = imgH / displayH;
+
+  // Convert screen coords to PDF coords (y inverted)
+  const pdfX0 = Math.min(sx, ex) * scaleX;
+  const pdfX1 = Math.max(sx, ex) * scaleX;
+  const pdfY0 = imgH - (Math.max(sy, ey) * scaleY);
+  const pdfY1 = imgH - (Math.min(sy, ey) * scaleY);
+
+  // Minimum size check
+  if (Math.abs(pdfX1 - pdfX0) < 5 && Math.abs(pdfY1 - pdfY0) < 5) {
+    // Click (not drag) — for stickynote/stamp, use a fixed size
+    if (state.annotTool === 'stickynote' || state.annotTool === 'stamp') {
+      // Use click position as top-right, create 24x24 rect
+      const cx = sx * scaleX;
+      const cy = imgH - (sy * scaleY);
+      await sendAnnotation(tab, pageIndex, cx, cy, cx + 24, cy + 24);
+      return;
+    }
+    return; // Too small for other tools
+  }
+
+  await sendAnnotation(tab, pageIndex, pdfX0, pdfY0, pdfX1, pdfY1);
+}
+
+async function sendAnnotation(tab, pageIndex, x0, y0, x1, y1) {
+  const colorHex = $('#annot-color').value;
+  const r = parseInt(colorHex.slice(1, 3), 16) / 255;
+  const g = parseInt(colorHex.slice(3, 5), 16) / 255;
+  const b = parseInt(colorHex.slice(5, 7), 16) / 255;
+  const opacity = parseFloat($('#annot-opacity').value);
+  const borderWidth = parseFloat($('#annot-border-width').value);
+
+  const request = {
+    handle: tab.handle,
+    page: pageIndex + 1, // lopdf uses 1-based pages
+    type: state.annotTool,
+    x0, y0, x1, y1,
+    color: [r, g, b],
+    opacity,
+    borderWidth,
+    contents: null,
+    fontSize: null,
+    stampName: null,
+    icon: null,
+    lineEndingStart: null,
+    lineEndingEnd: null,
+    inkPaths: null,
+  };
+
+  if (state.annotTool === 'freetext') {
+    request.contents = prompt('Enter text:') || '';
+    request.fontSize = parseFloat($('#annot-fontsize').value) || 12;
+    if (!request.contents) return;
+  }
+  if (state.annotTool === 'stickynote') {
+    request.contents = prompt('Note text:') || '';
+    if (!request.contents) return;
+  }
+  if (state.annotTool === 'stamp') {
+    request.stampName = $('#annot-stamp-name').value;
+  }
+
+  try {
+    await invoke('add_annotation', { request });
+    // Invalidate render cache and re-render to show the annotation
+    invalidateCaches(tab.handle, pageIndex);
+    await renderCurrentView();
+    // Re-add draw overlays since renderCurrentView rebuilds page wrappers
+    if (state.annotTool !== 'select') addDrawOverlay();
+  } catch (err) {
+    console.error('Failed to add annotation:', err);
+  }
+}
+
+async function createInkAnnotation(pageIndex, bounds, inkPaths) {
+  const tab = activeTab();
+  if (!tab) return;
+
+  const colorHex = $('#annot-color').value;
+  const r = parseInt(colorHex.slice(1, 3), 16) / 255;
+  const g = parseInt(colorHex.slice(3, 5), 16) / 255;
+  const b = parseInt(colorHex.slice(5, 7), 16) / 255;
+  const opacity = parseFloat($('#annot-opacity').value);
+  const borderWidth = parseFloat($('#annot-border-width').value);
+
+  const request = {
+    handle: tab.handle,
+    page: pageIndex + 1,
+    type: 'ink',
+    x0: bounds.x0, y0: bounds.y0, x1: bounds.x1, y1: bounds.y1,
+    color: [r, g, b],
+    opacity,
+    borderWidth,
+    contents: null,
+    fontSize: null,
+    stampName: null,
+    icon: null,
+    lineEndingStart: null,
+    lineEndingEnd: null,
+    inkPaths,
+  };
+
+  try {
+    await invoke('add_annotation', { request });
+    invalidateCaches(tab.handle, pageIndex);
+    await renderCurrentView();
+    if (state.annotTool !== 'select') addDrawOverlay();
+  } catch (err) {
+    console.error('Failed to add ink annotation:', err);
+  }
+}
+
+async function deleteSelectedAnnotation() {
+  // For now, delete the last annotation on the current page
+  const tab = activeTab();
+  if (!tab) return;
+
+  try {
+    const annots = await invoke('list_annotations', {
+      handle: tab.handle,
+      page: tab.currentPage + 1,
+    });
+    if (annots.length === 0) return;
+    const last = annots[annots.length - 1];
+    await invoke('delete_annotation', {
+      handle: tab.handle,
+      page: tab.currentPage + 1,
+      annotIndex: last.index,
+    });
+    invalidateCaches(tab.handle, tab.currentPage);
+    await renderCurrentView();
+    if (state.annotTool !== 'select') addDrawOverlay();
+  } catch (err) {
+    console.error('Failed to delete annotation:', err);
+  }
 }
 
 // ── Viewport scroll → page tracking ─────────────────────────────────
