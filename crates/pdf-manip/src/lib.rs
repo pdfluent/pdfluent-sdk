@@ -27,6 +27,12 @@ pub mod image_insert;
 pub mod optimize;
 pub mod pages;
 #[cfg(feature = "pdfa-convert")]
+pub mod pdfa_cleanup;
+#[cfg(feature = "pdfa-convert")]
+pub mod pdfa_colorspace;
+#[cfg(feature = "pdfa-convert")]
+pub mod pdfa_fonts;
+#[cfg(feature = "pdfa-convert")]
 pub mod pdfa_xmp;
 pub mod text_replace;
 pub mod text_run;

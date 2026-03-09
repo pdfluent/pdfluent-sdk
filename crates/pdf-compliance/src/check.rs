@@ -6,6 +6,40 @@ use pdf_syntax::object::{Array, Dict, Name, Object, Stream};
 use pdf_syntax::page::Resources;
 use pdf_syntax::Pdf;
 
+/// Pre-collected objects from a PDF, to avoid repeated expensive parsing.
+/// Created once with `ObjectCache::new(pdf)` and shared across checks.
+pub struct ObjectCache<'a> {
+    objects: Vec<Object<'a>>,
+}
+
+impl<'a> ObjectCache<'a> {
+    pub fn new(pdf: &'a Pdf) -> Self {
+        Self {
+            objects: pdf.objects().into_iter().collect(),
+        }
+    }
+
+    /// Build cache only if estimated object count is below threshold.
+    /// Returns empty cache for very large PDFs to avoid excessive parse time.
+    pub fn new_bounded(pdf: &'a Pdf, max_objects: usize) -> Self {
+        let estimated = pdf.len();
+        if estimated > max_objects {
+            return Self {
+                objects: Vec::new(),
+            };
+        }
+        Self::new(pdf)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.objects.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Object<'a>> {
+        self.objects.iter()
+    }
+}
+
 /// Helper to push an error into a report.
 pub fn error(report: &mut ComplianceReport, rule: &str, message: impl Into<String>) {
     report.issues.push(ComplianceIssue {
@@ -63,6 +97,12 @@ pub fn catalog<'a>(pdf: &'a Pdf) -> Option<Dict<'a>> {
 /// The /Encrypt entry lives in the trailer dictionary (or xref stream dict),
 /// not in the catalog. We scan the raw PDF bytes for it.
 pub fn is_encrypted(pdf: &Pdf) -> bool {
+    let cache = ObjectCache::new(pdf);
+    is_encrypted_cached(pdf, &cache)
+}
+
+/// Cached version of is_encrypted.
+pub fn is_encrypted_cached(pdf: &Pdf, cache: &ObjectCache<'_>) -> bool {
     let data = pdf.data().as_ref();
 
     // Look for /Encrypt in the trailer dictionary section.
@@ -75,7 +115,7 @@ pub fn is_encrypted(pdf: &Pdf) -> bool {
     }
 
     // Also check xref stream dictionaries (PDF 1.5+).
-    for obj in pdf.objects() {
+    for obj in cache.iter() {
         if let Object::Stream(s) = obj {
             let dict = s.dict();
             if let Some(t) = dict.get::<Name>(keys::TYPE) {
@@ -174,12 +214,18 @@ pub fn check_pdfa4_conformance_absent(pdf: &Pdf, report: &mut ComplianceReport) 
 
 /// Check stream dicts for empty name keys (§6.1.7.1 t3, §6.1.6.1).
 pub fn check_stream_empty_keys(pdf: &Pdf, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
+    let cache = ObjectCache::new(pdf);
+    check_stream_empty_keys_cached(&cache, report);
+}
+
+/// Cached version using pre-collected objects.
+pub fn check_stream_empty_keys_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
+    for obj in cache.iter() {
         if let Object::Stream(s) = obj {
             for (key, _) in s.dict().entries() {
                 if key.as_ref().is_empty() {
                     error(report, "6.1.7.1", "Stream dictionary contains empty key");
-                    return; // one error is enough
+                    return;
                 }
             }
         }
@@ -712,6 +758,10 @@ pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>,
 }
 
 /// Check if the document has embedded files.
+///
+/// Checks the Names/EmbeddedFiles tree, /AF array on the catalog, and also
+/// scans all objects for file specification dicts containing an /EF key
+/// (veraPDF 6.1.11 test 1).
 pub fn has_embedded_files(pdf: &Pdf) -> bool {
     let Some(cat) = catalog(pdf) else {
         return false;
@@ -723,7 +773,44 @@ pub fn has_embedded_files(pdf: &Pdf) -> bool {
         }
     }
 
-    cat.get::<Array<'_>>(keys::AF).is_some()
+    if cat.get::<Array<'_>>(keys::AF).is_some() {
+        return true;
+    }
+
+    // Scan all indirect objects for file spec dicts with /EF key
+    for obj in pdf.objects() {
+        match &obj {
+            Object::Dict(dict) if dict.contains_key(keys::EF) => return true,
+            Object::Stream(s) if s.dict().contains_key(keys::EF) => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+pub fn has_embedded_files_cached(pdf: &Pdf, cache: &ObjectCache<'_>) -> bool {
+    let Some(cat) = catalog(pdf) else {
+        return false;
+    };
+
+    if let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) {
+        if names.get::<Object<'_>>(keys::EMBEDDED_FILES).is_some() {
+            return true;
+        }
+    }
+
+    if cat.get::<Array<'_>>(keys::AF).is_some() {
+        return true;
+    }
+
+    for obj in cache.iter() {
+        match obj {
+            Object::Dict(dict) if dict.contains_key(keys::EF) => return true,
+            Object::Stream(s) if s.dict().contains_key(keys::EF) => return true,
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Check if any page has transparency (Group with /S /Transparency).
@@ -800,6 +887,23 @@ pub fn check_lang_values(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 fn check_struct_elem_lang(elem: &Dict<'_>, report: &mut ComplianceReport) {
+    check_struct_elem_lang_bounded(elem, report, 0, &mut 0);
+}
+
+fn check_struct_elem_lang_bounded(
+    elem: &Dict<'_>,
+    report: &mut ComplianceReport,
+    depth: usize,
+    visited: &mut usize,
+) {
+    const MAX_DEPTH: usize = 100;
+    const MAX_NODES: usize = 10_000;
+
+    if depth > MAX_DEPTH || *visited >= MAX_NODES {
+        return;
+    }
+    *visited += 1;
+
     if let Some(lang_str) = elem.get::<pdf_syntax::object::String>(keys::LANG) {
         if let Ok(tag) = std::str::from_utf8(lang_str.as_bytes()) {
             if !is_valid_lang_tag(tag) {
@@ -813,7 +917,10 @@ fn check_struct_elem_lang(elem: &Dict<'_>, report: &mut ComplianceReport) {
     }
     if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
         for kid in kids.iter::<Dict<'_>>() {
-            check_struct_elem_lang(&kid, report);
+            check_struct_elem_lang_bounded(&kid, report, depth + 1, visited);
+            if *visited >= MAX_NODES {
+                return;
+            }
         }
     }
 }
@@ -2927,6 +3034,16 @@ pub fn check_catalog_version_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
 /// Real values ≤ 32767, name ≤ 127 bytes, string ≤ 65535/32767 bytes,
 /// graphics state nesting ≤ 28 levels.
 pub fn check_page_dimensions(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    check_page_dimensions_with_cache(pdf, &ObjectCache::new(pdf), part, report);
+}
+
+/// Cached version that accepts pre-collected objects.
+pub fn check_page_dimensions_with_cache(
+    pdf: &Pdf,
+    cache: &ObjectCache<'_>,
+    part: u8,
+    report: &mut ComplianceReport,
+) {
     // PDF/A-1 uses clause 6.1.12, PDF/A-2/3/4 uses 6.1.13
     let rule = if part == 1 { "6.1.12" } else { "6.1.13" };
 
@@ -2978,16 +3095,16 @@ pub fn check_page_dimensions(pdf: &Pdf, part: u8, report: &mut ComplianceReport)
     }
 
     // Name objects must not exceed 127 bytes
-    check_name_lengths(pdf, rule, report);
+    check_name_lengths_cached(cache, rule, report);
 
     // String objects must not exceed 65535 bytes
-    check_string_lengths(pdf, rule, report);
+    check_string_lengths_cached(cache, rule, report);
 
     // Array objects must not exceed 8191 elements
-    check_array_sizes(pdf, rule, report);
+    check_array_sizes_cached(cache, rule, report);
 
     // Dictionary objects must not exceed 4095 entries
-    check_dict_sizes(pdf, rule, report);
+    check_dict_sizes_cached(cache, rule, report);
 
     // Graphics state nesting depth (q/Q) must not exceed 28
     for (page_idx, page) in pdf.pages().iter().enumerate() {
@@ -3004,8 +3121,12 @@ pub fn check_page_dimensions(pdf: &Pdf, part: u8, report: &mut ComplianceReport)
 
 /// All Name objects must not exceed 127 bytes.
 fn check_name_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
-        if let Object::Dict(ref d) = obj {
+    check_name_lengths_cached(&ObjectCache::new(pdf), rule, report);
+}
+
+fn check_name_lengths_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut ComplianceReport) {
+    for obj in cache.iter() {
+        if let Object::Dict(d) = obj {
             for (key, _) in d.entries() {
                 if key.as_ref().len() > 127 {
                     error(
@@ -3017,12 +3138,58 @@ fn check_name_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
                 }
             }
         }
-        if let Object::Name(ref n) = obj {
+        if let Object::Name(n) = obj {
             if n.as_ref().len() > 127 {
                 error(
                     report,
                     rule,
                     format!("Name object exceeds 127 bytes ({})", n.as_ref().len()),
+                );
+                return;
+            }
+        }
+    }
+}
+
+fn check_string_lengths_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut ComplianceReport) {
+    for obj in cache.iter() {
+        if let Object::String(ref s) = obj {
+            if s.as_bytes().len() > 65535 {
+                error(
+                    report,
+                    rule,
+                    format!("String object exceeds 65535 bytes ({})", s.as_bytes().len()),
+                );
+                return;
+            }
+        }
+    }
+}
+
+fn check_array_sizes_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut ComplianceReport) {
+    for obj in cache.iter() {
+        if let Object::Array(ref a) = obj {
+            let count = a.raw_iter().count();
+            if count > 8191 {
+                error(
+                    report,
+                    rule,
+                    format!("Array object exceeds 8191 elements ({count})"),
+                );
+                return;
+            }
+        }
+    }
+}
+
+fn check_dict_sizes_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut ComplianceReport) {
+    for obj in cache.iter() {
+        if let Object::Dict(ref d) = obj {
+            if d.len() > 4095 {
+                error(
+                    report,
+                    rule,
+                    format!("Dictionary object exceeds 4095 entries ({})", d.len()),
                 );
                 return;
             }
@@ -3129,7 +3296,15 @@ pub fn check_all_page_boundaries(pdf: &Pdf, report: &mut ComplianceReport) {
 
 /// Check stream filters for PDF/A compliance (§6.1.8, §6.1.9).
 pub fn check_stream_filters(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
+    check_stream_filters_cached(&ObjectCache::new(pdf), pdfa_part, report);
+}
+
+pub fn check_stream_filters_cached(
+    cache: &ObjectCache<'_>,
+    pdfa_part: u8,
+    report: &mut ComplianceReport,
+) {
+    for obj in cache.iter() {
         if let Object::Stream(s) = obj {
             let dict = s.dict();
             let Some(filter) = dict.get::<Object<'_>>(keys::FILTER) else {
@@ -3181,10 +3356,16 @@ pub fn check_inline_image_filters(pdf: &Pdf, pdfa_part: u8, report: &mut Complia
         let Some(content) = page.page_stream() else {
             continue;
         };
+        // Skip very large content streams to avoid pathological scan times.
+        // Inline images are rare in streams > 1 MB; the BI scan is O(n²) worst case.
+        if content.len() > 1_000_000 {
+            continue;
+        }
         let text = String::from_utf8_lossy(content);
         let loc = format!("page {}", page_idx + 1);
         // Find BI ... ID sequences and check /F or /Filter keys within them
         let mut pos = 0;
+        let mut inline_count = 0usize;
         while let Some(bi_pos) = text[pos..].find("BI") {
             let abs_bi = pos + bi_pos;
             // Make sure BI is at a word boundary
@@ -3195,6 +3376,10 @@ pub fn check_inline_image_filters(pdf: &Pdf, pdfa_part: u8, report: &mut Complia
             if !before_ok || !after_ok {
                 pos = abs_bi + 2;
                 continue;
+            }
+            inline_count += 1;
+            if inline_count > 200 {
+                break; // Avoid pathological scans
             }
             // Find ID marker (preceded by any whitespace: space, newline, etc.)
             let search_region = &text[abs_bi..];
@@ -3376,7 +3561,13 @@ fn walk_name_tree_filespec(node: &Dict<'_>, report: &mut ComplianceReport) {
 /// Stream dictionaries must not contain /F, /FFilter, or /FDecodeParms keys
 /// (these reference external files, forbidden in PDF/A).
 pub fn check_stream_external_refs(pdf: &Pdf, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
+    let cache = ObjectCache::new(pdf);
+    check_stream_external_refs_cached(&cache, report);
+}
+
+/// Cached version using pre-collected objects.
+pub fn check_stream_external_refs_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
+    for obj in cache.iter() {
         if let Object::Stream(s) = obj {
             let dict = s.dict();
             // /FFilter and /FDecodeParms are unambiguously external-file keys
@@ -3790,52 +3981,21 @@ pub fn check_linearization(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// String objects must not exceed 65535 bytes.
+#[allow(dead_code)]
 fn check_string_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
-        if let Object::String(ref s) = obj {
-            if s.as_bytes().len() > 65535 {
-                error(
-                    report,
-                    rule,
-                    format!("String object exceeds 65535 bytes ({})", s.as_bytes().len()),
-                );
-                return;
-            }
-        }
-    }
+    check_string_lengths_cached(&ObjectCache::new(pdf), rule, report);
 }
 
 /// Array objects must not exceed 8191 elements.
+#[allow(dead_code)]
 fn check_array_sizes(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
-        if let Object::Array(ref a) = obj {
-            let count = a.raw_iter().count();
-            if count > 8191 {
-                error(
-                    report,
-                    rule,
-                    format!("Array object exceeds 8191 elements ({count})"),
-                );
-                return;
-            }
-        }
-    }
+    check_array_sizes_cached(&ObjectCache::new(pdf), rule, report);
 }
 
 /// Dictionary objects must not exceed 4095 entries.
+#[allow(dead_code)]
 fn check_dict_sizes(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
-        if let Object::Dict(ref d) = obj {
-            if d.len() > 4095 {
-                error(
-                    report,
-                    rule,
-                    format!("Dictionary object exceeds 4095 entries ({})", d.len()),
-                );
-                return;
-            }
-        }
-    }
+    check_dict_sizes_cached(&ObjectCache::new(pdf), rule, report);
 }
 
 /// Graphics state nesting (q/Q) must not exceed 28 levels.
@@ -5727,13 +5887,19 @@ fn collect_struct_types(elem: &Dict<'_>, types: &mut Vec<Vec<u8>>, depth: usize)
 /// Non-recursive: checks top-level objects and one level of dict/array nesting
 /// to avoid OOM from shared indirect reference resolution.
 pub fn check_name_length_limit(pdf: &Pdf, report: &mut ComplianceReport) {
+    let cache = ObjectCache::new(pdf);
+    check_name_length_limit_cached(&cache, report);
+}
+
+/// Cached version that uses pre-collected objects.
+pub fn check_name_length_limit_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
     let mut long_name = false;
     let mut long_string = false;
-    for obj in pdf.objects() {
-        if !long_name && check_name_length_obj(&obj) {
+    for obj in cache.iter() {
+        if !long_name && check_name_length_obj(obj) {
             long_name = true;
         }
-        if !long_string && check_string_length_obj(&obj) {
+        if !long_string && check_string_length_obj(obj) {
             long_string = true;
         }
         if long_name && long_string {
@@ -5749,17 +5915,16 @@ pub fn check_name_length_limit(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 fn check_name_length_obj(obj: &Object<'_>) -> bool {
+    use pdf_syntax::object::MaybeRef;
     match obj {
         Object::Name(n) => n.as_ref().len() > 127,
         Object::Dict(dict) => {
-            for (key, _) in dict.entries() {
+            for (key, val) in dict.entries() {
                 if key.as_ref().len() > 127 {
                     return true;
                 }
-            }
-            // Check name values one level deep
-            for (key, _) in dict.entries() {
-                if let Some(Object::Name(n)) = dict.get::<Object<'_>>(key.as_ref()) {
+                // Check direct name values without resolving indirect refs
+                if let MaybeRef::NotRef(Object::Name(n)) = val {
                     if n.as_ref().len() > 127 {
                         return true;
                     }
@@ -5780,11 +5945,12 @@ fn check_name_length_obj(obj: &Object<'_>) -> bool {
 }
 
 fn check_string_length_obj(obj: &Object<'_>) -> bool {
+    use pdf_syntax::object::MaybeRef;
     match obj {
         Object::String(s) => s.as_ref().len() > 32767,
         Object::Dict(dict) => {
-            for (key, _) in dict.entries() {
-                if let Some(Object::String(s)) = dict.get::<Object<'_>>(key.as_ref()) {
+            for (_, val) in dict.entries() {
+                if let MaybeRef::NotRef(Object::String(s)) = val {
                     if s.as_ref().len() > 32767 {
                         return true;
                     }
@@ -5811,11 +5977,19 @@ fn check_string_length_obj(obj: &Object<'_>) -> bool {
 /// PDF/A requires name values to be valid UTF-8 byte sequences.
 /// Names with null bytes or invalid UTF-8 must be flagged.
 pub fn check_name_utf8(pdf: &Pdf, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
-        if check_name_utf8_obj(&obj) {
+    let cache = ObjectCache::new(pdf);
+    check_name_utf8_cached(&cache, report);
+}
+
+/// Cached version that uses pre-collected objects.
+pub fn check_name_utf8_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
+    for obj in cache.iter() {
+        if check_name_utf8_obj(obj) {
+            // Use unique internal clause to avoid remap conflicts with "6.1.7.1" (stream checks).
+            // Remapped to "6.1.7" for all parts in pdfa.rs.
             error(
                 report,
-                "6.1.7.1",
+                "6.1.7-names",
                 "Name value is not a valid UTF-8 sequence",
             );
             return;
@@ -5824,19 +5998,19 @@ pub fn check_name_utf8(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 fn check_name_utf8_obj(obj: &Object<'_>) -> bool {
+    use pdf_syntax::object::MaybeRef;
     match obj {
         Object::Name(n) => {
             let bytes = n.as_ref();
-            // Check for null bytes or invalid UTF-8
             bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
         }
         Object::Dict(dict) => {
-            for (key, _) in dict.entries() {
+            for (key, val) in dict.entries() {
                 let kb = key.as_ref();
                 if kb.contains(&0) || std::str::from_utf8(kb).is_err() {
                     return true;
                 }
-                if let Some(Object::Name(n)) = dict.get::<Object<'_>>(kb) {
+                if let MaybeRef::NotRef(Object::Name(n)) = val {
                     let nb = n.as_ref();
                     if nb.contains(&0) || std::str::from_utf8(nb).is_err() {
                         return true;
@@ -5846,12 +6020,12 @@ fn check_name_utf8_obj(obj: &Object<'_>) -> bool {
             false
         }
         Object::Stream(s) => {
-            for (key, _) in s.dict().entries() {
+            for (key, val) in s.dict().entries() {
                 let kb = key.as_ref();
                 if kb.contains(&0) || std::str::from_utf8(kb).is_err() {
                     return true;
                 }
-                if let Some(Object::Name(n)) = s.dict().get::<Object<'_>>(kb) {
+                if let MaybeRef::NotRef(Object::Name(n)) = val {
                     let nb = n.as_ref();
                     if nb.contains(&0) || std::str::from_utf8(nb).is_err() {
                         return true;
@@ -5866,10 +6040,15 @@ fn check_name_utf8_obj(obj: &Object<'_>) -> bool {
 
 /// Check implementation limits: array capacity ≤ 8191 (§6.1.13).
 pub fn check_array_capacity_limit(pdf: &Pdf, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
-        match &obj {
+    check_array_capacity_limit_cached(&ObjectCache::new(pdf), report);
+}
+
+pub fn check_array_capacity_limit_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
+    use pdf_syntax::object::MaybeRef;
+    for obj in cache.iter() {
+        match obj {
             Object::Array(arr) => {
-                let count = arr.iter::<Object<'_>>().count();
+                let count = arr.raw_iter().count();
                 if count > 8191 {
                     error(
                         report,
@@ -5880,9 +6059,9 @@ pub fn check_array_capacity_limit(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
             Object::Dict(dict) => {
-                for (key, _) in dict.entries() {
-                    if let Some(inner_arr) = dict.get::<Array<'_>>(key.as_ref()) {
-                        let count = inner_arr.iter::<Object<'_>>().count();
+                for (_, val) in dict.entries() {
+                    if let MaybeRef::NotRef(Object::Array(inner_arr)) = val {
+                        let count = inner_arr.raw_iter().count();
                         if count > 8191 {
                             error(
                                 report,
@@ -5934,15 +6113,15 @@ pub fn check_cid_value_limit(pdf: &Pdf, report: &mut ComplianceReport) {
 /// Absolute real values must be <= 32767.0.
 /// Non-recursive: checks top-level objects and one level of dict/array nesting.
 pub fn check_real_value_limits(pdf: &Pdf, report: &mut ComplianceReport) {
-    let mut found = false;
-    for obj in pdf.objects() {
-        if check_real_limit_obj(&obj) {
-            found = true;
-            break;
+    check_real_value_limits_cached(&ObjectCache::new(pdf), report);
+}
+
+pub fn check_real_value_limits_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
+    for obj in cache.iter() {
+        if check_real_limit_obj(obj) {
+            error(report, "6.1.12", "Real value out of range (exceeds 32767)");
+            return;
         }
-    }
-    if found {
-        error(report, "6.1.12", "Real value out of range (exceeds 32767)");
     }
 }
 
@@ -5951,19 +6130,20 @@ fn is_real_over_limit(v: f64) -> bool {
 }
 
 fn check_real_limit_obj(obj: &Object<'_>) -> bool {
+    use pdf_syntax::object::MaybeRef;
     match obj {
         Object::Number(n) => is_real_over_limit(n.as_f64()),
         Object::Dict(dict) => {
-            for (key, _) in dict.entries() {
-                match dict.get::<Object<'_>>(key.as_ref()) {
-                    Some(Object::Number(n)) => {
+            for (_, val) in dict.entries() {
+                match val {
+                    MaybeRef::NotRef(Object::Number(n)) => {
                         if is_real_over_limit(n.as_f64()) {
                             return true;
                         }
                     }
-                    Some(Object::Array(arr)) => {
-                        for item in arr.iter::<Object<'_>>() {
-                            if let Object::Number(n) = &item {
+                    MaybeRef::NotRef(Object::Array(arr)) => {
+                        for item in arr.raw_iter() {
+                            if let MaybeRef::NotRef(Object::Number(n)) = item {
                                 if is_real_over_limit(n.as_f64()) {
                                     return true;
                                 }
@@ -5976,8 +6156,8 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
             false
         }
         Object::Array(arr) => {
-            for item in arr.iter::<Object<'_>>() {
-                if let Object::Number(n) = &item {
+            for item in arr.raw_iter() {
+                if let MaybeRef::NotRef(Object::Number(n)) = item {
                     if is_real_over_limit(n.as_f64()) {
                         return true;
                     }
@@ -5986,8 +6166,8 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
             false
         }
         Object::Stream(s) => {
-            for (key, _) in s.dict().entries() {
-                if let Some(Object::Number(n)) = s.dict().get::<Object<'_>>(key.as_ref()) {
+            for (_, val) in s.dict().entries() {
+                if let MaybeRef::NotRef(Object::Number(n)) = val {
                     if is_real_over_limit(n.as_f64()) {
                         return true;
                     }
@@ -6003,9 +6183,13 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
 ///
 /// PDF implementation limit: non-zero real values must have absolute value >= ~1.175e-38.
 pub fn check_near_zero_reals(pdf: &Pdf, report: &mut ComplianceReport) {
+    check_near_zero_reals_cached(&ObjectCache::new(pdf), report);
+}
+
+pub fn check_near_zero_reals_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
     const MIN_POSITIVE: f64 = 1.175e-38;
-    for obj in pdf.objects() {
-        if check_near_zero_obj(&obj, MIN_POSITIVE) {
+    for obj in cache.iter() {
+        if check_near_zero_obj(obj, MIN_POSITIVE) {
             error(report, "6.1.13", "Non-zero real value too close to 0.0");
             return;
         }
@@ -6013,14 +6197,15 @@ pub fn check_near_zero_reals(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 fn check_near_zero_obj(obj: &Object<'_>, min: f64) -> bool {
+    use pdf_syntax::object::MaybeRef;
     match obj {
         Object::Number(n) => {
             let v = n.as_f64();
             v != 0.0 && v.abs() < min
         }
         Object::Dict(dict) => {
-            for (key, _) in dict.entries() {
-                if let Some(Object::Number(n)) = dict.get::<Object<'_>>(key.as_ref()) {
+            for (_, val) in dict.entries() {
+                if let MaybeRef::NotRef(Object::Number(n)) = val {
                     let v = n.as_f64();
                     if v != 0.0 && v.abs() < min {
                         return true;
@@ -6030,8 +6215,8 @@ fn check_near_zero_obj(obj: &Object<'_>, min: f64) -> bool {
             false
         }
         Object::Array(arr) => {
-            for item in arr.iter::<Object<'_>>() {
-                if let Object::Number(n) = &item {
+            for val in arr.raw_iter() {
+                if let MaybeRef::NotRef(Object::Number(n)) = val {
                     let v = n.as_f64();
                     if v != 0.0 && v.abs() < min {
                         return true;
@@ -6048,10 +6233,14 @@ fn check_near_zero_obj(obj: &Object<'_>, min: f64) -> bool {
 ///
 /// PDF integers must be in [-2147483648, 2147483647].
 pub fn check_integer_range(pdf: &Pdf, report: &mut ComplianceReport) {
+    check_integer_range_cached(&ObjectCache::new(pdf), report);
+}
+
+pub fn check_integer_range_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
     const MAX_INT: f64 = 2_147_483_647.0;
     const MIN_INT: f64 = -2_147_483_648.0;
-    for obj in pdf.objects() {
-        if check_integer_range_obj(&obj, MIN_INT, MAX_INT) {
+    for obj in cache.iter() {
+        if check_integer_range_obj(obj, MIN_INT, MAX_INT) {
             error(report, "6.1.13", "Integer value out of range");
             return;
         }
@@ -6063,19 +6252,20 @@ fn is_int_out_of_range(v: f64, min: f64, max: f64) -> bool {
 }
 
 fn check_integer_range_obj(obj: &Object<'_>, min: f64, max: f64) -> bool {
+    use pdf_syntax::object::MaybeRef;
     match obj {
         Object::Number(n) => is_int_out_of_range(n.as_f64(), min, max),
         Object::Dict(dict) => {
-            for (key, _) in dict.entries() {
-                match dict.get::<Object<'_>>(key.as_ref()) {
-                    Some(Object::Number(n)) => {
+            for (_, val) in dict.entries() {
+                match val {
+                    MaybeRef::NotRef(Object::Number(n)) => {
                         if is_int_out_of_range(n.as_f64(), min, max) {
                             return true;
                         }
                     }
-                    Some(Object::Array(arr)) => {
-                        for item in arr.iter::<Object<'_>>() {
-                            if let Object::Number(n) = &item {
+                    MaybeRef::NotRef(Object::Array(arr)) => {
+                        for item in arr.raw_iter() {
+                            if let MaybeRef::NotRef(Object::Number(n)) = item {
                                 if is_int_out_of_range(n.as_f64(), min, max) {
                                     return true;
                                 }
@@ -6088,8 +6278,8 @@ fn check_integer_range_obj(obj: &Object<'_>, min: f64, max: f64) -> bool {
             false
         }
         Object::Array(arr) => {
-            for item in arr.iter::<Object<'_>>() {
-                if let Object::Number(n) = &item {
+            for item in arr.raw_iter() {
+                if let MaybeRef::NotRef(Object::Number(n)) = item {
                     if is_int_out_of_range(n.as_f64(), min, max) {
                         return true;
                     }
@@ -6108,21 +6298,25 @@ fn check_integer_range_obj(obj: &Object<'_>, min: f64, max: f64) -> bool {
 /// Valid font file subtypes: Type1C, CIDFontType0C.
 /// (OpenType added in PDF/A-2+).
 pub fn check_font_file_subtype(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
-    for obj in pdf.objects() {
+    check_font_file_subtype_cached(&ObjectCache::new(pdf), part, report);
+}
+
+pub fn check_font_file_subtype_cached(
+    cache: &ObjectCache<'_>,
+    part: u8,
+    report: &mut ComplianceReport,
+) {
+    for obj in cache.iter() {
         let Object::Stream(s) = obj else { continue };
         let dict = s.dict();
-        // Only check font file streams (identified by having Subtype in
-        // a font descriptor's FontFile3 stream)
         let Some(subtype) = dict.get::<Name>(keys::SUBTYPE) else {
             continue;
         };
         let st = subtype.as_ref();
-        // FontFile3 streams have subtypes like Type1C, CIDFontType0C, OpenType
         let is_font_stream = st == b"Type1C" || st == b"CIDFontType0C" || st == b"OpenType";
         if !is_font_stream {
             continue;
         }
-        // PDF/A-1 only allows Type1C and CIDFontType0C
         if part == 1 && st == b"OpenType" {
             let st_str = std::str::from_utf8(st).unwrap_or("?");
             error(
