@@ -27,6 +27,7 @@ members = [
     # --- Bindings & tools ---
     # pdf-python: excluded — PyO3 requires matching Python. Build via maturin.
     "crates/pdf-node",
+    "crates/pdf-java",
     "crates/xfa-wasm",
     "crates/xfa-cli",
 
