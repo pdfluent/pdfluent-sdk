@@ -239,18 +239,28 @@ fn find_and_set_field(
             _ => continue,
         };
 
-        let partial = field_dict
-            .get(b"T")
-            .ok()
-            .and_then(|o| match o {
-                Object::String(s, _) => Some(String::from_utf8_lossy(s).to_string()),
-                _ => None,
-            })
-            .unwrap_or_default();
+        let partial = field_dict.get(b"T").ok().and_then(|o| match o {
+            Object::String(s, _) => Some(String::from_utf8_lossy(s).to_string()),
+            _ => None,
+        });
 
         if name_parts.is_empty() {
             continue;
         }
+
+        // If no /T key, this is a widget or intermediate node — pass through to kids.
+        let partial = match partial {
+            Some(p) => p,
+            None => {
+                if let Ok(Object::Array(kids_arr)) = field_dict.get(b"Kids") {
+                    let kids_clone = kids_arr.clone();
+                    if find_and_set_field(doc, &kids_clone, name_parts, value).is_ok() {
+                        return Ok(());
+                    }
+                }
+                continue;
+            }
+        };
 
         if partial != name_parts[0] {
             continue;

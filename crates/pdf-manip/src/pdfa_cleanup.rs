@@ -29,6 +29,10 @@ pub struct PdfACleanupReport {
     pub lzw_streams_reencoded: usize,
     /// Number of OCG dictionaries fixed.
     pub ocg_fixes: usize,
+    /// Number of CIDToGIDMap entries added.
+    pub cidtogidmap_added: usize,
+    /// Number of annotation AP fixes.
+    pub ap_fixes: usize,
 }
 
 /// Remove all PDF/A-incompatible elements from the document.
@@ -44,7 +48,14 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
         annotation_flags_fixed: 0,
         lzw_streams_reencoded: 0,
         ocg_fixes: 0,
+        cidtogidmap_added: 0,
+        ap_fixes: 0,
     };
+
+    // Force PDF version to 1.7 for PDF/A-2 compliance (6.1.2).
+    if doc.version.starts_with('2') {
+        doc.version = "1.7".to_string();
+    }
 
     report.js_actions_removed = remove_javascript(doc);
     report.aa_entries_removed = remove_additional_actions(doc);
@@ -63,6 +74,11 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_need_appearances(doc);
     remove_forbidden_actions(doc);
     fix_image_interpolate(doc);
+    report.cidtogidmap_added = fix_cidtogidmap(doc);
+    report.ap_fixes = fix_annotation_ap(doc);
+    fix_ocg_order(doc);
+    fix_annotation_contents(doc);
+    remove_halftone_names(doc);
 
     Ok(report)
 }
@@ -348,7 +364,8 @@ fn ensure_trailer_id(doc: &mut Document) -> bool {
 }
 
 /// Fix annotation flags for PDF/A compliance (6.3.2).
-/// Print flag (bit 3) must be set, Hidden/Invisible/ToggleNoView/NoView must be clear.
+/// All annotations must have F key. Print flag (bit 3) must be set,
+/// Hidden/Invisible/ToggleNoView/NoView must be clear.
 fn fix_annotation_flags(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
@@ -357,7 +374,7 @@ fn fix_annotation_flags(doc: &mut Document) -> usize {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 let is_annot = match dict.get(b"Subtype").ok() {
                     Some(Object::Name(n)) => {
-                        // Popup annotations are exempt
+                        // Popup annotations are exempt from Print requirement
                         n != b"Popup" && is_annotation_subtype(n)
                     }
                     _ => false,
@@ -367,11 +384,8 @@ fn fix_annotation_flags(doc: &mut Document) -> usize {
                 } else {
                     let f = match dict.get(b"F").ok() {
                         Some(Object::Integer(v)) => *v as u32,
-                        _ => 0,
+                        _ => 0, // Missing F key = 0 = needs fix
                     };
-                    // PDF spec F flags (1-indexed bits, stored 0-indexed):
-                    //   1=Invisible(0x01), 2=Hidden(0x02), 3=Print(0x04),
-                    //   6=NoView(0x20), 9=ToggleNoView(0x100)
                     let print_bit: u32 = 1 << 2;
                     let bad: u32 = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 8);
                     (f & print_bit == 0) || (f & bad != 0)
@@ -515,7 +529,19 @@ fn fix_optional_content(doc: &mut Document) -> usize {
         None => return 0,
     };
 
-    // Fix D (default config) dictionary: ensure Name key is present
+    // Get OCGs list for Order fixing.
+    let ocgs: Vec<Object> = {
+        if let Some(Object::Dictionary(ocprops)) = doc.objects.get(&ocprops_id) {
+            match ocprops.get(b"OCGs").ok() {
+                Some(Object::Array(arr)) => arr.clone(),
+                _ => vec![],
+            }
+        } else {
+            vec![]
+        }
+    };
+
+    // Fix D (default config) dictionary: ensure Name key is present, fix Order, remove AS.
     let d_id = {
         if let Some(Object::Dictionary(ocprops)) = doc.objects.get(&ocprops_id) {
             match ocprops.get(b"D").ok() {
@@ -536,9 +562,19 @@ fn fix_optional_content(doc: &mut Document) -> usize {
                 );
                 count += 1;
             }
+            // Always set Order to full OCGs list (6.9 t3).
+            if !ocgs.is_empty() {
+                d_dict.set("Order", Object::Array(ocgs.clone()));
+                count += 1;
+            }
+            // Remove AS key (6.9 t4).
+            if d_dict.has(b"AS") {
+                d_dict.remove(b"AS");
+                count += 1;
+            }
         }
     } else {
-        // D might be inline
+        // D might be inline.
         if let Some(Object::Dictionary(ref mut ocprops)) = doc.objects.get_mut(&ocprops_id) {
             if let Ok(Object::Dictionary(ref mut d_dict)) = ocprops.get_mut(b"D") {
                 if !d_dict.has(b"Name") {
@@ -548,11 +584,19 @@ fn fix_optional_content(doc: &mut Document) -> usize {
                     );
                     count += 1;
                 }
+                if !ocgs.is_empty() {
+                    d_dict.set("Order", Object::Array(ocgs.clone()));
+                    count += 1;
+                }
+                if d_dict.has(b"AS") {
+                    d_dict.remove(b"AS");
+                    count += 1;
+                }
             }
         }
     }
 
-    // Fix Configs array entries similarly
+    // Fix Configs array entries: ensure Name, remove AS.
     let config_ids: Vec<ObjectId> = {
         if let Some(Object::Dictionary(ocprops)) = doc.objects.get(&ocprops_id) {
             match ocprops.get(b"Configs").ok() {
@@ -580,6 +624,10 @@ fn fix_optional_content(doc: &mut Document) -> usize {
                     "Name",
                     Object::String(b"Config".to_vec(), lopdf::StringFormat::Literal),
                 );
+                count += 1;
+            }
+            if config.has(b"AS") {
+                config.remove(b"AS");
                 count += 1;
             }
         }
@@ -632,26 +680,49 @@ fn remove_forbidden_actions(doc: &mut Document) {
         b"Rendition",
         b"Trans",
         b"GoTo3DView",
+        b"GoToE",
     ];
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let is_forbidden = {
+        let action_type = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 if let Ok(Object::Name(s)) = dict.get(b"S") {
-                    forbidden.iter().any(|f| s == *f)
+                    if forbidden.iter().any(|f| s == *f) {
+                        Some(ActionRemoval::RemoveType)
+                    } else if s == b"Named" {
+                        // Only NextPage, PrevPage, FirstPage, LastPage are allowed (6.5.1 t2).
+                        let allowed = match dict.get(b"N").ok() {
+                            Some(Object::Name(n)) => matches!(
+                                n.as_slice(),
+                                b"NextPage" | b"PrevPage" | b"FirstPage" | b"LastPage"
+                            ),
+                            _ => false,
+                        };
+                        if !allowed {
+                            Some(ActionRemoval::RemoveType)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 } else {
-                    false
+                    None
                 }
             } else {
-                false
+                None
             }
         };
-        if is_forbidden {
+        if let Some(ActionRemoval::RemoveType) = action_type {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.remove(b"S");
             }
         }
     }
+}
+
+enum ActionRemoval {
+    RemoveType,
 }
 
 /// Set Interpolate=false on all image XObjects (6.2.8 t3).
@@ -681,19 +752,198 @@ fn fix_image_interpolate(doc: &mut Document) {
     }
 }
 
+/// Add CIDToGIDMap /Identity to CIDFontType2 fonts if missing (6.2.11.4.1).
+fn fix_cidtogidmap(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                let is_cidfont2 = matches!(
+                    dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"CIDFontType2"
+                );
+                is_cidfont2 && !dict.has(b"CIDToGIDMap")
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.set("CIDToGIDMap", Object::Name(b"Identity".to_vec()));
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Fix annotation AP dictionaries: ensure /N (normal appearance) exists (6.3.3 t2).
+fn fix_annotation_ap(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let fix_info = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                let is_annot = matches!(
+                    dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if is_annotation_subtype(n) && n != b"Popup" && n != b"Link"
+                );
+                if !is_annot {
+                    ApFixInfo::None
+                } else {
+                    match dict.get(b"AP").ok() {
+                        Some(Object::Dictionary(ap)) => {
+                            if ap.has(b"N") {
+                                ApFixInfo::None
+                            } else {
+                                let fallback = ap
+                                    .get(b"D")
+                                    .ok()
+                                    .cloned()
+                                    .or_else(|| ap.get(b"R").ok().cloned());
+                                ApFixInfo::InlineAp(fallback)
+                            }
+                        }
+                        Some(Object::Reference(ap_id)) => ApFixInfo::RefAp(*ap_id),
+                        _ => ApFixInfo::None,
+                    }
+                }
+            } else {
+                ApFixInfo::None
+            }
+        };
+        match fix_info {
+            ApFixInfo::InlineAp(Some(val)) => {
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    if let Ok(Object::Dictionary(ref mut ap)) = dict.get_mut(b"AP") {
+                        ap.set("N", val);
+                        count += 1;
+                    }
+                }
+            }
+            ApFixInfo::RefAp(ap_id) => {
+                // Check referenced AP dict.
+                let fallback = {
+                    if let Some(Object::Dictionary(ap)) = doc.objects.get(&ap_id) {
+                        if ap.has(b"N") {
+                            None
+                        } else {
+                            ap.get(b"D")
+                                .ok()
+                                .cloned()
+                                .or_else(|| ap.get(b"R").ok().cloned())
+                        }
+                    } else {
+                        None
+                    }
+                };
+                if let Some(val) = fallback {
+                    if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
+                        ap.set("N", val);
+                        count += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+enum ApFixInfo {
+    None,
+    InlineAp(Option<Object>),
+    RefAp(ObjectId),
+}
+
+/// Ensure OCG D config has Order array listing all OCGs (6.9 t3).
+fn fix_ocg_order(doc: &mut Document) {
+    // This is now handled in fix_optional_content — kept for backwards compat.
+    let _ = doc;
+}
+
+/// Add /Contents to annotations that lack it (6.3.3 t1).
+fn fix_annotation_contents(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                let is_annot = matches!(
+                    dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if is_annotation_subtype(n) && n != b"Popup"
+                );
+                is_annot && !dict.has(b"Contents")
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.set(
+                    "Contents",
+                    Object::String(Vec::new(), lopdf::StringFormat::Literal),
+                );
+            }
+        }
+    }
+}
+
+/// Remove HalftoneName and TransferFunction from halftone dictionaries (6.2.5 t5, t6).
+fn remove_halftone_names(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                // Halftone dicts have HalftoneType or Type=Halftone.
+                let is_halftone = dict.has(b"HalftoneType")
+                    || matches!(
+                        dict.get(b"Type").ok(),
+                        Some(Object::Name(ref n)) if n == b"Halftone"
+                    );
+                is_halftone && (dict.has(b"HalftoneName") || dict.has(b"TransferFunction"))
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"HalftoneName");
+                dict.remove(b"TransferFunction");
+            }
+        }
+    }
+}
+
 /// Ensure saved PDF bytes have a proper binary comment after the header (6.1.2).
 /// Must be called on the bytes AFTER `doc.save_to()`.
 pub fn fix_pdf_header(data: &mut Vec<u8>) {
-    // PDF/A requires: %PDF-1.x\n%<4 high bytes>\n
-    // Find the first newline after %PDF
+    // PDF/A-2 requires: %PDF-1.n\n%<4+ high bytes>\n
+    // Also fix %PDF-2.x to %PDF-1.7.
+    if data.len() >= 9 && &data[0..5] == b"%PDF-" {
+        // Fix version 2.x → 1.7
+        if data[5] == b'2' {
+            data[5] = b'1';
+            data[7] = b'7';
+        }
+    }
+
+    // Find the first newline after %PDF header.
     if let Some(pos) = data.iter().position(|&b| b == b'\n') {
         let next = pos + 1;
-        // Check if there's already a binary comment
+        // Check if there's already a binary comment with high bytes.
         if next < data.len() && data[next] == b'%' {
-            // Check if the comment has high bytes
-            let has_high = data[next..].iter().take(5).any(|&b| b >= 0x80);
+            let end = data[next..]
+                .iter()
+                .position(|&b| b == b'\n' || b == b'\r')
+                .unwrap_or(5);
+            let has_high = data[next..next + end]
+                .iter()
+                .filter(|&&b| b >= 0x80)
+                .count()
+                >= 4;
             if has_high {
-                return; // Already has a proper binary comment
+                return; // Already has a proper binary comment.
             }
         }
         // Insert binary comment line: %âãÏÓ\n
@@ -740,7 +990,7 @@ fn count_name_tree_entries(doc: &Document, tree_id: ObjectId) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lopdf::{Stream, dictionary};
+    use lopdf::{dictionary, Stream};
 
     fn make_basic_doc() -> Document {
         let mut doc = Document::with_version("1.7");
@@ -935,5 +1185,70 @@ mod tests {
         };
         doc.add_object(Object::Dictionary(annot));
         assert_eq!(fix_annotation_flags(&mut doc), 1);
+    }
+
+    #[test]
+    fn test_fix_cidtogidmap() {
+        let mut doc = make_basic_doc();
+        let cidfont = dictionary! {
+            "Type" => "Font",
+            "Subtype" => Object::Name(b"CIDFontType2".to_vec()),
+            "BaseFont" => "TestFont",
+        };
+        doc.add_object(Object::Dictionary(cidfont));
+        assert_eq!(fix_cidtogidmap(&mut doc), 1);
+
+        // Second call should be no-op.
+        assert_eq!(fix_cidtogidmap(&mut doc), 0);
+    }
+
+    #[test]
+    fn test_fix_annotation_ap() {
+        let mut doc = make_basic_doc();
+        // Annotation with AP dict that has /D but no /N.
+        let ap = dictionary! {
+            "D" => Object::Reference((99, 0).into()),
+        };
+        let annot = dictionary! {
+            "Subtype" => Object::Name(b"Stamp".to_vec()),
+            "AP" => Object::Dictionary(ap),
+            "F" => Object::Integer(4),
+        };
+        doc.add_object(Object::Dictionary(annot));
+        assert_eq!(fix_annotation_ap(&mut doc), 1);
+    }
+
+    #[test]
+    fn test_fix_annotation_contents() {
+        let mut doc = make_basic_doc();
+        let annot = dictionary! {
+            "Subtype" => Object::Name(b"Text".to_vec()),
+            "F" => Object::Integer(4),
+        };
+        doc.add_object(Object::Dictionary(annot));
+        fix_annotation_contents(&mut doc);
+        // All annotations should now have Contents.
+        for obj in doc.objects.values() {
+            if let Object::Dictionary(dict) = obj {
+                if matches!(dict.get(b"Subtype").ok(), Some(Object::Name(ref n)) if n == b"Text") {
+                    assert!(dict.has(b"Contents"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_version_fix() {
+        let mut doc = make_basic_doc();
+        doc.version = "2.0".to_string();
+        let _ = cleanup_for_pdfa(&mut doc, false).unwrap();
+        assert_eq!(doc.version, "1.7");
+    }
+
+    #[test]
+    fn test_fix_pdf_header_v2() {
+        let mut data = b"%PDF-2.0\ntest".to_vec();
+        fix_pdf_header(&mut data);
+        assert!(data.starts_with(b"%PDF-1.7"));
     }
 }
