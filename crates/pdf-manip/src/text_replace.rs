@@ -57,6 +57,9 @@ pub fn replace_text(
 }
 
 /// Replace text across all pages in a document.
+///
+/// Pages where the replacement text cannot be encoded in the font are
+/// silently skipped (e.g. subset fonts missing glyphs for the replacement).
 pub fn replace_text_all_pages(
     doc: &mut Document,
     search: &str,
@@ -66,8 +69,14 @@ pub fn replace_text_all_pages(
     let mut total = 0;
 
     for page_num in 1..=page_count {
-        let fonts = FontMap::from_page(doc, page_num)?;
-        total += replace_text(doc, page_num, search, replacement, &fonts)?;
+        let fonts = match FontMap::from_page(doc, page_num) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        match replace_text(doc, page_num, search, replacement, &fonts) {
+            Ok(n) => total += n,
+            Err(_) => continue, // skip pages with encoding issues
+        }
     }
 
     Ok(total)
@@ -284,33 +293,33 @@ fn encode_text_for_font(font_name: &str, text: &str, fonts: &FontMap) -> Result<
         return encode_cid_text(font_name, text, fonts);
     }
 
-    // For builtin single-byte fonts, prefer the reverse CMap (if available)
-    // over raw Latin-1 encoding. The reverse CMap respects font-specific
-    // Encoding/Differences and produces correct glyph codes.
+    // For fonts with a ToUnicode CMap, use the reverse CMap to encode.
+    // This respects font-specific Encoding/Differences and subset glyphs.
     let reverse = fonts.build_reverse_map(font_name);
     if !reverse.is_empty() {
         let mut bytes = Vec::with_capacity(text.len());
-        let mut all_found = true;
         for ch in text.chars() {
             if let Some(&code) = reverse.get(&ch) {
                 if code <= 0xFF {
                     bytes.push(code as u8);
                 } else {
-                    all_found = false;
-                    break;
+                    return Err(ManipError::Other(format!(
+                        "character '{}' (U+{:04X}) maps to code {} which exceeds single-byte range in font '{}'",
+                        ch, ch as u32, code, font_name
+                    )));
                 }
             } else {
-                all_found = false;
-                break;
+                return Err(ManipError::Other(format!(
+                    "character '{}' (U+{:04X}) not available in font '{}' (subset or custom encoding)",
+                    ch, ch as u32, font_name
+                )));
             }
         }
-        if all_found {
-            return Ok(bytes);
-        }
-        // Fall through to Latin-1 if reverse CMap was incomplete
+        return Ok(bytes);
     }
 
-    // Fallback: Latin-1 encoding (assume Unicode code point = byte value).
+    // Fallback: Latin-1 encoding for fonts without a ToUnicode CMap
+    // (standard fonts with standard encoding).
     let mut bytes = Vec::with_capacity(text.len());
     for ch in text.chars() {
         let code = ch as u32;

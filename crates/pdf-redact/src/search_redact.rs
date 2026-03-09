@@ -342,6 +342,9 @@ fn remove_text_ops_for_page(
     // Also process Form XObjects referenced in the page's Resources.
     removed += remove_text_ops_from_xobjects(doc, page_num, &matcher, &fonts)?;
 
+    // Also process annotation appearance streams.
+    removed += remove_text_ops_from_annotations(doc, page_num, &matcher, &fonts)?;
+
     Ok(removed)
 }
 
@@ -421,6 +424,219 @@ fn remove_text_ops_from_xobjects(
     }
 
     Ok(total_removed)
+}
+
+/// Remove matching text ops from annotation appearance streams on a page.
+fn remove_text_ops_from_annotations(
+    doc: &mut Document,
+    page_num: u32,
+    matcher: &TextMatcher,
+    fonts: &pdf_manip::text_run::FontMap,
+) -> Result<usize> {
+    let pages = doc.get_pages();
+    let &page_id = match pages.get(&page_num) {
+        Some(id) => id,
+        None => return Ok(0),
+    };
+
+    // Collect appearance stream IDs from annotations.
+    let ap_stream_ids = collect_annotation_appearance_ids(doc, page_id);
+    if ap_stream_ids.is_empty() {
+        return Ok(0);
+    }
+
+    let mut total_removed = 0;
+    for stream_id in ap_stream_ids {
+        total_removed += remove_text_ops_from_stream(doc, stream_id, matcher, fonts)?;
+    }
+
+    Ok(total_removed)
+}
+
+/// Remove matching text operations from a single stream object.
+fn remove_text_ops_from_stream(
+    doc: &mut Document,
+    stream_id: ObjectId,
+    matcher: &TextMatcher,
+    fonts: &pdf_manip::text_run::FontMap,
+) -> Result<usize> {
+    let content_bytes = match doc.get_object(stream_id) {
+        Ok(Object::Stream(ref s)) => {
+            let mut stream = s.clone();
+            let _ = stream.decompress();
+            stream.content.clone()
+        }
+        _ => return Ok(0),
+    };
+
+    let editor = match pdf_manip::content_editor::ContentEditor::from_stream(&content_bytes) {
+        Ok(e) => e,
+        Err(_) => return Ok(0),
+    };
+
+    let runs = pdf_manip::text_run::extract_text_runs(&editor, fonts);
+
+    let mut indices_to_remove: Vec<usize> = Vec::new();
+    for run in &runs {
+        if !matcher.find_all(&run.text).is_empty() {
+            for idx in run.ops_range.clone() {
+                indices_to_remove.push(idx);
+            }
+        }
+    }
+
+    if indices_to_remove.is_empty() {
+        // Check for nested Form XObjects within this stream (e.g., signature appearances).
+        let nested_ids = collect_nested_form_xobjects(doc, stream_id);
+        let mut nested_removed = 0;
+        for nested_id in nested_ids {
+            nested_removed += remove_text_ops_from_stream(doc, nested_id, matcher, fonts)?;
+        }
+        return Ok(nested_removed);
+    }
+
+    indices_to_remove.sort_unstable();
+    indices_to_remove.dedup();
+
+    let mut new_editor = editor;
+    for &idx in indices_to_remove.iter().rev() {
+        new_editor.remove_range(idx..idx + 1);
+    }
+
+    let removed = indices_to_remove.len();
+
+    let encoded = new_editor
+        .encode()
+        .map_err(|e| RedactError::Other(format!("encode annotation stream: {e}")))?;
+
+    if let Ok(Object::Stream(ref mut s)) = doc.get_object_mut(stream_id) {
+        s.dict.remove(b"Filter");
+        s.content = encoded;
+        s.dict
+            .set("Length", Object::Integer(s.content.len() as i64));
+    }
+
+    // Also recurse into nested Form XObjects.
+    let nested_ids = collect_nested_form_xobjects(doc, stream_id);
+    let mut nested_removed = removed;
+    for nested_id in nested_ids {
+        nested_removed += remove_text_ops_from_stream(doc, nested_id, matcher, fonts)?;
+    }
+
+    Ok(nested_removed)
+}
+
+/// Collect appearance stream IDs from page annotations.
+fn collect_annotation_appearance_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
+    let mut result = Vec::new();
+
+    let page_dict = match doc.get_object(page_id) {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        _ => return result,
+    };
+
+    let annots = match page_dict.get(b"Annots") {
+        Ok(Object::Array(ref arr)) => arr.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Array(ref arr)) => arr.clone(),
+            _ => return result,
+        },
+        _ => return result,
+    };
+
+    for annot_ref in &annots {
+        let annot_id = match annot_ref {
+            Object::Reference(id) => *id,
+            _ => continue,
+        };
+
+        let annot_dict = match doc.get_object(annot_id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => continue,
+        };
+
+        // Get the AP (appearance) dictionary.
+        let ap_dict = match annot_dict.get(b"AP") {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            Ok(Object::Reference(id)) => match doc.get_object(*id) {
+                Ok(Object::Dictionary(ref d)) => d.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+
+        // Get the N (normal appearance) stream.
+        match ap_dict.get(b"N") {
+            Ok(Object::Reference(id)) => {
+                result.push(*id);
+            }
+            Ok(Object::Dictionary(ref d)) => {
+                // Some annotations have a dict of appearance states.
+                for (_key, val) in d.iter() {
+                    if let Object::Reference(id) = val {
+                        result.push(*id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    result
+}
+
+/// Collect Form XObject IDs referenced within a stream's Resources or content.
+fn collect_nested_form_xobjects(doc: &Document, stream_id: ObjectId) -> Vec<ObjectId> {
+    let mut result = Vec::new();
+
+    let stream_dict = match doc.get_object(stream_id) {
+        Ok(Object::Stream(ref s)) => s.dict.clone(),
+        _ => return result,
+    };
+
+    // Check the stream's own Resources/XObject dict.
+    let resources = match stream_dict.get(b"Resources") {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => return result,
+        },
+        _ => return result,
+    };
+
+    let xobject_dict = match resources.get(b"XObject") {
+        Ok(Object::Dictionary(ref d)) => d.clone(),
+        Ok(Object::Reference(id)) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => return result,
+        },
+        _ => return result,
+    };
+
+    for (_key, value) in xobject_dict.iter() {
+        let obj_id = match value {
+            Object::Reference(id) => *id,
+            _ => continue,
+        };
+        // Only include Form XObjects, not images.
+        if let Ok(Object::Stream(ref s)) = doc.get_object(obj_id) {
+            let is_form = s
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|v| match v {
+                    Object::Name(ref n) => Some(n.as_slice()),
+                    _ => None,
+                })
+                .map(|n| n == b"Form")
+                .unwrap_or(false);
+            if is_form {
+                result.push(obj_id);
+            }
+        }
+    }
+
+    result
 }
 
 /// Collect ObjectIds of Form XObjects from a page's Resources/XObject dictionary.
