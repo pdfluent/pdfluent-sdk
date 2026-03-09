@@ -28,6 +28,10 @@ keywords = ["pdf", "render", "forms", "signatures", "rust"]
 [project.optional-dependencies]
 pillow = ["Pillow"]
 numpy = ["numpy"]
+test = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

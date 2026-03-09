@@ -179,5 +179,85 @@ namespace XfaPdf.Tests
                 Assert.Equal(PdfStatus.ErrorCorruptPdf, ex.Status);
             }
         }
+
+        // ---------- Scenario 5: Read AcroForm fields ----------
+
+        [Fact(Skip = "TODO: AcroForm field reading not yet exposed in .NET binding")]
+        public void ReadFormFields()
+        {
+            // TODO: using var doc = PdfDocument.Open(LoadFixture("acroform.pdf"));
+            //       var fields = doc.GetFormFields();
+            //       Assert.NotEmpty(fields);
+        }
+
+        // ---------- Scenario 6: Fill text field, save ----------
+
+        [Fact(Skip = "TODO: Form field writing not yet exposed in .NET binding")]
+        public void WriteFormField()
+        {
+            // TODO: using var doc = PdfDocument.Open(LoadFixture("acroform.pdf"));
+            //       doc.SetFieldValue("name", "test");
+            //       var saved = doc.Save();
+            //       using var doc2 = PdfDocument.Open(saved);
+            //       Assert.Equal("test", doc2.GetFieldValue("name"));
+        }
+
+        // ---------- Scenario 7: Read annotations ----------
+
+        [Fact(Skip = "TODO: Annotation reading not yet exposed in .NET binding")]
+        public void ReadAnnotations()
+        {
+            // TODO: using var doc = PdfDocument.Open(CreateTestPdf());
+            //       var annots = doc.GetAnnotations(0);
+            //       Assert.NotNull(annots);
+        }
+
+        // ---------- Scenario 8: Add highlight, save ----------
+
+        [Fact(Skip = "TODO: Annotation creation not yet exposed in .NET binding")]
+        public void AddHighlightAnnotation()
+        {
+            // TODO: Create highlight, save, reopen, verify
+        }
+
+        // ---------- Scenario 9: Validate PDF/A ----------
+
+        [Fact(Skip = "TODO: PDF/A validation not yet exposed in .NET binding")]
+        public void ValidatePdfA()
+        {
+            // TODO: using var doc = PdfDocument.Open(CreateTestPdf());
+            //       var report = doc.ValidatePdfA("2b");
+            //       Assert.NotNull(report);
+        }
+
+        // ---------- Scenario 10: Merge 2 PDFs ----------
+
+        [Fact(Skip = "TODO: PDF merge not yet exposed in .NET binding")]
+        public void MergePdfs()
+        {
+            // TODO: var merged = PdfDocument.Merge(pdf1, pdf2);
+            //       using var doc = PdfDocument.Open(merged);
+            //       Assert.Equal(2, doc.PageCount);
+        }
+
+        // ---------- Scenario 11: Verify signature ----------
+
+        [Fact(Skip = "TODO: Signature verification not yet exposed in .NET binding")]
+        public void VerifySignature()
+        {
+            // TODO: using var doc = PdfDocument.Open(LoadFixture("signed.pdf"));
+            //       var sigs = doc.VerifySignatures();
+            //       Assert.NotEmpty(sigs);
+        }
+
+        // ---------- Scenario 12: Extract images ----------
+
+        [Fact(Skip = "TODO: Image extraction not yet exposed in .NET binding")]
+        public void ExtractImages()
+        {
+            // TODO: using var doc = PdfDocument.Open(CreateTestPdf());
+            //       var images = doc.ExtractImages(0);
+            //       Assert.NotNull(images);
+        }
     }
 }
