@@ -141,6 +141,12 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
         }));
 
+        // 3a3. Fix CIDSet for CID fonts.
+        set_progress("cidset");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_cidset(&mut doc)
+        }));
+
         // 3b. Normalize color spaces: add sRGB OutputIntent if missing.
         set_progress("colorspace");
         let colorspace_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
