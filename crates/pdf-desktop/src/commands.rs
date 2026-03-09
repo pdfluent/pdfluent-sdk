@@ -1244,4 +1244,83 @@ mod tests {
         let result = PdfDocument::open(data);
         assert!(result.is_err());
     }
+
+    // ── Screenshot regression ────────────────────────────────────────
+
+    fn golden_dir() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("golden")
+    }
+
+    /// Render a test PDF and compare with golden screenshot.
+    ///
+    /// If the golden file doesn't exist, it is created (first run).
+    /// On subsequent runs, the rendered PNG dimensions and size are
+    /// compared to detect regressions.
+    fn check_screenshot(pdf_name: &str, page: usize, dpi: f64) {
+        let (state, h) = setup(pdf_name);
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let png = render_page_png(&open.doc, page, dpi).unwrap();
+        assert!(!png.is_empty());
+
+        let golden_name = format!(
+            "{}_{}_{}dpi.png",
+            pdf_name.replace(".pdf", ""),
+            page,
+            dpi as u32
+        );
+        let golden_path = golden_dir().join(&golden_name);
+
+        if !golden_path.exists() {
+            std::fs::write(&golden_path, &png).unwrap();
+            eprintln!("Golden created: {golden_name} ({} bytes)", png.len());
+            return;
+        }
+
+        let golden = std::fs::read(&golden_path).unwrap();
+
+        // Verify PNG header.
+        assert_eq!(&png[..4], &[0x89, b'P', b'N', b'G']);
+
+        // Extract dimensions from PNG IHDR chunk (bytes 16-23).
+        let png_w = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+        let png_h = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
+        let golden_w = u32::from_be_bytes([golden[16], golden[17], golden[18], golden[19]]);
+        let golden_h = u32::from_be_bytes([golden[20], golden[21], golden[22], golden[23]]);
+
+        assert_eq!(
+            (png_w, png_h),
+            (golden_w, golden_h),
+            "Dimension mismatch for {golden_name}: rendered {png_w}x{png_h} vs golden {golden_w}x{golden_h}"
+        );
+
+        // File size should be within 20% (accounts for minor rendering differences).
+        let size_ratio = png.len() as f64 / golden.len() as f64;
+        assert!(
+            (0.80..=1.20).contains(&size_ratio),
+            "Size regression for {golden_name}: rendered {} bytes vs golden {} bytes (ratio {size_ratio:.2})",
+            png.len(),
+            golden.len(),
+        );
+    }
+
+    #[test]
+    fn screenshot_simple_pdf_page0() {
+        check_screenshot("simple.pdf", 0, 72.0);
+    }
+
+    #[test]
+    fn screenshot_simple_pdf_page0_150dpi() {
+        check_screenshot("simple.pdf", 0, 150.0);
+    }
+
+    #[test]
+    fn screenshot_multipage_pdf_page0() {
+        check_screenshot("multi-page.pdf", 0, 72.0);
+    }
+
+    #[test]
+    fn screenshot_acroform_page0() {
+        check_screenshot("acroform.pdf", 0, 72.0);
+    }
 }
