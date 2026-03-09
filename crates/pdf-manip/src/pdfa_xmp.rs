@@ -179,18 +179,25 @@ fn parse_xmp_date(date_str: &str) -> Option<xmp_writer::DateTime> {
     // Also support PDF date format: D:YYYYMMDDHHmmSS+HH'mm'
     let s = date_str.strip_prefix("D:").unwrap_or(date_str);
 
-    if s.len() >= 4 {
-        let year = s[0..4].parse::<u16>().ok()?;
-        let month = if s.len() >= 6 {
-            s[4..6].parse::<u8>().ok()
+    // Work on chars to avoid panics on multi-byte UTF-8 boundaries.
+    let chars: Vec<char> = s.chars().collect();
+
+    if chars.len() >= 4 {
+        let year_str: String = chars[0..4].iter().collect();
+        let year = year_str.parse::<u16>().ok()?;
+        let month = if chars.len() >= 6 {
+            let ms: String = chars[4..6].iter().collect();
+            ms.parse::<u8>().ok()
         } else {
             None
         };
-        let day = if s.len() >= 8 {
-            s[6..8].parse::<u8>().ok().or({
+        let day = if chars.len() >= 8 {
+            let ds: String = chars[6..8].iter().collect();
+            ds.parse::<u8>().ok().or({
                 // ISO format: YYYY-MM-DD
-                if s.len() >= 10 && &s[4..5] == "-" {
-                    s[8..10].parse::<u8>().ok()
+                if chars.len() >= 10 && chars[4] == '-' {
+                    let ds2: String = chars[8..10].iter().collect();
+                    ds2.parse::<u8>().ok()
                 } else {
                     None
                 }
