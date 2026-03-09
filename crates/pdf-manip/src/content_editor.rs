@@ -96,13 +96,87 @@ impl ContentEditor {
     }
 
     /// Encode operations back to content stream bytes.
+    ///
+    /// Uses custom encoding for inline images (BI/ID/EI), because
+    /// lopdf's Content::encode() incorrectly serializes them as
+    /// regular stream objects.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        let content = Content {
-            operations: self.operations.clone(),
-        };
-        content
-            .encode()
-            .map_err(|e| ManipError::Other(format!("content encode: {e}")))
+        if self.operations.iter().any(|op| op.operator == "BI") {
+            self.encode_with_inline_images()
+        } else {
+            let content = Content {
+                operations: self.operations.clone(),
+            };
+            content
+                .encode()
+                .map_err(|e| ManipError::Other(format!("content encode: {e}")))
+        }
+    }
+
+    /// Custom encoder that handles inline images correctly.
+    fn encode_with_inline_images(&self) -> Result<Vec<u8>> {
+        // Split operations: inline images get custom encoding,
+        // non-BI segments use lopdf's standard encoder.
+        let mut buf = Vec::new();
+        let mut segment: Vec<Operation> = Vec::new();
+
+        for op in &self.operations {
+            if op.operator == "BI" {
+                // Flush any pending normal operations
+                if !segment.is_empty() {
+                    let content = Content {
+                        operations: std::mem::take(&mut segment),
+                    };
+                    let encoded = content
+                        .encode()
+                        .map_err(|e| ManipError::Other(format!("content encode: {e}")))?;
+                    if !buf.is_empty() {
+                        buf.push(b'\n');
+                    }
+                    buf.extend_from_slice(&encoded);
+                }
+
+                // Encode inline image: BI <dict> ID <data> EI
+                if let Some(Object::Stream(ref stream)) = op.operands.first() {
+                    if !buf.is_empty() {
+                        buf.push(b'\n');
+                    }
+                    buf.extend_from_slice(b"BI\n");
+                    for (key, val) in &stream.dict {
+                        // Skip internal Stream keys not part of inline image dict
+                        if key == b"Length" || key == b"Filter" || key == b"DecodeParms" {
+                            continue;
+                        }
+                        buf.push(b'/');
+                        buf.extend_from_slice(key);
+                        buf.push(b' ');
+                        write_inline_value(&mut buf, val);
+                        buf.push(b'\n');
+                    }
+                    buf.extend_from_slice(b"ID ");
+                    buf.extend_from_slice(&stream.content);
+                    buf.extend_from_slice(b"\nEI");
+                }
+            } else {
+                segment.push(op.clone());
+            }
+        }
+
+        // Flush remaining normal operations
+        if !segment.is_empty() {
+            let content = Content {
+                operations: segment,
+            };
+            let encoded = content
+                .encode()
+                .map_err(|e| ManipError::Other(format!("content encode: {e}")))?;
+            if !buf.is_empty() {
+                buf.push(b'\n');
+            }
+            buf.extend_from_slice(&encoded);
+        }
+
+        Ok(buf)
     }
 
     /// Encode and compress with flate.
@@ -526,6 +600,46 @@ pub(crate) fn multiply_matrix(m1: &[f64; 6], m2: &[f64; 6]) -> [f64; 6] {
     ]
 }
 
+/// Write a PDF object value in inline image dictionary format.
+fn write_inline_value(buf: &mut Vec<u8>, obj: &Object) {
+    match obj {
+        Object::Integer(n) => buf.extend_from_slice(n.to_string().as_bytes()),
+        Object::Real(n) => {
+            // Use compact float formatting
+            let s = if n.fract() == 0.0 {
+                format!("{n:.1}")
+            } else {
+                format!("{n}")
+            };
+            buf.extend_from_slice(s.as_bytes());
+        }
+        Object::Boolean(b) => {
+            buf.extend_from_slice(if *b { b"true" } else { b"false" });
+        }
+        Object::Name(name) => {
+            buf.push(b'/');
+            buf.extend_from_slice(name);
+        }
+        Object::String(s, _) => {
+            buf.push(b'(');
+            buf.extend_from_slice(s);
+            buf.push(b')');
+        }
+        Object::Array(arr) => {
+            buf.push(b'[');
+            for (i, item) in arr.iter().enumerate() {
+                if i > 0 {
+                    buf.push(b' ');
+                }
+                write_inline_value(buf, item);
+            }
+            buf.push(b']');
+        }
+        Object::Null => buf.extend_from_slice(b"null"),
+        _ => buf.extend_from_slice(b"null"),
+    }
+}
+
 /// Compress data with flate/zlib.
 fn compress_flate(data: &[u8]) -> Vec<u8> {
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
@@ -740,6 +854,64 @@ mod tests {
         let editor = ContentEditor::from_stream(b"").unwrap();
         assert!(editor.is_empty());
         assert_eq!(editor.len(), 0);
+    }
+
+    #[test]
+    fn minimal_inline_image_roundtrip() {
+        // Minimal BI/ID/EI test: 4x4 1-bit gray image
+        let input =
+            b"q 1 0 0 1 0 0 cm BI /W 4 /H 4 /BPC 1 /CS /DeviceGray ID \xF0\xA0\x50\x0F EI Q";
+        let editor = ContentEditor::from_stream(input).unwrap();
+        let encoded = editor.encode().unwrap();
+        let editor2 = ContentEditor::from_stream(&encoded).unwrap();
+        assert_eq!(editor.len(), editor2.len());
+    }
+
+    #[test]
+    fn inline_image_with_text_roundtrip() {
+        // BI with surrounding text operations including Tj with strings
+        let input = b"q 1 0 0 1 0 0 cm BI /W 4 /H 4 /BPC 1 /CS /DeviceGray ID \xF0\xA0\x50\x0F EI Q BT /F0 12 Tf (Hello World) Tj ET q 1 0 0 1 0 0 cm BI /W 4 /H 4 /BPC 1 /CS /DeviceGray ID \xAA\xBB\xCC\xDD EI Q";
+        let editor = ContentEditor::from_stream(input).unwrap();
+        let encoded = editor.encode().unwrap();
+        let editor2 = ContentEditor::from_stream(&encoded).unwrap();
+        assert_eq!(editor.len(), editor2.len(), "op count mismatch");
+    }
+
+    #[test]
+    fn roundtrip_regression_0119() {
+        // Regression: inline images (BI/ID/EI) caused op count loss during roundtrip.
+        let pdf_data = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/regression-388/roundtrip_0119.pdf"
+        ));
+        let pdf_data = match pdf_data {
+            Ok(d) => d,
+            Err(_) => return, // skip if fixture not available
+        };
+        let doc = Document::load_mem(&pdf_data).unwrap();
+        let pages = doc.get_pages();
+        let mut tested = 0;
+        for (&page_num, &page_id) in &pages {
+            let content = match doc.get_page_content(page_id) {
+                Ok(c) if !c.is_empty() => c,
+                _ => continue,
+            };
+            let editor = match ContentEditor::from_stream(&content) {
+                Ok(e) => e,
+                Err(_) => continue, // skip pages lopdf can't decode
+            };
+            let orig_count = editor.len();
+            let encoded = editor.encode().unwrap();
+            let editor2 = ContentEditor::from_stream(&encoded).unwrap();
+            assert_eq!(
+                orig_count,
+                editor2.len(),
+                "page {page_num}: op count mismatch {orig_count} → {}",
+                editor2.len()
+            );
+            tested += 1;
+        }
+        assert!(tested > 0, "should test at least one page");
     }
 
     #[test]
