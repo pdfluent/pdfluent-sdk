@@ -1,7 +1,9 @@
 use std::time::Instant;
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: profile_compliance <pdf>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: profile_compliance <pdf>");
     let data = std::fs::read(&path).expect("cannot read file");
     println!("File: {} ({} bytes)", path, data.len());
 
@@ -14,8 +16,7 @@ fn main() {
     println!("Pages: {}", pdf.pages().iter().count());
 
     // Time the full PDF/A validation
-    let level = pdf_compliance::detect_pdfa_level(&pdf)
-        .unwrap_or(pdf_compliance::PdfALevel::A1b);
+    let level = pdf_compliance::detect_pdfa_level(&pdf).unwrap_or(pdf_compliance::PdfALevel::A1b);
     println!("Detected level: {:?}", level);
 
     let t1 = Instant::now();
