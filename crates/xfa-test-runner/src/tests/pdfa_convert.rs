@@ -132,12 +132,8 @@ impl PdfTest for PdfAConvertTest {
             _ => None,
         };
 
-        // 3a-2. Fix metrics and CIDSet on already-embedded fonts.
-        set_progress("font_metrics");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pdf_manip::pdfa_fonts::fix_embedded_font_metrics(&mut doc);
-            pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
-        }));
+        // NOTE: fix_embedded_font_metrics disabled — it breaks glyph width consistency.
+        // The metrics fix needs to match veraPDF's expectations exactly.
 
         // 3b. Normalize color spaces: add sRGB OutputIntent if missing.
         set_progress("colorspace");
