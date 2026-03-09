@@ -3120,6 +3120,7 @@ pub fn check_page_dimensions_with_cache(
 }
 
 /// All Name objects must not exceed 127 bytes.
+#[allow(dead_code)]
 fn check_name_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
     check_name_lengths_cached(&ObjectCache::new(pdf), rule, report);
 }
