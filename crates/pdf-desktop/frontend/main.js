@@ -52,6 +52,7 @@ async function init() {
   setupKeyboardShortcuts();
   setupDragDrop();
   setupMenuEvents();
+  setupSearchEvents();
   updateUI();
 }
 
@@ -584,6 +585,9 @@ function setupKeyboardShortcuts() {
     if (mod && e.key === '-') { e.preventDefault(); zoomOut(); }
     if (mod && e.key === '1') { e.preventDefault(); setZoom('fit-width'); }
     if (mod && e.key === '2') { e.preventDefault(); setZoom('fit-page'); }
+    if (mod && e.key === 'c') { e.preventDefault(); copyPageText(); }
+    if (mod && e.key === 'a') { e.preventDefault(); selectAllText(); }
+    if (mod && e.key === 'f') { e.preventDefault(); toggleSearch(); }
     if (mod && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
     if (mod && e.key === 'd') { e.preventDefault(); toggleDarkMode(); }
 
@@ -626,6 +630,9 @@ async function setupMenuEvents() {
       case 'fit_page': setZoom('fit-page'); break;
       case 'toggle_sidebar': toggleSidebar(); break;
       case 'toggle_dark': toggleDarkMode(); break;
+      case 'copy': copyPageText(); break;
+      case 'select_all': selectAllText(); break;
+      case 'find': toggleSearch(); break;
       case 'doc_info': showDocumentInfo(); break;
     }
   });
@@ -682,6 +689,125 @@ async function showDocumentInfo() {
   } catch (err) {
     console.error('Failed to get document info:', err);
   }
+}
+
+// ── Text Selection & Copy ────────────────────────────────────────────
+
+async function copyPageText() {
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    const text = await invoke('extract_page_text', {
+      handle: tab.handle,
+      pageIndex: tab.currentPage,
+    });
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    console.error('Copy failed:', err);
+  }
+}
+
+async function selectAllText() {
+  // Select all text on current page (visual feedback + prepare for copy)
+  const tab = activeTab();
+  if (!tab) return;
+  // Add selection overlay to current page wrapper
+  const wrapper = $(`.page-wrapper[data-page="${tab.currentPage}"]`);
+  if (wrapper) {
+    // Clear existing overlays
+    wrapper.querySelectorAll('.selection-overlay').forEach(el => el.remove());
+    const overlay = document.createElement('div');
+    overlay.className = 'selection-overlay';
+    overlay.style.inset = '0';
+    wrapper.appendChild(overlay);
+  }
+}
+
+// ── Search ──────────────────────────────────────────────────────────
+
+const searchState = {
+  visible: false,
+  query: '',
+  results: [],     // page indices with matches
+  currentIndex: 0, // index into results
+};
+
+function toggleSearch() {
+  const bar = $('#search-bar');
+  searchState.visible = !searchState.visible;
+  bar.classList.toggle('hidden', !searchState.visible);
+  if (searchState.visible) {
+    const input = $('#search-input');
+    input.focus();
+    input.select();
+  } else {
+    clearSearchHighlights();
+  }
+}
+
+function setupSearchEvents() {
+  const input = $('#search-input');
+  const prevBtn = $('#search-prev');
+  const nextBtn = $('#search-next');
+  const closeBtn = $('#search-close');
+
+  input.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      if (e.shiftKey) navigateSearch(-1);
+      else if (searchState.query === input.value && searchState.results.length > 0) navigateSearch(1);
+      else await performSearch(input.value);
+    }
+    if (e.key === 'Escape') toggleSearch();
+  });
+
+  prevBtn.addEventListener('click', () => navigateSearch(-1));
+  nextBtn.addEventListener('click', () => navigateSearch(1));
+  closeBtn.addEventListener('click', toggleSearch);
+}
+
+async function performSearch(query) {
+  searchState.query = query;
+  searchState.currentIndex = 0;
+  if (!query) {
+    searchState.results = [];
+    updateSearchIndicator();
+    clearSearchHighlights();
+    return;
+  }
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    searchState.results = await invoke('search_document', {
+      handle: tab.handle,
+      query,
+    });
+    updateSearchIndicator();
+    if (searchState.results.length > 0) {
+      await goToPage(searchState.results[0]);
+    }
+  } catch (err) {
+    console.error('Search failed:', err);
+  }
+}
+
+function navigateSearch(direction) {
+  if (searchState.results.length === 0) return;
+  searchState.currentIndex = (searchState.currentIndex + direction + searchState.results.length) % searchState.results.length;
+  updateSearchIndicator();
+  goToPage(searchState.results[searchState.currentIndex]);
+}
+
+function updateSearchIndicator() {
+  const el = $('#search-results');
+  if (searchState.results.length === 0) {
+    el.textContent = searchState.query ? 'No results' : '';
+  } else {
+    el.textContent = `${searchState.currentIndex + 1} / ${searchState.results.length}`;
+  }
+}
+
+function clearSearchHighlights() {
+  $$('.search-highlight').forEach(el => el.remove());
 }
 
 // ── Viewport scroll → page tracking ─────────────────────────────────

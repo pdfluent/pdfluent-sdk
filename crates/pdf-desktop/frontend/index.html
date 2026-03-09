@@ -84,6 +84,14 @@
 
     <!-- PDF viewport -->
     <div id="viewport">
+      <!-- Search bar (hidden by default) -->
+      <div id="search-bar" class="hidden">
+        <input type="text" id="search-input" placeholder="Find in document..." />
+        <span id="search-results">0 / 0</span>
+        <button id="search-prev" title="Previous">&#9650;</button>
+        <button id="search-next" title="Next">&#9660;</button>
+        <button id="search-close" title="Close">&times;</button>
+      </div>
       <div id="viewport-scroll">
         <div id="page-container"></div>
       </div>

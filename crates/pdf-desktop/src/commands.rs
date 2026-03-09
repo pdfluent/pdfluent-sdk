@@ -218,6 +218,70 @@ pub fn delete_page(
     Err("Page deletion not yet implemented — requires mutation layer".to_string())
 }
 
+// ── Text extraction and search ───────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct TextBlockResponse {
+    pub text: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[tauri::command]
+pub fn extract_page_text(
+    state: State<'_, AppState>,
+    handle: u32,
+    page_index: usize,
+) -> Result<String, String> {
+    let docs = state.documents.lock().unwrap();
+    let open = docs
+        .get(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+    open.doc
+        .extract_text(page_index)
+        .map_err(|e| format!("text extraction error: {e}"))
+}
+
+#[tauri::command]
+pub fn extract_text_blocks(
+    state: State<'_, AppState>,
+    handle: u32,
+    page_index: usize,
+) -> Result<Vec<TextBlockResponse>, String> {
+    let docs = state.documents.lock().unwrap();
+    let open = docs
+        .get(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+    let blocks = open
+        .doc
+        .extract_text_blocks(page_index)
+        .map_err(|e| format!("text block extraction error: {e}"))?;
+    Ok(blocks
+        .iter()
+        .map(|b| {
+            let first_span = b.spans.first();
+            TextBlockResponse {
+                text: b.text(),
+                x: first_span.map(|s| s.x).unwrap_or(0.0),
+                y: first_span.map(|s| s.y).unwrap_or(0.0),
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn search_document(
+    state: State<'_, AppState>,
+    handle: u32,
+    query: String,
+) -> Result<Vec<usize>, String> {
+    let docs = state.documents.lock().unwrap();
+    let open = docs
+        .get(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+    Ok(open.doc.search_text(&query))
+}
+
 fn file_name_from_path(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
