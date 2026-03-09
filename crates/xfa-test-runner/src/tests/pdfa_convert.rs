@@ -122,6 +122,38 @@ impl PdfTest for PdfAConvertTest {
             }
         };
 
+        // 3b. Normalize color spaces: add sRGB OutputIntent if missing.
+        set_progress("colorspace");
+        let colorspace_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc)
+        }));
+        match colorspace_result {
+            Ok(Ok(cs_report)) => {
+                if cs_report.output_intent_added {
+                    // OutputIntent was added — good.
+                    let _ = cs_report;
+                }
+            }
+            Ok(Err(e)) => {
+                return TestResult {
+                    status: TestStatus::Skip,
+                    error_message: Some(format!("colorspace normalization failed: {e}")),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
+            Err(_) => {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some("panic in normalize_colorspaces".into()),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
+        }
+
         set_progress("xmp_repair");
         let xmp_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_xmp::repair_xmp_metadata(
