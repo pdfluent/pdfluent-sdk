@@ -88,7 +88,13 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_widget_btn_appearance(doc);
     fix_font_descriptor_keys(doc);
     ensure_xmp_dc_title(doc);
+    truncate_long_names(doc);
+    fix_soft_mask_colorspace(doc);
     remove_halftone_names(doc);
+    remove_needs_rendering(doc);
+    remove_forbidden_annotations(doc);
+    fix_file_spec_keys(doc);
+    remove_ocg_as_key(doc);
     strip_signatures(doc);
 
     Ok(report)
@@ -1382,6 +1388,109 @@ fn remove_ocg_as_key(doc: &mut Document) {
     }
 }
 
+/// Truncate Name objects longer than 127 bytes (6.1.13:4).
+fn truncate_long_names(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let long_keys: Vec<Vec<u8>> = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                dict.iter()
+                    .filter_map(|(key, val)| {
+                        // Check Name values > 127 bytes.
+                        if let Object::Name(n) = val {
+                            if n.len() > 127 {
+                                return Some(key.clone());
+                            }
+                        }
+                        None
+                    })
+                    .collect()
+            } else {
+                vec![]
+            }
+        };
+        for key in long_keys {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                if let Ok(Object::Name(ref n)) = dict.get(&key) {
+                    let truncated = n[..127].to_vec();
+                    let key_str = std::str::from_utf8(&key).unwrap_or("?");
+                    dict.set(key_str, Object::Name(truncated));
+                }
+            }
+        }
+    }
+}
+
+/// Fix soft mask images to use DeviceGray colorspace (6.8:5).
+fn fix_soft_mask_colorspace(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+                let is_image = matches!(
+                    stream.dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"Image"
+                );
+                if !is_image {
+                    false
+                } else {
+                    // Check if this is a soft mask (SMask value of another image,
+                    // or has /Matte key which indicates it's a soft mask).
+                    let has_matte = stream.dict.has(b"Matte");
+                    let cs_not_gray = match stream.dict.get(b"ColorSpace").ok() {
+                        Some(Object::Name(ref n)) => n != b"DeviceGray",
+                        None => false, // If no colorspace, likely already grayscale.
+                        _ => true,
+                    };
+                    has_matte && cs_not_gray
+                }
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream
+                    .dict
+                    .set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+            }
+        }
+    }
+
+    // Also check images that are referenced as SMask values.
+    let smask_ids: Vec<ObjectId> = {
+        let mut ids_out = Vec::new();
+        for obj in doc.objects.values() {
+            if let Object::Stream(stream) = obj {
+                if let Ok(Object::Reference(smask_id)) = stream.dict.get(b"SMask") {
+                    ids_out.push(*smask_id);
+                }
+            }
+        }
+        ids_out
+    };
+
+    for smask_id in smask_ids {
+        let needs_fix = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&smask_id) {
+                match stream.dict.get(b"ColorSpace").ok() {
+                    Some(Object::Name(ref n)) => n != b"DeviceGray",
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&smask_id) {
+                stream
+                    .dict
+                    .set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+            }
+        }
+    }
+}
+
 /// Remove HalftoneName and TransferFunction from halftone dictionaries (6.2.5 t5, t6).
 fn remove_halftone_names(doc: &mut Document) {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
@@ -1920,6 +2029,100 @@ mod tests {
                 stream.content.len(),
                 original_len,
                 "should not modify XMP when dc:title exists"
+            );
+        }
+    }
+
+    #[test]
+    fn test_truncate_long_names() {
+        let mut doc = make_basic_doc();
+        let long_name = vec![b'A'; 200];
+        let dict = dictionary! {
+            "SomeKey" => Object::Name(long_name),
+        };
+        let id = doc.add_object(Object::Dictionary(dict));
+        truncate_long_names(&mut doc);
+        if let Some(Object::Dictionary(d)) = doc.objects.get(&id) {
+            if let Ok(Object::Name(n)) = d.get(b"SomeKey") {
+                assert!(n.len() <= 127, "Name should be truncated to 127 bytes");
+            }
+        }
+    }
+
+    #[test]
+    fn test_truncate_long_names_short_ok() {
+        let mut doc = make_basic_doc();
+        let dict = dictionary! {
+            "Key" => Object::Name(b"ShortName".to_vec()),
+        };
+        let id = doc.add_object(Object::Dictionary(dict));
+        truncate_long_names(&mut doc);
+        if let Some(Object::Dictionary(d)) = doc.objects.get(&id) {
+            if let Ok(Object::Name(n)) = d.get(b"Key") {
+                assert_eq!(n, b"ShortName");
+            }
+        }
+    }
+
+    #[test]
+    fn test_fix_soft_mask_colorspace() {
+        let mut doc = make_basic_doc();
+        // Soft mask image (has /Matte) with non-DeviceGray colorspace.
+        let smask_stream = Stream::new(
+            dictionary! {
+                "Subtype" => Object::Name(b"Image".to_vec()),
+                "ColorSpace" => Object::Name(b"DeviceRGB".to_vec()),
+                "Matte" => Object::Array(vec![Object::Integer(0)]),
+                "Width" => Object::Integer(10),
+                "Height" => Object::Integer(10),
+                "BitsPerComponent" => Object::Integer(8),
+            },
+            vec![0u8; 100],
+        );
+        let smask_id = doc.add_object(Object::Stream(smask_stream));
+        fix_soft_mask_colorspace(&mut doc);
+        if let Some(Object::Stream(s)) = doc.objects.get(&smask_id) {
+            assert_eq!(
+                s.dict.get(b"ColorSpace").ok(),
+                Some(&Object::Name(b"DeviceGray".to_vec())),
+                "Soft mask should be DeviceGray"
+            );
+        }
+    }
+
+    #[test]
+    fn test_fix_soft_mask_via_smask_ref() {
+        let mut doc = make_basic_doc();
+        let smask_stream = Stream::new(
+            dictionary! {
+                "Subtype" => Object::Name(b"Image".to_vec()),
+                "ColorSpace" => Object::Name(b"DeviceRGB".to_vec()),
+                "Width" => Object::Integer(10),
+                "Height" => Object::Integer(10),
+                "BitsPerComponent" => Object::Integer(8),
+            },
+            vec![0u8; 100],
+        );
+        let smask_id = doc.add_object(Object::Stream(smask_stream));
+        // Parent image referencing the soft mask.
+        let parent_stream = Stream::new(
+            dictionary! {
+                "Subtype" => Object::Name(b"Image".to_vec()),
+                "ColorSpace" => Object::Name(b"DeviceRGB".to_vec()),
+                "Width" => Object::Integer(10),
+                "Height" => Object::Integer(10),
+                "BitsPerComponent" => Object::Integer(8),
+                "SMask" => Object::Reference(smask_id),
+            },
+            vec![0u8; 300],
+        );
+        doc.add_object(Object::Stream(parent_stream));
+        fix_soft_mask_colorspace(&mut doc);
+        if let Some(Object::Stream(s)) = doc.objects.get(&smask_id) {
+            assert_eq!(
+                s.dict.get(b"ColorSpace").ok(),
+                Some(&Object::Name(b"DeviceGray".to_vec())),
+                "SMask referenced image should be DeviceGray"
             );
         }
     }
