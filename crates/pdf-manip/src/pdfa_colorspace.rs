@@ -17,6 +17,8 @@ pub struct ColorSpaceReport {
     pub device_colorspaces_found: Vec<String>,
     /// Number of pages scanned.
     pub pages_scanned: usize,
+    /// Number of Separation colorspaces unified (rule 6.2.4.4:2).
+    pub separations_unified: usize,
 }
 
 /// Detect device-dependent color spaces used in page resources.
@@ -172,11 +174,14 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
         false
     };
 
+    let separations_unified = normalize_separation_colorspaces(doc);
+
     Ok(ColorSpaceReport {
         had_output_intent,
         output_intent_added,
         device_colorspaces_found: unique_names,
         pages_scanned,
+        separations_unified,
     })
 }
 
@@ -521,6 +526,115 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
     p
 }
 
+/// Normalize Separation colorspaces so all with the same name use identical
+/// alternateSpace and tintTransform (PDF/A rule 6.2.4.4:2).
+fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
+    use std::collections::HashMap;
+
+    // Phase 1: Collect all Separation arrays across all objects.
+    // A Separation array is: [/Separation name alternateCS tintTransform]
+    // We record (ObjectId, name) → (alternateCS, tintTransform).
+    let mut by_name: HashMap<Vec<u8>, Vec<(ObjectId, Object, Object)>> = HashMap::new();
+
+    for (&id, obj) in &doc.objects {
+        collect_separations_recursive(id, obj, &mut by_name);
+    }
+
+    // Phase 2: For each name with conflicting definitions, unify to canonical (first found).
+    let mut fixes: Vec<(ObjectId, Vec<u8>, Object, Object)> = Vec::new();
+    for (name, entries) in &by_name {
+        if entries.len() <= 1 {
+            continue;
+        }
+        let (_, ref canon_alt, ref canon_tint) = entries[0];
+        for (id, alt, tint) in &entries[1..] {
+            if *alt != *canon_alt || *tint != *canon_tint {
+                fixes.push((*id, name.clone(), canon_alt.clone(), canon_tint.clone()));
+            }
+        }
+    }
+
+    // Phase 3: Apply fixes.
+    let count = fixes.len();
+    for (id, name, alt, tint) in fixes {
+        if let Some(obj) = doc.objects.get_mut(&id) {
+            fix_separation_recursive(obj, &name, &alt, &tint);
+        }
+    }
+    count
+}
+
+fn collect_separations_recursive(
+    id: ObjectId,
+    obj: &Object,
+    map: &mut std::collections::HashMap<Vec<u8>, Vec<(ObjectId, Object, Object)>>,
+) {
+    match obj {
+        Object::Array(arr) => {
+            if arr.len() >= 4 {
+                if let Object::Name(cs_type) = &arr[0] {
+                    if cs_type == b"Separation" {
+                        if let Object::Name(name) = &arr[1] {
+                            map.entry(name.clone()).or_default().push((
+                                id,
+                                arr[2].clone(),
+                                arr[3].clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+            for item in arr {
+                collect_separations_recursive(id, item, map);
+            }
+        }
+        Object::Dictionary(dict) => {
+            for (_, val) in dict.iter() {
+                collect_separations_recursive(id, val, map);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, val) in stream.dict.iter() {
+                collect_separations_recursive(id, val, map);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &Object) {
+    match obj {
+        Object::Array(arr) => {
+            if arr.len() >= 4 {
+                if let Object::Name(cs_type) = &arr[0] {
+                    if cs_type == b"Separation" {
+                        if let Object::Name(n) = &arr[1] {
+                            if n == name {
+                                arr[2] = alt.clone();
+                                arr[3] = tint.clone();
+                            }
+                        }
+                    }
+                }
+            }
+            for item in arr.iter_mut() {
+                fix_separation_recursive(item, name, alt, tint);
+            }
+        }
+        Object::Dictionary(dict) => {
+            for (_, val) in dict.iter_mut() {
+                fix_separation_recursive(val, name, alt, tint);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, val) in stream.dict.iter_mut() {
+                fix_separation_recursive(val, name, alt, tint);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn is_device_dependent(name: &str) -> bool {
     matches!(name, "DeviceRGB" | "DeviceCMYK" | "DeviceGray")
 }
@@ -709,5 +823,130 @@ mod tests {
         assert!(!report.had_output_intent);
         assert!(report.output_intent_added);
         assert!(report.device_colorspaces_found.is_empty());
+    }
+
+    #[test]
+    fn test_separation_no_conflict() {
+        let mut doc = Document::with_version("1.7");
+        let tint_fn = dictionary! {
+            "FunctionType" => Object::Integer(2),
+            "N" => Object::Integer(1),
+        };
+        let tint_id = doc.add_object(Object::Dictionary(tint_fn));
+
+        let sep1 = Object::Array(vec![
+            Object::Name(b"Separation".to_vec()),
+            Object::Name(b"SpotRed".to_vec()),
+            Object::Name(b"DeviceRGB".to_vec()),
+            Object::Reference(tint_id),
+        ]);
+        let sep2 = Object::Array(vec![
+            Object::Name(b"Separation".to_vec()),
+            Object::Name(b"SpotRed".to_vec()),
+            Object::Name(b"DeviceRGB".to_vec()),
+            Object::Reference(tint_id),
+        ]);
+        doc.add_object(sep1);
+        doc.add_object(sep2);
+
+        let count = normalize_separation_colorspaces(&mut doc);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_separation_conflict_unified() {
+        let mut doc = Document::with_version("1.7");
+
+        let tint1_id = doc.add_object(Object::Dictionary(dictionary! {
+            "FunctionType" => Object::Integer(2),
+            "N" => Object::Integer(1),
+        }));
+        let tint2_id = doc.add_object(Object::Dictionary(dictionary! {
+            "FunctionType" => Object::Integer(2),
+            "N" => Object::Integer(2),
+        }));
+
+        let sep1 = Object::Array(vec![
+            Object::Name(b"Separation".to_vec()),
+            Object::Name(b"SpotBlue".to_vec()),
+            Object::Name(b"DeviceRGB".to_vec()),
+            Object::Reference(tint1_id),
+        ]);
+        let sep2 = Object::Array(vec![
+            Object::Name(b"Separation".to_vec()),
+            Object::Name(b"SpotBlue".to_vec()),
+            Object::Name(b"DeviceCMYK".to_vec()),
+            Object::Reference(tint2_id),
+        ]);
+        let sep1_id = doc.add_object(sep1);
+        let sep2_id = doc.add_object(sep2);
+
+        let count = normalize_separation_colorspaces(&mut doc);
+        assert_eq!(count, 1);
+
+        // sep2 should now match sep1.
+        if let Object::Array(arr) = &doc.objects[&sep2_id] {
+            assert_eq!(arr[2], Object::Name(b"DeviceRGB".to_vec()));
+            assert_eq!(arr[3], Object::Reference(tint1_id));
+        } else {
+            panic!("expected array");
+        }
+        // sep1 unchanged.
+        if let Object::Array(arr) = &doc.objects[&sep1_id] {
+            assert_eq!(arr[2], Object::Name(b"DeviceRGB".to_vec()));
+            assert_eq!(arr[3], Object::Reference(tint1_id));
+        } else {
+            panic!("expected array");
+        }
+    }
+
+    #[test]
+    fn test_separation_in_dict_value() {
+        let mut doc = Document::with_version("1.7");
+
+        let tint1_id = doc.add_object(Object::Dictionary(dictionary! {
+            "FunctionType" => Object::Integer(2),
+            "N" => Object::Integer(1),
+        }));
+        let tint2_id = doc.add_object(Object::Dictionary(dictionary! {
+            "FunctionType" => Object::Integer(4),
+            "N" => Object::Integer(1),
+        }));
+
+        // sep1 as top-level array
+        doc.add_object(Object::Array(vec![
+            Object::Name(b"Separation".to_vec()),
+            Object::Name(b"Cyan".to_vec()),
+            Object::Name(b"DeviceRGB".to_vec()),
+            Object::Reference(tint1_id),
+        ]));
+
+        // sep2 nested inside a Colorants dictionary
+        let mut colorants = lopdf::Dictionary::new();
+        colorants.set(
+            "Cyan",
+            Object::Array(vec![
+                Object::Name(b"Separation".to_vec()),
+                Object::Name(b"Cyan".to_vec()),
+                Object::Name(b"DeviceCMYK".to_vec()),
+                Object::Reference(tint2_id),
+            ]),
+        );
+        let colorants_id = doc.add_object(Object::Dictionary(colorants));
+
+        let count = normalize_separation_colorspaces(&mut doc);
+        assert_eq!(count, 1);
+
+        // Verify the nested Separation was unified.
+        if let Object::Dictionary(dict) = &doc.objects[&colorants_id] {
+            if let Ok(Object::Array(arr)) = dict.get(b"Cyan") {
+                assert_eq!(arr[2], Object::Name(b"DeviceRGB".to_vec()));
+                assert_eq!(arr[3], Object::Reference(tint1_id));
+            } else {
+                panic!("expected array in Colorants");
+            }
+        } else {
+            panic!("expected dictionary");
+        }
     }
 }
