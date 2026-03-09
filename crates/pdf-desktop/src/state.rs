@@ -2,13 +2,20 @@ use pdf_engine::{PdfDocument, RenderOptions, ThumbnailOptions};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+const MAX_UNDO_STACK: usize = 50;
+
 /// A document opened in the viewer.
 pub struct OpenDocument {
-    #[allow(dead_code)] // used by later issues (save, print)
     pub path: String,
     pub doc: PdfDocument,
     /// Raw PDF bytes — kept for lopdf-based mutations (annotations, save).
     pub raw_bytes: Vec<u8>,
+    /// The original bytes as opened from disk (for dirty detection).
+    pub saved_bytes: Vec<u8>,
+    /// Undo stack: previous PDF byte snapshots.
+    pub undo_stack: Vec<Vec<u8>>,
+    /// Redo stack: forward PDF byte snapshots.
+    pub redo_stack: Vec<Vec<u8>>,
 }
 
 impl OpenDocument {
@@ -18,6 +25,21 @@ impl OpenDocument {
             .map_err(|e| format!("failed to reload document: {e}"))?;
         self.doc = doc;
         Ok(())
+    }
+
+    /// Push the current state onto the undo stack before a mutation.
+    pub fn push_undo(&mut self) {
+        self.undo_stack.push(self.raw_bytes.clone());
+        if self.undo_stack.len() > MAX_UNDO_STACK {
+            self.undo_stack.remove(0);
+        }
+        // Clear redo stack on new action.
+        self.redo_stack.clear();
+    }
+
+    /// Whether the document has unsaved changes.
+    pub fn is_dirty(&self) -> bool {
+        self.raw_bytes != self.saved_bytes
     }
 }
 
