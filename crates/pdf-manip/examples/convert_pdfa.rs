@@ -32,6 +32,9 @@ fn main() {
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");
 
+    let cidset_fixed = pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+    eprintln!("CIDSet: fixed={cidset_fixed}");
+
     match pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc) {
         Ok(r) => eprintln!(
             "Colorspace: had_intent={}, added={}, device_cs={:?}",

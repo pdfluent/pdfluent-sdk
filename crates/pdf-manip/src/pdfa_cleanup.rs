@@ -566,21 +566,74 @@ fn fix_optional_content(doc: &mut Document) -> usize {
         None => return 0,
     };
 
-    let ocprops_id = {
+    // Find OCProperties — may be a reference or inline in the Catalog.
+    let (ocprops_id, ocprops_inline) = {
         if let Some(Object::Dictionary(catalog)) = doc.objects.get(&catalog_id) {
             match catalog.get(b"OCProperties").ok() {
-                Some(Object::Reference(id)) => Some(*id),
-                _ => None,
+                Some(Object::Reference(id)) => (Some(*id), false),
+                Some(Object::Dictionary(_)) => (None, true),
+                _ => return 0,
             }
         } else {
-            None
+            return 0;
         }
     };
 
-    let ocprops_id = match ocprops_id {
-        Some(id) => id,
-        None => return 0,
-    };
+    if !ocprops_inline && ocprops_id.is_none() {
+        return 0;
+    }
+
+    // Helper: fix D config dict inline.
+    fn fix_d_config(d_dict: &mut lopdf::Dictionary, ocgs: &[Object], count: &mut usize) {
+        if !d_dict.has(b"Name") {
+            d_dict.set(
+                "Name",
+                Object::String(b"Default".to_vec(), lopdf::StringFormat::Literal),
+            );
+            *count += 1;
+        }
+        if !ocgs.is_empty() {
+            d_dict.set("Order", Object::Array(ocgs.to_vec()));
+            *count += 1;
+        }
+        if d_dict.has(b"AS") {
+            d_dict.remove(b"AS");
+            *count += 1;
+        }
+    }
+
+    if ocprops_inline {
+        // OCProperties is inline in the Catalog dict.
+        // Extract OCGs list first.
+        let ocgs: Vec<Object> = {
+            if let Some(Object::Dictionary(catalog)) = doc.objects.get(&catalog_id) {
+                if let Ok(Object::Dictionary(ocprops)) = catalog.get(b"OCProperties") {
+                    match ocprops.get(b"OCGs").ok() {
+                        Some(Object::Array(arr)) => arr.clone(),
+                        _ => vec![],
+                    }
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![]
+            }
+        };
+
+        // Fix the inline D config.
+        if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+            if let Ok(Object::Dictionary(ref mut ocprops)) = catalog.get_mut(b"OCProperties") {
+                // Fix D config.
+                if let Ok(Object::Dictionary(ref mut d_dict)) = ocprops.get_mut(b"D") {
+                    fix_d_config(d_dict, &ocgs, &mut count);
+                }
+            }
+        }
+
+        return count;
+    }
+
+    let ocprops_id = ocprops_id.unwrap();
 
     // Get OCGs list for Order fixing.
     let ocgs: Vec<Object> = {
@@ -608,43 +661,13 @@ fn fix_optional_content(doc: &mut Document) -> usize {
 
     if let Some(did) = d_id {
         if let Some(Object::Dictionary(ref mut d_dict)) = doc.objects.get_mut(&did) {
-            if !d_dict.has(b"Name") {
-                d_dict.set(
-                    "Name",
-                    Object::String(b"Default".to_vec(), lopdf::StringFormat::Literal),
-                );
-                count += 1;
-            }
-            // Always set Order to full OCGs list (6.9 t3).
-            if !ocgs.is_empty() {
-                d_dict.set("Order", Object::Array(ocgs.clone()));
-                count += 1;
-            }
-            // Remove AS key (6.9 t4).
-            if d_dict.has(b"AS") {
-                d_dict.remove(b"AS");
-                count += 1;
-            }
+            fix_d_config(d_dict, &ocgs, &mut count);
         }
     } else {
-        // D might be inline.
+        // D might be inline in the OCProperties object.
         if let Some(Object::Dictionary(ref mut ocprops)) = doc.objects.get_mut(&ocprops_id) {
             if let Ok(Object::Dictionary(ref mut d_dict)) = ocprops.get_mut(b"D") {
-                if !d_dict.has(b"Name") {
-                    d_dict.set(
-                        "Name",
-                        Object::String(b"Default".to_vec(), lopdf::StringFormat::Literal),
-                    );
-                    count += 1;
-                }
-                if !ocgs.is_empty() {
-                    d_dict.set("Order", Object::Array(ocgs.clone()));
-                    count += 1;
-                }
-                if d_dict.has(b"AS") {
-                    d_dict.remove(b"AS");
-                    count += 1;
-                }
+                fix_d_config(d_dict, &ocgs, &mut count);
             }
         }
     }
