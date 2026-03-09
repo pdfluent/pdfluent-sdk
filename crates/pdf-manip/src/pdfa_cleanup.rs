@@ -913,7 +913,14 @@ fn fix_annotation_contents(doc: &mut Document) {
                     dict.get(b"Subtype").ok(),
                     Some(Object::Name(ref n)) if is_annotation_subtype(n) && n != b"Popup"
                 );
-                is_annot && !dict.has(b"Contents")
+                if !is_annot {
+                    false
+                } else if !dict.has(b"Contents") {
+                    true // 6.3.3:1 — missing
+                } else {
+                    // 6.3.3:2 — must be a text string
+                    !matches!(dict.get(b"Contents").ok(), Some(Object::String(..)))
+                }
             } else {
                 false
             }
@@ -924,6 +931,103 @@ fn fix_annotation_contents(doc: &mut Document) {
                     "Contents",
                     Object::String(Vec::new(), lopdf::StringFormat::Literal),
                 );
+            }
+        }
+    }
+}
+
+/// Remove /A and /AA keys from Widget annotations (6.4.1:1).
+fn fix_widget_actions(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let is_widget_with_actions = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                matches!(
+                    dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"Widget"
+                ) && (dict.has(b"A") || dict.has(b"AA"))
+            } else {
+                false
+            }
+        };
+        if is_widget_with_actions {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"A");
+                dict.remove(b"AA");
+            }
+        }
+    }
+}
+
+/// Remove /XFA key from AcroForm dictionary (6.4.2:1).
+fn remove_xfa_from_acroform(doc: &mut Document) {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return,
+    };
+
+    let acroform_id = {
+        if let Some(Object::Dictionary(catalog)) = doc.objects.get(&catalog_id) {
+            match catalog.get(b"AcroForm").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    };
+
+    if let Some(af_id) = acroform_id {
+        if let Some(Object::Dictionary(ref mut af)) = doc.objects.get_mut(&af_id) {
+            af.remove(b"XFA");
+        }
+    } else if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+        if let Ok(Object::Dictionary(ref mut af)) = catalog.get_mut(b"AcroForm") {
+            af.remove(b"XFA");
+        }
+    }
+}
+
+/// Fix Widget/Btn annotations: ensure AP/N is a subdictionary (6.3.3:3).
+fn fix_widget_btn_appearance(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                let is_widget_btn = matches!(
+                    dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"Widget"
+                ) && matches!(
+                    dict.get(b"FT").ok(),
+                    Some(Object::Name(ref n)) if n == b"Btn"
+                );
+                if !is_widget_btn {
+                    false
+                } else {
+                    match dict.get(b"AP").ok() {
+                        Some(Object::Dictionary(ap)) => match ap.get(b"N").ok() {
+                            Some(Object::Dictionary(_) | Object::Reference(_)) => false,
+                            Some(_) => true,
+                            None => false,
+                        },
+                        _ => false,
+                    }
+                }
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                if let Ok(Object::Dictionary(ref mut ap)) = dict.get_mut(b"AP") {
+                    let n_val = ap.get(b"N").ok().cloned();
+                    if let Some(val) = n_val {
+                        let mut sub = lopdf::Dictionary::new();
+                        sub.set("Off", val.clone());
+                        sub.set("Yes", val);
+                        ap.set("N", Object::Dictionary(sub));
+                    }
+                }
             }
         }
     }
