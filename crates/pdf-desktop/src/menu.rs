@@ -57,6 +57,10 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<Wry>> {
                 .id("find")
                 .accelerator("CmdOrCtrl+F")
                 .build(app)?,
+            &MenuItemBuilder::new("Go to Page...")
+                .id("go_to_page")
+                .accelerator("CmdOrCtrl+G")
+                .build(app)?,
         ])
         .build()?;
 
