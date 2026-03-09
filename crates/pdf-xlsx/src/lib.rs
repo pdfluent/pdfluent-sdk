@@ -120,6 +120,7 @@ fn write_table_to_sheet(
 mod tests {
     use super::*;
     use lopdf::{dictionary, Document, Object, Stream};
+    use std::io::Read;
 
     fn make_test_pdf(content: &[u8]) -> Document {
         let mut doc = Document::with_version("1.7");
@@ -155,6 +156,27 @@ mod tests {
         doc
     }
 
+    fn read_zip_entry(data: &[u8], name: &str) -> Option<String> {
+        let cursor = std::io::Cursor::new(data);
+        let mut archive = zip::ZipArchive::new(cursor).ok()?;
+        let mut file = archive.by_name(name).ok()?;
+        let mut content = String::new();
+        file.read_to_string(&mut content).ok()?;
+        Some(content)
+    }
+
+    fn zip_file_names(data: &[u8]) -> Vec<String> {
+        let cursor = std::io::Cursor::new(data);
+        let archive = zip::ZipArchive::new(cursor).unwrap();
+        (0..archive.len())
+            .map(|i| {
+                let cursor = std::io::Cursor::new(data);
+                let archive = zip::ZipArchive::new(cursor).unwrap();
+                archive.name_for_index(i).unwrap().to_string()
+            })
+            .collect()
+    }
+
     #[test]
     fn convert_table_to_xlsx() {
         // Two columns of data: simulated via text positioning.
@@ -185,5 +207,111 @@ mod tests {
         let doc = make_test_pdf(b"");
         let xlsx = pdf_to_xlsx(&doc).unwrap();
         assert!(xlsx.len() > 100);
+    }
+
+    #[test]
+    fn xlsx_is_valid_zip() {
+        let content = b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (Name) Tj 1 0 0 1 200 700 Tm (Age) Tj 1 0 0 1 72 684 Tm (Alice) Tj 1 0 0 1 200 684 Tm (30) Tj ET";
+        let doc = make_test_pdf(content);
+        let xlsx = pdf_to_xlsx(&doc).unwrap();
+
+        assert_eq!(&xlsx[0..2], b"PK");
+        let cursor = std::io::Cursor::new(&xlsx);
+        assert!(zip::ZipArchive::new(cursor).is_ok());
+    }
+
+    #[test]
+    fn xlsx_structure_has_required_files() {
+        let content = b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (A) Tj 1 0 0 1 200 700 Tm (B) Tj 1 0 0 1 72 684 Tm (1) Tj 1 0 0 1 200 684 Tm (2) Tj ET";
+        let doc = make_test_pdf(content);
+        let xlsx = pdf_to_xlsx(&doc).unwrap();
+        let names = zip_file_names(&xlsx);
+
+        assert!(
+            names.contains(&"[Content_Types].xml".to_string()),
+            "Missing [Content_Types].xml, found: {names:?}"
+        );
+        // XLSX must have at least one worksheet.
+        assert!(
+            names.iter().any(|n| n.starts_with("xl/worksheets/")),
+            "No worksheet found, entries: {names:?}"
+        );
+    }
+
+    #[test]
+    fn xlsx_content_types_valid() {
+        let content = b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (X) Tj 1 0 0 1 200 700 Tm (Y) Tj ET";
+        let doc = make_test_pdf(content);
+        let xlsx = pdf_to_xlsx(&doc).unwrap();
+        let ct = read_zip_entry(&xlsx, "[Content_Types].xml").unwrap();
+
+        assert!(ct.contains("ContentType"));
+        assert!(ct.contains("spreadsheetml"));
+    }
+
+    #[test]
+    fn xlsx_worksheet_xml_parseable() {
+        let content = b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (Data) Tj 1 0 0 1 200 700 Tm (123) Tj ET";
+        let doc = make_test_pdf(content);
+        let xlsx = pdf_to_xlsx(&doc).unwrap();
+
+        // Find the first worksheet.
+        let names = zip_file_names(&xlsx);
+        let sheet = names
+            .iter()
+            .find(|n| n.starts_with("xl/worksheets/sheet"))
+            .expect("No worksheet found");
+
+        let xml = read_zip_entry(&xlsx, sheet).unwrap();
+        let mut reader = quick_xml::Reader::from_str(&xml);
+        let mut buf = Vec::new();
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(quick_xml::events::Event::Eof) => break,
+                Err(e) => panic!("Invalid XML in {sheet}: {e}"),
+                _ => {}
+            }
+            buf.clear();
+        }
+    }
+
+    #[test]
+    fn xlsx_table_data_text_preserved() {
+        let content = b"BT /F1 12 Tf 1 0 0 1 72 700 Tm (Name) Tj 1 0 0 1 200 700 Tm (Age) Tj 1 0 0 1 72 684 Tm (Alice) Tj 1 0 0 1 200 684 Tm (30) Tj 1 0 0 1 72 668 Tm (Bob) Tj 1 0 0 1 200 668 Tm (25) Tj ET";
+        let doc = make_test_pdf(content);
+        let tables = extract_tables(&doc);
+
+        // Verify the extracted table has the expected content.
+        assert!(!tables.is_empty(), "No tables detected");
+        let all_text: String = tables
+            .iter()
+            .flat_map(|t| t.rows.iter())
+            .flat_map(|r| r.iter())
+            .map(|c| c.as_text())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(
+            all_text.contains("Name"),
+            "Missing 'Name' in table: {all_text}"
+        );
+        assert!(
+            all_text.contains("Alice"),
+            "Missing 'Alice' in table: {all_text}"
+        );
+    }
+
+    #[test]
+    fn xlsx_empty_produces_valid_structure() {
+        let doc = make_test_pdf(b"");
+        let xlsx = pdf_to_xlsx(&doc).unwrap();
+
+        assert_eq!(&xlsx[0..2], b"PK");
+        let names = zip_file_names(&xlsx);
+        assert!(names.contains(&"[Content_Types].xml".to_string()));
+        assert!(
+            names.iter().any(|n| n.starts_with("xl/worksheets/")),
+            "Empty XLSX should still have a worksheet"
+        );
     }
 }
