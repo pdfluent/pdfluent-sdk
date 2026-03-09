@@ -1,0 +1,4 @@
+module PdfCApiFFI {
+    header "pdf_capi.h"
+    export *
+}
