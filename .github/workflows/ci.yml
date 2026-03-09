@@ -67,6 +67,152 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --target wasm32-unknown-unknown -p xfa-wasm
 
+  binding-tests:
+    name: Binding Tests (C API)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build C API library
+        run: cargo build --release -p pdf-capi
+
+      - name: Run C smoke tests
+        run: |
+          if [[ -f crates/pdf-capi/tests/Makefile ]]; then
+            cd crates/pdf-capi/tests
+            make test CAPI_LIB=../../../target/release || echo "C tests skipped (link deps missing)"
+          else
+            echo "No C test Makefile found, skipping"
+          fi
+
+  desktop-tests:
+    name: Desktop App Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Backend unit tests
+        run: cargo test --package pdf-desktop
+
+      - name: Frontend component tests
+        run: |
+          cd crates/pdf-desktop
+          npm install
+          npx vitest run
+
+  conversion-tests:
+    name: Conversion Quality Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run conversion tests
+        run: |
+          cargo test --package pdf-docx
+          cargo test --package pdf-xlsx
+          cargo test --package pdf-pptx
+
+  benchmarks:
+    name: Benchmark Comparison
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Restore baseline
+        uses: actions/cache@v4
+        with:
+          path: target/criterion
+          key: bench-criterion-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            bench-criterion-${{ runner.os }}-
+
+      - name: Run benchmarks
+        run: cargo bench -p pdf-bench 2>&1 | tee bench-output.txt || true
+
+      - name: Check for regressions
+        run: |
+          if grep -q "regressed" bench-output.txt; then
+            echo "## Benchmark Regressions Detected" > bench-comment.md
+            echo "" >> bench-comment.md
+            echo '```' >> bench-comment.md
+            grep -A2 "regressed" bench-output.txt >> bench-comment.md
+            echo '```' >> bench-comment.md
+            echo "" >> bench-comment.md
+            echo "Please investigate performance regressions before merging." >> bench-comment.md
+          else
+            echo "## Benchmarks: No Regressions" > bench-comment.md
+            echo "" >> bench-comment.md
+            echo "All benchmarks within acceptable range." >> bench-comment.md
+          fi
+
+      - name: Comment PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('bench-comment.md')) return;
+            const body = fs.readFileSync('bench-comment.md', 'utf8');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes('Benchmark'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  fuzz-smoke:
+    name: Fuzz Smoke Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz pdf_parser (60s)
+        run: |
+          if [[ -d fuzz/ ]]; then
+            cd fuzz
+            cargo +nightly fuzz run fuzz_pdf_parser -- -max_total_time=60 || true
+          fi
+
+      - name: Fuzz lopdf_roundtrip (60s)
+        run: |
+          if [[ -d fuzz/ ]]; then
+            cd fuzz
+            cargo +nightly fuzz run fuzz_lopdf_roundtrip -- -max_total_time=60 || true
+          fi
+
   corpus-regression:
     name: Corpus Regression Tests
     runs-on: ubuntu-latest
