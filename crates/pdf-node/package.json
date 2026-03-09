@@ -26,6 +26,7 @@
   "scripts": {
     "build": "napi build --release --platform",
     "build:debug": "napi build --platform",
+    "test": "jest tests/",
     "prepublishOnly": "napi prepublish -t npm"
   },
   "keywords": [
