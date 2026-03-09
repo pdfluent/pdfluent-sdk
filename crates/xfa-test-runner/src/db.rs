@@ -82,10 +82,23 @@ impl Database {
                 PRIMARY KEY (oracle_name, pdf_hash)
             );
 
+            CREATE TABLE IF NOT EXISTS crashes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL REFERENCES runs(run_id),
+                pdf_path TEXT NOT NULL,
+                pdf_hash TEXT,
+                test_name TEXT NOT NULL,
+                panic_message TEXT,
+                panic_location TEXT,
+                backtrace TEXT,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_results_category ON test_results(error_category);
             CREATE INDEX IF NOT EXISTS idx_results_hash ON test_results(pdf_hash);
-            CREATE INDEX IF NOT EXISTS idx_results_run ON test_results(run_id);",
+            CREATE INDEX IF NOT EXISTS idx_results_run ON test_results(run_id);
+            CREATE INDEX IF NOT EXISTS idx_crashes_run ON crashes(run_id);",
         )?;
         Ok(())
     }
@@ -444,6 +457,97 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    /// Get distinct PDF paths where a specific test failed/crashed/timed out.
+    /// Used by --affected-by to rerun only PDFs affected by a specific test.
+    pub fn affected_pdf_paths(&self, run_id: &str, test_name: &str) -> Vec<String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT pdf_path FROM test_results
+                 WHERE run_id = ?1 AND test_name = ?2
+                   AND status IN ('fail', 'crash', 'timeout')",
+            )
+            .unwrap();
+
+        stmt.query_map(params![run_id, test_name], |row| row.get::<_, String>(0))
+            .unwrap()
+            .flatten()
+            .collect()
+    }
+
+    /// Check if a passing result exists for a given (pdf_hash, test_name, code_version).
+    /// Used for incremental testing: skip PDFs whose content and code haven't changed.
+    pub fn has_passing_result(&self, pdf_hash: &str, test_name: &str, code_version: &str) -> bool {
+        let conn = self.conn.lock().unwrap();
+        // Look for a pass result with matching hash where the run's git_commit matches
+        conn.query_row(
+            "SELECT 1 FROM test_results tr
+             JOIN runs r ON r.run_id = tr.run_id
+             WHERE tr.pdf_hash = ?1 AND tr.test_name = ?2 AND tr.status = 'pass'
+               AND r.git_commit = ?3
+             LIMIT 1",
+            params![pdf_hash, test_name, code_version],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
+    /// Insert a crash forensics record.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_crash(
+        &self,
+        run_id: &str,
+        pdf_path: &str,
+        pdf_hash: &str,
+        test_name: &str,
+        panic_message: &str,
+        panic_location: Option<&str>,
+        backtrace: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO crashes (run_id, pdf_path, pdf_hash, test_name, panic_message, panic_location, backtrace, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                run_id,
+                pdf_path,
+                pdf_hash,
+                test_name,
+                panic_message,
+                panic_location,
+                backtrace,
+                chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Query crash forensics for a run.
+    #[allow(dead_code)]
+    pub fn crashes(&self, run_id: &str) -> Vec<CrashRecord> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT pdf_path, pdf_hash, test_name, panic_message, panic_location, backtrace
+                 FROM crashes WHERE run_id = ?1 ORDER BY id",
+            )
+            .unwrap();
+
+        stmt.query_map(params![run_id], |row| {
+            Ok(CrashRecord {
+                pdf_path: row.get(0)?,
+                pdf_hash: row.get(1)?,
+                test_name: row.get(2)?,
+                panic_message: row.get(3)?,
+                panic_location: row.get(4)?,
+                backtrace: row.get(5)?,
+            })
+        })
+        .unwrap()
+        .flatten()
+        .collect()
     }
 
     /// Get distinct PDF paths that failed, crashed, or timed out in a given run.
@@ -1027,6 +1131,16 @@ pub struct ClusterExample {
     pub pdf_size: i64,
     pub pdf_hash: String,
     pub error_message: Option<String>,
+}
+
+#[allow(dead_code)]
+pub struct CrashRecord {
+    pub pdf_path: String,
+    pub pdf_hash: Option<String>,
+    pub test_name: String,
+    pub panic_message: Option<String>,
+    pub panic_location: Option<String>,
+    pub backtrace: Option<String>,
 }
 
 #[allow(dead_code)]

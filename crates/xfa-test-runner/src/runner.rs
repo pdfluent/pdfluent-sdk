@@ -196,6 +196,26 @@ impl Runner {
                         }
                     }
 
+                    // Incremental: skip if a passing result exists for same hash + code version
+                    if let Some(ref cv) = self.config.code_version {
+                        if self.db.has_passing_result(&pdf_hash, test.name(), cv) {
+                            pass_count.fetch_add(1, Ordering::Relaxed);
+                            let row = TestResultRow::from_test_result(
+                                &self.config.run_id,
+                                &path_str,
+                                &pdf_hash,
+                                pdf_size,
+                                test.name(),
+                                &TestStatus::Pass,
+                                None,
+                                None,
+                                0,
+                            );
+                            let _ = self.db.insert_result(&row);
+                            continue;
+                        }
+                    }
+
                     let result = self.run_single_test(Arc::clone(test), &pdf_data, pdf_path);
 
                     match result.status {
@@ -207,6 +227,18 @@ impl Runner {
                         }
                         TestStatus::Crash => {
                             crash_count.fetch_add(1, Ordering::Relaxed);
+                            // Store crash forensics
+                            let panic_msg = result.error_message.as_deref().unwrap_or("unknown");
+                            let panic_loc = extract_panic_location(panic_msg);
+                            let _ = self.db.insert_crash(
+                                &self.config.run_id,
+                                &path_str,
+                                &pdf_hash,
+                                test.name(),
+                                panic_msg,
+                                panic_loc.as_deref(),
+                                None, // backtrace not available from catch_unwind
+                            );
                         }
                         TestStatus::Timeout => {
                             timeout_count.fetch_add(1, Ordering::Relaxed);
@@ -375,6 +407,33 @@ impl Runner {
     }
 
     fn enumerate_pdfs(&self) -> Vec<PathBuf> {
+        // --affected-by mode: only test PDFs where a specific test failed.
+        if let Some(ref test_name) = self.config.affected_by {
+            if let Some(prev_run) = self.db.latest_run_id() {
+                let affected = self.db.affected_pdf_paths(&prev_run, test_name);
+                if affected.is_empty() {
+                    eprintln!(
+                        "No failures for test '{test_name}' in run '{prev_run}' — nothing to rerun"
+                    );
+                } else {
+                    eprintln!(
+                        "Rerunning {} PDFs affected by '{}' from run '{}'",
+                        affected.len(),
+                        test_name,
+                        prev_run
+                    );
+                }
+                return affected
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .filter(|p| p.exists())
+                    .take(self.config.limit.unwrap_or(usize::MAX))
+                    .collect();
+            } else {
+                eprintln!("WARNING: --affected-by specified but no previous run found in database");
+            }
+        }
+
         // Rerun-failures mode: only test PDFs that failed/crashed/timed-out in the latest run.
         if self.config.rerun_failures {
             if let Some(prev_run) = self.db.latest_run_id() {
@@ -443,6 +502,20 @@ fn detect_encrypted(pdf_data: &[u8]) -> Option<String> {
         Err(_) => None, // Panic during parsing — treat as non-encrypted
         _ => None,
     }
+}
+
+/// Try to extract a file:line panic location from a panic message.
+/// Rust panic messages often contain patterns like "src/foo.rs:42" or
+/// "called at src/bar.rs:100:5".
+fn extract_panic_location(msg: &str) -> Option<String> {
+    // Look for patterns like "src/foo.rs:42" or "foo.rs:100:5"
+    for word in msg.split_whitespace() {
+        let word = word.trim_matches(|c: char| c == ',' || c == '\'' || c == ')' || c == '(');
+        if word.contains(".rs:") {
+            return Some(word.to_string());
+        }
+    }
+    None
 }
 
 fn hex_sha256(data: &[u8]) -> String {
