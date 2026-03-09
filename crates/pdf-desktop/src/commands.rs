@@ -105,7 +105,10 @@ pub fn open_document(
         OpenDocument {
             path,
             doc,
+            saved_bytes: data.clone(),
             raw_bytes: data,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         },
     );
 
@@ -401,6 +404,8 @@ pub fn add_annotation(
         .get_mut(&request.handle)
         .ok_or_else(|| "document not found".to_string())?;
 
+    open.push_undo();
+
     let mut lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes)
         .map_err(|e| format!("failed to parse PDF for annotation: {e}"))?;
 
@@ -510,6 +515,8 @@ pub fn delete_annotation(
     let open = docs
         .get_mut(&handle)
         .ok_or_else(|| "document not found".to_string())?;
+
+    open.push_undo();
 
     let mut lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes)
         .map_err(|e| format!("failed to parse PDF: {e}"))?;
@@ -636,6 +643,63 @@ pub fn list_annotations(
     }
 
     Ok(result)
+}
+
+// ── Undo / Redo / Save ───────────────────────────────────────────────
+
+#[tauri::command]
+pub fn undo_document(state: State<'_, AppState>, handle: u32) -> Result<bool, String> {
+    let mut docs = state.documents.lock().unwrap();
+    let open = docs
+        .get_mut(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+
+    if let Some(prev) = open.undo_stack.pop() {
+        open.redo_stack.push(open.raw_bytes.clone());
+        open.raw_bytes = prev;
+        open.reload()?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub fn redo_document(state: State<'_, AppState>, handle: u32) -> Result<bool, String> {
+    let mut docs = state.documents.lock().unwrap();
+    let open = docs
+        .get_mut(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+
+    if let Some(next) = open.redo_stack.pop() {
+        open.undo_stack.push(open.raw_bytes.clone());
+        open.raw_bytes = next;
+        open.reload()?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub fn save_document(state: State<'_, AppState>, handle: u32) -> Result<(), String> {
+    let mut docs = state.documents.lock().unwrap();
+    let open = docs
+        .get_mut(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+
+    std::fs::write(&open.path, &open.raw_bytes).map_err(|e| format!("failed to save: {e}"))?;
+    open.saved_bytes = open.raw_bytes.clone();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn is_document_dirty(state: State<'_, AppState>, handle: u32) -> Result<bool, String> {
+    let docs = state.documents.lock().unwrap();
+    let open = docs
+        .get(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+    Ok(open.is_dirty())
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
