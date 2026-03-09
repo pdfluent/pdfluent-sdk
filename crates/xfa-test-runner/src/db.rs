@@ -446,6 +446,22 @@ impl Database {
         Ok(())
     }
 
+    /// Get distinct PDF paths that failed, crashed, or timed out in a given run.
+    pub fn failed_pdf_paths(&self, run_id: &str) -> Vec<String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT pdf_path FROM test_results
+                 WHERE run_id = ?1 AND status IN ('fail', 'crash', 'timeout')",
+            )
+            .unwrap();
+
+        stmt.query_map(params![run_id], |row| row.get::<_, String>(0))
+            .unwrap()
+            .flatten()
+            .collect()
+    }
+
     pub fn latest_run_id(&self) -> Option<String> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
