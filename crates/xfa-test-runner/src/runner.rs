@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -277,6 +278,8 @@ impl Runner {
         }
         self.in_flight.fetch_add(1, Ordering::Relaxed);
 
+        let progress = test.progress_tracker();
+
         let data = pdf_data.to_vec();
         let path_buf = path.to_path_buf();
 
@@ -336,15 +339,34 @@ impl Runner {
 
         let result = match rx.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(_) => crate::tests::TestResult {
-                status: TestStatus::Timeout,
-                error_message: Some(format!(
-                    "Test '{test_name}' exceeded timeout of {timeout:?}"
-                )),
-                duration_ms: timeout.as_millis() as u64,
-                oracle_score: None,
-                metadata: Default::default(),
-            },
+            Err(_) => {
+                // Read progress tracker to see which sub-check was last running
+                let last_check = progress
+                    .as_ref()
+                    .and_then(|p| p.lock().ok())
+                    .map(|s| s.clone())
+                    .filter(|s| !s.is_empty());
+
+                let msg = match &last_check {
+                    Some(check) => format!(
+                        "Test '{test_name}' exceeded timeout of {timeout:?} (last check: {check})"
+                    ),
+                    None => format!("Test '{test_name}' exceeded timeout of {timeout:?}"),
+                };
+
+                let mut metadata = HashMap::new();
+                if let Some(check) = last_check {
+                    metadata.insert("last_check".to_string(), check);
+                }
+
+                crate::tests::TestResult {
+                    status: TestStatus::Timeout,
+                    error_message: Some(msg),
+                    duration_ms: timeout.as_millis() as u64,
+                    oracle_score: None,
+                    metadata,
+                }
+            }
         };
 
         // Decrement here (not in the thread) so hung threads don't hold the counter.

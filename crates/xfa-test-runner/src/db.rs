@@ -811,6 +811,23 @@ pub struct RunSummary {
     pub skip: usize,
 }
 
+impl RunSummary {
+    /// Number of applicable (non-skipped) test results.
+    pub fn applicable(&self) -> usize {
+        self.pass + self.fail + self.crash + self.timeout
+    }
+
+    /// Pass rate over applicable tests only (excluding skips).
+    pub fn applicable_pass_rate(&self) -> f64 {
+        let a = self.applicable();
+        if a == 0 {
+            0.0
+        } else {
+            self.pass as f64 / a as f64 * 100.0
+        }
+    }
+}
+
 impl std::fmt::Display for RunSummary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -827,7 +844,18 @@ impl std::fmt::Display for RunSummary {
             self.crash,
             self.timeout,
             self.skip,
-        )
+        )?;
+        let applicable = self.applicable();
+        if applicable > 0 && self.skip > 0 {
+            write!(
+                f,
+                "\nApplicable pass rate: {:.2}% ({} / {} applicable)",
+                self.applicable_pass_rate(),
+                self.pass,
+                applicable,
+            )?;
+        }
+        Ok(())
     }
 }
 

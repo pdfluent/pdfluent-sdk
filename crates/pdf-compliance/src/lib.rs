@@ -185,6 +185,17 @@ pub fn validate_pdfa_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     pdfa::validate_timed(pdf, level)
 }
 
+/// Like `validate_pdfa` but updates a progress tracker with the name of the
+/// current check.  Useful for diagnosing timeouts — the caller can read the
+/// tracker to see which check was last running.
+pub fn validate_pdfa_with_progress(
+    pdf: &Pdf,
+    level: PdfALevel,
+    progress: &std::sync::Mutex<String>,
+) -> ComplianceReport {
+    pdfa::validate_with_progress(pdf, level, progress)
+}
+
 /// Detect the PDF/A level declared in XMP metadata.
 pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
     let xmp = check::get_xmp_metadata(pdf)?;
