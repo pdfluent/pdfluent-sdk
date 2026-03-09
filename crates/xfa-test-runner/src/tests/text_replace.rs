@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use pdf_manip::text_replace::replace_text_all_pages;
+use pdf_manip::text_replace::replace_text;
+use pdf_manip::text_run::FontMap;
 
 use super::{PdfTest, TestResult, TestStatus};
 
@@ -50,7 +51,7 @@ impl PdfTest for TextReplaceTest {
 
         let replacement = "__XFA_REPLACED__";
 
-        // 2. Load via lopdf and perform replacement.
+        // 2. Load via lopdf and perform replacement on page 1 only.
         let mut doc = match lopdf::Document::load_mem(pdf_data) {
             Ok(d) => d,
             Err(e) => {
@@ -64,8 +65,32 @@ impl PdfTest for TextReplaceTest {
             }
         };
 
+        let fonts = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            FontMap::from_page(&doc, 1)
+        })) {
+            Ok(Ok(f)) => f,
+            Ok(Err(e)) => {
+                return TestResult {
+                    status: TestStatus::Skip,
+                    error_message: Some(format!("font map failed: {e}")),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
+            Err(_) => {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some("panic building font map".into()),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
+        };
+
         let replace_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            replace_text_all_pages(&mut doc, &search_word, replacement)
+            replace_text(&mut doc, 1, &search_word, replacement, &fonts)
         }));
 
         let replacements: usize = match replace_result {
@@ -93,7 +118,9 @@ impl PdfTest for TextReplaceTest {
         if replacements == 0 {
             return TestResult {
                 status: TestStatus::Skip,
-                error_message: Some("0 replacements made (font encoding mismatch?)".into()),
+                error_message: Some(
+                    "0 replacements on page 1 (font encoding or split text)".into(),
+                ),
                 duration_ms: elapsed(),
                 oracle_score: None,
                 metadata: HashMap::new(),

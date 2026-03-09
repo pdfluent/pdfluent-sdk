@@ -24,32 +24,44 @@ pub fn replace_text(
     let editor = editor_for_page(doc, page_num)?;
     let runs = extract_text_runs(&editor, fonts);
 
-    // Find runs that contain the search string.
+    // Try single-run matching first (fast path).
     let matches = find_matching_runs(&runs, search);
-    if matches.is_empty() {
+    if !matches.is_empty() {
+        let mut new_editor = editor;
+        let mut offset: i64 = 0;
+        let count = matches.len();
+
+        for m in &matches {
+            let run = &runs[m.run_index];
+            let adjusted_start = (run.ops_range.start as i64 + offset) as usize;
+
+            let op = match new_editor.operations().get(adjusted_start) {
+                Some(op) => op.clone(),
+                None => continue,
+            };
+
+            let new_ops = build_replacement_ops(&op, search, replacement, &run.font_name, fonts)?;
+            let ops_count_diff = new_ops.len() as i64 - 1;
+
+            new_editor.replace_operation(adjusted_start, new_ops);
+            offset += ops_count_diff;
+        }
+
+        write_editor_to_page(doc, page_num, &new_editor)?;
+        return Ok(count);
+    }
+
+    // Fall back to cross-run matching for text split across Tj/TJ operators.
+    let cross_matches = find_cross_run_matches(&runs, search);
+    if cross_matches.is_empty() {
         return Ok(0);
     }
 
     let mut new_editor = editor;
-    let mut offset: i64 = 0;
-    let count = matches.len();
+    let count = cross_matches.len();
 
-    for m in &matches {
-        let run = &runs[m.run_index];
-        let adjusted_start = (run.ops_range.start as i64 + offset) as usize;
-
-        // Get the original operation.
-        let op = match new_editor.operations().get(adjusted_start) {
-            Some(op) => op.clone(),
-            None => continue,
-        };
-
-        // Build replacement operation(s).
-        let new_ops = build_replacement_ops(&op, search, replacement, &run.font_name, fonts)?;
-        let ops_count_diff = new_ops.len() as i64 - 1;
-
-        new_editor.replace_operation(adjusted_start, new_ops);
-        offset += ops_count_diff;
+    for cm in &cross_matches {
+        apply_cross_run_replacement(&mut new_editor, &runs, cm, search, replacement, fonts)?;
     }
 
     write_editor_to_page(doc, page_num, &new_editor)?;
@@ -98,6 +110,132 @@ fn find_matching_runs(runs: &[TextRun], search: &str) -> Vec<TextMatch> {
         }
     }
     matches
+}
+
+// ---------------------------------------------------------------------------
+// Cross-run matching (text split across multiple Tj/TJ operators)
+// ---------------------------------------------------------------------------
+
+/// A match that spans multiple consecutive same-font text runs.
+struct CrossRunMatch {
+    /// First run index (inclusive).
+    run_start: usize,
+    /// Last run index (exclusive).
+    run_end: usize,
+}
+
+/// Find matches that span multiple consecutive same-font text runs.
+///
+/// Groups consecutive runs with the same font name, concatenates their text,
+/// and searches for the pattern. Only returns matches that span 2+ runs
+/// (single-run matches are handled by `find_matching_runs`).
+fn find_cross_run_matches(runs: &[TextRun], search: &str) -> Vec<CrossRunMatch> {
+    let mut matches = Vec::new();
+    if runs.len() < 2 {
+        return matches;
+    }
+
+    let mut i = 0;
+    while i < runs.len() {
+        let font = &runs[i].font_name;
+        let group_start = i;
+        let mut combined = runs[i].text.clone();
+        i += 1;
+
+        while i < runs.len() && runs[i].font_name == *font {
+            combined.push_str(&runs[i].text);
+            i += 1;
+        }
+
+        // Only consider multi-run groups.
+        if i - group_start >= 2 && combined.contains(search) {
+            matches.push(CrossRunMatch {
+                run_start: group_start,
+                run_end: i,
+            });
+        }
+    }
+
+    matches
+}
+
+/// Apply a cross-run replacement: put full replacement text in the first
+/// run's operator and empty out subsequent runs' operators.
+fn apply_cross_run_replacement(
+    editor: &mut crate::content_editor::ContentEditor,
+    runs: &[TextRun],
+    cm: &CrossRunMatch,
+    search: &str,
+    replacement: &str,
+    fonts: &FontMap,
+) -> Result<()> {
+    let group_runs = &runs[cm.run_start..cm.run_end];
+    let font_name = &group_runs[0].font_name;
+
+    // Combine text from all runs in the group.
+    let combined: String = group_runs.iter().map(|r| r.text.as_str()).collect();
+    let new_text = combined.replace(search, replacement);
+
+    // Encode the full replacement text.
+    let new_bytes = encode_text_for_font(font_name, &new_text, fonts)?;
+
+    // Put the full text in the first run's text-showing operator.
+    let first_op_idx = group_runs[0].ops_range.start;
+    if let Some(op) = editor.operations().get(first_op_idx).cloned() {
+        let new_op = match op.operator.as_str() {
+            "TJ" => {
+                // Preserve as TJ with single string element.
+                Operation::new(
+                    "TJ",
+                    vec![Object::Array(vec![Object::String(
+                        new_bytes,
+                        lopdf::StringFormat::Literal,
+                    )])],
+                )
+            }
+            _ => Operation::new(
+                "Tj",
+                vec![Object::String(new_bytes, lopdf::StringFormat::Literal)],
+            ),
+        };
+        editor.replace_operation(first_op_idx, vec![new_op]);
+    }
+
+    // Empty out subsequent runs' text-showing operators.
+    for run in &group_runs[1..] {
+        let op_idx = run.ops_range.start;
+        if let Some(op) = editor.operations().get(op_idx).cloned() {
+            let empty_op = make_empty_text_op(&op);
+            editor.replace_operation(op_idx, vec![empty_op]);
+        }
+    }
+
+    Ok(())
+}
+
+/// Create an empty version of a text-showing operator (preserves operator type).
+fn make_empty_text_op(op: &Operation) -> Operation {
+    match op.operator.as_str() {
+        "TJ" => Operation::new(
+            "TJ",
+            vec![Object::Array(vec![Object::String(
+                vec![],
+                lopdf::StringFormat::Literal,
+            )])],
+        ),
+        "\"" => {
+            let mut operands = op.operands.clone();
+            if operands.len() >= 3 {
+                operands[2] = Object::String(vec![], lopdf::StringFormat::Literal);
+            }
+            Operation::new("\"", operands)
+        }
+        // Tj, '
+        _ => Operation::new(
+            &op.operator,
+            vec![Object::String(vec![], lopdf::StringFormat::Literal)],
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,5 +662,54 @@ mod tests {
 
         let count = replace_text_all_pages(&mut doc, "Hello", "Hallo").unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn replace_cross_run_split_tj() {
+        // Text "January" split across three Tj operators.
+        let mut doc = make_doc_with_text(b"BT /F1 12 Tf 100 700 Td (Jan) Tj (u) Tj (ary) Tj ET");
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        let count = replace_text(&mut doc, 1, "January", "Februar", &fonts).unwrap();
+        assert_eq!(count, 1);
+
+        // Verify: the combined text should now contain "Februar".
+        let editor = editor_for_page(&doc, 1).unwrap();
+        let runs = extract_text_runs(&editor, &fonts);
+        let combined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert!(
+            combined.contains("Februar"),
+            "expected 'Februar' in '{combined}'"
+        );
+    }
+
+    #[test]
+    fn replace_cross_run_with_positioning() {
+        // Text "Hello" split across two Tj ops with a Td positioning op in between.
+        let mut doc =
+            make_doc_with_text(b"BT /F1 12 Tf 100 700 Td (Hel) Tj 0.5 0 Td (lo World) Tj ET");
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        let count = replace_text(&mut doc, 1, "Hello", "Hallo", &fonts).unwrap();
+        assert_eq!(count, 1);
+
+        let editor = editor_for_page(&doc, 1).unwrap();
+        let runs = extract_text_runs(&editor, &fonts);
+        let combined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert!(
+            combined.contains("Hallo"),
+            "expected 'Hallo' in '{combined}'"
+        );
+    }
+
+    #[test]
+    fn replace_cross_run_single_run_takes_priority() {
+        // When the match is within a single run, use the fast path.
+        let mut doc = make_doc_with_text(b"BT /F1 12 Tf 100 700 Td (Hello World) Tj ET");
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        let count = replace_text(&mut doc, 1, "Hello", "Hallo", &fonts).unwrap();
+        assert_eq!(count, 1);
+
+        let editor = editor_for_page(&doc, 1).unwrap();
+        let runs = extract_text_runs(&editor, &fonts);
+        assert_eq!(runs[0].text, "Hallo World");
     }
 }
