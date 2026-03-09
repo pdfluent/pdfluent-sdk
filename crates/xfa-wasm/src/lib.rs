@@ -506,6 +506,267 @@ impl PdfDoc {
         });
         Some(serde_json::to_string(&result).unwrap_or_default())
     }
+
+    // ---- Page geometry ----
+
+    /// Get page width in PDF points.
+    #[wasm_bindgen(js_name = "pageWidth")]
+    pub fn page_width(&self, page_index: usize) -> f64 {
+        let pages = self.pdf.pages();
+        if page_index >= pages.len() {
+            return 0.0;
+        }
+        let mb = pages[page_index].media_box();
+        (mb.x1 - mb.x0).abs()
+    }
+
+    /// Get page height in PDF points.
+    #[wasm_bindgen(js_name = "pageHeight")]
+    pub fn page_height(&self, page_index: usize) -> f64 {
+        let pages = self.pdf.pages();
+        if page_index >= pages.len() {
+            return 0.0;
+        }
+        let mb = pages[page_index].media_box();
+        (mb.y1 - mb.y0).abs()
+    }
+
+    // ---- Page rendering (feature: render) ----
+
+    /// Render a page to RGBA pixels.
+    ///
+    /// Returns a Uint8Array with layout: `[width:4LE][height:4LE][RGBA pixels...]`.
+    /// Use with Canvas ImageData:
+    /// ```js
+    /// const raw = doc.renderPage(0, 1.5);
+    /// const view = new DataView(raw.buffer);
+    /// const w = view.getUint32(0, true);
+    /// const h = view.getUint32(4, true);
+    /// const pixels = raw.slice(8);
+    /// const imageData = new ImageData(new Uint8ClampedArray(pixels), w, h);
+    /// ctx.putImageData(imageData, 0, 0);
+    /// ```
+    #[cfg(feature = "render")]
+    #[wasm_bindgen(js_name = "renderPage")]
+    pub fn render_page(&self, page_index: usize, scale: f32) -> Result<Vec<u8>, JsError> {
+        let pages = self.pdf.pages();
+        if page_index >= pages.len() {
+            return Err(JsError::new(&format!(
+                "page index {page_index} out of range (0..{})",
+                pages.len()
+            )));
+        }
+        let page = &pages[page_index];
+        let interp_settings = pdf_render::pdf_interpret::InterpreterSettings::default();
+        let render_settings = pdf_render::RenderSettings {
+            x_scale: scale,
+            y_scale: scale,
+            ..Default::default()
+        };
+        let pixmap = pdf_render::render(page, &interp_settings, &render_settings);
+        let w = pixmap.width() as u32;
+        let h = pixmap.height() as u32;
+        let rgba = pixmap.data_as_u8_slice();
+        let mut buf = Vec::with_capacity(8 + rgba.len());
+        buf.extend_from_slice(&w.to_le_bytes());
+        buf.extend_from_slice(&h.to_le_bytes());
+        buf.extend_from_slice(rgba);
+        Ok(buf)
+    }
+
+    /// Render a thumbnail constrained to a maximum dimension.
+    ///
+    /// Same return format as `renderPage`.
+    #[cfg(feature = "render")]
+    #[wasm_bindgen(js_name = "renderThumbnail")]
+    pub fn render_thumbnail(
+        &self,
+        page_index: usize,
+        max_dimension: u32,
+    ) -> Result<Vec<u8>, JsError> {
+        let pages = self.pdf.pages();
+        if page_index >= pages.len() {
+            return Err(JsError::new(&format!(
+                "page index {page_index} out of range (0..{})",
+                pages.len()
+            )));
+        }
+        let page = &pages[page_index];
+        let media_box = page.media_box();
+        let pw = (media_box.x1 - media_box.x0).abs() as f32;
+        let ph = (media_box.y1 - media_box.y0).abs() as f32;
+        let max_side = pw.max(ph);
+        let scale = if max_side > 0.0 {
+            max_dimension as f32 / max_side
+        } else {
+            1.0
+        };
+        self.render_page(page_index, scale)
+    }
+
+    // ---- Annotation reading ----
+
+    /// Parse existing annotations on a page as JSON.
+    ///
+    /// Returns a JSON array of annotation objects.
+    #[cfg(feature = "annotate")]
+    #[wasm_bindgen(js_name = "getAnnotations")]
+    pub fn get_annotations(&self, page_index: usize) -> Result<String, JsError> {
+        let pages = self.pdf.pages();
+        if page_index >= pages.len() {
+            return Err(JsError::new(&format!(
+                "page index {page_index} out of range (0..{})",
+                pages.len()
+            )));
+        }
+        let page = &pages[page_index];
+        let annots = pdf_annot::Annotation::from_page(page);
+        let arr: Vec<serde_json::Value> = annots
+            .iter()
+            .map(|a| {
+                let rect = a.rect().map(|r| {
+                    serde_json::json!({
+                        "x0": r.x0,
+                        "y0": r.y0,
+                        "x1": r.x1,
+                        "y1": r.y1,
+                    })
+                });
+                serde_json::json!({
+                    "subtype": format!("{:?}", a.annotation_type()),
+                    "rect": rect,
+                    "contents": a.contents(),
+                })
+            })
+            .collect();
+        serde_json::to_string(&arr).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    // ---- Annotation creation (feature: annotate) ----
+
+    /// Add a highlight annotation to a page.
+    ///
+    /// Takes the PDF bytes and returns new PDF bytes with the annotation added.
+    #[cfg(feature = "annotate")]
+    #[wasm_bindgen(js_name = "addHighlight")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_highlight(
+        data: &[u8],
+        page_index: u32,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        r: f64,
+        g: f64,
+        b: f64,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
+        let rect = pdf_annot::builder::AnnotRect { x0, y0, x1, y1 };
+        let annot_id = pdf_annot::builder::AnnotationBuilder::highlight(rect)
+            .color(r, g, b)
+            .quad_points_from_rect(&rect)
+            .build(&mut doc)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(buf)
+    }
+
+    /// Add a sticky note (text annotation) to a page.
+    ///
+    /// Returns new PDF bytes with the annotation.
+    #[cfg(feature = "annotate")]
+    #[wasm_bindgen(js_name = "addStickyNote")]
+    pub fn add_sticky_note(
+        data: &[u8],
+        page_index: u32,
+        x: f64,
+        y: f64,
+        text: &str,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
+        let rect = pdf_annot::builder::AnnotRect {
+            x0: x,
+            y0: y,
+            x1: x + 24.0,
+            y1: y + 24.0,
+        };
+        let annot_id = pdf_annot::builder::AnnotationBuilder::sticky_note(
+            rect,
+            pdf_annot::builder::TextIcon::Note,
+        )
+        .contents(text)
+        .color(1.0, 0.95, 0.0)
+        .build(&mut doc)
+        .map_err(|e| JsError::new(&format!("{e}")))?;
+        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(buf)
+    }
+
+    /// Add a free text annotation to a page.
+    ///
+    /// Returns new PDF bytes with the annotation.
+    #[cfg(feature = "annotate")]
+    #[wasm_bindgen(js_name = "addFreeText")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_free_text(
+        data: &[u8],
+        page_index: u32,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        text: &str,
+        font_size: f64,
+    ) -> Result<Vec<u8>, JsError> {
+        let mut doc = lopdf::Document::load_mem(data).map_err(|e| JsError::new(&format!("{e}")))?;
+        let rect = pdf_annot::builder::AnnotRect { x0, y0, x1, y1 };
+        let annot_id = pdf_annot::builder::AnnotationBuilder::free_text(rect, text, font_size)
+            .build(&mut doc)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        pdf_annot::builder::add_annotation_to_page(&mut doc, page_index, annot_id)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("{e}")))?;
+        Ok(buf)
+    }
+
+    // ---- Signature verification ----
+
+    /// Verify all digital signatures in the document.
+    ///
+    /// Returns JSON array with verification results per signature.
+    #[wasm_bindgen(js_name = "verifySignatures")]
+    pub fn verify_signatures(&self) -> String {
+        let sigs = pdf_sign::signature_fields(&self.pdf);
+        let results: Vec<serde_json::Value> = sigs
+            .iter()
+            .map(|s| {
+                let structural_ok = s
+                    .sig
+                    .cms_signed_data()
+                    .map(|cms| cms.verify_structural_integrity())
+                    .unwrap_or(false);
+                serde_json::json!({
+                    "field_name": s.field_name,
+                    "signer": s.sig.signer_name(),
+                    "structural_integrity": structural_ok,
+                    "sub_filter": s.sig.sub_filter().map(|sf| format!("{sf:?}")),
+                    "signing_time": s.sig.signing_time(),
+                })
+            })
+            .collect();
+        serde_json::to_string(&results).unwrap_or_default()
+    }
 }
 
 /// Convert PDF string bytes to a Rust String (UTF-8/UTF-16/Latin-1).
