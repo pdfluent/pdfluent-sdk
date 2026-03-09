@@ -82,9 +82,12 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     report.ap_fixes = fix_annotation_ap(doc);
     fix_ocg_order(doc);
     fix_annotation_contents(doc);
+    fix_annotation_contents_type(doc);
     fix_widget_actions(doc);
     remove_xfa_from_acroform(doc);
     fix_widget_btn_appearance(doc);
+    fix_font_descriptor_keys(doc);
+    ensure_xmp_dc_title(doc);
     remove_halftone_names(doc);
     strip_signatures(doc);
 
@@ -939,6 +942,41 @@ fn fix_annotation_contents(doc: &mut Document) {
     }
 }
 
+/// Ensure annotation /Contents values are text strings, not other types (6.3.3:2).
+fn fix_annotation_contents_type(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                let is_annot = matches!(
+                    dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if is_annotation_subtype(n)
+                );
+                if !is_annot {
+                    false
+                } else {
+                    match dict.get(b"Contents").ok() {
+                        Some(Object::String(_, _)) => false, // Already a string — OK.
+                        Some(_) => true, // Name, Array, Integer, etc. — needs fix.
+                        None => false,   // Missing handled by fix_annotation_contents.
+                    }
+                }
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                // Convert whatever value to an empty string.
+                dict.set(
+                    "Contents",
+                    Object::String(Vec::new(), lopdf::StringFormat::Literal),
+                );
+            }
+        }
+    }
+}
+
 /// Remove /A and /AA keys from Widget annotations (6.4.1:1).
 fn fix_widget_actions(doc: &mut Document) {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
@@ -1032,6 +1070,314 @@ fn fix_widget_btn_appearance(doc: &mut Document) {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Fix font descriptor keys: ensure FontFile type matches font Subtype (6.2.11.4.1:1).
+///
+/// - Type1 fonts → FontFile
+/// - TrueType fonts → FontFile2
+/// - CIDFontType0 (CFF) → FontFile3
+///
+/// If a font descriptor has the wrong FontFile key, rename it to the correct one.
+fn fix_font_descriptor_keys(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    // Collect font subtype → descriptor reference mappings.
+    let mut descriptor_subtypes: Vec<(ObjectId, &'static [u8])> = Vec::new();
+    for &id in &ids {
+        if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+            let subtype = match dict.get(b"Subtype").ok() {
+                Some(Object::Name(ref n)) => n.as_slice(),
+                _ => continue,
+            };
+            let expected_key: &'static [u8] = match subtype {
+                b"Type1" | b"MMType1" => b"FontFile",
+                b"TrueType" => b"FontFile2",
+                b"CIDFontType0" => b"FontFile3",
+                b"CIDFontType2" => b"FontFile2",
+                _ => continue,
+            };
+            // Get the font descriptor reference.
+            let desc_id = match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+            descriptor_subtypes.push((desc_id, expected_key));
+        }
+    }
+
+    // Fix descriptor keys.
+    for (desc_id, expected_key) in descriptor_subtypes {
+        let wrong_keys: Vec<Vec<u8>> = {
+            let all_keys: &[&[u8]] = &[b"FontFile", b"FontFile2", b"FontFile3"];
+            if let Some(Object::Dictionary(desc)) = doc.objects.get(&desc_id) {
+                all_keys
+                    .iter()
+                    .filter(|&&k| k != expected_key && desc.has(k))
+                    .map(|k| k.to_vec())
+                    .collect()
+            } else {
+                continue;
+            }
+        };
+
+        if wrong_keys.is_empty() {
+            continue;
+        }
+
+        // Move the font file reference from wrong key to expected key.
+        if let Some(Object::Dictionary(ref mut desc)) = doc.objects.get_mut(&desc_id) {
+            if !desc.has(expected_key) {
+                // Take value from the first wrong key.
+                if let Some(val) = desc.get(&wrong_keys[0]).ok().cloned() {
+                    desc.set(
+                        std::str::from_utf8(expected_key).unwrap_or("FontFile2"),
+                        val,
+                    );
+                }
+            }
+            for wrong_key in &wrong_keys {
+                desc.remove(wrong_key);
+            }
+        }
+    }
+}
+
+/// Ensure XMP metadata stream contains dc:title (6.6.2.3.1:1).
+///
+/// If the XMP stream exists but lacks dc:title, inserts a minimal dc:title element.
+fn ensure_xmp_dc_title(doc: &mut Document) {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return,
+    };
+
+    let meta_id = {
+        if let Some(Object::Dictionary(cat)) = doc.objects.get(&catalog_id) {
+            match cat.get(b"Metadata").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    };
+
+    let meta_id = match meta_id {
+        Some(id) => id,
+        None => return, // No XMP stream — nothing to fix here.
+    };
+
+    let xmp_bytes = {
+        if let Some(Object::Stream(stream)) = doc.objects.get(&meta_id) {
+            stream.content.clone()
+        } else {
+            return;
+        }
+    };
+
+    let xmp_str = String::from_utf8_lossy(&xmp_bytes);
+
+    // Check if dc:title already exists.
+    if xmp_str.contains("dc:title") {
+        return;
+    }
+
+    // Find insertion point: before closing </rdf:RDF> or </x:xmpmeta>.
+    let insertion_target = "</rdf:RDF>";
+    let insert_pos = match xmp_str.find(insertion_target) {
+        Some(pos) => pos,
+        None => return, // Not a recognizable XMP structure.
+    };
+
+    // Build a dc:title RDF description block.
+    let dc_title_block = concat!(
+        "<rdf:Description rdf:about=\"\"\n",
+        "  xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n",
+        "  <dc:title>\n",
+        "    <rdf:Alt>\n",
+        "      <rdf:li xml:lang=\"x-default\">Untitled</rdf:li>\n",
+        "    </rdf:Alt>\n",
+        "  </dc:title>\n",
+        "</rdf:Description>\n",
+    );
+
+    let mut new_xmp = String::with_capacity(xmp_str.len() + dc_title_block.len());
+    new_xmp.push_str(&xmp_str[..insert_pos]);
+    new_xmp.push_str(dc_title_block);
+    new_xmp.push_str(&xmp_str[insert_pos..]);
+
+    let new_bytes = new_xmp.into_bytes();
+    if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&meta_id) {
+        stream.set_content(new_bytes);
+    }
+}
+
+/// Remove /NeedsRendering from catalog (6.4.2:2).
+fn remove_needs_rendering(doc: &mut Document) {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return,
+    };
+    if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+        catalog.remove(b"NeedsRendering");
+    }
+}
+
+/// Remove forbidden annotation subtypes: 3D, Sound, Screen, Movie (6.3.1:1).
+fn remove_forbidden_annotations(doc: &mut Document) {
+    let page_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for page_id in &page_ids {
+        let forbidden_refs: Vec<ObjectId> = {
+            let annots = if let Some(Object::Dictionary(dict)) = doc.objects.get(page_id) {
+                match dict.get(b"Annots").ok() {
+                    Some(Object::Array(arr)) => Some(arr.clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            if let Some(arr) = annots {
+                arr.iter()
+                    .filter_map(|obj| {
+                        if let Object::Reference(id) = obj {
+                            if let Some(Object::Dictionary(d)) = doc.objects.get(id) {
+                                if matches!(
+                                    d.get(b"Subtype").ok(),
+                                    Some(Object::Name(ref n)) if matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie")
+                                ) {
+                                    return Some(*id);
+                                }
+                            }
+                        }
+                        None
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
+        if !forbidden_refs.is_empty() {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(page_id) {
+                if let Ok(Object::Array(ref mut arr)) = dict.get_mut(b"Annots") {
+                    arr.retain(|obj| {
+                        if let Object::Reference(id) = obj {
+                            !forbidden_refs.contains(id)
+                        } else {
+                            true
+                        }
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// Fix embedded file specification dicts: ensure F and UF keys (6.8:2).
+fn fix_file_spec_keys(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                matches!(
+                    dict.get(b"Type").ok(),
+                    Some(Object::Name(ref n)) if n == b"Filespec"
+                ) && (!dict.has(b"F") || !dict.has(b"UF"))
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                let name = dict
+                    .get(b"F")
+                    .ok()
+                    .or_else(|| dict.get(b"UF").ok())
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal)
+                    });
+                if !dict.has(b"F") {
+                    dict.set("F", name.clone());
+                }
+                if !dict.has(b"UF") {
+                    dict.set("UF", name);
+                }
+            }
+        }
+    }
+}
+
+/// Remove /AS key from OCG configuration dicts (6.9:4).
+fn remove_ocg_as_key(doc: &mut Document) {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return,
+    };
+
+    let ocprops_id = {
+        if let Some(Object::Dictionary(catalog)) = doc.objects.get(&catalog_id) {
+            match catalog.get(b"OCProperties").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    };
+
+    let ocprops_id = match ocprops_id {
+        Some(id) => id,
+        None => return,
+    };
+
+    // Remove AS from /D config
+    let d_id = {
+        if let Some(Object::Dictionary(ocprops)) = doc.objects.get(&ocprops_id) {
+            match ocprops.get(b"D").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    };
+
+    if let Some(d_id) = d_id {
+        if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&d_id) {
+            d.remove(b"AS");
+        }
+    } else if let Some(Object::Dictionary(ref mut ocprops)) = doc.objects.get_mut(&ocprops_id) {
+        if let Ok(Object::Dictionary(ref mut d)) = ocprops.get_mut(b"D") {
+            d.remove(b"AS");
+        }
+    }
+
+    // Remove AS from alternate configs in /Configs array
+    let config_ids: Vec<ObjectId> = {
+        if let Some(Object::Dictionary(ocprops)) = doc.objects.get(&ocprops_id) {
+            match ocprops.get(b"Configs").ok() {
+                Some(Object::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|o| {
+                        if let Object::Reference(id) = o {
+                            Some(*id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        }
+    };
+    for cfg_id in config_ids {
+        if let Some(Object::Dictionary(ref mut cfg)) = doc.objects.get_mut(&cfg_id) {
+            cfg.remove(b"AS");
         }
     }
 }
@@ -1451,6 +1797,130 @@ mod tests {
                     assert!(dict.has(b"Contents"));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_fix_annotation_contents_type() {
+        let mut doc = make_basic_doc();
+        // Annotation with /Contents as Name instead of String.
+        let annot = dictionary! {
+            "Subtype" => Object::Name(b"Text".to_vec()),
+            "Contents" => Object::Name(b"SomeValue".to_vec()),
+            "F" => Object::Integer(4),
+        };
+        doc.add_object(Object::Dictionary(annot));
+        fix_annotation_contents_type(&mut doc);
+        for obj in doc.objects.values() {
+            if let Object::Dictionary(dict) = obj {
+                if matches!(dict.get(b"Subtype").ok(), Some(Object::Name(ref n)) if n == b"Text") {
+                    assert!(
+                        matches!(dict.get(b"Contents").ok(), Some(Object::String(_, _))),
+                        "/Contents should be a String"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_fix_font_descriptor_keys() {
+        let mut doc = make_basic_doc();
+        // TrueType font with FontFile (wrong — should be FontFile2).
+        let font_stream_id =
+            doc.add_object(Object::Stream(Stream::new(dictionary! {}, vec![0u8; 10])));
+        let desc = dictionary! {
+            "Type" => "FontDescriptor",
+            "FontFile" => Object::Reference(font_stream_id),
+        };
+        let desc_id = doc.add_object(Object::Dictionary(desc));
+        let font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => Object::Name(b"TrueType".to_vec()),
+            "FontDescriptor" => Object::Reference(desc_id),
+        };
+        doc.add_object(Object::Dictionary(font));
+        fix_font_descriptor_keys(&mut doc);
+        if let Some(Object::Dictionary(d)) = doc.objects.get(&desc_id) {
+            assert!(!d.has(b"FontFile"), "FontFile should be removed");
+            assert!(d.has(b"FontFile2"), "FontFile2 should be added");
+        }
+    }
+
+    #[test]
+    fn test_ensure_xmp_dc_title() {
+        let mut doc = make_basic_doc();
+        let catalog_id = get_catalog_id(&doc).unwrap();
+        // Create an XMP stream without dc:title.
+        let xmp = br#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about=""
+  xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">
+  <pdfaid:part>2</pdfaid:part>
+  <pdfaid:conformance>B</pdfaid:conformance>
+</rdf:Description>
+</rdf:RDF>
+</x:xmpmeta><?xpacket end="w"?>"#;
+        let meta_stream = Stream::new(
+            dictionary! {
+                "Type" => "Metadata",
+                "Subtype" => "XML",
+            },
+            xmp.to_vec(),
+        );
+        let meta_id = doc.add_object(Object::Stream(meta_stream));
+        if let Some(Object::Dictionary(ref mut cat)) = doc.objects.get_mut(&catalog_id) {
+            cat.set("Metadata", Object::Reference(meta_id));
+        }
+        ensure_xmp_dc_title(&mut doc);
+        if let Some(Object::Stream(stream)) = doc.objects.get(&meta_id) {
+            let content = String::from_utf8_lossy(&stream.content);
+            assert!(
+                content.contains("dc:title"),
+                "XMP should now contain dc:title"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ensure_xmp_dc_title_already_present() {
+        let mut doc = make_basic_doc();
+        let catalog_id = get_catalog_id(&doc).unwrap();
+        let xmp = br#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about=""
+  xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:title><rdf:Alt><rdf:li xml:lang="x-default">My Title</rdf:li></rdf:Alt></dc:title>
+</rdf:Description>
+</rdf:RDF>
+</x:xmpmeta><?xpacket end="w"?>"#;
+        let meta_stream = Stream::new(
+            dictionary! {
+                "Type" => "Metadata",
+                "Subtype" => "XML",
+            },
+            xmp.to_vec(),
+        );
+        let meta_id = doc.add_object(Object::Stream(meta_stream));
+        if let Some(Object::Dictionary(ref mut cat)) = doc.objects.get_mut(&catalog_id) {
+            cat.set("Metadata", Object::Reference(meta_id));
+        }
+        let original_len = {
+            if let Some(Object::Stream(s)) = doc.objects.get(&meta_id) {
+                s.content.len()
+            } else {
+                0
+            }
+        };
+        ensure_xmp_dc_title(&mut doc);
+        if let Some(Object::Stream(stream)) = doc.objects.get(&meta_id) {
+            assert_eq!(
+                stream.content.len(),
+                original_len,
+                "should not modify XMP when dc:title exists"
+            );
         }
     }
 

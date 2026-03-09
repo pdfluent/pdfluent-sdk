@@ -139,10 +139,9 @@ fn generate_xmp(meta: &PdfMetadata, conformance: PdfAConformance) -> Vec<u8> {
     writer.pdfa_part(conformance.part());
     writer.pdfa_conformance(conformance.conformance());
 
-    // Dublin Core.
-    if let Some(ref title) = meta.title {
-        writer.title([(None::<LangId>, title.as_str())]);
-    }
+    // Dublin Core — dc:title is required by 6.6.2.3.1:1.
+    let title_str = meta.title.as_deref().unwrap_or("Untitled");
+    writer.title([(None::<LangId>, title_str)]);
     if let Some(ref description) = meta.description {
         writer.description([(None::<LangId>, description.as_str())]);
     }
