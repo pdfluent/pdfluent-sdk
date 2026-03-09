@@ -12,6 +12,7 @@ pub mod render;
 #[cfg(feature = "pdfium-oracle")]
 pub mod render_oracle;
 pub mod search;
+pub mod sign_verify;
 pub mod signatures;
 pub mod text_extract;
 pub mod text_oracle;
@@ -91,6 +92,7 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(text_oracle::TextOracleTest),
         Box::new(metadata_oracle::MetadataOracleTest),
         Box::new(manipulation::ManipulationTest),
+        Box::new(sign_verify::SignVerifyTest),
     ];
 
     #[cfg(feature = "pdfium-oracle")]
