@@ -82,6 +82,9 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     report.ap_fixes = fix_annotation_ap(doc);
     fix_ocg_order(doc);
     fix_annotation_contents(doc);
+    fix_widget_actions(doc);
+    remove_xfa_from_acroform(doc);
+    fix_widget_btn_appearance(doc);
     remove_halftone_names(doc);
     strip_signatures(doc);
 
