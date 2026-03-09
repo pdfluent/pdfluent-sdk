@@ -519,3 +519,148 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(128,128,128,0.6);
 }
+
+/* ── Annotation toolbar ─────────────────────────────────────── */
+#annot-toolbar {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+#annot-toolbar.hidden { display: none; }
+
+.annot-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.annot-separator {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.annot-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.annot-tool:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+}
+
+.annot-tool.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.annot-properties {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.annot-properties label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.annot-properties input[type="color"] {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+}
+
+.annot-properties input[type="range"] {
+  width: 60px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.annot-properties select {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-size: 11px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.annot-properties .hidden { display: none; }
+
+#annot-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+#annot-delete:hover:not(:disabled) {
+  background: #dc2626;
+  color: white;
+  border-color: #dc2626;
+}
+
+#annot-delete:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── Annotation drawing overlay ─────────────────────────────── */
+.annot-draw-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  z-index: 50;
+}
+
+.annot-draw-preview {
+  position: absolute;
+  border: 2px dashed var(--accent);
+  background: rgba(37, 99, 235, 0.1);
+  pointer-events: none;
+}
+
+.annot-ink-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  z-index: 50;
+}

@@ -14,6 +14,8 @@ serde_json = { workspace = true }
 image = { workspace = true }
 base64 = "0.22"
 pdf-engine = { path = "../pdf-engine" }
+pdf-annot = { path = "../pdf-annot" }
+lopdf = { workspace = true }
 
 [build-dependencies]
 tauri-build = "2"
