@@ -60,6 +60,7 @@ async function init() {
   setupMenuEvents();
   setupSearchEvents();
   setupAnnotationToolbar();
+  detectDarkModePreference();
   updateUI();
 }
 
@@ -598,17 +599,21 @@ function setupSidebarEvents() {
 
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
+    // Don't intercept shortcuts when typing in an input field.
+    const inInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT';
     const mod = e.metaKey || e.ctrlKey;
 
     if (mod && e.key === 'o') { e.preventDefault(); promptOpen(); }
     if (mod && e.key === 'w') { e.preventDefault(); if (state.activeTab !== null) closeTab(state.activeTab); }
     if (mod && e.key === '=') { e.preventDefault(); zoomIn(); }
     if (mod && e.key === '-') { e.preventDefault(); zoomOut(); }
+    if (mod && e.key === '0') { e.preventDefault(); setZoom('fit-page'); }
     if (mod && e.key === '1') { e.preventDefault(); setZoom('fit-width'); }
     if (mod && e.key === '2') { e.preventDefault(); setZoom('fit-page'); }
     if (mod && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undoAction(); }
     if (mod && e.key === 'z' && e.shiftKey) { e.preventDefault(); redoAction(); }
     if (mod && e.key === 'Z') { e.preventDefault(); redoAction(); }
+    if (mod && e.key === 'y') { e.preventDefault(); redoAction(); }
     if (mod && e.key === 's' && !e.shiftKey) { e.preventDefault(); saveDocument(); }
     if (mod && e.key === 'p') { e.preventDefault(); printDocument(); }
     if (mod && e.shiftKey && e.key === 'S') { e.preventDefault(); saveDocumentAs(); }
@@ -617,15 +622,29 @@ function setupKeyboardShortcuts() {
     if (mod && e.key === 'f') { e.preventDefault(); toggleSearch(); }
     if (mod && e.key === 'b') { e.preventDefault(); toggleSidebar(); }
     if (mod && e.key === 'd') { e.preventDefault(); toggleDarkMode(); }
+    if (mod && e.key === 'g') { e.preventDefault(); focusGoToPage(); }
+    if (mod && e.key === 'i') { e.preventDefault(); showDocumentInfo(); }
 
-    // Arrow key navigation
-    if (!mod && e.key === 'ArrowLeft') { const t = activeTab(); if (t) goToPage(t.currentPage - 1); }
-    if (!mod && e.key === 'ArrowRight') { const t = activeTab(); if (t) goToPage(t.currentPage + 1); }
-    if (e.key === 'Home') { goToPage(0); }
-    if (e.key === 'End') { const t = activeTab(); if (t) goToPage(t.pageCount - 1); }
-    if (e.key === 'Escape' && state.annotToolbarVisible) { selectAnnotTool('select'); }
-    if (e.key === 'v' && !mod && state.annotToolbarVisible) { selectAnnotTool('select'); }
+    // Non-modifier shortcuts (only when not in an input field)
+    if (!inInput && !mod) {
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomIn(); }
+      if (e.key === '-') { e.preventDefault(); zoomOut(); }
+      if (e.key === 'ArrowLeft') { const t = activeTab(); if (t) goToPage(t.currentPage - 1); }
+      if (e.key === 'ArrowRight') { const t = activeTab(); if (t) goToPage(t.currentPage + 1); }
+      if (e.key === 'PageUp') { e.preventDefault(); const t = activeTab(); if (t) goToPage(t.currentPage - 1); }
+      if (e.key === 'PageDown') { e.preventDefault(); const t = activeTab(); if (t) goToPage(t.currentPage + 1); }
+      if (e.key === 'Home') { e.preventDefault(); goToPage(0); }
+      if (e.key === 'End') { e.preventDefault(); const t = activeTab(); if (t) goToPage(t.pageCount - 1); }
+      if (e.key === 'Escape' && state.annotToolbarVisible) { selectAnnotTool('select'); }
+      if (e.key === 'Escape' && searchState.visible) { toggleSearch(); }
+      if (e.key === 'v' && state.annotToolbarVisible) { selectAnnotTool('select'); }
+    }
   });
+}
+
+function focusGoToPage() {
+  dom.pageInput.focus();
+  dom.pageInput.select();
 }
 
 function setupDragDrop() {
@@ -668,6 +687,7 @@ async function setupMenuEvents() {
       case 'select_all': selectAllText(); break;
       case 'find': toggleSearch(); break;
       case 'doc_info': showDocumentInfo(); break;
+      case 'go_to_page': focusGoToPage(); break;
     }
   });
 }
@@ -705,6 +725,36 @@ function toggleSidebar() {
 function toggleDarkMode() {
   state.darkMode = !state.darkMode;
   document.body.classList.toggle('dark', state.darkMode);
+  try {
+    localStorage.setItem('xfa-dark-mode', state.darkMode ? '1' : '0');
+  } catch (_) { /* storage unavailable */ }
+}
+
+function detectDarkModePreference() {
+  // Check saved preference first, then OS preference.
+  try {
+    const saved = localStorage.getItem('xfa-dark-mode');
+    if (saved !== null) {
+      state.darkMode = saved === '1';
+      document.body.classList.toggle('dark', state.darkMode);
+      return;
+    }
+  } catch (_) { /* storage unavailable */ }
+
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    state.darkMode = true;
+    document.body.classList.add('dark');
+  }
+
+  // Listen for OS theme changes.
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    // Only follow OS if user hasn't manually toggled.
+    try {
+      if (localStorage.getItem('xfa-dark-mode') !== null) return;
+    } catch (_) { /* ignore */ }
+    state.darkMode = e.matches;
+    document.body.classList.toggle('dark', state.darkMode);
+  });
 }
 
 async function showDocumentInfo() {
