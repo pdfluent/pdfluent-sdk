@@ -13,3 +13,5 @@ metadata.sqlite
 /fuzz/artifacts/
 /fuzz/corpus/*/
 !/fuzz/corpus/*/seed_*
+node_modules/
+package-lock.json
