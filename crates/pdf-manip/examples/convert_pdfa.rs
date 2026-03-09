@@ -29,6 +29,9 @@ fn main() {
         Err(e) => eprintln!("Font error: {e}"),
     }
 
+    let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+    eprintln!("TrueType encoding: fixed={enc_fixed}");
+
     match pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc) {
         Ok(r) => eprintln!(
             "Colorspace: had_intent={}, added={}, device_cs={:?}",
