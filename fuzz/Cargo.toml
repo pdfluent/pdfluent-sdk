@@ -12,6 +12,13 @@ libfuzzer-sys = "0.4"
 pdf-syntax = { path = "../crates/pdf-syntax", features = ["std", "images"] }
 xfa-dom-resolver = { path = "../crates/xfa-dom-resolver" }
 formcalc-interpreter = { path = "../crates/formcalc-interpreter" }
+lopdf = "0.39"
+pdf-manip = { path = "../crates/pdf-manip" }
+pdf-redact = { path = "../crates/pdf-redact" }
+pdf-annot = { path = "../crates/pdf-annot" }
+pdf-forms = { path = "../crates/pdf-forms" }
+pdf-sign = { path = "../crates/pdf-sign" }
+pdf-compliance = { path = "../crates/pdf-compliance" }
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -53,4 +60,44 @@ doc = false
 [[bin]]
 name = "fuzz_som_path"
 path = "fuzz_targets/fuzz_som_path.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_content_editor"
+path = "fuzz_targets/fuzz_content_editor.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_text_replace"
+path = "fuzz_targets/fuzz_text_replace.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_redact"
+path = "fuzz_targets/fuzz_redact.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_pdfa_convert"
+path = "fuzz_targets/fuzz_pdfa_convert.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_lopdf_roundtrip"
+path = "fuzz_targets/fuzz_lopdf_roundtrip.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_form_fill"
+path = "fuzz_targets/fuzz_form_fill.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_annot_create"
+path = "fuzz_targets/fuzz_annot_create.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_sign"
+path = "fuzz_targets/fuzz_sign.rs"
 doc = false
