@@ -224,6 +224,11 @@ impl PdfTest for PdfAConvertTest {
             "js_removed".into(),
             cleanup_report.js_actions_removed.to_string(),
         );
+        metadata.insert(
+            "cidtogidmap_added".into(),
+            cleanup_report.cidtogidmap_added.to_string(),
+        );
+        metadata.insert("ap_fixes".into(), cleanup_report.ap_fixes.to_string());
 
         // 6. Validate with veraPDF oracle if available.
         if let Some(verapdf) = &self.verapdf {
