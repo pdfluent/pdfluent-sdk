@@ -38,6 +38,8 @@ pub fn run() {
             commands::extract_page_text,
             commands::extract_text_blocks,
             commands::search_document,
+            commands::print_document,
+            commands::save_document_as,
             commands::add_annotation,
             commands::delete_annotation,
             commands::list_annotations,
