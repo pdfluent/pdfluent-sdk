@@ -21,6 +21,7 @@ signature = "2.2"
 thiserror = { workspace = true }
 p12 = "0.6"
 pkcs8 = "0.10"
+lopdf = { workspace = true }
 ureq = { version = "2", optional = true }
 
 [features]
