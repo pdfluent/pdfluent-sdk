@@ -131,4 +131,92 @@ class PdfDocumentTest {
             assertTrue(img.height <= 100)
         }
     }
+
+    // ---------- Scenario 5: Read AcroForm fields ----------
+
+    @Test
+    @org.junit.Ignore("TODO: AcroForm field reading not yet exposed in Kotlin binding")
+    fun readFormFields() {
+        // TODO: PdfDocument.open(loadFixture("acroform.pdf")).use { doc ->
+        //     val fields = doc.getFormFields()
+        //     assertTrue(fields.isNotEmpty())
+        // }
+    }
+
+    // ---------- Scenario 6: Fill text field, save ----------
+
+    @Test
+    @org.junit.Ignore("TODO: Form field writing not yet exposed in Kotlin binding")
+    fun writeFormField() {
+        // TODO: PdfDocument.open(loadFixture("acroform.pdf")).use { doc ->
+        //     doc.setFieldValue("name", "test")
+        //     val saved = doc.save()
+        //     PdfDocument.open(saved).use { doc2 ->
+        //         assertEquals("test", doc2.getFieldValue("name"))
+        //     }
+        // }
+    }
+
+    // ---------- Scenario 7: Read annotations ----------
+
+    @Test
+    @org.junit.Ignore("TODO: Annotation reading not yet exposed in Kotlin binding")
+    fun readAnnotations() {
+        // TODO: PdfDocument.open(createTestPdf()).use { doc ->
+        //     val annots = doc.getAnnotations(0)
+        //     assertNotNull(annots)
+        // }
+    }
+
+    // ---------- Scenario 8: Add highlight, save ----------
+
+    @Test
+    @org.junit.Ignore("TODO: Annotation creation not yet exposed in Kotlin binding")
+    fun addHighlightAnnotation() {
+        // TODO: Create highlight annotation, save, reopen, verify
+    }
+
+    // ---------- Scenario 9: Validate PDF/A ----------
+
+    @Test
+    @org.junit.Ignore("TODO: PDF/A validation not yet exposed in Kotlin binding")
+    fun validatePdfA() {
+        // TODO: PdfDocument.open(createTestPdf()).use { doc ->
+        //     val report = doc.validatePdfA("2b")
+        //     assertNotNull(report)
+        // }
+    }
+
+    // ---------- Scenario 10: Merge 2 PDFs ----------
+
+    @Test
+    @org.junit.Ignore("TODO: PDF merge not yet exposed in Kotlin binding")
+    fun mergePdfs() {
+        // TODO: val merged = PdfDocument.merge(pdf1, pdf2)
+        //     PdfDocument.open(merged).use { doc ->
+        //         assertEquals(2, doc.pageCount)
+        //     }
+    }
+
+    // ---------- Scenario 11: Verify signature ----------
+
+    @Test
+    @org.junit.Ignore("TODO: Signature verification not yet exposed in Kotlin binding")
+    fun verifySignature() {
+        // TODO: PdfDocument.open(loadFixture("signed.pdf")).use { doc ->
+        //     val sigs = doc.verifySignatures()
+        //     assertTrue(sigs.isNotEmpty())
+        // }
+    }
+
+    // ---------- Scenario 12: Extract images ----------
+
+    @Test
+    @org.junit.Ignore("TODO: Image extraction not yet exposed in Kotlin binding")
+    fun extractImages() {
+        // TODO: PdfDocument.open(createTestPdf()).use { doc ->
+        //     val images = doc.extractImages(0)
+        //     assertNotNull(images)
+        // }
+    }
 }
