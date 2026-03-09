@@ -429,10 +429,7 @@ fn fix_annotation_flags(doc: &mut Document) -> usize {
         let needs_fix = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 let is_annot = match dict.get(b"Subtype").ok() {
-                    Some(Object::Name(n)) => {
-                        // Popup annotations are exempt from Print requirement
-                        n != b"Popup" && is_annotation_subtype(n)
-                    }
+                    Some(Object::Name(n)) => is_annotation_subtype(n),
                     _ => false,
                 };
                 if !is_annot {
@@ -720,6 +717,7 @@ fn is_annotation_subtype(name: &[u8]) -> bool {
             | b"Watermark"
             | b"3D"
             | b"Redact"
+            | b"Popup"
     )
 }
 
@@ -848,21 +846,42 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                 if !is_annot {
                     ApFixInfo::None
                 } else {
-                    match dict.get(b"AP").ok() {
-                        Some(Object::Dictionary(ap)) => {
-                            if ap.has(b"N") {
-                                ApFixInfo::None
-                            } else {
-                                let fallback = ap
-                                    .get(b"D")
-                                    .ok()
-                                    .cloned()
-                                    .or_else(|| ap.get(b"R").ok().cloned());
-                                ApFixInfo::InlineAp(fallback)
-                            }
+                    // Check for zero-size rect (exempt from AP requirement).
+                    let is_zero_size = match dict.get(b"Rect").ok() {
+                        Some(Object::Array(arr)) if arr.len() == 4 => {
+                            let nums: Vec<f64> = arr
+                                .iter()
+                                .filter_map(|o| match o {
+                                    Object::Integer(i) => Some(*i as f64),
+                                    Object::Real(r) => Some(*r as f64),
+                                    _ => None,
+                                })
+                                .collect();
+                            nums.len() == 4
+                                && (nums[0] - nums[2]).abs() < 0.01
+                                && (nums[1] - nums[3]).abs() < 0.01
                         }
-                        Some(Object::Reference(ap_id)) => ApFixInfo::RefAp(*ap_id),
-                        _ => ApFixInfo::None,
+                        _ => false,
+                    };
+                    if is_zero_size {
+                        ApFixInfo::None
+                    } else {
+                        match dict.get(b"AP").ok() {
+                            Some(Object::Dictionary(ap)) => {
+                                if ap.has(b"N") {
+                                    ApFixInfo::None
+                                } else {
+                                    let fallback = ap
+                                        .get(b"D")
+                                        .ok()
+                                        .cloned()
+                                        .or_else(|| ap.get(b"R").ok().cloned());
+                                    ApFixInfo::InlineAp(fallback)
+                                }
+                            }
+                            Some(Object::Reference(ap_id)) => ApFixInfo::RefAp(*ap_id),
+                            _ => ApFixInfo::MissingAp, // No AP at all — need to create one.
+                        }
                     }
                 }
             } else {
@@ -901,6 +920,29 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                     }
                 }
             }
+            ApFixInfo::MissingAp => {
+                // Create an empty appearance stream and AP dict.
+                let mut stream_dict = lopdf::Dictionary::new();
+                stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
+                stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+                stream_dict.set(
+                    "BBox",
+                    Object::Array(vec![
+                        Object::Integer(0),
+                        Object::Integer(0),
+                        Object::Integer(0),
+                        Object::Integer(0),
+                    ]),
+                );
+                let empty_stream = lopdf::Stream::new(stream_dict, Vec::new());
+                let stream_id = doc.add_object(Object::Stream(empty_stream));
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    let mut ap = lopdf::Dictionary::new();
+                    ap.set("N", Object::Reference(stream_id));
+                    dict.set("AP", Object::Dictionary(ap));
+                    count += 1;
+                }
+            }
             _ => {}
         }
     }
@@ -911,6 +953,7 @@ enum ApFixInfo {
     None,
     InlineAp(Option<Object>),
     RefAp(ObjectId),
+    MissingAp,
 }
 
 /// Ensure OCG D config has Order array listing all OCGs (6.9 t3).
@@ -1681,12 +1724,26 @@ fn strip_signatures(doc: &mut Document) {
 /// Must be called on the bytes AFTER `doc.save_to()`.
 pub fn fix_pdf_header(data: &mut Vec<u8>) {
     // PDF/A-2 requires: %PDF-1.n\n%<4+ high bytes>\n
-    // Also fix %PDF-2.x to %PDF-1.7.
+    // where n is 0-7, and no extra bytes between the version and EOL.
     if data.len() >= 9 && &data[0..5] == b"%PDF-" {
         // Fix version 2.x → 1.7
         if data[5] == b'2' {
             data[5] = b'1';
             data[7] = b'7';
+        }
+        // Ensure version is at least 1.4 for PDF/A-2.
+        if data[5] == b'1' && data[7] < b'4' {
+            data[7] = b'4';
+        }
+        // Remove any trailing characters (like spaces) between version and EOL.
+        // Header should be exactly "%PDF-1.n" (8 bytes) followed by EOL.
+        if data.len() > 8 && data[8] != b'\n' && data[8] != b'\r' {
+            // Find the next EOL.
+            if let Some(eol_pos) = data[8..].iter().position(|&b| b == b'\n' || b == b'\r') {
+                let eol_pos = eol_pos + 8;
+                // Remove bytes between position 8 and the EOL.
+                data.drain(8..eol_pos);
+            }
         }
     }
 

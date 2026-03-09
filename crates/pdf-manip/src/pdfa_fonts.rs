@@ -958,6 +958,131 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
     fixed
 }
 
+/// Known symbolic font base names (exempt from encoding rules).
+const SYMBOLIC_FONTS: &[&str] = &[
+    "Symbol",
+    "ZapfDingbats",
+    "Wingdings",
+    "Webdings",
+    "Dingbats",
+];
+
+/// Fix TrueType font encoding for PDF/A compliance (rule 6.2.11.6:2).
+///
+/// Non-symbolic TrueType fonts must have MacRomanEncoding or WinAnsiEncoding.
+/// This adds WinAnsiEncoding to any non-symbolic TrueType font missing it.
+pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
+    // Collect font IDs that need fixing.
+    let mut to_fix: Vec<ObjectId> = Vec::new();
+
+    for (id, obj) in &doc.objects {
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        // Only process TrueType fonts.
+        if get_name(dict, b"Subtype").as_deref() != Some("TrueType") {
+            continue;
+        }
+
+        // Check if symbolic via FontDescriptor Flags.
+        let is_symbolic = is_font_symbolic(doc, dict);
+        if is_symbolic {
+            continue;
+        }
+
+        // Check existing Encoding.
+        let needs_fix = match dict.get(b"Encoding") {
+            Ok(Object::Name(enc)) => {
+                let enc_str = String::from_utf8_lossy(enc);
+                // Must be MacRomanEncoding or WinAnsiEncoding.
+                enc_str != "WinAnsiEncoding" && enc_str != "MacRomanEncoding"
+            }
+            Ok(Object::Dictionary(enc_dict)) => {
+                // Encoding is a dict — check BaseEncoding.
+                !matches!(
+                    get_name(enc_dict, b"BaseEncoding").as_deref(),
+                    Some("WinAnsiEncoding") | Some("MacRomanEncoding")
+                )
+            }
+            Ok(Object::Reference(enc_ref)) => {
+                // Encoding references another object — check if it's a valid name or dict.
+                match doc.get_object(*enc_ref) {
+                    Ok(Object::Name(enc)) => {
+                        let enc_str = String::from_utf8_lossy(enc);
+                        enc_str != "WinAnsiEncoding" && enc_str != "MacRomanEncoding"
+                    }
+                    Ok(Object::Dictionary(enc_dict)) => !matches!(
+                        get_name(enc_dict, b"BaseEncoding").as_deref(),
+                        Some("WinAnsiEncoding") | Some("MacRomanEncoding")
+                    ),
+                    _ => true,
+                }
+            }
+            _ => true, // Missing Encoding — needs fix.
+        };
+
+        if needs_fix {
+            to_fix.push(*id);
+        }
+    }
+
+    // Apply fixes.
+    let count = to_fix.len();
+    for id in to_fix {
+        if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(id) {
+            // If there's an existing Encoding dict with Differences, preserve it
+            // but set BaseEncoding to WinAnsiEncoding.
+            let has_differences = matches!(
+                dict.get(b"Encoding"),
+                Ok(Object::Dictionary(d)) if d.has(b"Differences")
+            );
+            if has_differences {
+                // Clone the existing dict and add BaseEncoding.
+                if let Ok(Object::Dictionary(enc_dict)) = dict.get(b"Encoding") {
+                    let mut new_enc = enc_dict.clone();
+                    new_enc.set(
+                        "BaseEncoding",
+                        Object::Name(b"WinAnsiEncoding".to_vec()),
+                    );
+                    dict.set("Encoding", Object::Dictionary(new_enc));
+                }
+            } else {
+                dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+            }
+        }
+    }
+
+    count
+}
+
+/// Check if a font is symbolic based on FontDescriptor Flags or font name.
+fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
+    // Check base font name against known symbolic fonts.
+    if let Some(name) = get_name(font_dict, b"BaseFont") {
+        let base = name.split('+').next_back().unwrap_or(&name);
+        for sym in SYMBOLIC_FONTS {
+            if base.eq_ignore_ascii_case(sym) {
+                return true;
+            }
+        }
+    }
+
+    // Check FontDescriptor Flags bit 2 (0-indexed) = value 4 = Symbolic.
+    let fd = match font_dict.get(b"FontDescriptor") {
+        Ok(Object::Reference(id)) => doc.get_object(*id).ok(),
+        Ok(obj) => Some(obj),
+        _ => None,
+    };
+    if let Some(Object::Dictionary(fd_dict)) = fd {
+        if let Ok(Object::Integer(flags)) = fd_dict.get(b"Flags") {
+            // Bit 2 (value 4) = Symbolic
+            return (*flags & 4) != 0;
+        }
+    }
+
+    false
+}
+
 fn count_all_fonts(doc: &Document) -> usize {
     doc.objects
         .values()
