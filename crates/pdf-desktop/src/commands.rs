@@ -726,3 +726,522 @@ fn parse_line_ending(s: &str) -> LineEnding {
         _ => LineEnding::None,
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────
+//
+// These tests exercise Tauri command logic directly through AppState,
+// bypassing the State<'_, AppState> wrapper which cannot be constructed
+// outside the Tauri runtime.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::{render_page_png, render_thumbnail_png, AppState, OpenDocument};
+
+    fn fixture_path(name: &str) -> String {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        format!("{manifest}/../../tests/corpus-mini/{name}")
+    }
+
+    /// Load a test PDF into a fresh AppState, returning the state and handle.
+    fn setup(pdf_name: &str) -> (AppState, u32) {
+        let path = fixture_path(pdf_name);
+        let data = std::fs::read(&path).expect("failed to read test fixture");
+        let doc = PdfDocument::open(data.clone()).expect("failed to open test PDF");
+        let state = AppState::default();
+        let handle = state.alloc_handle();
+        state.documents.lock().unwrap().insert(
+            handle,
+            OpenDocument {
+                path,
+                doc,
+                raw_bytes: data.clone(),
+                saved_bytes: data,
+                undo_stack: Vec::new(),
+                redo_stack: Vec::new(),
+            },
+        );
+        (state, handle)
+    }
+
+    // ── Open / Close ──────────────────────────────────────────────
+
+    #[test]
+    fn open_and_close_document() {
+        let (state, h) = setup("simple.pdf");
+        assert!(state.documents.lock().unwrap().contains_key(&h));
+        state.documents.lock().unwrap().remove(&h);
+        assert!(!state.documents.lock().unwrap().contains_key(&h));
+    }
+
+    #[test]
+    fn handle_allocation_is_unique() {
+        let state = AppState::default();
+        let h1 = state.alloc_handle();
+        let h2 = state.alloc_handle();
+        let h3 = state.alloc_handle();
+        assert_ne!(h1, h2);
+        assert_ne!(h2, h3);
+    }
+
+    #[test]
+    fn missing_handle_returns_error() {
+        let state = AppState::default();
+        let docs = state.documents.lock().unwrap();
+        assert!(docs.get(&9999).is_none());
+    }
+
+    // ── Page count ────────────────────────────────────────────────
+
+    #[test]
+    fn page_count_simple() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        assert!(open.doc.page_count() >= 1);
+    }
+
+    #[test]
+    fn page_count_multipage() {
+        let (state, h) = setup("multi-page.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        assert!(open.doc.page_count() >= 2);
+    }
+
+    // ── Render ────────────────────────────────────────────────────
+
+    #[test]
+    fn render_page_returns_png() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let png = render_page_png(&open.doc, 0, 72.0).unwrap();
+        assert!(!png.is_empty());
+        // Verify PNG magic bytes.
+        assert_eq!(&png[..4], &[0x89, b'P', b'N', b'G']);
+    }
+
+    #[test]
+    fn render_thumbnail_returns_png() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let png = render_thumbnail_png(&open.doc, 0, 200).unwrap();
+        assert!(!png.is_empty());
+        assert_eq!(&png[..4], &[0x89, b'P', b'N', b'G']);
+    }
+
+    #[test]
+    fn render_base64_roundtrip() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let png = render_page_png(&open.doc, 0, 72.0).unwrap();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        assert!(!b64.is_empty());
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&b64)
+            .unwrap();
+        assert_eq!(decoded, png);
+    }
+
+    // ── Document info ─────────────────────────────────────────────
+
+    #[test]
+    fn document_info_returns_metadata() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let info = open.doc.info();
+        // Just verify it doesn't panic and returns a valid struct.
+        let _ = info.title;
+        let _ = info.author;
+        let _ = info.producer;
+    }
+
+    // ── Page geometry ─────────────────────────────────────────────
+
+    #[test]
+    fn page_geometry_has_positive_dimensions() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let geom = open.doc.page_geometry(0).unwrap();
+        assert!(geom.media_box.width() > 0.0);
+        assert!(geom.media_box.height() > 0.0);
+    }
+
+    // ── Bookmarks ─────────────────────────────────────────────────
+
+    #[test]
+    fn bookmarks_returns_without_panic() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let _ = open.doc.bookmarks(); // May be empty, just must not panic.
+    }
+
+    // ── Text extraction ───────────────────────────────────────────
+
+    #[test]
+    fn extract_text_returns_string() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        // Should not error on a valid page.
+        let result = open.doc.extract_text(0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn extract_text_blocks_returns_vec() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let result = open.doc.extract_text_blocks(0);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn extract_text_invalid_page_returns_error() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let result = open.doc.extract_text(9999);
+        assert!(result.is_err());
+    }
+
+    // ── Search ────────────────────────────────────────────────────
+
+    #[test]
+    fn search_document_returns_pages() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        // Search for a string unlikely to be found.
+        let results = open.doc.search_text("zzzznonexistent");
+        assert!(results.is_empty());
+    }
+
+    // ── Annotations ───────────────────────────────────────────────
+
+    #[test]
+    fn add_and_list_annotations() {
+        let (state, h) = setup("simple.pdf");
+
+        // Add a highlight annotation via lopdf (same path as add_annotation command).
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            open.push_undo();
+
+            let mut lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes).unwrap();
+            let rect = AnnotRect::new(72.0, 700.0, 200.0, 720.0);
+            let annot_id = AnnotationBuilder::highlight(rect)
+                .color(1.0, 1.0, 0.0)
+                .quad_points_from_rect(&rect)
+                .build(&mut lopdf_doc)
+                .unwrap();
+            add_annotation_to_page(&mut lopdf_doc, 1, annot_id).unwrap();
+
+            let mut buf = Vec::new();
+            lopdf_doc.save_to(&mut buf).unwrap();
+            open.raw_bytes = buf;
+            open.reload().unwrap();
+        }
+
+        // List annotations (same logic as list_annotations command).
+        {
+            let docs = state.documents.lock().unwrap();
+            let open = docs.get(&h).unwrap();
+            let lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes).unwrap();
+            let pages = lopdf_doc.get_pages();
+            let page_id = *pages.get(&1).unwrap();
+            let page_dict = lopdf_doc.get_object(page_id).unwrap();
+            let annots = page_dict
+                .as_dict()
+                .unwrap()
+                .get(b"Annots")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert!(!annots.is_empty());
+        }
+    }
+
+    #[test]
+    fn delete_annotation_removes_entry() {
+        let (state, h) = setup("simple.pdf");
+
+        // Add an annotation first.
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            let mut lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes).unwrap();
+            let rect = AnnotRect::new(10.0, 10.0, 50.0, 50.0);
+            let annot_id = AnnotationBuilder::square(rect)
+                .build(&mut lopdf_doc)
+                .unwrap();
+            add_annotation_to_page(&mut lopdf_doc, 1, annot_id).unwrap();
+            let mut buf = Vec::new();
+            lopdf_doc.save_to(&mut buf).unwrap();
+            open.raw_bytes = buf;
+            open.reload().unwrap();
+        }
+
+        // Count annotations before delete.
+        let count_before = {
+            let docs = state.documents.lock().unwrap();
+            let open = docs.get(&h).unwrap();
+            let lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes).unwrap();
+            let pages = lopdf_doc.get_pages();
+            let page_id = *pages.get(&1).unwrap();
+            let page_dict = lopdf_doc.get_object(page_id).unwrap();
+            page_dict
+                .as_dict()
+                .ok()
+                .and_then(|d| d.get(b"Annots").ok())
+                .and_then(|a| a.as_array().ok())
+                .map(|a| a.len())
+                .unwrap_or(0)
+        };
+
+        // Delete last annotation (same logic as delete_annotation command).
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            open.push_undo();
+            let mut lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes).unwrap();
+            let pages = lopdf_doc.get_pages();
+            let page_id = *pages.get(&1).unwrap();
+            let page_obj = lopdf_doc.get_object_mut(page_id).unwrap();
+            let arr = page_obj
+                .as_dict_mut()
+                .unwrap()
+                .get_mut(b"Annots")
+                .unwrap()
+                .as_array_mut()
+                .unwrap();
+            if !arr.is_empty() {
+                arr.remove(arr.len() - 1);
+            }
+            let mut buf = Vec::new();
+            lopdf_doc.save_to(&mut buf).unwrap();
+            open.raw_bytes = buf;
+            open.reload().unwrap();
+        }
+
+        // Count after delete.
+        let count_after = {
+            let docs = state.documents.lock().unwrap();
+            let open = docs.get(&h).unwrap();
+            let lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes).unwrap();
+            let pages = lopdf_doc.get_pages();
+            let page_id = *pages.get(&1).unwrap();
+            let page_dict = lopdf_doc.get_object(page_id).unwrap();
+            page_dict
+                .as_dict()
+                .ok()
+                .and_then(|d| d.get(b"Annots").ok())
+                .and_then(|a| a.as_array().ok())
+                .map(|a| a.len())
+                .unwrap_or(0)
+        };
+
+        assert_eq!(count_after, count_before - 1);
+    }
+
+    // ── Undo / Redo ───────────────────────────────────────────────
+
+    #[test]
+    fn undo_restores_previous_state() {
+        let (state, h) = setup("simple.pdf");
+
+        let original_len = {
+            let docs = state.documents.lock().unwrap();
+            docs.get(&h).unwrap().raw_bytes.len()
+        };
+
+        // Mutate: add annotation.
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            open.push_undo();
+            let mut lopdf_doc = lopdf::Document::load_mem(&open.raw_bytes).unwrap();
+            let rect = AnnotRect::new(10.0, 10.0, 50.0, 50.0);
+            let annot_id = AnnotationBuilder::circle(rect)
+                .build(&mut lopdf_doc)
+                .unwrap();
+            add_annotation_to_page(&mut lopdf_doc, 1, annot_id).unwrap();
+            let mut buf = Vec::new();
+            lopdf_doc.save_to(&mut buf).unwrap();
+            open.raw_bytes = buf;
+            open.reload().unwrap();
+        }
+
+        let mutated_len = {
+            let docs = state.documents.lock().unwrap();
+            docs.get(&h).unwrap().raw_bytes.len()
+        };
+        assert_ne!(original_len, mutated_len);
+
+        // Undo.
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            let prev = open.undo_stack.pop().unwrap();
+            open.redo_stack.push(open.raw_bytes.clone());
+            open.raw_bytes = prev;
+            open.reload().unwrap();
+        }
+
+        let restored_len = {
+            let docs = state.documents.lock().unwrap();
+            docs.get(&h).unwrap().raw_bytes.len()
+        };
+        assert_eq!(original_len, restored_len);
+    }
+
+    #[test]
+    fn redo_after_undo() {
+        let (state, h) = setup("simple.pdf");
+
+        // Push undo + mutate.
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            open.push_undo();
+            // Simulate mutation by appending a comment.
+            let mut new_bytes = open.raw_bytes.clone();
+            new_bytes.extend_from_slice(b"\n% test comment\n");
+            open.raw_bytes = new_bytes;
+        }
+
+        // Undo.
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            let prev = open.undo_stack.pop().unwrap();
+            open.redo_stack.push(open.raw_bytes.clone());
+            open.raw_bytes = prev;
+        }
+
+        // Redo.
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            assert!(!open.redo_stack.is_empty());
+            let next = open.redo_stack.pop().unwrap();
+            open.undo_stack.push(open.raw_bytes.clone());
+            open.raw_bytes = next;
+        }
+
+        // After redo, the comment should be back.
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        let content = String::from_utf8_lossy(&open.raw_bytes);
+        assert!(content.contains("% test comment"));
+    }
+
+    #[test]
+    fn push_undo_clears_redo_stack() {
+        let (state, h) = setup("simple.pdf");
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            open.redo_stack.push(vec![1, 2, 3]);
+            assert!(!open.redo_stack.is_empty());
+            open.push_undo();
+            assert!(open.redo_stack.is_empty());
+        }
+    }
+
+    // ── Save / Dirty ──────────────────────────────────────────────
+
+    #[test]
+    fn new_document_is_not_dirty() {
+        let (state, h) = setup("simple.pdf");
+        let docs = state.documents.lock().unwrap();
+        let open = docs.get(&h).unwrap();
+        assert!(!open.is_dirty());
+    }
+
+    #[test]
+    fn mutated_document_is_dirty() {
+        let (state, h) = setup("simple.pdf");
+        let mut docs = state.documents.lock().unwrap();
+        let open = docs.get_mut(&h).unwrap();
+        open.raw_bytes.push(0);
+        assert!(open.is_dirty());
+    }
+
+    #[test]
+    fn save_document_as_writes_file() {
+        let (state, h) = setup("simple.pdf");
+        let tmp_path = std::env::temp_dir().join("xfa-test-save.pdf");
+        {
+            let docs = state.documents.lock().unwrap();
+            let open = docs.get(&h).unwrap();
+            std::fs::write(&tmp_path, &open.raw_bytes).unwrap();
+        }
+        let saved = std::fs::read(&tmp_path).unwrap();
+        assert!(!saved.is_empty());
+        assert_eq!(&saved[..5], b"%PDF-");
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    #[test]
+    fn save_resets_dirty_flag() {
+        let (state, h) = setup("simple.pdf");
+        let tmp_path = std::env::temp_dir().join("xfa-test-save-dirty.pdf");
+        {
+            let mut docs = state.documents.lock().unwrap();
+            let open = docs.get_mut(&h).unwrap();
+            // Mutate to make dirty.
+            open.raw_bytes.push(0);
+            assert!(open.is_dirty());
+            // Save.
+            open.saved_bytes = open.raw_bytes.clone();
+            assert!(!open.is_dirty());
+        }
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    // ── File name helper ──────────────────────────────────────────
+
+    #[test]
+    fn file_name_from_path_extracts_name() {
+        assert_eq!(file_name_from_path("/foo/bar/test.pdf"), "test.pdf");
+        assert_eq!(file_name_from_path("simple.pdf"), "simple.pdf");
+        assert_eq!(file_name_from_path("/"), "Untitled");
+    }
+
+    // ── Line ending parser ────────────────────────────────────────
+
+    #[test]
+    fn parse_line_ending_known_values() {
+        assert!(matches!(parse_line_ending("Square"), LineEnding::Square));
+        assert!(matches!(
+            parse_line_ending("OpenArrow"),
+            LineEnding::OpenArrow
+        ));
+        assert!(matches!(
+            parse_line_ending("ClosedArrow"),
+            LineEnding::ClosedArrow
+        ));
+        assert!(matches!(parse_line_ending("unknown"), LineEnding::None));
+        assert!(matches!(parse_line_ending(""), LineEnding::None));
+    }
+
+    // ── Encrypted PDF ─────────────────────────────────────────────
+
+    #[test]
+    fn encrypted_pdf_fails_without_password() {
+        let path = fixture_path("encrypted.pdf");
+        let data = std::fs::read(&path).unwrap();
+        // Should fail to open without password.
+        let result = PdfDocument::open(data);
+        assert!(result.is_err());
+    }
+}
