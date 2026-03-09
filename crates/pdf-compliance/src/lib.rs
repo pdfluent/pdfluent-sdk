@@ -1,11 +1,14 @@
-//! PDF compliance checking (PDF/A, PDF/UA).
+//! PDF compliance checking (PDF/A, PDF/UA, PDF/X).
 //!
 //! Validates PDF documents against conformance profiles
-//! (ISO 19005 for PDF/A, ISO 14289 for PDF/UA).
+//! (ISO 19005 for PDF/A, ISO 14289 for PDF/UA, ISO 15930 for PDF/X).
 
 pub mod pdfa;
 pub mod pdfua;
+pub mod pdfx;
+pub mod pdfx_gen;
 pub mod tagged;
+pub mod tagged_gen;
 
 pub mod check;
 mod xmp;
@@ -78,6 +81,42 @@ impl PdfALevel {
     }
 }
 
+/// PDF/X conformance level (ISO 15930).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfXLevel {
+    /// PDF/X-1a:2003 — CMYK-only, no transparency.
+    X1a2003,
+    /// PDF/X-3:2003 — allows color-managed workflows, no transparency.
+    X32003,
+    /// PDF/X-4 — allows transparency and ICC-based colors.
+    X4,
+}
+
+impl PdfXLevel {
+    /// Whether this level forbids transparency.
+    pub fn forbids_transparency(self) -> bool {
+        matches!(self, Self::X1a2003 | Self::X32003)
+    }
+
+    /// Human-readable version string.
+    pub fn version_string(self) -> &'static str {
+        match self {
+            Self::X1a2003 => "PDF/X-1a:2003",
+            Self::X32003 => "PDF/X-3:2003",
+            Self::X4 => "PDF/X-4",
+        }
+    }
+
+    /// GTS version identifier for XMP metadata.
+    pub fn gts_version(self) -> &'static str {
+        match self {
+            Self::X1a2003 => "PDF/X-1a:2003",
+            Self::X32003 => "PDF/X-3:2003",
+            Self::X4 => "PDF/X-4",
+        }
+    }
+}
+
 /// A single compliance issue found during checking.
 #[derive(Debug, Clone)]
 pub struct ComplianceIssue {
@@ -141,6 +180,11 @@ pub fn validate_pdfa(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     pdfa::validate(pdf, level)
 }
 
+/// Like `validate_pdfa` but prints per-check timing to stderr.
+pub fn validate_pdfa_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
+    pdfa::validate_timed(pdf, level)
+}
+
 /// Detect the PDF/A level declared in XMP metadata.
 pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
     let xmp = check::get_xmp_metadata(pdf)?;
@@ -151,6 +195,11 @@ pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
 /// Validate a PDF against PDF/UA-1 (ISO 14289-1).
 pub fn validate_pdfua(pdf: &Pdf) -> ComplianceReport {
     pdfua::validate(pdf)
+}
+
+/// Validate a PDF against a PDF/X conformance level.
+pub fn validate_pdfx(pdf: &Pdf, level: PdfXLevel) -> ComplianceReport {
+    pdfx::validate(pdf, level)
 }
 
 /// Parse the structure tree from a PDF.
