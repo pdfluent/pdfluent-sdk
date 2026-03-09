@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"] }
+pdf-engine = { path = "../pdf-engine" }
+pdf-compliance = { path = "../pdf-compliance" }
 pdfium-ffi-bridge.workspace = true
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
@@ -24,3 +26,8 @@ harness = false
 [[bench]]
 name = "xfa_operations"
 harness = false
+
+[[bench]]
+name = "sdk_operations"
+harness = false
+

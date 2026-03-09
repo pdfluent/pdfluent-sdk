@@ -131,7 +131,9 @@ impl Config {
             // Fast tests: 1/5 of base, minimum 2s
             "parse" | "metadata" | "geometry" => (base / 5).max(2),
             // Medium tests: 1/3 of base, minimum 5s
-            "bookmarks" | "annotations" | "form_fields" | "signatures" => (base / 3).max(5),
+            "bookmarks" | "annotations" | "form_fields" | "signatures" | "sign_verify" => {
+                (base / 3).max(5)
+            }
             // Heavy tests: full base timeout
             _ => base,
         };
