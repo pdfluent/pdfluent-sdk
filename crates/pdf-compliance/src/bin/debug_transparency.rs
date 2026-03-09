@@ -4,7 +4,9 @@ use pdf_syntax::Pdf;
 use std::env;
 
 fn main() {
-    let path = env::args().nth(1).expect("usage: debug_transparency <path>");
+    let path = env::args()
+        .nth(1)
+        .expect("usage: debug_transparency <path>");
     let data = std::fs::read(&path).unwrap();
     let pdf = Pdf::new(data).unwrap();
 
@@ -50,7 +52,10 @@ fn main() {
                         let has_ca_lower = gs_d.get::<Object<'_>>(b"ca" as &[u8]);
                         let has_bm = gs_d.get::<Name>(keys::BM);
                         let has_smask = gs_d.get::<Object<'_>>(keys::SMASK);
-                        println!("      {nm}: CA={has_ca:?} ca={has_ca_lower:?} BM={has_bm:?} SMask={}", has_smask.is_some());
+                        println!(
+                            "      {nm}: CA={has_ca:?} ca={has_ca_lower:?} BM={has_bm:?} SMask={}",
+                            has_smask.is_some()
+                        );
                     } else {
                         println!("      {nm}: could not resolve to Dict");
                     }
@@ -66,10 +71,7 @@ fn main() {
         println!("  --- page.resources() ---");
         let res = page.resources();
         let gs_dict = &res.ext_g_states;
-        println!(
-            "    ext_g_states entries: {}",
-            gs_dict.entries().count()
-        );
+        println!("    ext_g_states entries: {}", gs_dict.entries().count());
         for (name, _) in gs_dict.entries() {
             let nm = std::str::from_utf8(name.as_ref()).unwrap_or("?");
             if let Some(gs_d) = gs_dict.get::<Dict<'_>>(name.as_ref()) {
@@ -77,7 +79,10 @@ fn main() {
                 let has_ca_lower = gs_d.get::<Object<'_>>(b"ca" as &[u8]);
                 let has_bm = gs_d.get::<Name>(keys::BM);
                 let has_smask = gs_d.get::<Object<'_>>(keys::SMASK);
-                println!("      {nm}: CA={has_ca:?} ca={has_ca_lower:?} BM={has_bm:?} SMask={}", has_smask.is_some());
+                println!(
+                    "      {nm}: CA={has_ca:?} ca={has_ca_lower:?} BM={has_bm:?} SMask={}",
+                    has_smask.is_some()
+                );
             } else {
                 println!("      {nm}: could not resolve to Dict");
             }
@@ -120,8 +125,14 @@ fn main() {
                     }
                     // Check Group on Form XObject
                     if let Some(group) = dict.get::<Dict<'_>>(b"Group" as &[u8]) {
-                        let s = group.get::<Name>(keys::S).map(|s| std::str::from_utf8(s.as_ref()).unwrap_or("?").to_string()).unwrap_or_default();
-                        let cs = group.get::<Name>(keys::CS).map(|cs| std::str::from_utf8(cs.as_ref()).unwrap_or("?").to_string()).unwrap_or_default();
+                        let s = group
+                            .get::<Name>(keys::S)
+                            .map(|s| std::str::from_utf8(s.as_ref()).unwrap_or("?").to_string())
+                            .unwrap_or_default();
+                        let cs = group
+                            .get::<Name>(keys::CS)
+                            .map(|cs| std::str::from_utf8(cs.as_ref()).unwrap_or("?").to_string())
+                            .unwrap_or_default();
                         println!("      Form {nm} Group: S={s} CS={cs}");
                     }
                 }
