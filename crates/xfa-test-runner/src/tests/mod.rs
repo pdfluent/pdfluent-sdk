@@ -11,6 +11,7 @@ pub mod manipulation;
 pub mod metadata;
 pub mod metadata_oracle;
 pub mod parse;
+pub mod pdfa_convert;
 pub mod redact;
 pub mod render;
 #[cfg(feature = "pdfium-oracle")]
@@ -74,10 +75,18 @@ pub struct TestConfig {
 }
 
 pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
-    let compliance = if let Some(oracle) = config.verapdf_oracle {
-        compliance::ComplianceTest::new().with_verapdf(oracle)
+    let verapdf_arc = config.verapdf_oracle;
+
+    let compliance = if let Some(ref oracle) = verapdf_arc {
+        compliance::ComplianceTest::new().with_verapdf(oracle.clone())
     } else {
         compliance::ComplianceTest::new()
+    };
+
+    let pdfa_convert = if let Some(ref oracle) = verapdf_arc {
+        pdfa_convert::PdfAConvertTest::new().with_verapdf(oracle.clone())
+    } else {
+        pdfa_convert::PdfAConvertTest::new()
     };
 
     #[allow(unused_mut)]
@@ -103,6 +112,7 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(content_roundtrip::ContentRoundtripTest),
         Box::new(text_replace::TextReplaceTest),
         Box::new(redact::RedactTest),
+        Box::new(pdfa_convert),
     ];
 
     #[cfg(feature = "pdfium-oracle")]
