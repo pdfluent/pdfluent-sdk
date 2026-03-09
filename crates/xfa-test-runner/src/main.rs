@@ -61,6 +61,10 @@ enum Command {
         #[arg(long)]
         resume: bool,
 
+        /// Rerun only PDFs that failed/crashed/timed-out in the previous run
+        #[arg(long)]
+        rerun_failures: bool,
+
         /// Run ID (auto-generated if not provided)
         #[arg(long)]
         run_id: Option<String>,
@@ -292,6 +296,7 @@ fn main() {
             timeout,
             tests: test_filter,
             resume,
+            rerun_failures,
             run_id,
             no_verapdf,
             verapdf_path,
@@ -321,6 +326,7 @@ fn main() {
                 timeout,
                 test_filter,
                 resume,
+                rerun_failures,
                 run_id,
                 Some(&database),
                 tier,

@@ -6,6 +6,11 @@ use pdf_syntax::object::{Array, Dict, Name, Object, Stream};
 use pdf_syntax::page::Resources;
 use pdf_syntax::Pdf;
 
+/// Maximum decompressed page content stream size (in bytes) to scan.
+/// Checks that iterate content streams byte-by-byte skip streams larger than
+/// this to avoid pathological O(n²) scan times on content-heavy pages.
+const MAX_CONTENT_STREAM_SCAN_SIZE: usize = 1_000_000; // 1 MB
+
 /// Pre-collected objects from a PDF, to avoid repeated expensive parsing.
 /// Created once with `ObjectCache::new(pdf)` and shared across checks.
 pub struct ObjectCache<'a> {
@@ -3357,9 +3362,7 @@ pub fn check_inline_image_filters(pdf: &Pdf, pdfa_part: u8, report: &mut Complia
         let Some(content) = page.page_stream() else {
             continue;
         };
-        // Skip very large content streams to avoid pathological scan times.
-        // Inline images are rare in streams > 1 MB; the BI scan is O(n²) worst case.
-        if content.len() > 1_000_000 {
+        if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE {
             continue;
         }
         let text = String::from_utf8_lossy(content);
@@ -4197,6 +4200,9 @@ pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let loc = format!("page {}", page_idx + 1);
         if let Some(content) = page.page_stream() {
+            if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE {
+                continue;
+            }
             if scan_for_undefined_ops(content, valid_ops) {
                 error_at(
                     report,
@@ -5548,6 +5554,9 @@ pub fn check_marked_content_sequences(pdf: &Pdf, report: &mut ComplianceReport) 
         let Some(content) = page.page_stream() else {
             continue;
         };
+        if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE {
+            continue;
+        }
         let text = String::from_utf8_lossy(content);
         let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
 

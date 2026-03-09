@@ -266,7 +266,7 @@ impl Runner {
         pdf_data: &[u8],
         path: &Path,
     ) -> crate::tests::TestResult {
-        let timeout = self.config.timeout;
+        let timeout = self.config.timeout_for_test(test.name());
         let test_name = test.name().to_string();
 
         // Backpressure: wait if too many test threads are actively being awaited.
@@ -353,6 +353,31 @@ impl Runner {
     }
 
     fn enumerate_pdfs(&self) -> Vec<PathBuf> {
+        // Rerun-failures mode: only test PDFs that failed/crashed/timed-out in the latest run.
+        if self.config.rerun_failures {
+            if let Some(prev_run) = self.db.latest_run_id() {
+                let failed_paths = self.db.failed_pdf_paths(&prev_run);
+                if failed_paths.is_empty() {
+                    eprintln!("No failures found in run '{prev_run}' — nothing to rerun");
+                } else {
+                    eprintln!(
+                        "Rerunning {} failed/crashed/timed-out PDFs from run '{prev_run}'",
+                        failed_paths.len()
+                    );
+                }
+                return failed_paths
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .filter(|p| p.exists())
+                    .take(self.config.limit.unwrap_or(usize::MAX))
+                    .collect();
+            } else {
+                eprintln!(
+                    "WARNING: --rerun-failures specified but no previous run found in database"
+                );
+            }
+        }
+
         let skip_set = self.load_skip_list();
         WalkDir::new(&self.config.corpus_dir)
             .follow_links(true)
