@@ -171,40 +171,125 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     })
 }
 
-/// Minimal sRGB ICC profile for PDF/A OutputIntent.
+/// sRGB ICC v2.1 profile with all required tags for PDF/A compliance.
+///
+/// Contains 9 tags: desc, cprt, wtpt, rXYZ, gXYZ, bXYZ, rTRC, gTRC, bTRC.
+/// Uses D50-adapted sRGB primaries and gamma 2.2 TRC.
 fn srgb_icc_profile_bytes() -> Vec<u8> {
-    let mut profile = Vec::with_capacity(132);
+    // Layout:
+    //   0..128   header
+    //   128..132 tag count (9)
+    //   132..240 9 tag entries (12 bytes each)
+    //   240..336 desc tag data (96 bytes, padded)
+    //   336..348 cprt tag data (12 bytes)
+    //   348..368 wtpt tag data (20 bytes)
+    //   368..388 rXYZ tag data (20 bytes)
+    //   388..408 gXYZ tag data (20 bytes)
+    //   408..428 bXYZ tag data (20 bytes)
+    //   428..444 shared curv tag data (14 bytes + 2 pad)
+    let total_size: u32 = 444;
+    let mut p = Vec::with_capacity(total_size as usize);
 
-    profile.extend_from_slice(&[0u8; 4]); // size placeholder
-    profile.extend_from_slice(b"    "); // CMM type
-    profile.extend_from_slice(&[2, 0x10, 0, 0]); // version 2.1.0
-    profile.extend_from_slice(b"mntr"); // device class: monitor
-    profile.extend_from_slice(b"RGB "); // color space
-    profile.extend_from_slice(b"XYZ "); // PCS
-    profile.extend_from_slice(&[0u8; 12]); // date/time
-    profile.extend_from_slice(b"acsp"); // signature
-    profile.extend_from_slice(b"MSFT"); // platform
-    profile.extend_from_slice(&[0u8; 4]); // flags
-    profile.extend_from_slice(b"    "); // manufacturer
-    profile.extend_from_slice(b"    "); // model
-    profile.extend_from_slice(&[0u8; 8]); // device attributes
-    profile.extend_from_slice(&[0u8; 4]); // rendering intent
-                                          // PCS illuminant D50
-    profile.extend_from_slice(&[0, 0, 0xF6, 0xD6]); // X
-    profile.extend_from_slice(&[0, 1, 0, 0]); // Y
-    profile.extend_from_slice(&[0, 0, 0xD3, 0x2D]); // Z
-    profile.extend_from_slice(b"    "); // creator
-    profile.extend_from_slice(&[0u8; 16]); // profile ID
-    let remaining = 128 - profile.len();
-    profile.extend_from_slice(&vec![0u8; remaining]);
+    // === Header (128 bytes) ===
+    p.extend_from_slice(&total_size.to_be_bytes()); // profile size
+    p.extend_from_slice(b"\0\0\0\0"); // preferred CMM
+    p.extend_from_slice(&[2, 0x10, 0, 0]); // version 2.1.0
+    p.extend_from_slice(b"mntr"); // device class: monitor
+    p.extend_from_slice(b"RGB "); // color space
+    p.extend_from_slice(b"XYZ "); // PCS
+    p.extend_from_slice(&[0u8; 12]); // date/time
+    p.extend_from_slice(b"acsp"); // signature
+    p.extend_from_slice(&[0u8; 4]); // platform
+    p.extend_from_slice(&[0u8; 4]); // flags
+    p.extend_from_slice(&[0u8; 4]); // manufacturer
+    p.extend_from_slice(&[0u8; 4]); // model
+    p.extend_from_slice(&[0u8; 8]); // device attributes
+    p.extend_from_slice(&[0u8; 4]); // rendering intent (perceptual)
+                                    // PCS illuminant D50 (X=0.9642, Y=1.0, Z=0.8249)
+    p.extend_from_slice(&0x0000F6D6_u32.to_be_bytes()); // X
+    p.extend_from_slice(&0x00010000_u32.to_be_bytes()); // Y
+    p.extend_from_slice(&0x0000D32D_u32.to_be_bytes()); // Z
+    p.extend_from_slice(&[0u8; 4]); // creator
+    p.extend_from_slice(&[0u8; 16]); // profile ID
+    p.extend_from_slice(&[0u8; 128 - 100]); // reserved padding to 128
+    debug_assert_eq!(p.len(), 128);
 
-    // Tag table: 0 tags (minimal valid profile)
-    profile.extend_from_slice(&[0u8; 4]);
+    // === Tag table ===
+    p.extend_from_slice(&9_u32.to_be_bytes()); // 9 tags
 
-    let size = profile.len() as u32;
-    profile[0..4].copy_from_slice(&size.to_be_bytes());
+    // Tag entries: signature(4) + offset(4) + size(4) = 12 bytes each
+    let tags: &[(&[u8; 4], u32, u32)] = &[
+        (b"desc", 240, 95),
+        (b"cprt", 336, 12),
+        (b"wtpt", 348, 20),
+        (b"rXYZ", 368, 20),
+        (b"gXYZ", 388, 20),
+        (b"bXYZ", 408, 20),
+        (b"rTRC", 428, 14),
+        (b"gTRC", 428, 14), // shared with rTRC
+        (b"bTRC", 428, 14), // shared with rTRC
+    ];
+    for (sig, offset, size) in tags {
+        p.extend_from_slice(*sig);
+        p.extend_from_slice(&offset.to_be_bytes());
+        p.extend_from_slice(&size.to_be_bytes());
+    }
+    debug_assert_eq!(p.len(), 240);
 
-    profile
+    // === desc tag (textDescriptionType) — 95 bytes + 1 pad = 96 ===
+    p.extend_from_slice(b"desc"); // type signature
+    p.extend_from_slice(&[0u8; 4]); // reserved
+    p.extend_from_slice(&5_u32.to_be_bytes()); // ASCII length (incl. null)
+    p.extend_from_slice(b"sRGB\0"); // ASCII string
+    p.extend_from_slice(&[0u8; 4]); // Unicode language code
+    p.extend_from_slice(&[0u8; 4]); // Unicode count (0 = none)
+    p.extend_from_slice(&[0u8; 2]); // ScriptCode code
+    p.push(0); // ScriptCode count
+    p.extend_from_slice(&[0u8; 67]); // ScriptCode string (always 67)
+    p.push(0); // pad to 4-byte alignment
+    debug_assert_eq!(p.len(), 336);
+
+    // === cprt tag (textType) — 12 bytes ===
+    p.extend_from_slice(b"text"); // type signature
+    p.extend_from_slice(&[0u8; 4]); // reserved
+    p.extend_from_slice(b"CC0\0"); // copyright text
+    debug_assert_eq!(p.len(), 348);
+
+    // === XYZ tags (XYZType) — 20 bytes each ===
+    // Helper: write XYZ tag
+    fn write_xyz(p: &mut Vec<u8>, x: i32, y: i32, z: i32) {
+        p.extend_from_slice(b"XYZ "); // type signature
+        p.extend_from_slice(&[0u8; 4]); // reserved
+        p.extend_from_slice(&x.to_be_bytes());
+        p.extend_from_slice(&y.to_be_bytes());
+        p.extend_from_slice(&z.to_be_bytes());
+    }
+
+    // wtpt — D50 media white point (X=0.9505, Y=1.0, Z=1.0891)
+    write_xyz(&mut p, 0x0000F351, 0x00010000, 0x000116CC);
+    debug_assert_eq!(p.len(), 368);
+
+    // rXYZ — Red primary (X=0.4361, Y=0.2225, Z=0.0139)
+    write_xyz(&mut p, 0x00006FA3, 0x000038F6, 0x00000391);
+    debug_assert_eq!(p.len(), 388);
+
+    // gXYZ — Green primary (X=0.3851, Y=0.7169, Z=0.0971)
+    write_xyz(&mut p, 0x00006294, 0x0000B785, 0x000018DC);
+    debug_assert_eq!(p.len(), 408);
+
+    // bXYZ — Blue primary (X=0.1431, Y=0.0606, Z=0.7142)
+    write_xyz(&mut p, 0x000024A1, 0x00000F85, 0x0000B6D4);
+    debug_assert_eq!(p.len(), 428);
+
+    // === Shared curv tag (curveType with gamma 2.2) — 14 bytes + 2 pad ===
+    p.extend_from_slice(b"curv"); // type signature
+    p.extend_from_slice(&[0u8; 4]); // reserved
+    p.extend_from_slice(&1_u32.to_be_bytes()); // count=1 means gamma value
+    p.extend_from_slice(&[0x02, 0x33]); // u8Fixed8Number: gamma 2.19922 ≈ 2.2
+    p.extend_from_slice(&[0u8; 2]); // pad to 4-byte alignment
+    debug_assert_eq!(p.len(), 444);
+
+    p
 }
 
 fn is_device_dependent(name: &str) -> bool {
@@ -358,10 +443,20 @@ mod tests {
     #[test]
     fn test_icc_profile_structure() {
         let profile = srgb_icc_profile_bytes();
-        assert!(profile.len() >= 132);
+        assert_eq!(profile.len(), 444);
+        // Header checks
         assert_eq!(&profile[36..40], b"acsp");
         assert_eq!(&profile[16..20], b"RGB ");
         assert_eq!(&profile[12..16], b"mntr");
+        // Size field
+        let size = u32::from_be_bytes([profile[0], profile[1], profile[2], profile[3]]);
+        assert_eq!(size, 444);
+        // 9 tags
+        let tag_count =
+            u32::from_be_bytes([profile[128], profile[129], profile[130], profile[131]]);
+        assert_eq!(tag_count, 9);
+        // desc tag signature at first entry
+        assert_eq!(&profile[132..136], b"desc");
     }
 
     #[test]
