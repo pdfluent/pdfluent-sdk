@@ -194,6 +194,30 @@ pub fn get_bookmarks(
     Ok(convert(&open.doc.bookmarks()))
 }
 
+// ── Page manipulation (context menu actions) ────────────────────────
+// NOTE: PdfDocument is currently read-only (pdf-syntax based).
+// Full mutation support (rotate, delete, reorder) will be added when
+// the pdf-engine gains a mutation layer on top of lopdf (issue #333).
+
+#[tauri::command]
+pub fn rotate_page(
+    _state: State<'_, AppState>,
+    _handle: u32,
+    _page_index: usize,
+    _degrees: u32,
+) -> Result<(), String> {
+    Err("Page rotation not yet implemented — requires mutation layer".to_string())
+}
+
+#[tauri::command]
+pub fn delete_page(
+    _state: State<'_, AppState>,
+    _handle: u32,
+    _page_index: usize,
+) -> Result<(), String> {
+    Err("Page deletion not yet implemented — requires mutation layer".to_string())
+}
+
 fn file_name_from_path(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
