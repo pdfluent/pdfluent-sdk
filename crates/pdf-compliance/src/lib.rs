@@ -180,6 +180,11 @@ pub fn validate_pdfa(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     pdfa::validate(pdf, level)
 }
 
+/// Like `validate_pdfa` but prints per-check timing to stderr.
+pub fn validate_pdfa_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
+    pdfa::validate_timed(pdf, level)
+}
+
 /// Detect the PDF/A level declared in XMP metadata.
 pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
     let xmp = check::get_xmp_metadata(pdf)?;
