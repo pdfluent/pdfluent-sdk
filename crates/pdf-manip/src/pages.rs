@@ -102,7 +102,7 @@ pub fn insert_pages(target: &mut Document, source: &Document, position: u32) -> 
 
     if let Some(Object::Dictionary(ref mut pages_dict)) = target.objects.get_mut(&pages_id) {
         if let Ok(Object::Array(ref mut kids)) = pages_dict.get_mut(b"Kids") {
-            let insert_idx = (position - 1) as usize;
+            let insert_idx = ((position - 1) as usize).min(kids.len());
             for (i, page_id) in source_page_ids.iter().enumerate() {
                 kids.insert(insert_idx + i, Object::Reference(*page_id));
             }

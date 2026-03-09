@@ -138,14 +138,34 @@ pub fn search_and_redact(
         // Build a text string from positioned chars.
         let text: String = chars.iter().map(|c| c.ch).collect();
 
+        // Build a byte-offset-to-char-index map so regex byte offsets can be
+        // translated back to indices into `chars`.
+        let byte_to_char: Vec<usize> = {
+            let mut map = Vec::with_capacity(text.len() + 1);
+            for (ci, ch) in text.chars().enumerate() {
+                for _ in 0..ch.len_utf8() {
+                    map.push(ci);
+                }
+            }
+            map.push(chars.len()); // sentinel for end-of-string
+            map
+        };
+
         // Find matches in the text.
         let match_ranges = matcher.find_all(&text);
 
         for range in &match_ranges {
             total_matches += 1;
 
+            // Convert byte offsets to char indices.
+            let char_start = byte_to_char.get(range.start).copied().unwrap_or(0);
+            let char_end = byte_to_char.get(range.end).copied().unwrap_or(chars.len());
+            if char_start >= chars.len() || char_end > chars.len() || char_start >= char_end {
+                continue;
+            }
+
             // Compute bounding rect from the chars in this range.
-            let matched_chars = &chars[range.start..range.end];
+            let matched_chars = &chars[char_start..char_end];
             if matched_chars.is_empty() {
                 continue;
             }
