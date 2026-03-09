@@ -317,6 +317,78 @@ pub fn search_document(
     Ok(open.doc.search_text(&query))
 }
 
+// ── Print and Save ───────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn print_document(state: State<'_, AppState>, handle: u32) -> Result<String, String> {
+    let docs = state.documents.lock().unwrap();
+    let open = docs
+        .get(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+
+    // Write the current PDF to a temp file for printing.
+    let tmp_dir = std::env::temp_dir();
+    let tmp_path = tmp_dir.join(format!("xfa-print-{handle}.pdf"));
+    std::fs::write(&tmp_path, &open.raw_bytes)
+        .map_err(|e| format!("failed to write temp PDF: {e}"))?;
+
+    let path_str = tmp_path
+        .to_str()
+        .ok_or_else(|| "invalid temp path".to_string())?
+        .to_string();
+
+    // Launch the platform print command.
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("lpr")
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| format!("failed to launch lpr: {e}"))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "/min", "AcroRd32", "/p", &path_str])
+            .spawn()
+            .or_else(|_| {
+                // Fallback: use ShellExecute via powershell
+                std::process::Command::new("powershell")
+                    .args([
+                        "-Command",
+                        &format!("Start-Process -FilePath '{}' -Verb Print", path_str),
+                    ])
+                    .spawn()
+            })
+            .map_err(|e| format!("failed to launch print: {e}"))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("lp")
+            .arg(&path_str)
+            .spawn()
+            .map_err(|e| format!("failed to launch lp: {e}"))?;
+    }
+
+    Ok(path_str)
+}
+
+#[tauri::command]
+pub fn save_document_as(
+    state: State<'_, AppState>,
+    handle: u32,
+    path: String,
+) -> Result<(), String> {
+    let docs = state.documents.lock().unwrap();
+    let open = docs
+        .get(&handle)
+        .ok_or_else(|| "document not found".to_string())?;
+
+    std::fs::write(&path, &open.raw_bytes).map_err(|e| format!("failed to save PDF: {e}"))?;
+    Ok(())
+}
+
 // ── Annotation commands ──────────────────────────────────────────────
 
 #[tauri::command]

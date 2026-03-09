@@ -600,6 +600,8 @@ function setupKeyboardShortcuts() {
     if (mod && e.key === '-') { e.preventDefault(); zoomOut(); }
     if (mod && e.key === '1') { e.preventDefault(); setZoom('fit-width'); }
     if (mod && e.key === '2') { e.preventDefault(); setZoom('fit-page'); }
+    if (mod && e.key === 'p') { e.preventDefault(); printDocument(); }
+    if (mod && e.shiftKey && e.key === 'S') { e.preventDefault(); saveDocumentAs(); }
     if (mod && e.key === 'c') { e.preventDefault(); copyPageText(); }
     if (mod && e.key === 'a') { e.preventDefault(); selectAllText(); }
     if (mod && e.key === 'f') { e.preventDefault(); toggleSearch(); }
@@ -647,6 +649,8 @@ async function setupMenuEvents() {
       case 'fit_page': setZoom('fit-page'); break;
       case 'toggle_sidebar': toggleSidebar(); break;
       case 'toggle_dark': toggleDarkMode(); break;
+      case 'print': printDocument(); break;
+      case 'save_as': saveDocumentAs(); break;
       case 'copy': copyPageText(); break;
       case 'select_all': selectAllText(); break;
       case 'find': toggleSearch(); break;
@@ -705,6 +709,35 @@ async function showDocumentInfo() {
     );
   } catch (err) {
     console.error('Failed to get document info:', err);
+  }
+}
+
+// ── Print & Save ─────────────────────────────────────────────────────
+
+async function printDocument() {
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    await invoke('print_document', { handle: tab.handle });
+  } catch (err) {
+    console.error('Print failed:', err);
+  }
+}
+
+async function saveDocumentAs() {
+  const tab = activeTab();
+  if (!tab) return;
+  try {
+    const { save } = window.__TAURI__.dialog;
+    const path = await save({
+      defaultPath: tab.fileName,
+      filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
+    });
+    if (path) {
+      await invoke('save_document_as', { handle: tab.handle, path });
+    }
+  } catch (err) {
+    console.error('Save failed:', err);
   }
 }
 
