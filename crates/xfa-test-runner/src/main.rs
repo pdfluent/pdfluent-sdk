@@ -65,9 +65,17 @@ enum Command {
         #[arg(long)]
         rerun_failures: bool,
 
+        /// Rerun only PDFs where this test failed (e.g. "compliance")
+        #[arg(long)]
+        affected_by: Option<String>,
+
         /// Run ID (auto-generated if not provided)
         #[arg(long)]
         run_id: Option<String>,
+
+        /// Code version for incremental testing (skip unchanged PDFs)
+        #[arg(long)]
+        code_version: Option<String>,
 
         /// Disable veraPDF oracle
         #[arg(long)]
@@ -297,7 +305,9 @@ fn main() {
             tests: test_filter,
             resume,
             rerun_failures,
+            affected_by,
             run_id,
+            code_version,
             no_verapdf,
             verapdf_path,
             tier,
@@ -327,10 +337,12 @@ fn main() {
                 test_filter,
                 resume,
                 rerun_failures,
+                affected_by,
                 run_id,
                 Some(&database),
                 tier,
                 limit,
+                code_version,
             );
 
             // Set up veraPDF oracle if available and not disabled

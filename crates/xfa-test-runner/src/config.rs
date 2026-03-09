@@ -70,9 +70,11 @@ pub struct Config {
     pub test_filter: Option<Vec<String>>,
     pub resume: bool,
     pub rerun_failures: bool,
+    pub affected_by: Option<String>,
     pub run_id: String,
     pub tier: TestTier,
     pub limit: Option<usize>,
+    pub code_version: Option<String>,
 }
 
 impl Config {
@@ -85,10 +87,12 @@ impl Config {
         tests: Option<String>,
         resume: bool,
         rerun_failures: bool,
+        affected_by: Option<String>,
         run_id: Option<String>,
         db: Option<&crate::db::Database>,
         tier: TestTier,
         limit: Option<usize>,
+        code_version: Option<String>,
     ) -> Self {
         let run_id = run_id.unwrap_or_else(|| {
             if resume {
@@ -112,9 +116,11 @@ impl Config {
             test_filter,
             resume,
             rerun_failures,
+            affected_by,
             run_id,
             tier,
             limit,
+            code_version,
         }
     }
 
