@@ -3972,6 +3972,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdf-java"
+version = "0.1.0"
+dependencies = [
+ "jni",
+ "pdf-engine",
+]
+
+[[package]]
 name = "pdf-manip"
 version = "0.1.0"
 dependencies = [
@@ -8127,7 +8135,10 @@ dependencies = [
  "formcalc-interpreter",
  "indexmap 2.13.0",
  "js-sys",
+ "lopdf",
+ "pdf-annot",
  "pdf-compliance",
+ "pdf-render",
  "pdf-sign",
  "pdf-syntax",
  "serde",
