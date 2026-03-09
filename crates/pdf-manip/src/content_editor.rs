@@ -549,7 +549,23 @@ pub(crate) fn get_content_stream_ids(doc: &Document, page_id: ObjectId) -> Vec<O
         _ => return Vec::new(),
     };
     match page_dict.get(b"Contents") {
-        Ok(Object::Reference(id)) => vec![*id],
+        Ok(Object::Reference(id)) => {
+            // Dereference: if the target is an Array (indirect content array),
+            // extract stream IDs from it. Otherwise treat as a single stream.
+            match doc.get_object(*id) {
+                Ok(Object::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|obj| {
+                        if let Object::Reference(ref_id) = obj {
+                            Some(*ref_id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => vec![*id],
+            }
+        }
         Ok(Object::Array(arr)) => arr
             .iter()
             .filter_map(|obj| {
