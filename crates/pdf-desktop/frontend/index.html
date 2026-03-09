@@ -67,6 +67,88 @@
         </svg>
       </button>
     </div>
+    <div class="toolbar-separator"></div>
+    <div class="toolbar-group">
+      <button id="btn-annotate" title="Toggle Annotations">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Annotation toolbar (hidden until toggled) -->
+  <div id="annot-toolbar" class="hidden">
+    <div class="annot-tools">
+      <button class="annot-tool active" data-tool="select" title="Select (V)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg>
+      </button>
+      <div class="annot-separator"></div>
+      <button class="annot-tool" data-tool="highlight" title="Highlight">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="10" width="18" height="6" rx="1" fill="rgba(250,204,21,0.4)"/></svg>
+      </button>
+      <button class="annot-tool" data-tool="underline" title="Underline">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v7a6 6 0 0 0 12 0V3"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
+      </button>
+      <button class="annot-tool" data-tool="strikeout" title="Strikeout">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="12" x2="20" y2="12"/><path d="M17.5 4H9a3.5 3.5 0 0 0 0 7"/><path d="M6.5 20H15a3.5 3.5 0 0 0 0-7"/></svg>
+      </button>
+      <div class="annot-separator"></div>
+      <button class="annot-tool" data-tool="freetext" title="Text Box">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9.5" y1="20" x2="14.5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+      </button>
+      <button class="annot-tool" data-tool="stickynote" title="Sticky Note">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </button>
+      <div class="annot-separator"></div>
+      <button class="annot-tool" data-tool="ink" title="Freehand Draw">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+      </button>
+      <button class="annot-tool" data-tool="rectangle" title="Rectangle">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+      </button>
+      <button class="annot-tool" data-tool="circle" title="Circle">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+      </button>
+      <button class="annot-tool" data-tool="line" title="Line">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/></svg>
+      </button>
+      <button class="annot-tool" data-tool="arrow" title="Arrow">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="14 5 19 5 19 10"/></svg>
+      </button>
+      <div class="annot-separator"></div>
+      <button class="annot-tool" data-tool="stamp" title="Stamp">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 21h14"/><path d="M12 17V7"/><circle cx="12" cy="5" r="3"/></svg>
+      </button>
+    </div>
+    <div class="annot-properties">
+      <label title="Color"><input type="color" id="annot-color" value="#FACC15" /></label>
+      <label title="Opacity"><input type="range" id="annot-opacity" min="0.1" max="1" step="0.1" value="0.4" /></label>
+      <label title="Border Width">
+        <select id="annot-border-width">
+          <option value="0.5">0.5</option><option value="1" selected>1</option>
+          <option value="2">2</option><option value="3">3</option><option value="5">5</option>
+        </select>
+      </label>
+      <label title="Font Size" id="annot-fontsize-label" class="hidden">
+        <select id="annot-fontsize">
+          <option value="8">8pt</option><option value="10">10pt</option>
+          <option value="12" selected>12pt</option><option value="14">14pt</option>
+          <option value="18">18pt</option><option value="24">24pt</option>
+        </select>
+      </label>
+      <label title="Stamp" id="annot-stamp-label" class="hidden">
+        <select id="annot-stamp-name">
+          <option value="Draft">Draft</option><option value="Approved">Approved</option>
+          <option value="Confidential">Confidential</option><option value="Final">Final</option>
+          <option value="Expired">Expired</option><option value="NotApproved">Not Approved</option>
+          <option value="ForComment">For Comment</option><option value="TopSecret">Top Secret</option>
+        </select>
+      </label>
+      <button id="annot-delete" title="Delete Annotation" disabled>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      </button>
+    </div>
   </div>
 
   <!-- Main content -->

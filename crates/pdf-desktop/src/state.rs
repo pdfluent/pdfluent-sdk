@@ -3,10 +3,22 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// A document opened in the viewer.
-#[allow(dead_code)] // path used by later issues (save, print)
 pub struct OpenDocument {
+    #[allow(dead_code)] // used by later issues (save, print)
     pub path: String,
     pub doc: PdfDocument,
+    /// Raw PDF bytes — kept for lopdf-based mutations (annotations, save).
+    pub raw_bytes: Vec<u8>,
+}
+
+impl OpenDocument {
+    /// Re-parse the raw bytes into a fresh PdfDocument after mutation.
+    pub fn reload(&mut self) -> Result<(), String> {
+        let doc = PdfDocument::open(self.raw_bytes.clone())
+            .map_err(|e| format!("failed to reload document: {e}"))?;
+        self.doc = doc;
+        Ok(())
+    }
 }
 
 /// Shared application state managed by Tauri.
