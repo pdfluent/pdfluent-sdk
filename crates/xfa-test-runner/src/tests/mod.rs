@@ -1,20 +1,27 @@
+pub mod annot_create;
 pub mod annotations;
 pub mod bookmarks;
 pub mod compliance;
+pub mod content_roundtrip;
 pub mod form_fields;
+pub mod form_write;
 pub mod geometry;
 pub mod images;
 pub mod manipulation;
 pub mod metadata;
 pub mod metadata_oracle;
 pub mod parse;
+pub mod pdfa_convert;
+pub mod redact;
 pub mod render;
 #[cfg(feature = "pdfium-oracle")]
 pub mod render_oracle;
 pub mod search;
+pub mod sign_verify;
 pub mod signatures;
 pub mod text_extract;
 pub mod text_oracle;
+pub mod text_replace;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -68,10 +75,18 @@ pub struct TestConfig {
 }
 
 pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
-    let compliance = if let Some(oracle) = config.verapdf_oracle {
-        compliance::ComplianceTest::new().with_verapdf(oracle)
+    let verapdf_arc = config.verapdf_oracle;
+
+    let compliance = if let Some(ref oracle) = verapdf_arc {
+        compliance::ComplianceTest::new().with_verapdf(oracle.clone())
     } else {
         compliance::ComplianceTest::new()
+    };
+
+    let pdfa_convert = if let Some(ref oracle) = verapdf_arc {
+        pdfa_convert::PdfAConvertTest::new().with_verapdf(oracle.clone())
+    } else {
+        pdfa_convert::PdfAConvertTest::new()
     };
 
     #[allow(unused_mut)]
@@ -91,6 +106,13 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(text_oracle::TextOracleTest),
         Box::new(metadata_oracle::MetadataOracleTest),
         Box::new(manipulation::ManipulationTest),
+        Box::new(sign_verify::SignVerifyTest),
+        Box::new(form_write::FormWriteTest),
+        Box::new(annot_create::AnnotCreateTest),
+        Box::new(content_roundtrip::ContentRoundtripTest),
+        Box::new(text_replace::TextReplaceTest),
+        Box::new(redact::RedactTest),
+        Box::new(pdfa_convert),
     ];
 
     #[cfg(feature = "pdfium-oracle")]
