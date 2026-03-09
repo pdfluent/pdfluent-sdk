@@ -197,6 +197,9 @@ impl PdfTest for PdfAConvertTest {
             };
         }
 
+        // 4b. Fix PDF header for PDF/A compliance (binary comment).
+        pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+
         // 5. Validate with our own checker.
         set_progress("validate_own");
         let pdf2 = match pdf_syntax::Pdf::new(saved.clone()) {

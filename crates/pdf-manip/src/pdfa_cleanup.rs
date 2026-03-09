@@ -61,6 +61,8 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     report.lzw_streams_reencoded = reencode_lzw_streams(doc);
     report.ocg_fixes = fix_optional_content(doc);
     fix_need_appearances(doc);
+    remove_forbidden_actions(doc);
+    fix_image_interpolate(doc);
 
     Ok(report)
 }
@@ -615,6 +617,89 @@ fn is_annotation_subtype(name: &[u8]) -> bool {
             | b"3D"
             | b"Redact"
     )
+}
+
+/// Remove forbidden action types for PDF/A (6.5.1).
+fn remove_forbidden_actions(doc: &mut Document) {
+    let forbidden = [
+        &b"Launch"[..],
+        b"Sound",
+        b"Movie",
+        b"ResetForm",
+        b"ImportData",
+        b"Hide",
+        b"SetOCGState",
+        b"Rendition",
+        b"Trans",
+        b"GoTo3DView",
+    ];
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let is_forbidden = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                if let Ok(Object::Name(s)) = dict.get(b"S") {
+                    forbidden.iter().any(|f| s == *f)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if is_forbidden {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"S");
+            }
+        }
+    }
+}
+
+/// Set Interpolate=false on all image XObjects (6.2.8 t3).
+fn fix_image_interpolate(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+                let is_image = matches!(
+                    stream.dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"Image"
+                );
+                is_image
+                    && matches!(
+                        stream.dict.get(b"Interpolate").ok(),
+                        Some(Object::Boolean(true))
+                    )
+            } else {
+                false
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.dict.set("Interpolate", Object::Boolean(false));
+            }
+        }
+    }
+}
+
+/// Ensure saved PDF bytes have a proper binary comment after the header (6.1.2).
+/// Must be called on the bytes AFTER `doc.save_to()`.
+pub fn fix_pdf_header(data: &mut Vec<u8>) {
+    // PDF/A requires: %PDF-1.x\n%<4 high bytes>\n
+    // Find the first newline after %PDF
+    if let Some(pos) = data.iter().position(|&b| b == b'\n') {
+        let next = pos + 1;
+        // Check if there's already a binary comment
+        if next < data.len() && data[next] == b'%' {
+            // Check if the comment has high bytes
+            let has_high = data[next..].iter().take(5).any(|&b| b >= 0x80);
+            if has_high {
+                return; // Already has a proper binary comment
+            }
+        }
+        // Insert binary comment line: %âãÏÓ\n
+        let comment = b"\x25\xe2\xe3\xcf\xd3\x0a";
+        data.splice(next..next, comment.iter().copied());
+    }
 }
 
 fn is_javascript_action(dict: &lopdf::Dictionary) -> bool {
