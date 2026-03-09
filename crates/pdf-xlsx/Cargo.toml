@@ -14,3 +14,5 @@ rust_xlsxwriter = "0.94"
 
 [dev-dependencies]
 tempfile = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
