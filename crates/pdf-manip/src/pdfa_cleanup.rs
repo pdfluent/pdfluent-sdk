@@ -87,6 +87,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     remove_xfa_from_acroform(doc);
     fix_widget_btn_appearance(doc);
     fix_font_descriptor_keys(doc);
+    fix_font_lastchar_widths(doc);
     ensure_xmp_dc_title(doc);
     truncate_long_names(doc);
     fix_soft_mask_colorspace(doc);
@@ -1151,6 +1152,90 @@ fn fix_font_descriptor_keys(doc: &mut Document) {
     }
 }
 
+/// Fix simple fonts: ensure LastChar exists and Widths array has correct length (6.2.11.2:5, 6.2.11.2:6).
+fn fix_font_lastchar_widths(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let fix_info = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                let subtype = match dict.get(b"Subtype").ok() {
+                    Some(Object::Name(ref n)) => n.as_slice(),
+                    _ => continue,
+                };
+                // Only simple fonts (Type1, TrueType, MMType1) need FirstChar/LastChar/Widths.
+                if !matches!(subtype, b"Type1" | b"TrueType" | b"MMType1") {
+                    continue;
+                }
+                // Skip if it has no BaseFont (not a real font dict).
+                if !dict.has(b"BaseFont") {
+                    continue;
+                }
+                let first_char = match dict.get(b"FirstChar").ok() {
+                    Some(Object::Integer(v)) => Some(*v),
+                    _ => None,
+                };
+                let last_char = match dict.get(b"LastChar").ok() {
+                    Some(Object::Integer(v)) => Some(*v),
+                    _ => None,
+                };
+                let widths_len = match dict.get(b"Widths").ok() {
+                    Some(Object::Array(arr)) => Some(arr.len() as i64),
+                    _ => None,
+                };
+                Some((first_char, last_char, widths_len))
+            } else {
+                continue;
+            }
+        };
+
+        if let Some((first_char, last_char, widths_len)) = fix_info {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                let fc = first_char.unwrap_or(0);
+                let lc = last_char.unwrap_or(255);
+
+                // Ensure FirstChar exists.
+                if first_char.is_none() {
+                    dict.set("FirstChar", Object::Integer(fc));
+                }
+                // Ensure LastChar exists (6.2.11.2:5).
+                if last_char.is_none() {
+                    dict.set("LastChar", Object::Integer(lc));
+                }
+
+                let expected_len = (lc - fc + 1).max(0);
+
+                // Fix Widths array length (6.2.11.2:6).
+                match widths_len {
+                    Some(wl) if wl != expected_len => {
+                        // Get existing widths and pad/truncate.
+                        let existing = match dict.get(b"Widths").ok() {
+                            Some(Object::Array(arr)) => arr.clone(),
+                            _ => vec![],
+                        };
+                        let mut new_widths = Vec::with_capacity(expected_len as usize);
+                        for i in 0..expected_len as usize {
+                            if i < existing.len() {
+                                new_widths.push(existing[i].clone());
+                            } else {
+                                // Default to 0 width for missing entries.
+                                new_widths.push(Object::Integer(0));
+                            }
+                        }
+                        dict.set("Widths", Object::Array(new_widths));
+                    }
+                    None if expected_len > 0 => {
+                        // No Widths array — create one with default widths.
+                        let widths: Vec<Object> =
+                            (0..expected_len).map(|_| Object::Integer(0)).collect();
+                        dict.set("Widths", Object::Array(widths));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 /// Ensure XMP metadata stream contains dc:title (6.6.2.3.1:1).
 ///
 /// If the XMP stream exists but lacks dc:title, inserts a minimal dc:title element.
@@ -2030,6 +2115,52 @@ mod tests {
                 original_len,
                 "should not modify XMP when dc:title exists"
             );
+        }
+    }
+
+    #[test]
+    fn test_fix_font_lastchar_widths_missing() {
+        let mut doc = make_basic_doc();
+        // Type1 font without LastChar or Widths.
+        let font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => Object::Name(b"Type1".to_vec()),
+            "BaseFont" => "TestFont",
+            "FirstChar" => Object::Integer(32),
+        };
+        let font_id = doc.add_object(Object::Dictionary(font));
+        fix_font_lastchar_widths(&mut doc);
+        if let Some(Object::Dictionary(d)) = doc.objects.get(&font_id) {
+            assert!(d.has(b"LastChar"), "LastChar should be added");
+            assert!(d.has(b"Widths"), "Widths should be added");
+            if let Ok(Object::Array(w)) = d.get(b"Widths") {
+                let lc = match d.get(b"LastChar").ok() {
+                    Some(Object::Integer(v)) => *v,
+                    _ => 0,
+                };
+                assert_eq!(w.len() as i64, lc - 32 + 1, "Widths length should match");
+            }
+        }
+    }
+
+    #[test]
+    fn test_fix_font_widths_wrong_length() {
+        let mut doc = make_basic_doc();
+        // TrueType font with wrong Widths length.
+        let font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => Object::Name(b"TrueType".to_vec()),
+            "BaseFont" => "TestFont",
+            "FirstChar" => Object::Integer(0),
+            "LastChar" => Object::Integer(9),
+            "Widths" => Object::Array(vec![Object::Integer(500); 5]), // 5 instead of 10
+        };
+        let font_id = doc.add_object(Object::Dictionary(font));
+        fix_font_lastchar_widths(&mut doc);
+        if let Some(Object::Dictionary(d)) = doc.objects.get(&font_id) {
+            if let Ok(Object::Array(w)) = d.get(b"Widths") {
+                assert_eq!(w.len(), 10, "Widths should be padded to 10");
+            }
         }
     }
 
