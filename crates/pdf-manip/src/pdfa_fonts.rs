@@ -470,11 +470,14 @@ fn update_simple_widths(
             face.glyph_hor_advance(glyph_id)
                 .map(|w| (w as f64 * scale).round() as i64)
                 .unwrap_or(0)
-        } else {
-            // Use .notdef width as fallback.
-            face.glyph_hor_advance(ttf_parser::GlyphId(0))
+        } else if code <= u16::MAX as u32 {
+            // Fallback: use width at GlyphId == code (identity mapping for TrueType).
+            // This matches how veraPDF validates widths when encoding is absent.
+            face.glyph_hor_advance(ttf_parser::GlyphId(code as u16))
                 .map(|w| (w as f64 * scale).round() as i64)
                 .unwrap_or(0)
+        } else {
+            0
         };
         widths.push(Object::Integer(width));
     }
