@@ -169,6 +169,16 @@ fn generate_xmp(meta: &PdfMetadata, conformance: PdfAConformance) -> Vec<u8> {
         writer.producer(producer);
     }
 
+    // PDF/A extension schema declarations (6.6.2.3.1).
+    // Properties not in XMP 2004 core need extension schema descriptions.
+    {
+        let mut schemas = writer.extension_schemas();
+        // pdfaid:part and pdfaid:conformance
+        schemas.pdfaid(false);
+        // pdf:Producer etc.
+        schemas.pdf().properties().describe_all();
+    }
+
     writer.finish(None).into_bytes()
 }
 
