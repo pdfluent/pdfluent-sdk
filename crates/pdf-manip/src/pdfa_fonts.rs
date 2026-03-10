@@ -1313,19 +1313,11 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
     count + symbolic_to_strip.len()
 }
 
-/// Check if a font is symbolic based on font name or FontDescriptor Flags.
+/// Check if a font is symbolic based on FontDescriptor Flags and font name.
 fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
-    // Check base font name against known symbolic fonts (takes priority over Flags).
-    if let Some(name) = get_name(font_dict, b"BaseFont") {
-        if is_symbolic_font_name(&name) {
-            return true;
-        }
-    }
-
-    // Check FontDescriptor Flags.
+    // Check FontDescriptor Flags FIRST — these may have been updated after
+    // embedding a non-symbolic fallback font (e.g., DejaVuSans for ZapfDingbats).
     // Bit 3 (value 4) = Symbolic, bit 6 (value 32) = Nonsymbolic.
-    // If Nonsymbolic is set, treat as non-symbolic even if Symbolic is also set
-    // (veraPDF prioritizes Nonsymbolic over Symbolic for conflicting flags).
     let fd = match font_dict.get(b"FontDescriptor") {
         Ok(Object::Reference(id)) => doc.get_object(*id).ok(),
         Ok(obj) => Some(obj),
@@ -1335,7 +1327,20 @@ fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
         if let Ok(Object::Integer(flags)) = fd_dict.get(b"Flags") {
             let symbolic = (*flags & 4) != 0;
             let nonsymbolic = (*flags & 32) != 0;
-            return symbolic && !nonsymbolic;
+            // If Nonsymbolic is explicitly set, trust it.
+            if nonsymbolic {
+                return false;
+            }
+            if symbolic {
+                return true;
+            }
+        }
+    }
+
+    // Fallback: check base font name against known symbolic fonts.
+    if let Some(name) = get_name(font_dict, b"BaseFont") {
+        if is_symbolic_font_name(&name) {
+            return true;
         }
     }
 
