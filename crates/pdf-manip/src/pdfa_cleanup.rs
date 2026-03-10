@@ -462,9 +462,7 @@ fn fix_annotation_flags(doc: &mut Document) -> usize {
                     Some(Object::Name(n)) => Some(n.clone()),
                     _ => None,
                 };
-                let is_annot = subtype
-                    .as_ref()
-                    .map_or(false, |n| is_annotation_subtype(n))
+                let is_annot = subtype.as_ref().is_some_and(|n| is_annotation_subtype(n))
                     || matches!(
                         dict.get(b"Type").ok(),
                         Some(Object::Name(ref n)) if n == b"Annot"
@@ -506,6 +504,111 @@ fn fix_annotation_flags(doc: &mut Document) -> usize {
             }
         }
     }
+    // Pass 2: Fix inline annotation dicts in page /Annots arrays.
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    for page_id in page_ids {
+        let annots_ref = {
+            let Some(Object::Dictionary(page)) = doc.objects.get(&page_id) else {
+                continue;
+            };
+            match page.get(b"Annots").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                Some(Object::Array(_)) => None,
+                _ => continue,
+            }
+        };
+        let arr_id = annots_ref.unwrap_or(page_id);
+        let is_inline = annots_ref.is_none();
+
+        let annots_len = if is_inline {
+            if let Some(Object::Dictionary(page)) = doc.objects.get(&arr_id) {
+                if let Ok(Object::Array(arr)) = page.get(b"Annots") {
+                    arr.len()
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else if let Some(Object::Array(arr)) = doc.objects.get(&arr_id) {
+            arr.len()
+        } else {
+            0
+        };
+
+        for i in 0..annots_len {
+            let needs_fix = {
+                let arr = if is_inline {
+                    let Some(Object::Dictionary(page)) = doc.objects.get(&arr_id) else {
+                        break;
+                    };
+                    let Ok(Object::Array(arr)) = page.get(b"Annots") else {
+                        break;
+                    };
+                    arr
+                } else {
+                    let Some(Object::Array(arr)) = doc.objects.get(&arr_id) else {
+                        break;
+                    };
+                    arr
+                };
+                let Object::Dictionary(annot) = &arr[i] else {
+                    continue;
+                };
+                let subtype = match annot.get(b"Subtype").ok() {
+                    Some(Object::Name(n)) => Some(n.clone()),
+                    _ => None,
+                };
+                let is_annot_sub = subtype.as_ref().is_some_and(|n| is_annotation_subtype(n));
+                let is_popup = subtype.as_deref() == Some(b"Popup");
+                if !is_annot_sub {
+                    false
+                } else {
+                    let has_f = annot.get(b"F").is_ok();
+                    let f = match annot.get(b"F").ok() {
+                        Some(Object::Integer(v)) => *v as u32,
+                        _ => 0,
+                    };
+                    if is_popup && !has_f {
+                        false
+                    } else {
+                        let print_bit: u32 = 1 << 2;
+                        let bad_bits: u32 = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 8);
+                        (f & print_bit == 0) || (f & bad_bits != 0)
+                    }
+                }
+            };
+            if needs_fix {
+                let arr_mut = if is_inline {
+                    let Some(Object::Dictionary(ref mut page)) = doc.objects.get_mut(&arr_id)
+                    else {
+                        break;
+                    };
+                    let Ok(Object::Array(ref mut arr)) = page.get_mut(b"Annots") else {
+                        break;
+                    };
+                    arr
+                } else {
+                    let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&arr_id) else {
+                        break;
+                    };
+                    arr
+                };
+                if let Object::Dictionary(ref mut annot) = arr_mut[i] {
+                    let f = match annot.get(b"F").ok() {
+                        Some(Object::Integer(v)) => *v as u32,
+                        _ => 0,
+                    };
+                    let print_bit: u32 = 1 << 2;
+                    let bad_bits: u32 = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 8);
+                    let new_f = (f | print_bit) & !bad_bits;
+                    annot.set("F", Object::Integer(new_f as i64));
+                    count += 1;
+                }
+            }
+        }
+    }
+
     count
 }
 

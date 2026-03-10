@@ -30,3 +30,5 @@ pdfa-convert = ["dep:xmp-writer"]
 
 [dev-dependencies]
 tempfile = "3"
+pdf-syntax.workspace = true
+pdf-compliance.workspace = true

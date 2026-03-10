@@ -138,9 +138,13 @@ impl Runner {
                 };
 
                 // Pre-check: skip files that aren't actually PDFs (e.g. HTML error pages).
-                // PDF spec allows %PDF within first 1024 bytes.
+                // PDF spec requires %PDF within first 1024 bytes, but some real-world
+                // PDFs have extra garbage or BOM before the header. Search a larger
+                // window (4 KB) for robustness, matching lopdf's own behaviour of
+                // scanning the entire buffer.
+                let header_search_len = 4096.min(pdf_data.len());
                 let has_pdf_header = pdf_data
-                    .get(..1024.min(pdf_data.len()))
+                    .get(..header_search_len)
                     .is_some_and(|window| window.windows(4).any(|w| w == b"%PDF"));
                 if !has_pdf_header {
                     let pdf_hash = hex_sha256(&pdf_data);
