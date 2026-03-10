@@ -632,6 +632,64 @@ fn add_default_cmyk_colorspace(doc: &mut Document) {
             }
         }
     }
+
+    // Also add DefaultCMYK to Form XObject Resources that have their own
+    // ColorSpace dict, to cover DeviceCMYK usage within Form XObjects.
+    let form_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Stream(stream) = obj {
+                if get_name(&stream.dict, b"Subtype").as_deref() == Some("Form")
+                    && stream.dict.has(b"Resources")
+                {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for form_id in form_ids {
+        let res_ref_id = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&form_id) {
+                match stream.dict.get(b"Resources").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(res_ref_id) = res_ref_id {
+            // Resources is a reference — modify the referenced dict.
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => continue,
+                };
+                if !cs_dict.has(b"DefaultCMYK") {
+                    cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&form_id) {
+            // Resources is inline in the Form XObject.
+            if let Ok(Object::Dictionary(res)) = stream.dict.get(b"Resources") {
+                let mut res = res.clone();
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => continue,
+                };
+                if !cs_dict.has(b"DefaultCMYK") {
+                    cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                    stream.dict.set("Resources", Object::Dictionary(res));
+                }
+            }
+        }
+    }
 }
 
 /// Normalize Separation colorspaces so all with the same name use identical
