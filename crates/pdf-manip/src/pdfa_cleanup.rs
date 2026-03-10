@@ -103,6 +103,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     strip_ef_from_file_specs(doc);
     remove_ocg_as_key(doc);
     strip_signatures(doc);
+    strip_non_catalog_metadata(doc);
 
     Ok(report)
 }
@@ -2000,6 +2001,41 @@ fn count_name_tree_entries(doc: &Document, tree_id: ObjectId) -> usize {
         }
     }
     0
+}
+
+/// Strip /Metadata from all objects except the document catalog (6.6.2.3.1).
+///
+/// Embedded XMP metadata in images and other objects often contains
+/// non-standard properties (photoshop, exif, camera-raw, pdfx) that
+/// violate 6.6.2.3.1 unless proper extension schemas are present.
+/// Removing these metadata streams is safe and avoids the violation.
+fn strip_non_catalog_metadata(doc: &mut Document) {
+    let catalog_id = get_catalog_id(doc);
+
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        if catalog_id == Some(id) {
+            continue;
+        }
+        let has_metadata = matches!(
+            doc.objects.get(&id),
+            Some(Object::Dictionary(d)) if d.has(b"Metadata")
+        ) || matches!(
+            doc.objects.get(&id),
+            Some(Object::Stream(s)) if s.dict.has(b"Metadata")
+        );
+        if has_metadata {
+            match doc.objects.get_mut(&id) {
+                Some(Object::Dictionary(ref mut d)) => {
+                    d.remove(b"Metadata");
+                }
+                Some(Object::Stream(ref mut s)) => {
+                    s.dict.remove(b"Metadata");
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]
