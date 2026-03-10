@@ -80,6 +80,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_image_interpolate(doc);
     report.cidtogidmap_added = fix_cidtogidmap(doc);
     report.ap_fixes = fix_annotation_ap(doc);
+    strip_ap_non_normal(doc);
     fix_ocg_order(doc);
     fix_annotation_contents(doc);
     fix_annotation_contents_type(doc);
@@ -977,6 +978,56 @@ enum ApFixInfo {
     InlineAp(Option<Object>),
     RefAp(ObjectId),
     MissingAp,
+}
+
+/// Remove D and R entries from annotation AP dicts (6.3.3:2).
+/// PDF/A requires AP dict to contain only the N (Normal) key.
+fn strip_ap_non_normal(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let ap_ref = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let is_annot = matches!(
+                dict.get(b"Subtype").ok(),
+                Some(Object::Name(ref n)) if is_annotation_subtype(n)
+            );
+            if !is_annot {
+                continue;
+            }
+            match dict.get(b"AP").ok() {
+                Some(Object::Dictionary(ap)) => {
+                    if ap.has(b"D") || ap.has(b"R") {
+                        None // inline — handle below
+                    } else {
+                        continue;
+                    }
+                }
+                Some(Object::Reference(ap_id)) => Some(*ap_id),
+                _ => continue,
+            }
+        };
+
+        match ap_ref {
+            Some(ap_id) => {
+                // AP is a reference — clean the referenced dict.
+                if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
+                    ap.remove(b"D");
+                    ap.remove(b"R");
+                }
+            }
+            None => {
+                // AP is inline in the annotation dict.
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    if let Ok(Object::Dictionary(ref mut ap)) = dict.get_mut(b"AP") {
+                        ap.remove(b"D");
+                        ap.remove(b"R");
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Ensure OCG D config has Order array listing all OCGs (6.9 t3).
