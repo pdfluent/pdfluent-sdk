@@ -444,7 +444,15 @@ fn update_metrics_from_font(doc: &mut Document, info: &NonEmbeddedFont, font_dat
     if info.is_type0 {
         update_cid_widths(doc, info.target_id, &face, scale);
     } else {
-        update_simple_widths(doc, info.font_id, &face, scale);
+        // For CFF-based symbolic fonts (Symbol, ZapfDingbats), use the CFF
+        // internal encoding to compute widths.  The Unicode cmap in OTF wrappers
+        // maps unrelated Latin codepoints to symbol glyphs, producing wrong widths.
+        let is_cff = face.tables().glyf.is_none();
+        if is_cff && is_symbolic_font_name(&info.name) {
+            update_simple_widths_cff_symbolic(doc, info.font_id, font_data);
+        } else {
+            update_simple_widths(doc, info.font_id, &face, scale);
+        }
     }
 }
 
@@ -531,6 +539,93 @@ fn update_simple_widths(
             // Fallback: use width at GlyphId == code (identity mapping for TrueType).
             // This matches how veraPDF validates widths when encoding is absent.
             face.glyph_hor_advance(ttf_parser::GlyphId(code as u16))
+                .map(|w| (w as f64 * scale).round() as i64)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        widths.push(Object::Integer(width));
+    }
+
+    if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
+        if !widths.is_empty() {
+            font.set("Widths", Object::Array(widths));
+            font.set("FirstChar", Object::Integer(first_char as i64));
+            font.set("LastChar", Object::Integer(last_char as i64));
+        }
+    }
+}
+
+/// Extract the raw CFF table data from an OTF font file.
+///
+/// Returns None if the font is not OTF or has no CFF table.
+fn extract_cff_table(font_data: &[u8]) -> Option<&[u8]> {
+    let raw_face = ttf_parser::RawFace::parse(font_data, 0).ok()?;
+    for record in raw_face.table_records {
+        if &record.tag.to_bytes() == b"CFF " {
+            let start = record.offset as usize;
+            let end = start.checked_add(record.length as usize)?;
+            return font_data.get(start..end);
+        }
+    }
+    None
+}
+
+/// Compute Widths for a CFF-based symbolic font (Symbol, ZapfDingbats).
+///
+/// Uses the CFF internal encoding to map character codes → glyph IDs,
+/// then reads widths from the OTF hmtx table (which veraPDF validates against).
+fn update_simple_widths_cff_symbolic(doc: &mut Document, font_id: ObjectId, font_data: &[u8]) {
+    // Parse the OTF face for hmtx-based width lookup.
+    let Ok(face) = ttf_parser::Face::parse(font_data, 0) else {
+        return;
+    };
+    let units_per_em = face.units_per_em() as f64;
+    if units_per_em == 0.0 {
+        return;
+    }
+    let scale = 1000.0 / units_per_em;
+
+    // Extract the CFF table from the OTF wrapper for encoding lookup.
+    let cff_data = extract_cff_table(font_data);
+    let Some(cff_data) = cff_data else { return };
+    let Some(cff) = cff_parser::Table::parse(cff_data) else {
+        return;
+    };
+
+    let (first_char, last_char) = {
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            return;
+        };
+        let fc = font
+            .get(b"FirstChar")
+            .ok()
+            .and_then(|o| match o {
+                Object::Integer(i) => Some(*i as u32),
+                _ => None,
+            })
+            .unwrap_or(0);
+        let lc = font
+            .get(b"LastChar")
+            .ok()
+            .and_then(|o| match o {
+                Object::Integer(i) => Some(*i as u32),
+                _ => None,
+            })
+            .unwrap_or(255);
+        (fc, lc)
+    };
+
+    let mut widths = Vec::new();
+    for code in first_char..=last_char {
+        let width = if code <= 255 {
+            // Use CFF encoding to map code → glyph ID, then hmtx for width.
+            let gid = cff
+                .encoding
+                .code_to_gid(&cff.charset, code as u8)
+                .map(|g| ttf_parser::GlyphId(g.0))
+                .unwrap_or(ttf_parser::GlyphId(0));
+            face.glyph_hor_advance(gid)
                 .map(|w| (w as f64 * scale).round() as i64)
                 .unwrap_or(0)
         } else {
@@ -2091,8 +2186,14 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             }
 
             // Skip symbolic fonts — encoding mapping is unreliable.
+            // Also skip subset fonts (prefix like ABCDEF+FontName) — their widths
+            // were set by the original PDF producer and already match the embedded
+            // subset program.
             if let Some(name) = get_name(dict, b"BaseFont") {
                 if is_symbolic_font_name(&name) {
+                    continue;
+                }
+                if name.contains('+') {
                     continue;
                 }
             }
@@ -2891,6 +2992,15 @@ pub fn fix_notdef_glyph_refs(doc: &mut Document) -> usize {
             // Skip symbolic fonts — they use custom encodings.
             if is_font_symbolic(doc, dict) {
                 continue;
+            }
+
+            // Skip subset fonts (prefix like ABCDEF+FontName).  Their encoding
+            // and glyph tables were set by the original producer; modifying
+            // Differences can point to glyph names absent from the subset.
+            if let Some(name) = get_name(dict, b"BaseFont") {
+                if name.contains('+') {
+                    continue;
+                }
             }
 
             let fd_id = match dict.get(b"FontDescriptor").ok() {

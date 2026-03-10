@@ -617,56 +617,172 @@ fn reencode_lzw_streams(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let has_lzw = {
+        let lzw_mode = {
             if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
                 match stream.dict.get(b"Filter").ok() {
-                    Some(Object::Name(n)) => n == b"LZWDecode",
-                    Some(Object::Array(arr)) => arr.iter().any(|o| {
-                        if let Object::Name(n) = o {
-                            n == b"LZWDecode"
+                    Some(Object::Name(n)) if n == b"LZWDecode" => LzwMode::Single,
+                    Some(Object::Array(arr)) => {
+                        let lzw_pos = arr
+                            .iter()
+                            .position(|o| matches!(o, Object::Name(n) if n == b"LZWDecode"));
+                        if let Some(pos) = lzw_pos {
+                            LzwMode::InArray(pos)
                         } else {
-                            false
+                            LzwMode::None
                         }
-                    }),
-                    _ => false,
+                    }
+                    _ => LzwMode::None,
                 }
             } else {
-                false
+                LzwMode::None
             }
         };
-        if has_lzw {
-            let decoded = {
-                if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
-                    stream.decompressed_content().ok()
-                } else {
-                    None
-                }
-            };
-            if let Some(raw_data) = decoded {
-                let compressed = {
-                    use std::io::Write;
-                    let mut encoder =
-                        flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-                    if encoder.write_all(&raw_data).is_ok() {
-                        encoder.finish().ok()
+        match lzw_mode {
+            LzwMode::None => {}
+            LzwMode::Single => {
+                // Single LZWDecode filter — full decompress + re-encode as Flate.
+                let decoded = {
+                    if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+                        stream.decompressed_content().ok()
                     } else {
                         None
                     }
                 };
-                if let Some(compressed_data) = compressed {
-                    if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
-                        stream.set_content(compressed_data);
-                        stream
-                            .dict
-                            .set("Filter", Object::Name(b"FlateDecode".to_vec()));
-                        stream.dict.remove(b"DecodeParms");
-                        count += 1;
+                if let Some(raw_data) = decoded {
+                    let compressed = flate_compress(&raw_data);
+                    if let Some(compressed_data) = compressed {
+                        if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                            stream.set_content(compressed_data);
+                            stream
+                                .dict
+                                .set("Filter", Object::Name(b"FlateDecode".to_vec()));
+                            stream.dict.remove(b"DecodeParms");
+                            count += 1;
+                        }
                     }
+                }
+            }
+            LzwMode::InArray(pos) => {
+                // LZW in a filter array (e.g. [LZWDecode, DCTDecode]).
+                // Decode only the LZW layer and remove it from the array.
+                let lzw_decoded = {
+                    let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+                        continue;
+                    };
+                    let early_change = lzw_early_change(&stream.dict, pos);
+                    let raw = &stream.content;
+                    lzw_decode(raw, early_change)
+                };
+                let Some(decoded_data) = lzw_decoded else {
+                    // LZW decoding failed — try full decompress + re-encode.
+                    let decoded = {
+                        if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+                            stream.decompressed_content().ok()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(raw_data) = decoded {
+                        if let Some(compressed_data) = flate_compress(&raw_data) {
+                            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                                stream.set_content(compressed_data);
+                                stream
+                                    .dict
+                                    .set("Filter", Object::Name(b"FlateDecode".to_vec()));
+                                stream.dict.remove(b"DecodeParms");
+                                count += 1;
+                            }
+                        }
+                    }
+                    continue;
+                };
+                if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                    stream.set_content(decoded_data);
+                    // Remove the LZWDecode entry from the filter array and
+                    // corresponding DecodeParms entry.  Collect what we need
+                    // first to avoid overlapping mutable borrows.
+                    let mut new_filter: Option<Object> = None;
+                    let mut new_parms: Option<Option<Object>> = None; // Some(None) = remove
+                    if let Ok(Object::Array(ref mut filters)) = stream.dict.get_mut(b"Filter") {
+                        filters.remove(pos);
+                        if filters.len() == 1 {
+                            new_filter = Some(filters[0].clone());
+                        }
+                    }
+                    // Remove corresponding DecodeParms entry.
+                    if let Ok(Object::Array(ref mut parms)) = stream.dict.get_mut(b"DecodeParms") {
+                        if pos < parms.len() {
+                            parms.remove(pos);
+                        }
+                        if parms.len() == 1 {
+                            let single = parms[0].clone();
+                            new_parms = if matches!(single, Object::Null) {
+                                Some(None)
+                            } else {
+                                Some(Some(single))
+                            };
+                        }
+                    }
+                    // Collapse single-element arrays.
+                    if let Some(f) = new_filter {
+                        stream.dict.set("Filter", f);
+                    }
+                    match new_parms {
+                        Some(None) => {
+                            stream.dict.remove(b"DecodeParms");
+                        }
+                        Some(Some(p)) => {
+                            stream.dict.set("DecodeParms", p);
+                        }
+                        None => {}
+                    }
+                    count += 1;
                 }
             }
         }
     }
     count
+}
+
+enum LzwMode {
+    None,
+    Single,
+    InArray(usize),
+}
+
+/// Compress data with zlib/deflate.
+fn flate_compress(data: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Write;
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    if encoder.write_all(data).is_ok() {
+        encoder.finish().ok()
+    } else {
+        None
+    }
+}
+
+/// LZW-decode raw bytes using the weezl crate.
+fn lzw_decode(data: &[u8], _early_change: bool) -> Option<Vec<u8>> {
+    // PDF LZW uses MSB byte order, min code size = 8.
+    let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
+    decoder.decode(data).ok()
+}
+
+/// Get the EarlyChange parameter for an LZW filter at `pos` in the filter array.
+fn lzw_early_change(dict: &lopdf::Dictionary, pos: usize) -> bool {
+    let parms = match dict.get(b"DecodeParms").ok() {
+        Some(Object::Array(arr)) => arr.get(pos).cloned(),
+        Some(Object::Dictionary(d)) if pos == 0 => Some(Object::Dictionary(d.clone())),
+        _ => None,
+    };
+    if let Some(Object::Dictionary(parms_dict)) = parms {
+        match parms_dict.get(b"EarlyChange").ok() {
+            Some(Object::Integer(0)) => false,
+            _ => true, // Default is 1 (early change enabled).
+        }
+    } else {
+        true // Default.
+    }
 }
 
 /// Set NeedAppearances to false in AcroForm dictionary (6.4.1 t3).
@@ -733,7 +849,12 @@ fn fix_optional_content(doc: &mut Document) -> usize {
 
     // Helper: fix D config dict inline.
     fn fix_d_config(d_dict: &mut lopdf::Dictionary, ocgs: &[Object], count: &mut usize) {
-        if !d_dict.has(b"Name") {
+        let name_missing_or_empty = match d_dict.get(b"Name").ok() {
+            None => true,
+            Some(Object::String(s, _)) => s.is_empty(),
+            _ => false,
+        };
+        if name_missing_or_empty {
             d_dict.set(
                 "Name",
                 Object::String(b"Default".to_vec(), lopdf::StringFormat::Literal),
@@ -858,7 +979,12 @@ fn fix_optional_content(doc: &mut Document) -> usize {
 
     for config_id in config_ids {
         if let Some(Object::Dictionary(ref mut config)) = doc.objects.get_mut(&config_id) {
-            if !config.has(b"Name") {
+            let name_missing_or_empty = match config.get(b"Name").ok() {
+                None => true,
+                Some(Object::String(s, _)) => s.is_empty(),
+                _ => false,
+            };
+            if name_missing_or_empty {
                 config.set(
                     "Name",
                     Object::String(b"Config".to_vec(), lopdf::StringFormat::Literal),
@@ -878,7 +1004,12 @@ fn fix_optional_content(doc: &mut Document) -> usize {
             if let Ok(Object::Array(ref mut configs_arr)) = ocprops.get_mut(b"Configs") {
                 for idx in inline_indices {
                     if let Some(Object::Dictionary(ref mut config)) = configs_arr.get_mut(idx) {
-                        if !config.has(b"Name") {
+                        let name_missing_or_empty = match config.get(b"Name").ok() {
+                            None => true,
+                            Some(Object::String(s, _)) => s.is_empty(),
+                            _ => false,
+                        };
+                        if name_missing_or_empty {
                             config.set(
                                 "Name",
                                 Object::String(b"Config".to_vec(), lopdf::StringFormat::Literal),
@@ -1113,7 +1244,20 @@ fn fix_cidtogidmap(doc: &mut Document) -> usize {
                     dict.get(b"Subtype").ok(),
                     Some(Object::Name(ref n)) if n == b"CIDFontType2"
                 );
-                is_cidfont2 && !dict.has(b"CIDToGIDMap")
+                if !is_cidfont2 {
+                    false
+                } else {
+                    match dict.get(b"CIDToGIDMap").ok() {
+                        None => true,                                       // Missing
+                        Some(Object::Name(n)) if n == b"Identity" => false, // Valid
+                        Some(Object::Reference(ref_id)) => {
+                            // Valid if it references a stream.
+                            !matches!(doc.objects.get(ref_id), Some(Object::Stream(_)))
+                        }
+                        Some(Object::Stream(_)) => false, // Valid inline stream
+                        _ => true,                        // Invalid (e.g. /NoIdentity)
+                    }
+                }
             } else {
                 false
             }
@@ -1215,6 +1359,30 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                 if let Some(val) = fallback {
                     if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
                         ap.set("N", val);
+                        count += 1;
+                    }
+                }
+            }
+            ApFixInfo::InlineAp(None) => {
+                // AP dict exists but has no N key and no D/R fallback.
+                // Create an empty appearance stream for N.
+                let mut stream_dict = lopdf::Dictionary::new();
+                stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
+                stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+                stream_dict.set(
+                    "BBox",
+                    Object::Array(vec![
+                        Object::Integer(0),
+                        Object::Integer(0),
+                        Object::Integer(0),
+                        Object::Integer(0),
+                    ]),
+                );
+                let empty_stream = lopdf::Stream::new(stream_dict, Vec::new());
+                let stream_id = doc.add_object(Object::Stream(empty_stream));
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    if let Ok(Object::Dictionary(ref mut ap)) = dict.get_mut(b"AP") {
+                        ap.set("N", Object::Reference(stream_id));
                         count += 1;
                     }
                 }
@@ -1815,51 +1983,71 @@ fn remove_needs_rendering(doc: &mut Document) {
 fn remove_forbidden_annotations(doc: &mut Document) {
     let page_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for page_id in &page_ids {
-        let forbidden_refs: Vec<ObjectId> = {
-            let annots = if let Some(Object::Dictionary(dict)) = doc.objects.get(page_id) {
+        // Determine where the Annots array lives: inline or via reference.
+        let (annots_arr, annots_ref_id) = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(page_id) {
                 match dict.get(b"Annots").ok() {
-                    Some(Object::Array(arr)) => Some(arr.clone()),
-                    _ => None,
+                    Some(Object::Array(arr)) => (Some(arr.clone()), None),
+                    Some(Object::Reference(ref_id)) => {
+                        if let Some(Object::Array(arr)) = doc.objects.get(ref_id) {
+                            (Some(arr.clone()), Some(*ref_id))
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    _ => (None, None),
                 }
             } else {
-                None
-            };
-            if let Some(arr) = annots {
-                arr.iter()
-                    .filter_map(|obj| {
-                        if let Object::Reference(id) = obj {
-                            if let Some(Object::Dictionary(d)) = doc.objects.get(id) {
-                                let is_forbidden = match d.get(b"Subtype").ok() {
-                                    Some(Object::Name(ref n)) => {
-                                        // Explicitly forbidden types.
-                                        matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie")
-                                        // Also remove non-standard annotation types.
-                                        || !is_annotation_subtype(n)
-                                    }
-                                    _ => false,
-                                };
-                                if is_forbidden {
-                                    return Some(*id);
-                                }
-                            }
-                        }
-                        None
-                    })
-                    .collect()
-            } else {
-                Vec::new()
+                (None, None)
             }
         };
-        if !forbidden_refs.is_empty() {
+        let Some(arr) = annots_arr else { continue };
+
+        let forbidden_refs: Vec<ObjectId> = arr
+            .iter()
+            .filter_map(|obj| {
+                if let Object::Reference(id) = obj {
+                    if let Some(Object::Dictionary(d)) = doc.objects.get(id) {
+                        let is_forbidden = match d.get(b"Subtype").ok() {
+                            Some(Object::Name(ref n)) => {
+                                // Explicitly forbidden types.
+                                matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie")
+                                // Also remove non-standard annotation types.
+                                || !is_annotation_subtype(n)
+                            }
+                            _ => false,
+                        };
+                        if is_forbidden {
+                            return Some(*id);
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        if forbidden_refs.is_empty() {
+            continue;
+        }
+
+        let retain_fn = |obj: &Object| -> bool {
+            if let Object::Reference(id) = obj {
+                !forbidden_refs.contains(id)
+            } else {
+                true
+            }
+        };
+
+        if let Some(annots_id) = annots_ref_id {
+            // Annots is a referenced array object.
+            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&annots_id) {
+                arr.retain(retain_fn);
+            }
+        } else {
+            // Annots is inline in the page dict.
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(page_id) {
                 if let Ok(Object::Array(ref mut arr)) = dict.get_mut(b"Annots") {
-                    arr.retain(|obj| {
-                        if let Object::Reference(id) = obj {
-                            !forbidden_refs.contains(id)
-                        } else {
-                            true
-                        }
-                    });
+                    arr.retain(retain_fn);
                 }
             }
         }
@@ -2007,7 +2195,8 @@ fn truncate_long_names(doc: &mut Document) {
             Some(Object::Stream(s)) => Some(&s.dict),
             _ => None,
         };
-        let long_keys: Vec<Vec<u8>> = if let Some(dict) = dict_ref {
+        // Phase 1: Truncate Name values > 127 bytes.
+        let long_val_keys: Vec<Vec<u8>> = if let Some(dict) = dict_ref {
             dict.iter()
                 .filter_map(|(key, val)| {
                     if let Object::Name(n) = val {
@@ -2021,7 +2210,7 @@ fn truncate_long_names(doc: &mut Document) {
         } else {
             vec![]
         };
-        for key in long_keys {
+        for key in long_val_keys {
             let truncated = match doc.objects.get(&id) {
                 Some(Object::Dictionary(d)) => d.get(&key).ok().and_then(|v| {
                     if let Object::Name(n) = v {
@@ -2047,6 +2236,41 @@ fn truncate_long_names(doc: &mut Document) {
                     }
                     Some(Object::Stream(ref mut s)) => {
                         s.dict.set(key_str, Object::Name(truncated));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Phase 2: Truncate dictionary keys (Name objects) > 127 bytes.
+        // Dictionary keys are Name objects in PDF; veraPDF 6.1.13:4 applies to
+        // them as well (e.g. in RoleMap, ClassMap).
+        let dict_ref2 = match doc.objects.get(&id) {
+            Some(Object::Dictionary(d)) => Some(d),
+            Some(Object::Stream(s)) => Some(&s.dict),
+            _ => None,
+        };
+        let long_keys: Vec<(Vec<u8>, Object)> = if let Some(dict) = dict_ref2 {
+            dict.iter()
+                .filter(|(key, _)| key.len() > 127)
+                .map(|(key, val)| (key.clone(), val.clone()))
+                .collect()
+        } else {
+            vec![]
+        };
+        if !long_keys.is_empty() {
+            // Remove old long keys and re-insert with truncated key names.
+            for (old_key, val) in &long_keys {
+                let truncated_key = &old_key[..127];
+                let truncated_key_str = std::str::from_utf8(truncated_key).unwrap_or("truncated");
+                match doc.objects.get_mut(&id) {
+                    Some(Object::Dictionary(ref mut d)) => {
+                        d.remove(old_key.as_slice());
+                        d.set(truncated_key_str, val.clone());
+                    }
+                    Some(Object::Stream(ref mut s)) => {
+                        s.dict.remove(old_key.as_slice());
+                        s.dict.set(truncated_key_str, val.clone());
                     }
                     _ => {}
                 }
