@@ -75,24 +75,35 @@ impl PdfTest for PdfAConvertTest {
         let mut doc = match lopdf::Document::load_mem(pdf_data) {
             Ok(d) => d,
             Err(e) => {
+                // Fallback: try stripping garbage bytes before %PDF header.
+                match try_repair_for_lopdf(pdf_data) {
+                    Some(d) => d,
+                    None => {
+                        return TestResult {
+                            status: TestStatus::Skip,
+                            error_message: Some(format!("lopdf load failed: {e}")),
+                            duration_ms: elapsed(),
+                            oracle_score: None,
+                            metadata: HashMap::new(),
+                        };
+                    }
+                }
+            }
+        };
+
+        if doc.get_pages().is_empty() {
+            // Fallback: try adding missing /Type /Page entries to page-like objects.
+            if !try_fix_missing_page_types(&mut doc) {
+                // Second fallback: check if pdf-syntax found pages (it has brute-force mode).
+                let syntax_page_count = pdf.pages().len();
                 return TestResult {
                     status: TestStatus::Skip,
-                    error_message: Some(format!("lopdf load failed: {e}")),
+                    error_message: Some(format!("0 pages (pdf-syntax found {syntax_page_count})")),
                     duration_ms: elapsed(),
                     oracle_score: None,
                     metadata: HashMap::new(),
                 };
             }
-        };
-
-        if doc.get_pages().is_empty() {
-            return TestResult {
-                status: TestStatus::Skip,
-                error_message: Some("0 pages".into()),
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata: HashMap::new(),
-            };
         }
 
         // 3. Run PDF/A conversion pipeline.
@@ -156,7 +167,19 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
         }));
 
-        // 3a3. Fix CIDSet for CID fonts.
+        // 3a3. Fix simple TrueType widths.
+        set_progress("simple_tt_widths");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_simple_truetype_widths(&mut doc)
+        }));
+
+        // 3a4. Fix Type1 font widths from CFF.
+        set_progress("type1_widths");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_widths(&mut doc)
+        }));
+
+        // 3a5. Fix CIDSet for CID fonts.
         set_progress("cidset");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::fix_cidset(&mut doc)
@@ -376,4 +399,201 @@ fn write_temp_pdf(data: &[u8], original: &Path) -> Option<std::path::PathBuf> {
     let path = dir.join(format!("{stem}_pdfa_converted.pdf"));
     std::fs::write(&path, data).ok()?;
     Some(path)
+}
+
+/// Try to repair PDF data so that lopdf can load it.
+///
+/// Strategies:
+/// 1. Strip garbage bytes before the %PDF header (offset header).
+/// 2. Try appending a minimal %%EOF + startxref if missing/broken.
+/// 3. Try truncating trailing garbage after the last %%EOF.
+fn try_repair_for_lopdf(data: &[u8]) -> Option<lopdf::Document> {
+    // Strategy 1: Find %PDF- offset and strip leading garbage.
+    let offset = data.windows(5).position(|w| w == b"%PDF-")?;
+
+    if offset > 0 {
+        let trimmed = &data[offset..];
+        if let Ok(doc) = lopdf::Document::load_mem(trimmed) {
+            return Some(doc);
+        }
+        // Continue with trimmed data for further strategies.
+        return try_repair_xref(trimmed);
+    }
+
+    try_repair_xref(data)
+}
+
+/// Try to fix xref/trailer issues in PDF data.
+///
+/// Strategies:
+/// - Find the last `startxref` and `%%EOF`, and verify the xref offset.
+///   If the offset is wrong, try to fix it.
+/// - If `%%EOF` is missing, append one.
+/// - If `startxref` points to wrong location, try scanning for actual xref position.
+fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
+    // Look for "startxref" in the last part of the file.
+    let search_start = data.len().saturating_sub(4096);
+    let tail = &data[search_start..];
+
+    // Find the last startxref.
+    let startxref_pos = tail
+        .windows(9)
+        .rposition(|w| w == b"startxref")
+        .map(|p| search_start + p);
+
+    if let Some(sxr) = startxref_pos {
+        // Read the xref offset value after "startxref".
+        let after = &data[sxr + 9..];
+        let offset_str: String = after
+            .iter()
+            .skip_while(|b| b.is_ascii_whitespace())
+            .take_while(|b| b.is_ascii_digit())
+            .map(|&b| b as char)
+            .collect();
+
+        if let Ok(xref_offset) = offset_str.parse::<usize>() {
+            // Check if the xref offset actually points to "xref" or a valid xref stream.
+            if xref_offset < data.len() {
+                let at_offset = &data[xref_offset..];
+                let has_xref = at_offset.starts_with(b"xref")
+                    || (at_offset.len() > 5 && at_offset[0].is_ascii_digit());
+
+                if !has_xref {
+                    // The offset is wrong. Try to find the actual xref position.
+                    if let Some(real_xref) = find_last_xref_pos(data) {
+                        let mut repaired = data.to_vec();
+                        // Rebuild the startxref section.
+                        repaired.truncate(sxr);
+                        repaired.extend_from_slice(
+                            format!("startxref\n{real_xref}\n%%EOF\n").as_bytes(),
+                        );
+                        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+                            return Some(doc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Strategy: if no %%EOF in last 512 bytes but startxref exists earlier in file,
+    // try appending %%EOF.
+    let last_512 = &data[data.len().saturating_sub(512)..];
+    let has_eof = last_512.windows(5).any(|w| w == b"%%EOF");
+
+    if !has_eof {
+        if let Some(real_xref) = find_last_xref_pos(data) {
+            let mut repaired = data.to_vec();
+            repaired.extend_from_slice(format!("\nstartxref\n{real_xref}\n%%EOF\n").as_bytes());
+            if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+                return Some(doc);
+            }
+        }
+    }
+
+    None
+}
+
+/// Find the byte offset of the last "xref" keyword or xref stream object in the data.
+fn find_last_xref_pos(data: &[u8]) -> Option<usize> {
+    // First try: find "xref" keyword (traditional xref table).
+    let xref_pos = data.windows(4).rposition(|w| w == b"xref");
+
+    if let Some(pos) = xref_pos {
+        // Verify it's actually at the start of a line (preceded by newline or start of file).
+        if pos == 0 || data[pos - 1] == b'\n' || data[pos - 1] == b'\r' {
+            return Some(pos);
+        }
+    }
+
+    // Fallback: scan for cross-reference stream objects.
+    // These look like "N 0 obj" followed by a dictionary containing /Type /XRef.
+    // This is harder to find reliably, so we just return None for now.
+    None
+}
+
+/// Try to fix lopdf documents where get_pages() returns empty because page
+/// dictionaries lack a /Type /Page entry.
+///
+/// Walks the page tree from the catalog and adds /Type /Page to leaf nodes
+/// that have a /MediaBox (strong indicator of a page). Returns true if pages
+/// were found after the fix.
+fn try_fix_missing_page_types(doc: &mut lopdf::Document) -> bool {
+    // Collect page-like object IDs from the page tree.
+    let page_ids = collect_page_tree_leaves(doc);
+
+    if page_ids.is_empty() {
+        return false;
+    }
+
+    let mut fixed = false;
+    for page_id in &page_ids {
+        if let Ok(dict) = doc.get_dictionary_mut(*page_id) {
+            // Only fix if it doesn't already have /Type or has wrong type.
+            let needs_fix = !matches!(dict.get_type(), Ok(t) if t == b"Page");
+
+            if needs_fix {
+                // Verify it looks like a page (has MediaBox or Contents).
+                let has_media_box = dict.get(b"MediaBox").is_ok();
+                let has_contents = dict.get(b"Contents").is_ok();
+                let has_parent = dict.get(b"Parent").is_ok();
+
+                if has_media_box || has_contents || has_parent {
+                    dict.set("Type", lopdf::Object::Name(b"Page".to_vec()));
+                    fixed = true;
+                }
+            }
+        }
+    }
+
+    if fixed {
+        // Re-check if pages are now found.
+        !doc.get_pages().is_empty()
+    } else {
+        false
+    }
+}
+
+/// Walk the page tree from the catalog's /Pages entry and collect leaf node IDs.
+/// Unlike lopdf's get_pages(), this doesn't require /Type to be present.
+fn collect_page_tree_leaves(doc: &lopdf::Document) -> Vec<lopdf::ObjectId> {
+    let mut leaves = Vec::new();
+
+    let pages_id = match doc
+        .catalog()
+        .and_then(|cat| cat.get(b"Pages"))
+        .and_then(lopdf::Object::as_reference)
+    {
+        Ok(id) => id,
+        Err(_) => return leaves,
+    };
+
+    let mut stack = vec![pages_id];
+    let mut visited = std::collections::HashSet::new();
+    let limit = doc.objects.len().min(10_000);
+
+    while let Some(id) = stack.pop() {
+        if !visited.insert(id) || visited.len() > limit {
+            continue;
+        }
+
+        let dict = match doc.get_dictionary(id) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        // Check if this node has /Kids — if so, it's a Pages node.
+        if let Ok(kids) = dict.get(b"Kids").and_then(lopdf::Object::as_array) {
+            for kid in kids {
+                if let Ok(kid_id) = kid.as_reference() {
+                    stack.push(kid_id);
+                }
+            }
+        } else {
+            // No /Kids — this is a leaf (page) node.
+            leaves.push(id);
+        }
+    }
+
+    leaves
 }

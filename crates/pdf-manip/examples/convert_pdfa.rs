@@ -44,6 +44,12 @@ fn main() {
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");
 
+    let tt_widths = pdf_manip::pdfa_fonts::fix_simple_truetype_widths(&mut doc);
+    eprintln!("Simple TrueType widths: fixed={tt_widths}");
+
+    let t1_widths = pdf_manip::pdfa_fonts::fix_type1_widths(&mut doc);
+    eprintln!("Type1 widths: fixed={t1_widths}");
+
     let cidset_fixed = pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
     eprintln!("CIDSet: fixed={cidset_fixed}");
 
