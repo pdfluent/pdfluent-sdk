@@ -388,14 +388,11 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
         }
     }
 
-    // Update Widths and FontDescriptor metrics from the embedded font.
-    if is_truetype || is_otf {
-        update_metrics_from_font(doc, info, &font_data);
-    }
-
-    // If we embedded a non-symbolic font (e.g., DejaVuSans) for a symbolic-named
-    // font (e.g., ZapfDingbats), update FontDescriptor Flags to match the actual
-    // embedded program. veraPDF checks the font program, not the name.
+    // Update FontDescriptor Flags BEFORE computing widths, so that the
+    // width computation uses the same validation path veraPDF will use.
+    // veraPDF uses Encoding → Unicode → cmap for Nonsymbolic fonts, but
+    // CFF internal encoding for Symbolic fonts. The flags must match the
+    // embedded font program for consistent width validation.
     if is_truetype {
         if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
             let has_31_cmap = face.tables().cmap.as_ref().is_some_and(|cmap| {
@@ -415,6 +412,12 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
                 }
             }
         }
+    }
+
+    // Update Widths and FontDescriptor metrics from the embedded font.
+    // Uses the Symbolic flag (set above) to choose the right width path.
+    if is_truetype || is_otf {
+        update_metrics_from_font(doc, info, &font_data);
     }
 
     // PDF/A 6.2.11.6:4: for symbolic TrueType fonts, the cmap must contain
@@ -692,11 +695,23 @@ fn update_metrics_from_font(doc: &mut Document, info: &NonEmbeddedFont, font_dat
     if info.is_type0 {
         update_cid_widths(doc, info.target_id, &face, scale);
     } else {
-        // For CFF-based symbolic fonts (Symbol, ZapfDingbats), use the CFF
-        // internal encoding to compute widths.  The Unicode cmap in OTF wrappers
-        // maps unrelated Latin codepoints to symbol glyphs, producing wrong widths.
+        // For OTF-CFF fonts (OTTO magic), always use the cmap-based path.
+        // OTF Symbol fonts (StandardSymbolsPS.otf, D050000L.otf) have cmaps
+        // that map ASCII code points to their Symbol/Dingbats equivalents,
+        // which matches how veraPDF validates widths. The CFF internal
+        // encoding in these OTF fonts is often empty (all .notdef).
+        //
+        // Only use CFF internal encoding for raw CFF files (Type1C) that
+        // don't have a cmap table.
         let is_cff = face.tables().glyf.is_none();
-        if is_cff && is_symbolic_font_name(&info.name) {
+        let is_otf_wrapped = font_data.starts_with(b"OTTO");
+        let is_symbolic = is_symbolic_font_name(&info.name) && {
+            let Some(Object::Dictionary(font)) = doc.objects.get(&info.font_id) else {
+                return;
+            };
+            is_font_symbolic(doc, font)
+        };
+        if is_cff && is_symbolic && !is_otf_wrapped {
             update_simple_widths_cff_symbolic(doc, info.font_id, font_data);
         } else {
             update_simple_widths(doc, info.font_id, &face, scale);
