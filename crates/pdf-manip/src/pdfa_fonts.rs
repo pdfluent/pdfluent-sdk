@@ -1282,12 +1282,17 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
         };
 
         if let Some(enc_id) = enc_ref_with_diffs {
-            // Encoding is a referenced dict with Differences — update it in place.
-            if let Some(Object::Dictionary(ref mut enc_dict)) = doc.objects.get_mut(&enc_id) {
-                enc_dict.set(
+            // Encoding is a referenced dict with Differences — clone it to avoid
+            // modifying a shared object that other fonts may reference.
+            if let Some(Object::Dictionary(enc_dict)) = doc.objects.get(&enc_id) {
+                let mut new_enc = enc_dict.clone();
+                new_enc.set(
                     "BaseEncoding",
                     Object::Name(b"WinAnsiEncoding".to_vec()),
                 );
+                if let Some(Object::Dictionary(ref mut font_dict)) = doc.objects.get_mut(&id) {
+                    font_dict.set("Encoding", Object::Dictionary(new_enc));
+                }
             }
         } else if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(id) {
             // Inline dict with Differences, or no encoding at all.

@@ -164,7 +164,7 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     };
 
     // Also scan for DeviceCMYK usage in content streams and image XObjects.
-    let has_cmyk =
+    let _has_cmyk =
         unique_names.iter().any(|n| n.contains("DeviceCMYK")) || has_device_cmyk_in_objects(doc);
 
     let output_intent_added = if !had_output_intent {
@@ -176,11 +176,10 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
         false
     };
 
-    // If DeviceCMYK is used, add DefaultCMYK ICCBased colorspace to page resources
-    // so veraPDF accepts DeviceCMYK usage alongside the sRGB OutputIntent.
-    if has_cmyk {
-        add_default_cmyk_colorspace(doc);
-    }
+    // Always add DefaultCMYK to all pages — even if we don't detect CMYK usage,
+    // it may exist in compressed streams or inline images we can't easily scan.
+    // DefaultCMYK is harmless on pages that don't use DeviceCMYK.
+    add_default_cmyk_colorspace(doc);
 
     let separations_unified = normalize_separation_colorspaces(doc);
     let overprint_mode_fixed = fix_overprint_mode(doc);
@@ -586,7 +585,25 @@ fn add_default_cmyk_colorspace(doc: &mut Document) {
 
         if let Some(res_id) = res_id {
             // Resources is a reference — modify the referenced dict.
-            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_id) {
+            // First resolve ColorSpace if it's also a reference.
+            let cs_ref_id = {
+                if let Some(Object::Dictionary(res)) = doc.objects.get(&res_id) {
+                    match res.get(b"ColorSpace").ok() {
+                        Some(Object::Reference(id)) => Some(*id),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(cs_ref_id) = cs_ref_id {
+                // ColorSpace is itself a reference — modify that dict.
+                if let Some(Object::Dictionary(ref mut cs_dict)) = doc.objects.get_mut(&cs_ref_id) {
+                    if !cs_dict.has(b"DefaultCMYK") {
+                        cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
+                    }
+                }
+            } else if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_id) {
                 let mut cs_dict = match res.get(b"ColorSpace") {
                     Ok(Object::Dictionary(d)) => d.clone(),
                     _ => lopdf::Dictionary::new(),
