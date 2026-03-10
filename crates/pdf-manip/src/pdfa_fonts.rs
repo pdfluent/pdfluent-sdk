@@ -42,9 +42,13 @@ const STANDARD_14: &[&str] = &[
     "ZapfDingbats",
 ];
 
-/// Fallback font path for any font that cannot be found.
-const FALLBACK_FONT: &str = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-const FALLBACK_FONT_MAC: &str = "/System/Library/Fonts/Supplemental/Arial.ttf";
+/// Fallback font paths for any font that cannot be found (tried in order).
+const FALLBACK_FONTS: &[&str] = &[
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+];
 
 /// Font subtypes that indicate a Font dictionary.
 const FONT_SUBTYPES: &[&str] = &[
@@ -246,12 +250,10 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
 
     for info in &non_embedded {
         let font_path = find_system_font(&info.name).or_else(|| {
-            for fb in [FALLBACK_FONT, FALLBACK_FONT_MAC] {
-                if std::path::Path::new(fb).exists() {
-                    return Some(fb.to_string());
-                }
-            }
-            None
+            FALLBACK_FONTS
+                .iter()
+                .find(|p| std::path::Path::new(p).exists())
+                .map(|p| p.to_string())
         });
 
         match font_path {
@@ -1023,158 +1025,251 @@ fn get_or_create_font_descriptor(doc: &mut Document, font_id: ObjectId) -> Resul
 }
 
 /// Map Standard 14 font names to available system font files.
+// Font directory prefix macros for compile-time concatenation.
+macro_rules! lib {
+    ($f:literal) => {
+        concat!("/usr/share/fonts/truetype/liberation/", $f)
+    };
+}
+macro_rules! urw {
+    ($f:literal) => {
+        concat!("/usr/share/fonts/opentype/urw-base35/", $f)
+    };
+}
+macro_rules! noto {
+    ($f:literal) => {
+        concat!("/usr/share/fonts/truetype/noto/", $f)
+    };
+}
+macro_rules! dv {
+    ($f:literal) => {
+        concat!("/usr/share/fonts/truetype/dejavu/", $f)
+    };
+}
+macro_rules! mac {
+    ($f:literal) => {
+        concat!("/System/Library/Fonts/Supplemental/", $f)
+    };
+}
+
 fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
-    // Try Linux paths first (VPS), then macOS paths.
+    // Priority: Liberation (metric-compatible) > URW Base35 > Noto > DejaVu > macOS.
     let candidates: &[&str] = match clean_name {
-        "Helvetica" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        // --- Sans-serif (Helvetica / Arial family) ---
+        "Helvetica"
+        | "ArialMT"
+        | "Arial"
+        | "Tahoma"
+        | "Verdana"
+        | "LucidaSansUnicode"
+        | "LucidaSans"
+        | "SegoeUI"
+        | "Calibri"
+        | "TrebuchetMS"
+        | "LucidaGrande"
+        | "HelveticaNeue"
+        | "HelveticaLTStd-Roman" => &[
+            lib!("LiberationSans-Regular.ttf"),
+            urw!("NimbusSans-Regular.otf"),
+            noto!("NotoSans-Regular.ttf"),
+            dv!("DejaVuSans.ttf"),
             "/System/Library/Fonts/Helvetica.ttc",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            mac!("Arial.ttf"),
         ],
-        "Helvetica-Bold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "Helvetica-Bold" | "Arial-BoldMT" | "Arial,Bold" | "Arial-Bold" | "ArialBlack"
+        | "Tahoma,Bold" | "Tahoma-Bold" | "Verdana,Bold" | "Verdana-Bold" | "Calibri,Bold"
+        | "Calibri-Bold" | "HelveticaNeue-Bold" | "SegoeUI,Bold" | "SegoeUI-Bold" => &[
+            lib!("LiberationSans-Bold.ttf"),
+            urw!("NimbusSans-Bold.otf"),
+            noto!("NotoSans-Bold.ttf"),
+            dv!("DejaVuSans-Bold.ttf"),
+            mac!("Arial Bold.ttf"),
         ],
-        "Helvetica-Oblique" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+        "Helvetica-Oblique"
+        | "Arial-ItalicMT"
+        | "Arial,Italic"
+        | "Arial-Italic"
+        | "Verdana,Italic"
+        | "Verdana-Italic"
+        | "Calibri,Italic"
+        | "Calibri-Italic"
+        | "HelveticaNeue-Italic"
+        | "SegoeUI,Italic"
+        | "SegoeUI-Italic" => &[
+            lib!("LiberationSans-Italic.ttf"),
+            urw!("NimbusSans-Italic.otf"),
+            noto!("NotoSans-Italic.ttf"),
+            dv!("DejaVuSans-Oblique.ttf"),
+            mac!("Arial Italic.ttf"),
         ],
-        "Helvetica-BoldOblique" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
+        "Helvetica-BoldOblique"
+        | "Arial-BoldItalicMT"
+        | "Arial,BoldItalic"
+        | "Calibri,BoldItalic"
+        | "HelveticaNeue-BoldItalic" => &[
+            lib!("LiberationSans-BoldItalic.ttf"),
+            urw!("NimbusSans-BoldItalic.otf"),
+            noto!("NotoSans-BoldItalic.ttf"),
+            dv!("DejaVuSans-BoldOblique.ttf"),
+            mac!("Arial Bold Italic.ttf"),
         ],
-        "Times-Roman" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-            "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+        // --- Serif (Times family) ---
+        "Times-Roman" | "TimesNewRomanPSMT" | "TimesNewRoman" | "TimesNewRomanPS" | "Georgia"
+        | "BookAntiqua" | "Cambria" | "Garamond" | "Palatino" | "PalatinoLinotype" => &[
+            lib!("LiberationSerif-Regular.ttf"),
+            urw!("NimbusRoman-Regular.otf"),
+            noto!("NotoSerif-Regular.ttf"),
+            dv!("DejaVuSerif.ttf"),
+            mac!("Times New Roman.ttf"),
         ],
-        "Times-Bold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
+        "Times-Bold"
+        | "TimesNewRomanPS-BoldMT"
+        | "TimesNewRoman,Bold"
+        | "TimesNewRoman-Bold"
+        | "Georgia,Bold"
+        | "Georgia-Bold"
+        | "Cambria,Bold"
+        | "Cambria-Bold" => &[
+            lib!("LiberationSerif-Bold.ttf"),
+            urw!("NimbusRoman-Bold.otf"),
+            noto!("NotoSerif-Bold.ttf"),
+            dv!("DejaVuSerif-Bold.ttf"),
+            mac!("Times New Roman Bold.ttf"),
         ],
-        "Times-Italic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
-            "/System/Library/Fonts/Supplemental/Times New Roman Italic.ttf",
+        "Times-Italic"
+        | "TimesNewRomanPS-ItalicMT"
+        | "TimesNewRoman,Italic"
+        | "TimesNewRoman-Italic"
+        | "Georgia,Italic"
+        | "Georgia-Italic"
+        | "Cambria,Italic"
+        | "Cambria-Italic" => &[
+            lib!("LiberationSerif-Italic.ttf"),
+            urw!("NimbusRoman-Italic.otf"),
+            noto!("NotoSerif-Italic.ttf"),
+            dv!("DejaVuSerif-Italic.ttf"),
+            mac!("Times New Roman Italic.ttf"),
         ],
-        "Times-BoldItalic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-BoldItalic.ttf",
-            "/System/Library/Fonts/Supplemental/Times New Roman Bold Italic.ttf",
+        "Times-BoldItalic"
+        | "TimesNewRomanPS-BoldItalicMT"
+        | "TimesNewRoman,BoldItalic"
+        | "Cambria,BoldItalic" => &[
+            lib!("LiberationSerif-BoldItalic.ttf"),
+            urw!("NimbusRoman-BoldItalic.otf"),
+            noto!("NotoSerif-BoldItalic.ttf"),
+            dv!("DejaVuSerif-BoldItalic.ttf"),
+            mac!("Times New Roman Bold Italic.ttf"),
         ],
-        "Courier" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New.ttf",
+        // --- Monospace (Courier family) ---
+        "Courier" | "CourierNewPSMT" | "CourierNew" | "CourierNewPS" | "LucidaConsole"
+        | "Consolas" => &[
+            lib!("LiberationMono-Regular.ttf"),
+            urw!("NimbusMonoPS-Regular.otf"),
+            dv!("DejaVuSansMono.ttf"),
+            mac!("Courier New.ttf"),
         ],
-        "Courier-Bold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
+        "Courier-Bold" | "CourierNewPS-BoldMT" | "CourierNew,Bold" | "CourierNew-Bold" => &[
+            lib!("LiberationMono-Bold.ttf"),
+            urw!("NimbusMonoPS-Bold.otf"),
+            dv!("DejaVuSansMono-Bold.ttf"),
+            mac!("Courier New Bold.ttf"),
         ],
-        "Courier-Oblique" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New Italic.ttf",
+        "Courier-Oblique" | "CourierNewPS-ItalicMT" | "CourierNew,Italic" | "CourierNew-Italic" => {
+            &[
+                lib!("LiberationMono-Italic.ttf"),
+                urw!("NimbusMonoPS-Italic.otf"),
+                dv!("DejaVuSansMono-Oblique.ttf"),
+                mac!("Courier New Italic.ttf"),
+            ]
+        }
+        "Courier-BoldOblique" | "CourierNewPS-BoldItalicMT" | "CourierNew,BoldItalic" => &[
+            lib!("LiberationMono-BoldItalic.ttf"),
+            urw!("NimbusMonoPS-BoldItalic.otf"),
+            dv!("DejaVuSansMono-BoldOblique.ttf"),
+            mac!("Courier New Bold Italic.ttf"),
         ],
-        "Courier-BoldOblique" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New Bold Italic.ttf",
-        ],
+        // --- Symbolic fonts ---
         "Symbol" | "SymbolMT" => &[
-            "/usr/share/fonts/opentype/urw-base35/StandardSymbolsPS.otf",
+            urw!("StandardSymbolsPS.otf"),
             "/System/Library/Fonts/Symbol.ttf",
         ],
         "ZapfDingbats" => &[
-            "/usr/share/fonts/opentype/urw-base35/D050000L.otf",
+            urw!("D050000L.otf"),
             "/System/Library/Fonts/Supplemental/Apple Symbols.ttf",
         ],
-        "ArialMT" | "Arial" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-        ],
-        "Arial-BoldMT" | "Arial,Bold" | "Arial-Bold" | "ArialBlack" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        ],
-        "Arial-ItalicMT" | "Arial,Italic" | "Arial-Italic" | "ArialBlack,Italic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
-        ],
-        "Arial-BoldItalicMT" | "Arial,BoldItalic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Bold Italic.ttf",
-        ],
-        "TimesNewRomanPSMT" | "TimesNewRoman" | "TimesNewRomanPS" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-            "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
-        ],
-        "TimesNewRomanPS-BoldMT" | "TimesNewRoman,Bold" | "TimesNewRoman-Bold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Times New Roman Bold.ttf",
-        ],
-        "TimesNewRomanPS-ItalicMT" | "TimesNewRoman,Italic" | "TimesNewRoman-Italic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
-            "/System/Library/Fonts/Supplemental/Times New Roman Italic.ttf",
-        ],
-        "TimesNewRomanPS-BoldItalicMT" | "TimesNewRoman,BoldItalic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-BoldItalic.ttf",
-            "/System/Library/Fonts/Supplemental/Times New Roman Bold Italic.ttf",
-        ],
-        "CourierNewPSMT" | "CourierNew" | "CourierNewPS" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New.ttf",
-        ],
-        "CourierNewPS-BoldMT" | "CourierNew,Bold" | "CourierNew-Bold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New Bold.ttf",
-        ],
-        "CourierNewPS-ItalicMT" | "CourierNew,Italic" | "CourierNew-Italic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New Italic.ttf",
-        ],
-        "CourierNewPS-BoldItalicMT" | "CourierNew,BoldItalic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New Bold Italic.ttf",
-        ],
-        "Tahoma" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Tahoma.ttf",
-        ],
-        "Tahoma,Bold" | "Tahoma-Bold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Tahoma Bold.ttf",
-        ],
-        "Verdana" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Verdana.ttf",
-        ],
-        "Verdana,Bold" | "Verdana-Bold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Verdana Bold.ttf",
-        ],
-        "Verdana,Italic" | "Verdana-Italic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
-            "/System/Library/Fonts/Supplemental/Verdana Italic.ttf",
-        ],
-        "LucidaSansUnicode" | "LucidaSans" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Arial.ttf",
-        ],
+        // --- Narrow variants ---
         "ArialNarrow" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Narrow.ttf",
+            lib!("LiberationSansNarrow-Regular.ttf"),
+            urw!("NimbusSansNarrow-Regular.otf"),
+            dv!("DejaVuSansCondensed.ttf"),
+            mac!("Arial Narrow.ttf"),
         ],
         "ArialNarrow,Bold" | "ArialNarrow-Bold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Narrow Bold.ttf",
+            lib!("LiberationSansNarrow-Bold.ttf"),
+            urw!("NimbusSansNarrow-Bold.otf"),
+            dv!("DejaVuSansCondensed-Bold.ttf"),
+            mac!("Arial Narrow Bold.ttf"),
         ],
         "ArialNarrow,Italic" | "ArialNarrow-Italic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Narrow Italic.ttf",
+            lib!("LiberationSansNarrow-Italic.ttf"),
+            urw!("NimbusSansNarrow-Oblique.otf"),
+            dv!("DejaVuSansCondensed-Oblique.ttf"),
+            mac!("Arial Narrow Italic.ttf"),
         ],
         "ArialNarrow,BoldItalic" | "ArialNarrow-BoldItalic" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Narrow Bold Italic.ttf",
+            lib!("LiberationSansNarrow-BoldItalic.ttf"),
+            urw!("NimbusSansNarrow-BoldOblique.otf"),
+            dv!("DejaVuSansCondensed-BoldOblique.ttf"),
+            mac!("Arial Narrow Bold Italic.ttf"),
         ],
         "ArialRoundedMTBold" => &[
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf",
+            lib!("LiberationSans-Bold.ttf"),
+            dv!("DejaVuSans-Bold.ttf"),
+            mac!("Arial Rounded Bold.ttf"),
         ],
+        // --- PostScript Level 2 base 35 fonts (URW equivalents) ---
+        "NewCenturySchlbk-Roman" | "CenturySchoolbook" => {
+            &[urw!("C059-Roman.otf"), lib!("LiberationSerif-Regular.ttf")]
+        }
+        "NewCenturySchlbk-Bold" | "CenturySchoolbook-Bold" => {
+            &[urw!("C059-Bold.otf"), lib!("LiberationSerif-Bold.ttf")]
+        }
+        "NewCenturySchlbk-Italic" | "CenturySchoolbook-Italic" => {
+            &[urw!("C059-Italic.otf"), lib!("LiberationSerif-Italic.ttf")]
+        }
+        "NewCenturySchlbk-BoldItalic" | "CenturySchoolbook-BoldItalic" => &[
+            urw!("C059-BdIta.otf"),
+            lib!("LiberationSerif-BoldItalic.ttf"),
+        ],
+        "Bookman-Light" | "BookmanOldStyle" => &[
+            urw!("URWBookman-Light.otf"),
+            lib!("LiberationSerif-Regular.ttf"),
+        ],
+        "Bookman-Demi" | "BookmanOldStyle-Bold" => &[
+            urw!("URWBookman-Demi.otf"),
+            lib!("LiberationSerif-Bold.ttf"),
+        ],
+        "AvantGarde-Book" | "AvantGardeITCbyBT-Book" => &[
+            urw!("URWGothic-Book.otf"),
+            lib!("LiberationSans-Regular.ttf"),
+        ],
+        "AvantGarde-Demi" => &[urw!("URWGothic-Demi.otf"), lib!("LiberationSans-Bold.ttf")],
+        "Palatino-Roman" | "PalatinoLinotype-Roman" => {
+            &[urw!("P052-Roman.otf"), lib!("LiberationSerif-Regular.ttf")]
+        }
+        "Palatino-Bold" | "PalatinoLinotype-Bold" => {
+            &[urw!("P052-Bold.otf"), lib!("LiberationSerif-Bold.ttf")]
+        }
+        "Palatino-Italic" | "PalatinoLinotype-Italic" => {
+            &[urw!("P052-Italic.otf"), lib!("LiberationSerif-Italic.ttf")]
+        }
+        "Palatino-BoldItalic" | "PalatinoLinotype-BoldItalic" => &[
+            urw!("P052-BoldItalic.otf"),
+            lib!("LiberationSerif-BoldItalic.ttf"),
+        ],
+        "ZapfChancery-MediumItalic" => &[urw!("Z003-MediumItalic.otf")],
+        // --- Misc common fonts ---
+        "Impact" | "ComicSansMS" => &[lib!("LiberationSans-Bold.ttf"), noto!("NotoSans-Bold.ttf")],
         _ => return None,
     };
     for &path in candidates {
@@ -1182,7 +1277,6 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
             return Some(path);
         }
     }
-    // Return first candidate even if non-existent (for error messages).
     candidates.first().copied()
 }
 
@@ -1194,6 +1288,11 @@ fn find_system_font(font_name: &str) -> Option<String> {
         if std::path::Path::new(path).exists() {
             return Some(path.to_string());
         }
+    }
+
+    // Heuristic: for unknown fonts, infer style and pick a matching substitute.
+    if let Some(path) = heuristic_font_match(clean_name) {
+        return Some(path);
     }
 
     let candidates: Vec<String> = vec![
@@ -1241,6 +1340,71 @@ fn find_system_font(font_name: &str) -> Option<String> {
     }
 
     None
+}
+
+/// Heuristic font matching: infer weight/style from font name, then pick a
+/// Liberation or Noto substitute based on whether the name looks like serif,
+/// sans-serif, or monospace.
+fn heuristic_font_match(name: &str) -> Option<String> {
+    let lower = name.to_ascii_lowercase();
+
+    // Detect weight and style from common suffixes.
+    let is_bold = lower.contains("bold")
+        || lower.contains("demi")
+        || lower.contains("black")
+        || lower.contains("heavy");
+    let is_italic =
+        lower.contains("italic") || lower.contains("oblique") || lower.contains("slant");
+
+    // Detect font class.
+    let is_mono = lower.contains("mono")
+        || lower.contains("courier")
+        || lower.contains("code")
+        || lower.contains("console")
+        || lower.contains("typewriter");
+    let is_serif =
+        (lower.contains("serif") && !lower.contains("sansserif") && !lower.contains("sans-serif"))
+            || lower.contains("roman")
+            || lower.contains("times")
+            || lower.contains("garamond")
+            || lower.contains("georgia")
+            || lower.contains("bookman")
+            || lower.contains("century")
+            || lower.contains("palatino")
+            || lower.contains("cambria")
+            || lower.contains("minion");
+
+    let key = if is_mono {
+        match (is_bold, is_italic) {
+            (true, true) => "Courier-BoldOblique",
+            (true, false) => "Courier-Bold",
+            (false, true) => "Courier-Oblique",
+            (false, false) => "Courier",
+        }
+    } else if is_serif {
+        match (is_bold, is_italic) {
+            (true, true) => "Times-BoldItalic",
+            (true, false) => "Times-Bold",
+            (false, true) => "Times-Italic",
+            (false, false) => "Times-Roman",
+        }
+    } else {
+        // Default to sans-serif.
+        match (is_bold, is_italic) {
+            (true, true) => "Helvetica-BoldOblique",
+            (true, false) => "Helvetica-Bold",
+            (false, true) => "Helvetica-Oblique",
+            (false, false) => "Helvetica",
+        }
+    };
+
+    standard14_system_path(key).and_then(|p| {
+        if std::path::Path::new(p).exists() {
+            Some(p.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 fn find_font_recursive(dir: &str, filename: &str) -> Option<String> {
