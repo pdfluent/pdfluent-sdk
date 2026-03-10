@@ -875,6 +875,84 @@ pub fn fix_width_mismatches(doc: &mut Document) -> usize {
     fixed
 }
 
+/// Fix FontDescriptor metrics to match embedded font programs (6.2.11.6:3).
+///
+/// Updates Ascent, Descent, CapHeight, FontBBox in FontDescriptor dicts
+/// when they don't match the embedded font. Does NOT touch widths.
+pub fn fix_font_descriptor_metrics(doc: &mut Document) -> usize {
+    // Collect all FontDescriptor IDs that have embedded fonts.
+    let fd_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if matches!(get_name(dict, b"Type").as_deref(), Some("FontDescriptor")) {
+                    // Check if there's an embedded font.
+                    if dict.has(b"FontFile") || dict.has(b"FontFile2") || dict.has(b"FontFile3") {
+                        return Some(*id);
+                    }
+                }
+            }
+            None
+        })
+        .collect();
+
+    let mut fixed = 0;
+    for fd_id in fd_ids {
+        let font_data = read_embedded_font_data(doc, fd_id);
+        let Some(font_data) = font_data else { continue };
+
+        let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+            continue;
+        };
+
+        let units_per_em = face.units_per_em() as f64;
+        if units_per_em == 0.0 {
+            continue;
+        }
+        let scale = 1000.0 / units_per_em;
+
+        let ascent = (face.ascender() as f64 * scale).round() as i64;
+        let descent = (face.descender() as f64 * scale).round() as i64;
+        let bbox = face.global_bounding_box();
+        let cap_height = face
+            .capital_height()
+            .map(|h| (h as f64 * scale).round() as i64);
+
+        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+            // Only update if values differ.
+            let ascent_ok = matches!(
+                fd.get(b"Ascent").ok(),
+                Some(Object::Integer(v)) if (*v - ascent).abs() <= 1
+            );
+            let descent_ok = matches!(
+                fd.get(b"Descent").ok(),
+                Some(Object::Integer(v)) if (*v - descent).abs() <= 1
+            );
+            let needs_update = !ascent_ok || !descent_ok;
+
+            if needs_update {
+                fd.set("Ascent", Object::Integer(ascent));
+                fd.set("Descent", Object::Integer(descent));
+                fd.set(
+                    "FontBBox",
+                    Object::Array(vec![
+                        Object::Integer((bbox.x_min as f64 * scale).round() as i64),
+                        Object::Integer((bbox.y_min as f64 * scale).round() as i64),
+                        Object::Integer((bbox.x_max as f64 * scale).round() as i64),
+                        Object::Integer((bbox.y_max as f64 * scale).round() as i64),
+                    ]),
+                );
+                if let Some(ch) = cap_height {
+                    fd.set("CapHeight", Object::Integer(ch));
+                }
+                fixed += 1;
+            }
+        }
+    }
+    fixed
+}
+
 /// Fix font metrics for all already-embedded fonts (6.2.11.6:3, 6.2.11.5:1).
 ///
 /// Reads embedded font programs (FontFile2/FontFile3) and updates

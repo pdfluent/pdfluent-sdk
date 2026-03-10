@@ -138,6 +138,12 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_width_mismatches(&mut doc)
         }));
 
+        // 3a1c. Fix FontDescriptor metrics.
+        set_progress("fd_metrics");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_font_descriptor_metrics(&mut doc)
+        }));
+
         // 3a2. Fix TrueType encoding for non-symbolic fonts.
         set_progress("font_encoding");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
