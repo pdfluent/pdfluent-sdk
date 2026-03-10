@@ -458,21 +458,35 @@ fn fix_annotation_flags(doc: &mut Document) -> usize {
     for id in ids {
         let needs_fix = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
-                let is_annot = match dict.get(b"Subtype").ok() {
-                    // Popup annotations are exempt from F key requirements.
-                    Some(Object::Name(n)) => is_annotation_subtype(n) && n != b"Popup",
-                    _ => false,
+                let subtype = match dict.get(b"Subtype").ok() {
+                    Some(Object::Name(n)) => Some(n.clone()),
+                    _ => None,
                 };
+                let is_annot = subtype
+                    .as_ref()
+                    .map_or(false, |n| is_annotation_subtype(n))
+                    || matches!(
+                        dict.get(b"Type").ok(),
+                        Some(Object::Name(ref n)) if n == b"Annot"
+                    );
+                let is_popup = subtype.as_deref() == Some(b"Popup");
                 if !is_annot {
                     false
                 } else {
+                    let has_f = dict.get(b"F").is_ok();
                     let f = match dict.get(b"F").ok() {
                         Some(Object::Integer(v)) => *v as u32,
-                        _ => 0, // Missing F key = 0 = needs fix
+                        _ => 0,
                     };
-                    let print_bit: u32 = 1 << 2;
-                    let bad: u32 = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 8);
-                    (f & print_bit == 0) || (f & bad != 0)
+                    // Popup annotations are exempt from HAVING the F key (6.3.2:1),
+                    // but if F is already present, flags must be correct (6.3.2:2).
+                    if is_popup && !has_f {
+                        false
+                    } else {
+                        let print_bit: u32 = 1 << 2;
+                        let bad: u32 = (1 << 0) | (1 << 1) | (1 << 5) | (1 << 8);
+                        (f & print_bit == 0) || (f & bad != 0)
+                    }
                 }
             } else {
                 false
@@ -764,10 +778,7 @@ fn fix_optional_content(doc: &mut Document) -> usize {
                         if !config.has(b"Name") {
                             config.set(
                                 "Name",
-                                Object::String(
-                                    b"Config".to_vec(),
-                                    lopdf::StringFormat::Literal,
-                                ),
+                                Object::String(b"Config".to_vec(), lopdf::StringFormat::Literal),
                             );
                             count += 1;
                         }
@@ -1024,6 +1035,9 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                 let is_annot = matches!(
                     dict.get(b"Subtype").ok(),
                     Some(Object::Name(ref n)) if is_annotation_subtype(n) && n != b"Popup" && n != b"Link"
+                ) || matches!(
+                    dict.get(b"Type").ok(),
+                    Some(Object::Name(ref n)) if n == b"Annot"
                 );
                 if !is_annot {
                     ApFixInfo::None
@@ -1352,13 +1366,12 @@ fn fix_widget_btn_appearance(doc: &mut Document) {
     for id in ids {
         let needs_fix = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
-                let is_widget_btn = matches!(
+                let is_widget = matches!(
                     dict.get(b"Subtype").ok(),
                     Some(Object::Name(ref n)) if n == b"Widget"
-                ) && matches!(
-                    dict.get(b"FT").ok(),
-                    Some(Object::Name(ref n)) if n == b"Btn"
                 );
+                // Walk parent chain for inherited FT=Btn.
+                let is_widget_btn = is_widget && is_btn_field(doc, dict);
                 if !is_widget_btn {
                     false
                 } else {
@@ -1416,14 +1429,13 @@ fn fix_non_btn_ap_n_subdict(doc: &mut Document) {
                 Some(Object::Dictionary(ap)) => match ap.get(b"N").ok() {
                     Some(Object::Dictionary(sub)) => {
                         // Pick the first reference from the subdictionary.
-                        sub.iter()
-                            .find_map(|(_, v)| {
-                                if matches!(v, Object::Reference(_)) {
-                                    Some(v.clone())
-                                } else {
-                                    None
-                                }
-                            })
+                        sub.iter().find_map(|(_, v)| {
+                            if matches!(v, Object::Reference(_)) {
+                                Some(v.clone())
+                            } else {
+                                None
+                            }
+                        })
                     }
                     _ => None,
                 },
@@ -1891,24 +1903,20 @@ fn truncate_long_names(doc: &mut Document) {
         };
         for key in long_keys {
             let truncated = match doc.objects.get(&id) {
-                Some(Object::Dictionary(d)) => {
-                    d.get(&key).ok().and_then(|v| {
-                        if let Object::Name(n) = v {
-                            Some(n[..127].to_vec())
-                        } else {
-                            None
-                        }
-                    })
-                }
-                Some(Object::Stream(s)) => {
-                    s.dict.get(&key).ok().and_then(|v| {
-                        if let Object::Name(n) = v {
-                            Some(n[..127].to_vec())
-                        } else {
-                            None
-                        }
-                    })
-                }
+                Some(Object::Dictionary(d)) => d.get(&key).ok().and_then(|v| {
+                    if let Object::Name(n) = v {
+                        Some(n[..127].to_vec())
+                    } else {
+                        None
+                    }
+                }),
+                Some(Object::Stream(s)) => s.dict.get(&key).ok().and_then(|v| {
+                    if let Object::Name(n) = v {
+                        Some(n[..127].to_vec())
+                    } else {
+                        None
+                    }
+                }),
                 _ => None,
             };
             if let Some(truncated) = truncated {
@@ -2050,10 +2058,7 @@ fn remove_halftone_names(doc: &mut Document) {
         let is_type5 = match doc.objects.get(&id) {
             Some(Object::Dictionary(d)) => {
                 is_halftone_dict(d)
-                    && matches!(
-                        d.get(b"HalftoneType").ok(),
-                        Some(Object::Integer(5))
-                    )
+                    && matches!(d.get(b"HalftoneType").ok(), Some(Object::Integer(5)))
             }
             _ => false,
         };
@@ -2307,15 +2312,14 @@ fn count_name_tree_entries(doc: &Document, tree_id: ObjectId) -> usize {
 ///    with empty streams so veraPDF won't find non-standard XMP properties.
 fn strip_non_catalog_metadata(doc: &mut Document) {
     // Find the catalog's /Metadata reference to preserve it.
-    let catalog_meta_id: Option<ObjectId> = get_catalog_id(doc).and_then(|cat_id| {
-        match doc.objects.get(&cat_id) {
+    let catalog_meta_id: Option<ObjectId> =
+        get_catalog_id(doc).and_then(|cat_id| match doc.objects.get(&cat_id) {
             Some(Object::Dictionary(cat)) => match cat.get(b"Metadata").ok() {
                 Some(Object::Reference(id)) => Some(*id),
                 _ => None,
             },
             _ => None,
-        }
-    });
+        });
     let catalog_id = get_catalog_id(doc);
 
     // Phase 1: Strip /Metadata keys from all dicts and stream dicts,
