@@ -1744,29 +1744,57 @@ fn remove_ocg_as_key(doc: &mut Document) {
 fn truncate_long_names(doc: &mut Document) {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let long_keys: Vec<Vec<u8>> = {
-            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
-                dict.iter()
-                    .filter_map(|(key, val)| {
-                        // Check Name values > 127 bytes.
-                        if let Object::Name(n) = val {
-                            if n.len() > 127 {
-                                return Some(key.clone());
-                            }
+        let dict_ref = match doc.objects.get(&id) {
+            Some(Object::Dictionary(d)) => Some(d),
+            Some(Object::Stream(s)) => Some(&s.dict),
+            _ => None,
+        };
+        let long_keys: Vec<Vec<u8>> = if let Some(dict) = dict_ref {
+            dict.iter()
+                .filter_map(|(key, val)| {
+                    if let Object::Name(n) = val {
+                        if n.len() > 127 {
+                            return Some(key.clone());
                         }
-                        None
-                    })
-                    .collect()
-            } else {
-                vec![]
-            }
+                    }
+                    None
+                })
+                .collect()
+        } else {
+            vec![]
         };
         for key in long_keys {
-            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
-                if let Ok(Object::Name(ref n)) = dict.get(&key) {
-                    let truncated = n[..127].to_vec();
-                    let key_str = std::str::from_utf8(&key).unwrap_or("?");
-                    dict.set(key_str, Object::Name(truncated));
+            let truncated = match doc.objects.get(&id) {
+                Some(Object::Dictionary(d)) => {
+                    d.get(&key).ok().and_then(|v| {
+                        if let Object::Name(n) = v {
+                            Some(n[..127].to_vec())
+                        } else {
+                            None
+                        }
+                    })
+                }
+                Some(Object::Stream(s)) => {
+                    s.dict.get(&key).ok().and_then(|v| {
+                        if let Object::Name(n) = v {
+                            Some(n[..127].to_vec())
+                        } else {
+                            None
+                        }
+                    })
+                }
+                _ => None,
+            };
+            if let Some(truncated) = truncated {
+                let key_str = std::str::from_utf8(&key).unwrap_or("?");
+                match doc.objects.get_mut(&id) {
+                    Some(Object::Dictionary(ref mut d)) => {
+                        d.set(key_str, Object::Name(truncated));
+                    }
+                    Some(Object::Stream(ref mut s)) => {
+                        s.dict.set(key_str, Object::Name(truncated));
+                    }
+                    _ => {}
                 }
             }
         }
