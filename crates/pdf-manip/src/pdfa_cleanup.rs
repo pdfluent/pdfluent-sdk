@@ -87,6 +87,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_widget_actions(doc);
     remove_xfa_from_acroform(doc);
     fix_widget_btn_appearance(doc);
+    fix_form_xobject_keys(doc);
     // NOTE: fix_font_descriptor_keys and fix_font_lastchar_widths disabled —
     // they run before embed_fonts and create incorrect state (zero widths,
     // wrong FontFile key). Font fixes are handled by embed_fonts instead.
@@ -1025,6 +1026,38 @@ fn strip_ap_non_normal(doc: &mut Document) {
                         ap.remove(b"R");
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Remove forbidden keys from Form XObjects (6.2.9:1).
+///
+/// Form XObjects must not contain OPI, Subtype2 (with value PS), or PS keys.
+fn fix_form_xobject_keys(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let is_form_xobject = {
+            let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+                continue;
+            };
+            matches!(
+                stream.dict.get(b"Subtype").ok(),
+                Some(Object::Name(ref n)) if n == b"Form"
+            )
+        };
+        if !is_form_xobject {
+            continue;
+        }
+        if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+            stream.dict.remove(b"OPI");
+            stream.dict.remove(b"PS");
+            // Remove Subtype2 if value is PS.
+            if matches!(
+                stream.dict.get(b"Subtype2").ok(),
+                Some(Object::Name(ref n)) if n == b"PS"
+            ) {
+                stream.dict.remove(b"Subtype2");
             }
         }
     }
