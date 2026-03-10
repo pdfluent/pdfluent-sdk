@@ -35,6 +35,9 @@ fn main() {
     let cff_widths = pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
     eprintln!("CFF widths: fixed={cff_widths}");
 
+    let tt_cid_widths = pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+    eprintln!("TrueType CID widths: fixed={tt_cid_widths}");
+
     let charset_fixed = pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
     eprintln!("Type1 CharSet: fixed={charset_fixed}");
 

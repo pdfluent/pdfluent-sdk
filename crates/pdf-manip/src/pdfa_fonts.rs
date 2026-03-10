@@ -1334,6 +1334,248 @@ pub fn fix_cff_widths(doc: &mut Document) -> usize {
     fixed
 }
 
+/// Fix widths for TrueType CIDFontType2 fonts (6.2.11.5:1).
+///
+/// CIDFontType2 fonts use CIDToGIDMap (Identity or explicit) to map CIDs
+/// to GlyphIDs. This is safer than simple TrueType width fixing because
+/// the mapping is unambiguous (no encoding complexity).
+pub fn fix_truetype_cid_widths(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+
+    for font_id in font_ids {
+        let (subtype, fd_id, cid_font_id) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+
+            if subtype == "Type0" {
+                // Get CIDFont descendant.
+                let desc = get_descendant_embed_info(doc, dict);
+                match desc {
+                    Some((cid_id, true)) => {
+                        let cid_subtype = doc.objects.get(&cid_id).and_then(|o| {
+                            if let Object::Dictionary(d) = o {
+                                get_name(d, b"Subtype")
+                            } else {
+                                None
+                            }
+                        });
+                        let cid_fd = doc.objects.get(&cid_id).and_then(|o| {
+                            if let Object::Dictionary(d) = o {
+                                match d.get(b"FontDescriptor").ok() {
+                                    Some(Object::Reference(id)) => Some(*id),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        (cid_subtype.unwrap_or_default(), cid_fd, Some(cid_id))
+                    }
+                    _ => continue,
+                }
+            } else if subtype == "CIDFontType2" {
+                let fd_id = match dict.get(b"FontDescriptor").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                };
+                (subtype, fd_id, Some(font_id))
+            } else {
+                continue;
+            }
+        };
+
+        // Only process CIDFontType2 (TrueType-based CID fonts).
+        if subtype != "CIDFontType2" {
+            continue;
+        }
+
+        let Some(fd_id) = fd_id else { continue };
+        let Some(cid_id) = cid_font_id else { continue };
+
+        // Only process fonts with FontFile2 (TrueType programs).
+        let has_ff2 = matches!(
+            doc.objects.get(&fd_id),
+            Some(Object::Dictionary(d)) if d.has(b"FontFile2")
+        );
+        if !has_ff2 {
+            continue;
+        }
+
+        let font_data = read_embedded_font_data(doc, fd_id);
+        let Some(font_data) = font_data else { continue };
+
+        let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+            continue;
+        };
+
+        let units_per_em = face.units_per_em() as f64;
+        if units_per_em == 0.0 {
+            continue;
+        }
+        let scale = 1000.0 / units_per_em;
+
+        // Read CIDToGIDMap to determine mapping.
+        let is_identity = {
+            let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_id) else {
+                continue;
+            };
+            match cid_dict.get(b"CIDToGIDMap").ok() {
+                Some(Object::Name(n)) => n == b"Identity",
+                None => true, // Default is Identity per spec.
+                _ => false,   // Stream-based map — skip for now.
+            }
+        };
+
+        if !is_identity {
+            continue; // Only handle Identity mapping for now.
+        }
+
+        // For Identity mapping: CID == GID. Read widths from hmtx.
+        let num_glyphs = face.number_of_glyphs();
+        if num_glyphs == 0 {
+            continue;
+        }
+
+        // Collect widths: CID → width in PDF units.
+        let mut widths: Vec<(u16, i64)> = Vec::new();
+        for gid in 0..num_glyphs {
+            let w = face
+                .glyph_hor_advance(ttf_parser::GlyphId(gid))
+                .map(|a| (a as f64 * scale).round() as i64)
+                .unwrap_or(0);
+            widths.push((gid, w));
+        }
+
+        if widths.is_empty() {
+            continue;
+        }
+
+        // Check if existing widths already match (avoid unnecessary changes).
+        let existing_matches = check_cid_widths_match(doc, cid_id, &widths);
+        if existing_matches {
+            continue;
+        }
+
+        // Determine DW (most common width).
+        let mut freq: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        for (_, w) in &widths {
+            *freq.entry(*w).or_default() += 1;
+        }
+        let dw = freq
+            .iter()
+            .max_by_key(|(_, count)| *count)
+            .map(|(w, _)| *w)
+            .unwrap_or(1000);
+
+        // Build /W array with runs of non-default widths.
+        let mut w_array: Vec<Object> = Vec::new();
+        let mut i = 0;
+        while i < widths.len() {
+            let (cid, w) = widths[i];
+            if w == dw {
+                i += 1;
+                continue;
+            }
+            // Start a run of consecutive CIDs with non-default widths.
+            let start = cid;
+            let mut run: Vec<i64> = vec![w];
+            i += 1;
+            while i < widths.len() {
+                let (next_cid, next_w) = widths[i];
+                if next_cid != start + run.len() as u16 {
+                    break;
+                }
+                if next_w == dw && (i + 1 >= widths.len() || widths[i + 1].0 != next_cid + 1) {
+                    break;
+                }
+                run.push(next_w);
+                i += 1;
+            }
+            w_array.push(Object::Integer(start as i64));
+            w_array.push(Object::Array(
+                run.into_iter().map(Object::Integer).collect(),
+            ));
+        }
+
+        // Update the CIDFont dictionary.
+        if let Some(Object::Dictionary(ref mut cid_dict)) = doc.objects.get_mut(&cid_id) {
+            cid_dict.set("DW", Object::Integer(dw));
+            if w_array.is_empty() {
+                cid_dict.remove(b"W");
+            } else {
+                cid_dict.set("W", Object::Array(w_array));
+            }
+        }
+
+        fixed += 1;
+    }
+
+    fixed
+}
+
+/// Check if existing CIDFont W/DW widths match the expected widths.
+fn check_cid_widths_match(doc: &Document, cid_id: ObjectId, expected: &[(u16, i64)]) -> bool {
+    let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_id) else {
+        return false;
+    };
+
+    let dw = match cid_dict.get(b"DW").ok() {
+        Some(Object::Integer(v)) => *v,
+        _ => 1000,
+    };
+
+    // Build a map of CID → expected width from the W array.
+    let mut existing_widths: std::collections::HashMap<u16, i64> = std::collections::HashMap::new();
+    if let Ok(Object::Array(w_arr)) = cid_dict.get(b"W") {
+        let mut i = 0;
+        while i < w_arr.len() {
+            let start_cid = match &w_arr[i] {
+                Object::Integer(v) => *v as u16,
+                _ => break,
+            };
+            i += 1;
+            if i >= w_arr.len() {
+                break;
+            }
+            match &w_arr[i] {
+                Object::Array(widths) => {
+                    for (j, w) in widths.iter().enumerate() {
+                        if let Object::Integer(v) = w {
+                            existing_widths.insert(start_cid + j as u16, *v);
+                        }
+                    }
+                    i += 1;
+                }
+                Object::Integer(end_cid) => {
+                    i += 1;
+                    if i >= w_arr.len() {
+                        break;
+                    }
+                    if let Object::Integer(width) = &w_arr[i] {
+                        for cid in start_cid..=(*end_cid as u16) {
+                            existing_widths.insert(cid, *width);
+                        }
+                    }
+                    i += 1;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    // Compare: for each expected width, check if existing matches.
+    for (cid, exp_w) in expected {
+        let actual = existing_widths.get(cid).copied().unwrap_or(dw);
+        if (actual - exp_w).abs() > 1 {
+            return false;
+        }
+    }
+    true
+}
+
 /// Fix CharSet in Type 1 font descriptors (6.2.11.4.2:1).
 ///
 /// The CharSet string must list all glyph names present in the CFF font program.

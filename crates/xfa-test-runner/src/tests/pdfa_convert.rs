@@ -132,11 +132,16 @@ impl PdfTest for PdfAConvertTest {
             _ => None,
         };
 
-        // NOTE: fix_width_mismatches disabled — causes regression on TrueType fonts.
-        // CFF-only width fixing is safe (doesn't touch TrueType).
+        // NOTE: fix_width_mismatches disabled — causes regression on simple TrueType fonts.
+        // CFF-only and CIDFontType2 width fixing is safe.
         set_progress("cff_widths");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc)
+        }));
+
+        set_progress("tt_cid_widths");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc)
         }));
 
         // 3a1b. Fix Type1 CharSet from CFF program.
