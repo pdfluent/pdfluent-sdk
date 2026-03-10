@@ -2568,6 +2568,8 @@ fn strip_signatures(doc: &mut Document) {
 pub fn fix_pdf_header(data: &mut Vec<u8>) {
     // PDF/A-2 requires: %PDF-1.n\n%<4+ high bytes>\n
     // where n is 0-7, and no extra bytes between the version and EOL.
+    let mut shift: i64 = 0;
+
     if data.len() >= 9 && &data[0..5] == b"%PDF-" {
         // Fix version 2.x → 1.7
         if data[5] == b'2' {
@@ -2584,8 +2586,9 @@ pub fn fix_pdf_header(data: &mut Vec<u8>) {
             // Find the next EOL.
             if let Some(eol_pos) = data[8..].iter().position(|&b| b == b'\n' || b == b'\r') {
                 let eol_pos = eol_pos + 8;
-                // Remove bytes between position 8 and the EOL.
+                let removed = eol_pos - 8;
                 data.drain(8..eol_pos);
+                shift -= removed as i64;
             }
         }
     }
@@ -2605,13 +2608,128 @@ pub fn fix_pdf_header(data: &mut Vec<u8>) {
                 .count()
                 >= 4;
             if has_high {
-                return; // Already has a proper binary comment.
+                if shift != 0 {
+                    adjust_xref_offsets(data, shift);
+                }
+                return;
             }
         }
         // Insert binary comment line: %âãÏÓ\n
         let comment = b"\x25\xe2\xe3\xcf\xd3\x0a";
         data.splice(next..next, comment.iter().copied());
+        shift += comment.len() as i64;
     }
+
+    if shift != 0 {
+        adjust_xref_offsets(data, shift);
+    }
+}
+
+/// Adjust xref table offsets after the header size changed.
+///
+/// `shift` is positive if bytes were added, negative if removed.
+/// All in-use object offsets and the startxref value are adjusted.
+fn adjust_xref_offsets(data: &mut Vec<u8>, shift: i64) {
+    // Find startxref near the end of the file.
+    let Some(sx_pos) = find_last(data, b"startxref") else {
+        return;
+    };
+    // Read the offset value after "startxref\n".
+    let val_start = sx_pos + b"startxref".len();
+    // Skip whitespace.
+    let val_start = data[val_start..]
+        .iter()
+        .position(|b| b.is_ascii_digit())
+        .map(|p| val_start + p)
+        .unwrap_or(val_start);
+    let val_end = data[val_start..]
+        .iter()
+        .position(|b| !b.is_ascii_digit())
+        .map(|p| val_start + p)
+        .unwrap_or(data.len());
+    let old_sx: i64 = std::str::from_utf8(&data[val_start..val_end])
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let new_sx = old_sx + shift;
+    let new_sx_bytes = new_sx.to_string().into_bytes();
+    data.splice(val_start..val_end, new_sx_bytes);
+
+    // Now find and adjust the xref table entries.
+    let xref_start = if new_sx >= 0 { new_sx as usize } else { return };
+    if xref_start >= data.len()
+        || &data[xref_start..xref_start + 4.min(data.len() - xref_start)] != b"xref"
+    {
+        return;
+    }
+    // Skip "xref\n" and the "first_obj count\n" line.
+    let mut pos = xref_start + 4;
+    // Process all xref subsections.
+    while pos < data.len() {
+        // Skip whitespace/newlines.
+        while pos < data.len() && (data[pos] == b'\n' || data[pos] == b'\r' || data[pos] == b' ') {
+            pos += 1;
+        }
+        if pos >= data.len() || data[pos] == b't' {
+            // Reached "trailer".
+            break;
+        }
+        // Parse "first_obj count".
+        let line_end = data[pos..]
+            .iter()
+            .position(|&b| b == b'\n' || b == b'\r')
+            .map(|p| pos + p)
+            .unwrap_or(data.len());
+        let line = &data[pos..line_end];
+        let parts: Vec<&[u8]> = line.split(|&b| b == b' ').collect();
+        let count: usize = if parts.len() >= 2 {
+            std::str::from_utf8(parts[1])
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0)
+        } else {
+            break;
+        };
+        pos = line_end;
+        // Skip newline.
+        while pos < data.len() && (data[pos] == b'\n' || data[pos] == b'\r') {
+            pos += 1;
+        }
+        // Process count entries.
+        for _ in 0..count {
+            if pos + 20 > data.len() {
+                break;
+            }
+            // Entry format: "OOOOOOOOOO GGGGG N \r\n" or "OOOOOOOOOO GGGGG N \n"
+            // The flag (n or f) is at position 17.
+            let flag = data[pos + 17];
+            if flag == b'n' {
+                // Parse the 10-digit offset.
+                let old_offset: i64 = std::str::from_utf8(&data[pos..pos + 10])
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                let new_offset = old_offset + shift;
+                let formatted = format!("{:010}", new_offset);
+                data[pos..pos + 10].copy_from_slice(formatted.as_bytes());
+            }
+            // Skip to next entry (entries are 20 bytes).
+            pos += 20;
+        }
+    }
+}
+
+/// Find the last occurrence of `needle` in `data`.
+fn find_last(data: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.len() > data.len() {
+        return None;
+    }
+    for i in (0..=data.len() - needle.len()).rev() {
+        if &data[i..i + needle.len()] == needle {
+            return Some(i);
+        }
+    }
+    None
 }
 
 fn is_javascript_action(dict: &lopdf::Dictionary) -> bool {
