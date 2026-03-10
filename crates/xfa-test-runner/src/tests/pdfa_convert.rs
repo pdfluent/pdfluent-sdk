@@ -215,6 +215,12 @@ impl PdfTest for PdfAConvertTest {
             }
         }
 
+        // 3c. Supplementary PDF/A fixups (small rule fixes).
+        set_progress("fixups");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fixups::run_fixups(&mut doc)
+        }));
+
         set_progress("xmp_repair");
         let xmp_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_xmp::repair_xmp_metadata(

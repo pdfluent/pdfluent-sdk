@@ -1011,19 +1011,42 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
                 _ => None,
             };
             // Check attributes dict (index 4 if present) for Process/ColorSpace.
+            // The attributes dict may be inline or a reference.
             let process_repl = if arr.len() > 4 {
-                match &arr[4] {
-                    Object::Dictionary(attrs) => {
-                        if let Ok(Object::Dictionary(process)) = attrs.get(b"Process") {
-                            match process.get(b"ColorSpace").ok() {
-                                Some(Object::Name(n)) => replacement(n),
-                                _ => None,
-                            }
+                let attrs_dict = match &arr[4] {
+                    Object::Dictionary(d) => Some(d),
+                    Object::Reference(ref_id) => {
+                        if let Some(Object::Dictionary(d)) = doc.objects.get(ref_id) {
+                            Some(d)
                         } else {
                             None
                         }
                     }
                     _ => None,
+                };
+                if let Some(attrs) = attrs_dict {
+                    // Process entry may also be inline or a reference.
+                    let process_dict = match attrs.get(b"Process").ok() {
+                        Some(Object::Dictionary(d)) => Some(d),
+                        Some(Object::Reference(ref_id)) => {
+                            if let Some(Object::Dictionary(d)) = doc.objects.get(ref_id) {
+                                Some(d)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(process) = process_dict {
+                        match process.get(b"ColorSpace").ok() {
+                            Some(Object::Name(n)) => replacement(n),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
             } else {
                 None
@@ -1051,13 +1074,14 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
 
     // Pass 2: Fix attributes dicts stored as separate referenced objects.
     // Some DeviceN arrays reference the attributes dict by ObjectId.
+    // The attributes dict may have Process as inline dict or reference.
     let ids2: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids2 {
         let repl = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
                 continue;
             };
-            // Check if this is a Process dict or a dict containing a Process entry.
+            // Check if this dict has a Process entry (inline dict).
             if let Ok(Object::Dictionary(process)) = dict.get(b"Process") {
                 match process.get(b"ColorSpace").ok() {
                     Some(Object::Name(n)) => replacement(n),
@@ -1072,6 +1096,38 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
                 if let Ok(Object::Dictionary(ref mut process)) = dict.get_mut(b"Process") {
                     process.set("ColorSpace", Object::Reference(repl));
                 }
+            }
+        }
+    }
+
+    // Pass 3: Fix Process dicts referenced by ID from attributes dicts.
+    // Pattern: attributes dict has /Process <ref> -> Process dict has /ColorSpace /DeviceCMYK.
+    // Collect all Process reference IDs from attributes dicts.
+    let ids3: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut process_ref_ids: Vec<ObjectId> = Vec::new();
+    for id in &ids3 {
+        if let Some(Object::Dictionary(dict)) = doc.objects.get(id) {
+            if let Ok(Object::Reference(process_id)) = dict.get(b"Process") {
+                if !process_ref_ids.contains(process_id) {
+                    process_ref_ids.push(*process_id);
+                }
+            }
+        }
+    }
+
+    // Fix the referenced Process dicts directly.
+    for process_id in process_ref_ids {
+        let repl = if let Some(Object::Dictionary(process)) = doc.objects.get(&process_id) {
+            match process.get(b"ColorSpace").ok() {
+                Some(Object::Name(n)) => replacement(n),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(repl) = repl {
+            if let Some(Object::Dictionary(ref mut process)) = doc.objects.get_mut(&process_id) {
+                process.set("ColorSpace", Object::Reference(repl));
             }
         }
     }
@@ -1209,52 +1265,229 @@ fn fix_overprint_mode(doc: &mut Document) -> usize {
     count
 }
 
-/// Fix ICCBased colorspace streams: ensure /N matches the profile header (rule 6.2.4.2:1).
+/// Fix ICCBased colorspace streams: ensure /N matches the profile header and
+/// replace invalid ICC profiles (rule 6.2.4.2:1).
 ///
-/// If an ICCBased stream has /N that doesn't match the ICC header's color space,
-/// update /N to the correct value.
+/// For each ICCBased stream:
+/// 1. Decompress the stream content to read the actual ICC header.
+/// 2. If /N doesn't match the profile's color space, update /N.
+/// 3. If the ICC profile header is invalid (garbage device class, color space, or version),
+///    replace the entire profile with our known-good sRGB or CMYK profile.
 fn fix_iccbased_n_value(doc: &mut Document) -> usize {
+    // Pre-generate replacement profiles.
+    let srgb_profile = srgb_icc_profile_bytes();
+    let cmyk_profile = cmyk_icc_profile_bytes();
+    let gray_profile = gray_icc_profile_bytes();
+
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let correct_n = if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
-            // ICCBased streams typically have /N. Check if it matches the profile.
+        let action = if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+            // Only process streams that have /N (ICCBased profile indicator).
             let declared_n = match stream.dict.get(b"N").ok() {
-                Some(Object::Integer(n)) => Some(*n),
-                _ => None,
-            };
-            let Some(declared) = declared_n else {
-                continue;
-            };
-            // Read ICC header: bytes 16..20 contain the color space signature.
-            let content = &stream.content;
-            if content.len() < 20 {
-                continue;
-            }
-            let cs_sig = &content[16..20];
-            let expected_n: i64 = match cs_sig {
-                b"GRAY" => 1,
-                b"RGB " => 3,
-                b"CMYK" => 4,
-                b"Lab " => 3,
+                Some(Object::Integer(n)) => *n,
                 _ => continue,
             };
-            if declared != expected_n {
-                Some(expected_n)
+
+            // Decompress the stream content to read the actual ICC header.
+            // If no filters are present, decompressed_content returns empty;
+            // in that case the raw content IS the profile data.
+            let icc_bytes = {
+                let decompressed = stream.decompressed_content().unwrap_or_default();
+                if decompressed.is_empty() && !stream.content.is_empty() {
+                    stream.content.clone()
+                } else {
+                    decompressed
+                }
+            };
+
+            if icc_bytes.len() < 128 {
+                // ICC header must be at least 128 bytes. Replace.
+                IccAction::Replace(declared_n)
             } else {
-                None
+                // Validate the ICC profile header.
+                let cs_sig = &icc_bytes[16..20];
+                let device_class = &icc_bytes[12..16];
+                let acsp_sig = &icc_bytes[36..40];
+                let version_major = icc_bytes[8];
+
+                let cs_valid = matches!(
+                    cs_sig,
+                    b"GRAY"
+                        | b"RGB "
+                        | b"CMYK"
+                        | b"Lab "
+                        | b"XYZ "
+                        | b"Luv "
+                        | b"YCbr"
+                        | b"Yxy "
+                        | b"HSV "
+                        | b"HLS "
+                        | b"CMY "
+                );
+                let class_valid = matches!(
+                    device_class,
+                    b"scnr" | b"mntr" | b"prtr" | b"link" | b"spac" | b"abst" | b"nmcl"
+                );
+                let acsp_valid = acsp_sig == b"acsp";
+                let version_valid = version_major < 5;
+
+                if cs_valid && class_valid && acsp_valid && version_valid {
+                    // Profile is valid. Check /N consistency.
+                    let expected_n: i64 = match cs_sig {
+                        b"GRAY" => 1,
+                        b"RGB " | b"Lab " => 3,
+                        b"CMYK" => 4,
+                        _ => declared_n,
+                    };
+                    if declared_n != expected_n {
+                        IccAction::FixN(expected_n)
+                    } else {
+                        IccAction::None
+                    }
+                } else {
+                    // Invalid ICC profile — replace.
+                    IccAction::Replace(declared_n)
+                }
             }
         } else {
-            None
+            IccAction::None
         };
-        if let Some(n) = correct_n {
-            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
-                stream.dict.set("N", Object::Integer(n));
-                count += 1;
+
+        match action {
+            IccAction::None => {}
+            IccAction::FixN(n) => {
+                if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                    stream.dict.set("N", Object::Integer(n));
+                    count += 1;
+                }
+            }
+            IccAction::Replace(declared_n) => {
+                if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                    let replacement = match declared_n {
+                        4 => cmyk_profile.clone(),
+                        1 => gray_profile.clone(),
+                        _ => srgb_profile.clone(),
+                    };
+                    stream.content = replacement;
+                    // Remove compression filter since we store raw data.
+                    stream.dict.remove(b"Filter");
+                    stream.dict.remove(b"DecodeParms");
+                    stream.dict.remove(b"F");
+                    stream.dict.remove(b"FFilter");
+                    stream.dict.remove(b"FDecodeParms");
+                    let new_n = match declared_n {
+                        4 => 4_i64,
+                        1 => 1,
+                        _ => 3,
+                    };
+                    stream.dict.set("N", Object::Integer(new_n));
+                    stream
+                        .dict
+                        .set("Length", Object::Integer(stream.content.len() as i64));
+                    count += 1;
+                }
             }
         }
     }
     count
+}
+
+/// Actions for ICC profile fixing.
+enum IccAction {
+    /// No action needed.
+    None,
+    /// Fix /N value to the given number.
+    FixN(i64),
+    /// Replace the entire ICC profile. i64 is the declared /N value.
+    Replace(i64),
+}
+
+/// Minimal Gray ICC v2 profile (1-component).
+fn gray_icc_profile_bytes() -> Vec<u8> {
+    let total_size: u32 = 324;
+    let mut p = Vec::with_capacity(total_size as usize);
+
+    // === Header (128 bytes) ===
+    p.extend_from_slice(&total_size.to_be_bytes());
+    p.extend_from_slice(b"\0\0\0\0"); // preferred CMM
+    p.extend_from_slice(&[2, 0x10, 0, 0]); // version 2.1.0
+    p.extend_from_slice(b"mntr"); // device class: monitor
+    p.extend_from_slice(b"GRAY"); // color space
+    p.extend_from_slice(b"XYZ "); // PCS
+    p.extend_from_slice(&[0u8; 12]); // date/time
+    p.extend_from_slice(b"acsp"); // signature
+    p.extend_from_slice(&[0u8; 4]); // platform
+    p.extend_from_slice(&[0u8; 4]); // flags
+    p.extend_from_slice(&[0u8; 4]); // manufacturer
+    p.extend_from_slice(&[0u8; 4]); // model
+    p.extend_from_slice(&[0u8; 8]); // device attributes
+    p.extend_from_slice(&[0u8; 4]); // rendering intent
+                                    // PCS illuminant D50
+    p.extend_from_slice(&0x0000F6D6_u32.to_be_bytes());
+    p.extend_from_slice(&0x00010000_u32.to_be_bytes());
+    p.extend_from_slice(&0x0000D32D_u32.to_be_bytes());
+    p.extend_from_slice(&[0u8; 4]); // creator
+    p.extend_from_slice(&[0u8; 16]); // profile ID
+    p.extend_from_slice(&[0u8; 128 - 100]); // reserved
+    debug_assert_eq!(p.len(), 128);
+
+    // === Tag table: 4 tags ===
+    p.extend_from_slice(&4_u32.to_be_bytes());
+    // 128 + 4 + 4*12 = 180 bytes for header + tag table
+
+    let tags: &[(&[u8; 4], u32, u32)] = &[
+        (b"desc", 180, 95),
+        (b"wtpt", 276, 20),
+        (b"cprt", 296, 12),
+        (b"kTRC", 308, 14),
+    ];
+    for (sig, offset, size) in tags {
+        p.extend_from_slice(*sig);
+        p.extend_from_slice(&offset.to_be_bytes());
+        p.extend_from_slice(&size.to_be_bytes());
+    }
+    debug_assert_eq!(p.len(), 180);
+
+    // === desc tag (textDescriptionType) — 95 bytes ===
+    p.extend_from_slice(b"desc");
+    p.extend_from_slice(&[0u8; 4]);
+    p.extend_from_slice(&5_u32.to_be_bytes()); // ASCII length incl null
+    p.extend_from_slice(b"Gray\0");
+    p.extend_from_slice(&[0u8; 4]); // Unicode language
+    p.extend_from_slice(&[0u8; 4]); // Unicode count
+    p.extend_from_slice(&[0u8; 2]); // ScriptCode code
+    p.push(0); // ScriptCode count
+    p.extend_from_slice(&[0u8; 67]); // ScriptCode string
+    debug_assert_eq!(p.len(), 275);
+    // Pad to offset 276 (4-byte alignment)
+    p.push(0);
+    debug_assert_eq!(p.len(), 276);
+
+    // === wtpt (XYZType) — D50 ===
+    p.extend_from_slice(b"XYZ ");
+    p.extend_from_slice(&[0u8; 4]);
+    p.extend_from_slice(&0x0000F351_i32.to_be_bytes());
+    p.extend_from_slice(&0x00010000_i32.to_be_bytes());
+    p.extend_from_slice(&0x000116CC_i32.to_be_bytes());
+    debug_assert_eq!(p.len(), 296);
+
+    // === cprt ===
+    p.extend_from_slice(b"text");
+    p.extend_from_slice(&[0u8; 4]);
+    p.extend_from_slice(b"CC0\0");
+    debug_assert_eq!(p.len(), 308);
+
+    // === kTRC (curveType with gamma 2.2) ===
+    p.extend_from_slice(b"curv");
+    p.extend_from_slice(&[0u8; 4]);
+    p.extend_from_slice(&1_u32.to_be_bytes()); // count=1 means gamma value
+    p.extend_from_slice(&[0x02, 0x33]); // gamma ~ 2.2
+    debug_assert_eq!(p.len(), 322);
+    p.extend_from_slice(&[0u8; 2]); // pad to 324
+    debug_assert_eq!(p.len(), 324);
+
+    p
 }
 
 fn is_device_dependent(name: &str) -> bool {
@@ -1677,8 +1910,10 @@ mod tests {
         let mut doc = Document::with_version("1.7");
         // Create a minimal ICC profile header with RGB color space (bytes 16..20 = "RGB ")
         let mut icc_data = vec![0u8; 128];
+        icc_data[12..16].copy_from_slice(b"mntr"); // valid device class
         icc_data[16..20].copy_from_slice(b"RGB ");
         icc_data[36..40].copy_from_slice(b"acsp");
+        icc_data[8] = 2; // version 2.x
 
         let icc_dict = dictionary! {
             "N" => Object::Integer(4), // Wrong: should be 3 for RGB
@@ -1698,8 +1933,10 @@ mod tests {
     fn test_icc_n_value_correct() {
         let mut doc = Document::with_version("1.7");
         let mut icc_data = vec![0u8; 128];
+        icc_data[12..16].copy_from_slice(b"prtr"); // valid device class
         icc_data[16..20].copy_from_slice(b"CMYK");
         icc_data[36..40].copy_from_slice(b"acsp");
+        icc_data[8] = 2; // version 2.x
 
         let icc_dict = dictionary! {
             "N" => Object::Integer(4), // Correct for CMYK
