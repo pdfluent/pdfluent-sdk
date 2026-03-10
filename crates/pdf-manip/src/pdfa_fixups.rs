@@ -54,7 +54,7 @@ fn fix_truetype_encoding_differences(doc: &mut Document) -> usize {
                 count += 1;
             }
             TtDiffAction::SanitizeDifferences => {
-                // Replace non-AGL names with .notdef.
+                // Replace non-AGL names with space (not .notdef, which causes 6.2.11.8:1).
                 sanitize_differences(doc, font_id);
                 count += 1;
             }
@@ -192,12 +192,15 @@ fn sanitize_differences(doc: &mut Document, font_id: ObjectId) {
         }
     };
 
+    // Replace non-AGL glyph names with "space" rather than ".notdef".
+    // Using ".notdef" causes veraPDF 6.2.11.8:1 violations when the
+    // character code is referenced by text-showing operators.
     let sanitize = |arr: &mut Vec<Object>| {
         for obj in arr.iter_mut() {
             if let Object::Name(ref name) = obj {
                 let name_str = String::from_utf8_lossy(name);
                 if !is_agl_name(&name_str) {
-                    *obj = Object::Name(b".notdef".to_vec());
+                    *obj = Object::Name(b"space".to_vec());
                 }
             }
         }
