@@ -21,11 +21,16 @@ fn main() {
     }
 
     match pdf_manip::pdfa_fonts::embed_fonts(&mut doc) {
-        Ok(r) => eprintln!(
-            "Fonts: embedded={}, failed={}",
-            r.fonts_embedded,
-            r.failed.len()
-        ),
+        Ok(r) => {
+            eprintln!(
+                "Fonts: embedded={}, failed={}",
+                r.fonts_embedded,
+                r.failed.len()
+            );
+            for (name, reason) in &r.failed {
+                eprintln!("  FAIL: {} — {}", name, reason);
+            }
+        }
         Err(e) => eprintln!("Font error: {e}"),
     }
 
@@ -46,7 +51,16 @@ fn main() {
 
     // Fix .notdef glyph references (6.2.11.8:1).
     let notdef_fixed = pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
-    eprintln!(".notdef refs: fixed={notdef_fixed}");
+    eprintln!(".notdef refs (simple): fixed={notdef_fixed}");
+
+    // Fix .notdef in CID fonts by modifying content streams (6.2.11.8:1).
+    let cid_notdef_fixed = pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+    eprintln!(".notdef refs (CID): fixed={cid_notdef_fixed}");
+
+    // Ensure undefined WinAnsi codes have Differences entries (prevents
+    // ambiguous glyph mapping between veraPDF and our width fixer).
+    let undef_fixed = pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+    eprintln!("Undefined encoding codes: fixed={undef_fixed}");
 
     // Conservative width mismatch fix: only updates individual mismatched entries
     // where the mapping is unambiguous. Skips fonts with >50% mismatches.
