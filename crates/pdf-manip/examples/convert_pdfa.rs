@@ -29,9 +29,8 @@ fn main() {
         Err(e) => eprintln!("Font error: {e}"),
     }
 
-    let sym_fixed = pdf_manip::pdfa_fonts::fix_symbolic_font_flags(&mut doc);
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
-    eprintln!("Symbolic flags: fixed={sym_fixed}, TrueType encoding: fixed={enc_fixed}");
+    eprintln!("TrueType encoding: fixed={enc_fixed}");
 
     let cidset_fixed = pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
     eprintln!("CIDSet: fixed={cidset_fixed}");

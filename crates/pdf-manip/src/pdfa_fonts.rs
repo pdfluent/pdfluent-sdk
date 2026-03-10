@@ -573,9 +573,10 @@ fn get_or_create_font_descriptor(doc: &mut Document, font_id: ObjectId) -> Resul
         get_name(font, b"BaseFont").unwrap_or_else(|| "Unknown".into())
     };
 
-    // Symbolic fonts (ZapfDingbats, Symbol) need Flags bit 2 (=4).
-    // Non-symbolic fonts need Flags bit 5 (=32).
-    let flags = if is_symbolic_font_name(&font_name) { 4 } else { 32 };
+    // When embedding a fallback font (DejaVuSans), the result is always
+    // non-symbolic regardless of the original font name, because DejaVuSans
+    // is a standard Unicode font. Use Flags=32 (Nonsymbolic).
+    let flags: i64 = 32;
 
     let fd = dictionary! {
         "Type" => "FontDescriptor",
@@ -1096,6 +1097,9 @@ fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
 
 /// Fix FontDescriptor Flags for known symbolic fonts.
 /// Sets Symbolic bit (4) and clears Nonsymbolic bit (32) for Symbol/ZapfDingbats etc.
+/// NOTE: Disabled — marking fallback fonts as Symbolic causes 6.2.11.6:4 regression
+/// because DejaVuSans has multiple cmap subtables (symbolic fonts need exactly one).
+#[allow(dead_code)]
 pub fn fix_symbolic_font_flags(doc: &mut Document) -> usize {
     let mut to_fix: Vec<(ObjectId, ObjectId)> = Vec::new(); // (font_id, fd_id)
 
