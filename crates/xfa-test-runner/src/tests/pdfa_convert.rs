@@ -135,9 +135,10 @@ impl PdfTest for PdfAConvertTest {
         // NOTE: fix_embedded_font_metrics disabled — it breaks glyph width consistency.
         // The metrics fix needs to match veraPDF's expectations exactly.
 
-        // 3a2. Fix TrueType encoding for non-symbolic fonts.
+        // 3a2. Fix symbolic font flags and TrueType encoding.
         set_progress("font_encoding");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_symbolic_font_flags(&mut doc);
             pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
         }));
 

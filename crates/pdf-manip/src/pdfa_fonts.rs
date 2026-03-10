@@ -570,10 +570,14 @@ fn get_or_create_font_descriptor(doc: &mut Document, font_id: ObjectId) -> Resul
         get_name(font, b"BaseFont").unwrap_or_else(|| "Unknown".into())
     };
 
+    // Symbolic fonts (ZapfDingbats, Symbol) need Flags bit 2 (=4).
+    // Non-symbolic fonts need Flags bit 5 (=32).
+    let flags = if is_symbolic_font_name(&font_name) { 4 } else { 32 };
+
     let fd = dictionary! {
         "Type" => "FontDescriptor",
         "FontName" => Object::Name(font_name.into_bytes()),
-        "Flags" => Object::Integer(32),
+        "Flags" => Object::Integer(flags),
         "FontBBox" => Object::Array(vec![
             Object::Integer(0), Object::Integer(-200),
             Object::Integer(1000), Object::Integer(800),
@@ -967,6 +971,14 @@ const SYMBOLIC_FONTS: &[&str] = &[
     "Dingbats",
 ];
 
+/// Check if a font name (with optional subset prefix) is a symbolic font.
+fn is_symbolic_font_name(name: &str) -> bool {
+    let base = name.split('+').next_back().unwrap_or(name);
+    SYMBOLIC_FONTS
+        .iter()
+        .any(|sym| base.eq_ignore_ascii_case(sym))
+}
+
 /// Fix TrueType font encoding for PDF/A compliance (rule 6.2.11.6:2).
 ///
 /// Non-symbolic TrueType fonts must have MacRomanEncoding or WinAnsiEncoding.
@@ -1055,15 +1067,12 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
     count
 }
 
-/// Check if a font is symbolic based on FontDescriptor Flags or font name.
+/// Check if a font is symbolic based on font name or FontDescriptor Flags.
 fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
-    // Check base font name against known symbolic fonts.
+    // Check base font name against known symbolic fonts (takes priority over Flags).
     if let Some(name) = get_name(font_dict, b"BaseFont") {
-        let base = name.split('+').next_back().unwrap_or(&name);
-        for sym in SYMBOLIC_FONTS {
-            if base.eq_ignore_ascii_case(sym) {
-                return true;
-            }
+        if is_symbolic_font_name(&name) {
+            return true;
         }
     }
 
@@ -1075,12 +1084,62 @@ fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
     };
     if let Some(Object::Dictionary(fd_dict)) = fd {
         if let Ok(Object::Integer(flags)) = fd_dict.get(b"Flags") {
-            // Bit 2 (value 4) = Symbolic
             return (*flags & 4) != 0;
         }
     }
 
     false
+}
+
+/// Fix FontDescriptor Flags for known symbolic fonts.
+/// Sets Symbolic bit (4) and clears Nonsymbolic bit (32) for Symbol/ZapfDingbats etc.
+pub fn fix_symbolic_font_flags(doc: &mut Document) -> usize {
+    let mut to_fix: Vec<(ObjectId, ObjectId)> = Vec::new(); // (font_id, fd_id)
+
+    for (id, obj) in &doc.objects {
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+        if subtype != "TrueType" && subtype != "Type1" {
+            continue;
+        }
+        let Some(name) = get_name(dict, b"BaseFont") else {
+            continue;
+        };
+        if !is_symbolic_font_name(&name) {
+            continue;
+        }
+        // Check if FontDescriptor Flags are wrong.
+        let fd_id = match dict.get(b"FontDescriptor") {
+            Ok(Object::Reference(fid)) => *fid,
+            _ => continue,
+        };
+        let needs_fix = match doc.objects.get(&fd_id) {
+            Some(Object::Dictionary(fd)) => match fd.get(b"Flags") {
+                Ok(Object::Integer(flags)) => (*flags & 4) == 0, // Symbolic bit not set
+                _ => true,
+            },
+            _ => false,
+        };
+        if needs_fix {
+            to_fix.push((*id, fd_id));
+        }
+    }
+
+    let count = to_fix.len();
+    for (_font_id, fd_id) in to_fix {
+        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+            let flags = match fd.get(b"Flags") {
+                Ok(Object::Integer(f)) => *f,
+                _ => 0,
+            };
+            // Set Symbolic (bit 2 = 4), clear Nonsymbolic (bit 5 = 32).
+            let new_flags = (flags | 4) & !32;
+            fd.set("Flags", Object::Integer(new_flags));
+        }
+    }
+    count
 }
 
 fn count_all_fonts(doc: &Document) -> usize {
