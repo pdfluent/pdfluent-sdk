@@ -366,6 +366,35 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
         update_metrics_from_font(doc, info, &font_data);
     }
 
+    // If we embedded a non-symbolic font (e.g., DejaVuSans) for a symbolic-named
+    // font (e.g., ZapfDingbats), update FontDescriptor Flags to match the actual
+    // embedded program. veraPDF checks the font program, not the name.
+    if is_truetype {
+        if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+            let has_31_cmap = face
+                .tables()
+                .cmap
+                .as_ref()
+                .is_some_and(|cmap| {
+                    cmap.subtables
+                        .into_iter()
+                        .any(|st| st.platform_id == ttf_parser::PlatformId::Windows
+                            && st.encoding_id == 1)
+                });
+            if has_31_cmap {
+                // Font program has Windows Unicode cmap → non-symbolic.
+                if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                    if let Ok(Object::Integer(flags)) = fd.get(b"Flags") {
+                        let mut f = *flags;
+                        f &= !4;  // Clear Symbolic (bit 3)
+                        f |= 32;  // Set Nonsymbolic (bit 6)
+                        fd.set("Flags", Object::Integer(f));
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
