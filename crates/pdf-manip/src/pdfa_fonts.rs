@@ -764,8 +764,21 @@ fn update_simple_widths(
 
     let mut widths = Vec::new();
     for code in first_char..=last_char {
+        // For TrueType fonts, veraPDF validates widths by looking up the raw
+        // character code as a Unicode code point in the (3,1) cmap, ignoring
+        // the PDF Encoding (MacRomanEncoding, etc.). Match that behavior:
+        // try raw code as Unicode first, then fall back to encoding mapping.
+        let raw_unicode_gid = if is_truetype_outline && code <= 0xFFFF {
+            char::from_u32(code).and_then(|c| face.glyph_index(c))
+        } else {
+            None
+        };
         let ch = encoding_to_char(code, &encoding_name);
-        let width = if let Some(glyph_id) = face.glyph_index(ch) {
+        let width = if let Some(glyph_id) = raw_unicode_gid {
+            face.glyph_hor_advance(glyph_id)
+                .map(|w| (w as f64 * scale).round() as i64)
+                .unwrap_or(0)
+        } else if let Some(glyph_id) = face.glyph_index(ch) {
             face.glyph_hor_advance(glyph_id)
                 .map(|w| (w as f64 * scale).round() as i64)
                 .unwrap_or(0)
@@ -3435,7 +3448,18 @@ fn get_truetype_glyph_width_fractional(
         // encoding → cmap → Mac cmap path (matches veraPDF behavior).
     }
 
-    // Map code -> Unicode via encoding.
+    // For TrueType fonts, veraPDF validates widths by looking up the raw
+    // character code as a Unicode code point in the (3,1) cmap, ignoring
+    // the PDF Encoding. Try raw code as Unicode first.
+    if code <= 0xFFFF {
+        if let Some(ch) = char::from_u32(code) {
+            if let Some(gid) = face.glyph_index(ch) {
+                return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+            }
+        }
+    }
+
+    // Fallback: map code -> Unicode via encoding.
     let ch = encoding_to_char(code, enc_name);
 
     if let Some(gid) = face.glyph_index(ch) {
