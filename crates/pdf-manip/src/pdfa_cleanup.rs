@@ -1464,10 +1464,15 @@ fn remove_xfa_from_acroform(doc: &mut Document) {
 }
 
 /// Fix Widget/Btn annotations: ensure AP/N is a subdictionary (6.3.3:3).
+///
+/// For button widgets, veraPDF requires that AP/N is an appearance subdictionary
+/// (mapping state names like /Yes, /Off to appearance streams), NOT a single
+/// stream or a reference to a single stream.
 fn fix_widget_btn_appearance(doc: &mut Document) {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let needs_fix = {
+        // Determine if this annotation needs fixing and extract the current N value.
+        let fix_val: Option<Object> = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 let is_widget = matches!(
                     dict.get(b"Subtype").ok(),
@@ -1476,31 +1481,43 @@ fn fix_widget_btn_appearance(doc: &mut Document) {
                 // Walk parent chain for inherited FT=Btn.
                 let is_widget_btn = is_widget && is_btn_field(doc, dict);
                 if !is_widget_btn {
-                    false
+                    None
                 } else {
                     match dict.get(b"AP").ok() {
                         Some(Object::Dictionary(ap)) => match ap.get(b"N").ok() {
-                            Some(Object::Dictionary(_) | Object::Reference(_)) => false,
-                            Some(_) => true,
-                            None => false,
+                            // Already a subdictionary — no fix needed.
+                            Some(Object::Dictionary(_)) => None,
+                            // Reference — must dereference to check if it points to
+                            // a subdictionary or a stream.
+                            Some(Object::Reference(ref_id)) => {
+                                let target = doc.objects.get(ref_id);
+                                match target {
+                                    // Reference to a dictionary — already fine.
+                                    Some(Object::Dictionary(_)) => None,
+                                    // Reference to a stream (Form XObject) — wrap it.
+                                    Some(Object::Stream(_)) => Some(Object::Reference(*ref_id)),
+                                    // Other/missing — wrap anyway.
+                                    _ => Some(Object::Reference(*ref_id)),
+                                }
+                            }
+                            // Direct stream or other non-dict value — wrap it.
+                            Some(other) => Some(other.clone()),
+                            None => None,
                         },
-                        _ => false,
+                        _ => None,
                     }
                 }
             } else {
-                false
+                None
             }
         };
-        if needs_fix {
+        if let Some(val) = fix_val {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 if let Ok(Object::Dictionary(ref mut ap)) = dict.get_mut(b"AP") {
-                    let n_val = ap.get(b"N").ok().cloned();
-                    if let Some(val) = n_val {
-                        let mut sub = lopdf::Dictionary::new();
-                        sub.set("Off", val.clone());
-                        sub.set("Yes", val);
-                        ap.set("N", Object::Dictionary(sub));
-                    }
+                    let mut sub = lopdf::Dictionary::new();
+                    sub.set("Off", val.clone());
+                    sub.set("Yes", val);
+                    ap.set("N", Object::Dictionary(sub));
                 }
             }
         }
