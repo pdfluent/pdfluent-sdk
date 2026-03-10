@@ -16,6 +16,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let stream_lengths_fixed = fix_stream_lengths(doc);
     let cmap_wmode_fixed = fix_cmap_wmode(doc);
     let cidtogidmap_fixed = fix_cidtogidmap_extra(doc);
+    let cidsysteminfo_fixed = fix_cidsysteminfo_mismatch(doc);
 
     FixupReport {
         tt_encoding_diffs_fixed,
@@ -27,6 +28,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         stream_lengths_fixed,
         cmap_wmode_fixed,
         cidtogidmap_fixed,
+        cidsysteminfo_fixed,
     }
 }
 
@@ -42,6 +44,7 @@ pub struct FixupReport {
     pub stream_lengths_fixed: usize,
     pub cmap_wmode_fixed: usize,
     pub cidtogidmap_fixed: usize,
+    pub cidsysteminfo_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -114,9 +117,13 @@ fn analyze_tt_differences(doc: &Document, font_id: ObjectId) -> TtDiffAction {
         return TtDiffAction::None;
     };
 
-    // Must have Differences array.
+    // Must have Differences array (may be inline or referenced).
     let differences = match enc_dict.get(b"Differences").ok() {
         Some(Object::Array(arr)) => arr.clone(),
+        Some(Object::Reference(ref_id)) => match doc.objects.get(ref_id) {
+            Some(Object::Array(arr)) => arr.clone(),
+            _ => return TtDiffAction::None,
+        },
         _ => return TtDiffAction::None,
     };
 
@@ -223,14 +230,40 @@ fn sanitize_differences(doc: &mut Document, font_id: ObjectId) {
     };
 
     if let Some(enc_id) = enc_ref {
-        if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&enc_id) {
+        // Encoding is a referenced dict.
+        // Check if Differences is inline or also a reference.
+        let diff_ref = {
+            if let Some(Object::Dictionary(enc)) = doc.objects.get(&enc_id) {
+                match enc.get(b"Differences").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(diff_id) = diff_ref {
+            // Differences is also a referenced array — modify it directly.
+            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&diff_id) {
+                sanitize(arr);
+            }
+        } else if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&enc_id) {
             if let Ok(Object::Array(ref mut arr)) = enc.get_mut(b"Differences") {
                 sanitize(arr);
             }
         }
     } else if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
         if let Ok(Object::Dictionary(ref mut enc)) = dict.get_mut(b"Encoding") {
-            if let Ok(Object::Array(ref mut arr)) = enc.get_mut(b"Differences") {
+            // Check if Differences is a reference.
+            let diff_ref = match enc.get(b"Differences").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            };
+            if let Some(diff_id) = diff_ref {
+                if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&diff_id) {
+                    sanitize(arr);
+                }
+            } else if let Ok(Object::Array(ref mut arr)) = enc.get_mut(b"Differences") {
                 sanitize(arr);
             }
         }
@@ -919,14 +952,8 @@ fn extract_font_names_from_content(content: &[u8]) -> Vec<Vec<u8>> {
             let rest = &text[end..];
             let trimmed = rest.trim_start();
             // Pattern: /FontName <size> Tf
-            if trimmed
-                .split_whitespace()
-                .take(3)
-                .collect::<Vec<_>>()
-                .last()
-                .copied()
-                == Some("Tf")
-            {
+            let tokens: Vec<&str> = trimmed.split_whitespace().take(2).collect();
+            if tokens.len() == 2 && tokens[1] == "Tf" {
                 let name_vec = name.to_vec();
                 if !names.contains(&name_vec) {
                     names.push(name_vec);
@@ -1243,8 +1270,11 @@ fn face_has_31_cmap(face: &ttf_parser::Face) -> bool {
 ///
 /// Includes the full AGL plus common PDF standard names.
 fn is_agl_name(name: &str) -> bool {
-    // .notdef is always valid.
-    if name == ".notdef" || name == ".null" || name == "nonmarkingreturn" {
+    // .notdef is always valid as a glyph name.
+    // .null and nonmarkingreturn are valid glyph names but map to U+0000 and
+    // U+000D respectively, which veraPDF considers non-Unicode-compliant in
+    // TrueType Differences arrays. Exclude them so they get sanitized.
+    if name == ".notdef" {
         return true;
     }
 
@@ -2070,3 +2100,222 @@ static AGL_NAMES: &[&str] = &[
     "zero",
     "zeta",
 ];
+
+// ---------------------------------------------------------------------------
+// 6.2.11.3.1:1, 6.2.11.3.3:1 — CIDSystemInfo mismatch
+// ---------------------------------------------------------------------------
+//
+// For Type0 fonts with a CMap encoding, the CIDSystemInfo in the CMap must
+// match the CIDSystemInfo in the CIDFont descendant. The Registry and
+// Ordering strings must be identical. If they differ, we update the CIDFont's
+// CIDSystemInfo to match the CMap's values.
+//
+// Additionally, the CMap's CIDSystemInfo must be compatible with the embedded
+// CMap stream (if any). We also handle the case where a predefined CMap name
+// (like "UniGB-UTF16-H") implies specific Registry/Ordering values.
+
+fn fix_cidsysteminfo_mismatch(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in &ids {
+        let (encoding_obj, cid_font_id) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(id) else {
+                continue;
+            };
+            let subtype = get_name_val(dict, b"Subtype");
+            if subtype.as_deref() != Some("Type0") {
+                continue;
+            }
+            let enc = dict.get(b"Encoding").ok().cloned();
+            let cid_id = match dict.get(b"DescendantFonts").ok() {
+                Some(Object::Array(arr)) => match arr.first() {
+                    Some(Object::Reference(r)) => Some(*r),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let Some(cid_id) = cid_id else { continue };
+            (enc, cid_id)
+        };
+
+        let Some(encoding_obj) = encoding_obj else {
+            continue;
+        };
+
+        // Get the CMap's CIDSystemInfo (from the CMap stream or predefined name).
+        let cmap_csi = match &encoding_obj {
+            Object::Name(name) => {
+                // Predefined CMap name — derive CIDSystemInfo from name.
+                let name_str = String::from_utf8_lossy(name);
+                predefined_cmap_cidsysteminfo(&name_str)
+            }
+            Object::Reference(cmap_id) => {
+                // CMap stream — extract CIDSystemInfo from the stream content.
+                extract_cmap_stream_cidsysteminfo(doc, *cmap_id)
+            }
+            _ => None,
+        };
+
+        let Some((cmap_registry, cmap_ordering)) = cmap_csi else {
+            continue;
+        };
+
+        // Get the CIDFont's CIDSystemInfo.
+        let cidfont_csi = {
+            let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_font_id) else {
+                continue;
+            };
+            match cid_dict.get(b"CIDSystemInfo").ok() {
+                Some(Object::Dictionary(csi)) => {
+                    let reg = match csi.get(b"Registry").ok() {
+                        Some(Object::String(s, _)) => String::from_utf8_lossy(s).to_string(),
+                        _ => String::new(),
+                    };
+                    let ord = match csi.get(b"Ordering").ok() {
+                        Some(Object::String(s, _)) => String::from_utf8_lossy(s).to_string(),
+                        _ => String::new(),
+                    };
+                    Some((reg, ord))
+                }
+                Some(Object::Reference(csi_id)) => {
+                    if let Some(Object::Dictionary(csi)) = doc.objects.get(csi_id) {
+                        let reg = match csi.get(b"Registry").ok() {
+                            Some(Object::String(s, _)) => String::from_utf8_lossy(s).to_string(),
+                            _ => String::new(),
+                        };
+                        let ord = match csi.get(b"Ordering").ok() {
+                            Some(Object::String(s, _)) => String::from_utf8_lossy(s).to_string(),
+                            _ => String::new(),
+                        };
+                        Some((reg, ord))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        };
+
+        let Some((cidfont_reg, cidfont_ord)) = cidfont_csi else {
+            continue;
+        };
+
+        // Check if they match.
+        if cmap_registry == cidfont_reg && cmap_ordering == cidfont_ord {
+            continue; // Already matching.
+        }
+
+        // Fix: update the CIDFont's CIDSystemInfo to match the CMap's values.
+        let csi_ref = {
+            let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_font_id) else {
+                continue;
+            };
+            match cid_dict.get(b"CIDSystemInfo").ok() {
+                Some(Object::Reference(r)) => Some(*r),
+                _ => None,
+            }
+        };
+
+        if let Some(csi_id) = csi_ref {
+            // CIDSystemInfo is a reference — update the referenced dict.
+            if let Some(Object::Dictionary(ref mut csi)) = doc.objects.get_mut(&csi_id) {
+                csi.set(
+                    "Registry",
+                    Object::String(
+                        cmap_registry.as_bytes().to_vec(),
+                        lopdf::StringFormat::Literal,
+                    ),
+                );
+                csi.set(
+                    "Ordering",
+                    Object::String(
+                        cmap_ordering.as_bytes().to_vec(),
+                        lopdf::StringFormat::Literal,
+                    ),
+                );
+                count += 1;
+            }
+        } else {
+            // CIDSystemInfo is inline — replace it.
+            if let Some(Object::Dictionary(ref mut cid_dict)) = doc.objects.get_mut(&cid_font_id) {
+                let new_csi = dictionary! {
+                    "Registry" => Object::String(cmap_registry.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+                    "Ordering" => Object::String(cmap_ordering.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+                    "Supplement" => Object::Integer(0),
+                };
+                cid_dict.set("CIDSystemInfo", Object::Dictionary(new_csi));
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
+
+/// Extract CIDSystemInfo from a CMap stream's content.
+fn extract_cmap_stream_cidsysteminfo(
+    doc: &Document,
+    cmap_id: ObjectId,
+) -> Option<(String, String)> {
+    let stream = match doc.objects.get(&cmap_id) {
+        Some(Object::Stream(s)) => s,
+        _ => return None,
+    };
+
+    let content = stream
+        .decompressed_content()
+        .ok()
+        .unwrap_or_else(|| stream.content.clone());
+    let text = String::from_utf8_lossy(&content);
+
+    // Look for /CIDSystemInfo << /Registry (...) /Ordering (...) >> def
+    let registry = extract_cmap_string_value(&text, "Registry");
+    let ordering = extract_cmap_string_value(&text, "Ordering");
+
+    match (registry, ordering) {
+        (Some(r), Some(o)) => Some((r, o)),
+        _ => None,
+    }
+}
+
+/// Extract a string value from a CMap program's CIDSystemInfo dict.
+fn extract_cmap_string_value(text: &str, key: &str) -> Option<String> {
+    let key_pattern = format!("/{key}");
+    let pos = text.find(&key_pattern)?;
+    let after = &text[pos + key_pattern.len()..];
+
+    // Look for (value) — PostScript literal string.
+    let paren_start = after.find('(')?;
+    let paren_end = after[paren_start..].find(')')?;
+    let value = &after[paren_start + 1..paren_start + paren_end];
+    Some(value.to_string())
+}
+
+/// Get CIDSystemInfo (Registry, Ordering) for predefined CMap names.
+fn predefined_cmap_cidsysteminfo(cmap_name: &str) -> Option<(String, String)> {
+    // Identity CMaps.
+    if cmap_name.starts_with("Identity") {
+        return Some(("Adobe".to_string(), "Identity".to_string()));
+    }
+
+    // Adobe standard CMaps.
+    if cmap_name.contains("Japan") || cmap_name.starts_with("90") {
+        return Some(("Adobe".to_string(), "Japan1".to_string()));
+    }
+    if cmap_name.contains("Korea") || cmap_name.starts_with("KS") {
+        return Some(("Adobe".to_string(), "Korea1".to_string()));
+    }
+    if cmap_name.contains("GB") || cmap_name.starts_with("GBK") {
+        return Some(("Adobe".to_string(), "GB1".to_string()));
+    }
+    if cmap_name.contains("CNS") || cmap_name.contains("B5") {
+        return Some(("Adobe".to_string(), "CNS1".to_string()));
+    }
+    if cmap_name.contains("UCS") || cmap_name.contains("UTF") {
+        // Adobe-UCS CMaps have "Identity" ordering in practice.
+        return Some(("Adobe".to_string(), "Identity".to_string()));
+    }
+
+    None
+}

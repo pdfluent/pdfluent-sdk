@@ -106,6 +106,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     strip_signatures(doc);
     strip_non_catalog_metadata(doc);
     ensure_page_resources(doc);
+    promote_inline_fonts(doc);
 
     Ok(report)
 }
@@ -2784,6 +2785,94 @@ fn strip_metadata_in_nested_dicts(doc: &mut Document, obj_id: ObjectId) {
         Some(Object::Dictionary(ref mut d)) => strip_from_dict(d),
         Some(Object::Stream(ref mut s)) => strip_from_dict(&mut s.dict),
         _ => {}
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Promote inline font dicts to standalone objects.
+// ---------------------------------------------------------------------------
+//
+// Some PDFs have font dictionaries inlined directly inside Page or Form
+// XObject Resources. The embed_fonts pass in pdfa_fonts iterates
+// doc.objects, so it can only find fonts that are standalone objects.
+// This pass extracts inline font dicts from Resources/Font and replaces
+// them with references to newly created objects.
+fn promote_inline_fonts(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        // Collect inline fonts that need promotion (font resource name -> inline dict).
+        let inline_fonts: Vec<(Vec<u8>, lopdf::Dictionary)> = {
+            let font_dict = match doc.objects.get(&id) {
+                Some(Object::Dictionary(d)) => get_font_dict_inline(d),
+                Some(Object::Stream(s)) => get_font_dict_inline(&s.dict),
+                _ => None,
+            };
+            let Some(fd) = font_dict else { continue };
+            fd.iter()
+                .filter_map(|(name, val)| {
+                    if let Object::Dictionary(d) = val {
+                        // Only promote if it looks like a font dict (has BaseFont or Subtype).
+                        if d.has(b"BaseFont") || d.has(b"Subtype") {
+                            Some((name.clone(), d.clone()))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        if inline_fonts.is_empty() {
+            continue;
+        }
+
+        // Create standalone objects for each inline font and replace inline
+        // dicts with references.
+        let mut replacements: Vec<(Vec<u8>, ObjectId)> = Vec::new();
+        for (name, dict) in inline_fonts {
+            let new_id = doc.add_object(Object::Dictionary(dict));
+            replacements.push((name, new_id));
+        }
+
+        // Apply replacements: set the font resource name to a Reference.
+        let set_in_dict = |font_dict: &mut lopdf::Dictionary, repls: &[(Vec<u8>, ObjectId)]| {
+            for (name, new_id) in repls {
+                let key = String::from_utf8_lossy(name).to_string();
+                font_dict.set(key, Object::Reference(*new_id));
+            }
+        };
+
+        match doc.objects.get_mut(&id) {
+            Some(Object::Dictionary(ref mut d)) => {
+                if let Ok(Object::Dictionary(ref mut res)) = d.get_mut(b"Resources") {
+                    if let Ok(Object::Dictionary(ref mut fd)) = res.get_mut(b"Font") {
+                        set_in_dict(fd, &replacements);
+                    }
+                }
+            }
+            Some(Object::Stream(ref mut s)) => {
+                if let Ok(Object::Dictionary(ref mut res)) = s.dict.get_mut(b"Resources") {
+                    if let Ok(Object::Dictionary(ref mut fd)) = res.get_mut(b"Font") {
+                        set_in_dict(fd, &replacements);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Get the inline Font dict from a Resources dict, if Resources/Font is inline.
+fn get_font_dict_inline(dict: &lopdf::Dictionary) -> Option<&lopdf::Dictionary> {
+    match dict.get(b"Resources").ok()? {
+        Object::Dictionary(res) => match res.get(b"Font").ok()? {
+            Object::Dictionary(fd) => Some(fd),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
