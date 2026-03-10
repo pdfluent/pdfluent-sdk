@@ -1195,13 +1195,15 @@ fn is_symbolic_font_name(name: &str) -> bool {
         .any(|sym| base.eq_ignore_ascii_case(sym))
 }
 
-/// Fix TrueType font encoding for PDF/A compliance (rule 6.2.11.6:2).
+/// Fix TrueType font encoding for PDF/A compliance (rules 6.2.11.6:2, 6.2.11.6:3).
 ///
-/// Non-symbolic TrueType fonts must have MacRomanEncoding or WinAnsiEncoding.
-/// This adds WinAnsiEncoding to any non-symbolic TrueType font missing it.
+/// - Non-symbolic TrueType fonts must have MacRomanEncoding or WinAnsiEncoding.
+/// - Symbolic TrueType fonts must NOT have an Encoding entry.
 pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
-    // Collect font IDs that need fixing.
+    // Collect font IDs that need fixing (non-symbolic: add encoding).
     let mut to_fix: Vec<ObjectId> = Vec::new();
+    // Collect symbolic font IDs that need Encoding removed.
+    let mut symbolic_to_strip: Vec<ObjectId> = Vec::new();
 
     for (id, obj) in &doc.objects {
         let Object::Dictionary(dict) = obj else {
@@ -1215,6 +1217,10 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
         // Check if symbolic via FontDescriptor Flags.
         let is_symbolic = is_font_symbolic(doc, dict);
         if is_symbolic {
+            // Symbolic fonts must NOT have Encoding (6.2.11.6:3).
+            if dict.has(b"Encoding") {
+                symbolic_to_strip.push(*id);
+            }
             continue;
         }
 
@@ -1304,7 +1310,14 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
         }
     }
 
-    count
+    // Strip Encoding from symbolic TrueType fonts (6.2.11.6:3).
+    for id in &symbolic_to_strip {
+        if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(*id) {
+            dict.remove(b"Encoding");
+        }
+    }
+
+    count + symbolic_to_strip.len()
 }
 
 /// Check if a font is symbolic based on font name or FontDescriptor Flags.
