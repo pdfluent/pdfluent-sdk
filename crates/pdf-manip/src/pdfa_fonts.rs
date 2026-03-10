@@ -1219,12 +1219,8 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
         // Check if symbolic via FontDescriptor Flags.
         let is_symbolic = is_font_symbolic(doc, dict);
         if is_symbolic {
-            // Only strip Encoding from fonts with KNOWN symbolic names.
-            // Flag-only symbolic fonts may be non-symbolic per veraPDF's
-            // font program analysis — stripping their Encoding causes
-            // 6.2.11.6:2 regressions.
-            let name = get_name(dict, b"BaseFont").unwrap_or_default();
-            if is_symbolic_font_name(&name) && dict.has(b"Encoding") {
+            // Symbolic fonts must NOT have Encoding (6.2.11.6:3).
+            if dict.has(b"Encoding") {
                 symbolic_to_strip.push(*id);
             }
             continue;
@@ -1269,55 +1265,12 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
     // Apply fixes.
     let count = to_fix.len();
     for id in to_fix {
-        // First check if Encoding is a Reference to a dict with Differences.
-        let enc_ref_with_diffs = {
-            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
-                continue;
-            };
-            match dict.get(b"Encoding").ok() {
-                Some(Object::Reference(enc_id)) => {
-                    match doc.objects.get(enc_id) {
-                        Some(Object::Dictionary(enc_dict)) if enc_dict.has(b"Differences") => {
-                            Some(*enc_id)
-                        }
-                        _ => None,
-                    }
-                }
-                _ => None,
-            }
-        };
-
-        if let Some(enc_id) = enc_ref_with_diffs {
-            // Encoding is a referenced dict with Differences — clone it to avoid
-            // modifying a shared object that other fonts may reference.
-            if let Some(Object::Dictionary(enc_dict)) = doc.objects.get(&enc_id) {
-                let mut new_enc = enc_dict.clone();
-                new_enc.set(
-                    "BaseEncoding",
-                    Object::Name(b"WinAnsiEncoding".to_vec()),
-                );
-                if let Some(Object::Dictionary(ref mut font_dict)) = doc.objects.get_mut(&id) {
-                    font_dict.set("Encoding", Object::Dictionary(new_enc));
-                }
-            }
-        } else if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(id) {
-            // Inline dict with Differences, or no encoding at all.
-            let has_differences = matches!(
-                dict.get(b"Encoding"),
-                Ok(Object::Dictionary(d)) if d.has(b"Differences")
-            );
-            if has_differences {
-                if let Ok(Object::Dictionary(enc_dict)) = dict.get(b"Encoding") {
-                    let mut new_enc = enc_dict.clone();
-                    new_enc.set(
-                        "BaseEncoding",
-                        Object::Name(b"WinAnsiEncoding".to_vec()),
-                    );
-                    dict.set("Encoding", Object::Dictionary(new_enc));
-                }
-            } else {
-                dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
-            }
+        if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(id) {
+            // Always set Encoding to simple WinAnsiEncoding Name.
+            // Preserving Differences arrays from referenced encoding dicts
+            // can cause 6.2.11.6:2 violations when glyph names aren't in
+            // the Adobe Glyph List. A simple Name avoids that check.
+            dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
         }
     }
 
