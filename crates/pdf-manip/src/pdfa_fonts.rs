@@ -742,11 +742,145 @@ fn find_font_recursive_depth(dir: &str, filename: &str, depth: u32) -> Option<St
     None
 }
 
+/// Fix width mismatches for fonts with embedded programs (6.2.11.5:1).
+///
+/// Only updates widths that actually differ from the embedded font by > 1 unit.
+/// This avoids the regression that blanket width updates cause.
+pub fn fix_width_mismatches(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if is_font_dict(dict) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let mut fixed = 0;
+    for font_id in font_ids {
+        let (subtype, fd_id, is_type0) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+            let is_type0 = subtype == "Type0";
+
+            if is_type0 {
+                let desc_fd = get_descendant_embed_info(doc, dict);
+                match desc_fd {
+                    Some((cid_id, true)) => {
+                        let cid_fd = doc.objects.get(&cid_id).and_then(|o| {
+                            if let Object::Dictionary(d) = o {
+                                match d.get(b"FontDescriptor").ok() {
+                                    Some(Object::Reference(id)) => Some(*id),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        (subtype, cid_fd, true)
+                    }
+                    _ => continue,
+                }
+            } else {
+                let fd_id = match dict.get(b"FontDescriptor").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                };
+                (subtype, fd_id, false)
+            }
+        };
+
+        let Some(fd_id) = fd_id else { continue };
+
+        let font_data = read_embedded_font_data(doc, fd_id);
+        let Some(font_data) = font_data else { continue };
+
+        let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+            continue;
+        };
+
+        let units_per_em = face.units_per_em() as f64;
+        if units_per_em == 0.0 {
+            continue;
+        }
+        let scale = 1000.0 / units_per_em;
+
+        // For simple fonts, check if existing widths differ from font widths.
+        if !is_type0 && subtype != "CIDFontType0" && subtype != "CIDFontType2" {
+            let has_mismatch = {
+                let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+                    continue;
+                };
+                let fc = font
+                    .get(b"FirstChar")
+                    .ok()
+                    .and_then(|o| match o {
+                        Object::Integer(i) => Some(*i as u32),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let existing_widths = match font.get(b"Widths").ok() {
+                    Some(Object::Array(arr)) => arr,
+                    _ => continue,
+                };
+                let enc = font
+                    .get(b"Encoding")
+                    .ok()
+                    .and_then(|o| match o {
+                        Object::Name(n) => String::from_utf8(n.clone()).ok(),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+
+                let mut mismatch = false;
+                for (i, obj) in existing_widths.iter().enumerate() {
+                    let pdf_w = match obj {
+                        Object::Integer(w) => *w,
+                        Object::Real(r) => *r as i64,
+                        _ => continue,
+                    };
+                    let code = fc + i as u32;
+                    let ch = encoding_to_char(code, &enc);
+                    let expected = if let Some(gid) = face.glyph_index(ch) {
+                        face.glyph_hor_advance(gid)
+                            .map(|w| (w as f64 * scale).round() as i64)
+                            .unwrap_or(0)
+                    } else if code <= u16::MAX as u32 {
+                        face.glyph_hor_advance(ttf_parser::GlyphId(code as u16))
+                            .map(|w| (w as f64 * scale).round() as i64)
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    if (pdf_w - expected).abs() > 1 {
+                        mismatch = true;
+                        break;
+                    }
+                }
+                mismatch
+            };
+
+            if has_mismatch {
+                update_simple_widths(doc, font_id, &face, scale);
+                fixed += 1;
+            }
+        }
+    }
+    fixed
+}
+
 /// Fix font metrics for all already-embedded fonts (6.2.11.6:3, 6.2.11.5:1).
 ///
 /// Reads embedded font programs (FontFile2/FontFile3) and updates
 /// Ascent, Descent, CapHeight, FontBBox in the FontDescriptor, and
 /// Widths in the font dictionary to match the actual font data.
+#[allow(dead_code)]
 pub fn fix_embedded_font_metrics(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc
         .objects

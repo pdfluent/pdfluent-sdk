@@ -29,6 +29,9 @@ fn main() {
         Err(e) => eprintln!("Font error: {e}"),
     }
 
+    let width_fixed = pdf_manip::pdfa_fonts::fix_width_mismatches(&mut doc);
+    eprintln!("Width mismatches: fixed={width_fixed}");
+
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");
 
