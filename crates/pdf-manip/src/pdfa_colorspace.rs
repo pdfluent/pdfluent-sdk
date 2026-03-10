@@ -633,16 +633,14 @@ fn add_default_cmyk_colorspace(doc: &mut Document) {
         }
     }
 
-    // Also add DefaultCMYK to Form XObject Resources that have their own
-    // ColorSpace dict, to cover DeviceCMYK usage within Form XObjects.
+    // Also add DefaultCMYK to ALL Form XObject Resources (even those without
+    // an existing ColorSpace dict or without Resources at all).
     let form_ids: Vec<ObjectId> = doc
         .objects
         .iter()
         .filter_map(|(id, obj)| {
             if let Object::Stream(stream) = obj {
-                if get_name(&stream.dict, b"Subtype").as_deref() == Some("Form")
-                    && stream.dict.has(b"Resources")
-                {
+                if get_name(&stream.dict, b"Subtype").as_deref() == Some("Form") {
                     return Some(*id);
                 }
             }
@@ -667,7 +665,7 @@ fn add_default_cmyk_colorspace(doc: &mut Document) {
             if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
                 let mut cs_dict = match res.get(b"ColorSpace") {
                     Ok(Object::Dictionary(d)) => d.clone(),
-                    _ => continue,
+                    _ => lopdf::Dictionary::new(),
                 };
                 if !cs_dict.has(b"DefaultCMYK") {
                     cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
@@ -675,18 +673,19 @@ fn add_default_cmyk_colorspace(doc: &mut Document) {
                 }
             }
         } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&form_id) {
-            // Resources is inline in the Form XObject.
-            if let Ok(Object::Dictionary(res)) = stream.dict.get(b"Resources") {
-                let mut res = res.clone();
-                let mut cs_dict = match res.get(b"ColorSpace") {
-                    Ok(Object::Dictionary(d)) => d.clone(),
-                    _ => continue,
-                };
-                if !cs_dict.has(b"DefaultCMYK") {
-                    cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
-                    res.set("ColorSpace", Object::Dictionary(cs_dict));
-                    stream.dict.set("Resources", Object::Dictionary(res));
-                }
+            // Resources inline or missing — create/update.
+            let mut res = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultCMYK") {
+                cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                stream.dict.set("Resources", Object::Dictionary(res));
             }
         }
     }
