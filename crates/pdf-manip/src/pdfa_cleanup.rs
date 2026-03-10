@@ -381,7 +381,8 @@ fn normalize_rendering_intents(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let needs_fix = {
+        // Check /RI in dictionaries (ExtGState).
+        let needs_ri_fix = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 if let Ok(Object::Name(ri)) = dict.get(b"RI") {
                     !valid.contains(&ri.as_slice())
@@ -392,9 +393,30 @@ fn normalize_rendering_intents(doc: &mut Document) -> usize {
                 false
             }
         };
-        if needs_fix {
+        if needs_ri_fix {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.set("RI", Object::Name(b"RelativeColorimetric".to_vec()));
+                count += 1;
+            }
+        }
+
+        // Check /Intent in stream dicts (Image XObjects).
+        let needs_intent_fix = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+                if let Ok(Object::Name(intent)) = stream.dict.get(b"Intent") {
+                    !valid.contains(&intent.as_slice())
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if needs_intent_fix {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream
+                    .dict
+                    .set("Intent", Object::Name(b"RelativeColorimetric".to_vec()));
                 count += 1;
             }
         }
