@@ -107,14 +107,22 @@ impl VeraPdfOracle {
     fn run_verapdf(&self, pdf_path: &Path) -> Result<VeraPdfResult, String> {
         let start = Instant::now();
 
-        let output = Command::new(&self.binary_path)
-            .args([
-                "--format",
-                "json",
-                "--flavour",
-                "0", // Auto-detect profile
-            ])
-            .arg(pdf_path)
+        let mut cmd = Command::new(&self.binary_path);
+        cmd.args(["--format", "json", "--flavour", "0"]);
+        cmd.arg(pdf_path);
+        // Ensure JAVA_HOME is set for the veraPDF JVM.
+        if std::env::var("JAVA_HOME").is_err() {
+            for java_dir in [
+                "/usr/lib/jvm/java-21-openjdk-amd64",
+                "/usr/lib/jvm/java-17-openjdk-amd64",
+            ] {
+                if Path::new(java_dir).is_dir() {
+                    cmd.env("JAVA_HOME", java_dir);
+                    break;
+                }
+            }
+        }
+        let output = cmd
             .output()
             .map_err(|e| format!("failed to run veraPDF: {e}"))?;
 
@@ -143,7 +151,15 @@ impl VeraPdfOracle {
                 arr.remove(0)
             }
             Some(ValidationResultWrapper::Single(vr)) => vr,
-            None => return Err("veraPDF returned no validation result".to_string()),
+            None => {
+                let msg = if let Some(exc) = job.task_exception {
+                    let detail = exc.exception_message.as_deref().unwrap_or(&exc.message);
+                    format!("veraPDF taskException: {}", detail.chars().take(200).collect::<String>())
+                } else {
+                    "veraPDF returned no validation result".to_string()
+                };
+                return Err(msg);
+            }
         };
 
         let rule_failures: Vec<RuleFailure> = vr
@@ -298,6 +314,17 @@ struct VeraPdfJob {
     /// veraPDF 1.28+ wraps validationResult in an array.
     #[serde(rename = "validationResult")]
     validation_result: Option<ValidationResultWrapper>,
+    /// veraPDF returns this when it can't process the file (e.g. "Pages not found").
+    #[serde(rename = "taskException", default)]
+    task_exception: Option<TaskException>,
+}
+
+#[derive(Deserialize)]
+struct TaskException {
+    #[serde(default)]
+    message: String,
+    #[serde(rename = "exceptionMessage", default)]
+    exception_message: Option<String>,
 }
 
 #[derive(Deserialize)]
