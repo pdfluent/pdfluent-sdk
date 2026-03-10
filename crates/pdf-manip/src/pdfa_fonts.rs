@@ -388,11 +388,14 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
         }
     }
 
-    // Update FontDescriptor Flags BEFORE computing widths, so that the
-    // width computation uses the same validation path veraPDF will use.
-    // veraPDF uses Encoding → Unicode → cmap for Nonsymbolic fonts, but
-    // CFF internal encoding for Symbolic fonts. The flags must match the
-    // embedded font program for consistent width validation.
+    // Update Widths and FontDescriptor metrics from the embedded font.
+    if is_truetype || is_otf {
+        update_metrics_from_font(doc, info, &font_data);
+    }
+
+    // If we embedded a non-symbolic font (e.g., DejaVuSans) for a symbolic-named
+    // font (e.g., ZapfDingbats), update FontDescriptor Flags to match the actual
+    // embedded program. veraPDF checks the font program, not the name.
     if is_truetype {
         if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
             let has_31_cmap = face.tables().cmap.as_ref().is_some_and(|cmap| {
@@ -412,12 +415,6 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
                 }
             }
         }
-    }
-
-    // Update Widths and FontDescriptor metrics from the embedded font.
-    // Uses the Symbolic flag (set above) to choose the right width path.
-    if is_truetype || is_otf {
-        update_metrics_from_font(doc, info, &font_data);
     }
 
     // PDF/A 6.2.11.6:4: for symbolic TrueType fonts, the cmap must contain
@@ -695,24 +692,12 @@ fn update_metrics_from_font(doc: &mut Document, info: &NonEmbeddedFont, font_dat
     if info.is_type0 {
         update_cid_widths(doc, info.target_id, &face, scale);
     } else {
-        // For OTF-CFF fonts (OTTO magic), always use the cmap-based path.
-        // OTF Symbol fonts (StandardSymbolsPS.otf, D050000L.otf) have cmaps
-        // that map ASCII code points to their Symbol/Dingbats equivalents,
-        // which matches how veraPDF validates widths. The CFF internal
-        // encoding in these OTF fonts is often empty (all .notdef).
-        //
-        // Only use CFF internal encoding for raw CFF files (Type1C) that
-        // don't have a cmap table.
+        // For CFF-based symbolic fonts (Symbol, ZapfDingbats), use the CFF
+        // internal encoding to compute widths.  The Unicode cmap in OTF wrappers
+        // maps unrelated Latin codepoints to symbol glyphs, producing wrong widths.
         let is_cff = face.tables().glyf.is_none();
-        let is_otf_wrapped = font_data.starts_with(b"OTTO");
-        let is_symbolic = is_symbolic_font_name(&info.name) && {
-            let Some(Object::Dictionary(font)) = doc.objects.get(&info.font_id) else {
-                return;
-            };
-            is_font_symbolic(doc, font)
-        };
-        if is_cff && is_symbolic && !is_otf_wrapped {
-            update_simple_widths_cff_symbolic(doc, info.font_id, font_data);
+        if is_cff && is_symbolic_font_name(&info.name) {
+            update_simple_widths_cff_symbolic(doc, info, font_data, &face, scale);
         } else {
             update_simple_widths(doc, info.font_id, &face, scale);
         }
@@ -836,27 +821,28 @@ fn extract_cff_table(font_data: &[u8]) -> Option<&[u8]> {
 
 /// Compute Widths for a CFF-based symbolic font (Symbol, ZapfDingbats).
 ///
-/// Uses the CFF internal encoding to map character codes → glyph IDs,
-/// then reads widths from the OTF hmtx table (which veraPDF validates against).
-fn update_simple_widths_cff_symbolic(doc: &mut Document, font_id: ObjectId, font_data: &[u8]) {
-    // Parse the OTF face for hmtx-based width lookup.
-    let Ok(face) = ttf_parser::Face::parse(font_data, 0) else {
-        return;
-    };
-    let units_per_em = face.units_per_em() as f64;
-    if units_per_em == 0.0 {
-        return;
-    }
-    let scale = 1000.0 / units_per_em;
+/// veraPDF validates Symbolic CFF fonts using:
+/// 1. PDF Encoding Differences → glyph name → CFF charset → GID → hmtx width
+/// 2. CFF internal encoding → GID → hmtx width (for non-Differences codes)
+///
+/// For OTF fonts where the CFF encoding is empty (all .notdef), codes not in
+/// Differences get .notdef width. Codes IN Differences get the named glyph width.
+fn update_simple_widths_cff_symbolic(
+    doc: &mut Document,
+    info: &NonEmbeddedFont,
+    font_data: &[u8],
+    face: &ttf_parser::Face,
+    scale: f64,
+) {
+    let font_id = info.font_id;
 
     // Extract the CFF table from the OTF wrapper for encoding lookup.
     let cff_data = extract_cff_table(font_data);
-    let Some(cff_data) = cff_data else { return };
-    let Some(cff) = cff_parser::Table::parse(cff_data) else {
-        return;
-    };
+    let cff = cff_data.and_then(cff_parser::Table::parse);
 
-    let (first_char, last_char) = {
+    // Parse PDF Encoding Differences (e.g., [1 /bullet]) so we can look up
+    // named glyphs that override the CFF internal encoding.
+    let (first_char, last_char, differences) = {
         let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
             return;
         };
@@ -876,13 +862,42 @@ fn update_simple_widths_cff_symbolic(doc: &mut Document, font_id: ObjectId, font
                 _ => None,
             })
             .unwrap_or(255);
-        (fc, lc)
+        let mut diffs = std::collections::HashMap::new();
+        match font.get(b"Encoding").ok() {
+            Some(Object::Dictionary(enc_dict)) => {
+                parse_differences(enc_dict, &mut diffs);
+            }
+            Some(Object::Reference(enc_ref)) => {
+                if let Ok(Object::Dictionary(enc_dict)) = doc.get_object(*enc_ref) {
+                    parse_differences(enc_dict, &mut diffs);
+                }
+            }
+            _ => {}
+        }
+        (fc, lc, diffs)
     };
 
     let mut widths = Vec::new();
     for code in first_char..=last_char {
-        let width = if code <= 255 {
-            // Use CFF encoding to map code → glyph ID, then hmtx for width.
+        let width = if code > 255 {
+            0
+        } else if let Some(glyph_name) = differences.get(&code) {
+            // Code is in Differences: look up glyph by name in the font.
+            // veraPDF resolves Differences names via CFF charset, then hmtx.
+            if let Some(gid) = face.glyph_index_by_name(glyph_name) {
+                face.glyph_hor_advance(gid)
+                    .map(|w| (w as f64 * scale).round() as i64)
+                    .unwrap_or(0)
+            } else {
+                // Glyph name not found — try via Unicode mapping.
+                glyph_name_to_unicode(glyph_name)
+                    .and_then(|u| face.glyph_index(u))
+                    .and_then(|gid| face.glyph_hor_advance(gid))
+                    .map(|w| (w as f64 * scale).round() as i64)
+                    .unwrap_or(0)
+            }
+        } else if let Some(ref cff) = cff {
+            // No Differences entry: use CFF internal encoding.
             let gid = cff
                 .encoding
                 .code_to_gid(&cff.charset, code as u8)
@@ -892,7 +907,10 @@ fn update_simple_widths_cff_symbolic(doc: &mut Document, font_id: ObjectId, font
                 .map(|w| (w as f64 * scale).round() as i64)
                 .unwrap_or(0)
         } else {
-            0
+            // No CFF table available — use .notdef width.
+            face.glyph_hor_advance(ttf_parser::GlyphId(0))
+                .map(|w| (w as f64 * scale).round() as i64)
+                .unwrap_or(0)
         };
         widths.push(Object::Integer(width));
     }
