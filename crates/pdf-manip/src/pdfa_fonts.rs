@@ -1334,7 +1334,10 @@ fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
         }
     }
 
-    // Check FontDescriptor Flags bit 2 (0-indexed) = value 4 = Symbolic.
+    // Check FontDescriptor Flags.
+    // Bit 3 (value 4) = Symbolic, bit 6 (value 32) = Nonsymbolic.
+    // If Nonsymbolic is set, treat as non-symbolic even if Symbolic is also set
+    // (veraPDF prioritizes Nonsymbolic over Symbolic for conflicting flags).
     let fd = match font_dict.get(b"FontDescriptor") {
         Ok(Object::Reference(id)) => doc.get_object(*id).ok(),
         Ok(obj) => Some(obj),
@@ -1342,7 +1345,9 @@ fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
     };
     if let Some(Object::Dictionary(fd_dict)) = fd {
         if let Ok(Object::Integer(flags)) = fd_dict.get(b"Flags") {
-            return (*flags & 4) != 0;
+            let symbolic = (*flags & 4) != 0;
+            let nonsymbolic = (*flags & 32) != 0;
+            return symbolic && !nonsymbolic;
         }
     }
 
