@@ -87,6 +87,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_widget_actions(doc);
     remove_xfa_from_acroform(doc);
     fix_widget_btn_appearance(doc);
+    fix_non_btn_ap_n_subdict(doc);
     fix_form_xobject_keys(doc);
     // NOTE: fix_font_descriptor_keys and fix_font_lastchar_widths disabled —
     // they run before embed_fonts and create incorrect state (zero widths,
@@ -458,7 +459,8 @@ fn fix_annotation_flags(doc: &mut Document) -> usize {
         let needs_fix = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 let is_annot = match dict.get(b"Subtype").ok() {
-                    Some(Object::Name(n)) => is_annotation_subtype(n),
+                    // Popup annotations are exempt from F key requirements.
+                    Some(Object::Name(n)) => is_annotation_subtype(n) && n != b"Popup",
                     _ => false,
                 };
                 if !is_annot {
@@ -702,23 +704,38 @@ fn fix_optional_content(doc: &mut Document) -> usize {
     }
 
     // Fix Configs array entries: ensure Name, remove AS.
-    let config_ids: Vec<ObjectId> = {
+    // Collect referenced config IDs and indices of inline config dicts.
+    let (config_ids, inline_indices): (Vec<ObjectId>, Vec<usize>) = {
         if let Some(Object::Dictionary(ocprops)) = doc.objects.get(&ocprops_id) {
             match ocprops.get(b"Configs").ok() {
-                Some(Object::Array(arr)) => arr
-                    .iter()
-                    .filter_map(|o| {
-                        if let Object::Reference(id) = o {
-                            Some(*id)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-                _ => vec![],
+                Some(Object::Array(arr)) => {
+                    let refs = arr
+                        .iter()
+                        .filter_map(|o| {
+                            if let Object::Reference(id) = o {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    let inlines = arr
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, o)| {
+                            if matches!(o, Object::Dictionary(_)) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    (refs, inlines)
+                }
+                _ => (vec![], vec![]),
             }
         } else {
-            vec![]
+            (vec![], vec![])
         }
     };
 
@@ -738,7 +755,59 @@ fn fix_optional_content(doc: &mut Document) -> usize {
         }
     }
 
+    // Fix inline config dicts in the Configs array.
+    if !inline_indices.is_empty() {
+        if let Some(Object::Dictionary(ref mut ocprops)) = doc.objects.get_mut(&ocprops_id) {
+            if let Ok(Object::Array(ref mut configs_arr)) = ocprops.get_mut(b"Configs") {
+                for idx in inline_indices {
+                    if let Some(Object::Dictionary(ref mut config)) = configs_arr.get_mut(idx) {
+                        if !config.has(b"Name") {
+                            config.set(
+                                "Name",
+                                Object::String(
+                                    b"Config".to_vec(),
+                                    lopdf::StringFormat::Literal,
+                                ),
+                            );
+                            count += 1;
+                        }
+                        if config.has(b"AS") {
+                            config.remove(b"AS");
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     count
+}
+
+/// Check if a Widget annotation is a button field (Btn).
+/// Button widgets may legitimately have AP/N subdictionaries for state appearances.
+fn is_btn_field(doc: &Document, dict: &lopdf::Dictionary) -> bool {
+    // Check /FT directly on the annotation.
+    if let Ok(Object::Name(ft)) = dict.get(b"FT") {
+        return ft == b"Btn";
+    }
+    // Walk the /Parent chain to find /FT.
+    let mut current = dict.get(b"Parent").ok().cloned();
+    for _ in 0..10 {
+        let obj = match &current {
+            Some(Object::Reference(id)) => doc.objects.get(id),
+            _ => break,
+        };
+        if let Some(Object::Dictionary(parent)) = obj {
+            if let Ok(Object::Name(ft)) = parent.get(b"FT") {
+                return ft == b"Btn";
+            }
+            current = parent.get(b"Parent").ok().cloned();
+        } else {
+            break;
+        }
+    }
+    false
 }
 
 fn is_annotation_subtype(name: &[u8]) -> bool {
@@ -1322,6 +1391,55 @@ fn fix_widget_btn_appearance(doc: &mut Document) {
     }
 }
 
+/// Fix non-Widget/non-Btn annotations where AP/N is a subdictionary (6.3.3:4).
+///
+/// For non-Widget annotations (or Widget without FT=Btn), AP/N must be a single
+/// appearance stream, not a subdictionary mapping state names.  If we find a
+/// subdictionary, pick the first stream reference from it and replace AP/N.
+fn fix_non_btn_ap_n_subdict(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let fix_val: Option<Object> = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let subtype = match dict.get(b"Subtype").ok() {
+                Some(Object::Name(ref n)) if is_annotation_subtype(n) => n.clone(),
+                _ => continue,
+            };
+            // Widget/Btn annotations are allowed to have a subdictionary — skip them.
+            if subtype == b"Widget" && is_btn_field(doc, dict) {
+                continue;
+            }
+            // Check if AP/N is a subdictionary (not a stream reference).
+            match dict.get(b"AP").ok() {
+                Some(Object::Dictionary(ap)) => match ap.get(b"N").ok() {
+                    Some(Object::Dictionary(sub)) => {
+                        // Pick the first reference from the subdictionary.
+                        sub.iter()
+                            .find_map(|(_, v)| {
+                                if matches!(v, Object::Reference(_)) {
+                                    Some(v.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some(val) = fix_val {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                if let Ok(Object::Dictionary(ref mut ap)) = dict.get_mut(b"AP") {
+                    ap.set("N", val);
+                }
+            }
+        }
+    }
+}
+
 /// Fix font descriptor keys: ensure FontFile type matches font Subtype (6.2.11.4.1:1).
 ///
 /// - Type1 fonts → FontFile
@@ -1560,7 +1678,8 @@ fn remove_needs_rendering(doc: &mut Document) {
     }
 }
 
-/// Remove forbidden annotation subtypes: 3D, Sound, Screen, Movie (6.3.1:1).
+/// Remove forbidden annotation subtypes: 3D, Sound, Screen, Movie,
+/// and any non-standard annotation types not defined in ISO 32000-1 (6.3.1:1).
 fn remove_forbidden_annotations(doc: &mut Document) {
     let page_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for page_id in &page_ids {
@@ -1578,10 +1697,16 @@ fn remove_forbidden_annotations(doc: &mut Document) {
                     .filter_map(|obj| {
                         if let Object::Reference(id) = obj {
                             if let Some(Object::Dictionary(d)) = doc.objects.get(id) {
-                                if matches!(
-                                    d.get(b"Subtype").ok(),
-                                    Some(Object::Name(ref n)) if matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie")
-                                ) {
+                                let is_forbidden = match d.get(b"Subtype").ok() {
+                                    Some(Object::Name(ref n)) => {
+                                        // Explicitly forbidden types.
+                                        matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie")
+                                        // Also remove non-standard annotation types.
+                                        || !is_annotation_subtype(n)
+                                    }
+                                    _ => false,
+                                };
+                                if is_forbidden {
                                     return Some(*id);
                                 }
                             }

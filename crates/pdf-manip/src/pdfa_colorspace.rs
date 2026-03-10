@@ -179,7 +179,11 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     // Always add DefaultCMYK to all pages — even if we don't detect CMYK usage,
     // it may exist in compressed streams or inline images we can't easily scan.
     // DefaultCMYK is harmless on pages that don't use DeviceCMYK.
-    add_default_cmyk_colorspace(doc);
+    let cmyk_cs_id = add_default_cmyk_colorspace(doc);
+
+    // Replace DeviceCMYK references in deep structures (Shading, Group, Pattern)
+    // that are not covered by DefaultCMYK resource fallback.
+    fix_device_cmyk_in_deep_structures(doc, cmyk_cs_id);
 
     let separations_unified = normalize_separation_colorspaces(doc);
     let overprint_mode_fixed = fix_overprint_mode(doc);
@@ -532,7 +536,8 @@ fn srgb_icc_profile_bytes() -> Vec<u8> {
 
 /// Add DefaultCMYK ICCBased colorspace to all page resources.
 /// This allows DeviceCMYK usage when the OutputIntent is sRGB (not CMYK).
-fn add_default_cmyk_colorspace(doc: &mut Document) {
+/// Returns the ObjectId of the ICCBased colorspace array for reuse.
+fn add_default_cmyk_colorspace(doc: &mut Document) -> ObjectId {
     let icc_bytes = cmyk_icc_profile_bytes();
     let icc_dict = dictionary! {
         "N" => Object::Integer(4),
@@ -678,6 +683,125 @@ fn add_default_cmyk_colorspace(doc: &mut Document) {
                 cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
                 res.set("ColorSpace", Object::Dictionary(cs_dict));
                 stream.dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
+    cs_id
+}
+
+/// Replace `/ColorSpace /DeviceCMYK` in Shading dicts and `/CS /DeviceCMYK` in
+/// transparency Group dicts with an ICCBased reference. These deep structures
+/// are not covered by the DefaultCMYK resource fallback mechanism.
+fn fix_device_cmyk_in_deep_structures(doc: &mut Document, cmyk_cs_id: ObjectId) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        let obj = match doc.objects.get(&id) {
+            Some(o) => o,
+            None => continue,
+        };
+
+        match obj {
+            Object::Dictionary(dict) => {
+                // Shading dicts have /ShadingType and may have /ColorSpace /DeviceCMYK.
+                if dict.get(b"ShadingType").is_ok()
+                    && get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
+                {
+                    if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
+                        d.set("ColorSpace", Object::Reference(cmyk_cs_id));
+                    }
+                    continue;
+                }
+            }
+            Object::Stream(stream) => {
+                let dict = &stream.dict;
+
+                // Shading streams (have /ShadingType) with /ColorSpace /DeviceCMYK.
+                if dict.get(b"ShadingType").is_ok()
+                    && get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
+                {
+                    if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                        s.dict.set("ColorSpace", Object::Reference(cmyk_cs_id));
+                    }
+                    continue;
+                }
+
+                // Group dicts on XObject streams: /Group << /CS /DeviceCMYK >>
+                let group_has_cmyk = if let Ok(Object::Dictionary(group)) = dict.get(b"Group") {
+                    get_name(group, b"CS").as_deref() == Some("DeviceCMYK")
+                } else {
+                    false
+                };
+                if group_has_cmyk {
+                    if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                        if let Ok(Object::Dictionary(ref mut group)) = s.dict.get_mut(b"Group") {
+                            group.set("CS", Object::Reference(cmyk_cs_id));
+                        }
+                    }
+                    continue;
+                }
+
+                // Pattern streams with /ColorSpace /DeviceCMYK (Type 2 patterns = shading patterns).
+                let is_pattern = get_name(dict, b"Type").as_deref() == Some("Pattern")
+                    || dict.get(b"PatternType").is_ok();
+                if is_pattern
+                    && get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
+                {
+                    if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                        s.dict.set("ColorSpace", Object::Reference(cmyk_cs_id));
+                    }
+                    continue;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Also handle Group dicts that are stored as references from the stream dict.
+    // Re-scan for /Group as a reference to a separate dict object.
+    let ids2: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids2 {
+        let group_ref_id = {
+            let obj = match doc.objects.get(&id) {
+                Some(o) => o,
+                None => continue,
+            };
+            match obj {
+                Object::Stream(stream) => match stream.dict.get(b"Group").ok() {
+                    Some(Object::Reference(gid)) => Some(*gid),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some(gid) = group_ref_id {
+            let needs_fix = if let Some(Object::Dictionary(group)) = doc.objects.get(&gid) {
+                get_name(group, b"CS").as_deref() == Some("DeviceCMYK")
+            } else {
+                false
+            };
+            if needs_fix {
+                if let Some(Object::Dictionary(ref mut group)) = doc.objects.get_mut(&gid) {
+                    group.set("CS", Object::Reference(cmyk_cs_id));
+                }
+            }
+        }
+    }
+
+    // Handle Pattern dicts (non-stream, Type 2 shading patterns can be plain dicts with /Shading ref).
+    let ids3: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids3 {
+        let needs_fix = if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+            let is_pattern = get_name(dict, b"Type").as_deref() == Some("Pattern")
+                || dict.get(b"PatternType").is_ok();
+            is_pattern && get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK")
+        } else {
+            false
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.set("ColorSpace", Object::Reference(cmyk_cs_id));
             }
         }
     }
