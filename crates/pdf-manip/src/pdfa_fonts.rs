@@ -764,21 +764,8 @@ fn update_simple_widths(
 
     let mut widths = Vec::new();
     for code in first_char..=last_char {
-        // For TrueType fonts, veraPDF validates widths by looking up the raw
-        // character code as a Unicode code point in the (3,1) cmap, ignoring
-        // the PDF Encoding (MacRomanEncoding, etc.). Match that behavior:
-        // try raw code as Unicode first, then fall back to encoding mapping.
-        let raw_unicode_gid = if is_truetype_outline && code <= 0xFFFF {
-            char::from_u32(code).and_then(|c| face.glyph_index(c))
-        } else {
-            None
-        };
         let ch = encoding_to_char(code, &encoding_name);
-        let width = if let Some(glyph_id) = raw_unicode_gid {
-            face.glyph_hor_advance(glyph_id)
-                .map(|w| (w as f64 * scale).round() as i64)
-                .unwrap_or(0)
-        } else if let Some(glyph_id) = face.glyph_index(ch) {
+        let width = if let Some(glyph_id) = face.glyph_index(ch) {
             face.glyph_hor_advance(glyph_id)
                 .map(|w| (w as f64 * scale).round() as i64)
                 .unwrap_or(0)
@@ -1099,7 +1086,12 @@ macro_rules! mac {
 }
 
 fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
-    // Priority: Liberation (metric-compatible) > URW Base35 > Noto > DejaVu > macOS.
+    // Priority: URW Base35 (OTF, metric-compatible, keeps Type1 subtype) >
+    //           Liberation (TTF) > Noto > DejaVu > macOS.
+    // OTF fonts are preferred because embedding them as FontFile3 preserves the
+    // original Type1 subtype, avoiding veraPDF's TrueType width validation bug
+    // with MacRomanEncoding (veraPDF ignores the PDF Encoding and uses the raw
+    // character code in the (3,1) cmap for width validation).
     let candidates: &[&str] = match clean_name {
         // --- Sans-serif (Helvetica / Arial family) ---
         "Helvetica"
@@ -1115,8 +1107,8 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         | "LucidaGrande"
         | "HelveticaNeue"
         | "HelveticaLTStd-Roman" => &[
-            lib!("LiberationSans-Regular.ttf"),
             urw!("NimbusSans-Regular.otf"),
+            lib!("LiberationSans-Regular.ttf"),
             noto!("NotoSans-Regular.ttf"),
             dv!("DejaVuSans.ttf"),
             "/System/Library/Fonts/Helvetica.ttc",
@@ -1125,8 +1117,8 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         "Helvetica-Bold" | "Arial-BoldMT" | "Arial,Bold" | "Arial-Bold" | "ArialBlack"
         | "Tahoma,Bold" | "Tahoma-Bold" | "Verdana,Bold" | "Verdana-Bold" | "Calibri,Bold"
         | "Calibri-Bold" | "HelveticaNeue-Bold" | "SegoeUI,Bold" | "SegoeUI-Bold" => &[
-            lib!("LiberationSans-Bold.ttf"),
             urw!("NimbusSans-Bold.otf"),
+            lib!("LiberationSans-Bold.ttf"),
             noto!("NotoSans-Bold.ttf"),
             dv!("DejaVuSans-Bold.ttf"),
             mac!("Arial Bold.ttf"),
@@ -1142,8 +1134,8 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         | "HelveticaNeue-Italic"
         | "SegoeUI,Italic"
         | "SegoeUI-Italic" => &[
-            lib!("LiberationSans-Italic.ttf"),
             urw!("NimbusSans-Italic.otf"),
+            lib!("LiberationSans-Italic.ttf"),
             noto!("NotoSans-Italic.ttf"),
             dv!("DejaVuSans-Oblique.ttf"),
             mac!("Arial Italic.ttf"),
@@ -1153,8 +1145,8 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         | "Arial,BoldItalic"
         | "Calibri,BoldItalic"
         | "HelveticaNeue-BoldItalic" => &[
-            lib!("LiberationSans-BoldItalic.ttf"),
             urw!("NimbusSans-BoldItalic.otf"),
+            lib!("LiberationSans-BoldItalic.ttf"),
             noto!("NotoSans-BoldItalic.ttf"),
             dv!("DejaVuSans-BoldOblique.ttf"),
             mac!("Arial Bold Italic.ttf"),
@@ -1162,8 +1154,8 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         // --- Serif (Times family) ---
         "Times-Roman" | "TimesNewRomanPSMT" | "TimesNewRoman" | "TimesNewRomanPS" | "Georgia"
         | "BookAntiqua" | "Cambria" | "Garamond" | "Palatino" | "PalatinoLinotype" => &[
-            lib!("LiberationSerif-Regular.ttf"),
             urw!("NimbusRoman-Regular.otf"),
+            lib!("LiberationSerif-Regular.ttf"),
             noto!("NotoSerif-Regular.ttf"),
             dv!("DejaVuSerif.ttf"),
             mac!("Times New Roman.ttf"),
@@ -1176,8 +1168,8 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         | "Georgia-Bold"
         | "Cambria,Bold"
         | "Cambria-Bold" => &[
-            lib!("LiberationSerif-Bold.ttf"),
             urw!("NimbusRoman-Bold.otf"),
+            lib!("LiberationSerif-Bold.ttf"),
             noto!("NotoSerif-Bold.ttf"),
             dv!("DejaVuSerif-Bold.ttf"),
             mac!("Times New Roman Bold.ttf"),
@@ -1190,8 +1182,8 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         | "Georgia-Italic"
         | "Cambria,Italic"
         | "Cambria-Italic" => &[
-            lib!("LiberationSerif-Italic.ttf"),
             urw!("NimbusRoman-Italic.otf"),
+            lib!("LiberationSerif-Italic.ttf"),
             noto!("NotoSerif-Italic.ttf"),
             dv!("DejaVuSerif-Italic.ttf"),
             mac!("Times New Roman Italic.ttf"),
@@ -1200,8 +1192,8 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         | "TimesNewRomanPS-BoldItalicMT"
         | "TimesNewRoman,BoldItalic"
         | "Cambria,BoldItalic" => &[
-            lib!("LiberationSerif-BoldItalic.ttf"),
             urw!("NimbusRoman-BoldItalic.otf"),
+            lib!("LiberationSerif-BoldItalic.ttf"),
             noto!("NotoSerif-BoldItalic.ttf"),
             dv!("DejaVuSerif-BoldItalic.ttf"),
             mac!("Times New Roman Bold Italic.ttf"),
@@ -1209,28 +1201,28 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         // --- Monospace (Courier family) ---
         "Courier" | "CourierNewPSMT" | "CourierNew" | "CourierNewPS" | "LucidaConsole"
         | "Consolas" => &[
-            lib!("LiberationMono-Regular.ttf"),
             urw!("NimbusMonoPS-Regular.otf"),
+            lib!("LiberationMono-Regular.ttf"),
             dv!("DejaVuSansMono.ttf"),
             mac!("Courier New.ttf"),
         ],
         "Courier-Bold" | "CourierNewPS-BoldMT" | "CourierNew,Bold" | "CourierNew-Bold" => &[
-            lib!("LiberationMono-Bold.ttf"),
             urw!("NimbusMonoPS-Bold.otf"),
+            lib!("LiberationMono-Bold.ttf"),
             dv!("DejaVuSansMono-Bold.ttf"),
             mac!("Courier New Bold.ttf"),
         ],
         "Courier-Oblique" | "CourierNewPS-ItalicMT" | "CourierNew,Italic" | "CourierNew-Italic" => {
             &[
-                lib!("LiberationMono-Italic.ttf"),
                 urw!("NimbusMonoPS-Italic.otf"),
+                lib!("LiberationMono-Italic.ttf"),
                 dv!("DejaVuSansMono-Oblique.ttf"),
                 mac!("Courier New Italic.ttf"),
             ]
         }
         "Courier-BoldOblique" | "CourierNewPS-BoldItalicMT" | "CourierNew,BoldItalic" => &[
-            lib!("LiberationMono-BoldItalic.ttf"),
             urw!("NimbusMonoPS-BoldItalic.otf"),
+            lib!("LiberationMono-BoldItalic.ttf"),
             dv!("DejaVuSansMono-BoldOblique.ttf"),
             mac!("Courier New Bold Italic.ttf"),
         ],
@@ -1245,30 +1237,31 @@ fn standard14_system_path(clean_name: &str) -> Option<&'static str> {
         ],
         // --- Narrow variants ---
         "ArialNarrow" => &[
-            lib!("LiberationSansNarrow-Regular.ttf"),
             urw!("NimbusSansNarrow-Regular.otf"),
+            lib!("LiberationSansNarrow-Regular.ttf"),
             dv!("DejaVuSansCondensed.ttf"),
             mac!("Arial Narrow.ttf"),
         ],
         "ArialNarrow,Bold" | "ArialNarrow-Bold" => &[
-            lib!("LiberationSansNarrow-Bold.ttf"),
             urw!("NimbusSansNarrow-Bold.otf"),
+            lib!("LiberationSansNarrow-Bold.ttf"),
             dv!("DejaVuSansCondensed-Bold.ttf"),
             mac!("Arial Narrow Bold.ttf"),
         ],
         "ArialNarrow,Italic" | "ArialNarrow-Italic" => &[
-            lib!("LiberationSansNarrow-Italic.ttf"),
             urw!("NimbusSansNarrow-Oblique.otf"),
+            lib!("LiberationSansNarrow-Italic.ttf"),
             dv!("DejaVuSansCondensed-Oblique.ttf"),
             mac!("Arial Narrow Italic.ttf"),
         ],
         "ArialNarrow,BoldItalic" | "ArialNarrow-BoldItalic" => &[
-            lib!("LiberationSansNarrow-BoldItalic.ttf"),
             urw!("NimbusSansNarrow-BoldOblique.otf"),
+            lib!("LiberationSansNarrow-BoldItalic.ttf"),
             dv!("DejaVuSansCondensed-BoldOblique.ttf"),
             mac!("Arial Narrow Bold Italic.ttf"),
         ],
         "ArialRoundedMTBold" => &[
+            urw!("NimbusSans-Bold.otf"),
             lib!("LiberationSans-Bold.ttf"),
             dv!("DejaVuSans-Bold.ttf"),
             mac!("Arial Rounded Bold.ttf"),
@@ -3448,18 +3441,7 @@ fn get_truetype_glyph_width_fractional(
         // encoding → cmap → Mac cmap path (matches veraPDF behavior).
     }
 
-    // For TrueType fonts, veraPDF validates widths by looking up the raw
-    // character code as a Unicode code point in the (3,1) cmap, ignoring
-    // the PDF Encoding. Try raw code as Unicode first.
-    if code <= 0xFFFF {
-        if let Some(ch) = char::from_u32(code) {
-            if let Some(gid) = face.glyph_index(ch) {
-                return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
-            }
-        }
-    }
-
-    // Fallback: map code -> Unicode via encoding.
+    // Map code -> Unicode via encoding.
     let ch = encoding_to_char(code, enc_name);
 
     if let Some(gid) = face.glyph_index(ch) {
