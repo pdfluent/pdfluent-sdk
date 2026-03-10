@@ -1219,8 +1219,12 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
         // Check if symbolic via FontDescriptor Flags.
         let is_symbolic = is_font_symbolic(doc, dict);
         if is_symbolic {
-            // Symbolic fonts must NOT have Encoding (6.2.11.6:3).
-            if dict.has(b"Encoding") {
+            // Only strip Encoding from fonts with KNOWN symbolic names.
+            // Flag-only symbolic fonts may be non-symbolic per veraPDF's
+            // font program analysis — stripping their Encoding causes
+            // 6.2.11.6:2 regressions.
+            let name = get_name(dict, b"BaseFont").unwrap_or_default();
+            if is_symbolic_font_name(&name) && dict.has(b"Encoding") {
                 symbolic_to_strip.push(*id);
             }
             continue;
