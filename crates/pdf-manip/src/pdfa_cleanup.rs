@@ -747,64 +747,93 @@ fn is_annotation_subtype(name: &[u8]) -> bool {
     )
 }
 
+/// Check if an action name is forbidden for PDF/A.
+fn is_forbidden_action(s: &[u8]) -> bool {
+    matches!(
+        s,
+        b"Launch"
+            | b"Sound"
+            | b"Movie"
+            | b"ResetForm"
+            | b"ImportData"
+            | b"Hide"
+            | b"SetOCGState"
+            | b"Rendition"
+            | b"Trans"
+            | b"GoTo3DView"
+            | b"GoToE"
+            | b"SetState"
+            | b"NoOp"
+            | b"JavaScript"
+    )
+}
+
+/// Check if a Named action is forbidden.
+fn is_forbidden_named_action(dict: &lopdf::Dictionary) -> bool {
+    match dict.get(b"N").ok() {
+        Some(Object::Name(n)) => !matches!(
+            n.as_slice(),
+            b"NextPage" | b"PrevPage" | b"FirstPage" | b"LastPage"
+        ),
+        _ => true,
+    }
+}
+
+/// Check if an action dict has a forbidden type.
+fn is_action_forbidden(dict: &lopdf::Dictionary) -> bool {
+    if let Ok(Object::Name(s)) = dict.get(b"S") {
+        if is_forbidden_action(s) {
+            return true;
+        }
+        if s == b"Named" && is_forbidden_named_action(dict) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Remove forbidden action types for PDF/A (6.5.1).
+///
+/// Handles both top-level action objects AND inline action dicts
+/// within /A keys of annotations, outlines, and other objects.
 fn remove_forbidden_actions(doc: &mut Document) {
-    let forbidden = [
-        &b"Launch"[..],
-        b"Sound",
-        b"Movie",
-        b"ResetForm",
-        b"ImportData",
-        b"Hide",
-        b"SetOCGState",
-        b"Rendition",
-        b"Trans",
-        b"GoTo3DView",
-        b"GoToE",
-        b"SetState", // deprecated set-state action
-        b"NoOp",     // deprecated no-op action
-    ];
+    // Phase 1: Remove /S from top-level action objects with forbidden types.
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let action_type = {
+        let needs_fix = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
-                if let Ok(Object::Name(s)) = dict.get(b"S") {
-                    if forbidden.iter().any(|f| s == *f) {
-                        Some(ActionRemoval::RemoveType)
-                    } else if s == b"Named" {
-                        // Only NextPage, PrevPage, FirstPage, LastPage are allowed (6.5.1 t2).
-                        let allowed = match dict.get(b"N").ok() {
-                            Some(Object::Name(n)) => matches!(
-                                n.as_slice(),
-                                b"NextPage" | b"PrevPage" | b"FirstPage" | b"LastPage"
-                            ),
-                            _ => false,
-                        };
-                        if !allowed {
-                            Some(ActionRemoval::RemoveType)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+                is_action_forbidden(dict)
             } else {
-                None
+                false
             }
         };
-        if let Some(ActionRemoval::RemoveType) = action_type {
+        if needs_fix {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.remove(b"S");
             }
         }
     }
-}
 
-enum ActionRemoval {
-    RemoveType,
+    // Phase 2: Remove /A keys from objects where /A points to a forbidden
+    // inline action dict (not a separate object).
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let remove_a = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                match dict.get(b"A").ok() {
+                    Some(Object::Dictionary(action)) => is_action_forbidden(action),
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        };
+        if remove_a {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"A");
+            }
+        }
+    }
 }
 
 /// Set Interpolate=false on all image XObjects (6.2.8 t3).
