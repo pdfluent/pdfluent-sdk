@@ -18,6 +18,7 @@ subsetter = { workspace = true, optional = true }
 xmp-writer = { workspace = true, optional = true }
 roxmltree.workspace = true
 ttf-parser = { workspace = true }
+cff-parser = { workspace = true }
 
 [features]
 default = ["serde", "image-insert", "font-subset", "pdfa-convert"]

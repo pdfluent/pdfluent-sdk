@@ -132,11 +132,18 @@ impl PdfTest for PdfAConvertTest {
             _ => None,
         };
 
-        // NOTE: fix_width_mismatches disabled — causes regression (67→104 PDFs).
-        // The width calculation doesn't match veraPDF's expectations for already-
-        // embedded fonts. Only widths set by embed_fonts (above) are reliable.
+        // NOTE: fix_width_mismatches disabled — causes regression on TrueType fonts.
+        // CFF-only width fixing is safe (doesn't touch TrueType).
+        set_progress("cff_widths");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc)
+        }));
 
-        // NOTE: fix_font_descriptor_metrics disabled — may interact with width issues.
+        // 3a1b. Fix Type1 CharSet from CFF program.
+        set_progress("charset");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc)
+        }));
 
         // 3a2. Fix TrueType encoding for non-symbolic fonts.
         set_progress("font_encoding");
