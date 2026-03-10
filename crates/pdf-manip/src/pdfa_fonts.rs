@@ -1102,52 +1102,6 @@ fn read_embedded_font_data(doc: &Document, fd_id: ObjectId) -> Option<Vec<u8>> {
     None
 }
 
-/// Extract maximum CID from a CIDFont's /W (Widths) array.
-///
-/// /W format: [cid_start [w1 w2 ...] | cid_start cid_end w]
-/// Returns max CID + 1 (number of CIDs to cover).
-fn max_cid_from_widths(dict: &lopdf::Dictionary) -> Option<usize> {
-    let w = match dict.get(b"W").ok()? {
-        Object::Array(arr) => arr,
-        _ => return None,
-    };
-    let mut max_cid: usize = 0;
-    let mut i = 0;
-    while i < w.len() {
-        let cid_start = match &w[i] {
-            Object::Integer(n) => *n as usize,
-            _ => {
-                i += 1;
-                continue;
-            }
-        };
-        if i + 1 >= w.len() {
-            max_cid = max_cid.max(cid_start);
-            break;
-        }
-        match &w[i + 1] {
-            Object::Array(arr) => {
-                // [cid_start [w1 w2 ...]] — covers cid_start to cid_start+len-1
-                max_cid = max_cid.max(cid_start + arr.len().saturating_sub(1));
-                i += 2;
-            }
-            Object::Integer(cid_end) => {
-                // [cid_start cid_end w] — covers cid_start to cid_end
-                max_cid = max_cid.max(*cid_end as usize);
-                i += 3;
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-    if max_cid > 0 {
-        Some(max_cid)
-    } else {
-        None
-    }
-}
-
 /// Fix CIDSet streams for all CID fonts (6.2.11.8:1).
 ///
 /// CIDSet must be a stream containing a bitmap covering all CIDs present
@@ -1158,7 +1112,7 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
     let mut fixed = 0;
 
     for font_id in font_ids {
-        let (fd_id, has_cidset, num_glyphs, max_cid_from_w) = {
+        let (fd_id, has_cidset, num_glyphs) = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
                 continue;
             };
@@ -1184,7 +1138,7 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
                 })
                 .unwrap_or(false);
 
-            // Try to get glyph count from embedded font program.
+            // Read font data to get glyph count.
             let font_data = read_embedded_font_data(doc, fd_id);
             let num_glyphs = font_data.and_then(|data| {
                 ttf_parser::Face::parse(&data, 0)
@@ -1192,31 +1146,21 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
                     .map(|face| face.number_of_glyphs())
             });
 
-            // Fallback: estimate max CID from /W (Widths) array.
-            let max_cid_from_w = if num_glyphs.is_none() {
-                max_cid_from_widths(dict)
-            } else {
-                None
-            };
-
-            (fd_id, has_cidset, num_glyphs, max_cid_from_w)
+            (fd_id, has_cidset, num_glyphs)
         };
 
-        // Determine glyph count: prefer parsed count, fall back to /W-based estimate.
-        let glyph_count = if let Some(n) = num_glyphs {
-            n as usize
-        } else if let Some(max_cid) = max_cid_from_w {
-            // Use max CID + 1 as the glyph count.
-            max_cid + 1
-        } else {
+        // Only fix if we can parse the font to determine glyph count.
+        // /W-based and full-bitmap fallbacks cause 6.2.11.4.2:2 regression
+        // (veraPDF rejects CIDSets that don't exactly match the font's glyph set).
+        let Some(num_glyphs) = num_glyphs else {
             continue;
         };
 
         // Build CIDSet bitmap: one bit per CID, all set to 1.
-        let num_bytes = glyph_count.div_ceil(8);
+        let num_bytes = (num_glyphs as usize).div_ceil(8);
         let mut cidset_data = vec![0xFFu8; num_bytes];
         // Clear trailing bits in the last byte.
-        let trailing = glyph_count % 8;
+        let trailing = num_glyphs as usize % 8;
         if trailing != 0 && !cidset_data.is_empty() {
             let last = cidset_data.len() - 1;
             cidset_data[last] = 0xFF << (8 - trailing);
