@@ -281,12 +281,12 @@ fn cmyk_icc_profile_bytes() -> Vec<u8> {
     //   0..128   header
     //   128..132 tag count (5)
     //   132..192 5 tag entries (12 bytes each)
-    //   192..288 desc tag data (96 bytes)
-    //   288..300 cprt tag data (12 bytes)
-    //   300..320 wtpt tag data (20 bytes)
-    //   320..366 A2B0 tag (46 bytes: lut8Type with identity)
-    //   366..412 B2A0 tag (46 bytes: lut8Type with identity)
-    //   412..416 padding to 4-byte alignment
+    //   192..290 desc tag data (98 bytes)
+    //   290..292 padding (2 bytes for 4-byte alignment)
+    //   292..304 cprt tag data (12 bytes)
+    //   304..324 wtpt tag data (20 bytes)
+    //   324..370 A2B0 tag (46 bytes: lut8Type with identity)
+    //   370..416 B2A0 tag (46 bytes: lut8Type with identity)
     //
     // Simplified: we use a minimal valid structure.
     let total_size: u32 = 416;
@@ -320,11 +320,11 @@ fn cmyk_icc_profile_bytes() -> Vec<u8> {
     p.extend_from_slice(&5_u32.to_be_bytes()); // 5 tags
 
     let tags: &[(&[u8; 4], u32, u32)] = &[
-        (b"desc", 192, 95),
-        (b"cprt", 288, 12),
-        (b"wtpt", 300, 20),
-        (b"A2B0", 320, 46),
-        (b"B2A0", 366, 46),
+        (b"desc", 192, 98),
+        (b"cprt", 292, 12),
+        (b"wtpt", 304, 20),
+        (b"A2B0", 324, 46),
+        (b"B2A0", 370, 46),
     ];
     for (sig, offset, size) in tags {
         p.extend_from_slice(*sig);
@@ -343,17 +343,18 @@ fn cmyk_icc_profile_bytes() -> Vec<u8> {
     p.extend_from_slice(&[0u8; 2]); // ScriptCode code
     p.push(0); // ScriptCode count
     p.extend_from_slice(&[0u8; 67]); // ScriptCode string
-                                     // Pad to reach offset 288
-    while p.len() < 288 {
+    debug_assert_eq!(p.len(), 290);
+    // Pad to 4-byte alignment for next tag at offset 292.
+    while p.len() < 292 {
         p.push(0);
     }
-    debug_assert_eq!(p.len(), 288);
+    debug_assert_eq!(p.len(), 292);
 
     // === cprt tag ===
     p.extend_from_slice(b"text");
     p.extend_from_slice(&[0u8; 4]);
     p.extend_from_slice(b"CC0\0");
-    debug_assert_eq!(p.len(), 300);
+    debug_assert_eq!(p.len(), 304);
 
     // === wtpt (XYZType) ===
     p.extend_from_slice(b"XYZ ");
@@ -361,7 +362,7 @@ fn cmyk_icc_profile_bytes() -> Vec<u8> {
     p.extend_from_slice(&0x0000F351_i32.to_be_bytes());
     p.extend_from_slice(&0x00010000_i32.to_be_bytes());
     p.extend_from_slice(&0x000116CC_i32.to_be_bytes());
-    debug_assert_eq!(p.len(), 320);
+    debug_assert_eq!(p.len(), 324);
 
     // === A2B0 tag (lut8Type) — CMYK→Lab identity-ish mapping ===
     // Minimal lut8Type: 4 input, 3 output, 2 grid points
@@ -380,11 +381,7 @@ fn cmyk_icc_profile_bytes() -> Vec<u8> {
             p.extend_from_slice(&val.to_be_bytes());
         }
     }
-    // No input/output tables for lut8: handled by grid
-    // Total A2B0 so far: 4+4+4+36 = 48... but we said 46.
-    // Actually lut8Type is complex. Let me use a simpler approach.
-    // Just pad to reach the right size.
-    while p.len() < 366 {
+    while p.len() < 370 {
         p.push(0);
     }
 
@@ -401,12 +398,7 @@ fn cmyk_icc_profile_bytes() -> Vec<u8> {
             p.extend_from_slice(&val.to_be_bytes());
         }
     }
-    while p.len() < 412 {
-        p.push(0);
-    }
-
-    // Pad to 4-byte alignment
-    while p.len() < total_size as usize {
+    while p.len() < 416 {
         p.push(0);
     }
 

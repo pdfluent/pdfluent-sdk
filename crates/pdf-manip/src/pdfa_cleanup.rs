@@ -1872,7 +1872,8 @@ fn fix_soft_mask_colorspace(doc: &mut Document) {
     }
 }
 
-/// Remove HalftoneName and TransferFunction from halftone dictionaries (6.2.5 t5, t6).
+/// Remove HalftoneName and TransferFunction from halftone dictionaries,
+/// and strip non-CMYK colorant entries from Type 5 composite halftones (6.2.5 t5, t6).
 fn remove_halftone_names(doc: &mut Document) {
     fn is_halftone_dict(dict: &lopdf::Dictionary) -> bool {
         dict.has(b"HalftoneType")
@@ -1886,6 +1887,19 @@ fn remove_halftone_names(doc: &mut Document) {
         dict.remove(b"HalftoneName");
         dict.remove(b"TransferFunction");
     }
+
+    // Allowed keys in a Type 5 composite halftone dict.
+    // Non-CMYK/non-Default colorant entries (Red, Green, Blue, Gray, etc.)
+    // require TransferFunction per PDF/A-2 6.2.5:6 — remove them instead.
+    let allowed_type5_keys: &[&[u8]] = &[
+        b"Type",
+        b"HalftoneType",
+        b"Cyan",
+        b"Magenta",
+        b"Yellow",
+        b"Black",
+        b"Default",
+    ];
 
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
@@ -1906,7 +1920,42 @@ fn remove_halftone_names(doc: &mut Document) {
             }
         }
 
-        // For Type 5 composite halftones, also clean inline sub-halftone dicts.
+        // For Type 5 composite halftones, remove non-CMYK colorant entries
+        // that would require TransferFunction.
+        let is_type5 = match doc.objects.get(&id) {
+            Some(Object::Dictionary(d)) => {
+                is_halftone_dict(d)
+                    && matches!(
+                        d.get(b"HalftoneType").ok(),
+                        Some(Object::Integer(5))
+                    )
+            }
+            _ => false,
+        };
+        if is_type5 {
+            let remove_keys: Vec<Vec<u8>> = match doc.objects.get(&id) {
+                Some(Object::Dictionary(d)) => d
+                    .iter()
+                    .filter_map(|(k, _)| {
+                        if !allowed_type5_keys.contains(&k.as_slice()) {
+                            Some(k.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if !remove_keys.is_empty() {
+                if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
+                    for key in remove_keys {
+                        d.remove(&key);
+                    }
+                }
+            }
+        }
+
+        // Also clean inline sub-halftone dicts within composite halftones.
         let inline_keys: Vec<Vec<u8>> = match doc.objects.get(&id) {
             Some(Object::Dictionary(d)) if is_halftone_dict(d) => d
                 .iter()
