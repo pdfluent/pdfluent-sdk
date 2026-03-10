@@ -906,8 +906,7 @@ fn fix_device_colorspaces_in_deep_structures(
                 let is_pattern = get_name(dict, b"Type").as_deref() == Some("Pattern")
                     || dict.get(b"PatternType").is_ok();
                 if is_pattern {
-                    if let Some(repl) =
-                        get_name(dict, b"ColorSpace").and_then(|n| replacement(&n))
+                    if let Some(repl) = get_name(dict, b"ColorSpace").and_then(|n| replacement(&n))
                     {
                         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                             s.dict.set("ColorSpace", Object::Reference(repl));
@@ -967,6 +966,112 @@ fn fix_device_colorspaces_in_deep_structures(
         if let Some(repl) = repl {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.set("ColorSpace", Object::Reference(repl));
+            }
+        }
+    }
+
+    // Fix DeviceN/NChannel colorspaces: replace DeviceCMYK/DeviceRGB in the
+    // alternate colorspace and in the Process/ColorSpace attribute (6.2.4.3:3).
+    fix_devicen_process_colors(doc, cmyk_cs_id, rgb_cs_id);
+}
+
+/// Fix DeviceN/NChannel colorspace arrays that reference DeviceCMYK or DeviceRGB
+/// as their alternate colorspace or Process/ColorSpace attribute.
+fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_id: ObjectId) {
+    let replacement = |name: &[u8]| -> Option<ObjectId> {
+        if name == b"DeviceCMYK" {
+            Some(cmyk_cs_id)
+        } else if name == b"DeviceRGB" {
+            Some(rgb_cs_id)
+        } else {
+            None
+        }
+    };
+
+    // Pass 1: Fix DeviceN arrays stored as objects.
+    // DeviceN array: [/DeviceN [names] alternateCS tintTransform attributesDict?]
+    // NChannel is the same structure with /NChannel as the first element.
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let fix = {
+            let Some(Object::Array(arr)) = doc.objects.get(&id) else {
+                continue;
+            };
+            if arr.len() < 4 {
+                continue;
+            }
+            let is_devicen =
+                matches!(&arr[0], Object::Name(n) if n == b"DeviceN" || n == b"NChannel");
+            if !is_devicen {
+                continue;
+            }
+            // Check alternate colorspace (index 2).
+            let alt_repl = match &arr[2] {
+                Object::Name(n) => replacement(n),
+                _ => None,
+            };
+            // Check attributes dict (index 4 if present) for Process/ColorSpace.
+            let process_repl = if arr.len() > 4 {
+                match &arr[4] {
+                    Object::Dictionary(attrs) => {
+                        if let Ok(Object::Dictionary(process)) = attrs.get(b"Process") {
+                            match process.get(b"ColorSpace").ok() {
+                                Some(Object::Name(n)) => replacement(n),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            (alt_repl, process_repl)
+        };
+        let (alt_repl, process_repl) = fix;
+        if let Some(repl) = alt_repl {
+            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&id) {
+                arr[2] = Object::Reference(repl);
+            }
+        }
+        if let Some(repl) = process_repl {
+            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&id) {
+                if arr.len() > 4 {
+                    if let Object::Dictionary(ref mut attrs) = arr[4] {
+                        if let Ok(Object::Dictionary(ref mut process)) = attrs.get_mut(b"Process") {
+                            process.set("ColorSpace", Object::Reference(repl));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Pass 2: Fix attributes dicts stored as separate referenced objects.
+    // Some DeviceN arrays reference the attributes dict by ObjectId.
+    let ids2: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids2 {
+        let repl = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            // Check if this is a Process dict or a dict containing a Process entry.
+            if let Ok(Object::Dictionary(process)) = dict.get(b"Process") {
+                match process.get(b"ColorSpace").ok() {
+                    Some(Object::Name(n)) => replacement(n),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(repl) = repl {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                if let Ok(Object::Dictionary(ref mut process)) = dict.get_mut(b"Process") {
+                    process.set("ColorSpace", Object::Reference(repl));
+                }
             }
         }
     }
