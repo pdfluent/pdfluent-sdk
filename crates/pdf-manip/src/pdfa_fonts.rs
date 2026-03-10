@@ -340,6 +340,15 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
             }
         }
     }
+    if is_otf && !info.is_type0 {
+        // For simple fonts: TrueType → Type1 when embedding .otf (CFF-based OpenType).
+        // veraPDF checks that FontFile3 with /Subtype /OpenType matches Type1.
+        if info.subtype == "TrueType" {
+            if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&info.font_id) {
+                font.set("Subtype", Object::Name(b"Type1".to_vec()));
+            }
+        }
+    }
     if is_truetype && info.is_type0 {
         // For CIDFont descendants: CIDFontType0 → CIDFontType2 when embedding .ttf
         let target_subtype = {
@@ -1750,34 +1759,43 @@ pub fn fix_type1_charset(doc: &mut Document) -> usize {
             continue;
         }
 
-        // Only process FontFile3 (CFF programs) or FontFile (Type 1).
-        let has_ff3 = matches!(
+        // Only process FontFile3 (CFF programs) or FontFile (Type 1 PFB).
+        let has_fontfile3 = matches!(
             doc.objects.get(&fd_id),
-            Some(Object::Dictionary(d)) if d.has(b"FontFile3") || d.has(b"FontFile")
+            Some(Object::Dictionary(d)) if d.has(b"FontFile3")
         );
-        if !has_ff3 {
+        let has_fontfile = matches!(
+            doc.objects.get(&fd_id),
+            Some(Object::Dictionary(d)) if d.has(b"FontFile")
+        );
+        if !has_fontfile3 && !has_fontfile {
             continue;
         }
 
         let font_data = read_embedded_font_data(doc, fd_id);
         let Some(font_data) = font_data else { continue };
 
-        let Some(cff) = cff_parser::Table::parse(&font_data) else {
-            continue;
-        };
-
-        // Build CharSet string from CFF glyph names: "/name1/name2/name3..."
-        let num_glyphs = cff.number_of_glyphs();
-        let mut charset_str = String::new();
-        for gid in 0..num_glyphs {
-            let glyph_id = cff_parser::GlyphId(gid);
-            if let Some(name) = cff.glyph_name(glyph_id) {
-                if name != ".notdef" {
-                    charset_str.push('/');
-                    charset_str.push_str(name);
+        let charset_str = if has_fontfile3 {
+            // CFF font program — extract glyph names from CFF.
+            let Some(cff) = cff_parser::Table::parse(&font_data) else {
+                continue;
+            };
+            let num_glyphs = cff.number_of_glyphs();
+            let mut cs = String::new();
+            for gid in 0..num_glyphs {
+                let glyph_id = cff_parser::GlyphId(gid);
+                if let Some(name) = cff.glyph_name(glyph_id) {
+                    if name != ".notdef" {
+                        cs.push('/');
+                        cs.push_str(name);
+                    }
                 }
             }
-        }
+            cs
+        } else {
+            // PFB/Type1 font — decrypt eexec and extract glyph names from CharStrings.
+            extract_type1_glyph_names_to_charset(&font_data)
+        };
 
         if charset_str.is_empty() {
             continue;
@@ -1792,6 +1810,233 @@ pub fn fix_type1_charset(doc: &mut Document) -> usize {
         }
     }
     fixed
+}
+
+/// Extract glyph names from a Type 1 (PFB) font program and return a CharSet string.
+///
+/// Strips PFB segment headers, decrypts the eexec-encrypted binary section,
+/// then extracts glyph names from the /CharStrings dictionary.
+/// Returns a string like "/A/B/C/space" (without .notdef).
+fn extract_type1_glyph_names_to_charset(pfb_data: &[u8]) -> String {
+    let ps_data = strip_pfb_headers(pfb_data);
+
+    // First try: see if /CharStrings is visible in cleartext (rare but possible).
+    if let Some(cs) = extract_glyph_names_from_charstrings(&ps_data) {
+        if !cs.is_empty() {
+            return cs;
+        }
+    }
+
+    // Decrypt eexec section and try again.
+    let decrypted = decrypt_eexec(&ps_data);
+    if decrypted.is_empty() {
+        return String::new();
+    }
+
+    extract_glyph_names_from_charstrings(&decrypted).unwrap_or_default()
+}
+
+/// Strip PFB (Printer Font Binary) segment headers.
+///
+/// PFB files have segments prefixed by: 0x80, type_byte, length_le32, data.
+/// This function concatenates the data portions, stripping the headers.
+fn strip_pfb_headers(data: &[u8]) -> Vec<u8> {
+    if data.is_empty() || data[0] != 0x80 {
+        return data.to_vec();
+    }
+
+    let mut result = Vec::new();
+    let mut i = 0;
+
+    while i + 6 <= data.len() && data[i] == 0x80 {
+        let seg_type = data[i + 1];
+        if seg_type == 3 {
+            break; // EOF segment
+        }
+        let length =
+            u32::from_le_bytes([data[i + 2], data[i + 3], data[i + 4], data[i + 5]]) as usize;
+        i += 6;
+        let end = (i + length).min(data.len());
+        result.extend_from_slice(&data[i..end]);
+        i = end;
+    }
+
+    result
+}
+
+/// Decrypt the eexec-encrypted section of a Type 1 font program.
+///
+/// Finds the `eexec` keyword, then decrypts using the standard Type 1
+/// eexec key (55665). Handles both hex-encoded and binary eexec data.
+/// Skips the first 4 random bytes after decryption.
+fn decrypt_eexec(ps_data: &[u8]) -> Vec<u8> {
+    // Find "eexec" keyword.
+    let eexec_pos = ps_data.windows(5).position(|w| w == b"eexec");
+    let Some(eexec_pos) = eexec_pos else {
+        return Vec::new();
+    };
+
+    // Skip past "eexec" and any following whitespace.
+    let mut start = eexec_pos + 5;
+    while start < ps_data.len() && ps_data[start].is_ascii_whitespace() {
+        start += 1;
+    }
+
+    if start >= ps_data.len() {
+        return Vec::new();
+    }
+
+    // Determine if hex-encoded or binary.
+    // Hex-encoded eexec has only hex digits and whitespace.
+    let cipher = if ps_data[start..]
+        .iter()
+        .take(32)
+        .all(|b| b.is_ascii_hexdigit() || b.is_ascii_whitespace())
+    {
+        // Hex-encoded: decode hex pairs.
+        let hex_str: String = ps_data[start..]
+            .iter()
+            .filter(|b| b.is_ascii_hexdigit())
+            .map(|&b| b as char)
+            .collect();
+        let mut bytes = Vec::with_capacity(hex_str.len() / 2);
+        let chars: Vec<char> = hex_str.chars().collect();
+        for pair in chars.chunks(2) {
+            if pair.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&format!("{}{}", pair[0], pair[1]), 16) {
+                    bytes.push(byte);
+                }
+            }
+        }
+        bytes
+    } else {
+        // Binary eexec.
+        ps_data[start..].to_vec()
+    };
+
+    if cipher.len() < 4 {
+        return Vec::new();
+    }
+
+    // Decrypt with eexec key (55665).
+    let mut key: u16 = 55665;
+    let mut plain = Vec::with_capacity(cipher.len());
+
+    for &c in &cipher {
+        let p = c ^ (key >> 8) as u8;
+        key = (c as u16)
+            .wrapping_add(key)
+            .wrapping_mul(52845)
+            .wrapping_add(22719);
+        plain.push(p);
+    }
+
+    // Skip first 4 random bytes.
+    if plain.len() > 4 {
+        plain[4..].to_vec()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Extract glyph names from a (potentially decrypted) Type 1 font's /CharStrings section.
+///
+/// Parses entries like: `/glyphname N RD <N binary bytes> ND`
+/// Returns a CharSet string like "/A/B/C/space" (excluding .notdef).
+fn extract_glyph_names_from_charstrings(data: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(data);
+
+    // Find "/CharStrings" section.
+    let cs_pos = text.find("/CharStrings")?;
+    let section = &text[cs_pos..];
+
+    let mut names = Vec::new();
+    let bytes = section.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        // Look for glyph name definitions: "/glyphname"
+        if bytes[i] == b'/' {
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && !bytes[end].is_ascii_whitespace() {
+                end += 1;
+            }
+            let name = &section[start..end];
+
+            // Stop if we hit "end" or other section markers.
+            if name == "CharStrings" || name == "FontName" || name == "Encoding" {
+                i = end;
+                continue;
+            }
+            if name == "end" {
+                break;
+            }
+
+            if !name.is_empty() && name != ".notdef" {
+                names.push(name.to_string());
+            }
+
+            // Skip past the binary charstring data: "N RD <N+1 binary bytes>"
+            // or "N -| <N+1 binary bytes>"
+            i = end;
+            // Skip whitespace to find the charstring length N.
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            // Parse N (the charstring byte count).
+            let n_start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i > n_start {
+                if let Ok(n) = section[n_start..i].parse::<usize>() {
+                    // Skip whitespace.
+                    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                        i += 1;
+                    }
+                    // Skip "RD" or "-|" token.
+                    if i + 2 <= bytes.len()
+                        && (bytes[i..].starts_with(b"RD") || bytes[i..].starts_with(b"-|"))
+                    {
+                        i += 2;
+                    }
+                    // Skip one delimiter byte (space after RD), then N binary bytes.
+                    if i < bytes.len() {
+                        i += 1; // delimiter
+                    }
+                    i += n; // binary charstring data
+                }
+            }
+            continue;
+        }
+
+        // End of CharStrings dict.
+        if bytes[i..].starts_with(b"end") || bytes[i..].starts_with(b"readonly") {
+            // Check if this is really "end" as a standalone token.
+            let remaining = &section[i..];
+            if remaining.starts_with("end\n")
+                || remaining.starts_with("end\r")
+                || remaining.starts_with("end ")
+                || remaining.starts_with("readonly")
+            {
+                break;
+            }
+        }
+
+        i += 1;
+    }
+
+    if names.is_empty() {
+        return None;
+    }
+
+    let mut charset = String::new();
+    for name in &names {
+        charset.push('/');
+        charset.push_str(name);
+    }
+    Some(charset)
 }
 
 /// Fix widths for simple TrueType fonts with explicit standard encoding (6.2.11.5:1).
@@ -2190,8 +2435,21 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             // After embedding a non-symbolic fallback font (e.g. DejaVuSans for
             // ZapfDingbats), the flags are updated to Nonsymbolic — in that case
             // the standard cmap-based width mapping works correctly.
+            //
+            // Also skip subset fonts (ABCDEF+FontName) — their widths were set
+            // by the original PDF producer and match the embedded subset program.
             if let Some(name) = get_name(dict, b"BaseFont") {
                 if is_symbolic_font_name(&name) && is_font_symbolic(doc, dict) {
+                    continue;
+                }
+                if name.contains('+') {
+                    continue;
+                }
+                // Skip TrueType subset fonts — their custom cmap tables make
+                // glyph mapping unreliable (GIDs are renumbered during subsetting).
+                // Type1/CFF subsets are safe because the CFF encoding provides
+                // unambiguous code-to-glyph mapping.
+                if name.contains('+') && subtype == "TrueType" {
                     continue;
                 }
             }
@@ -2282,10 +2540,13 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         // For WinAnsiEncoding/MacRomanEncoding, the mapping is unambiguous,
         // so we trust the computed widths even if many differ (common when a
         // fallback font like DejaVuSans was embedded for Helvetica/Times etc.).
+        // CFF internal encoding is also reliable — when no PDF-level Encoding
+        // exists, the CFF's own encoding provides an unambiguous code-to-GID map.
         let has_reliable_encoding =
             matches!(enc_info.0.as_str(), "WinAnsiEncoding" | "MacRomanEncoding");
+        let uses_cff_encoding = enc_info.0.is_empty() && enc_info.1.is_empty() && has_ff3;
         let total_widths = existing_widths.len();
-        if !has_reliable_encoding && corrections.len() * 2 > total_widths {
+        if !has_reliable_encoding && !uses_cff_encoding && corrections.len() * 2 > total_widths {
             continue;
         }
 
@@ -2397,22 +2658,23 @@ fn compute_truetype_width_corrections(
 
     for (i, obj) in existing_widths.iter().enumerate() {
         let pdf_w = match obj {
-            Object::Integer(w) => *w,
-            Object::Real(r) => *r as i64,
+            Object::Integer(w) => *w as f64,
+            Object::Real(r) => *r as f64,
             _ => continue,
         };
 
         let code = first_char + i as u32;
 
-        // Determine the expected glyph width from the font program.
+        // Determine the expected glyph width from the font program (fractional).
         let expected_w =
-            get_truetype_glyph_width_for_code(&face, code, enc_name, differences, scale);
+            get_truetype_glyph_width_fractional(&face, code, enc_name, differences, scale);
 
-        let Some(expected) = expected_w else { continue };
+        let Some(frac_w) = expected_w else { continue };
 
-        // Only flag as mismatch if difference > 1 unit (allow rounding).
-        if (pdf_w - expected).abs() > 1 {
-            corrections.push((i, expected));
+        // veraPDF compares fractional widths with tolerance > 1.0.
+        // Use the same threshold to match its validation logic.
+        if (pdf_w - frac_w).abs() > 1.0 {
+            corrections.push((i, frac_w.round() as i64));
         }
     }
 
@@ -2423,6 +2685,7 @@ fn compute_truetype_width_corrections(
 ///
 /// Uses the encoding to map code -> Unicode -> glyph ID via cmap.
 /// If the Differences array overrides the glyph for this code, uses that.
+#[allow(dead_code)]
 fn get_truetype_glyph_width_for_code(
     face: &ttf_parser::Face,
     code: u32,
@@ -2466,6 +2729,53 @@ fn get_truetype_glyph_width_for_code(
     }
 
     // Can't determine width — return None to skip this entry.
+    None
+}
+
+/// Get the expected glyph width as an unrounded f64 for fractional comparison.
+///
+/// veraPDF compares the fractional glyph width from the font program against
+/// the /Widths value with a tolerance of > 1.0. Using rounded integer widths
+/// can miss mismatches where the fractional difference crosses the threshold.
+fn get_truetype_glyph_width_fractional(
+    face: &ttf_parser::Face,
+    code: u32,
+    enc_name: &str,
+    differences: &std::collections::HashMap<u32, String>,
+    scale: f64,
+) -> Option<f64> {
+    // If Differences maps this code to a glyph name, try to use it.
+    if let Some(glyph_name) = differences.get(&code) {
+        if let Some(unicode) = glyph_name_to_unicode(glyph_name) {
+            if let Some(gid) = face.glyph_index(unicode) {
+                return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+            }
+        }
+        // Try looking up glyph by name directly in the font.
+        if let Some(gid) = face.glyph_index_by_name(glyph_name) {
+            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+        if glyph_name == ".notdef" {
+            return face
+                .glyph_hor_advance(ttf_parser::GlyphId(0))
+                .map(|w| w as f64 * scale);
+        }
+    }
+
+    // Map code -> Unicode via encoding.
+    let ch = encoding_to_char(code, enc_name);
+
+    if let Some(gid) = face.glyph_index(ch) {
+        return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+    }
+
+    // Fallback: try direct GID = code (identity mapping for some TrueType fonts).
+    if code <= u16::MAX as u32 {
+        if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(code as u16)) {
+            return Some(w as f64 * scale);
+        }
+    }
+
     None
 }
 
@@ -2666,16 +2976,42 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
     }
 }
 
-/// Compute width corrections for a Type1 font with CFF program.
+/// Compute width corrections for a Type1 font with CFF program (FontFile3).
 ///
-/// Maps character codes -> glyph names -> CFF glyph widths, and compares
-/// with existing /Widths array.
+/// Handles two container formats:
+/// - OTF-wrapped CFF (/Subtype /OpenType): parsed via ttf_parser, widths from hmtx table
+/// - Raw CFF (/Subtype /Type1C): parsed via cff_parser, widths from charstring programs
+///
+/// For fonts without a PDF-level Encoding, falls back to the CFF's internal encoding
+/// to map character codes to glyph IDs.
 fn compute_cff_type1_width_corrections(
     font_data: &[u8],
     first_char: u32,
     existing_widths: &[Object],
     enc_info: &(String, std::collections::HashMap<u32, String>),
 ) -> Vec<(usize, i64)> {
+    let (enc_name, differences) = enc_info;
+    let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
+
+    // Try OTF parse first (handles OpenType-wrapped CFF).
+    if let Ok(face) = ttf_parser::Face::parse(font_data, 0) {
+        let units_per_em = face.units_per_em() as f64;
+        if units_per_em > 0.0 {
+            let scale = 1000.0 / units_per_em;
+            return compute_otf_cff_corrections(
+                &face,
+                font_data,
+                first_char,
+                existing_widths,
+                enc_name,
+                differences,
+                has_pdf_encoding,
+                scale,
+            );
+        }
+    }
+
+    // Fall back to raw CFF parse (Type1C).
     let Some(cff) = cff_parser::Table::parse(font_data) else {
         return Vec::new();
     };
@@ -2687,40 +3023,206 @@ fn compute_cff_type1_width_corrections(
         1.0
     };
 
-    let (enc_name, differences) = enc_info;
     let mut corrections = Vec::new();
 
     for (i, obj) in existing_widths.iter().enumerate() {
         let pdf_w = match obj {
-            Object::Integer(w) => *w,
-            Object::Real(r) => *r as i64,
+            Object::Integer(w) => *w as f64,
+            Object::Real(r) => *r as f64,
             _ => continue,
         };
 
         let code = first_char + i as u32;
 
-        // Determine the glyph name for this code.
-        let glyph_name = if let Some(name) = differences.get(&code) {
-            name.clone()
+        // Try PDF encoding path first.
+        let frac_w = if has_pdf_encoding {
+            let glyph_name = if let Some(name) = differences.get(&code) {
+                name.clone()
+            } else {
+                let ch = encoding_to_char(code, enc_name);
+                match unicode_to_glyph_name(ch) {
+                    Some(name) => name,
+                    None => continue,
+                }
+            };
+            find_cff_glyph_width_by_name_fractional(&cff, &glyph_name, scale)
         } else {
-            // Use encoding to get Unicode, then map to AGL name.
-            let ch = encoding_to_char(code, enc_name);
-            match unicode_to_glyph_name(ch) {
-                Some(name) => name,
-                None => continue,
+            // No PDF encoding — use CFF internal encoding.
+            // glyph_index() maps code -> GID via the CFF encoding + charset.
+            if code > 255 {
+                continue;
             }
+            let gid = match cff.glyph_index(code as u8) {
+                Some(gid) if gid.0 != 0 || code == 0 => gid,
+                _ => continue,
+            };
+            cff.glyph_width(gid).map(|w| w as f64 * scale)
         };
 
-        // Look up width by glyph name in CFF.
-        let expected = find_cff_glyph_width_by_name(&cff, &glyph_name, scale);
-        let Some(expected_w) = expected else { continue };
+        let Some(frac_w) = frac_w else { continue };
 
-        if (pdf_w - expected_w).abs() > 1 {
-            corrections.push((i, expected_w));
+        if (pdf_w - frac_w).abs() > 1.0 {
+            corrections.push((i, frac_w.round() as i64));
         }
     }
 
     corrections
+}
+
+/// Compute width corrections for OTF-wrapped CFF fonts.
+///
+/// For OTF fonts, veraPDF validates against the hmtx table widths (not the CFF
+/// charstring widths). When a PDF-level Encoding exists, we use cmap to map
+/// code -> Unicode -> GID -> hmtx width. When no encoding exists (common in
+/// subset fonts), we extract the CFF table from the OTF and use its internal
+/// encoding to map code -> GID -> hmtx width.
+#[allow(clippy::too_many_arguments)]
+fn compute_otf_cff_corrections(
+    face: &ttf_parser::Face,
+    font_data: &[u8],
+    first_char: u32,
+    existing_widths: &[Object],
+    enc_name: &str,
+    differences: &std::collections::HashMap<u32, String>,
+    has_pdf_encoding: bool,
+    scale: f64,
+) -> Vec<(usize, i64)> {
+    // If no PDF encoding, try to extract CFF table for its internal encoding.
+    let cff_table = if !has_pdf_encoding {
+        extract_cff_from_otf(font_data)
+    } else {
+        None
+    };
+
+    let mut corrections = Vec::new();
+
+    for (i, obj) in existing_widths.iter().enumerate() {
+        let pdf_w = match obj {
+            Object::Integer(w) => *w as f64,
+            Object::Real(r) => *r as f64,
+            _ => continue,
+        };
+
+        let code = first_char + i as u32;
+
+        let frac_w = if has_pdf_encoding {
+            get_otf_width_via_encoding(face, code, enc_name, differences, scale)
+        } else if let Some(ref cff) = cff_table {
+            // No PDF encoding: use CFF internal encoding -> GID -> hmtx
+            if code > 255 {
+                continue;
+            }
+            let gid = match cff.glyph_index(code as u8) {
+                Some(gid) if gid.0 != 0 || code == 0 => gid,
+                _ => continue,
+            };
+            // Use hmtx width (what veraPDF validates) rather than CFF charstring width.
+            face.glyph_hor_advance(ttf_parser::GlyphId(gid.0))
+                .map(|w| w as f64 * scale)
+        } else {
+            continue;
+        };
+
+        let Some(frac_w) = frac_w else { continue };
+
+        if (pdf_w - frac_w).abs() > 1.0 {
+            corrections.push((i, frac_w.round() as i64));
+        }
+    }
+
+    corrections
+}
+
+/// Get an OTF font's width for a character code using PDF encoding.
+fn get_otf_width_via_encoding(
+    face: &ttf_parser::Face,
+    code: u32,
+    enc_name: &str,
+    differences: &std::collections::HashMap<u32, String>,
+    scale: f64,
+) -> Option<f64> {
+    if let Some(glyph_name) = differences.get(&code) {
+        if let Some(unicode) = glyph_name_to_unicode(glyph_name) {
+            if let Some(gid) = face.glyph_index(unicode) {
+                return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+            }
+        }
+        if let Some(gid) = face.glyph_index_by_name(glyph_name) {
+            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+        if glyph_name == ".notdef" {
+            return face
+                .glyph_hor_advance(ttf_parser::GlyphId(0))
+                .map(|w| w as f64 * scale);
+        }
+    }
+
+    let ch = encoding_to_char(code, enc_name);
+    if let Some(gid) = face.glyph_index(ch) {
+        return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+    }
+
+    None
+}
+
+/// Extract the CFF table from an OTF font.
+fn extract_cff_from_otf(font_data: &[u8]) -> Option<cff_parser::Table<'_>> {
+    if font_data.len() < 12 {
+        return None;
+    }
+
+    let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
+    let mut offset = 12;
+
+    for _ in 0..num_tables {
+        if offset + 16 > font_data.len() {
+            break;
+        }
+        let tag = &font_data[offset..offset + 4];
+        let table_offset = u32::from_be_bytes([
+            font_data[offset + 8],
+            font_data[offset + 9],
+            font_data[offset + 10],
+            font_data[offset + 11],
+        ]) as usize;
+        let table_length = u32::from_be_bytes([
+            font_data[offset + 12],
+            font_data[offset + 13],
+            font_data[offset + 14],
+            font_data[offset + 15],
+        ]) as usize;
+
+        if tag == b"CFF " {
+            if table_offset + table_length <= font_data.len() {
+                return cff_parser::Table::parse(
+                    &font_data[table_offset..table_offset + table_length],
+                );
+            }
+            return None;
+        }
+
+        offset += 16;
+    }
+
+    None
+}
+
+/// Like find_cff_glyph_width_by_name but returns f64 (unrounded) for fractional comparison.
+fn find_cff_glyph_width_by_name_fractional(
+    cff: &cff_parser::Table,
+    glyph_name: &str,
+    scale: f64,
+) -> Option<f64> {
+    let num_glyphs = cff.number_of_glyphs();
+    for gid_raw in 0..num_glyphs {
+        let gid = cff_parser::GlyphId(gid_raw);
+        if let Some(name) = cff.glyph_name(gid) {
+            if name == glyph_name {
+                return cff.glyph_width(gid).map(|w| w as f64 * scale);
+            }
+        }
+    }
+    None
 }
 
 /// Known symbolic font base names (exempt from encoding rules).
