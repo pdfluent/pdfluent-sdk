@@ -104,6 +104,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     remove_ocg_as_key(doc);
     strip_signatures(doc);
     strip_non_catalog_metadata(doc);
+    ensure_page_resources(doc);
 
     Ok(report)
 }
@@ -1873,25 +1874,96 @@ fn fix_soft_mask_colorspace(doc: &mut Document) {
 
 /// Remove HalftoneName and TransferFunction from halftone dictionaries (6.2.5 t5, t6).
 fn remove_halftone_names(doc: &mut Document) {
+    fn is_halftone_dict(dict: &lopdf::Dictionary) -> bool {
+        dict.has(b"HalftoneType")
+            || matches!(
+                dict.get(b"Type").ok(),
+                Some(Object::Name(ref n)) if n == b"Halftone"
+            )
+    }
+
+    fn clean_halftone_dict(dict: &mut lopdf::Dictionary) {
+        dict.remove(b"HalftoneName");
+        dict.remove(b"TransferFunction");
+    }
+
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let needs_fix = {
-            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
-                // Halftone dicts have HalftoneType or Type=Halftone.
-                let is_halftone = dict.has(b"HalftoneType")
-                    || matches!(
-                        dict.get(b"Type").ok(),
-                        Some(Object::Name(ref n)) if n == b"Halftone"
-                    );
-                is_halftone && (dict.has(b"HalftoneName") || dict.has(b"TransferFunction"))
-            } else {
-                false
-            }
+        let dict = match doc.objects.get(&id) {
+            Some(Object::Dictionary(d)) => Some(d),
+            Some(Object::Stream(s)) => Some(&s.dict),
+            _ => None,
         };
+        let needs_fix = dict
+            .map(|d| is_halftone_dict(d) && (d.has(b"HalftoneName") || d.has(b"TransferFunction")))
+            .unwrap_or(false);
+
         if needs_fix {
-            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
-                dict.remove(b"HalftoneName");
-                dict.remove(b"TransferFunction");
+            match doc.objects.get_mut(&id) {
+                Some(Object::Dictionary(ref mut d)) => clean_halftone_dict(d),
+                Some(Object::Stream(ref mut s)) => clean_halftone_dict(&mut s.dict),
+                _ => {}
+            }
+        }
+
+        // For Type 5 composite halftones, also clean inline sub-halftone dicts.
+        let inline_keys: Vec<Vec<u8>> = match doc.objects.get(&id) {
+            Some(Object::Dictionary(d)) if is_halftone_dict(d) => d
+                .iter()
+                .filter_map(|(k, v)| {
+                    if let Object::Dictionary(sub) = v {
+                        if is_halftone_dict(sub)
+                            && (sub.has(b"HalftoneName") || sub.has(b"TransferFunction"))
+                        {
+                            return Some(k.clone());
+                        }
+                    }
+                    None
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        for key in inline_keys {
+            if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
+                if let Ok(Object::Dictionary(ref mut sub)) = d.get_mut(&key) {
+                    clean_halftone_dict(sub);
+                }
+            }
+        }
+    }
+}
+
+/// Ensure pages and Form XObjects have a Resources dictionary (6.2.2:2).
+fn ensure_page_resources(doc: &mut Document) {
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in &page_ids {
+        let needs_resources = matches!(
+            doc.objects.get(id),
+            Some(Object::Dictionary(d)) if !d.has(b"Resources")
+        );
+        if needs_resources {
+            if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(id) {
+                d.set("Resources", Object::Dictionary(lopdf::Dictionary::new()));
+            }
+        }
+    }
+
+    for id in ids {
+        let needs_resources = match doc.objects.get(&id) {
+            Some(Object::Stream(s)) => {
+                matches!(
+                    s.dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"Form"
+                ) && !s.dict.has(b"Resources")
+            }
+            _ => false,
+        };
+        if needs_resources {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict
+                    .set("Resources", Object::Dictionary(lopdf::Dictionary::new()));
             }
         }
     }
