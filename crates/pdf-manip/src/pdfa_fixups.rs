@@ -17,6 +17,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let cmap_wmode_fixed = fix_cmap_wmode(doc);
     let cidtogidmap_fixed = fix_cidtogidmap_extra(doc);
     let cidsysteminfo_fixed = fix_cidsysteminfo_mismatch(doc);
+    let cmap_embedded = embed_nonstandard_cmaps(doc);
 
     FixupReport {
         tt_encoding_diffs_fixed,
@@ -29,6 +30,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         cmap_wmode_fixed,
         cidtogidmap_fixed,
         cidsysteminfo_fixed,
+        cmap_embedded,
     }
 }
 
@@ -45,6 +47,7 @@ pub struct FixupReport {
     pub cmap_wmode_fixed: usize,
     pub cidtogidmap_fixed: usize,
     pub cidsysteminfo_fixed: usize,
+    pub cmap_embedded: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -2318,4 +2321,233 @@ fn predefined_cmap_cidsysteminfo(cmap_name: &str) -> Option<(String, String)> {
     }
 
     None
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.11.3.3 — Embed non-standard CMap files
+// ---------------------------------------------------------------------------
+//
+// All CMaps used in a PDF/A file must either be one of the predefined CMaps
+// from ISO 32000-1 Table 118, or be embedded as a stream.
+//
+// This pass finds Type0 fonts that reference non-standard CMaps by name and
+// embeds the CMap file as a stream object.
+
+/// Predefined CMap names from ISO 32000-1 Table 118 that do not require embedding.
+const PREDEFINED_CMAPS: &[&str] = &[
+    "Identity-H",
+    "Identity-V",
+    // Japanese
+    "83pv-RKSJ-H",
+    "90ms-RKSJ-H",
+    "90ms-RKSJ-V",
+    "90msp-RKSJ-H",
+    "90msp-RKSJ-V",
+    "90pv-RKSJ-H",
+    "Add-RKSJ-H",
+    "Add-RKSJ-V",
+    "EUC-H",
+    "EUC-V",
+    "Ext-RKSJ-H",
+    "Ext-RKSJ-V",
+    "H",
+    "V",
+    "UniJIS-UCS2-H",
+    "UniJIS-UCS2-V",
+    "UniJIS-UCS2-HW-H",
+    "UniJIS-UCS2-HW-V",
+    "UniJIS-UTF16-H",
+    "UniJIS-UTF16-V",
+    // Korean
+    "KSC-EUC-H",
+    "KSC-EUC-V",
+    "KSCms-UHC-H",
+    "KSCms-UHC-V",
+    "KSCms-UHC-HW-H",
+    "KSCms-UHC-HW-V",
+    "KSCpc-EUC-H",
+    "UniKS-UCS2-H",
+    "UniKS-UCS2-V",
+    "UniKS-UTF16-H",
+    "UniKS-UTF16-V",
+    // Simplified Chinese
+    "GB-EUC-H",
+    "GB-EUC-V",
+    "GBpc-EUC-H",
+    "GBpc-EUC-V",
+    "GBK-EUC-H",
+    "GBK-EUC-V",
+    "GBKp-EUC-H",
+    "GBKp-EUC-V",
+    "GBK2K-H",
+    "GBK2K-V",
+    "UniGB-UCS2-H",
+    "UniGB-UCS2-V",
+    "UniGB-UTF16-H",
+    "UniGB-UTF16-V",
+    // Traditional Chinese
+    "B5pc-H",
+    "B5pc-V",
+    "HKscs-B5-H",
+    "HKscs-B5-V",
+    "ETen-B5-H",
+    "ETen-B5-V",
+    "ETenms-B5-H",
+    "ETenms-B5-V",
+    "CNS-EUC-H",
+    "CNS-EUC-V",
+    "UniCNS-UCS2-H",
+    "UniCNS-UCS2-V",
+    "UniCNS-UTF16-H",
+    "UniCNS-UTF16-V",
+];
+
+/// Directories where CMap files may be found.
+const CMAP_SEARCH_DIRS: &[&str] = &[
+    "/usr/share/poppler/cMap",
+    "/usr/share/fonts/cmap",
+    "/usr/share/fonts/cMap",
+    "/usr/share/ghostscript/cMap",
+];
+
+/// Embed non-standard CMap files referenced by Type0 fonts (6.2.11.3.3).
+fn embed_nonstandard_cmaps(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    // Collect Type0 fonts that use non-standard CMap names.
+    let mut to_embed: Vec<(ObjectId, String)> = Vec::new();
+
+    for id in &ids {
+        let cmap_name = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(id) else {
+                continue;
+            };
+            let subtype = dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        String::from_utf8(n.clone()).ok()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            if subtype != "Type0" {
+                continue;
+            }
+            match dict.get(b"Encoding").ok() {
+                Some(Object::Name(n)) => String::from_utf8(n.clone()).unwrap_or_default(),
+                _ => continue, // Already a stream reference or missing.
+            }
+        };
+
+        if cmap_name.is_empty() {
+            continue;
+        }
+        if PREDEFINED_CMAPS.contains(&cmap_name.as_str()) {
+            continue;
+        }
+
+        to_embed.push((*id, cmap_name));
+    }
+
+    let mut embedded = 0;
+
+    for (font_id, cmap_name) in to_embed {
+        // Try to find the CMap file on disk.
+        let cmap_data = find_cmap_file(&cmap_name);
+        let Some(cmap_data) = cmap_data else {
+            continue;
+        };
+
+        // Create a CMap stream object.
+        let mut cmap_dict = lopdf::Dictionary::new();
+        cmap_dict.set("Type", Object::Name(b"CMap".to_vec()));
+        cmap_dict.set("CMapName", Object::Name(cmap_name.as_bytes().to_vec()));
+
+        // Extract CIDSystemInfo from the CMap data if present.
+        if let Some((registry, ordering, supplement)) = extract_cmap_cidsysteminfo(&cmap_data) {
+            let csi_dict = dictionary! {
+                "Registry" => Object::String(registry.into_bytes(), lopdf::StringFormat::Literal),
+                "Ordering" => Object::String(ordering.into_bytes(), lopdf::StringFormat::Literal),
+                "Supplement" => Object::Integer(supplement),
+            };
+            cmap_dict.set("CIDSystemInfo", Object::Dictionary(csi_dict));
+        }
+
+        let stream = lopdf::Stream::new(cmap_dict, cmap_data);
+        let stream_id = doc.add_object(Object::Stream(stream));
+
+        // Replace the name reference with a stream reference.
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
+            dict.set("Encoding", Object::Reference(stream_id));
+        }
+
+        embedded += 1;
+    }
+
+    embedded
+}
+
+/// Search for a CMap file in standard directories.
+fn find_cmap_file(cmap_name: &str) -> Option<Vec<u8>> {
+    use std::path::Path;
+
+    for base_dir in CMAP_SEARCH_DIRS {
+        // Try direct path: base/CMapName
+        let direct = Path::new(base_dir).join(cmap_name);
+        if let Ok(data) = std::fs::read(&direct) {
+            return Some(data);
+        }
+
+        // Try subdirectories (e.g., poppler/cMap/Adobe-Korea1/Adobe-Korea1-2).
+        if let Ok(entries) = std::fs::read_dir(base_dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    let sub_path = entry.path().join(cmap_name);
+                    if let Ok(data) = std::fs::read(&sub_path) {
+                        return Some(data);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Extract CIDSystemInfo (Registry, Ordering, Supplement) from CMap PostScript data.
+fn extract_cmap_cidsysteminfo(data: &[u8]) -> Option<(String, String, i64)> {
+    let text = std::str::from_utf8(data).ok()?;
+
+    // Look for /CIDSystemInfo block.
+    let csi_pos = text.find("/CIDSystemInfo")?;
+    let block = &text[csi_pos..];
+
+    // Find Registry, Ordering, Supplement in the block.
+    let registry = extract_cmap_ps_string(block, "/Registry")?;
+    let ordering = extract_cmap_ps_string(block, "/Ordering")?;
+
+    let supplement = {
+        let sup_pos = block.find("/Supplement")?;
+        let after = block[sup_pos + "/Supplement".len()..].trim_start();
+        after
+            .split_whitespace()
+            .next()?
+            .trim_end_matches(|c: char| !c.is_ascii_digit())
+            .parse::<i64>()
+            .ok()?
+    };
+
+    Some((registry, ordering, supplement))
+}
+
+/// Extract a PostScript string value after a key (e.g., `/Registry (Adobe)`).
+fn extract_cmap_ps_string(block: &str, key: &str) -> Option<String> {
+    let pos = block.find(key)?;
+    let after = &block[pos + key.len()..];
+    let paren_start = after.find('(')?;
+    let paren_end = after[paren_start + 1..].find(')')?;
+    Some(after[paren_start + 1..paren_start + 1 + paren_end].to_string())
 }

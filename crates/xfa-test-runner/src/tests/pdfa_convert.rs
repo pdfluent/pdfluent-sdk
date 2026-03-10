@@ -181,12 +181,6 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc)
         }));
 
-        // 3a3b. Fix symbolic font widths (ZapfDingbats, Symbol) with CFF programs.
-        set_progress("symbolic_widths");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc)
-        }));
-
         // 3a5. Fix CIDSet for CID fonts.
         set_progress("cidset");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
