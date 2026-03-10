@@ -202,19 +202,21 @@ pub fn remove_additional_actions(doc: &mut Document) -> usize {
         }
     }
 
-    // Remove OpenAction from catalog if it's JavaScript.
+    // Remove OpenAction from catalog if it's any forbidden action.
     if let Some(catalog_id) = get_catalog_id(doc) {
         let remove_open_action = {
             if let Some(Object::Dictionary(catalog)) = doc.objects.get(&catalog_id) {
                 match catalog.get(b"OpenAction").ok() {
                     Some(Object::Reference(action_id)) => {
                         if let Some(Object::Dictionary(action)) = doc.objects.get(action_id) {
-                            is_javascript_action(action)
+                            is_javascript_action(action) || is_action_forbidden(action)
                         } else {
                             false
                         }
                     }
-                    Some(Object::Dictionary(action)) => is_javascript_action(action),
+                    Some(Object::Dictionary(action)) => {
+                        is_javascript_action(action) || is_action_forbidden(action)
+                    }
                     _ => false,
                 }
             } else {
@@ -822,6 +824,36 @@ fn remove_forbidden_actions(doc: &mut Document) {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 match dict.get(b"A").ok() {
                     Some(Object::Dictionary(action)) => is_action_forbidden(action),
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        };
+        if remove_a {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"A");
+            }
+        }
+    }
+
+    // Phase 3: Also remove /A from objects where /A is a Reference to a
+    // forbidden action (Phase 1 removed /S but the reference still exists).
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let remove_a = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                match dict.get(b"A").ok() {
+                    Some(Object::Reference(action_id)) => {
+                        match doc.objects.get(action_id) {
+                            Some(Object::Dictionary(action)) => {
+                                // Action had /S removed in Phase 1 — check if it's now
+                                // missing /S (was forbidden) or still has a valid /S.
+                                !action.has(b"S")
+                            }
+                            _ => false,
+                        }
+                    }
                     _ => false,
                 }
             } else {
