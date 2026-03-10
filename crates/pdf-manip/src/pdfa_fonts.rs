@@ -2185,15 +2185,13 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 _ => continue,
             }
 
-            // Skip symbolic fonts — encoding mapping is unreliable.
-            // Also skip subset fonts (prefix like ABCDEF+FontName) — their widths
-            // were set by the original PDF producer and already match the embedded
-            // subset program.
+            // Skip fonts with known symbolic names ONLY when the FontDescriptor
+            // has the Symbolic flag set (indicating the CFF encoding should be used).
+            // After embedding a non-symbolic fallback font (e.g. DejaVuSans for
+            // ZapfDingbats), the flags are updated to Nonsymbolic — in that case
+            // the standard cmap-based width mapping works correctly.
             if let Some(name) = get_name(dict, b"BaseFont") {
-                if is_symbolic_font_name(&name) {
-                    continue;
-                }
-                if name.contains('+') {
+                if is_symbolic_font_name(&name) && is_font_symbolic(doc, dict) {
                     continue;
                 }
             }
@@ -2915,6 +2913,221 @@ pub fn fix_symbolic_font_flags(doc: &mut Document) -> usize {
         }
     }
     count
+}
+
+/// Fix width mismatches for symbolic fonts (ZapfDingbats, Symbol) — rule 6.2.11.5:1.
+///
+/// Symbolic fonts use custom encodings where character codes map directly
+/// to glyph IDs (not via Unicode cmap). This function reads the embedded
+/// font program and updates the /Widths array to match.
+pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if is_font_dict(dict) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let mut fixed = 0;
+
+    for font_id in font_ids {
+        let info = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+
+            match subtype.as_str() {
+                "TrueType" | "Type1" | "MMType1" => {}
+                _ => continue,
+            }
+
+            let name = match get_name(dict, b"BaseFont") {
+                Some(n) => n,
+                None => continue,
+            };
+            if !is_symbolic_font_name(&name) {
+                continue;
+            }
+
+            // Only apply to fonts where the FontDescriptor Flags say Symbolic.
+            // If the font was re-embedded with a non-symbolic fallback, the flags
+            // will be Nonsymbolic, and fix_font_width_mismatches handles that case.
+            if !is_font_symbolic(doc, dict) {
+                continue;
+            }
+
+            let fd_id = match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+
+            let fc = match dict.get(b"FirstChar").ok() {
+                Some(Object::Integer(i)) => *i as u32,
+                _ => continue,
+            };
+            let existing_widths = match dict.get(b"Widths").ok() {
+                Some(Object::Array(arr)) => arr.clone(),
+                _ => continue,
+            };
+            if existing_widths.is_empty() {
+                continue;
+            }
+
+            (subtype, fd_id, fc, existing_widths)
+        };
+
+        let (subtype, fd_id, first_char, existing_widths) = info;
+
+        let (has_ff, has_ff2, has_ff3) = match doc.objects.get(&fd_id) {
+            Some(Object::Dictionary(d)) => {
+                (d.has(b"FontFile"), d.has(b"FontFile2"), d.has(b"FontFile3"))
+            }
+            _ => continue,
+        };
+        if !has_ff && !has_ff2 && !has_ff3 {
+            continue;
+        }
+
+        let font_data = read_embedded_font_data(doc, fd_id);
+        let Some(font_data) = font_data else { continue };
+
+        let corrections = if has_ff2 {
+            compute_symbolic_truetype_width_corrections(&font_data, first_char, &existing_widths)
+        } else if has_ff3 || has_ff {
+            compute_symbolic_cff_width_corrections(&font_data, first_char, &existing_widths)
+        } else {
+            continue;
+        };
+
+        if corrections.is_empty() {
+            continue;
+        }
+
+        // Safety: don't apply if >80% mismatch on non-Type1 — likely wrong mapping.
+        if subtype != "Type1" && corrections.len() * 5 > existing_widths.len() * 4 {
+            continue;
+        }
+
+        let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) else {
+            continue;
+        };
+        let Some(Object::Array(ref mut widths)) = font.get_mut(b"Widths").ok() else {
+            continue;
+        };
+        for (idx, new_w) in &corrections {
+            if *idx < widths.len() {
+                widths[*idx] = Object::Integer(*new_w);
+            }
+        }
+        fixed += 1;
+    }
+
+    fixed
+}
+
+/// Compute width corrections for a symbolic TrueType font.
+fn compute_symbolic_truetype_width_corrections(
+    font_data: &[u8],
+    first_char: u32,
+    existing_widths: &[Object],
+) -> Vec<(usize, i64)> {
+    let Ok(face) = ttf_parser::Face::parse(font_data, 0) else {
+        return Vec::new();
+    };
+
+    let units_per_em = face.units_per_em() as f64;
+    if units_per_em == 0.0 {
+        return Vec::new();
+    }
+    let scale = 1000.0 / units_per_em;
+    let mut corrections = Vec::new();
+
+    for (i, obj) in existing_widths.iter().enumerate() {
+        let pdf_w = match obj {
+            Object::Integer(w) => *w,
+            Object::Real(r) => *r as i64,
+            _ => continue,
+        };
+
+        let code = first_char + i as u32;
+
+        // Symbolic TrueType: veraPDF maps code via (3,0) cmap at 0xF000+code,
+        // or (1,0) cmap at code directly.
+        let gid = face
+            .glyph_index(char::from_u32(0xF000 + code).unwrap_or('\0'))
+            .or_else(|| face.glyph_index(char::from_u32(code).unwrap_or('\0')));
+
+        let Some(gid) = gid else { continue };
+        let Some(advance) = face.glyph_hor_advance(gid) else {
+            continue;
+        };
+
+        let expected = (advance as f64 * scale).round() as i64;
+        if (pdf_w - expected).abs() > 1 {
+            corrections.push((i, expected));
+        }
+    }
+
+    corrections
+}
+
+/// Compute width corrections for a symbolic CFF font.
+fn compute_symbolic_cff_width_corrections(
+    font_data: &[u8],
+    first_char: u32,
+    existing_widths: &[Object],
+) -> Vec<(usize, i64)> {
+    let Some(cff) = cff_parser::Table::parse(font_data) else {
+        return Vec::new();
+    };
+
+    let matrix = cff.matrix();
+    let scale = if matrix.sx.abs() > f32::EPSILON {
+        matrix.sx as f64 * 1000.0
+    } else {
+        1.0
+    };
+
+    let mut corrections = Vec::new();
+
+    for (i, obj) in existing_widths.iter().enumerate() {
+        let pdf_w = match obj {
+            Object::Integer(w) => *w,
+            Object::Real(r) => *r as i64,
+            _ => continue,
+        };
+
+        let code = first_char + i as u32;
+
+        let gid = cff.glyph_index(code as u8).filter(|g| g.0 > 0).or_else(|| {
+            if code < cff.number_of_glyphs() as u32 {
+                Some(cff_parser::GlyphId(code as u16))
+            } else {
+                None
+            }
+        });
+
+        let Some(gid) = gid else { continue };
+
+        let Some(w) = cff.glyph_width(gid) else {
+            continue;
+        };
+
+        let expected = (w as f64 * scale).round() as i64;
+
+        if (pdf_w - expected).abs() > 1 {
+            corrections.push((i, expected));
+        }
+    }
+
+    corrections
 }
 
 fn count_all_fonts(doc: &Document) -> usize {

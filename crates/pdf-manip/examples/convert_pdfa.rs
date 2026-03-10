@@ -54,9 +54,9 @@ fn main() {
     let width_fixes = pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
     eprintln!("Font width mismatches: fixed={width_fixes}");
 
-    // Fix symbolic font flags (ZapfDingbats, Symbol).
-    let symbolic_fixes = pdf_manip::pdfa_fonts::fix_symbolic_font_flags(&mut doc);
-    eprintln!("Symbolic font flags: fixed={symbolic_fixes}");
+    // Fix symbolic font widths (ZapfDingbats, Symbol) with CFF/TT programs.
+    let symbolic_fixes = pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    eprintln!("Symbolic font widths: fixed={symbolic_fixes}");
 
     let cidset_fixed = pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
     eprintln!("CIDSet: fixed={cidset_fixed}");
