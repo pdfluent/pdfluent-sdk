@@ -340,15 +340,8 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
             }
         }
     }
-    if is_otf && !info.is_type0 {
-        // For simple fonts: TrueType → Type1 when embedding .otf (CFF-based).
-        // veraPDF checks FontFile3/OpenType against TrueType rules which fail.
-        if info.subtype == "TrueType" {
-            if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&info.font_id) {
-                font.set("Subtype", Object::Name(b"Type1".to_vec()));
-            }
-        }
-    }
+    // NOTE: Do NOT change TrueType→Type1 subtype for OTF/CFF embeds.
+    // This causes width validation regressions (6.2.11.5:1 + 6.2.11.4.1:2).
     if is_truetype && info.is_type0 {
         // For CIDFont descendants: CIDFontType0 → CIDFontType2 when embedding .ttf
         let target_subtype = {
@@ -1817,38 +1810,62 @@ pub fn fix_type1_charset(doc: &mut Document) -> usize {
 /// Extract glyph names from a Type 1 PFB font program and build a CharSet string.
 ///
 /// Type 1 PFB format stores glyph names as PostScript name tokens in
-/// `/CharStrings` dictionary. The format is:
-///   /CharStrings N dict dup begin
-///   /glyphname ... RD|-| ... ND||-| def
-///   ...
-/// We scan for glyph names after the /CharStrings keyword.
+/// `/CharStrings` dictionary. The CharStrings dict is inside the eexec-encrypted
+/// portion of the font program, so we must decrypt it first.
+///
+/// eexec decryption uses the standard Type 1 algorithm:
+///   initial key = 55665
+///   plain = cipher ^ (key >> 8)
+///   key = ((cipher + key) * 52845 + 22719) & 0xFFFF
+///   skip first 4 random bytes
 fn extract_type1_glyph_names_to_charset(pfb_data: &[u8]) -> String {
     // PFB files may have segment headers (0x80, type, length).
     // Strip PFB headers to get the raw PostScript data.
     let ps_data = strip_pfb_headers(pfb_data);
 
-    let mut charset = String::new();
-
-    // Find the /CharStrings dictionary.
+    // First try: look for /CharStrings in the cleartext portion (PFA fonts).
     let cs_marker = b"/CharStrings";
-    let Some(cs_pos) = ps_data
+    if let Some(pos) = ps_data
         .windows(cs_marker.len())
         .position(|w| w == cs_marker)
-    else {
-        return charset;
-    };
+    {
+        let result = extract_glyph_names_from_charstrings(&ps_data[pos..]);
+        if !result.is_empty() {
+            return result;
+        }
+    }
 
-    // After /CharStrings, skip the count and "dict dup begin" or similar.
-    // Then scan for /name tokens.
-    let after_cs = &ps_data[cs_pos + cs_marker.len()..];
+    // Second try: decrypt the eexec-encrypted portion and search there.
+    let decrypted = decrypt_eexec(&ps_data);
+    if !decrypted.is_empty() {
+        if let Some(pos) = decrypted
+            .windows(cs_marker.len())
+            .position(|w| w == cs_marker)
+        {
+            return extract_glyph_names_from_charstrings(&decrypted[pos..]);
+        }
+    }
 
-    // Scan for /name patterns. Stop at "end" or "readonly" or EOF.
+    String::new()
+}
+
+/// Extract glyph names from data starting at `/CharStrings`.
+///
+/// Type 1 CharStrings format:
+///   `/glyphname N RD <N binary bytes> ND`
+/// or equivalently with `-|` / `|-` operators.
+/// After each glyph name, we parse the charstring length (N) and skip
+/// past the binary data to avoid misinterpreting binary bytes as names.
+fn extract_glyph_names_from_charstrings(data: &[u8]) -> String {
+    let cs_marker = b"/CharStrings";
+    let after_cs = &data[cs_marker.len()..];
+
+    let mut charset = String::new();
     let mut i = 0;
     while i < after_cs.len() {
         // Look for end markers.
         if after_cs[i..].starts_with(b"readonly")
             || (after_cs[i..].starts_with(b"end") && {
-                // Make sure "end" is a standalone token (not "endchar" etc.)
                 let next = after_cs.get(i + 3).copied().unwrap_or(b' ');
                 next == b' ' || next == b'\n' || next == b'\r' || next == b'\t'
             })
@@ -1857,7 +1874,6 @@ fn extract_type1_glyph_names_to_charset(pfb_data: &[u8]) -> String {
         }
 
         if after_cs[i] == b'/' {
-            // Extract the glyph name.
             let name_start = i + 1;
             let mut name_end = name_start;
             while name_end < after_cs.len()
@@ -1880,12 +1896,117 @@ fn extract_type1_glyph_names_to_charset(pfb_data: &[u8]) -> String {
                 }
             }
             i = name_end;
+
+            // After the glyph name, try to parse: <whitespace> <N> <ws> RD|-| <1 byte> <N binary bytes>
+            // Skip whitespace.
+            while i < after_cs.len() && after_cs[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            // Parse the charstring length (decimal integer).
+            let num_start = i;
+            while i < after_cs.len() && after_cs[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i > num_start {
+                if let Ok(n_str) = std::str::from_utf8(&after_cs[num_start..i]) {
+                    if let Ok(cs_len) = n_str.parse::<usize>() {
+                        // Skip to after RD or -| (2 chars) plus 1 space byte, then skip cs_len binary bytes.
+                        // Find RD or -|
+                        while i < after_cs.len() && after_cs[i].is_ascii_whitespace() {
+                            i += 1;
+                        }
+                        // Skip the RD/-| keyword (2 chars).
+                        if after_cs[i..].starts_with(b"RD") || after_cs[i..].starts_with(b"-|") {
+                            i += 2;
+                        }
+                        // One separator byte after RD/-| before binary data.
+                        if i < after_cs.len() {
+                            i += 1;
+                        }
+                        // Skip the binary charstring data.
+                        i = (i + cs_len).min(after_cs.len());
+                    }
+                }
+            }
         } else {
             i += 1;
         }
     }
 
     charset
+}
+
+/// Decrypt the eexec-encrypted portion of a Type 1 font program.
+///
+/// Finds the `eexec` keyword in the PostScript data, then decrypts the
+/// binary data that follows using the standard Type 1 eexec decryption
+/// algorithm (initial key 55665, skip 4 random bytes).
+fn decrypt_eexec(ps_data: &[u8]) -> Vec<u8> {
+    // Find the eexec keyword.
+    let eexec_marker = b"eexec";
+    let eexec_pos = match ps_data
+        .windows(eexec_marker.len())
+        .position(|w| w == eexec_marker)
+    {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+
+    let mut start = eexec_pos + eexec_marker.len();
+    // Skip whitespace/newline after eexec.
+    while start < ps_data.len() && ps_data[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    if start >= ps_data.len() {
+        return Vec::new();
+    }
+
+    // Determine if the encrypted data is hex-encoded or binary.
+    // Hex-encoded: all chars are [0-9a-fA-F\s].
+    // Binary: starts with non-hex byte.
+    let encrypted_data = &ps_data[start..];
+    let is_hex = encrypted_data
+        .iter()
+        .take(32)
+        .all(|&b| b.is_ascii_hexdigit() || b.is_ascii_whitespace());
+
+    let cipher_bytes = if is_hex {
+        // Decode hex to binary.
+        let hex_str: String = encrypted_data
+            .iter()
+            .filter(|b| !b.is_ascii_whitespace())
+            .map(|&b| b as char)
+            .collect();
+        let mut bytes = Vec::with_capacity(hex_str.len() / 2);
+        let mut chars = hex_str.chars();
+        while let (Some(h), Some(l)) = (chars.next(), chars.next()) {
+            if let (Some(hv), Some(lv)) = (h.to_digit(16), l.to_digit(16)) {
+                bytes.push((hv * 16 + lv) as u8);
+            }
+        }
+        bytes
+    } else {
+        encrypted_data.to_vec()
+    };
+
+    // Decrypt using Type 1 eexec algorithm.
+    let mut key: u16 = 55665;
+    let mut decrypted = Vec::with_capacity(cipher_bytes.len());
+    for &cipher in &cipher_bytes {
+        let plain = cipher ^ (key >> 8) as u8;
+        key = (cipher as u16)
+            .wrapping_add(key)
+            .wrapping_mul(52845)
+            .wrapping_add(22719);
+        decrypted.push(plain);
+    }
+
+    // Skip the first 4 random bytes.
+    if decrypted.len() > 4 {
+        decrypted.drain(..4);
+    }
+
+    decrypted
 }
 
 /// Strip PFB segment headers from Type 1 font data.
@@ -2312,10 +2433,10 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 _ => continue,
             }
 
-            // Skip symbolic fonts whose FontDescriptor still has the Symbolic flag
-            // AND whose name is a known symbolic font. If the descriptor was updated
-            // to non-symbolic (e.g., after embedding DejaVuSans), we can fix widths
-            // using the standard encoding mapping.
+            // Skip fonts with known symbolic names ONLY when the FontDescriptor
+            // has the Symbolic flag set (indicating the CFF encoding should be used).
+            // If Nonsymbolic is set (e.g., Flags=36 with both bits), the font uses
+            // standard encoding and should be processed here with cmap/encoding lookup.
             if let Some(name) = get_name(dict, b"BaseFont") {
                 if is_symbolic_font_name(&name) && is_font_symbolic(doc, dict) {
                     continue;
@@ -2471,7 +2592,10 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
                 _ => continue,
             }
 
-            // Only process fonts with known symbolic names AND Symbolic flag.
+            // Only process fonts with known symbolic names AND whose FontDescriptor
+            // has the Symbolic flag set (without Nonsymbolic). Fonts with Nonsymbolic
+            // set (e.g., Flags=36) use standard encoding and are handled by
+            // fix_font_width_mismatches instead.
             let name = get_name(dict, b"BaseFont").unwrap_or_default();
             if !is_symbolic_font_name(&name) || !is_font_symbolic(doc, dict) {
                 continue;
@@ -2662,6 +2786,7 @@ fn parse_differences(
 ///
 /// Returns a list of (index_in_widths_array, correct_width) for mismatched entries.
 /// Uses the font's cmap table to map character codes to glyph IDs.
+/// Compares using fractional font program widths (matching veraPDF's tolerance).
 fn compute_truetype_width_corrections(
     font_data: &[u8],
     first_char: u32,
@@ -2684,32 +2809,74 @@ fn compute_truetype_width_corrections(
 
     for (i, obj) in existing_widths.iter().enumerate() {
         let pdf_w = match obj {
-            Object::Integer(w) => *w,
-            Object::Real(r) => *r as i64,
+            Object::Integer(w) => *w as f64,
+            Object::Real(r) => *r as f64,
             _ => continue,
         };
 
         let code = first_char + i as u32;
 
-        // Determine the expected glyph width from the font program.
-        let expected_w =
-            get_truetype_glyph_width_for_code(&face, code, enc_name, differences, scale);
+        // Determine the expected glyph width from the font program (fractional).
+        let expected_frac =
+            get_truetype_glyph_width_fractional(&face, code, enc_name, differences, scale);
 
-        let Some(expected) = expected_w else { continue };
+        let Some(frac_w) = expected_frac else {
+            continue;
+        };
 
-        // Only flag as mismatch if difference > 1 unit (allow rounding).
-        if (pdf_w - expected).abs() > 1 {
-            corrections.push((i, expected));
+        // Use the same tolerance as veraPDF: |widthFromFontProgram - widthFromDictionary| > 1.0
+        // Compare the PDF integer width against the fractional font program width.
+        if (pdf_w - frac_w).abs() > 1.0 {
+            corrections.push((i, frac_w.round() as i64));
         }
     }
 
     corrections
 }
 
+/// Get the fractional (unrounded) glyph width for a character code in a TrueType font.
+fn get_truetype_glyph_width_fractional(
+    face: &ttf_parser::Face,
+    code: u32,
+    enc_name: &str,
+    differences: &std::collections::HashMap<u32, String>,
+    scale: f64,
+) -> Option<f64> {
+    // If Differences maps this code to a glyph name, try to use it.
+    if let Some(glyph_name) = differences.get(&code) {
+        if let Some(unicode) = glyph_name_to_unicode(glyph_name) {
+            if let Some(gid) = face.glyph_index(unicode) {
+                return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+            }
+        }
+        if glyph_name == ".notdef" {
+            return face
+                .glyph_hor_advance(ttf_parser::GlyphId(0))
+                .map(|w| w as f64 * scale);
+        }
+    }
+
+    let ch = encoding_to_char(code, enc_name);
+
+    if let Some(gid) = face.glyph_index(ch) {
+        return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+    }
+
+    // Fallback: try direct GID = code.
+    if code <= u16::MAX as u32 {
+        if let Some(w) = face.glyph_hor_advance(ttf_parser::GlyphId(code as u16)) {
+            return Some(w as f64 * scale);
+        }
+    }
+
+    None
+}
+
 /// Get the expected glyph width for a character code in a TrueType font.
 ///
 /// Uses the encoding to map code -> Unicode -> glyph ID via cmap.
 /// If the Differences array overrides the glyph for this code, uses that.
+#[allow(dead_code)]
 fn get_truetype_glyph_width_for_code(
     face: &ttf_parser::Face,
     code: u32,
@@ -4557,5 +4724,57 @@ mod tests {
         let data = read_embedded_font_data(&doc, fd_id);
         assert!(data.is_some());
         assert_eq!(data.unwrap(), font_bytes);
+    }
+
+    #[test]
+    fn test_decrypt_eexec_basic() {
+        // A minimal Type 1 font fragment with eexec.
+        // We can verify the decrypt_eexec function works by constructing
+        // a known plaintext, encrypting it, and checking round-trip.
+        let plaintext =
+            b"\x00\x00\x00\x00/CharStrings 2 dict dup begin\n/.notdef 0 def\n/A 1 def\nend";
+        let mut key: u16 = 55665;
+        let mut encrypted = Vec::new();
+        for &plain in plaintext.iter() {
+            let cipher = plain ^ (key >> 8) as u8;
+            key = (cipher as u16)
+                .wrapping_add(key)
+                .wrapping_mul(52845)
+                .wrapping_add(22719);
+            encrypted.push(cipher);
+        }
+
+        let mut ps_data = b"currentfile eexec\n".to_vec();
+        ps_data.extend_from_slice(&encrypted);
+
+        let decrypted = decrypt_eexec(&ps_data);
+        // After skipping 4 random bytes:
+        assert!(decrypted.starts_with(b"/CharStrings"));
+    }
+
+    #[test]
+    fn test_extract_type1_glyph_names_roundtrip() {
+        // Build a fake PFB with eexec-encrypted CharStrings.
+        let plaintext =
+            b"\x00\x00\x00\x00/CharStrings 3 dict dup begin\n/.notdef 0 def\n/A 1 def\n/B 2 def\nend\nreadonly";
+        let mut key: u16 = 55665;
+        let mut encrypted = Vec::new();
+        for &plain in plaintext.iter() {
+            let cipher = plain ^ (key >> 8) as u8;
+            key = (cipher as u16)
+                .wrapping_add(key)
+                .wrapping_mul(52845)
+                .wrapping_add(22719);
+            encrypted.push(cipher);
+        }
+
+        let mut ps_data = b"%!PS-AdobeFont-1.0\ncurrentfile eexec\n".to_vec();
+        ps_data.extend_from_slice(&encrypted);
+
+        let charset = extract_type1_glyph_names_to_charset(&ps_data);
+        // Should have /A and /B but NOT /.notdef
+        assert!(charset.contains("/A"), "charset={charset}");
+        assert!(charset.contains("/B"), "charset={charset}");
+        assert!(!charset.contains(".notdef"), "charset={charset}");
     }
 }
