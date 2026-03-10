@@ -625,6 +625,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cff-parser"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5810ca1a2b5870df2aab1c03e11c40c361ba51d6e3e361e56310f1cb3b4e087"
+
+[[package]]
 name = "cfg-expr"
 version = "0.15.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4085,6 +4091,7 @@ dependencies = [
 name = "pdf-manip"
 version = "0.1.0"
 dependencies = [
+ "cff-parser",
  "flate2",
  "image",
  "lopdf",

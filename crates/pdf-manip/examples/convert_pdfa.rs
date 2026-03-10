@@ -31,6 +31,12 @@ fn main() {
 
     // NOTE: fix_width_mismatches and fix_font_descriptor_metrics disabled —
     // they cause width regression on already-embedded fonts.
+    // CFF-only width fixing is safe (doesn't touch TrueType).
+    let cff_widths = pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+    eprintln!("CFF widths: fixed={cff_widths}");
+
+    let charset_fixed = pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+    eprintln!("Type1 CharSet: fixed={charset_fixed}");
 
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");
