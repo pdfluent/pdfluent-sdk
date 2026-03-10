@@ -1149,20 +1149,22 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
             (fd_id, has_cidset, num_glyphs)
         };
 
-        // Only fix if we have a font program to reference.
-        let Some(num_glyphs) = num_glyphs else {
-            continue;
-        };
-
         // Build CIDSet bitmap: one bit per CID, all set to 1.
-        let num_bytes = (num_glyphs as usize).div_ceil(8);
-        let mut cidset_data = vec![0xFFu8; num_bytes];
-        // Clear trailing bits in the last byte.
-        let trailing = num_glyphs as usize % 8;
-        if trailing != 0 && !cidset_data.is_empty() {
-            let last = cidset_data.len() - 1;
-            cidset_data[last] = 0xFF << (8 - trailing);
-        }
+        let cidset_data = if let Some(num_glyphs) = num_glyphs {
+            let num_bytes = (num_glyphs as usize).div_ceil(8);
+            let mut data = vec![0xFFu8; num_bytes];
+            // Clear trailing bits in the last byte.
+            let trailing = num_glyphs as usize % 8;
+            if trailing != 0 && !data.is_empty() {
+                let last = data.len() - 1;
+                data[last] = 0xFF << (8 - trailing);
+            }
+            data
+        } else {
+            // Can't parse font — use a full 65536-CID bitmap (all bits set).
+            // This is valid because CIDSet is a superset check: extra bits are OK.
+            vec![0xFFu8; 8192]
+        };
 
         let cidset_stream = Stream::new(dictionary! {}, cidset_data);
         let cidset_id = doc.add_object(Object::Stream(cidset_stream));

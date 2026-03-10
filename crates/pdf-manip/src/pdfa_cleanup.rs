@@ -100,6 +100,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     remove_needs_rendering(doc);
     remove_forbidden_annotations(doc);
     fix_file_spec_keys(doc);
+    strip_ef_from_file_specs(doc);
     remove_ocg_as_key(doc);
     strip_signatures(doc);
 
@@ -760,6 +761,8 @@ fn remove_forbidden_actions(doc: &mut Document) {
         b"Trans",
         b"GoTo3DView",
         b"GoToE",
+        b"SetState", // deprecated set-state action
+        b"NoOp",     // deprecated no-op action
     ];
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
@@ -1551,6 +1554,31 @@ fn fix_file_spec_keys(doc: &mut Document) {
                 if !dict.has(b"UF") {
                     dict.set("UF", name);
                 }
+            }
+        }
+    }
+}
+
+/// Strip /EF key from all file specification dicts (6.8:5).
+///
+/// Embedded files referenced by EF must be PDF/A compliant.
+/// Since we can't validate them, remove EF to ensure compliance.
+fn strip_ef_from_file_specs(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_strip = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                matches!(
+                    dict.get(b"Type").ok(),
+                    Some(Object::Name(ref n)) if n == b"Filespec"
+                ) && dict.has(b"EF")
+            } else {
+                false
+            }
+        };
+        if needs_strip {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"EF");
             }
         }
     }
