@@ -1653,11 +1653,16 @@ pub fn fix_type1_charset(doc: &mut Document) -> usize {
 /// in the embedded font program. This builds a complete CIDSet from the
 /// font's glyph count.
 pub fn fix_cidset(doc: &mut Document) -> usize {
+    // For PDF/A-2b, CIDSet is OPTIONAL. If present, it must correctly identify
+    // all CIDs in the font program. Generating a correct CIDSet for CID-keyed
+    // CFF fonts requires mapping GIDs to CIDs via the charset structure, which
+    // is complex and error-prone. The safest approach: REMOVE CIDSet entirely.
+    // This eliminates 6.2.11.4.2:2 validation errors without risk.
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
 
     for font_id in font_ids {
-        let (fd_id, has_cidset, num_glyphs) = {
+        let fd_id = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
                 continue;
             };
@@ -1666,63 +1671,30 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
                 continue;
             }
 
-            let fd_id = match dict.get(b"FontDescriptor").ok() {
+            match dict.get(b"FontDescriptor").ok() {
                 Some(Object::Reference(id)) => *id,
                 _ => continue,
-            };
-
-            let has_cidset = doc
-                .objects
-                .get(&fd_id)
-                .and_then(|o| {
-                    if let Object::Dictionary(fd) = o {
-                        Some(fd.has(b"CIDSet"))
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(false);
-
-            // Read font data to get glyph count.
-            let font_data = read_embedded_font_data(doc, fd_id);
-            let num_glyphs = font_data.and_then(|data| {
-                // Try TrueType/OpenType first.
-                if let Ok(face) = ttf_parser::Face::parse(&data, 0) {
-                    return Some(face.number_of_glyphs());
-                }
-                // Try standalone CFF (CIDFontType0).
-                if let Some(cff) = cff_parser::Table::parse(&data) {
-                    return Some(cff.number_of_glyphs());
-                }
-                None
-            });
-
-            (fd_id, has_cidset, num_glyphs)
+            }
         };
 
-        // Only fix if we can parse the font to determine glyph count.
-        let Some(num_glyphs) = num_glyphs else {
-            continue;
-        };
+        // Remove CIDSet if present — it's optional for PDF/A-2b and
+        // incorrect CIDSet causes validation failures.
+        let has_cidset = doc
+            .objects
+            .get(&fd_id)
+            .and_then(|o| {
+                if let Object::Dictionary(fd) = o {
+                    Some(fd.has(b"CIDSet"))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
 
-        // Build CIDSet bitmap: one bit per CID, all set to 1.
-        let num_bytes = (num_glyphs as usize).div_ceil(8);
-        let mut cidset_data = vec![0xFFu8; num_bytes];
-        // Clear trailing bits in the last byte.
-        let trailing = num_glyphs as usize % 8;
-        if trailing != 0 && !cidset_data.is_empty() {
-            let last = cidset_data.len() - 1;
-            cidset_data[last] = 0xFF << (8 - trailing);
-        }
-
-        let cidset_stream = Stream::new(dictionary! {}, cidset_data);
-        let cidset_id = doc.add_object(Object::Stream(cidset_stream));
-
-        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
-            fd.set("CIDSet", Object::Reference(cidset_id));
-        }
-
-        if !has_cidset {
+        if has_cidset {
+            if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                fd.remove(b"CIDSet");
+            }
             fixed += 1;
         }
     }
