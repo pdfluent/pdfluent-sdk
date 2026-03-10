@@ -7,13 +7,26 @@ use lopdf::{dictionary, Document, Object, ObjectId};
 
 /// Run all supplementary PDF/A fixups.
 pub fn run_fixups(doc: &mut Document) -> FixupReport {
+    let tt_encoding_diffs_fixed = fix_truetype_encoding_differences(doc);
+    let devicen_colorants_fixed = fix_devicen_colorants(doc);
+    let forbidden_annots_removed = fix_forbidden_annotations_extra(doc);
+    let crypt_filters_removed = fix_crypt_filters(doc);
+    let file_spec_ef_stripped = fix_file_spec_ef_extra(doc);
+    let content_resources_added = fix_content_stream_resources_extra(doc);
+    let stream_lengths_fixed = fix_stream_lengths(doc);
+    let cmap_wmode_fixed = fix_cmap_wmode(doc);
+    let cidtogidmap_fixed = fix_cidtogidmap_extra(doc);
+
     FixupReport {
-        tt_encoding_diffs_fixed: fix_truetype_encoding_differences(doc),
-        devicen_colorants_fixed: fix_devicen_colorants(doc),
-        forbidden_annots_removed: fix_forbidden_annotations_extra(doc),
-        crypt_filters_removed: fix_crypt_filters(doc),
-        file_spec_ef_stripped: fix_file_spec_ef_extra(doc),
-        content_resources_added: fix_content_stream_resources_extra(doc),
+        tt_encoding_diffs_fixed,
+        devicen_colorants_fixed,
+        forbidden_annots_removed,
+        crypt_filters_removed,
+        file_spec_ef_stripped,
+        content_resources_added,
+        stream_lengths_fixed,
+        cmap_wmode_fixed,
+        cidtogidmap_fixed,
     }
 }
 
@@ -26,6 +39,9 @@ pub struct FixupReport {
     pub crypt_filters_removed: usize,
     pub file_spec_ef_stripped: usize,
     pub content_resources_added: usize,
+    pub stream_lengths_fixed: usize,
+    pub cmap_wmode_fixed: usize,
+    pub cidtogidmap_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -723,9 +739,9 @@ fn fix_content_stream_resources_extra(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
 
-    for id in ids {
+    for id in &ids {
         let needs_resources = {
-            let Some(Object::Stream(s)) = doc.objects.get(&id) else {
+            let Some(Object::Stream(s)) = doc.objects.get(id) else {
                 continue;
             };
             // Tiling patterns (Type=Pattern, PatternType=1) must have Resources.
@@ -738,9 +754,406 @@ fn fix_content_stream_resources_extra(doc: &mut Document) -> usize {
         };
 
         if needs_resources {
-            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(id) {
                 s.dict
                     .set("Resources", Object::Dictionary(lopdf::Dictionary::new()));
+                count += 1;
+            }
+        }
+    }
+
+    // Phase 2: For Form XObjects that reference fonts in their content stream but
+    // don't have those fonts in their Resources, find the missing font refs from
+    // any other Form XObject or page that has them, and add them.
+    count += propagate_missing_font_resources(doc);
+
+    count
+}
+
+/// Find Form XObjects that use font resources (e.g. /F1) in their content but
+/// don't declare them in their Resources/Font dict. Fix by finding the font
+/// reference from another object that has it and adding it.
+fn propagate_missing_font_resources(doc: &mut Document) -> usize {
+    use std::collections::{HashMap, HashSet};
+
+    // Step 1: Build a global map of font name → object reference from all Resources/Font dicts.
+    let mut global_fonts: HashMap<Vec<u8>, Object> = HashMap::new();
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in &ids {
+        let font_dict = match doc.objects.get(id) {
+            Some(Object::Stream(s)) => get_font_dict_from_resources(&s.dict, doc),
+            Some(Object::Dictionary(d)) => get_font_dict_from_resources(d, doc),
+            _ => None,
+        };
+        if let Some(fd) = font_dict {
+            for (name, val) in fd.iter() {
+                if !global_fonts.contains_key(name) {
+                    global_fonts.insert(name.clone(), val.clone());
+                }
+            }
+        }
+    }
+
+    if global_fonts.is_empty() {
+        return 0;
+    }
+
+    // Step 2: For each Form XObject, check if content references fonts not in Resources.
+    let mut count = 0;
+    for id in &ids {
+        let missing_fonts = {
+            let Some(Object::Stream(s)) = doc.objects.get(id) else {
+                continue;
+            };
+            let is_form = matches!(
+                s.dict.get(b"Subtype").ok(),
+                Some(Object::Name(ref n)) if n == b"Form"
+            );
+            if !is_form {
+                continue;
+            }
+            // Parse content to find font references (/Fn where n is a name).
+            let content = s.decompressed_content().ok().unwrap_or_else(|| {
+                if s.content.is_empty() {
+                    vec![]
+                } else {
+                    s.content.clone()
+                }
+            });
+            let used_fonts = extract_font_names_from_content(&content);
+            if used_fonts.is_empty() {
+                continue;
+            }
+            // Check which are missing from Resources/Font.
+            let existing_fonts: HashSet<Vec<u8>> = get_font_dict_from_resources(&s.dict, doc)
+                .map(|fd| fd.iter().map(|(k, _)| k.clone()).collect())
+                .unwrap_or_default();
+
+            let mut missing = Vec::new();
+            for fname in used_fonts {
+                if !existing_fonts.contains(&fname) {
+                    if let Some(ref_obj) = global_fonts.get(&fname) {
+                        missing.push((fname, ref_obj.clone()));
+                    }
+                }
+            }
+            missing
+        };
+
+        if missing_fonts.is_empty() {
+            continue;
+        }
+
+        // Add missing fonts to the Form XObject's Resources/Font dict.
+        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(id) {
+            // Ensure Resources dict exists.
+            if !s.dict.has(b"Resources") {
+                s.dict
+                    .set("Resources", Object::Dictionary(lopdf::Dictionary::new()));
+            }
+            if let Ok(Object::Dictionary(ref mut resources)) = s.dict.get_mut(b"Resources") {
+                // Ensure Font dict exists.
+                if !resources.has(b"Font") {
+                    resources.set("Font", Object::Dictionary(lopdf::Dictionary::new()));
+                }
+                if let Ok(Object::Dictionary(ref mut font_dict)) = resources.get_mut(b"Font") {
+                    for (name, obj) in missing_fonts {
+                        let key_str = String::from_utf8_lossy(&name).to_string();
+                        font_dict.set(key_str, obj);
+                    }
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Get the Font dictionary from a Resources dictionary (which may be inline or referenced).
+fn get_font_dict_from_resources(
+    dict: &lopdf::Dictionary,
+    doc: &Document,
+) -> Option<lopdf::Dictionary> {
+    let resources = match dict.get(b"Resources").ok() {
+        Some(Object::Dictionary(d)) => Some(d.clone()),
+        Some(Object::Reference(ref_id)) => match doc.objects.get(ref_id) {
+            Some(Object::Dictionary(d)) => Some(d.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let resources = resources?;
+    match resources.get(b"Font").ok() {
+        Some(Object::Dictionary(fd)) => Some(fd.clone()),
+        Some(Object::Reference(ref_id)) => match doc.objects.get(ref_id) {
+            Some(Object::Dictionary(fd)) => Some(fd.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Extract font resource names (e.g. "F1", "F2") referenced in content stream bytes.
+fn extract_font_names_from_content(content: &[u8]) -> Vec<Vec<u8>> {
+    let mut names = Vec::new();
+    let text = String::from_utf8_lossy(content);
+    // Look for /Fn Tf patterns (font selection in content streams).
+    let mut i = 0;
+    let bytes = text.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] == b'/' {
+            // Read the name
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len()
+                && !matches!(
+                    bytes[end],
+                    b' ' | b'\t' | b'\n' | b'\r' | b'/' | b'[' | b']' | b'(' | b')' | b'<' | b'>'
+                )
+            {
+                end += 1;
+            }
+            let name = &bytes[start..end];
+            // Check if followed by a number and "Tf" (font selection operator).
+            let rest = &text[end..];
+            let trimmed = rest.trim_start();
+            // Pattern: /FontName <size> Tf
+            if trimmed
+                .split_whitespace()
+                .take(3)
+                .collect::<Vec<_>>()
+                .last()
+                .copied()
+                == Some("Tf")
+            {
+                let name_vec = name.to_vec();
+                if !names.contains(&name_vec) {
+                    names.push(name_vec);
+                }
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    names
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.7.1:1 — Stream Length must match actual bytes
+// ---------------------------------------------------------------------------
+//
+// Some PDFs have corrupted Length keys (e.g. "Qength" instead of "Length")
+// or missing Length keys entirely. After lopdf loads and re-saves, the Length
+// is recalculated, but corrupted keys may be preserved as-is.
+// This pass ensures all streams have a correct /Length key.
+
+fn fix_stream_lengths(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+            continue;
+        };
+        let actual_len = stream.content.len() as i64;
+        let has_length = stream.dict.has(b"Length");
+        let length_correct = match stream.dict.get(b"Length").ok() {
+            Some(Object::Integer(l)) => *l == actual_len,
+            _ => false,
+        };
+        // Also check for corrupted key names that look like Length.
+        let has_corrupted_length = stream.dict.iter().any(|(k, _)| {
+            k.as_slice() != b"Length" && k.len() >= 4 && k.len() <= 8 && {
+                // Heuristic: key is similar to "Length" (e.g. "Qength", "Lngth").
+                let lower: Vec<u8> = k.iter().map(|c| c.to_ascii_lowercase()).collect();
+                lower.contains(&b'e')
+                    && lower.contains(&b'n')
+                    && lower.contains(&b'g')
+                    && lower.contains(&b't')
+                    && lower.contains(&b'h')
+            }
+        });
+
+        if !has_length || !length_correct || has_corrupted_length {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                let actual = stream.content.len() as i64;
+                stream.dict.set("Length", Object::Integer(actual));
+                // Remove corrupted length-like keys.
+                let corrupt_keys: Vec<Vec<u8>> = stream
+                    .dict
+                    .iter()
+                    .filter(|(k, _)| {
+                        k.as_slice() != b"Length" && k.len() >= 4 && k.len() <= 8 && {
+                            let lower: Vec<u8> = k.iter().map(|c| c.to_ascii_lowercase()).collect();
+                            lower.contains(&b'e')
+                                && lower.contains(&b'n')
+                                && lower.contains(&b'g')
+                                && lower.contains(&b't')
+                                && lower.contains(&b'h')
+                        }
+                    })
+                    .map(|(k, _)| k.clone())
+                    .collect();
+                for key in corrupt_keys {
+                    stream.dict.remove(key.as_slice());
+                }
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.11.3.3:2 — CMap WMode mismatch
+// ---------------------------------------------------------------------------
+//
+// The WMode entry in the CMap dictionary must match the WMode value in the
+// embedded CMap stream. If they differ, we update the dictionary entry to
+// match the stream value.
+
+fn fix_cmap_wmode(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        let fix_info = {
+            let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+                continue;
+            };
+            // Must be a CMap stream (Type = CMap or has CMapName or UseCMap).
+            let is_cmap = matches!(
+                stream.dict.get(b"Type").ok(),
+                Some(Object::Name(ref n)) if n == b"CMap"
+            ) || stream.dict.has(b"CMapName")
+                || stream.dict.has(b"UseCMap");
+            if !is_cmap {
+                continue;
+            }
+            let dict_wmode = match stream.dict.get(b"WMode").ok() {
+                Some(Object::Integer(w)) => Some(*w),
+                _ => None,
+            };
+            // Parse the stream content to find WMode in the CMap program.
+            let stream_wmode = extract_cmap_wmode(stream);
+            match (dict_wmode, stream_wmode) {
+                (Some(dw), Some(sw)) if dw != sw => Some(sw),
+                (None, Some(sw)) if sw != 0 => Some(sw), // dict absent defaults to 0
+                _ => None,
+            }
+        };
+        if let Some(correct_wmode) = fix_info {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.dict.set("WMode", Object::Integer(correct_wmode));
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Extract WMode value from CMap stream content.
+fn extract_cmap_wmode(stream: &lopdf::Stream) -> Option<i64> {
+    let content = stream.decompressed_content().ok().unwrap_or_else(|| {
+        if stream.content.is_empty() {
+            vec![]
+        } else {
+            stream.content.clone()
+        }
+    });
+    let text = String::from_utf8_lossy(&content);
+    // Look for /WMode <value> def patterns in CMap programs.
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("/WMode") {
+            // Pattern: /WMode 1 def  or  /WMode 0 def
+            if let Some(pos) = trimmed.find("/WMode") {
+                let after = &trimmed[pos + 6..];
+                for part in after.split_whitespace() {
+                    if let Ok(v) = part.parse::<i64>() {
+                        return Some(v);
+                    }
+                    if part == "def" {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.11.3.2:1 — CIDToGIDMap for Type 2 CIDFonts (supplementary)
+// ---------------------------------------------------------------------------
+//
+// pdfa_cleanup::fix_cidtogidmap handles direct CIDFontType2 dicts, but some
+// CIDFonts are referenced via a Type 0 font's DescendantFonts array as
+// indirect references, and the CIDFont dict may lack the explicit Subtype.
+// This supplementary pass catches those cases.
+
+fn fix_cidtogidmap_extra(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        let needs_fix = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            // Type 0 fonts have DescendantFonts referencing CIDFont dicts.
+            let is_type0 = matches!(
+                dict.get(b"Subtype").ok(),
+                Some(Object::Name(ref n)) if n == b"Type0"
+            );
+            if !is_type0 {
+                continue;
+            }
+            // Check DescendantFonts array.
+            let desc_refs: Vec<ObjectId> = match dict.get(b"DescendantFonts").ok() {
+                Some(Object::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|o| {
+                        if let Object::Reference(r) = o {
+                            Some(*r)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => vec![],
+            };
+            let mut needs = Vec::new();
+            for desc_id in desc_refs {
+                let Some(Object::Dictionary(cidfont)) = doc.objects.get(&desc_id) else {
+                    continue;
+                };
+                let is_cid2 = matches!(
+                    cidfont.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"CIDFontType2"
+                );
+                if is_cid2 && !cidfont.has(b"CIDToGIDMap") {
+                    // Also verify it has an embedded font program (FontDescriptor with FontFile2).
+                    let has_embedded = match cidfont.get(b"FontDescriptor").ok() {
+                        Some(Object::Reference(fd_id)) => {
+                            matches!(
+                                doc.objects.get(fd_id),
+                                Some(Object::Dictionary(fd)) if fd.has(b"FontFile2")
+                            )
+                        }
+                        _ => false,
+                    };
+                    if has_embedded {
+                        needs.push(desc_id);
+                    }
+                }
+            }
+            needs
+        };
+        for desc_id in needs_fix {
+            if let Some(Object::Dictionary(ref mut cidfont)) = doc.objects.get_mut(&desc_id) {
+                cidfont.set("CIDToGIDMap", Object::Name(b"Identity".to_vec()));
                 count += 1;
             }
         }

@@ -64,6 +64,15 @@ fn main() {
         Err(e) => eprintln!("Colorspace error: {e}"),
     }
 
+    // Supplementary fixups (small rule fixes).
+    let fixup_report = pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+    eprintln!(
+        "Fixups: stream_lengths={}, cmap_wmode={}, cidtogidmap={}",
+        fixup_report.stream_lengths_fixed,
+        fixup_report.cmap_wmode_fixed,
+        fixup_report.cidtogidmap_fixed,
+    );
+
     match pdf_manip::pdfa_xmp::repair_xmp_metadata(
         &mut doc,
         pdf_manip::pdfa_xmp::PdfAConformance::A2b,
