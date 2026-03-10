@@ -167,15 +167,18 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
         }));
 
-        // NOTE: fix_simple_truetype_widths and fix_type1_widths disabled —
-        // they cause width regression on fonts that were already correct.
-        // Need more careful comparison logic before enabling.
-        // let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        //     pdf_manip::pdfa_fonts::fix_simple_truetype_widths(&mut doc)
-        // }));
-        // let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        //     pdf_manip::pdfa_fonts::fix_type1_widths(&mut doc)
-        // }));
+        // 3a2b. Fix .notdef glyph references (6.2.11.8:1).
+        set_progress("notdef_refs");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc)
+        }));
+
+        // 3a3. Conservative width mismatch fix for simple TrueType/Type1 fonts.
+        // Only updates individual mismatched width entries; skips unreliable mappings.
+        set_progress("width_mismatches");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc)
+        }));
 
         // 3a5. Fix CIDSet for CID fonts.
         set_progress("cidset");

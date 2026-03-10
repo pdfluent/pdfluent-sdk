@@ -44,10 +44,14 @@ fn main() {
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");
 
-    // NOTE: fix_simple_truetype_widths and fix_type1_widths disabled —
-    // they cause width regression on already-correct fonts.
-    // let tt_widths = pdf_manip::pdfa_fonts::fix_simple_truetype_widths(&mut doc);
-    // let t1_widths = pdf_manip::pdfa_fonts::fix_type1_widths(&mut doc);
+    // Fix .notdef glyph references (6.2.11.8:1).
+    let notdef_fixed = pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+    eprintln!(".notdef refs: fixed={notdef_fixed}");
+
+    // Conservative width mismatch fix: only updates individual mismatched entries
+    // where the mapping is unambiguous. Skips fonts with >50% mismatches.
+    let width_fixes = pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+    eprintln!("Font width mismatches: fixed={width_fixes}");
 
     let cidset_fixed = pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
     eprintln!("CIDSet: fixed={cidset_fixed}");
