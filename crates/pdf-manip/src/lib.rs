@@ -31,6 +31,8 @@ pub mod pdfa_cleanup;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_colorspace;
 #[cfg(feature = "pdfa-convert")]
+pub mod pdfa_fixups;
+#[cfg(feature = "pdfa-convert")]
 pub mod pdfa_fonts;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_xmp;
