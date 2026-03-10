@@ -29,11 +29,8 @@ fn main() {
         Err(e) => eprintln!("Font error: {e}"),
     }
 
-    let width_fixed = pdf_manip::pdfa_fonts::fix_width_mismatches(&mut doc);
-    eprintln!("Width mismatches: fixed={width_fixed}");
-
-    let fd_fixed = pdf_manip::pdfa_fonts::fix_font_descriptor_metrics(&mut doc);
-    eprintln!("FontDescriptor metrics: fixed={fd_fixed}");
+    // NOTE: fix_width_mismatches and fix_font_descriptor_metrics disabled —
+    // they cause width regression on already-embedded fonts.
 
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");

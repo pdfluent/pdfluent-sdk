@@ -132,17 +132,11 @@ impl PdfTest for PdfAConvertTest {
             _ => None,
         };
 
-        // 3a1b. Fix width mismatches for already-embedded fonts.
-        set_progress("width_fix");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pdf_manip::pdfa_fonts::fix_width_mismatches(&mut doc)
-        }));
+        // NOTE: fix_width_mismatches disabled — causes regression (67→104 PDFs).
+        // The width calculation doesn't match veraPDF's expectations for already-
+        // embedded fonts. Only widths set by embed_fonts (above) are reliable.
 
-        // 3a1c. Fix FontDescriptor metrics.
-        set_progress("fd_metrics");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pdf_manip::pdfa_fonts::fix_font_descriptor_metrics(&mut doc)
-        }));
+        // NOTE: fix_font_descriptor_metrics disabled — may interact with width issues.
 
         // 3a2. Fix TrueType encoding for non-symbolic fonts.
         set_progress("font_encoding");
