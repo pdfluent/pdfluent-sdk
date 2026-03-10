@@ -852,6 +852,37 @@ fn fix_device_colorspaces_in_deep_structures(
         }
     };
 
+    // Helper: resolve a device colorspace from a dict key, handling both
+    // direct Name values and references to Name objects.
+    let resolve_device_cs =
+        |dict: &lopdf::Dictionary, key: &[u8], doc: &Document| -> Option<String> {
+            match dict.get(key).ok() {
+                Some(Object::Name(n)) => {
+                    let name = String::from_utf8_lossy(n).to_string();
+                    if name == "DeviceCMYK" || name == "DeviceRGB" {
+                        Some(name)
+                    } else {
+                        None
+                    }
+                }
+                Some(Object::Reference(ref_id)) => {
+                    // Dereference: the referenced object may be a bare Name.
+                    match doc.objects.get(ref_id) {
+                        Some(Object::Name(n)) => {
+                            let name = String::from_utf8_lossy(n).to_string();
+                            if name == "DeviceCMYK" || name == "DeviceRGB" {
+                                Some(name)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
 
     for id in ids {
@@ -864,7 +895,8 @@ fn fix_device_colorspaces_in_deep_structures(
             Object::Dictionary(dict) => {
                 // Shading dicts have /ShadingType and may have a device ColorSpace.
                 if dict.get(b"ShadingType").is_ok() {
-                    if let Some(repl) = get_name(dict, b"ColorSpace").and_then(|n| replacement(&n))
+                    if let Some(repl) =
+                        resolve_device_cs(dict, b"ColorSpace", doc).and_then(|n| replacement(&n))
                     {
                         if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
                             d.set("ColorSpace", Object::Reference(repl));
@@ -878,7 +910,8 @@ fn fix_device_colorspaces_in_deep_structures(
 
                 // Shading streams with device ColorSpace.
                 if dict.get(b"ShadingType").is_ok() {
-                    if let Some(repl) = get_name(dict, b"ColorSpace").and_then(|n| replacement(&n))
+                    if let Some(repl) =
+                        resolve_device_cs(dict, b"ColorSpace", doc).and_then(|n| replacement(&n))
                     {
                         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                             s.dict.set("ColorSpace", Object::Reference(repl));

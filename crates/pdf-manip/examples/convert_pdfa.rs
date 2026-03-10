@@ -50,8 +50,13 @@ fn main() {
 
     // Conservative width mismatch fix: only updates individual mismatched entries
     // where the mapping is unambiguous. Skips fonts with >50% mismatches.
+    // Also handles subset fonts (ABCDEF+FontName) whose widths differ slightly.
     let width_fixes = pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
     eprintln!("Font width mismatches: fixed={width_fixes}");
+
+    // Fix symbolic font widths (ZapfDingbats, Symbol) with CFF programs.
+    let symbolic_fixes = pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    eprintln!("Symbolic font widths: fixed={symbolic_fixes}");
 
     let cidset_fixed = pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
     eprintln!("CIDSet: fixed={cidset_fixed}");
@@ -67,10 +72,11 @@ fn main() {
     // Supplementary fixups (small rule fixes).
     let fixup_report = pdf_manip::pdfa_fixups::run_fixups(&mut doc);
     eprintln!(
-        "Fixups: stream_lengths={}, cmap_wmode={}, cidtogidmap={}",
+        "Fixups: stream_lengths={}, cmap_wmode={}, cidtogidmap={}, cidsysteminfo={}",
         fixup_report.stream_lengths_fixed,
         fixup_report.cmap_wmode_fixed,
         fixup_report.cidtogidmap_fixed,
+        fixup_report.cidsysteminfo_fixed,
     );
 
     match pdf_manip::pdfa_xmp::repair_xmp_metadata(
