@@ -1179,15 +1179,39 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
     // Apply fixes.
     let count = to_fix.len();
     for id in to_fix {
-        if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(id) {
-            // If there's an existing Encoding dict with Differences, preserve it
-            // but set BaseEncoding to WinAnsiEncoding.
+        // First check if Encoding is a Reference to a dict with Differences.
+        let enc_ref_with_diffs = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            match dict.get(b"Encoding").ok() {
+                Some(Object::Reference(enc_id)) => {
+                    match doc.objects.get(enc_id) {
+                        Some(Object::Dictionary(enc_dict)) if enc_dict.has(b"Differences") => {
+                            Some(*enc_id)
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+
+        if let Some(enc_id) = enc_ref_with_diffs {
+            // Encoding is a referenced dict with Differences — update it in place.
+            if let Some(Object::Dictionary(ref mut enc_dict)) = doc.objects.get_mut(&enc_id) {
+                enc_dict.set(
+                    "BaseEncoding",
+                    Object::Name(b"WinAnsiEncoding".to_vec()),
+                );
+            }
+        } else if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(id) {
+            // Inline dict with Differences, or no encoding at all.
             let has_differences = matches!(
                 dict.get(b"Encoding"),
                 Ok(Object::Dictionary(d)) if d.has(b"Differences")
             );
             if has_differences {
-                // Clone the existing dict and add BaseEncoding.
                 if let Ok(Object::Dictionary(enc_dict)) = dict.get(b"Encoding") {
                     let mut new_enc = enc_dict.clone();
                     new_enc.set(
