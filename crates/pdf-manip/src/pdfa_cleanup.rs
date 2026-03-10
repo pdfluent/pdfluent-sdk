@@ -2003,38 +2003,143 @@ fn count_name_tree_entries(doc: &Document, tree_id: ObjectId) -> usize {
     0
 }
 
-/// Strip /Metadata from all objects except the document catalog (6.6.2.3.1).
+/// Strip non-catalog XMP metadata to fix 6.6.2.3.1 violations.
 ///
-/// Embedded XMP metadata in images and other objects often contains
-/// non-standard properties (photoshop, exif, camera-raw, pdfx) that
-/// violate 6.6.2.3.1 unless proper extension schemas are present.
-/// Removing these metadata streams is safe and avoids the violation.
+/// Two-phase approach:
+/// 1. Remove /Metadata keys from all dicts/streams except the catalog.
+/// 2. Replace non-catalog metadata stream objects (Type=Metadata, Subtype=XML)
+///    with empty streams so veraPDF won't find non-standard XMP properties.
 fn strip_non_catalog_metadata(doc: &mut Document) {
+    // Find the catalog's /Metadata reference to preserve it.
+    let catalog_meta_id: Option<ObjectId> = get_catalog_id(doc).and_then(|cat_id| {
+        match doc.objects.get(&cat_id) {
+            Some(Object::Dictionary(cat)) => match cat.get(b"Metadata").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            },
+            _ => None,
+        }
+    });
     let catalog_id = get_catalog_id(doc);
 
+    // Phase 1: Strip /Metadata keys from all dicts and stream dicts,
+    // except the catalog itself.
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
         if catalog_id == Some(id) {
             continue;
         }
-        let has_metadata = matches!(
+        strip_metadata_recursive(doc, id);
+    }
+
+    // Phase 2: Replace non-catalog metadata stream objects with empty content.
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        if catalog_meta_id == Some(id) {
+            continue;
+        }
+        let is_metadata_stream = matches!(
             doc.objects.get(&id),
-            Some(Object::Dictionary(d)) if d.has(b"Metadata")
-        ) || matches!(
-            doc.objects.get(&id),
-            Some(Object::Stream(s)) if s.dict.has(b"Metadata")
+            Some(Object::Stream(s)) if {
+                let t = s.dict.get(b"Type").ok();
+                let st = s.dict.get(b"Subtype").ok();
+                matches!(t, Some(Object::Name(ref n)) if n == b"Metadata")
+                    && matches!(st, Some(Object::Name(ref n)) if n == b"XML")
+            }
         );
-        if has_metadata {
-            match doc.objects.get_mut(&id) {
-                Some(Object::Dictionary(ref mut d)) => {
-                    d.remove(b"Metadata");
-                }
-                Some(Object::Stream(ref mut s)) => {
-                    s.dict.remove(b"Metadata");
+        if is_metadata_stream {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.content = Vec::new();
+                s.dict.set("Length", Object::Integer(0));
+            }
+        }
+    }
+}
+
+/// Recursively strip /Metadata keys from a top-level object's dictionaries.
+fn strip_metadata_recursive(doc: &mut Document, id: ObjectId) {
+    // First pass: strip from the direct dict/stream dict.
+    let has_metadata = matches!(
+        doc.objects.get(&id),
+        Some(Object::Dictionary(d)) if d.has(b"Metadata")
+    ) || matches!(
+        doc.objects.get(&id),
+        Some(Object::Stream(s)) if s.dict.has(b"Metadata")
+    );
+    if has_metadata {
+        match doc.objects.get_mut(&id) {
+            Some(Object::Dictionary(ref mut d)) => {
+                d.remove(b"Metadata");
+            }
+            Some(Object::Stream(ref mut s)) => {
+                s.dict.remove(b"Metadata");
+            }
+            _ => {}
+        }
+    }
+
+    // Also strip /Metadata from any nested inline dictionaries.
+    // Collect all values, find inline dicts that have /Metadata.
+    let dict_to_scan = match doc.objects.get(&id) {
+        Some(Object::Dictionary(d)) => Some(d.clone()),
+        Some(Object::Stream(s)) => Some(s.dict.clone()),
+        _ => None,
+    };
+    if let Some(dict) = dict_to_scan {
+        for (_key, value) in dict.iter() {
+            strip_metadata_from_value(doc, id, value);
+        }
+    }
+}
+
+/// Strip /Metadata from inline dictionary values within an object.
+fn strip_metadata_from_value(doc: &mut Document, parent_id: ObjectId, value: &Object) {
+    match value {
+        Object::Dictionary(d) => {
+            if d.has(b"Metadata") {
+                // Need to find and modify this inline dict within the parent.
+                // Since we can't easily get a mutable reference to nested dicts,
+                // we'll handle this by walking all values in the parent and removing.
+                strip_metadata_in_nested_dicts(doc, parent_id);
+            }
+            // Recurse into nested dicts.
+            for (_k, v) in d.iter() {
+                strip_metadata_from_value(doc, parent_id, v);
+            }
+        }
+        Object::Array(arr) => {
+            for v in arr {
+                strip_metadata_from_value(doc, parent_id, v);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk all nested dictionaries inside an object and remove /Metadata keys.
+fn strip_metadata_in_nested_dicts(doc: &mut Document, obj_id: ObjectId) {
+    fn strip_from_dict(dict: &mut lopdf::Dictionary) {
+        dict.remove(b"Metadata");
+        let keys: Vec<Vec<u8>> = dict.iter().map(|(k, _)| k.clone()).collect();
+        for key in keys {
+            match dict.get_mut(&key) {
+                Ok(Object::Dictionary(ref mut d)) => strip_from_dict(d),
+                Ok(Object::Array(ref mut arr)) => {
+                    for item in arr.iter_mut() {
+                        if let Object::Dictionary(ref mut d) = item {
+                            strip_from_dict(d);
+                        }
+                    }
                 }
                 _ => {}
             }
         }
+    }
+
+    match doc.objects.get_mut(&obj_id) {
+        Some(Object::Dictionary(ref mut d)) => strip_from_dict(d),
+        Some(Object::Stream(ref mut s)) => strip_from_dict(&mut s.dict),
+        _ => {}
     }
 }
 
