@@ -13,11 +13,23 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let crypt_filters_removed = fix_crypt_filters(doc);
     let file_spec_ef_stripped = fix_file_spec_ef_extra(doc);
     let content_resources_added = fix_content_stream_resources_extra(doc);
-    let stream_lengths_fixed = fix_stream_lengths(doc);
     let cmap_wmode_fixed = fix_cmap_wmode(doc);
     let cidtogidmap_fixed = fix_cidtogidmap_extra(doc);
     let cidsysteminfo_fixed = fix_cidsysteminfo_mismatch(doc);
     let cmap_embedded = embed_nonstandard_cmaps(doc);
+    let opi_keys_removed = fix_opi_keys(doc);
+    let stream_f_keys_removed = fix_stream_f_keys(doc);
+    let postscript_xobjects_removed = fix_postscript_xobjects(doc);
+    let overflow_integers_fixed = fix_overflow_integers(doc);
+    let long_strings_fixed = fix_long_strings(doc);
+    let jpx_colorspace_fixed = fix_jpx_forbidden_colorspaces(doc);
+    // Content stream modifications (decompress/recompress) must run before
+    // fix_stream_lengths to ensure Length values are correct.
+    let operator_spacing_fixed = fix_content_stream_operator_spacing(doc);
+    let tiny_floats_fixed = fix_tiny_floats_in_streams(doc);
+    let odd_hex_strings_fixed = fix_odd_hex_strings_in_streams(doc);
+    // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
+    let stream_lengths_fixed = fix_stream_lengths(doc);
 
     FixupReport {
         tt_encoding_diffs_fixed,
@@ -31,6 +43,15 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         cidtogidmap_fixed,
         cidsysteminfo_fixed,
         cmap_embedded,
+        opi_keys_removed,
+        stream_f_keys_removed,
+        postscript_xobjects_removed,
+        overflow_integers_fixed,
+        long_strings_fixed,
+        operator_spacing_fixed,
+        tiny_floats_fixed,
+        odd_hex_strings_fixed,
+        jpx_colorspace_fixed,
     }
 }
 
@@ -48,6 +69,15 @@ pub struct FixupReport {
     pub cidtogidmap_fixed: usize,
     pub cidsysteminfo_fixed: usize,
     pub cmap_embedded: usize,
+    pub opi_keys_removed: usize,
+    pub stream_f_keys_removed: usize,
+    pub postscript_xobjects_removed: usize,
+    pub overflow_integers_fixed: usize,
+    pub long_strings_fixed: usize,
+    pub operator_spacing_fixed: usize,
+    pub tiny_floats_fixed: usize,
+    pub odd_hex_strings_fixed: usize,
+    pub jpx_colorspace_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -2550,4 +2580,681 @@ fn extract_cmap_ps_string(block: &str, key: &str) -> Option<String> {
     let paren_start = after.find('(')?;
     let paren_end = after[paren_start + 1..].find(')')?;
     Some(after[paren_start + 1..paren_start + 1 + paren_end].to_string())
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.8:2 — Remove OPI keys from Image dictionaries.
+// ---------------------------------------------------------------------------
+
+fn fix_opi_keys(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let has_opi = matches!(
+            doc.objects.get(&id),
+            Some(Object::Stream(s)) if s.dict.has(b"OPI")
+        );
+        if has_opi {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"OPI");
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.7.1:3 — Remove F, FFilter, FDecodeParms from stream dictionaries.
+// ---------------------------------------------------------------------------
+
+fn fix_stream_f_keys(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let has_f = matches!(
+            doc.objects.get(&id),
+            Some(Object::Stream(s)) if s.dict.has(b"F") || s.dict.has(b"FFilter") || s.dict.has(b"FDecodeParms")
+        );
+        if has_f {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"F");
+                s.dict.remove(b"FFilter");
+                s.dict.remove(b"FDecodeParms");
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.9:3 — Remove PostScript XObjects.
+// ---------------------------------------------------------------------------
+
+fn fix_postscript_xobjects(doc: &mut Document) -> usize {
+    // Collect IDs of PostScript XObjects (Type=XObject, Subtype=PS).
+    let ps_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            if let Object::Stream(s) = obj {
+                let is_xobj =
+                    s.dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"XObject");
+                let is_ps =
+                    s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"PS");
+                if is_xobj && is_ps {
+                    return Some(id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    if ps_ids.is_empty() {
+        return 0;
+    }
+
+    let count = ps_ids.len();
+
+    // Remove references from all XObject resource dictionaries.
+    let all_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in all_ids {
+        let mut refs_to_remove = Vec::new();
+        if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+            if let Ok(Object::Dictionary(xobjects)) = dict.get(b"XObject") {
+                for (key, val) in xobjects.iter() {
+                    if let Object::Reference(ref_id) = val {
+                        if ps_ids.contains(ref_id) {
+                            refs_to_remove.push(key.clone());
+                        }
+                    }
+                }
+            }
+        }
+        if !refs_to_remove.is_empty() {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                if let Ok(Object::Dictionary(ref mut xobjects)) = dict.get_mut(b"XObject") {
+                    for key in &refs_to_remove {
+                        xobjects.remove(key);
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove the PS XObject streams themselves.
+    for id in &ps_ids {
+        doc.objects.remove(id);
+    }
+
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13:1 — Fix integer overflow (values > 2^31-1 or < -2^31).
+// ---------------------------------------------------------------------------
+
+fn fix_overflow_integers(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let obj = match doc.objects.get(&id) {
+            Some(o) => o.clone(),
+            None => continue,
+        };
+        let (fixed, n) = fix_overflow_in_object(obj);
+        if n > 0 {
+            doc.objects.insert(id, fixed);
+            count += n;
+        }
+    }
+    count
+}
+
+fn fix_overflow_in_object(obj: Object) -> (Object, usize) {
+    match obj {
+        Object::Integer(v) if v > i64::from(i32::MAX) => (Object::Integer(i64::from(i32::MAX)), 1),
+        Object::Integer(v) if v < i64::from(i32::MIN) => (Object::Integer(i64::from(i32::MIN)), 1),
+        Object::Array(arr) => {
+            let mut total = 0;
+            let new_arr: Vec<Object> = arr
+                .into_iter()
+                .map(|o| {
+                    let (fixed, n) = fix_overflow_in_object(o);
+                    total += n;
+                    fixed
+                })
+                .collect();
+            (Object::Array(new_arr), total)
+        }
+        Object::Dictionary(dict) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in dict.into_iter() {
+                let (fixed, n) = fix_overflow_in_object(val);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            (Object::Dictionary(new_dict), total)
+        }
+        Object::Stream(mut s) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in s.dict.into_iter() {
+                let (fixed, n) = fix_overflow_in_object(val);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            s.dict = new_dict;
+            (Object::Stream(s), total)
+        }
+        other => (other, 0),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13:3 — Truncate strings longer than 32767 bytes.
+// ---------------------------------------------------------------------------
+
+fn fix_long_strings(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let obj = match doc.objects.get(&id) {
+            Some(o) => o.clone(),
+            None => continue,
+        };
+        let (fixed, n) = fix_long_strings_in_object(obj);
+        if n > 0 {
+            doc.objects.insert(id, fixed);
+            count += n;
+        }
+    }
+    count
+}
+
+fn fix_long_strings_in_object(obj: Object) -> (Object, usize) {
+    const MAX_STRING_LEN: usize = 32767;
+    match obj {
+        Object::String(ref s, fmt) if s.len() > MAX_STRING_LEN => {
+            let truncated = s[..MAX_STRING_LEN].to_vec();
+            (Object::String(truncated, fmt), 1)
+        }
+        Object::Array(arr) => {
+            let mut total = 0;
+            let new_arr: Vec<Object> = arr
+                .into_iter()
+                .map(|o| {
+                    let (fixed, n) = fix_long_strings_in_object(o);
+                    total += n;
+                    fixed
+                })
+                .collect();
+            (Object::Array(new_arr), total)
+        }
+        Object::Dictionary(dict) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in dict.into_iter() {
+                let (fixed, n) = fix_long_strings_in_object(val);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            (Object::Dictionary(new_dict), total)
+        }
+        Object::Stream(mut s) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in s.dict.into_iter() {
+                let (fixed, n) = fix_long_strings_in_object(val);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            s.dict = new_dict;
+            (Object::Stream(s), total)
+        }
+        other => (other, 0),
+    }
+}
+
+/// Collect IDs of content streams (page Contents, Form XObjects, Tiling Patterns).
+fn collect_content_stream_ids(doc: &Document) -> std::collections::HashSet<ObjectId> {
+    let mut ids = std::collections::HashSet::new();
+    for obj in doc.objects.values() {
+        if let Object::Dictionary(dict) = obj {
+            if let Ok(Object::Name(t)) = dict.get(b"Type") {
+                if t == b"Page" {
+                    if let Ok(Object::Reference(cid)) = dict.get(b"Contents") {
+                        ids.insert(*cid);
+                    }
+                    if let Ok(Object::Array(arr)) = dict.get(b"Contents") {
+                        for item in arr {
+                            if let Object::Reference(cid) = item {
+                                ids.insert(*cid);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (&id, obj) in doc.objects.iter() {
+        if let Object::Stream(s) = obj {
+            let is_form =
+                s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"Form");
+            let is_pattern = s
+                .dict
+                .get(b"PatternType")
+                .ok()
+                .and_then(|o| o.as_i64().ok())
+                == Some(1);
+            if is_form || is_pattern {
+                ids.insert(id);
+            }
+        }
+    }
+    ids
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.2:1 — Fix `>>BDC` / `>>BMC` / `>>DP` without whitespace in content streams.
+// veraPDF treats `>>BDC` as a single undefined operator. Insert a space.
+// ---------------------------------------------------------------------------
+
+fn fix_content_stream_operator_spacing(doc: &mut Document) -> usize {
+    let content_stream_ids = collect_content_stream_ids(doc);
+
+    let mut count = 0;
+    let ids: Vec<ObjectId> = content_stream_ids.into_iter().collect();
+    for id in ids {
+        // Get decompressed content to check.
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        let has_issue = decompressed
+            .windows(5)
+            .any(|w| w == b">>BDC" || w == b">>BMC")
+            || decompressed.windows(4).any(|w| w == b">>DP");
+
+        if !has_issue {
+            continue;
+        }
+
+        // Fix the decompressed content.
+        let mut new_content = Vec::with_capacity(decompressed.len() + 64);
+        let mut i = 0;
+        while i < decompressed.len() {
+            if i + 5 <= decompressed.len()
+                && (&decompressed[i..i + 5] == b">>BDC" || &decompressed[i..i + 5] == b">>BMC")
+            {
+                new_content.extend_from_slice(b">> ");
+                new_content.push(decompressed[i + 2]);
+                new_content.push(decompressed[i + 3]);
+                new_content.push(decompressed[i + 4]);
+                i += 5;
+                count += 1;
+                continue;
+            }
+            if i + 4 <= decompressed.len() && &decompressed[i..i + 4] == b">>DP" {
+                new_content.extend_from_slice(b">> DP");
+                i += 4;
+                count += 1;
+                continue;
+            }
+            new_content.push(decompressed[i]);
+            i += 1;
+        }
+
+        // Store decompressed+fixed content; remove Filter so lopdf writes it raw.
+        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            s.dict.remove(b"Filter");
+            s.dict.remove(b"DecodeParms");
+            s.content = new_content;
+            // Re-compress for smaller output.
+            let _ = s.compress();
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13:5 — Replace tiny non-zero floats (|x| < 1.175e-38) with 0.
+// These appear in content streams and violate PDF/A number limits.
+// ---------------------------------------------------------------------------
+
+fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
+    const MIN_POSITIVE: f64 = 1.175e-38;
+    let mut count = 0;
+    let content_ids = collect_content_stream_ids(doc);
+    let ids: Vec<ObjectId> = content_ids.into_iter().collect();
+
+    for id in ids {
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: look for patterns like "0.000000" with many zeros.
+        if !decompressed.windows(8).any(|w| w == b"0.000000") {
+            continue;
+        }
+
+        // Scan for number tokens and check if they're tiny.
+        let mut new_content = Vec::with_capacity(decompressed.len());
+        let mut i = 0;
+        let mut fixed_any = false;
+
+        while i < decompressed.len() {
+            // Check if we're at the start of a number token.
+            let at_number = (decompressed[i] == b'0' || decompressed[i] == b'-')
+                && i + 1 < decompressed.len()
+                && (decompressed[i + 1] == b'.' || decompressed[i + 1] == b'0');
+
+            if !at_number || (i > 0 && is_number_byte(decompressed[i - 1])) {
+                new_content.push(decompressed[i]);
+                i += 1;
+                continue;
+            }
+
+            // Extract the full number token.
+            let start = i;
+            if decompressed[i] == b'-' {
+                i += 1;
+            }
+            while i < decompressed.len() && is_number_byte(decompressed[i]) {
+                i += 1;
+            }
+            let token = &decompressed[start..i];
+
+            // Only check tokens with many decimal digits (potential tiny values).
+            if token.len() > 10 {
+                if let Ok(s) = std::str::from_utf8(token) {
+                    if let Ok(val) = s.parse::<f64>() {
+                        if val != 0.0 && val.abs() < MIN_POSITIVE {
+                            new_content.push(b'0');
+                            count += 1;
+                            fixed_any = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+            new_content.extend_from_slice(token);
+        }
+
+        if fixed_any {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"Filter");
+                s.dict.remove(b"DecodeParms");
+                s.content = new_content;
+                let _ = s.compress();
+            }
+        }
+    }
+    count
+}
+
+fn is_number_byte(b: u8) -> bool {
+    b.is_ascii_digit() || b == b'.' || b == b'-'
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.8.3:4 — Fix JPEG2000 forbidden enumerated colour spaces.
+// CIEJab (19) is not allowed in PDF/A. Change to sRGB (16).
+// ---------------------------------------------------------------------------
+
+fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        let is_jpx = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            s.dict
+                .get(b"Filter")
+                .ok()
+                .and_then(|o| o.as_name().ok())
+                .map(|n| n == b"JPXDecode")
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        if !is_jpx {
+            continue;
+        }
+
+        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            // Find "colr" box in JP2 data and check enumCS.
+            if let Some(pos) = find_subsequence(&s.content, b"colr") {
+                // colr box layout: [4 bytes len][4 bytes "colr"][1 byte method][...]
+                // method 1 = enumerated colorspace: [3 bytes prec+approx][4 bytes enumCS]
+                let method_pos = pos + 4;
+                if method_pos < s.content.len() && s.content[method_pos] == 1 {
+                    let enum_pos = method_pos + 3;
+                    if enum_pos + 4 <= s.content.len() {
+                        let enum_cs = u32::from_be_bytes([
+                            s.content[enum_pos],
+                            s.content[enum_pos + 1],
+                            s.content[enum_pos + 2],
+                            s.content[enum_pos + 3],
+                        ]);
+                        // CIEJab = 19, not allowed in PDF/A.
+                        if enum_cs == 19 {
+                            // Replace with sRGB (16), also 3-component.
+                            let srgb: [u8; 4] = 16u32.to_be_bytes();
+                            s.content[enum_pos] = srgb[0];
+                            s.content[enum_pos + 1] = srgb[1];
+                            s.content[enum_pos + 2] = srgb[2];
+                            s.content[enum_pos + 3] = srgb[3];
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.6:1 — Fix hex strings with odd number of hex characters.
+// Pad with trailing 0 before the closing >.
+// ---------------------------------------------------------------------------
+
+fn fix_odd_hex_strings_in_streams(doc: &mut Document) -> usize {
+    let mut count = 0;
+    // Process all streams except binary ones (images, fonts, ICC profiles).
+    let ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            if let Object::Stream(s) = obj {
+                // Skip binary streams that aren't text-based.
+                let subtype = s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok());
+                if matches!(
+                    subtype,
+                    Some(b"Image" | b"CIDFontType0C" | b"CIDFontType2" | b"Type1C" | b"OpenType")
+                ) {
+                    return None;
+                }
+                // Skip font file streams (have Length1/Length2).
+                if s.dict.has(b"Length1") || s.dict.has(b"Length2") {
+                    return None;
+                }
+                // Skip ICC profile streams.
+                if s.dict.has(b"N") && s.dict.has(b"Alternate") {
+                    return None;
+                }
+                return Some(id);
+            }
+            None
+        })
+        .collect();
+
+    for id in ids {
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check for hex strings.
+        if !decompressed.contains(&b'<')
+            || decompressed
+                .windows(2)
+                .all(|w| !(w[0] == b'<' && w[1] != b'<'))
+        {
+            continue;
+        }
+
+        let mut new_content = Vec::with_capacity(decompressed.len() + 16);
+        let mut i = 0;
+        let mut fixed_any = false;
+
+        while i < decompressed.len() {
+            // Skip inline image data: after "ID" (preceded by whitespace),
+            // binary data continues until "\nEI" or " EI" followed by
+            // whitespace or end of stream. We must not scan binary image
+            // data for hex strings.
+            if decompressed[i] == b'I'
+                && i + 2 < decompressed.len()
+                && decompressed[i + 1] == b'D'
+                && (decompressed[i + 2] == b' '
+                    || decompressed[i + 2] == b'\n'
+                    || decompressed[i + 2] == b'\r')
+                && (i == 0
+                    || decompressed[i - 1] == b' '
+                    || decompressed[i - 1] == b'\n'
+                    || decompressed[i - 1] == b'\r')
+            {
+                // Find EI marker: a whitespace char, then 'E', 'I',
+                // then whitespace or end of stream.
+                let start = i;
+                i += 3; // skip "ID" + whitespace
+                loop {
+                    if i + 2 >= decompressed.len() {
+                        // Reached end without finding EI — copy rest.
+                        i = decompressed.len();
+                        break;
+                    }
+                    if (decompressed[i] == b'\n'
+                        || decompressed[i] == b' '
+                        || decompressed[i] == b'\r')
+                        && decompressed[i + 1] == b'E'
+                        && decompressed[i + 2] == b'I'
+                        && (i + 3 >= decompressed.len()
+                            || decompressed[i + 3] == b' '
+                            || decompressed[i + 3] == b'\n'
+                            || decompressed[i + 3] == b'\r'
+                            || decompressed[i + 3] == b'Q')
+                    {
+                        i += 3; // skip ws + "EI"
+                        break;
+                    }
+                    i += 1;
+                }
+                new_content.extend_from_slice(&decompressed[start..i]);
+                continue;
+            }
+            // Skip literal strings (...) — < and > inside are text, not
+            // hex string delimiters. Track nesting for balanced parens.
+            if decompressed[i] == b'(' {
+                let start = i;
+                i += 1;
+                let mut depth = 1u32;
+                while i < decompressed.len() && depth > 0 {
+                    match decompressed[i] {
+                        b'\\' => {
+                            i += 1; // skip escaped char
+                            if i >= decompressed.len() {
+                                break;
+                            }
+                        }
+                        b'(' => depth += 1,
+                        b')' => depth -= 1,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                let end = i.min(decompressed.len());
+                new_content.extend_from_slice(&decompressed[start..end]);
+                continue;
+            }
+            // Skip dict begin markers << so we don't treat the second < as
+            // a hex string start.
+            if decompressed[i] == b'<' && i + 1 < decompressed.len() && decompressed[i + 1] == b'<'
+            {
+                new_content.push(b'<');
+                new_content.push(b'<');
+                i += 2;
+                continue;
+            }
+            // Skip dict end markers >>.
+            if decompressed[i] == b'>' && i + 1 < decompressed.len() && decompressed[i + 1] == b'>'
+            {
+                new_content.push(b'>');
+                new_content.push(b'>');
+                i += 2;
+                continue;
+            }
+            if decompressed[i] == b'<' {
+                // Start of hex string — find matching >.
+                let start = i;
+                i += 1;
+                let mut hex_count = 0u32;
+                while i < decompressed.len() && decompressed[i] != b'>' {
+                    if decompressed[i].is_ascii_hexdigit() {
+                        hex_count += 1;
+                    }
+                    i += 1;
+                }
+                if i < decompressed.len() && decompressed[i] == b'>' && !hex_count.is_multiple_of(2)
+                {
+                    // Odd hex count — insert 0 before >.
+                    new_content.extend_from_slice(&decompressed[start..i]);
+                    new_content.push(b'0');
+                    new_content.push(b'>');
+                    i += 1;
+                    count += 1;
+                    fixed_any = true;
+                    continue;
+                }
+                // Even or not a valid hex string — copy as-is.
+                new_content.extend_from_slice(&decompressed[start..=i.min(decompressed.len() - 1)]);
+                if i < decompressed.len() {
+                    i += 1;
+                }
+                continue;
+            }
+            new_content.push(decompressed[i]);
+            i += 1;
+        }
+
+        if fixed_any {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"Filter");
+                s.dict.remove(b"DecodeParms");
+                s.content = new_content;
+                let _ = s.compress();
+            }
+        }
+    }
+    count
 }

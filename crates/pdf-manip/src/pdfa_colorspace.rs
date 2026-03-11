@@ -688,6 +688,65 @@ fn add_default_cmyk_colorspace(doc: &mut Document) -> ObjectId {
         }
     }
 
+    // Also add DefaultCMYK to tiling pattern streams (PatternType=1).
+    let pattern_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Stream(stream) = obj {
+                let pt = stream
+                    .dict
+                    .get(b"PatternType")
+                    .ok()
+                    .and_then(|o| o.as_i64().ok());
+                if pt == Some(1) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for pat_id in pattern_ids {
+        let res_ref_id = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&pat_id) {
+                match stream.dict.get(b"Resources").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(res_ref_id) = res_ref_id {
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultCMYK") {
+                    cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&pat_id) {
+            let mut res = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultCMYK") {
+                cs_dict.set("DefaultCMYK", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                stream.dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
     cs_id
 }
 
@@ -816,6 +875,65 @@ fn add_default_rgb_colorspace(doc: &mut Document) -> ObjectId {
                 }
             }
         } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&form_id) {
+            let mut res = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultRGB") {
+                cs_dict.set("DefaultRGB", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                stream.dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
+    // Also add DefaultRGB to tiling pattern streams (PatternType=1).
+    let pattern_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Stream(stream) = obj {
+                let pt = stream
+                    .dict
+                    .get(b"PatternType")
+                    .ok()
+                    .and_then(|o| o.as_i64().ok());
+                if pt == Some(1) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for pat_id in pattern_ids {
+        let res_ref_id = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&pat_id) {
+                match stream.dict.get(b"Resources").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(res_ref_id) = res_ref_id {
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultRGB") {
+                    cs_dict.set("DefaultRGB", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&pat_id) {
             let mut res = match stream.dict.get(b"Resources") {
                 Ok(Object::Dictionary(d)) => d.clone(),
                 _ => lopdf::Dictionary::new(),
