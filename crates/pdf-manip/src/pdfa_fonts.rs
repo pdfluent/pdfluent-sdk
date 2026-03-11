@@ -4499,11 +4499,12 @@ fn cff_width_for_code(
             if gid.0 != 0 || code == 0 {
                 return cff.glyph_width(gid).map(|w| w as f64 * scale);
             }
-            // GID 0 (.notdef) — return its width so PDF matches font program.
-            return cff
-                .glyph_width(cff_parser::GlyphId(0))
-                .map(|w| w as f64 * scale);
         }
+        // Code maps to .notdef (GID 0) or has no mapping at all.
+        // veraPDF expects the .notdef width for such codes.
+        return cff
+            .glyph_width(cff_parser::GlyphId(0))
+            .map(|w| w as f64 * scale);
     }
 
     None
