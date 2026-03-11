@@ -4484,9 +4484,19 @@ fn cff_width_for_code(
                 }
             }
 
-            // Glyph name not found in subset — veraPDF maps to .notdef (GID 0).
-            // Return .notdef width so the PDF Widths array matches.
-            if glyph_name != ".notdef" {
+            // Glyph name not found by PDF encoding name. Before returning .notdef,
+            // check the CFF internal encoding — veraPDF uses the CFF encoding
+            // for width comparison, and it may map this code to a valid GID even
+            // when the PDF encoding name doesn't match any glyph in the subset.
+            if glyph_name != ".notdef" && code <= 255 {
+                let enc_map = parse_cff_encoding_map(font_data);
+                if let Some(&gid) = enc_map.get(&(code as u8)) {
+                    if gid != 0 {
+                        return cff
+                            .glyph_width(cff_parser::GlyphId(gid))
+                            .map(|w| w as f64 * scale);
+                    }
+                }
                 return cff
                     .glyph_width(cff_parser::GlyphId(0))
                     .map(|w| w as f64 * scale);
