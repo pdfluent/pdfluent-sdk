@@ -396,7 +396,7 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
     // If we embedded a non-symbolic font (e.g., DejaVuSans) for a symbolic-named
     // font (e.g., ZapfDingbats), update FontDescriptor Flags to match the actual
     // embedded program. veraPDF checks the font program, not the name.
-    if is_truetype {
+    if is_truetype || is_otf {
         if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
             let has_31_cmap = face.tables().cmap.as_ref().is_some_and(|cmap| {
                 cmap.subtables.into_iter().any(|st| {
