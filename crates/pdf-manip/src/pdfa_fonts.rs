@@ -3125,7 +3125,11 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             let Some(Object::Dictionary(fd)) = doc.objects.get(&fd_id) else {
                 continue;
             };
-            (fd.has(b"FontFile"), fd.has(b"FontFile2"), fd.has(b"FontFile3"))
+            (
+                fd.has(b"FontFile"),
+                fd.has(b"FontFile2"),
+                fd.has(b"FontFile3"),
+            )
         };
 
         let font_data = read_embedded_font_data(doc, fd_id);
@@ -3856,7 +3860,9 @@ fn split_pfb_sections(data: &[u8]) -> Option<(&[u8], &[u8])> {
             break;
         }
         let seg_type = data[pos + 1];
-        let seg_len = u32::from_le_bytes([data[pos + 2], data[pos + 3], data[pos + 4], data[pos + 5]]) as usize;
+        let seg_len =
+            u32::from_le_bytes([data[pos + 2], data[pos + 3], data[pos + 4], data[pos + 5]])
+                as usize;
         let seg_data_start = pos + 6;
 
         match seg_type {
@@ -3886,9 +3892,7 @@ fn split_pfb_sections(data: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Parse FontMatrix from Type 1 cleartext.
@@ -4002,7 +4006,10 @@ fn eexec_decrypt(data: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(input.len());
     for &cipher in input {
         let plain = cipher ^ (r >> 8) as u8;
-        r = (cipher as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
+        r = (cipher as u16)
+            .wrapping_add(r)
+            .wrapping_mul(c1)
+            .wrapping_add(c2);
         result.push(plain);
     }
 
@@ -4151,7 +4158,10 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
     let mut decrypted = Vec::with_capacity(data.len());
     for &cipher in data {
         let plain = cipher ^ (r >> 8) as u8;
-        r = (cipher as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
+        r = (cipher as u16)
+            .wrapping_add(r)
+            .wrapping_mul(c1)
+            .wrapping_add(c2);
         decrypted.push(plain);
     }
 
@@ -4864,8 +4874,7 @@ fn parse_cff_top_dict_encoding_offset(dict_data: &[u8]) -> u32 {
             28 => {
                 // 2-byte integer
                 if i + 2 < dict_data.len() {
-                    let val =
-                        i16::from_be_bytes([dict_data[i + 1], dict_data[i + 2]]) as i64;
+                    let val = i16::from_be_bytes([dict_data[i + 1], dict_data[i + 2]]) as i64;
                     operand_stack.push(val);
                 }
                 i += 3;
@@ -4991,25 +5000,21 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
                 let enc_str = String::from_utf8_lossy(enc);
                 enc_str != "WinAnsiEncoding"
             }
-            Ok(Object::Dictionary(enc_dict)) => {
-                !matches!(
+            Ok(Object::Dictionary(enc_dict)) => !matches!(
+                get_name(enc_dict, b"BaseEncoding").as_deref(),
+                Some("WinAnsiEncoding")
+            ),
+            Ok(Object::Reference(enc_ref)) => match doc.get_object(*enc_ref) {
+                Ok(Object::Name(enc)) => {
+                    let enc_str = String::from_utf8_lossy(enc);
+                    enc_str != "WinAnsiEncoding"
+                }
+                Ok(Object::Dictionary(enc_dict)) => !matches!(
                     get_name(enc_dict, b"BaseEncoding").as_deref(),
                     Some("WinAnsiEncoding")
-                )
-            }
-            Ok(Object::Reference(enc_ref)) => {
-                match doc.get_object(*enc_ref) {
-                    Ok(Object::Name(enc)) => {
-                        let enc_str = String::from_utf8_lossy(enc);
-                        enc_str != "WinAnsiEncoding"
-                    }
-                    Ok(Object::Dictionary(enc_dict)) => !matches!(
-                        get_name(enc_dict, b"BaseEncoding").as_deref(),
-                        Some("WinAnsiEncoding")
-                    ),
-                    _ => true,
-                }
-            }
+                ),
+                _ => true,
+            },
             _ => true, // Missing Encoding — needs fix.
         };
 
@@ -6117,12 +6122,9 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                     .tables()
                     .cmap
                     .map(|cmap| {
-                        cmap.subtables
-                            .into_iter()
-                            .any(|st| {
-                                st.platform_id == ttf_parser::PlatformId::Windows
-                                    && st.encoding_id == 0
-                            })
+                        cmap.subtables.into_iter().any(|st| {
+                            st.platform_id == ttf_parser::PlatformId::Windows && st.encoding_id == 0
+                        })
                     })
                     .unwrap_or(false);
 
@@ -6179,8 +6181,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                 _ => continue,
             };
 
-            let Ok(editor) = crate::content_editor::ContentEditor::from_stream(&stream_data)
-            else {
+            let Ok(editor) = crate::content_editor::ContentEditor::from_stream(&stream_data) else {
                 continue;
             };
             let ops = editor.operations().to_vec();
@@ -6199,8 +6200,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         if let Some(invalid_codes) = notdef_fonts.get(&current_font) {
                             let mut new_op = op.clone();
                             let str_idx = if op.operator == "\"" { 2 } else { 0 };
-                            if let Some(Object::String(bytes, _)) =
-                                new_op.operands.get_mut(str_idx)
+                            if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx)
                             {
                                 if fix_simple_text_string(bytes, invalid_codes) {
                                     modified = true;
