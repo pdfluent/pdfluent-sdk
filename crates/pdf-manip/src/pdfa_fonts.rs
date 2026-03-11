@@ -3226,10 +3226,14 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         let has_reliable_encoding =
             matches!(enc_info.0.as_str(), "WinAnsiEncoding" | "MacRomanEncoding");
         let uses_cff_encoding = enc_info.0.is_empty() && enc_info.1.is_empty() && has_ff3;
-        let uses_custom_cff_encoding = has_ff3
-            && extract_cff_bytes_from_otf(&font_data)
-                .map(cff_has_custom_encoding)
-                .unwrap_or(false);
+        let uses_custom_cff_encoding = has_ff3 && {
+            if let Some(cff_bytes) = extract_cff_bytes_from_otf(&font_data) {
+                cff_has_custom_encoding(cff_bytes)
+            } else {
+                // Raw CFF (Type1C) — check directly
+                cff_has_custom_encoding(&font_data)
+            }
+        };
         // Type 1 FontFile widths are computed from the font program directly,
         // so they are always reliable regardless of encoding.
         let uses_type1_fontfile = has_ff1;
