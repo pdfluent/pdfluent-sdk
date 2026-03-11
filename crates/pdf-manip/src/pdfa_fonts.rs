@@ -3776,11 +3776,13 @@ fn parse_type1_program(data: &[u8]) -> Option<Type1Parsed> {
     // Parse Encoding from cleartext.
     let encoding = parse_type1_encoding(cleartext);
 
-    // Parse lenIV from cleartext (default 4).
-    let len_iv = parse_type1_len_iv(cleartext).unwrap_or(4) as usize;
-
     // Decrypt eexec section.
     let decrypted = eexec_decrypt(eexec_data);
+
+    // Parse lenIV from cleartext first, then from decrypted Private dict.
+    let len_iv = parse_type1_len_iv(cleartext)
+        .or_else(|| parse_type1_len_iv_bytes(&decrypted))
+        .unwrap_or(4) as usize;
 
     // Parse CharStrings from decrypted data.
     let charstring_widths = parse_type1_charstrings(&decrypted, len_iv);
@@ -3927,11 +3929,25 @@ fn parse_type1_encoding(cleartext: &[u8]) -> std::collections::HashMap<u8, Strin
 /// Parse lenIV from Type 1 cleartext (number of random bytes at start of charstrings).
 fn parse_type1_len_iv(cleartext: &[u8]) -> Option<u32> {
     let text = std::str::from_utf8(cleartext).ok()?;
-    // lenIV can appear in cleartext or encrypted section; check cleartext first.
     let pos = text.find("/lenIV")?;
     let after = &text[pos + 6..];
     let trimmed = after.trim_start();
     trimmed.split_whitespace().next()?.parse().ok()
+}
+
+/// Parse lenIV from raw bytes (e.g., decrypted Private dict).
+fn parse_type1_len_iv_bytes(data: &[u8]) -> Option<u32> {
+    let pos = find_bytes(data, b"/lenIV")?;
+    let after = &data[pos + 6..];
+    // Skip whitespace.
+    let trimmed = after.iter().position(|b| !b.is_ascii_whitespace())?;
+    let start = trimmed;
+    let end = after[start..]
+        .iter()
+        .position(|b| b.is_ascii_whitespace() || *b == b'/')
+        .unwrap_or(after.len() - start);
+    let num_str = std::str::from_utf8(&after[start..start + end]).ok()?;
+    num_str.parse().ok()
 }
 
 /// Decrypt eexec-encrypted data. Initial key R=55665, c1=52845, c2=22719.
@@ -3996,126 +4012,117 @@ fn hex_val(b: u8) -> u8 {
 }
 
 /// Parse CharStrings from decrypted eexec data to extract glyph widths.
+/// Parse CharStrings from decrypted eexec data (works with raw bytes).
+///
+/// Charstring entries look like: `/<name> <length> RD <binary> ND`
+/// or `/<name> <length> -| <binary> |-`.
 fn parse_type1_charstrings(
     decrypted: &[u8],
     len_iv: usize,
 ) -> std::collections::HashMap<String, i32> {
     let mut widths = std::collections::HashMap::new();
 
-    let Ok(text) = std::str::from_utf8(decrypted) else {
-        // If not valid UTF-8, try to find CharStrings in binary-safe way.
-        return parse_type1_charstrings_binary(decrypted, len_iv);
-    };
-
-    // Find /CharStrings dict.
-    let Some(cs_pos) = text.find("/CharStrings") else {
+    // Find /CharStrings marker.
+    let Some(cs_pos) = find_bytes(decrypted, b"/CharStrings") else {
         return widths;
     };
 
-    // Also check for lenIV in decrypted section.
-    let actual_len_iv = if let Some(liv_pos) = text[..cs_pos].find("/lenIV") {
-        let liv_after = text[liv_pos + 6..].trim_start();
-        liv_after
-            .split_whitespace()
-            .next()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(len_iv)
-    } else {
-        len_iv
-    };
-
-    // Parse entries: /<name> <length> RD <binary data> ND
-    // or: /<name> <length> -| <binary data> |-
-    let decrypted_bytes = decrypted;
-
-    // We need to iterate through the text, finding charstring entries.
+    // Scan forward from /CharStrings looking for charstring entries.
     let mut pos = cs_pos;
-    while pos < text.len() {
-        // Find next glyph name.
-        let Some(slash_pos) = text[pos..].find('/') else {
+
+    while pos < decrypted.len() {
+        // Find next '/' which starts a glyph name.
+        let Some(slash_offset) = decrypted[pos..].iter().position(|&b| b == b'/') else {
             break;
         };
-        let abs_slash = pos + slash_pos;
+        let slash_pos = pos + slash_offset;
 
-        // Check if this is "end" or past the CharStrings dict.
-        let before_slash = text[pos..abs_slash].trim();
-        if before_slash.contains("end") && !before_slash.contains("noaccess") {
-            // Might be end of CharStrings.
-            if text[abs_slash..].starts_with("/FontName")
-                || text[abs_slash..].starts_with("/Subrs")
-            {
-                pos = abs_slash + 1;
-                continue;
+        // Check for "end" keyword before this slash (end of CharStrings dict).
+        // Look at up to 20 bytes before the slash for "end".
+        let check_start = slash_pos.saturating_sub(20).max(pos);
+        if find_bytes(&decrypted[check_start..slash_pos], b"end").is_some() {
+            // Check if this is /FontName or other non-charstring entry.
+            let remaining = &decrypted[slash_pos..];
+            if !remaining.starts_with(b"/CharStrings") {
+                // Likely past the end of CharStrings dict.
+                break;
             }
         }
 
-        // Extract glyph name.
-        let name_start = abs_slash + 1;
-        let name_end = text[name_start..]
-            .find(|c: char| c.is_whitespace())
+        // Extract glyph name: read ASCII chars until whitespace.
+        let name_start = slash_pos + 1;
+        if name_start >= decrypted.len() {
+            break;
+        }
+        let name_end = decrypted[name_start..]
+            .iter()
+            .position(|b| b.is_ascii_whitespace())
             .map(|p| name_start + p)
-            .unwrap_or(text.len());
-        let glyph_name = &text[name_start..name_end];
+            .unwrap_or(decrypted.len());
+        let glyph_name = std::str::from_utf8(&decrypted[name_start..name_end])
+            .unwrap_or("")
+            .to_string();
 
-        // Find length number after name.
-        let after_name = text[name_end..].trim_start();
-        let len_str = after_name.split_whitespace().next().unwrap_or("");
-        let Ok(cs_len) = len_str.parse::<usize>() else {
+        if glyph_name.is_empty() {
             pos = name_end + 1;
             continue;
+        }
+
+        // Skip whitespace after name.
+        let mut p = name_end;
+        while p < decrypted.len() && decrypted[p].is_ascii_whitespace() {
+            p += 1;
+        }
+
+        // Read length number.
+        let num_start = p;
+        while p < decrypted.len() && decrypted[p].is_ascii_digit() {
+            p += 1;
+        }
+        let len_str = std::str::from_utf8(&decrypted[num_start..p]).unwrap_or("");
+        let Ok(cs_len) = len_str.parse::<usize>() else {
+            pos = p.max(name_end + 1);
+            continue;
         };
+
+        // Skip whitespace.
+        while p < decrypted.len() && decrypted[p].is_ascii_whitespace() {
+            p += 1;
+        }
 
         // Find RD or -| marker.
-        let after_len_start = name_end + text[name_end..].find(len_str).unwrap_or(0);
-        let after_len_end = after_len_start + len_str.len();
-        let marker_area = &text[after_len_end..];
-        let rd_pos = marker_area
-            .find("RD ")
-            .or_else(|| marker_area.find("RD\t"))
-            .or_else(|| marker_area.find("-| "))
-            .or_else(|| marker_area.find("-|\t"));
-
-        let Some(rd_offset) = rd_pos else {
-            pos = name_end + 1;
-            continue;
+        let marker_ok = if p + 2 <= decrypted.len() {
+            let two = &decrypted[p..p + 2];
+            two == b"RD" || two == b"-|"
+        } else {
+            false
         };
-        // Binary data starts after "RD " (3 chars) + 1 space.
-        let bin_start_in_text = after_len_end + rd_offset;
-        // Skip "RD" or "-|" and one space/char.
-        let mut bin_start = bin_start_in_text;
-        while bin_start < text.len() && !text.as_bytes()[bin_start].is_ascii_whitespace() {
-            bin_start += 1;
-        }
-        bin_start += 1; // skip the space after RD
 
-        // The binary data is at decrypted_bytes[bin_start..bin_start+cs_len].
-        if bin_start + cs_len <= decrypted_bytes.len() {
-            let charstring_data = &decrypted_bytes[bin_start..bin_start + cs_len];
-            if let Some(width) = decrypt_charstring_width(charstring_data, actual_len_iv) {
-                widths.insert(glyph_name.to_string(), width);
-            }
+        if !marker_ok {
+            pos = p.max(name_end + 1);
+            continue;
         }
 
-        pos = bin_start + cs_len;
+        // Skip marker (2 bytes) + one space.
+        p += 2;
+        if p < decrypted.len() && (decrypted[p] == b' ' || decrypted[p] == b'\t') {
+            p += 1;
+        }
+
+        // Read cs_len bytes of binary charstring data.
+        if p + cs_len > decrypted.len() {
+            break;
+        }
+        let charstring_data = &decrypted[p..p + cs_len];
+        if let Some(width) = decrypt_charstring_width(charstring_data, len_iv) {
+            widths.insert(glyph_name, width);
+        }
+
+        // Jump past the charstring data.
+        pos = p + cs_len;
     }
 
     widths
-}
-
-/// Fallback: parse CharStrings from binary data.
-fn parse_type1_charstrings_binary(
-    data: &[u8],
-    _len_iv: usize,
-) -> std::collections::HashMap<String, i32> {
-    // Try to find /CharStrings in the binary data.
-    let cs_marker = b"/CharStrings";
-    let Some(cs_pos) = find_bytes(data, cs_marker) else {
-        return std::collections::HashMap::new();
-    };
-    // Delegate to the text parser with lossy conversion.
-    let text = String::from_utf8_lossy(&data[cs_pos..]);
-    let _ = text; // Can't easily do binary parsing of PS here.
-    std::collections::HashMap::new()
 }
 
 /// Decrypt a Type 1 charstring and extract the width (wx from hsbw/sbw).
