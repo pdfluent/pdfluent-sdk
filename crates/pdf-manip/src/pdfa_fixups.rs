@@ -20,6 +20,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let opi_keys_removed = fix_opi_keys(doc);
     let stream_f_keys_removed = fix_stream_f_keys(doc);
     let postscript_xobjects_removed = fix_postscript_xobjects(doc);
+    let reference_xobjects_removed = fix_reference_xobjects(doc);
     let overflow_integers_fixed = fix_overflow_integers(doc);
     let long_strings_fixed = fix_long_strings(doc);
     let jpx_colorspace_fixed = fix_jpx_forbidden_colorspaces(doc);
@@ -28,6 +29,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let operator_spacing_fixed = fix_content_stream_operator_spacing(doc);
     let tiny_floats_fixed = fix_tiny_floats_in_streams(doc);
     let odd_hex_strings_fixed = fix_odd_hex_strings_in_streams(doc);
+    let inline_image_interpolate_fixed = fix_inline_image_interpolate(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
@@ -46,11 +48,13 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         opi_keys_removed,
         stream_f_keys_removed,
         postscript_xobjects_removed,
+        reference_xobjects_removed,
         overflow_integers_fixed,
         long_strings_fixed,
         operator_spacing_fixed,
         tiny_floats_fixed,
         odd_hex_strings_fixed,
+        inline_image_interpolate_fixed,
         jpx_colorspace_fixed,
     }
 }
@@ -72,11 +76,13 @@ pub struct FixupReport {
     pub opi_keys_removed: usize,
     pub stream_f_keys_removed: usize,
     pub postscript_xobjects_removed: usize,
+    pub reference_xobjects_removed: usize,
     pub overflow_integers_fixed: usize,
     pub long_strings_fixed: usize,
     pub operator_spacing_fixed: usize,
     pub tiny_floats_fixed: usize,
     pub odd_hex_strings_fixed: usize,
+    pub inline_image_interpolate_fixed: usize,
     pub jpx_colorspace_fixed: usize,
 }
 
@@ -833,6 +839,10 @@ fn fix_content_stream_resources_extra(doc: &mut Document) -> usize {
     // any other Form XObject or page that has them, and add them.
     count += propagate_missing_font_resources(doc);
 
+    // Phase 3: Type3 fonts — charstring procedures may reference page-level
+    // resources not declared in the Type3 font's Resources dict (6.2.2:2).
+    count += fix_type3_font_resources(doc);
+
     count
 }
 
@@ -931,6 +941,125 @@ fn propagate_missing_font_resources(doc: &mut Document) -> usize {
                     count += 1;
                 }
             }
+        }
+    }
+    count
+}
+
+/// Fix Type3 font Resources: Type3 fonts without an explicit Resources dict
+/// cause veraPDF to flag all page-level resources as "inherited" by the
+/// charstring content streams (6.2.2:2). Copy the parent page's Resources
+/// to the Type3 font so charstrings have explicitly associated resources.
+fn fix_type3_font_resources(doc: &mut Document) -> usize {
+    use std::collections::HashMap;
+
+    // Step 1: Find Type3 font IDs without Resources.
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut type3_ids_needing_fix: Vec<ObjectId> = Vec::new();
+    for id in &ids {
+        let Some(Object::Dictionary(dict)) = doc.objects.get(id) else {
+            continue;
+        };
+        let is_type3 = matches!(
+            dict.get(b"Subtype").ok(),
+            Some(Object::Name(ref n)) if n == b"Type3"
+        );
+        if is_type3 && !dict.has(b"Resources") {
+            type3_ids_needing_fix.push(*id);
+        }
+    }
+
+    if type3_ids_needing_fix.is_empty() {
+        return 0;
+    }
+
+    // Step 2: Build map of Type3 font ID → page Resources by scanning pages.
+    let mut font_to_resources: HashMap<ObjectId, Object> = HashMap::new();
+    for id in &ids {
+        let page_resources = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(id) else {
+                continue;
+            };
+            if dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) != Some(b"Page") {
+                continue;
+            }
+            dict.get(b"Resources").ok().cloned()
+        };
+        let Some(resources_obj) = page_resources else {
+            continue;
+        };
+
+        // Get the Font dictionary from this page's Resources.
+        let font_dict = match &resources_obj {
+            Object::Dictionary(res) => res.get(b"Font").ok().cloned(),
+            Object::Reference(res_id) => {
+                if let Some(Object::Dictionary(res)) = doc.objects.get(res_id) {
+                    res.get(b"Font").ok().cloned()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let Some(font_dict_obj) = font_dict else {
+            continue;
+        };
+        let font_entries: Vec<(Vec<u8>, ObjectId)> = match &font_dict_obj {
+            Object::Dictionary(fd) => fd
+                .iter()
+                .filter_map(|(k, v)| {
+                    if let Object::Reference(r) = v {
+                        Some((k.clone(), *r))
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            Object::Reference(fd_id) => {
+                if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_id) {
+                    fd.iter()
+                        .filter_map(|(k, v)| {
+                            if let Object::Reference(r) = v {
+                                Some((k.clone(), *r))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        };
+
+        // For each Type3 font used on this page, record the page's Resources.
+        for (_name, font_id) in &font_entries {
+            if type3_ids_needing_fix.contains(font_id) {
+                font_to_resources.insert(*font_id, resources_obj.clone());
+            }
+        }
+    }
+
+    // Step 3: Apply page Resources to Type3 fonts.
+    let mut count = 0;
+    for type3_id in &type3_ids_needing_fix {
+        let resources = font_to_resources.get(type3_id).cloned().unwrap_or_else(|| {
+            // Fallback: minimal Resources.
+            let mut r = lopdf::Dictionary::new();
+            r.set(
+                "ProcSet",
+                Object::Array(vec![
+                    Object::Name(b"PDF".to_vec()),
+                    Object::Name(b"ImageB".to_vec()),
+                ]),
+            );
+            Object::Dictionary(r)
+        });
+
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(type3_id) {
+            dict.set("Resources", resources);
+            count += 1;
         }
     }
     count
@@ -2236,7 +2365,16 @@ fn fix_cidsysteminfo_mismatch(doc: &mut Document) -> usize {
 
         // Check if they match.
         if cmap_registry == cidfont_reg && cmap_ordering == cidfont_ord {
-            continue; // Already matching.
+            // Registry/Ordering match — check Supplement (CIDFont ≤ CMap).
+            let cmap_supplement = get_cmap_supplement(doc, &encoding_obj);
+            if let Some(cmap_sup) = cmap_supplement {
+                let cidfont_sup = get_cidfont_supplement(doc, cid_font_id);
+                if cidfont_sup > cmap_sup {
+                    set_cidfont_supplement(doc, cid_font_id, cmap_sup);
+                    count += 1;
+                }
+            }
+            continue;
         }
 
         // Fix: update the CIDFont's CIDSystemInfo to match the CMap's values.
@@ -2323,6 +2461,94 @@ fn extract_cmap_string_value(text: &str, key: &str) -> Option<String> {
     let paren_end = after[paren_start..].find(')')?;
     let value = &after[paren_start + 1..paren_start + paren_end];
     Some(value.to_string())
+}
+
+/// Extract Supplement from a CMap (predefined name or stream).
+fn get_cmap_supplement(doc: &Document, encoding_obj: &Object) -> Option<i64> {
+    match encoding_obj {
+        Object::Name(_) => {
+            // Predefined CMap — Supplement is encoded in the name for some.
+            // We can't reliably extract it; skip.
+            None
+        }
+        Object::Reference(cmap_id) => {
+            // CMap stream — look for /Supplement in the CIDSystemInfo dict on the stream.
+            let stream = match doc.objects.get(cmap_id) {
+                Some(Object::Stream(s)) => s,
+                _ => return None,
+            };
+            // First check the stream dictionary.
+            if let Ok(Object::Dictionary(csi)) = stream.dict.get(b"CIDSystemInfo") {
+                if let Ok(Object::Integer(sup)) = csi.get(b"Supplement") {
+                    return Some(*sup);
+                }
+            }
+            // Then try parsing the CMap program text.
+            let content = stream
+                .decompressed_content()
+                .ok()
+                .unwrap_or_else(|| stream.content.clone());
+            let text = String::from_utf8_lossy(&content);
+            extract_cmap_int_value(&text, "Supplement")
+        }
+        _ => None,
+    }
+}
+
+/// Extract the Supplement value from a CIDFont's CIDSystemInfo.
+fn get_cidfont_supplement(doc: &Document, cid_font_id: ObjectId) -> i64 {
+    let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_font_id) else {
+        return 0;
+    };
+    match cid_dict.get(b"CIDSystemInfo").ok() {
+        Some(Object::Dictionary(csi)) => match csi.get(b"Supplement").ok() {
+            Some(Object::Integer(s)) => *s,
+            _ => 0,
+        },
+        Some(Object::Reference(csi_id)) => {
+            if let Some(Object::Dictionary(csi)) = doc.objects.get(csi_id) {
+                match csi.get(b"Supplement").ok() {
+                    Some(Object::Integer(s)) => *s,
+                    _ => 0,
+                }
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// Update the CIDFont's CIDSystemInfo Supplement value.
+fn set_cidfont_supplement(doc: &mut Document, cid_font_id: ObjectId, supplement: i64) {
+    let csi_ref = {
+        let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_font_id) else {
+            return;
+        };
+        match cid_dict.get(b"CIDSystemInfo").ok() {
+            Some(Object::Reference(r)) => Some(*r),
+            _ => None,
+        }
+    };
+    if let Some(csi_id) = csi_ref {
+        if let Some(Object::Dictionary(ref mut csi)) = doc.objects.get_mut(&csi_id) {
+            csi.set("Supplement", Object::Integer(supplement));
+        }
+    } else if let Some(Object::Dictionary(ref mut cid_dict)) = doc.objects.get_mut(&cid_font_id) {
+        if let Ok(Object::Dictionary(ref mut csi)) = cid_dict.get_mut(b"CIDSystemInfo") {
+            csi.set("Supplement", Object::Integer(supplement));
+        }
+    }
+}
+
+/// Extract an integer value from a CMap program's CIDSystemInfo dict.
+fn extract_cmap_int_value(text: &str, key: &str) -> Option<i64> {
+    let key_pattern = format!("/{key}");
+    let pos = text.find(&key_pattern)?;
+    let after = &text[pos + key_pattern.len()..].trim_start();
+    // Parse integer from the text.
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
 }
 
 /// Get CIDSystemInfo (Registry, Ordering) for predefined CMap names.
@@ -2692,6 +2918,32 @@ fn fix_postscript_xobjects(doc: &mut Document) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// 6.2.9:2 — Remove reference XObjects (Ref key in form XObject dictionaries).
+// ---------------------------------------------------------------------------
+
+fn fix_reference_xobjects(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let has_ref = match doc.objects.get(&id) {
+            Some(Object::Stream(s)) => {
+                let is_form =
+                    s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"Form");
+                is_form && s.dict.has(b"Ref")
+            }
+            _ => false,
+        };
+        if has_ref {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"Ref");
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
 // 6.1.13:1 — Fix integer overflow (values > 2^31-1 or < -2^31).
 // ---------------------------------------------------------------------------
 
@@ -2855,6 +3107,141 @@ fn collect_content_stream_ids(doc: &Document) -> std::collections::HashSet<Objec
         }
     }
     ids
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 6.2.8:3 — Fix Interpolate=true in inline images.
+// Inline images use BI <dict> ID <data> EI in content streams.
+// Replace /I true or /Interpolate true with /I false within BI...ID blocks.
+// ---------------------------------------------------------------------------
+
+fn fix_inline_image_interpolate(doc: &mut Document) -> usize {
+    let content_stream_ids = collect_content_stream_ids(doc);
+    let mut total_count = 0;
+
+    for id in content_stream_ids {
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: does this stream have inline images with Interpolate?
+        if !decompressed.windows(2).any(|w| w == b"BI") {
+            continue;
+        }
+
+        let mut new_content = Vec::with_capacity(decompressed.len());
+        let mut i = 0;
+        let mut count = 0;
+
+        while i < decompressed.len() {
+            // Look for BI (begin inline image) preceded by whitespace/newline.
+            if i + 2 < decompressed.len()
+                && &decompressed[i..i + 2] == b"BI"
+                && (i == 0 || decompressed[i - 1].is_ascii_whitespace())
+                && decompressed[i + 2].is_ascii_whitespace()
+            {
+                // Find matching ID marker.
+                let bi_start = i;
+                new_content.extend_from_slice(b"BI");
+                i += 2;
+
+                // Scan through the BI dictionary until ID.
+                while i < decompressed.len() {
+                    // Check for ID preceded by whitespace.
+                    if i + 2 < decompressed.len()
+                        && &decompressed[i..i + 2] == b"ID"
+                        && (i == 0 || decompressed[i - 1].is_ascii_whitespace())
+                        && (i + 2 >= decompressed.len()
+                            || decompressed[i + 2] == b' '
+                            || decompressed[i + 2] == b'\n'
+                            || decompressed[i + 2] == b'\r')
+                    {
+                        break;
+                    }
+
+                    // Check for /I true or /Interpolate true patterns.
+                    let replaced = try_replace_interpolate(&decompressed, i, &mut new_content);
+                    if let Some(advance) = replaced {
+                        i += advance;
+                        count += 1;
+                        continue;
+                    }
+
+                    new_content.push(decompressed[i]);
+                    i += 1;
+                }
+
+                if count > 0 && i >= decompressed.len() {
+                    // Didn't find ID — revert by not counting.
+                    count = 0;
+                    new_content.truncate(bi_start);
+                    new_content.extend_from_slice(&decompressed[bi_start..]);
+                    break;
+                }
+                continue;
+            }
+
+            new_content.push(decompressed[i]);
+            i += 1;
+        }
+
+        if count > 0 {
+            total_count += count;
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.set_plain_content(new_content);
+            }
+        }
+    }
+
+    total_count
+}
+
+/// Try to replace `/I true` or `/Interpolate true` with false at position `i`.
+/// Returns Some(bytes_consumed) if replacement was made.
+fn try_replace_interpolate(data: &[u8], i: usize, out: &mut Vec<u8>) -> Option<usize> {
+    // Match /I true (with whitespace)
+    if i + 7 <= data.len() && &data[i..i + 2] == b"/I" && data[i + 2].is_ascii_whitespace() {
+        // Check it's not /Interpolate (longer name).
+        if i + 3 < data.len() && data[i + 3] != b'n' {
+            // Check for "true"
+            let rest = &data[i + 2..];
+            let trimmed = rest.iter().position(|&b| !b.is_ascii_whitespace())?;
+            if rest[trimmed..].starts_with(b"true") {
+                let after_true = trimmed + 4;
+                if after_true >= rest.len()
+                    || rest[after_true].is_ascii_whitespace()
+                    || rest[after_true] == b'/'
+                {
+                    out.extend_from_slice(b"/I false");
+                    return Some(2 + after_true);
+                }
+            }
+        }
+    }
+
+    // Match /Interpolate true
+    if i + 18 <= data.len() && &data[i..i + 12] == b"/Interpolate" {
+        let rest = &data[i + 12..];
+        let trimmed = rest.iter().position(|&b| !b.is_ascii_whitespace())?;
+        if rest[trimmed..].starts_with(b"true") {
+            let after_true = trimmed + 4;
+            if after_true >= rest.len()
+                || rest[after_true].is_ascii_whitespace()
+                || rest[after_true] == b'/'
+            {
+                out.extend_from_slice(b"/I false");
+                return Some(12 + after_true);
+            }
+        }
+    }
+
+    None
 }
 
 // ---------------------------------------------------------------------------

@@ -1336,7 +1336,17 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                     } else {
                         match dict.get(b"AP").ok() {
                             Some(Object::Dictionary(ap)) => {
-                                if ap.has(b"N") {
+                                let n_is_valid = match ap.get(b"N").ok() {
+                                    Some(Object::Stream(_)) => true,
+                                    Some(Object::Dictionary(d)) => !d.is_empty(),
+                                    Some(Object::Reference(r)) => match doc.objects.get(r) {
+                                        Some(Object::Stream(_)) => true,
+                                        Some(Object::Dictionary(d)) => !d.is_empty(),
+                                        _ => false,
+                                    },
+                                    _ => false,
+                                };
+                                if n_is_valid {
                                     ApFixInfo::None
                                 } else {
                                     let fallback = ap
@@ -1366,25 +1376,59 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                 }
             }
             ApFixInfo::RefAp(ap_id) => {
-                // Check referenced AP dict.
-                let fallback = {
+                // Check referenced AP dict — N must exist and be a valid stream/dict.
+                let needs_fix = {
                     if let Some(Object::Dictionary(ap)) = doc.objects.get(&ap_id) {
-                        if ap.has(b"N") {
+                        let n_valid = match ap.get(b"N").ok() {
+                            Some(Object::Stream(_)) => true,
+                            Some(Object::Dictionary(d)) => !d.is_empty(),
+                            Some(Object::Reference(r)) => match doc.objects.get(r) {
+                                Some(Object::Stream(_)) => true,
+                                Some(Object::Dictionary(d)) => !d.is_empty(),
+                                _ => false,
+                            },
+                            _ => false,
+                        };
+                        if n_valid {
                             None
                         } else {
-                            ap.get(b"D")
-                                .ok()
-                                .cloned()
-                                .or_else(|| ap.get(b"R").ok().cloned())
+                            Some(
+                                ap.get(b"D")
+                                    .ok()
+                                    .cloned()
+                                    .or_else(|| ap.get(b"R").ok().cloned()),
+                            )
                         }
                     } else {
                         None
                     }
                 };
-                if let Some(val) = fallback {
-                    if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
-                        ap.set("N", val);
-                        count += 1;
+                if let Some(fallback) = needs_fix {
+                    if let Some(val) = fallback {
+                        if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
+                            ap.set("N", val);
+                            count += 1;
+                        }
+                    } else {
+                        // No D/R fallback — create empty appearance stream.
+                        let mut stream_dict = lopdf::Dictionary::new();
+                        stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
+                        stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+                        stream_dict.set(
+                            "BBox",
+                            Object::Array(vec![
+                                Object::Integer(0),
+                                Object::Integer(0),
+                                Object::Integer(0),
+                                Object::Integer(0),
+                            ]),
+                        );
+                        let empty_stream = lopdf::Stream::new(stream_dict, Vec::new());
+                        let stream_id = doc.add_object(Object::Stream(empty_stream));
+                        if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
+                            ap.set("N", Object::Reference(stream_id));
+                            count += 1;
+                        }
                     }
                 }
             }
