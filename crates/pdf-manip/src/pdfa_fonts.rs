@@ -4465,6 +4465,9 @@ fn cff_width_for_code(
         };
         if !glyph_name.is_empty() {
             if let Some(w) = find_cff_glyph_width_by_name_fractional(cff, &glyph_name, scale) {
+                if code >= 160 && code <= 200 {
+                    eprintln!("DEBUG cff_width: code={} name='{}' -> PDF_ENC width={}", code, glyph_name, w);
+                }
                 return Some(w);
             }
             // Try the standard AGL name if we used a "uniXXXX" form.
@@ -4487,9 +4490,13 @@ fn cff_width_for_code(
             // Glyph name not found in subset — veraPDF maps to .notdef (GID 0).
             // Return .notdef width so the PDF Widths array matches.
             if glyph_name != ".notdef" {
-                return cff
+                let notdef_w = cff
                     .glyph_width(cff_parser::GlyphId(0))
                     .map(|w| w as f64 * scale);
+                if code >= 160 && code <= 200 {
+                    eprintln!("DEBUG cff_width: code={} name='{}' -> NOTDEF width={:?}", code, glyph_name, notdef_w);
+                }
+                return notdef_w;
             }
         }
     }
@@ -4501,15 +4508,23 @@ fn cff_width_for_code(
         let enc_map = parse_cff_encoding_map(font_data);
         if let Some(&gid) = enc_map.get(&(code as u8)) {
             if gid != 0 {
-                return cff
+                let w = cff
                     .glyph_width(cff_parser::GlyphId(gid))
                     .map(|w| w as f64 * scale);
+                if code >= 160 && code <= 200 {
+                    eprintln!("DEBUG cff_width: code={} -> CFF_ENC gid={} width={:?}", code, gid, w);
+                }
+                return w;
             }
         }
         // Code not in CFF encoding or maps to .notdef → return .notdef width.
-        return cff
+        let notdef_w = cff
             .glyph_width(cff_parser::GlyphId(0))
             .map(|w| w as f64 * scale);
+        if code >= 160 && code <= 200 {
+            eprintln!("DEBUG cff_width: code={} -> CFF_NOTDEF width={:?}", code, notdef_w);
+        }
+        return notdef_w;
     }
 
     None
