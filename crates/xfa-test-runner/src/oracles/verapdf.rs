@@ -154,7 +154,10 @@ impl VeraPdfOracle {
             None => {
                 let msg = if let Some(exc) = job.task_exception {
                     let detail = exc.exception_message.as_deref().unwrap_or(&exc.message);
-                    format!("veraPDF taskException: {}", detail.chars().take(200).collect::<String>())
+                    format!(
+                        "veraPDF taskException: {}",
+                        detail.chars().take(200).collect::<String>()
+                    )
                 } else {
                     "veraPDF returned no validation result".to_string()
                 };
