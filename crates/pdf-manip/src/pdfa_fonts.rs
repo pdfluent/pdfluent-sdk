@@ -3153,10 +3153,14 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             if let Some(ref bfname) = get_name(doc.objects.get(&font_id).and_then(|o| if let Object::Dictionary(d) = o { Some(d) } else { None }).unwrap_or(&lopdf::Dictionary::new()), b"BaseFont") {
                 if bfname.contains("CMR10") || bfname.contains("CMTI10") || bfname.contains("CMSY") || bfname.contains("CMMIB") {
                     eprintln!("DEBUG {bfname}: fc={first_char} widths={} corrections={} enc=({},{}) ff3={has_ff3}", existing_widths.len(), corrections.len(), enc_info.0, enc_info.1.len());
-                    for &(idx, w) in corrections.iter().take(5) {
-                        let code = first_char + idx as u32;
+                    // Check specific failing codes
+                    for check_code in [161u32, 174, 175, 176, 185, 188, 189, 193, 196] {
+                        if check_code < first_char { continue; }
+                        let idx = (check_code - first_char) as usize;
+                        if idx >= existing_widths.len() { continue; }
                         let old = match &existing_widths[idx] { Object::Integer(v) => *v, _ => -1 };
-                        eprintln!("  code {code}: {old} -> {w}");
+                        let correction = corrections.iter().find(|&&(i, _)| i == idx);
+                        eprintln!("  code {check_code}: old={old}, correction={correction:?}");
                     }
                 }
             }
