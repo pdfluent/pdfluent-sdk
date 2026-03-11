@@ -4246,7 +4246,7 @@ fn compute_cff_type1_width_corrections(
 
         // Try PDF encoding → glyph name → CFF lookup, with CFF internal
         // encoding fallback (e.g. StandardEncoding maps code 173 → "hyphen").
-        let frac_w = cff_width_for_code(&cff, code, enc_name, differences, scale);
+        let frac_w = cff_width_for_code(&cff, font_data, code, enc_name, differences, scale);
 
         let Some(frac_w) = frac_w else { continue };
 
@@ -4439,14 +4439,15 @@ fn compute_cff_single_width(
         1.0
     };
 
-    cff_width_for_code(&cff, code, enc_name, differences, scale)
+    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale)
 }
 
 /// Look up the CFF glyph width for a character code, trying multiple strategies:
 /// 1. PDF encoding → glyph name → CFF name lookup
-/// 2. CFF internal encoding (StandardEncoding maps codes to glyph names)
+/// 2. CFF internal encoding (direct parse, no Standard Encoding fallback)
 fn cff_width_for_code(
     cff: &cff_parser::Table,
+    font_data: &[u8],
     code: u32,
     enc_name: &str,
     differences: &std::collections::HashMap<u32, String>,
@@ -4493,21 +4494,326 @@ fn cff_width_for_code(
         }
     }
 
-    // Fallback: CFF internal encoding (e.g., StandardEncoding maps code 173 to "hyphen").
+    // Fallback: CFF internal encoding — parse directly to avoid the Standard
+    // Encoding fallback that cff_parser::Table::glyph_index() uses.
+    // veraPDF uses only the CFF's own encoding for Type1C fonts.
     if code <= 255 {
-        if let Some(gid) = cff.glyph_index(code as u8) {
-            if gid.0 != 0 || code == 0 {
-                return cff.glyph_width(gid).map(|w| w as f64 * scale);
+        let enc_map = parse_cff_encoding_map(font_data);
+        if let Some(&gid) = enc_map.get(&(code as u8)) {
+            if gid != 0 {
+                return cff
+                    .glyph_width(cff_parser::GlyphId(gid))
+                    .map(|w| w as f64 * scale);
             }
         }
-        // Code maps to .notdef (GID 0) or has no mapping at all.
-        // veraPDF expects the .notdef width for such codes.
+        // Code not in CFF encoding or maps to .notdef → return .notdef width.
         return cff
             .glyph_width(cff_parser::GlyphId(0))
             .map(|w| w as f64 * scale);
     }
 
     None
+}
+
+/// Parse the CFF encoding table directly from raw CFF data, returning a
+/// code → GID map. Does NOT apply Standard Encoding fallback.
+fn parse_cff_encoding_map(data: &[u8]) -> std::collections::HashMap<u8, u16> {
+    let mut map = std::collections::HashMap::new();
+
+    // CFF structure: Header, Name INDEX, Top DICT INDEX, String INDEX, ...
+    // We need the encoding offset from the Top DICT.
+    if data.len() < 4 {
+        return map;
+    }
+
+    let header_size = data[2] as usize; // hdrSize
+    if header_size > data.len() {
+        return map;
+    }
+
+    // Skip Name INDEX
+    let name_idx_start = header_size;
+    let Some(after_name) = skip_cff_index(data, name_idx_start) else {
+        return map;
+    };
+
+    // Parse Top DICT INDEX to get encoding offset
+    let Some((top_dict_data, _after_top_dict)) = read_cff_index_first(data, after_name) else {
+        return map;
+    };
+
+    // Parse Top DICT for encoding offset (operator 16)
+    let enc_offset = parse_cff_top_dict_encoding_offset(&top_dict_data);
+
+    // enc_offset 0 = Standard Encoding, 1 = Expert Encoding.
+    // For these, glyph_index() uses the correct encoding directly (no wrong fallback).
+    if enc_offset == 0 || enc_offset == 1 {
+        if let Some(cff) = cff_parser::Table::parse(data) {
+            for code_byte in 0..=255u8 {
+                if let Some(gid) = cff.glyph_index(code_byte) {
+                    map.insert(code_byte, gid.0);
+                }
+            }
+        }
+        return map;
+    }
+
+    // Custom encoding at enc_offset
+    let offset = enc_offset as usize;
+    if offset >= data.len() {
+        return map;
+    }
+
+    let format = data[offset] & 0x7F; // Low 7 bits = format, high bit = supplemental
+    let has_supplement = data[offset] & 0x80 != 0;
+
+    match format {
+        0 => {
+            // Format 0: nCodes byte, then nCodes code bytes
+            if offset + 1 >= data.len() {
+                return map;
+            }
+            let n_codes = data[offset + 1] as usize;
+            for i in 0..n_codes {
+                if offset + 2 + i >= data.len() {
+                    break;
+                }
+                let code_byte = data[offset + 2 + i];
+                // GID = i + 1 (.notdef is GID 0, implicit)
+                map.insert(code_byte, (i + 1) as u16);
+            }
+            // Parse supplement if present
+            if has_supplement {
+                let sup_start = offset + 2 + n_codes;
+                parse_cff_encoding_supplement(data, sup_start, &mut map, data);
+            }
+        }
+        1 => {
+            // Format 1: nRanges byte, then nRanges * (first: u8, nLeft: u8)
+            if offset + 1 >= data.len() {
+                return map;
+            }
+            let n_ranges = data[offset + 1] as usize;
+            let mut gid: u16 = 1;
+            for i in 0..n_ranges {
+                let range_start = offset + 2 + i * 2;
+                if range_start + 1 >= data.len() {
+                    break;
+                }
+                let first = data[range_start];
+                let n_left = data[range_start + 1];
+                for j in 0..=n_left {
+                    let code_byte = first.wrapping_add(j);
+                    map.insert(code_byte, gid);
+                    gid += 1;
+                }
+            }
+            // Parse supplement if present
+            if has_supplement {
+                let sup_start = offset + 2 + n_ranges * 2;
+                parse_cff_encoding_supplement(data, sup_start, &mut map, data);
+            }
+        }
+        _ => {}
+    }
+
+    map
+}
+
+/// Parse CFF encoding supplement entries.
+fn parse_cff_encoding_supplement(
+    data: &[u8],
+    start: usize,
+    map: &mut std::collections::HashMap<u8, u16>,
+    cff_data: &[u8],
+) {
+    if start >= data.len() {
+        return;
+    }
+    let n_sups = data[start] as usize;
+    // Each supplement: code (u8) + SID (u16) = 3 bytes
+    // We need to map SID → GID via charset. Since we don't have easy
+    // charset access, parse via cff_parser for supplement entries.
+    if let Some(cff) = cff_parser::Table::parse(cff_data) {
+        for i in 0..n_sups {
+            let entry_start = start + 1 + i * 3;
+            if entry_start + 2 >= data.len() {
+                break;
+            }
+            let code = data[entry_start];
+            // The SID is at entry_start+1..entry_start+3
+            // We can look up the GID by searching for this SID in charset
+            // For now, use glyph_index as fallback for supplements
+            if let Some(gid) = cff.glyph_index(code) {
+                map.insert(code, gid.0);
+            }
+        }
+    }
+}
+
+/// Skip a CFF INDEX structure and return the offset after it.
+fn skip_cff_index(data: &[u8], start: usize) -> Option<usize> {
+    if start + 2 > data.len() {
+        return None;
+    }
+    let count = u16::from_be_bytes([data[start], data[start + 1]]) as usize;
+    if count == 0 {
+        return Some(start + 2);
+    }
+    if start + 3 > data.len() {
+        return None;
+    }
+    let off_size = data[start + 2] as usize;
+    if off_size == 0 || off_size > 4 {
+        return None;
+    }
+    // offsets array: (count+1) entries of off_size bytes each
+    let offsets_start = start + 3;
+    let offsets_end = offsets_start + (count + 1) * off_size;
+    if offsets_end > data.len() {
+        return None;
+    }
+    // Last offset value gives the data size
+    let last_off = read_cff_offset(data, offsets_start + count * off_size, off_size)?;
+    // Data starts after offsets, first offset is 1-based
+    Some(offsets_start + (count + 1) * off_size + last_off - 1)
+}
+
+/// Read the first entry from a CFF INDEX, returning (data, offset_after_index).
+fn read_cff_index_first(data: &[u8], start: usize) -> Option<(Vec<u8>, usize)> {
+    if start + 2 > data.len() {
+        return None;
+    }
+    let count = u16::from_be_bytes([data[start], data[start + 1]]) as usize;
+    if count == 0 {
+        return Some((Vec::new(), start + 2));
+    }
+    if start + 3 > data.len() {
+        return None;
+    }
+    let off_size = data[start + 2] as usize;
+    if off_size == 0 || off_size > 4 {
+        return None;
+    }
+    let offsets_start = start + 3;
+    let first_off = read_cff_offset(data, offsets_start, off_size)?;
+    let second_off = read_cff_offset(data, offsets_start + off_size, off_size)?;
+    let data_start = offsets_start + (count + 1) * off_size;
+    let entry_start = data_start + first_off - 1;
+    let entry_end = data_start + second_off - 1;
+    if entry_end > data.len() {
+        return None;
+    }
+    let last_off = read_cff_offset(data, offsets_start + count * off_size, off_size)?;
+    let after = data_start + last_off - 1;
+    Some((data[entry_start..entry_end].to_vec(), after))
+}
+
+/// Read a CFF offset value (1-4 bytes, big-endian).
+fn read_cff_offset(data: &[u8], pos: usize, size: usize) -> Option<usize> {
+    if pos + size > data.len() {
+        return None;
+    }
+    let mut val = 0usize;
+    for i in 0..size {
+        val = (val << 8) | data[pos + i] as usize;
+    }
+    Some(val)
+}
+
+/// Parse the encoding offset from a CFF Top DICT.
+/// Operator 16 (0x10) = Encoding offset (default 0 = Standard).
+fn parse_cff_top_dict_encoding_offset(dict_data: &[u8]) -> u32 {
+    let mut i = 0;
+    let mut operand_stack: Vec<i64> = Vec::new();
+
+    while i < dict_data.len() {
+        let b0 = dict_data[i];
+        match b0 {
+            0..=11 => {
+                // Operator (single byte)
+                if b0 == 16 {
+                    // Encoding operator
+                    return operand_stack.last().copied().unwrap_or(0) as u32;
+                }
+                operand_stack.clear();
+                i += 1;
+            }
+            12 => {
+                // Two-byte operator
+                operand_stack.clear();
+                i += 2;
+            }
+            13..=21 => {
+                // Operators 13-21
+                if b0 == 16 {
+                    return operand_stack.last().copied().unwrap_or(0) as u32;
+                }
+                operand_stack.clear();
+                i += 1;
+            }
+            28 => {
+                // 2-byte integer
+                if i + 2 < dict_data.len() {
+                    let val =
+                        i16::from_be_bytes([dict_data[i + 1], dict_data[i + 2]]) as i64;
+                    operand_stack.push(val);
+                }
+                i += 3;
+            }
+            29 => {
+                // 4-byte integer
+                if i + 4 < dict_data.len() {
+                    let val = i32::from_be_bytes([
+                        dict_data[i + 1],
+                        dict_data[i + 2],
+                        dict_data[i + 3],
+                        dict_data[i + 4],
+                    ]) as i64;
+                    operand_stack.push(val);
+                }
+                i += 5;
+            }
+            30 => {
+                // Real number (BCD) — skip it
+                i += 1;
+                while i < dict_data.len() {
+                    let nibbles = dict_data[i];
+                    i += 1;
+                    if nibbles & 0x0F == 0x0F || nibbles >> 4 == 0x0F {
+                        break;
+                    }
+                }
+                operand_stack.push(0); // Placeholder
+            }
+            32..=246 => {
+                operand_stack.push(b0 as i64 - 139);
+                i += 1;
+            }
+            247..=250 => {
+                if i + 1 < dict_data.len() {
+                    let val = (b0 as i64 - 247) * 256 + dict_data[i + 1] as i64 + 108;
+                    operand_stack.push(val);
+                }
+                i += 2;
+            }
+            251..=254 => {
+                if i + 1 < dict_data.len() {
+                    let val = -(b0 as i64 - 251) * 256 - dict_data[i + 1] as i64 - 108;
+                    operand_stack.push(val);
+                }
+                i += 2;
+            }
+            255 => {
+                // Reserved in DICT
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    0 // Default: Standard Encoding
 }
 
 /// Alternative glyph names to try when the primary name isn't found in CFF.
