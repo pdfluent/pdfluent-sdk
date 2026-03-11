@@ -63,6 +63,9 @@ members = [
 
     # --- Benchmarks ---
     "crates/pdf-bench",
+
+    # --- Forked dependencies ---
+    "crates/lopdf",
 ]
 resolver = "2"
 
@@ -74,7 +77,7 @@ repository = "https://github.com/jasperdew/xfa-native-rust"
 
 [workspace.dependencies]
 roxmltree = "0.20"
-lopdf = "0.39"
+lopdf = { path = "crates/lopdf" }
 pdfium-render = "0.8"
 thiserror = "2"
 image = "0.25"

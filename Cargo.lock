@@ -1371,6 +1371,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "env_filter"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a1c3cc8e57274ec99de65301228b537f1e4eedc1b8e0f9411c6caac8ae7308f"
+dependencies = [
+ "log",
+ "regex",
+]
+
+[[package]]
+name = "env_logger"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2daee4ea451f429a58296525ddf28b45a3b64f1acf6587e2067437bb11e218d"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "env_filter",
+ "jiff",
+ "log",
+]
+
+[[package]]
 name = "equator"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1871,9 +1894,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3045,8 +3070,6 @@ dependencies = [
 [[package]]
 name = "lopdf"
 version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f560f57dfb9142a02d673e137622fd515d4231e51feb8b4af28d92647d83f35b"
 dependencies = [
  "aes",
  "bitflags 2.11.0",
@@ -3054,8 +3077,10 @@ dependencies = [
  "chrono",
  "ecb",
  "encoding_rs",
+ "env_logger",
  "flate2",
  "getrandom 0.3.4",
+ "image",
  "indexmap 2.13.0",
  "itoa",
  "jiff",
@@ -3066,10 +3091,13 @@ dependencies = [
  "rand 0.9.2",
  "rangemap",
  "rayon",
+ "serde",
  "sha2",
  "stringprep",
+ "tempfile",
  "thiserror 2.0.18",
  "time",
+ "tokio",
  "ttf-parser",
  "weezl",
 ]
