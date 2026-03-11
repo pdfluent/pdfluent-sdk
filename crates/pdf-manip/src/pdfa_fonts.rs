@@ -4234,13 +4234,16 @@ fn compute_cff_type1_width_corrections(
     };
 
     if (scale - 1.0).abs() > 0.001 {
-        eprintln!("DEBUG CFF scale: matrix.sx={} scale={} data_len={}", matrix.sx, scale, font_data.len());
-        // Debug: show first few glyph widths
-        for gid in 0..5u16 {
+        eprintln!("DEBUG CFF scale: matrix.sx={} scale={} n_glyphs={}", matrix.sx, scale, cff.number_of_glyphs());
+        // Collect unique widths
+        let mut widths_set = std::collections::BTreeSet::new();
+        for gid in 0..cff.number_of_glyphs() as u16 {
             if let Some(w) = cff.glyph_width(cff_parser::GlyphId(gid)) {
-                eprintln!("  gid={} raw_w={} scaled={}", gid, w, w as f64 * scale);
+                widths_set.insert((w as f64 * 1000.0) as i64);
             }
         }
+        let unique: Vec<_> = widths_set.iter().copied().collect();
+        eprintln!("  unique widths (x1000): {:?}", &unique[..unique.len().min(30)]);
     }
 
     let mut corrections = Vec::new();
