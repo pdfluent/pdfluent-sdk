@@ -167,6 +167,12 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
         }));
 
+        // 3a2a. Add Unicode (3,1) cmap to TrueType fonts that only have Mac Roman (1,0).
+        set_progress("unicode_cmap");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc)
+        }));
+
         // 3a2b. Fix .notdef glyph references (6.2.11.8:1).
         set_progress("notdef_refs");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -179,10 +185,22 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc)
         }));
 
-        // 3a2d. Ensure undefined WinAnsi codes have Differences entries.
+        // 3a2d. Fix .notdef in symbolic simple fonts via content stream modification.
+        set_progress("symbolic_notdef");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc)
+        }));
+
+        // 3a2e. Ensure undefined WinAnsi codes have Differences entries.
         set_progress("undef_encoding");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc)
+        }));
+
+        // 3a2f. Fix incorrect Symbolic flags on non-symbolic CFF fonts.
+        set_progress("symbolic_flags");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc)
         }));
 
         // 3a3. Conservative width mismatch fix for simple TrueType/Type1 fonts.

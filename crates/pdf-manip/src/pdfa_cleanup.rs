@@ -427,10 +427,17 @@ fn normalize_rendering_intents(doc: &mut Document) -> usize {
     count
 }
 
-/// Ensure the trailer has an /ID entry (6.1.3).
+/// Ensure the trailer has a valid (non-empty) /ID entry (6.1.3).
 fn ensure_trailer_id(doc: &mut Document) -> bool {
-    if doc.trailer.has(b"ID") {
-        return false;
+    // Check if existing ID is valid (two non-empty strings).
+    if let Ok(Object::Array(arr)) = doc.trailer.get(b"ID") {
+        let valid = arr.len() == 2
+            && arr
+                .iter()
+                .all(|o| matches!(o, Object::String(s, _) if !s.is_empty()));
+        if valid {
+            return false;
+        }
     }
     // Generate a deterministic ID based on document content.
     let id_bytes: Vec<u8> = {
@@ -1105,6 +1112,8 @@ fn is_forbidden_action(s: &[u8]) -> bool {
             | b"GoToE"
             | b"SetState"
             | b"NoOp"
+            | b"NOP"
+            | b"Nop"
             | b"JavaScript"
     )
 }
@@ -1172,6 +1181,21 @@ fn remove_forbidden_actions(doc: &mut Document) {
         if remove_a {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.remove(b"A");
+            }
+        }
+    }
+
+    // Phase 2b: Remove /Next action chains from all action objects.
+    // /Next is not permitted in PDF/A (6.5.1) as it can chain to forbidden actions.
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in &ids {
+        let has_next = matches!(
+            doc.objects.get(id),
+            Some(Object::Dictionary(d)) if d.has(b"Next") && d.has(b"S")
+        );
+        if has_next {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(id) {
+                dict.remove(b"Next");
             }
         }
     }

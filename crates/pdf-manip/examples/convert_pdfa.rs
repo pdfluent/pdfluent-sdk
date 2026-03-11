@@ -9,7 +9,13 @@ fn main() {
     }
 
     let data = std::fs::read(&args[1]).expect("read input");
-    let mut doc = lopdf::Document::load_mem(&data).expect("load");
+    let mut doc = match lopdf::Document::load_mem(&data) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("ERROR: Failed to parse PDF: {e}");
+            std::process::exit(2);
+        }
+    };
 
     // Run conversion pipeline
     match pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false) {
@@ -49,6 +55,10 @@ fn main() {
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");
 
+    // Add Unicode (3,1) cmap to TrueType fonts that only have Mac Roman (1,0).
+    let cmap_fixed = pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+    eprintln!("TrueType Unicode cmap: fixed={cmap_fixed}");
+
     // Fix .notdef glyph references (6.2.11.8:1).
     let notdef_fixed = pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
     eprintln!(".notdef refs (simple): fixed={notdef_fixed}");
@@ -65,6 +75,10 @@ fn main() {
     // ambiguous glyph mapping between veraPDF and our width fixer).
     let undef_fixed = pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
     eprintln!("Undefined encoding codes: fixed={undef_fixed}");
+
+    // Fix incorrect Symbolic flags on non-symbolic CFF fonts.
+    let sym_flags = pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+    eprintln!("Symbolic flags: fixed={sym_flags}");
 
     // Conservative width mismatch fix: only updates individual mismatched entries
     // where the mapping is unambiguous. Skips fonts with >50% mismatches.
@@ -90,12 +104,17 @@ fn main() {
     // Supplementary fixups (small rule fixes).
     let fixup_report = pdf_manip::pdfa_fixups::run_fixups(&mut doc);
     eprintln!(
-        "Fixups: stream_lengths={}, cmap_wmode={}, cidtogidmap={}, cidsysteminfo={}, cmap_embedded={}",
+        "Fixups: lengths={}, opi={}, stream_f={}, ps_xobj={}, overflow={}, long_str={}, op_space={}, tiny_float={}, hex_str={}, jpx_cs={}",
         fixup_report.stream_lengths_fixed,
-        fixup_report.cmap_wmode_fixed,
-        fixup_report.cidtogidmap_fixed,
-        fixup_report.cidsysteminfo_fixed,
-        fixup_report.cmap_embedded,
+        fixup_report.opi_keys_removed,
+        fixup_report.stream_f_keys_removed,
+        fixup_report.postscript_xobjects_removed,
+        fixup_report.overflow_integers_fixed,
+        fixup_report.long_strings_fixed,
+        fixup_report.operator_spacing_fixed,
+        fixup_report.tiny_floats_fixed,
+        fixup_report.odd_hex_strings_fixed,
+        fixup_report.jpx_colorspace_fixed,
     );
 
     match pdf_manip::pdfa_xmp::repair_xmp_metadata(
