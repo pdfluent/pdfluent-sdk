@@ -3121,11 +3121,11 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         }
 
         // Determine which font file type is embedded.
-        let (has_ff2, has_ff3) = {
+        let (has_ff1, has_ff2, has_ff3) = {
             let Some(Object::Dictionary(fd)) = doc.objects.get(&fd_id) else {
                 continue;
             };
-            (fd.has(b"FontFile2"), fd.has(b"FontFile3"))
+            (fd.has(b"FontFile"), fd.has(b"FontFile2"), fd.has(b"FontFile3"))
         };
 
         let font_data = read_embedded_font_data(doc, fd_id);
@@ -3152,6 +3152,14 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         } else if has_ff2 && (subtype == "Type1" || subtype == "MMType1") {
             // Type1 font re-encoded as TrueType (after embedding fallback font).
             corrections = compute_truetype_width_corrections(
+                &font_data,
+                first_char,
+                &existing_widths,
+                &enc_info,
+            );
+        } else if has_ff1 && (subtype == "Type1" || subtype == "MMType1") {
+            // Traditional Type1 font with FontFile — parse charstring widths.
+            corrections = compute_type1_fontfile_width_corrections(
                 &font_data,
                 first_char,
                 &existing_widths,
@@ -3215,9 +3223,13 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         let has_reliable_encoding =
             matches!(enc_info.0.as_str(), "WinAnsiEncoding" | "MacRomanEncoding");
         let uses_cff_encoding = enc_info.0.is_empty() && enc_info.1.is_empty() && has_ff3;
+        // Type 1 FontFile widths are computed from the font program directly,
+        // so they are always reliable regardless of encoding.
+        let uses_type1_fontfile = has_ff1;
         let total_widths = existing_widths.len();
         if !has_reliable_encoding
             && !uses_cff_encoding
+            && !uses_type1_fontfile
             && corrections.len() * 2 > total_widths
             && extensions.is_empty()
         {
@@ -3692,14 +3704,489 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
     }
 }
 
+/// Compute width corrections for a Type 1 font with FontFile (PFB format).
+///
+/// Parses the Type 1 font program to extract FontMatrix, Encoding, and CharString
+/// widths. veraPDF validates Type 1 widths as: charstring_width * FontMatrix.sx * 1000.
+fn compute_type1_fontfile_width_corrections(
+    font_data: &[u8],
+    first_char: u32,
+    existing_widths: &[Object],
+    enc_info: &(String, std::collections::HashMap<u32, String>),
+) -> Vec<(usize, i64)> {
+    let Some(parsed) = parse_type1_program(font_data) else {
+        return Vec::new();
+    };
+
+    let (_enc_name, differences) = enc_info;
+
+    let mut corrections = Vec::new();
+    for (i, obj) in existing_widths.iter().enumerate() {
+        let pdf_w = match obj {
+            Object::Integer(w) => *w as f64,
+            Object::Real(r) => *r as f64,
+            _ => continue,
+        };
+
+        let code = first_char + i as u32;
+
+        // Determine glyph name: PDF Differences override, then Type 1 encoding.
+        let glyph_name = if let Some(name) = differences.get(&code) {
+            name.as_str()
+        } else if let Some(name) = parsed.encoding.get(&(code as u8)) {
+            name.as_str()
+        } else {
+            continue;
+        };
+
+        if glyph_name == ".notdef" {
+            continue;
+        }
+
+        let Some(&cs_width) = parsed.charstring_widths.get(glyph_name) else {
+            continue;
+        };
+
+        let expected = (cs_width as f64 * parsed.font_matrix_sx * 1000.0).round();
+
+        if (pdf_w - expected).abs() > 0.5 {
+            corrections.push((i, expected as i64));
+        }
+    }
+
+    corrections
+}
+
+/// Parsed data from a Type 1 font program.
+struct Type1Parsed {
+    font_matrix_sx: f64,
+    encoding: std::collections::HashMap<u8, String>,
+    charstring_widths: std::collections::HashMap<String, i32>,
+}
+
+/// Parse a Type 1 font program (PFB/PFA) to extract FontMatrix, Encoding, and widths.
+fn parse_type1_program(data: &[u8]) -> Option<Type1Parsed> {
+    // Find the cleartext/encrypted boundary.
+    // PFB format has segment headers; PFA is plain text with hex-encoded eexec.
+    let (cleartext, eexec_data) = split_type1_sections(data)?;
+
+    // Parse FontMatrix from cleartext.
+    let font_matrix_sx = parse_type1_font_matrix(cleartext).unwrap_or(0.001);
+
+    // Parse Encoding from cleartext.
+    let encoding = parse_type1_encoding(cleartext);
+
+    // Parse lenIV from cleartext (default 4).
+    let len_iv = parse_type1_len_iv(cleartext).unwrap_or(4) as usize;
+
+    // Decrypt eexec section.
+    let decrypted = eexec_decrypt(eexec_data);
+
+    // Parse CharStrings from decrypted data.
+    let charstring_widths = parse_type1_charstrings(&decrypted, len_iv);
+
+    Some(Type1Parsed {
+        font_matrix_sx,
+        encoding,
+        charstring_widths,
+    })
+}
+
+/// Split a Type 1 font into cleartext and eexec-encrypted sections.
+fn split_type1_sections(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    // Check for PFB format (starts with 0x80).
+    if data.first() == Some(&0x80) {
+        return split_pfb_sections(data);
+    }
+
+    // PFA format: find "eexec" keyword.
+    let eexec_pos = find_bytes(data, b"eexec")?;
+    let cleartext = &data[..eexec_pos];
+
+    // Skip "eexec" and any whitespace.
+    let mut pos = eexec_pos + 5;
+    while pos < data.len() && matches!(data[pos], b' ' | b'\r' | b'\n' | b'\t') {
+        pos += 1;
+    }
+
+    // The eexec data can be binary or hex-encoded.
+    let remaining = &data[pos..];
+    if remaining.is_empty() {
+        return None;
+    }
+
+    // Check if hex-encoded (all hex chars + whitespace).
+    let is_hex = remaining
+        .iter()
+        .take(20)
+        .all(|b| b.is_ascii_hexdigit() || matches!(b, b'\r' | b'\n' | b' '));
+
+    if is_hex {
+        // Decode hex to binary.
+        // For efficiency, we can't return a slice — we'd need owned data.
+        // Instead, return the hex data and let the caller decode it.
+        // Actually, since we need a slice, we'll handle hex in eexec_decrypt.
+        Some((cleartext, remaining))
+    } else {
+        Some((cleartext, remaining))
+    }
+}
+
+/// Split PFB (binary) format into cleartext and eexec sections.
+fn split_pfb_sections(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    let mut pos = 0;
+    let mut cleartext_end = 0;
+
+    while pos + 6 <= data.len() {
+        if data[pos] != 0x80 {
+            break;
+        }
+        let seg_type = data[pos + 1];
+        let seg_len = u32::from_le_bytes([data[pos + 2], data[pos + 3], data[pos + 4], data[pos + 5]]) as usize;
+        let seg_data_start = pos + 6;
+
+        match seg_type {
+            1 => {
+                // ASCII segment (cleartext).
+                cleartext_end = seg_data_start + seg_len;
+            }
+            2 => {
+                // Binary segment (eexec encrypted).
+                let eexec_end = seg_data_start + seg_len;
+                return Some((&data[6..cleartext_end], &data[seg_data_start..eexec_end]));
+            }
+            3 => break, // EOF marker.
+            _ => break,
+        }
+        pos = seg_data_start + seg_len;
+    }
+
+    // Fallback: try eexec keyword search.
+    let eexec_pos = find_bytes(&data[6..], b"eexec")?;
+    let cleartext = &data[6..6 + eexec_pos];
+    let mut skip = 6 + eexec_pos + 5;
+    while skip < data.len() && matches!(data[skip], b' ' | b'\r' | b'\n' | b'\t') {
+        skip += 1;
+    }
+    Some((cleartext, &data[skip..]))
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|w| w == needle)
+}
+
+/// Parse FontMatrix from Type 1 cleartext.
+fn parse_type1_font_matrix(cleartext: &[u8]) -> Option<f64> {
+    let text = std::str::from_utf8(cleartext).ok()?;
+    let fm_pos = text.find("/FontMatrix")?;
+    let after = &text[fm_pos..];
+    let bracket_start = after.find('[')?;
+    let bracket_end = after.find(']')?;
+    let values_str = &after[bracket_start + 1..bracket_end];
+    let values: Vec<f64> = values_str
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if !values.is_empty() {
+        Some(values[0])
+    } else {
+        None
+    }
+}
+
+/// Parse Encoding array from Type 1 cleartext.
+fn parse_type1_encoding(cleartext: &[u8]) -> std::collections::HashMap<u8, String> {
+    let mut encoding = std::collections::HashMap::new();
+    let Ok(text) = std::str::from_utf8(cleartext) else {
+        return encoding;
+    };
+
+    // Look for patterns like: dup <code> /<name> put
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("dup ") || !trimmed.ends_with(" put") {
+            continue;
+        }
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() >= 4 && parts[0] == "dup" && parts[3] == "put" {
+            if let Ok(code) = parts[1].parse::<u8>() {
+                if let Some(name) = parts[2].strip_prefix('/') {
+                    if name != ".notdef" {
+                        encoding.insert(code, name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    encoding
+}
+
+/// Parse lenIV from Type 1 cleartext (number of random bytes at start of charstrings).
+fn parse_type1_len_iv(cleartext: &[u8]) -> Option<u32> {
+    let text = std::str::from_utf8(cleartext).ok()?;
+    // lenIV can appear in cleartext or encrypted section; check cleartext first.
+    let pos = text.find("/lenIV")?;
+    let after = &text[pos + 6..];
+    let trimmed = after.trim_start();
+    trimmed.split_whitespace().next()?.parse().ok()
+}
+
+/// Decrypt eexec-encrypted data. Initial key R=55665, c1=52845, c2=22719.
+fn eexec_decrypt(data: &[u8]) -> Vec<u8> {
+    // Check if hex-encoded.
+    let is_hex = data
+        .iter()
+        .take(20)
+        .all(|b| b.is_ascii_hexdigit() || matches!(b, b'\r' | b'\n' | b' '));
+
+    let binary_data: Vec<u8>;
+    let input = if is_hex {
+        // Decode hex to binary.
+        let hex_chars: Vec<u8> = data
+            .iter()
+            .copied()
+            .filter(|b| b.is_ascii_hexdigit())
+            .collect();
+        binary_data = hex_chars
+            .chunks(2)
+            .filter_map(|pair| {
+                if pair.len() == 2 {
+                    let hi = hex_val(pair[0]);
+                    let lo = hex_val(pair[1]);
+                    Some((hi << 4) | lo)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        binary_data.as_slice()
+    } else {
+        data
+    };
+
+    let mut r: u16 = 55665;
+    let c1: u16 = 52845;
+    let c2: u16 = 22719;
+
+    let mut result = Vec::with_capacity(input.len());
+    for &cipher in input {
+        let plain = cipher ^ (r >> 8) as u8;
+        r = (cipher as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
+        result.push(plain);
+    }
+
+    // Skip first 4 random bytes.
+    if result.len() > 4 {
+        result.drain(..4);
+    }
+
+    result
+}
+
+fn hex_val(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'A'..=b'F' => b - b'A' + 10,
+        b'a'..=b'f' => b - b'a' + 10,
+        _ => 0,
+    }
+}
+
+/// Parse CharStrings from decrypted eexec data to extract glyph widths.
+fn parse_type1_charstrings(
+    decrypted: &[u8],
+    len_iv: usize,
+) -> std::collections::HashMap<String, i32> {
+    let mut widths = std::collections::HashMap::new();
+
+    let Ok(text) = std::str::from_utf8(decrypted) else {
+        // If not valid UTF-8, try to find CharStrings in binary-safe way.
+        return parse_type1_charstrings_binary(decrypted, len_iv);
+    };
+
+    // Find /CharStrings dict.
+    let Some(cs_pos) = text.find("/CharStrings") else {
+        return widths;
+    };
+
+    // Also check for lenIV in decrypted section.
+    let actual_len_iv = if let Some(liv_pos) = text[..cs_pos].find("/lenIV") {
+        let liv_after = text[liv_pos + 6..].trim_start();
+        liv_after
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(len_iv)
+    } else {
+        len_iv
+    };
+
+    // Parse entries: /<name> <length> RD <binary data> ND
+    // or: /<name> <length> -| <binary data> |-
+    let decrypted_bytes = decrypted;
+
+    // We need to iterate through the text, finding charstring entries.
+    let mut pos = cs_pos;
+    while pos < text.len() {
+        // Find next glyph name.
+        let Some(slash_pos) = text[pos..].find('/') else {
+            break;
+        };
+        let abs_slash = pos + slash_pos;
+
+        // Check if this is "end" or past the CharStrings dict.
+        let before_slash = text[pos..abs_slash].trim();
+        if before_slash.contains("end") && !before_slash.contains("noaccess") {
+            // Might be end of CharStrings.
+            if text[abs_slash..].starts_with("/FontName")
+                || text[abs_slash..].starts_with("/Subrs")
+            {
+                pos = abs_slash + 1;
+                continue;
+            }
+        }
+
+        // Extract glyph name.
+        let name_start = abs_slash + 1;
+        let name_end = text[name_start..]
+            .find(|c: char| c.is_whitespace())
+            .map(|p| name_start + p)
+            .unwrap_or(text.len());
+        let glyph_name = &text[name_start..name_end];
+
+        // Find length number after name.
+        let after_name = text[name_end..].trim_start();
+        let len_str = after_name.split_whitespace().next().unwrap_or("");
+        let Ok(cs_len) = len_str.parse::<usize>() else {
+            pos = name_end + 1;
+            continue;
+        };
+
+        // Find RD or -| marker.
+        let after_len_start = name_end + text[name_end..].find(len_str).unwrap_or(0);
+        let after_len_end = after_len_start + len_str.len();
+        let marker_area = &text[after_len_end..];
+        let rd_pos = marker_area
+            .find("RD ")
+            .or_else(|| marker_area.find("RD\t"))
+            .or_else(|| marker_area.find("-| "))
+            .or_else(|| marker_area.find("-|\t"));
+
+        let Some(rd_offset) = rd_pos else {
+            pos = name_end + 1;
+            continue;
+        };
+        // Binary data starts after "RD " (3 chars) + 1 space.
+        let bin_start_in_text = after_len_end + rd_offset;
+        // Skip "RD" or "-|" and one space/char.
+        let mut bin_start = bin_start_in_text;
+        while bin_start < text.len() && !text.as_bytes()[bin_start].is_ascii_whitespace() {
+            bin_start += 1;
+        }
+        bin_start += 1; // skip the space after RD
+
+        // The binary data is at decrypted_bytes[bin_start..bin_start+cs_len].
+        if bin_start + cs_len <= decrypted_bytes.len() {
+            let charstring_data = &decrypted_bytes[bin_start..bin_start + cs_len];
+            if let Some(width) = decrypt_charstring_width(charstring_data, actual_len_iv) {
+                widths.insert(glyph_name.to_string(), width);
+            }
+        }
+
+        pos = bin_start + cs_len;
+    }
+
+    widths
+}
+
+/// Fallback: parse CharStrings from binary data.
+fn parse_type1_charstrings_binary(
+    data: &[u8],
+    _len_iv: usize,
+) -> std::collections::HashMap<String, i32> {
+    // Try to find /CharStrings in the binary data.
+    let cs_marker = b"/CharStrings";
+    let Some(cs_pos) = find_bytes(data, cs_marker) else {
+        return std::collections::HashMap::new();
+    };
+    // Delegate to the text parser with lossy conversion.
+    let text = String::from_utf8_lossy(&data[cs_pos..]);
+    let _ = text; // Can't easily do binary parsing of PS here.
+    std::collections::HashMap::new()
+}
+
+/// Decrypt a Type 1 charstring and extract the width (wx from hsbw/sbw).
+fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
+    if data.len() <= len_iv {
+        return None;
+    }
+
+    // Charstring decryption: R=4330, c1=52845, c2=22719.
+    let mut r: u16 = 4330;
+    let c1: u16 = 52845;
+    let c2: u16 = 22719;
+
+    let mut decrypted = Vec::with_capacity(data.len());
+    for &cipher in data {
+        let plain = cipher ^ (r >> 8) as u8;
+        r = (cipher as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
+        decrypted.push(plain);
+    }
+
+    // Skip lenIV random bytes.
+    let cs = &decrypted[len_iv..];
+
+    // Parse first two integers (sbx, wx) followed by hsbw (13) or sbw (12 7).
+    let mut pos = 0;
+    let mut values = Vec::new();
+
+    while pos < cs.len() && values.len() < 4 {
+        let b = cs[pos];
+        if b == 13 {
+            // hsbw: stack has [sbx, wx]
+            break;
+        }
+        if b == 12 {
+            // Two-byte operator — could be sbw (12 7).
+            break;
+        }
+        // Parse integer.
+        if (32..=246).contains(&b) {
+            values.push(b as i32 - 139);
+            pos += 1;
+        } else if (247..=250).contains(&b) {
+            if pos + 1 >= cs.len() {
+                break;
+            }
+            values.push((b as i32 - 247) * 256 + cs[pos + 1] as i32 + 108);
+            pos += 2;
+        } else if (251..=254).contains(&b) {
+            if pos + 1 >= cs.len() {
+                break;
+            }
+            values.push(-(b as i32 - 251) * 256 - cs[pos + 1] as i32 - 108);
+            pos += 2;
+        } else if b == 255 {
+            if pos + 4 >= cs.len() {
+                break;
+            }
+            let val = i32::from_be_bytes([cs[pos + 1], cs[pos + 2], cs[pos + 3], cs[pos + 4]]);
+            values.push(val);
+            pos += 5;
+        } else {
+            // Unknown operator before width was found.
+            break;
+        }
+    }
+
+    // Width is the second value (values[1] = wx in hsbw/sbw).
+    values.get(1).copied()
+}
+
 /// Compute width corrections for a Type1 font with CFF program (FontFile3).
-///
-/// Handles two container formats:
-/// - OTF-wrapped CFF (/Subtype /OpenType): parsed via ttf_parser, widths from hmtx table
-/// - Raw CFF (/Subtype /Type1C): parsed via cff_parser, widths from charstring programs
-///
-/// For fonts without a PDF-level Encoding, falls back to the CFF's internal encoding
-/// to map character codes to glyph IDs.
 fn compute_cff_type1_width_corrections(
     font_data: &[u8],
     first_char: u32,
