@@ -1,9 +1,0 @@
-{
-	"editor.formatOnSave": true,
-	"[markdown]": {
-		"editor.formatOnSave": false
-	},
-	"search.exclude": {
-		"target": true
-	}
-}
