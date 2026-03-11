@@ -4031,30 +4031,31 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
             continue;
         }
 
-        // Check existing Encoding.
+        // Check existing Encoding — normalize everything to WinAnsiEncoding.
+        // MacRomanEncoding codes 128-255 differ from Unicode, but veraPDF's
+        // TrueType width validation uses raw character codes as Unicode in the
+        // (3,1) cmap. WinAnsiEncoding codes 160-255 are identity with Unicode,
+        // avoiding width mismatches.
         let needs_fix = match dict.get(b"Encoding") {
             Ok(Object::Name(enc)) => {
                 let enc_str = String::from_utf8_lossy(enc);
-                // Must be MacRomanEncoding or WinAnsiEncoding.
-                enc_str != "WinAnsiEncoding" && enc_str != "MacRomanEncoding"
+                enc_str != "WinAnsiEncoding"
             }
             Ok(Object::Dictionary(enc_dict)) => {
-                // Encoding is a dict — check BaseEncoding.
                 !matches!(
                     get_name(enc_dict, b"BaseEncoding").as_deref(),
-                    Some("WinAnsiEncoding") | Some("MacRomanEncoding")
+                    Some("WinAnsiEncoding")
                 )
             }
             Ok(Object::Reference(enc_ref)) => {
-                // Encoding references another object — check if it's a valid name or dict.
                 match doc.get_object(*enc_ref) {
                     Ok(Object::Name(enc)) => {
                         let enc_str = String::from_utf8_lossy(enc);
-                        enc_str != "WinAnsiEncoding" && enc_str != "MacRomanEncoding"
+                        enc_str != "WinAnsiEncoding"
                     }
                     Ok(Object::Dictionary(enc_dict)) => !matches!(
                         get_name(enc_dict, b"BaseEncoding").as_deref(),
-                        Some("WinAnsiEncoding") | Some("MacRomanEncoding")
+                        Some("WinAnsiEncoding")
                     ),
                     _ => true,
                 }
