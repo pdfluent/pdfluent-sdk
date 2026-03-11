@@ -132,7 +132,7 @@ fn find_non_embedded_fonts_detailed(doc: &Document) -> Vec<NonEmbeddedFont> {
             continue;
         }
 
-        let font_name = get_name(dict, b"BaseFont").unwrap_or_default();
+        let font_name = get_name_resolved(doc, dict, b"BaseFont").unwrap_or_default();
         if font_name.is_empty() {
             continue;
         }
@@ -188,17 +188,43 @@ fn find_non_embedded_fonts_detailed(doc: &Document) -> Vec<NonEmbeddedFont> {
 }
 
 /// Check if a font dictionary has an embedded font program via FontDescriptor.
+/// Verifies that FontFile/FontFile2/FontFile3 actually points to a Stream object,
+/// not just that the key exists (lopdf can drop stream data during load/save).
 fn has_embedded_font_program(doc: &Document, dict: &lopdf::Dictionary) -> bool {
     match dict.get(b"FontDescriptor").ok() {
         Some(Object::Reference(fd_id)) => {
             if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_id) {
-                fd.has(b"FontFile") || fd.has(b"FontFile2") || fd.has(b"FontFile3")
+                has_valid_font_file(doc, fd)
             } else {
                 false
             }
         }
         _ => false,
     }
+}
+
+/// Check if a FontDescriptor has a valid FontFile/FontFile2/FontFile3 stream.
+fn has_valid_font_file(doc: &Document, fd: &lopdf::Dictionary) -> bool {
+    for key in &[b"FontFile".as_slice(), b"FontFile2", b"FontFile3"] {
+        if let Ok(obj) = fd.get(key) {
+            match obj {
+                Object::Stream(s) => {
+                    if !s.content.is_empty() {
+                        return true;
+                    }
+                }
+                Object::Reference(id) => {
+                    if let Some(Object::Stream(s)) = doc.objects.get(id) {
+                        if !s.content.is_empty() {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 /// Get descendant CIDFont info: (object_id, is_embedded).
@@ -222,7 +248,7 @@ fn get_descendant_embed_info(
         let embedded = match desc.get(b"FontDescriptor").ok() {
             Some(Object::Reference(fd_id)) => {
                 if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_id) {
-                    fd.has(b"FontFile") || fd.has(b"FontFile2") || fd.has(b"FontFile3")
+                    has_valid_font_file(doc, fd)
                 } else {
                     false
                 }
@@ -2851,11 +2877,7 @@ pub fn fix_type1_widths(doc: &mut Document) -> usize {
 
         // Get the CFF font matrix scale.
         let matrix = cff.matrix();
-        let scale = if matrix.sx.abs() > f32::EPSILON {
-            matrix.sx as f64 * 1000.0
-        } else {
-            1.0
-        };
+        let scale = cff_matrix_scale(matrix.sx);
 
         // Build widths from CFF glyph data.
         let mut widths = Vec::new();
@@ -3163,7 +3185,8 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
 
         let (subtype, fd_id, first_char, existing_widths, enc_info, widths_ref) = info;
 
-        // Check if font program is embedded.
+        // Check if font program is embedded (FontFile key exists).
+        // We don't verify stream content here — read_embedded_font_data handles that.
         let has_embedded = matches!(
             doc.objects.get(&fd_id),
             Some(Object::Dictionary(d)) if d.has(b"FontFile") || d.has(b"FontFile2") || d.has(b"FontFile3")
@@ -3185,7 +3208,9 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         };
 
         let font_data = read_embedded_font_data(doc, fd_id);
-        let Some(font_data) = font_data else { continue };
+        let Some(font_data) = font_data else {
+            continue;
+        };
 
         let corrections: Vec<(usize, i64)>;
 
@@ -3313,11 +3338,16 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         // Type 1 FontFile widths are computed from the font program directly,
         // so they are always reliable regardless of encoding.
         let uses_type1_fontfile = has_ff1;
+        // CFF (FontFile3) with Differences-based encoding: each code maps to
+        // a specific glyph name that we look up in the CFF charset. This is
+        // unambiguous, like WinAnsiEncoding.
+        let has_differences_cff = has_ff3 && !enc_info.1.is_empty();
         let total_widths = existing_widths.len();
         if !has_reliable_encoding
             && !uses_cff_encoding
             && !uses_custom_cff_encoding
             && !uses_type1_fontfile
+            && !has_differences_cff
             && corrections.len() * 2 > total_widths
             && extensions.is_empty()
             && prepend_codes.is_empty()
@@ -4332,17 +4362,33 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
     let cs = &decrypted[len_iv..];
 
     // Parse first two integers (sbx, wx) followed by hsbw (13) or sbw (12 7).
+    // TeX fonts often use `div` (12 12) in the preamble, e.g. `59 2125 4 div hsbw`
+    // to encode fractional widths.
     let mut pos = 0;
     let mut values = Vec::new();
 
-    while pos < cs.len() && values.len() < 4 {
+    while pos < cs.len() && values.len() < 8 {
         let b = cs[pos];
         if b == 13 {
             // hsbw: stack has [sbx, wx]
             break;
         }
         if b == 12 {
-            // Two-byte operator — could be sbw (12 7).
+            if pos + 1 < cs.len() && cs[pos + 1] == 12 {
+                // div: pop two values, push quotient (a b div → a/b).
+                pos += 2;
+                if values.len() >= 2 {
+                    let divisor = values.pop().unwrap();
+                    let dividend = values.pop().unwrap();
+                    if divisor != 0 {
+                        values.push(dividend / divisor);
+                    } else {
+                        values.push(dividend);
+                    }
+                }
+                continue;
+            }
+            // Other two-byte operator (e.g. sbw = 12 7).
             break;
         }
         // Parse integer.
@@ -4376,6 +4422,23 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
 
     // Width is the second value (values[1] = wx in hsbw/sbw).
     values.get(1).copied()
+}
+
+/// Compute the CFF font matrix scale factor, compensating for f32→f64 precision loss.
+///
+/// CFF FontMatrix `sx` is stored as f32 (commonly 0.001 for 1000 UPM fonts).
+/// Converting `0.001f32` to f64 then multiplying by 1000.0 yields 1.0000000474…
+/// instead of exactly 1.0. This tiny error propagates into glyph widths,
+/// causing sub-unit discrepancies that veraPDF flags.
+fn cff_matrix_scale(matrix_sx: f32) -> f64 {
+    if matrix_sx.abs() > f32::EPSILON {
+        let raw = matrix_sx as f64 * 1000.0;
+        // Round to 6 decimal places — f32 has ~7 digits of precision,
+        // so the 7th+ digit is noise from the f32→f64 cast.
+        (raw * 1_000_000.0).round() / 1_000_000.0
+    } else {
+        1.0
+    }
 }
 
 /// Compute width corrections for a Type1 font with CFF program (FontFile3).
@@ -4412,11 +4475,7 @@ fn compute_cff_type1_width_corrections(
     };
 
     let matrix = cff.matrix();
-    let scale = if matrix.sx.abs() > f32::EPSILON {
-        matrix.sx as f64 * 1000.0
-    } else {
-        1.0
-    };
+    let scale = cff_matrix_scale(matrix.sx);
 
     let mut corrections = Vec::new();
 
@@ -4435,7 +4494,10 @@ fn compute_cff_type1_width_corrections(
 
         let Some(frac_w) = frac_w else { continue };
 
-        if (pdf_w - frac_w).abs() > 1.0 {
+        // Use >= 1.0 threshold because cff_parser returns integer widths (u16),
+        // losing fractional precision. A 1-unit integer diff may hide a >1 fractional
+        // diff that veraPDF catches (e.g. 479.89 rounds to 480 vs dict 481).
+        if (pdf_w - frac_w).abs() >= 1.0 {
             corrections.push((i, frac_w.round() as i64));
         }
     }
@@ -4482,11 +4544,7 @@ fn compute_otf_cff_corrections(
                 let enc_map = parse_cff_encoding_map(cff_bytes);
                 let cff = cff_parser::Table::parse(cff_bytes)?;
                 let matrix = cff.matrix();
-                let cff_scale = if matrix.sx.abs() > f32::EPSILON {
-                    matrix.sx as f64 * 1000.0
-                } else {
-                    1.0
-                };
+                let cff_scale = cff_matrix_scale(matrix.sx);
                 Some((cff, enc_map, cff_scale))
             })
         } else {
@@ -4549,7 +4607,9 @@ fn compute_otf_cff_corrections(
 
         let Some(frac_w) = frac_w else { continue };
 
-        if (pdf_w - frac_w).abs() > 1.0 {
+        // Use >= 1.0: CFF glyph_width returns integer u16, so a 1-unit diff
+        // may mask a fractional diff >1 that veraPDF catches.
+        if (pdf_w - frac_w).abs() >= 1.0 {
             corrections.push((i, frac_w.round() as i64));
         }
     }
@@ -4675,11 +4735,7 @@ fn compute_cff_single_width(
                         let enc_map = parse_cff_encoding_map(cff_bytes);
                         if let Some(cff) = cff_parser::Table::parse(cff_bytes) {
                             let matrix = cff.matrix();
-                            let cff_scale = if matrix.sx.abs() > f32::EPSILON {
-                                matrix.sx as f64 * 1000.0
-                            } else {
-                                1.0
-                            };
+                            let cff_scale = cff_matrix_scale(matrix.sx);
                             if let Some(&gid) = enc_map.get(&(code as u8)) {
                                 if gid != 0 {
                                     return cff
@@ -4702,11 +4758,7 @@ fn compute_cff_single_width(
     // Fall back to raw CFF parse.
     let cff = cff_parser::Table::parse(font_data)?;
     let matrix = cff.matrix();
-    let scale = if matrix.sx.abs() > f32::EPSILON {
-        matrix.sx as f64 * 1000.0
-    } else {
-        1.0
-    };
+    let scale = cff_matrix_scale(matrix.sx);
 
     cff_width_for_code(&cff, font_data, code, enc_name, differences, scale)
 }
@@ -6260,11 +6312,7 @@ fn compute_symbolic_cff_width_corrections(
     };
 
     let matrix = cff.matrix();
-    let scale = if matrix.sx.abs() > f32::EPSILON {
-        matrix.sx as f64 * 1000.0
-    } else {
-        1.0
-    };
+    let scale = cff_matrix_scale(matrix.sx);
 
     let mut corrections = Vec::new();
 
@@ -6317,6 +6365,18 @@ fn count_all_fonts(doc: &Document) -> usize {
 fn get_name(dict: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
     match dict.get(key).ok()? {
         Object::Name(n) => String::from_utf8(n.clone()).ok(),
+        _ => None,
+    }
+}
+
+/// Like `get_name` but resolves indirect references through the document.
+fn get_name_resolved(doc: &Document, dict: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
+    match dict.get(key).ok()? {
+        Object::Name(n) => String::from_utf8(n.clone()).ok(),
+        Object::Reference(id) => match doc.get_object(*id).ok()? {
+            Object::Name(n) => String::from_utf8(n.clone()).ok(),
+            _ => None,
+        },
         _ => None,
     }
 }

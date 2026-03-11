@@ -2040,7 +2040,8 @@ fn remove_forbidden_annotations(doc: &mut Document) {
                                 // Also remove non-standard annotation types.
                                 || !is_annotation_subtype(n)
                             }
-                            _ => false,
+                            // Missing or null Subtype — invalid for PDF/A (6.3.1).
+                            _ => true,
                         };
                         if is_forbidden {
                             return Some(*id);
