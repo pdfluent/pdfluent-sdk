@@ -6105,42 +6105,39 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                 .unwrap_or(255);
 
             // Build set of invalid codes using font's cmap.
+            // For symbolic fonts without Encoding, veraPDF uses the (3,0)
+            // Symbol cmap subtable with 0xF000 offset. face.glyph_index()
+            // may use a different subtable (3,1 Unicode), so we ONLY check
+            // the 0xF000 path to match veraPDF's behavior.
             let mut invalid_codes = HashSet::new();
             let mut replacement = 0x20u8;
 
             if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
-                // For TrueType symbolic fonts, try both direct char mapping and
-                // the 0xF000 offset (Microsoft Symbol cmap convention).
                 for code in first_char..=last_char.min(255) {
-                    let ch = char::from(code as u8);
                     let sym_ch = char::from_u32(0xF000 + code);
-                    let has_glyph = face
-                        .glyph_index(ch)
+                    let has_glyph = sym_ch
+                        .and_then(|c| face.glyph_index(c))
                         .map(|g| g.0 != 0)
-                        .unwrap_or(false)
-                        || sym_ch
-                            .and_then(|c| face.glyph_index(c))
-                            .map(|g| g.0 != 0)
-                            .unwrap_or(false);
+                        .unwrap_or(false);
                     if !has_glyph {
                         invalid_codes.insert(code as u8);
                     }
                 }
 
-                // Find replacement code (prefer space).
-                if face
-                    .glyph_index(' ')
+                // Find replacement code using same 0xF000 path.
+                let space_valid = char::from_u32(0xF020)
+                    .and_then(|c| face.glyph_index(c))
                     .map(|g| g.0 != 0)
-                    .unwrap_or(false)
-                {
+                    .unwrap_or(false);
+                if space_valid {
                     replacement = 0x20;
                 } else {
-                    // Use the first valid code.
+                    // Use the first valid code (via 0xF000 path).
                     for code in 0u32..=255 {
                         if !invalid_codes.contains(&(code as u8)) {
-                            let ch = char::from(code as u8);
-                            if face
-                                .glyph_index(ch)
+                            let sym_ch = char::from_u32(0xF000 + code);
+                            if sym_ch
+                                .and_then(|c| face.glyph_index(c))
                                 .map(|g| g.0 != 0)
                                 .unwrap_or(false)
                             {
