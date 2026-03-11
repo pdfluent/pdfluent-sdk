@@ -107,6 +107,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     strip_non_catalog_metadata(doc);
     ensure_page_resources(doc);
     promote_inline_fonts(doc);
+    sanitize_hash_encoded_names(doc);
 
     Ok(report)
 }
@@ -3096,6 +3097,116 @@ fn promote_inline_fonts(doc: &mut Document) {
             }
             _ => {}
         }
+    }
+}
+
+/// Sanitize PDF name objects that contain `#`-encoded characters.
+///
+/// lopdf cannot serialize name objects with raw `#XX` escape sequences (e.g. `/Im#22`).
+/// This causes objects to be silently dropped during save. We decode the `#XX` sequences
+/// into their actual characters so lopdf can handle them.
+fn sanitize_hash_encoded_names(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        let needs_fix = match doc.objects.get(&id) {
+            Some(Object::Dictionary(d)) => dict_has_hash_names(d),
+            Some(Object::Stream(s)) => dict_has_hash_names(&s.dict),
+            _ => false,
+        };
+        if !needs_fix {
+            continue;
+        }
+        // Clone, fix, and replace.
+        let fixed = match doc.objects.get(&id).cloned() {
+            Some(Object::Dictionary(d)) => Some(Object::Dictionary(fix_hash_names_in_dict(d))),
+            Some(Object::Stream(mut s)) => {
+                s.dict = fix_hash_names_in_dict(s.dict);
+                Some(Object::Stream(s))
+            }
+            _ => None,
+        };
+        if let Some(obj) = fixed {
+            doc.objects.insert(id, obj);
+        }
+    }
+}
+
+fn dict_has_hash_names(dict: &lopdf::Dictionary) -> bool {
+    for (key, val) in dict.iter() {
+        if key.windows(1).any(|w| w[0] == b'#') {
+            return true;
+        }
+        match val {
+            Object::Name(n) if n.windows(1).any(|w| w[0] == b'#') => return true,
+            Object::Dictionary(d) if dict_has_hash_names(d) => return true,
+            Object::Array(arr) => {
+                for item in arr {
+                    if let Object::Name(n) = item {
+                        if n.windows(1).any(|w| w[0] == b'#') {
+                            return true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn fix_hash_names_in_dict(dict: lopdf::Dictionary) -> lopdf::Dictionary {
+    let mut new_dict = lopdf::Dictionary::new();
+    for (key, val) in dict.into_iter() {
+        let fixed_key = decode_hash_name(&key);
+        let fixed_val = fix_hash_name_value(val);
+        new_dict.set(fixed_key, fixed_val);
+    }
+    new_dict
+}
+
+fn fix_hash_name_value(val: Object) -> Object {
+    match val {
+        Object::Name(n) => Object::Name(decode_hash_name_bytes(&n)),
+        Object::Dictionary(d) => Object::Dictionary(fix_hash_names_in_dict(d)),
+        Object::Array(arr) => {
+            Object::Array(arr.into_iter().map(fix_hash_name_value).collect())
+        }
+        other => other,
+    }
+}
+
+fn decode_hash_name(name: &[u8]) -> String {
+    String::from_utf8(decode_hash_name_bytes(name))
+        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
+}
+
+fn decode_hash_name_bytes(name: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(name.len());
+    let mut i = 0;
+    while i < name.len() {
+        if name[i] == b'#' && i + 2 < name.len() {
+            // Try to decode #XX as hex.
+            let hi = hex_digit(name[i + 1]);
+            let lo = hex_digit(name[i + 2]);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                result.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(name[i]);
+        i += 1;
+    }
+    result
+}
+
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 
