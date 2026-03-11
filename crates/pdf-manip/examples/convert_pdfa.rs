@@ -80,6 +80,10 @@ fn main() {
     let sym_flags = pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
     eprintln!("Symbolic flags: fixed={sym_flags}");
 
+    // Populate missing FirstChar/LastChar/Widths for embedded fonts (6.2.11.2:4-6).
+    let missing_widths = pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+    eprintln!("Missing font widths: populated={missing_widths}");
+
     // Conservative width mismatch fix: only updates individual mismatched entries
     // where the mapping is unambiguous. Skips fonts with >50% mismatches.
     // Also handles subset fonts (ABCDEF+FontName) whose widths differ slightly.
@@ -104,7 +108,7 @@ fn main() {
     // Supplementary fixups (small rule fixes).
     let fixup_report = pdf_manip::pdfa_fixups::run_fixups(&mut doc);
     eprintln!(
-        "Fixups: lengths={}, opi={}, stream_f={}, ps_xobj={}, ref_xobj={}, overflow={}, long_str={}, op_space={}, tiny_float={}, hex_str={}, inline_interp={}, jpx_cs={}",
+        "Fixups: lengths={}, opi={}, stream_f={}, ps_xobj={}, ref_xobj={}, overflow={}, long_str={}, op_space={}, tiny_float={}, hex_str={}, inline_interp={}, jpx_cs={}, concat_op={}",
         fixup_report.stream_lengths_fixed,
         fixup_report.opi_keys_removed,
         fixup_report.stream_f_keys_removed,
@@ -117,6 +121,7 @@ fn main() {
         fixup_report.odd_hex_strings_fixed,
         fixup_report.inline_image_interpolate_fixed,
         fixup_report.jpx_colorspace_fixed,
+        fixup_report.concatenated_operators_fixed,
     );
 
     match pdf_manip::pdfa_xmp::repair_xmp_metadata(
@@ -132,6 +137,7 @@ fn main() {
     let mut saved = Vec::new();
     doc.save_to(&mut saved).expect("save");
     pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+    pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
 
     std::fs::write(&args[2], &saved).expect("write output");
     eprintln!("Saved to {} ({} bytes)", args[2], saved.len());

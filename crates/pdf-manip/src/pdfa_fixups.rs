@@ -30,6 +30,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let tiny_floats_fixed = fix_tiny_floats_in_streams(doc);
     let odd_hex_strings_fixed = fix_odd_hex_strings_in_streams(doc);
     let inline_image_interpolate_fixed = fix_inline_image_interpolate(doc);
+    let concatenated_operators_fixed = fix_concatenated_operators(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
@@ -56,6 +57,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         odd_hex_strings_fixed,
         inline_image_interpolate_fixed,
         jpx_colorspace_fixed,
+        concatenated_operators_fixed,
     }
 }
 
@@ -84,6 +86,7 @@ pub struct FixupReport {
     pub odd_hex_strings_fixed: usize,
     pub inline_image_interpolate_fixed: usize,
     pub jpx_colorspace_fixed: usize,
+    pub concatenated_operators_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -3698,6 +3701,70 @@ fn fix_odd_hex_strings_in_streams(doc: &mut Document) -> usize {
         }
 
         if fixed_any {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"Filter");
+                s.dict.remove(b"DecodeParms");
+                s.content = new_content;
+                let _ = s.compress();
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// Fix concatenated PDF operators (e.g. "Qq" → "Q q")
+// ---------------------------------------------------------------------------
+//
+// Some broken PDF producers concatenate operators without whitespace separators.
+// "Qq" is the most common — Q (restore graphics state) followed by q (save
+// graphics state). This is not a valid single operator, causing veraPDF to flag
+// rule 6.2.2:1 ("operator not defined in ISO 32000-1").
+
+fn fix_concatenated_operators(doc: &mut Document) -> usize {
+    let content_stream_ids = collect_content_stream_ids(doc);
+    let mut count = 0;
+
+    for id in content_stream_ids {
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: does this stream contain "Qq" at all?
+        if !decompressed.windows(2).any(|w| w == b"Qq") {
+            continue;
+        }
+
+        // Replace "Qq" with "Q q" only when it appears as a standalone operator
+        // sequence (preceded by whitespace/newline/SOF and followed by
+        // whitespace/newline/EOF).
+        let mut new_content = Vec::with_capacity(decompressed.len() + 64);
+        let mut i = 0;
+        let len = decompressed.len();
+        let mut fixed = false;
+
+        while i < len {
+            if i + 2 <= len && &decompressed[i..i + 2] == b"Qq" {
+                let before_ok = i == 0 || decompressed[i - 1].is_ascii_whitespace();
+                let after_ok = i + 2 >= len || decompressed[i + 2].is_ascii_whitespace();
+                if before_ok && after_ok {
+                    new_content.extend_from_slice(b"Q q");
+                    i += 2;
+                    fixed = true;
+                    count += 1;
+                    continue;
+                }
+            }
+            new_content.push(decompressed[i]);
+            i += 1;
+        }
+
+        if fixed {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
