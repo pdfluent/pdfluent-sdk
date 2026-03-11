@@ -1,161 +1,184 @@
-//! License token — HMAC-SHA256 signed JWT-like tokens.
+//! License token — Ed25519 signed license files.
 //!
-//! Token format: `base64(header).base64(claims_json).base64(hmac_sha256)`
+//! License format: JSON file with a `signature` field containing a base64-encoded
+//! Ed25519 signature over the canonical payload (all fields except `signature`).
 //!
-//! This is a simplified JWT compatible with offline validation.
-//! The signing key is a shared secret between the license server and the engine.
+//! The public key is embedded in the binary for verification.
+//! The private key is only used by the license generation tool.
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-use crate::claims::LicenseClaims;
+use crate::claims::LicenseFile;
+#[cfg(feature = "signing")]
+use crate::claims::LicensePayload;
 use crate::error::{LicenseError, Result};
 
-type HmacSha256 = Hmac<Sha256>;
-
-/// Token header (fixed for now).
-const HEADER: &str = r#"{"alg":"HS256","typ":"XFA-LIC"}"#;
-
-/// Sign license claims into a token string.
+/// Verify a license file JSON string against a public key.
 ///
-/// Returns a dot-separated string: `header.payload.signature`.
-pub fn sign(claims: &LicenseClaims, secret: &[u8]) -> Result<String> {
-    let header_b64 = URL_SAFE_NO_PAD.encode(HEADER.as_bytes());
-    let payload_json = serde_json::to_vec(claims)?;
-    let payload_b64 = URL_SAFE_NO_PAD.encode(&payload_json);
+/// Returns the parsed `LicenseFile` if the signature is valid.
+pub fn verify_license(public_key: &[u8], license_json: &str) -> Result<LicenseFile> {
+    // Validate the public key first.
+    let key_bytes: [u8; 32] = public_key
+        .try_into()
+        .map_err(|_| LicenseError::InvalidPublicKey)?;
+    let verifying_key =
+        VerifyingKey::from_bytes(&key_bytes).map_err(|_| LicenseError::InvalidPublicKey)?;
 
-    let signing_input = format!("{header_b64}.{payload_b64}");
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
-    mac.update(signing_input.as_bytes());
-    let signature = mac.finalize().into_bytes();
-    let sig_b64 = URL_SAFE_NO_PAD.encode(signature);
+    let license_file: LicenseFile = serde_json::from_str(license_json)?;
 
-    Ok(format!("{signing_input}.{sig_b64}"))
-}
+    // Reconstruct the canonical payload JSON (without the signature field).
+    let payload_json = serde_json::to_string(&license_file.payload)?;
 
-/// Verify a token string and extract the claims.
-///
-/// Checks the HMAC signature but does NOT check expiry — the caller
-/// should use [`LicenseClaims::is_expired`] for that.
-pub fn verify(token: &str, secret: &[u8]) -> Result<LicenseClaims> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return Err(LicenseError::MalformedToken(format!(
-            "expected 3 parts, got {}",
-            parts.len()
-        )));
-    }
-
-    let signing_input = format!("{}.{}", parts[0], parts[1]);
-
-    // Verify signature.
-    let sig_bytes = URL_SAFE_NO_PAD
-        .decode(parts[2])
+    // Decode and verify the signature.
+    let sig_bytes = STANDARD
+        .decode(&license_file.signature)
         .map_err(|e| LicenseError::MalformedToken(format!("bad signature base64: {e}")))?;
 
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
-    mac.update(signing_input.as_bytes());
-    mac.verify_slice(&sig_bytes)
+    let signature = Signature::from_slice(&sig_bytes)
+        .map_err(|_| LicenseError::MalformedToken("invalid signature length".into()))?;
+
+    verifying_key
+        .verify(payload_json.as_bytes(), &signature)
         .map_err(|_| LicenseError::InvalidSignature)?;
 
-    // Decode payload.
-    let payload_bytes = URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .map_err(|e| LicenseError::MalformedToken(format!("bad payload base64: {e}")))?;
-
-    let claims: LicenseClaims = serde_json::from_slice(&payload_bytes)?;
-    Ok(claims)
+    Ok(license_file)
 }
 
-/// Verify a token and additionally check that it has not expired.
-pub fn verify_and_check_expiry(token: &str, secret: &[u8], now: u64) -> Result<LicenseClaims> {
-    let claims = verify(token, secret)?;
-    if claims.is_expired(now) {
-        return Err(LicenseError::Expired(claims.expires_at));
+/// Verify a license and check that it has not expired.
+pub fn verify_and_check_expiry(
+    public_key: &[u8],
+    license_json: &str,
+    now: u64,
+) -> Result<LicenseFile> {
+    let license = verify_license(public_key, license_json)?;
+    if license.payload.is_expired(now) {
+        return Err(LicenseError::Expired(license.payload.expires_at));
     }
-    Ok(claims)
+    Ok(license)
+}
+
+/// Sign a license payload with a private key (only available with `signing` feature).
+///
+/// Returns the complete license file JSON string including the signature.
+#[cfg(feature = "signing")]
+pub fn sign_license(private_key: &[u8], payload: &LicensePayload) -> Result<String> {
+    use ed25519_dalek::Signer;
+    use ed25519_dalek::SigningKey;
+
+    let key_bytes: [u8; 32] = private_key
+        .try_into()
+        .map_err(|_| LicenseError::MalformedToken("private key must be 32 bytes".into()))?;
+    let signing_key = SigningKey::from_bytes(&key_bytes);
+
+    let payload_json = serde_json::to_string(payload)?;
+    let signature = signing_key.sign(payload_json.as_bytes());
+    let sig_b64 = STANDARD.encode(signature.to_bytes());
+
+    let license_file = LicenseFile {
+        payload: payload.clone(),
+        signature: sig_b64,
+    };
+
+    Ok(serde_json::to_string_pretty(&license_file)?)
+}
+
+/// Generate a new Ed25519 keypair (only available with `signing` feature).
+///
+/// Returns `(private_key_bytes, public_key_bytes)`.
+#[cfg(feature = "signing")]
+pub fn generate_keypair() -> ([u8; 32], [u8; 32]) {
+    use ed25519_dalek::SigningKey;
+    use rand::rngs::OsRng;
+
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let verifying_key = signing_key.verifying_key();
+    (signing_key.to_bytes(), verifying_key.to_bytes())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "signing")]
     use crate::claims::Tier;
 
-    const SECRET: &[u8] = b"test-secret-key-for-xfa-license";
-
-    fn sample_claims() -> LicenseClaims {
-        LicenseClaims::new("cust-42", Tier::Professional, 1700000000, 1703000000)
+    #[cfg(feature = "signing")]
+    fn test_keypair() -> ([u8; 32], [u8; 32]) {
+        generate_keypair()
     }
 
+    #[cfg(feature = "signing")]
+    fn sample_payload() -> LicensePayload {
+        LicensePayload {
+            licensee: "Test User".into(),
+            email: "test@example.com".into(),
+            company: "Test Corp".into(),
+            tier: Tier::Professional,
+            seats: 5,
+            issued_at: 1700000000,
+            expires_at: 1730000000,
+            features: None,
+        }
+    }
+
+    #[cfg(feature = "signing")]
     #[test]
     fn sign_and_verify_roundtrip() {
-        let claims = sample_claims();
-        let token = sign(&claims, SECRET).unwrap();
-        let verified = verify(&token, SECRET).unwrap();
-        assert_eq!(claims, verified);
+        let (private_key, public_key) = test_keypair();
+        let payload = sample_payload();
+        let license_json = sign_license(&private_key, &payload).unwrap();
+        let verified = verify_license(&public_key, &license_json).unwrap();
+        assert_eq!(verified.payload, payload);
     }
 
+    #[cfg(feature = "signing")]
     #[test]
-    fn token_has_three_parts() {
-        let token = sign(&sample_claims(), SECRET).unwrap();
-        assert_eq!(token.split('.').count(), 3);
-    }
-
-    #[test]
-    fn wrong_secret_fails() {
-        let token = sign(&sample_claims(), SECRET).unwrap();
-        let result = verify(&token, b"wrong-secret");
+    fn wrong_key_fails() {
+        let (private_key, _) = test_keypair();
+        let (_, other_public) = test_keypair();
+        let payload = sample_payload();
+        let license_json = sign_license(&private_key, &payload).unwrap();
+        let result = verify_license(&other_public, &license_json);
         assert!(matches!(result, Err(LicenseError::InvalidSignature)));
     }
 
+    #[cfg(feature = "signing")]
     #[test]
     fn tampered_payload_fails() {
-        let token = sign(&sample_claims(), SECRET).unwrap();
-        let parts: Vec<&str> = token.split('.').collect();
-        // Replace one char in the payload.
-        let mut payload = parts[1].to_string();
-        let replacement = if payload.ends_with('A') { 'B' } else { 'A' };
-        payload.pop();
-        payload.push(replacement);
-        let tampered = format!("{}.{}.{}", parts[0], payload, parts[2]);
-        let result = verify(&tampered, SECRET);
+        let (private_key, public_key) = test_keypair();
+        let payload = sample_payload();
+        let license_json = sign_license(&private_key, &payload).unwrap();
+        let tampered = license_json.replace("Test User", "Evil User");
+        let result = verify_license(&public_key, &tampered);
         assert!(matches!(result, Err(LicenseError::InvalidSignature)));
     }
 
+    #[cfg(feature = "signing")]
     #[test]
-    fn malformed_token_too_few_parts() {
-        let result = verify("only.two", SECRET);
-        assert!(matches!(result, Err(LicenseError::MalformedToken(_))));
-    }
+    fn expiry_check() {
+        let (private_key, public_key) = test_keypair();
+        let payload = sample_payload(); // expires at 1730000000
+        let license_json = sign_license(&private_key, &payload).unwrap();
 
-    #[test]
-    fn malformed_token_bad_base64() {
-        let result = verify("a.b.!!!invalid!!!", SECRET);
-        assert!(matches!(result, Err(LicenseError::MalformedToken(_))));
-    }
-
-    #[test]
-    fn verify_with_expiry_check() {
-        let claims = sample_claims(); // expires at 1703000000
-        let token = sign(&claims, SECRET).unwrap();
-
-        // Before expiry → OK.
-        let result = verify_and_check_expiry(&token, SECRET, 1701000000);
+        let result = verify_and_check_expiry(&public_key, &license_json, 1710000000);
         assert!(result.is_ok());
 
-        // After expiry → error.
-        let result = verify_and_check_expiry(&token, SECRET, 1704000000);
-        assert!(matches!(result, Err(LicenseError::Expired(1703000000))));
+        let result = verify_and_check_expiry(&public_key, &license_json, 1740000000);
+        assert!(matches!(result, Err(LicenseError::Expired(1730000000))));
     }
 
     #[test]
-    fn different_tiers_produce_different_tokens() {
-        let basic = LicenseClaims::new("c", Tier::Basic, 1000, 2000);
-        let pro = LicenseClaims::new("c", Tier::Professional, 1000, 2000);
-        let t1 = sign(&basic, SECRET).unwrap();
-        let t2 = sign(&pro, SECRET).unwrap();
-        assert_ne!(t1, t2);
+    fn invalid_public_key_length() {
+        // Valid license JSON structure but wrong key length
+        let json = r#"{"licensee":"x","email":"x","company":"x","tier":"trial","seats":1,"issued_at":0,"expires_at":0,"signature":"AAAA"}"#;
+        let result = verify_license(&[0u8; 16], json);
+        assert!(matches!(result, Err(LicenseError::InvalidPublicKey)));
+    }
+
+    #[test]
+    fn malformed_json() {
+        let result = verify_license(&[0u8; 32], "not json");
+        assert!(matches!(result, Err(LicenseError::Json(_))));
     }
 }

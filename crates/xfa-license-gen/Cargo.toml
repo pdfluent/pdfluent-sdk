@@ -1,0 +1,17 @@
+[package]
+name = "xfa-license-gen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "xfa-license-gen"
+path = "src/main.rs"
+
+[dependencies]
+xfa-license = { workspace = true, features = ["signing"] }
+clap.workspace = true
+hex = "0.4"
+anyhow.workspace = true
+serde_json.workspace = true

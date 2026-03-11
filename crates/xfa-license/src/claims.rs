@@ -229,6 +229,55 @@ impl LicenseClaims {
     }
 }
 
+/// The unsigned payload of a license file (Ed25519).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LicensePayload {
+    /// Name of the license holder.
+    pub licensee: String,
+    /// Contact email.
+    pub email: String,
+    /// Company name.
+    pub company: String,
+    /// License tier.
+    pub tier: Tier,
+    /// Number of seats.
+    pub seats: u32,
+    /// Unix timestamp when the license was issued.
+    pub issued_at: u64,
+    /// Unix timestamp when the license expires.
+    pub expires_at: u64,
+    /// Optional feature overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<Vec<String>>,
+}
+
+/// A signed license file loaded from disk.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LicenseFile {
+    /// The license payload.
+    #[serde(flatten)]
+    pub payload: LicensePayload,
+    /// Base64-encoded Ed25519 signature over the canonical payload JSON.
+    pub signature: String,
+}
+
+impl LicensePayload {
+    /// Convert to LicenseClaims for use with the metering system.
+    pub fn to_claims(&self) -> LicenseClaims {
+        LicenseClaims::new(
+            &self.licensee,
+            self.tier,
+            self.issued_at,
+            self.expires_at,
+        )
+    }
+
+    /// Check if the license has expired.
+    pub fn is_expired(&self, now: u64) -> bool {
+        now >= self.expires_at
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
