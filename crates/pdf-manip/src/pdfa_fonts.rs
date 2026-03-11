@@ -4465,11 +4465,14 @@ fn cff_width_for_code(
         };
         if !glyph_name.is_empty() {
             if let Some(w) = find_cff_glyph_width_by_name_fractional(cff, &glyph_name, scale) {
-                // Verify against CFF encoding: if the CFF encoding maps this code
-                // to a different GID with a different width, use the CFF width.
-                // This handles fonts where the PDF encoding name maps to a glyph
-                // with a different width than the CFF encoding assigns.
-                if code <= 255 {
+                // For fonts with custom CFF encoding (not Standard/Expert),
+                // verify against CFF encoding: if the CFF encoding maps this
+                // code to a different GID with a different width, use the CFF
+                // width. This handles fonts where the PDF encoding name maps
+                // to a glyph with a different width than the CFF encoding.
+                // We only do this for custom encodings because Standard/Expert
+                // encodings give unreliable GIDs in subset fonts.
+                if code <= 255 && cff_has_custom_encoding(font_data) {
                     let enc_map = parse_cff_encoding_map(font_data);
                     if let Some(&gid) = enc_map.get(&(code as u8)) {
                         if gid != 0 {
@@ -4547,6 +4550,22 @@ fn cff_width_for_code(
 /// Check if the CFF has a custom encoding (not Standard or Expert).
 /// Parse the CFF encoding table directly from raw CFF data, returning a
 /// code → GID map. Does NOT apply Standard Encoding fallback.
+/// Check if the CFF has a custom encoding (not Standard or Expert).
+fn cff_has_custom_encoding(data: &[u8]) -> bool {
+    if data.len() < 4 {
+        return false;
+    }
+    let header_size = data[2] as usize;
+    let Some(after_name) = skip_cff_index(data, header_size) else {
+        return false;
+    };
+    let Some((top_dict_data, _)) = read_cff_index_first(data, after_name) else {
+        return false;
+    };
+    let enc_offset = parse_cff_top_dict_encoding_offset(&top_dict_data);
+    enc_offset > 1
+}
+
 fn parse_cff_encoding_map(data: &[u8]) -> std::collections::HashMap<u8, u16> {
     let mut map = std::collections::HashMap::new();
 
