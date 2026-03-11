@@ -757,41 +757,38 @@ fn update_simple_widths(
         (fc, lc, enc_name, diffs)
     };
 
-    // For TrueType fonts (with 'glyf' table), veraPDF validates widths using
-    // the (1,0) Mac cmap first, falling back to the (3,1) Unicode cmap with
-    // the raw character code. It does NOT use the PDF Encoding mapping.
-    // For CFF-based OTF fonts, the encoding-based approach is correct.
+    // veraPDF validates TrueType widths using the PDF Encoding to map
+    // character codes to Unicode, then looks up in the (3,1) cmap.
+    // This is the same algorithm for both TrueType and CFF fonts.
     let is_truetype_outline = face.tables().glyf.is_some();
 
     let mut widths = Vec::new();
     for code in first_char..=last_char {
-        let width = if is_truetype_outline {
-            // TrueType: (1,0) Mac cmap first, then (3,1) raw code as Unicode.
-            truetype_width_for_code(face, code, scale)
-                .map(|w| w.round() as i64)
+        let ch = encoding_to_char(code, &encoding_name);
+        let width = if let Some(glyph_id) = face.glyph_index(ch) {
+            face.glyph_hor_advance(glyph_id)
+                .map(|w| (w as f64 * scale).round() as i64)
                 .unwrap_or(0)
-        } else {
-            // CFF/Type1: use encoding → Unicode → cmap.
-            let ch = encoding_to_char(code, &encoding_name);
-            if let Some(glyph_id) = face.glyph_index(ch) {
-                face.glyph_hor_advance(glyph_id)
+        } else if let Some(glyph_name) = differences.get(&code) {
+            // Encoding Differences: look up glyph by name in the font program.
+            if let Some(gid) = face.glyph_index_by_name(glyph_name) {
+                face.glyph_hor_advance(gid)
                     .map(|w| (w as f64 * scale).round() as i64)
                     .unwrap_or(0)
-            } else if let Some(glyph_name) = differences.get(&code) {
-                if let Some(gid) = face.glyph_index_by_name(glyph_name) {
-                    face.glyph_hor_advance(gid)
-                        .map(|w| (w as f64 * scale).round() as i64)
-                        .unwrap_or(0)
-                } else {
-                    glyph_name_to_unicode(glyph_name)
-                        .and_then(|u| face.glyph_index(u))
-                        .and_then(|gid| face.glyph_hor_advance(gid))
-                        .map(|w| (w as f64 * scale).round() as i64)
-                        .unwrap_or(0)
-                }
             } else {
-                0
+                glyph_name_to_unicode(glyph_name)
+                    .and_then(|u| face.glyph_index(u))
+                    .and_then(|gid| face.glyph_hor_advance(gid))
+                    .map(|w| (w as f64 * scale).round() as i64)
+                    .unwrap_or(0)
             }
+        } else if is_truetype_outline && code <= u16::MAX as u32 {
+            // Fallback for TrueType: GlyphId == code (identity mapping).
+            face.glyph_hor_advance(ttf_parser::GlyphId(code as u16))
+                .map(|w| (w as f64 * scale).round() as i64)
+                .unwrap_or(0)
+        } else {
+            0
         };
         widths.push(Object::Integer(width));
     }
@@ -3412,43 +3409,44 @@ fn get_truetype_glyph_width_for_code(
 /// Get the expected glyph width as an unrounded f64 for fractional comparison.
 ///
 /// veraPDF compares the fractional glyph width from the font program against
-/// the /Widths value with a tolerance of > 1.0. Using rounded integer widths
-/// can miss mismatches where the fractional difference crosses the threshold.
-///
-/// For TrueType fonts, veraPDF uses the (1,0) Mac cmap first, then the (3,1)
-/// Unicode cmap with the raw code as Unicode. Delegates to `truetype_width_for_code`.
+/// the /Widths value with a tolerance of > 1.0. Uses the PDF Encoding to
+/// map character codes to Unicode, then looks up in the font's cmap.
 fn get_truetype_glyph_width_fractional(
     face: &ttf_parser::Face,
     code: u32,
-    _enc_name: &str,
-    _differences: &std::collections::HashMap<u32, String>,
+    enc_name: &str,
+    differences: &std::collections::HashMap<u32, String>,
     scale: f64,
 ) -> Option<f64> {
-    truetype_width_for_code(face, code, scale)
-}
+    // If Differences maps this code to a glyph name, try to use it.
+    if let Some(glyph_name) = differences.get(&code) {
+        if let Some(unicode) = glyph_name_to_unicode(glyph_name) {
+            if let Some(gid) = face.glyph_index(unicode) {
+                return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+            }
+        }
+        // Try looking up glyph by name directly in the font.
+        if let Some(gid) = face.glyph_index_by_name(glyph_name) {
+            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+        if glyph_name == ".notdef" {
+            return face
+                .glyph_hor_advance(ttf_parser::GlyphId(0))
+                .map(|w| w as f64 * scale);
+        }
+    }
 
-/// Compute the expected TrueType glyph width for a character code, matching
-/// veraPDF's validation algorithm: (1,0) Mac cmap first, then (3,1) Unicode
-/// cmap with the raw code interpreted as a Unicode code point.
-fn truetype_width_for_code(face: &ttf_parser::Face, code: u32, scale: f64) -> Option<f64> {
-    // Primary: (1,0) Mac cmap with raw character code.
+    // Map code → Unicode via PDF Encoding.
+    let ch = encoding_to_char(code, enc_name);
+    if let Some(gid) = face.glyph_index(ch) {
+        return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+    }
+
+    // Fallback: try (1,0) Mac Roman cmap subtable with raw code byte.
     if code <= 255 {
         if let Some(gid) = lookup_mac_cmap(face, code) {
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
         }
-    }
-
-    // Fallback: (3,1) Unicode cmap with raw code as Unicode code point.
-    let raw_ch = char::from_u32(code).unwrap_or('\0');
-    if let Some(gid) = face.glyph_index(raw_ch) {
-        return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
-    }
-
-    // Last resort: GlyphId == code (identity mapping).
-    if code <= u16::MAX as u32 {
-        return face
-            .glyph_hor_advance(ttf_parser::GlyphId(code as u16))
-            .map(|w| w as f64 * scale);
     }
 
     None
