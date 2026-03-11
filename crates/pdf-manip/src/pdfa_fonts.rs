@@ -4235,6 +4235,12 @@ fn compute_cff_type1_width_corrections(
 
     if (scale - 1.0).abs() > 0.001 {
         eprintln!("DEBUG CFF scale: matrix.sx={} scale={} data_len={}", matrix.sx, scale, font_data.len());
+        // Debug: show first few glyph widths
+        for gid in 0..5u16 {
+            if let Some(w) = cff.glyph_width(cff_parser::GlyphId(gid)) {
+                eprintln!("  gid={} raw_w={} scaled={}", gid, w, w as f64 * scale);
+            }
+        }
     }
 
     let mut corrections = Vec::new();
