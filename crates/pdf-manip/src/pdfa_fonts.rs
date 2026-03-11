@@ -4222,6 +4222,7 @@ fn compute_cff_type1_width_corrections(
     if let Ok(face) = ttf_parser::Face::parse(font_data, 0) {
         let units_per_em = face.units_per_em() as f64;
         if units_per_em > 0.0 {
+            eprintln!("DEBUG cff_type1: OTF path taken, upem={units_per_em}");
             let scale = 1000.0 / units_per_em;
             return compute_otf_cff_corrections(
                 &face,
@@ -4236,6 +4237,7 @@ fn compute_cff_type1_width_corrections(
         }
     }
 
+    eprintln!("DEBUG cff_type1: raw CFF path taken");
     // Fall back to raw CFF parse (Type1C).
     let Some(cff) = cff_parser::Table::parse(font_data) else {
         return Vec::new();
