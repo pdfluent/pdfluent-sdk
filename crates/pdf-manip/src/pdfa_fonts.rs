@@ -6073,12 +6073,9 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                 continue;
             }
 
-            // Skip fonts with standard encoding (handled by fix_notdef_glyph_refs).
-            let enc_name = get_name(dict, b"Encoding").unwrap_or_default();
-            if enc_name == "WinAnsiEncoding"
-                || enc_name == "MacRomanEncoding"
-                || enc_name == "MacExpertEncoding"
-            {
+            // Only handle fonts with NO Encoding entry at all. Fonts with any
+            // encoding (name or dictionary) are handled by fix_notdef_glyph_refs.
+            if dict.has(b"Encoding") {
                 continue;
             }
 
