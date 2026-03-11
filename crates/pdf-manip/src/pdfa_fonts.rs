@@ -3220,15 +3220,23 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         // fallback font like DejaVuSans was embedded for Helvetica/Times etc.).
         // CFF internal encoding is also reliable — when no PDF-level Encoding
         // exists, the CFF's own encoding provides an unambiguous code-to-GID map.
+        // Custom CFF encoding in OTF-wrapped fonts is also reliable, since the
+        // CFF encoding map directly provides the code-to-GID mapping that
+        // veraPDF uses for width comparison.
         let has_reliable_encoding =
             matches!(enc_info.0.as_str(), "WinAnsiEncoding" | "MacRomanEncoding");
         let uses_cff_encoding = enc_info.0.is_empty() && enc_info.1.is_empty() && has_ff3;
+        let uses_custom_cff_encoding = has_ff3
+            && extract_cff_bytes_from_otf(&font_data)
+                .map(cff_has_custom_encoding)
+                .unwrap_or(false);
         // Type 1 FontFile widths are computed from the font program directly,
         // so they are always reliable regardless of encoding.
         let uses_type1_fontfile = has_ff1;
         let total_widths = existing_widths.len();
         if !has_reliable_encoding
             && !uses_cff_encoding
+            && !uses_custom_cff_encoding
             && !uses_type1_fontfile
             && corrections.len() * 2 > total_widths
             && extensions.is_empty()
