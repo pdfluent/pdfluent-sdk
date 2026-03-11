@@ -3105,9 +3105,102 @@ fn promote_inline_fonts(doc: &mut Document) {
 /// lopdf cannot serialize name objects with raw `#XX` escape sequences (e.g. `/Im#22`).
 /// This causes objects to be silently dropped during save. We decode the `#XX` sequences
 /// into their actual characters so lopdf can handle them.
+/// Rename resource names containing `#` (hex-encoded bytes) to safe alphanumeric
+/// names, and update all content streams that reference them.
+///
+/// lopdf cannot serialize names containing certain decoded bytes (e.g. `#22` → `"`),
+/// causing silent object loss during save. We replace such names with safe sequential
+/// names (e.g. `Im#22` → `XSafe1`) and patch content streams accordingly.
 fn sanitize_hash_encoded_names(doc: &mut Document) {
-    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    use std::collections::HashMap;
 
+    // Phase 1: Collect all Resources dicts (pages + form XObjects) and build rename map.
+    // Key: resource object ID (page or XObject), Value: vec of (sub-dict category, old-name, new-name).
+    type RenameEntry = (Vec<u8>, Vec<u8>, Vec<u8>); // (category, old_name, new_name)
+    let mut rename_map: HashMap<ObjectId, Vec<RenameEntry>> = HashMap::new();
+    let mut safe_counter = 0u32;
+
+    let page_ids: Vec<(u32, ObjectId)> = doc.get_pages().into_iter().collect();
+    // Collect page-level Resources and content stream IDs.
+    let mut resources_to_scan: Vec<(ObjectId, Vec<ObjectId>)> = Vec::new();
+
+    for &(_page_num, page_id) in &page_ids {
+        let (res_entries, content_ids) = match doc.objects.get(&page_id) {
+            Some(Object::Dictionary(d)) => {
+                let contents = collect_content_stream_ids(d);
+                let res = collect_resource_sub_dicts_with_hash_keys(doc, d);
+                (res, contents)
+            }
+            _ => continue,
+        };
+        if !res_entries.is_empty() {
+            resources_to_scan.push((page_id, content_ids));
+            for (category, old_name) in res_entries {
+                safe_counter += 1;
+                let new_name = format!("XSafe{safe_counter}").into_bytes();
+                rename_map
+                    .entry(page_id)
+                    .or_default()
+                    .push((category, old_name, new_name));
+            }
+        }
+    }
+
+    // Also scan form XObjects (they have their own Resources + content stream).
+    let all_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in &all_ids {
+        let is_form_xobj = match doc.objects.get(id) {
+            Some(Object::Stream(s)) => {
+                matches!(s.dict.get(b"Subtype").ok(), Some(Object::Name(n)) if n == b"Form")
+            }
+            _ => false,
+        };
+        if !is_form_xobj {
+            continue;
+        }
+        let res_entries = match doc.objects.get(id) {
+            Some(Object::Stream(s)) => {
+                collect_resource_sub_dicts_with_hash_keys(doc, &s.dict)
+            }
+            _ => Vec::new(),
+        };
+        if !res_entries.is_empty() {
+            // Form XObject itself IS the content stream.
+            resources_to_scan.push((*id, vec![*id]));
+            for (category, old_name) in res_entries {
+                safe_counter += 1;
+                let new_name = format!("XSafe{safe_counter}").into_bytes();
+                rename_map
+                    .entry(*id)
+                    .or_default()
+                    .push((category, old_name, new_name));
+            }
+        }
+    }
+
+    if rename_map.is_empty() {
+        return;
+    }
+
+    // Phase 2: Rename keys in Resources dicts.
+    for (owner_id, renames) in &rename_map {
+        for (category, old_name, new_name) in renames {
+            rename_resource_key(doc, *owner_id, category, old_name, new_name);
+        }
+    }
+
+    // Phase 3: Patch content streams.
+    for (owner_id, content_ids) in &resources_to_scan {
+        if let Some(renames) = rename_map.get(owner_id) {
+            for &content_id in content_ids {
+                patch_content_stream_names(doc, content_id, renames);
+            }
+        }
+    }
+
+    // Phase 4: Fix any remaining #-encoded names in non-resource dicts (Name values,
+    // dict keys in other objects). Use safe decode that strips non-ASCII.
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
         let needs_fix = match doc.objects.get(&id) {
             Some(Object::Dictionary(d)) => dict_has_hash_names(d),
@@ -3117,7 +3210,6 @@ fn sanitize_hash_encoded_names(doc: &mut Document) {
         if !needs_fix {
             continue;
         }
-        // Clone, fix, and replace.
         let fixed = match doc.objects.get(&id).cloned() {
             Some(Object::Dictionary(d)) => Some(Object::Dictionary(fix_hash_names_in_dict(d))),
             Some(Object::Stream(mut s)) => {
@@ -3132,18 +3224,349 @@ fn sanitize_hash_encoded_names(doc: &mut Document) {
     }
 }
 
+/// Collect content stream ObjectIds from a page dictionary.
+fn collect_content_stream_ids(page_dict: &lopdf::Dictionary) -> Vec<ObjectId> {
+    match page_dict.get(b"Contents").ok() {
+        Some(Object::Reference(id)) => vec![*id],
+        Some(Object::Array(arr)) => arr
+            .iter()
+            .filter_map(|o| {
+                if let Object::Reference(id) = o {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Find resource sub-dict keys that contain unsafe bytes for PDF name serialization.
+/// lopdf decodes `#XX` during parsing (e.g. `/Im#22` → internal key `Im"`),
+/// so we detect decoded non-printable/non-safe bytes in internal key representation.
+/// Returns vec of (category like b"XObject", problematic_key_bytes).
+fn collect_resource_sub_dicts_with_hash_keys(
+    doc: &Document,
+    parent_dict: &lopdf::Dictionary,
+) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let res_dict = match parent_dict.get(b"Resources").ok() {
+        Some(Object::Dictionary(d)) => d,
+        Some(Object::Reference(id)) => match doc.objects.get(id) {
+            Some(Object::Dictionary(d)) => d,
+            _ => return Vec::new(),
+        },
+        _ => return Vec::new(),
+    };
+
+    let mut results = Vec::new();
+    let categories: &[&[u8]] = &[b"XObject", b"Font", b"ExtGState", b"ColorSpace", b"Pattern", b"Shading"];
+
+    for category in categories {
+        let sub_dict = match res_dict.get(category).ok() {
+            Some(Object::Dictionary(d)) => d,
+            Some(Object::Reference(id)) => match doc.objects.get(id) {
+                Some(Object::Dictionary(d)) => d,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        for (key, _) in sub_dict.iter() {
+            if key_has_unsafe_bytes(key) {
+                results.push((category.to_vec(), key.clone()));
+            }
+        }
+    }
+    results
+}
+
+/// Check if a name key contains bytes that lopdf can't safely serialize.
+/// After lopdf's parser decodes `#XX` sequences, the resulting bytes may include
+/// non-printable chars, `#`, delimiters, etc. that cause serialization failures.
+fn key_has_unsafe_bytes(key: &[u8]) -> bool {
+    key.iter().any(|&b| !is_safe_pdf_name_byte(b))
+}
+
+/// A byte is safe in a PDF name if it's printable ASCII (0x21..=0x7E),
+/// NOT a delimiter, and NOT `#` (which would need re-encoding).
+fn is_safe_pdf_name_byte(b: u8) -> bool {
+    matches!(b, b'!'..=b'~')
+        && !matches!(
+            b,
+            b'#' | b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+        )
+}
+
+/// Rename a key in a Resources sub-dictionary.
+fn rename_resource_key(
+    doc: &mut Document,
+    owner_id: ObjectId,
+    category: &[u8],
+    old_name: &[u8],
+    new_name: &[u8],
+) {
+    // Get the Resources dict (may be inline or referenced).
+    let res_ref = match doc.objects.get(&owner_id) {
+        Some(Object::Dictionary(d)) => match d.get(b"Resources").ok() {
+            Some(Object::Reference(id)) => Some(*id),
+            _ => None,
+        },
+        Some(Object::Stream(s)) => match s.dict.get(b"Resources").ok() {
+            Some(Object::Reference(id)) => Some(*id),
+            _ => None,
+        },
+        _ => return,
+    };
+
+    if let Some(res_id) = res_ref {
+        // Resources is a reference — modify the referenced dict.
+        rename_in_resources_dict(doc, res_id, category, old_name, new_name);
+    } else {
+        // Resources is inline — modify in place.
+        let mut obj = doc.objects.get(&owner_id).cloned();
+        let changed = match &mut obj {
+            Some(Object::Dictionary(d)) => rename_in_inline_resources(d, category, old_name, new_name),
+            Some(Object::Stream(s)) => rename_in_inline_resources(&mut s.dict, category, old_name, new_name),
+            _ => false,
+        };
+        if changed {
+            if let Some(o) = obj {
+                doc.objects.insert(owner_id, o);
+            }
+        }
+    }
+}
+
+/// Rename a key inside a referenced Resources dict.
+fn rename_in_resources_dict(
+    doc: &mut Document,
+    res_id: ObjectId,
+    category: &[u8],
+    old_name: &[u8],
+    new_name: &[u8],
+) {
+    // The sub-dict (e.g. XObject) may itself be a reference.
+    let sub_ref = match doc.objects.get(&res_id) {
+        Some(Object::Dictionary(d)) => match d.get(category).ok() {
+            Some(Object::Reference(id)) => Some(*id),
+            _ => None,
+        },
+        _ => return,
+    };
+
+    if let Some(sub_id) = sub_ref {
+        // Sub-dict is a reference.
+        if let Some(Object::Dictionary(d)) = doc.objects.get(&sub_id).cloned() {
+            let mut d = d;
+            if let Some(val) = d.remove(old_name) {
+                d.set(String::from_utf8_lossy(new_name).as_ref(), val);
+                doc.objects.insert(sub_id, Object::Dictionary(d));
+            }
+        }
+    } else {
+        // Sub-dict is inline in Resources.
+        if let Some(Object::Dictionary(res)) = doc.objects.get(&res_id).cloned() {
+            let mut res = res;
+            if let Some(Object::Dictionary(sub)) = res.remove(category) {
+                let mut sub = sub;
+                if let Some(val) = sub.remove(old_name) {
+                    sub.set(String::from_utf8_lossy(new_name).as_ref(), val);
+                }
+                res.set(
+                    String::from_utf8_lossy(category).as_ref(),
+                    Object::Dictionary(sub),
+                );
+                doc.objects.insert(res_id, Object::Dictionary(res));
+            }
+        }
+    }
+}
+
+/// Rename a key in an inline Resources sub-dict within a parent dict.
+fn rename_in_inline_resources(
+    parent: &mut lopdf::Dictionary,
+    category: &[u8],
+    old_name: &[u8],
+    new_name: &[u8],
+) -> bool {
+    if let Ok(Object::Dictionary(res)) = parent.get_mut(b"Resources") {
+        if let Ok(Object::Dictionary(sub)) = res.get_mut(category) {
+            if let Some(val) = sub.remove(old_name) {
+                sub.set(String::from_utf8_lossy(new_name).as_ref(), val);
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Replace name references in a content stream.
+/// Content streams store names in their original `#XX` encoded form,
+/// while lopdf's internal keys use decoded bytes. We re-encode the
+/// internal key to `#XX` form for matching against content stream bytes.
+fn patch_content_stream_names(
+    doc: &mut Document,
+    stream_id: ObjectId,
+    renames: &[(Vec<u8>, Vec<u8>, Vec<u8>)],
+) {
+    let content = match doc.objects.get(&stream_id) {
+        Some(Object::Stream(s)) => {
+            let mut s_clone = s.clone();
+            if s_clone.decompress().is_err() {
+                return;
+            }
+            s_clone.content.clone()
+        }
+        _ => return,
+    };
+
+    let mut patched = content.clone();
+    let mut changed = false;
+    for (_category, old_name, new_name) in renames {
+        let mut replace = Vec::with_capacity(1 + new_name.len());
+        replace.push(b'/');
+        replace.extend_from_slice(new_name);
+
+        // Try all #XX encoded variants (uppercase, lowercase, short form).
+        for variant in encode_name_variants(old_name) {
+            let mut search = Vec::with_capacity(1 + variant.len());
+            search.push(b'/');
+            search.extend_from_slice(&variant);
+
+            let before = patched.clone();
+            patched = replace_name_in_stream(&patched, &search, &replace);
+            if patched != before {
+                changed = true;
+            }
+        }
+
+        // Also try the raw decoded form (in case the stream uses raw bytes).
+        if old_name.iter().any(|b| !is_safe_pdf_name_byte(*b)) {
+            let mut search_raw = Vec::with_capacity(1 + old_name.len());
+            search_raw.push(b'/');
+            search_raw.extend_from_slice(old_name);
+
+            let before = patched.clone();
+            patched = replace_name_in_stream(&patched, &search_raw, &replace);
+            if patched != before {
+                changed = true;
+            }
+        }
+    }
+
+    if changed {
+        if let Some(Object::Stream(s)) = doc.objects.get_mut(&stream_id) {
+            s.set_plain_content(patched);
+        }
+    }
+}
+
+/// Re-encode decoded name bytes to `#XX` form for PDF content stream matching.
+/// Returns multiple variants (uppercase, lowercase, without leading zero) to
+/// handle different encoding styles found in real-world PDFs.
+fn encode_name_variants(name: &[u8]) -> Vec<Vec<u8>> {
+    let upper = encode_name_hex(name, b"0123456789ABCDEF");
+    let lower = encode_name_hex(name, b"0123456789abcdef");
+    // Also try variant without leading zero for single-digit values.
+    let short = encode_name_hex_short(name);
+    let mut variants = vec![upper.clone()];
+    if lower != upper {
+        variants.push(lower);
+    }
+    if let Some(s) = short {
+        if !variants.contains(&s) {
+            variants.push(s);
+        }
+    }
+    variants
+}
+
+fn encode_name_hex(name: &[u8], hex_table: &[u8; 16]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(name.len() * 3);
+    for &b in name {
+        if is_safe_pdf_name_byte(b) {
+            result.push(b);
+        } else {
+            result.push(b'#');
+            result.push(hex_table[(b >> 4) as usize]);
+            result.push(hex_table[(b & 0x0F) as usize]);
+        }
+    }
+    result
+}
+
+/// Encode with single hex digit for values 0x00-0x0F (non-standard but seen in wild).
+fn encode_name_hex_short(name: &[u8]) -> Option<Vec<u8>> {
+    let has_single_digit = name.iter().any(|&b| !is_safe_pdf_name_byte(b) && b < 16);
+    if !has_single_digit {
+        return None;
+    }
+    let mut result = Vec::with_capacity(name.len() * 3);
+    let hex = b"0123456789ABCDEF";
+    for &b in name {
+        if is_safe_pdf_name_byte(b) {
+            result.push(b);
+        } else if b < 16 {
+            result.push(b'#');
+            result.push(hex[b as usize]);
+        } else {
+            result.push(b'#');
+            result.push(hex[(b >> 4) as usize]);
+            result.push(hex[(b & 0x0F) as usize]);
+        }
+    }
+    Some(result)
+}
+
+/// Replace all occurrences of a PDF name token in stream bytes.
+/// A name token starts with `/` and ends at a delimiter or whitespace.
+fn replace_name_in_stream(data: &[u8], search: &[u8], replace: &[u8]) -> Vec<u8> {
+    if search.is_empty() {
+        return data.to_vec();
+    }
+    let mut result = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        if i + search.len() <= data.len() && &data[i..i + search.len()] == search {
+            // Check that the character after the match is a delimiter (or EOF).
+            let after = if i + search.len() < data.len() {
+                data[i + search.len()]
+            } else {
+                b' ' // EOF counts as delimiter
+            };
+            if is_pdf_delimiter(after) {
+                result.extend_from_slice(replace);
+                i += search.len();
+                continue;
+            }
+        }
+        result.push(data[i]);
+        i += 1;
+    }
+    result
+}
+
+fn is_pdf_delimiter(b: u8) -> bool {
+    matches!(
+        b,
+        b' ' | b'\t' | b'\n' | b'\r' | b'/' | b'[' | b']' | b'(' | b')' | b'<' | b'>' | b'{'
+            | b'}' | b'%'
+    )
+}
+
+/// Check if any dict key or Name value contains unsafe bytes (decoded form).
 fn dict_has_hash_names(dict: &lopdf::Dictionary) -> bool {
     for (key, val) in dict.iter() {
-        if key.windows(1).any(|w| w[0] == b'#') {
+        if key_has_unsafe_bytes(key) {
             return true;
         }
         match val {
-            Object::Name(n) if n.windows(1).any(|w| w[0] == b'#') => return true,
+            Object::Name(n) if key_has_unsafe_bytes(n) => return true,
             Object::Dictionary(d) if dict_has_hash_names(d) => return true,
             Object::Array(arr) => {
                 for item in arr {
                     if let Object::Name(n) = item {
-                        if n.windows(1).any(|w| w[0] == b'#') {
+                        if key_has_unsafe_bytes(n) {
                             return true;
                         }
                     }
@@ -3155,10 +3578,11 @@ fn dict_has_hash_names(dict: &lopdf::Dictionary) -> bool {
     false
 }
 
+/// Fix remaining unsafe names by replacing non-safe bytes with `_`.
 fn fix_hash_names_in_dict(dict: lopdf::Dictionary) -> lopdf::Dictionary {
     let mut new_dict = lopdf::Dictionary::new();
     for (key, val) in dict.into_iter() {
-        let fixed_key = decode_hash_name(&key);
+        let fixed_key = safe_decode_hash_name(&key);
         let fixed_val = fix_hash_name_value(val);
         new_dict.set(fixed_key, fixed_val);
     }
@@ -3167,35 +3591,47 @@ fn fix_hash_names_in_dict(dict: lopdf::Dictionary) -> lopdf::Dictionary {
 
 fn fix_hash_name_value(val: Object) -> Object {
     match val {
-        Object::Name(n) => Object::Name(decode_hash_name_bytes(&n)),
+        Object::Name(n) => Object::Name(safe_decode_hash_name_bytes(&n)),
         Object::Dictionary(d) => Object::Dictionary(fix_hash_names_in_dict(d)),
-        Object::Array(arr) => {
-            Object::Array(arr.into_iter().map(fix_hash_name_value).collect())
-        }
+        Object::Array(arr) => Object::Array(arr.into_iter().map(fix_hash_name_value).collect()),
         other => other,
     }
 }
 
-fn decode_hash_name(name: &[u8]) -> String {
-    String::from_utf8(decode_hash_name_bytes(name))
+/// Decode `#XX` sequences, but replace non-alphanumeric results with `_`.
+fn safe_decode_hash_name(name: &[u8]) -> String {
+    String::from_utf8(safe_decode_hash_name_bytes(name))
         .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
 }
 
-fn decode_hash_name_bytes(name: &[u8]) -> Vec<u8> {
+/// Replace any non-safe byte with `_`. Handles both:
+/// - Still-encoded `#XX` sequences (from dict keys that were never decoded)
+/// - Already-decoded unsafe bytes (from lopdf's internal representation)
+fn safe_decode_hash_name_bytes(name: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(name.len());
     let mut i = 0;
     while i < name.len() {
+        // Handle still-encoded #XX sequences.
         if name[i] == b'#' && i + 2 < name.len() {
-            // Try to decode #XX as hex.
             let hi = hex_digit(name[i + 1]);
             let lo = hex_digit(name[i + 2]);
             if let (Some(h), Some(l)) = (hi, lo) {
-                result.push(h * 16 + l);
+                let decoded = h * 16 + l;
+                if is_safe_pdf_name_byte(decoded) {
+                    result.push(decoded);
+                } else {
+                    result.push(b'_');
+                }
                 i += 3;
                 continue;
             }
         }
-        result.push(name[i]);
+        // Handle already-decoded unsafe bytes.
+        if is_safe_pdf_name_byte(name[i]) {
+            result.push(name[i]);
+        } else {
+            result.push(b'_');
+        }
         i += 1;
     }
     result
