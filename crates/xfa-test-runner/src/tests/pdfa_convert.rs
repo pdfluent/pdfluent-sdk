@@ -73,15 +73,15 @@ impl PdfTest for PdfAConvertTest {
         // 2. Load via lopdf for mutation.
         set_progress("lopdf_load");
         let mut doc = match lopdf::Document::load_mem(pdf_data) {
-            Ok(d) => d,
-            Err(e) => {
-                // Fallback: try stripping garbage bytes before %PDF header.
+            Ok(d) if !d.objects.is_empty() => d,
+            Ok(_) | Err(_) => {
+                // Fallback: try repair strategies (strip garbage, fix xref, rebuild from objects).
                 match try_repair_for_lopdf(pdf_data) {
                     Some(d) => d,
                     None => {
                         return TestResult {
                             status: TestStatus::Skip,
-                            error_message: Some(format!("lopdf load failed: {e}")),
+                            error_message: Some("lopdf load failed (all repairs exhausted)".into()),
                             duration_ms: elapsed(),
                             oracle_score: None,
                             metadata: HashMap::new(),
@@ -91,22 +91,47 @@ impl PdfTest for PdfAConvertTest {
             }
         };
 
+        // 2a. If lopdf lost pages, try sanitizing #-encoded names and reloading.
+        // Only applied when normal load produces 0 pages, since # replacement can
+        // break valid PDFs that use legitimate #XX hex encoding.
+        if doc.get_pages().is_empty() && raw_has_hash_names(pdf_data) {
+            let sanitized = sanitize_hash_names_raw(pdf_data);
+            if let Ok(d2) = lopdf::Document::load_mem(&sanitized) {
+                if !d2.get_pages().is_empty() {
+                    doc = d2;
+                }
+            }
+        }
+
+        // Fix wrong Root reference (corrupt trailer may point to non-Catalog object).
+        fix_wrong_root(&mut doc);
+
         if doc.get_pages().is_empty() {
             // Fallback: try adding missing /Type /Page entries to page-like objects.
-            if !try_fix_missing_page_types(&mut doc) {
-                // Second fallback: check if pdf-syntax found pages (it has brute-force mode).
-                let syntax_page_count = pdf.pages().len();
-                return TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some(format!("0 pages (pdf-syntax found {syntax_page_count})")),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
+            try_fix_missing_page_types(&mut doc);
+        }
+
+        // 2b. Handle encrypted documents: try empty password decryption.
+        if doc.trailer.get(b"Encrypt").is_ok() {
+            match doc.decrypt("") {
+                Ok(()) => {
+                    doc.trailer.remove(b"Encrypt");
+                }
+                Err(_) => {
+                    return TestResult {
+                        status: TestStatus::Skip,
+                        error_message: Some("encrypted PDF (decryption failed)".into()),
+                        duration_ms: elapsed(),
+                        oracle_score: None,
+                        metadata: HashMap::new(),
+                    };
+                }
             }
         }
 
         // 3. Run PDF/A conversion pipeline.
+        // Run cleanup BEFORE the final page count check — cleanup removes encryption
+        // which can prevent lopdf from seeing pages.
         set_progress("cleanup");
         let cleanup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false)
@@ -132,6 +157,13 @@ impl PdfTest for PdfAConvertTest {
                 };
             }
         };
+
+        // After cleanup (which removes encryption), retry page detection.
+        if doc.get_pages().is_empty() {
+            try_fix_missing_page_types(&mut doc);
+            // If still empty, proceed anyway — the pipeline handles empty page
+            // trees gracefully, and veraPDF will catch genuinely broken PDFs.
+        }
 
         // 3a. Embed non-embedded fonts.
         set_progress("font_embed");
@@ -201,6 +233,12 @@ impl PdfTest for PdfAConvertTest {
         set_progress("symbolic_flags");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc)
+        }));
+
+        // 3a2g. Populate missing FirstChar/LastChar/Widths for embedded fonts.
+        set_progress("missing_widths");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc)
         }));
 
         // 3a3. Conservative width mismatch fix for simple TrueType/Type1 fonts.
@@ -306,6 +344,10 @@ impl PdfTest for PdfAConvertTest {
 
         // 4b. Fix PDF header for PDF/A compliance (binary comment).
         pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+        // 4c. Fix startxref offset (lopdf can write wrong values).
+        pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
+
+
 
         // 5. Validate with our own checker.
         set_progress("validate_own");
@@ -419,11 +461,18 @@ impl PdfTest for PdfAConvertTest {
                 metadata,
             }
         } else {
+            let issue_details: Vec<String> = report
+                .issues
+                .iter()
+                .take(5)
+                .map(|i| format!("{}: {}", i.rule, i.message))
+                .collect();
             TestResult {
                 status: TestStatus::Fail,
                 error_message: Some(format!(
-                    "{} compliance issues after conversion",
-                    report.issues.len()
+                    "{} compliance issues: {}",
+                    report.issues.len(),
+                    issue_details.join("; ")
                 )),
                 duration_ms: elapsed(),
                 oracle_score: None,
@@ -445,9 +494,147 @@ fn write_temp_pdf(data: &[u8], original: &Path) -> Option<std::path::PathBuf> {
     Some(path)
 }
 
+/// Accept a loaded Document only if it has at least 1 object.
+/// lopdf sometimes "succeeds" loading corrupt data but finds 0 objects.
+fn accept_doc(doc: lopdf::Document) -> Option<lopdf::Document> {
+    if doc.objects.is_empty() {
+        None
+    } else {
+        Some(doc)
+    }
+}
+
+/// Try to load PDF data with lopdf, accepting only non-empty documents.
+fn try_load(data: &[u8]) -> Option<lopdf::Document> {
+    lopdf::Document::load_mem(data).ok().and_then(accept_doc)
+}
+
 /// Try to repair PDF data so that lopdf can load it.
 ///
 /// Strategies:
+/// Pre-process raw PDF bytes: replace `#` in PDF name tokens with `_`.
+///
+/// lopdf cannot parse names with `#XX` hex escaping (e.g. `/Im#22`), dropping
+/// the entire containing object. We replace `#` with `_` in name contexts,
+/// which is a 1-byte substitution that preserves xref offsets.
+///
+/// Only modifies bytes that are inside name tokens (after `/`), never inside
+/// stream content, string literals, or comments. Since content streams also
+/// reference these names (e.g. `/Im#22 Do`), the replacement is consistent.
+/// Quick check: does the raw PDF data contain `#` in name-like positions?
+fn raw_has_hash_names(data: &[u8]) -> bool {
+    // Look for `/Name#` patterns — a `/` followed by alphanumeric chars and then `#`.
+    let mut i = 0;
+    while i + 3 < data.len() {
+        if data[i] == b'/' {
+            i += 1;
+            while i < data.len() && data[i].is_ascii_alphanumeric() {
+                i += 1;
+            }
+            if i < data.len() && data[i] == b'#' {
+                return true;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+/// Replace `#` with `_` in all PDF name tokens (after `/`), both in dict
+/// keys and content stream operators. This is a 1-byte substitution that
+/// preserves xref offsets and stream lengths.
+///
+/// Skips: string literals `(...)`, hex strings `<...>`, and `%` comments.
+/// Processes content inside streams (since content stream operators like
+/// `/Im#22 Do` need the same renaming as their Resource dict keys).
+fn sanitize_hash_names_raw(data: &[u8]) -> Vec<u8> {
+    let mut result = data.to_vec();
+    let mut i = 0;
+    let mut in_string = 0i32;
+    let mut in_hex_string = false;
+
+    while i < result.len() {
+        // Track string literals (parentheses).
+        if result[i] == b'(' && !in_hex_string {
+            in_string += 1;
+            i += 1;
+            continue;
+        }
+        if result[i] == b')' && in_string > 0 {
+            in_string -= 1;
+            i += 1;
+            continue;
+        }
+        if result[i] == b'\\' && in_string > 0 {
+            i += 2;
+            continue;
+        }
+        if in_string > 0 {
+            i += 1;
+            continue;
+        }
+
+        // Skip dict delimiters << and >>.
+        if result[i] == b'<' && i + 1 < result.len() && result[i + 1] == b'<' {
+            i += 2;
+            continue;
+        }
+        if result[i] == b'>' && i + 1 < result.len() && result[i + 1] == b'>' {
+            i += 2;
+            continue;
+        }
+
+        // Track hex strings.
+        if result[i] == b'<' {
+            in_hex_string = true;
+            i += 1;
+            continue;
+        }
+        if result[i] == b'>' && in_hex_string {
+            in_hex_string = false;
+            i += 1;
+            continue;
+        }
+        if in_hex_string {
+            i += 1;
+            continue;
+        }
+
+        // Skip comments (but not %PDF header or %%EOF).
+        if result[i] == b'%' {
+            while i < result.len() && result[i] != b'\n' && result[i] != b'\r' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Name token: replace `#` with `_`.
+        if result[i] == b'/' {
+            i += 1;
+            while i < result.len() && !is_name_delimiter(result[i]) {
+                if result[i] == b'#' {
+                    result[i] = b'_';
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        i += 1;
+    }
+
+    result
+}
+
+fn is_name_delimiter(b: u8) -> bool {
+    matches!(
+        b,
+        b' ' | b'\t' | b'\n' | b'\r' | b'\0' | b'/' | b'[' | b']' | b'(' | b')' | b'<' | b'>'
+            | b'{' | b'}' | b'%'
+    )
+}
+
 /// 1. Strip garbage bytes before the %PDF header (offset header).
 /// 2. Try appending a minimal %%EOF + startxref if missing/broken.
 /// 3. Try truncating trailing garbage after the last %%EOF.
@@ -457,7 +644,7 @@ fn try_repair_for_lopdf(data: &[u8]) -> Option<lopdf::Document> {
 
     if offset > 0 {
         let trimmed = &data[offset..];
-        if let Ok(doc) = lopdf::Document::load_mem(trimmed) {
+        if let Some(doc) = try_load(trimmed) {
             return Some(doc);
         }
         // Continue with trimmed data for further strategies.
@@ -529,12 +716,12 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
                         repaired.extend_from_slice(
                             format!("startxref\n{real_xref}\n%%EOF\n").as_bytes(),
                         );
-                        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+                        if let Some(doc) = try_load(&repaired) {
                             return Some(doc);
                         }
                         // If it still fails, try fixing xref line endings too.
                         if let Some(double_repaired) = try_fix_xref_line_endings(&repaired) {
-                            if let Ok(doc) = lopdf::Document::load_mem(&double_repaired) {
+                            if let Some(doc) = try_load(&double_repaired) {
                                 return Some(doc);
                             }
                         }
@@ -553,7 +740,7 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
         if let Some(real_xref) = find_last_xref_pos(data) {
             let mut repaired = data.to_vec();
             repaired.extend_from_slice(format!("\nstartxref\n{real_xref}\n%%EOF\n").as_bytes());
-            if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+            if let Some(doc) = try_load(&repaired) {
                 return Some(doc);
             }
         }
@@ -562,7 +749,7 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
     // Strategy: corrupt trailer dict (e.g., filled with `<<<<...`).
     // Reconstruct trailer from xref table by scanning for /Root reference.
     if let Some(repaired) = try_rebuild_trailer(data) {
-        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+        if let Some(doc) = try_load(&repaired) {
             return Some(doc);
         }
     }
@@ -570,7 +757,7 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
     // Strategy: corrupt /Size value (e.g., "/Size (h)" instead of "/Size 80").
     // Fix by computing the correct size from the xref table.
     if let Some(repaired) = try_fix_trailer_size(data) {
-        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+        if let Some(doc) = try_load(&repaired) {
             return Some(doc);
         }
     }
@@ -578,7 +765,7 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
     // Strategy: comment after startxref value (e.g., "23291 %comment").
     // Strip non-digit chars after the offset number.
     if let Some(repaired) = try_fix_startxref_comment(data) {
-        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+        if let Some(doc) = try_load(&repaired) {
             return Some(doc);
         }
     }
@@ -586,12 +773,138 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
     // Strategy: xref entries with wrong line endings (19 bytes with LF only
     // instead of 20 bytes with CR+LF). Fix by normalizing to CR+LF.
     if let Some(repaired) = try_fix_xref_line_endings(data) {
-        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+        if let Some(doc) = try_load(&repaired) {
             return Some(doc);
         }
     }
 
+    // Final strategy: rebuild xref from scratch by scanning for "N G obj" markers.
+    // This handles PDFs with completely corrupt xref tables (wrong offsets, etc.).
+    if let Some(doc) = try_rebuild_xref_from_objects(data) {
+        return Some(doc);
+    }
+
     None
+}
+
+/// Rebuild a PDF's xref table from scratch by scanning for object definitions.
+///
+/// Scans the file body for "N G obj" patterns, collects all object offsets,
+/// finds /Root (Catalog), and builds a new valid xref table + trailer.
+fn try_rebuild_xref_from_objects(data: &[u8]) -> Option<lopdf::Document> {
+    // Scan for "N 0 obj" patterns (generation 0, which is most common).
+    let mut objects: Vec<(u32, usize)> = Vec::new(); // (obj_num, offset)
+    let mut root_ref: Option<u32> = None;
+    let mut info_ref: Option<u32> = None;
+
+    let mut pos = 0;
+    while pos + 10 < data.len() {
+        // Look for a digit followed by " 0 obj".
+        if data[pos].is_ascii_digit() {
+            // Check if this position starts a line (or is at the start).
+            let at_line_start = pos == 0 || data[pos - 1] == b'\n' || data[pos - 1] == b'\r';
+            if at_line_start {
+                // Try to parse "N 0 obj" or "N G obj".
+                let end = std::cmp::min(pos + 20, data.len());
+                let chunk = &data[pos..end];
+                if let Some(obj_info) = parse_obj_marker(chunk) {
+                    objects.push((obj_info.0, pos));
+                    // Check if this object is /Type /Catalog.
+                    let obj_end = std::cmp::min(pos + 4096, data.len());
+                    let obj_data = &data[pos..obj_end];
+                    if obj_data.windows(14).any(|w| w == b"/Type /Catalog" || w == b"/Type/Catalog") {
+                        root_ref = Some(obj_info.0);
+                    }
+                    if obj_data.windows(8).any(|w| w == b"/Author " || w == b"/Creator")
+                        && obj_data.windows(14).any(|w| w == b"/CreationDate " || w == b"/ModDate ")
+                        && info_ref.is_none()
+                    {
+                        info_ref = Some(obj_info.0);
+                    }
+                    // Skip past "obj" to avoid re-matching.
+                    pos += 5;
+                    continue;
+                }
+            }
+        }
+        pos += 1;
+    }
+
+    if objects.is_empty() || root_ref.is_none() {
+        return None;
+    }
+
+    // Sort by object number.
+    objects.sort_by_key(|&(num, _)| num);
+    objects.dedup_by_key(|o| o.0);
+
+    let max_obj = objects.last().map(|o| o.0).unwrap_or(0);
+    let size = max_obj + 1;
+
+    // Build xref table.
+    let mut xref_entries = Vec::new();
+    // Entry 0: free list head. Exactly 20 bytes: 10+1+5+1+1+CR+LF.
+    xref_entries.push(format!("{:010} {:05} f\r\n", 0, 65535));
+
+    let obj_map: std::collections::HashMap<u32, usize> =
+        objects.iter().cloned().collect();
+
+    for num in 1..size {
+        if let Some(&offset) = obj_map.get(&num) {
+            xref_entries.push(format!("{:010} {:05} n\r\n", offset, 0));
+        } else {
+            xref_entries.push(format!("{:010} {:05} f\r\n", 0, 0));
+        }
+    }
+
+    // Find %PDF header for clean data start.
+    let header_start = data.windows(5).position(|w| w == b"%PDF-").unwrap_or(0);
+    let body = &data[header_start..];
+
+    // Find the end of the last object (before any existing xref/trailer).
+    let body_end = if let Some(xp) = find_last_xref_pos(body) {
+        xp
+    } else {
+        body.len()
+    };
+
+    // Build new PDF: original body + new xref + trailer.
+    let mut repaired = body[..body_end].to_vec();
+    // Ensure newline before xref.
+    if !repaired.ends_with(b"\n") {
+        repaired.push(b'\n');
+    }
+    let xref_pos = repaired.len();
+    repaired.extend_from_slice(format!("xref\n0 {size}\n").as_bytes());
+    for entry in &xref_entries {
+        repaired.extend_from_slice(entry.as_bytes());
+    }
+
+    // Trailer.
+    let root = root_ref.unwrap();
+    repaired.extend_from_slice(b"trailer\n<<\n");
+    repaired.extend_from_slice(format!("/Size {size}\n/Root {root} 0 R\n").as_bytes());
+    if let Some(info) = info_ref {
+        repaired.extend_from_slice(format!("/Info {info} 0 R\n").as_bytes());
+    }
+    repaired.extend_from_slice(b">>\n");
+    repaired.extend_from_slice(format!("startxref\n{xref_pos}\n%%EOF\n").as_bytes());
+
+    try_load(&repaired)
+}
+
+/// Parse "N G obj" at the start of a byte slice. Returns (obj_num, gen_num) if valid.
+fn parse_obj_marker(data: &[u8]) -> Option<(u32, u16)> {
+    let s = std::str::from_utf8(data).ok()?;
+    let mut parts = s.split_whitespace();
+    let num: u32 = parts.next()?.parse().ok()?;
+    let gen: u16 = parts.next()?.parse().ok()?;
+    let keyword = parts.next()?;
+    if keyword == "obj" {
+        Some((num, gen))
+    } else {
+        None
+    }
 }
 
 /// Rebuild a corrupt trailer by scanning for /Root in the xref range.
@@ -892,6 +1205,43 @@ fn find_last_xref_pos(data: &[u8]) -> Option<usize> {
 /// Walks the page tree from the catalog and adds /Type /Page to leaf nodes
 /// that have a /MediaBox (strong indicator of a page). Returns true if pages
 /// were found after the fix.
+/// Fix a wrong Root reference in the trailer.
+///
+/// Some corrupt PDFs have a trailer that points to a non-Catalog object.
+/// We check if the Root object has `/Type /Catalog`; if not, scan all objects
+/// to find the real catalog and update the trailer.
+fn fix_wrong_root(doc: &mut lopdf::Document) {
+    let root_id = match doc.trailer.get(b"Root").ok() {
+        Some(lopdf::Object::Reference(id)) => *id,
+        _ => return,
+    };
+
+    // Check if Root actually has /Type /Catalog.
+    let is_catalog = match doc.objects.get(&root_id) {
+        Some(lopdf::Object::Dictionary(d)) => {
+            matches!(d.get(b"Type").ok(), Some(lopdf::Object::Name(n)) if n == b"Catalog")
+        }
+        _ => false,
+    };
+
+    if is_catalog {
+        return; // Root is correct.
+    }
+
+    // Scan all objects to find the real Catalog.
+    for (id, obj) in &doc.objects {
+        if let lopdf::Object::Dictionary(d) = obj {
+            if matches!(d.get(b"Type").ok(), Some(lopdf::Object::Name(n)) if n == b"Catalog")
+                && d.has(b"Pages")
+            {
+                doc.trailer
+                    .set("Root", lopdf::Object::Reference(*id));
+                return;
+            }
+        }
+    }
+}
+
 fn try_fix_missing_page_types(doc: &mut lopdf::Document) -> bool {
     // Collect page-like object IDs from the page tree.
     let page_ids = collect_page_tree_leaves(doc);
