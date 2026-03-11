@@ -3149,6 +3149,17 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 &existing_widths,
                 &enc_info,
             );
+            // DEBUG: trace CFF corrections for failing fonts
+            if let Some(ref bfname) = get_name(doc.objects.get(&font_id).and_then(|o| if let Object::Dictionary(d) = o { Some(d) } else { None }).unwrap_or(&lopdf::Dictionary::new()), b"BaseFont") {
+                if bfname.contains("CMR10") || bfname.contains("CMTI10") || bfname.contains("CMSY") || bfname.contains("CMMIB") {
+                    eprintln!("DEBUG {bfname}: fc={first_char} widths={} corrections={} enc=({},{}) ff3={has_ff3}", existing_widths.len(), corrections.len(), enc_info.0, enc_info.1.len());
+                    for &(idx, w) in corrections.iter().take(5) {
+                        let code = first_char + idx as u32;
+                        let old = match &existing_widths[idx] { Object::Integer(v) => *v, _ => -1 };
+                        eprintln!("  code {code}: {old} -> {w}");
+                    }
+                }
+            }
         } else if has_ff2 && (subtype == "Type1" || subtype == "MMType1") {
             // Type1 font re-encoded as TrueType (after embedding fallback font).
             corrections = compute_truetype_width_corrections(
