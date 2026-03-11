@@ -4635,17 +4635,12 @@ fn parse_cff_encoding_supplement(
         return;
     }
     let n_sups = data[start] as usize;
-    let Some(cff) = cff_parser::Table::parse(cff_data) else {
-        return;
-    };
-
-    // Build a name → GID map from the CFF charset.
-    let mut name_to_gid: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
-    for gid_raw in 1..cff.number_of_glyphs() {
-        if let Some(name) = cff.glyph_name(cff_parser::GlyphId(gid_raw)) {
-            name_to_gid.insert(name.to_string(), gid_raw);
-        }
-    }
+    // Build a SID → GID map from the CFF charset.
+    // veraPDF resolves supplement entries by SID, not by name.
+    // In subset fonts, the same glyph name can have different SIDs
+    // (standard SID vs custom String INDEX SID), so name-based matching
+    // would incorrectly match glyphs that veraPDF considers unmapped.
+    let sid_to_gid = parse_cff_charset_sid_map(cff_data);
 
     for i in 0..n_sups {
         let entry_start = start + 1 + i * 3;
@@ -4655,124 +4650,189 @@ fn parse_cff_encoding_supplement(
         let code = data[entry_start];
         let sid = u16::from_be_bytes([data[entry_start + 1], data[entry_start + 2]]);
 
-        // Map SID → glyph name using standard strings + String INDEX.
-        let glyph_name = sid_to_name(sid, cff_data);
-        if let Some(name) = glyph_name {
-            if let Some(&gid) = name_to_gid.get(&name) {
-                map.insert(code, gid);
+        // Map SID → GID via charset. Only add if the exact SID is in the charset.
+        if let Some(&gid) = sid_to_gid.get(&sid) {
+            map.insert(code, gid);
+        }
+        // If SID not in charset → .notdef (not added to map)
+    }
+}
+
+/// Parse the CFF charset to build a SID → GID map.
+///
+/// The charset maps GID → SID. We invert this to get SID → GID.
+/// The charset offset is found in the Top DICT (operator 15).
+fn parse_cff_charset_sid_map(data: &[u8]) -> std::collections::HashMap<u16, u16> {
+    let mut map = std::collections::HashMap::new();
+
+    if data.len() < 4 {
+        return map;
+    }
+    let hdr_size = data[2] as usize;
+    let Some(after_name) = skip_cff_index(data, hdr_size) else {
+        return map;
+    };
+    let Some((top_dict_data, _)) = read_cff_index_first(data, after_name) else {
+        return map;
+    };
+
+    // Parse Top DICT for charset offset (operator 15) and nGlyphs (from CharStrings INDEX).
+    let charset_offset = parse_cff_top_dict_value(&top_dict_data, 15);
+    let charstrings_offset = parse_cff_top_dict_value(&top_dict_data, 17);
+
+    // Get number of glyphs from CharStrings INDEX.
+    let n_glyphs = if charstrings_offset > 0 && (charstrings_offset as usize) + 2 <= data.len() {
+        u16::from_be_bytes([
+            data[charstrings_offset as usize],
+            data[charstrings_offset as usize + 1],
+        ])
+    } else {
+        return map;
+    };
+
+    // charset_offset 0 = ISOAdobe, 1 = Expert, 2 = ExpertSubset
+    // For predefined charsets, all SIDs are standard → direct mapping works.
+    if charset_offset <= 2 {
+        // For predefined charsets, sid_to_gid is complex. Just return empty
+        // and let the supplement fallback handle it.
+        return map;
+    }
+
+    let offset = charset_offset as usize;
+    if offset >= data.len() {
+        return map;
+    }
+
+    let format = data[offset];
+    match format {
+        0 => {
+            // Format 0: n_glyphs-1 SIDs (GID 0 = .notdef is implicit)
+            for gid in 1..n_glyphs {
+                let pos = offset + 1 + (gid as usize - 1) * 2;
+                if pos + 1 >= data.len() {
+                    break;
+                }
+                let sid = u16::from_be_bytes([data[pos], data[pos + 1]]);
+                map.insert(sid, gid);
             }
-            // If name not in charset → .notdef (not added to map)
+        }
+        1 => {
+            // Format 1: ranges of (first_sid: u16, n_left: u8)
+            let mut gid: u16 = 1;
+            let mut pos = offset + 1;
+            while gid < n_glyphs && pos + 2 < data.len() {
+                let first_sid = u16::from_be_bytes([data[pos], data[pos + 1]]);
+                let n_left = data[pos + 2] as u16;
+                for j in 0..=n_left {
+                    if gid < n_glyphs {
+                        map.insert(first_sid + j, gid);
+                        gid += 1;
+                    }
+                }
+                pos += 3;
+            }
+        }
+        2 => {
+            // Format 2: ranges of (first_sid: u16, n_left: u16)
+            let mut gid: u16 = 1;
+            let mut pos = offset + 1;
+            while gid < n_glyphs && pos + 3 < data.len() {
+                let first_sid = u16::from_be_bytes([data[pos], data[pos + 1]]);
+                let n_left = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
+                for j in 0..=n_left {
+                    if gid < n_glyphs {
+                        map.insert(first_sid + j, gid);
+                        gid += 1;
+                    }
+                }
+                pos += 4;
+            }
+        }
+        _ => {}
+    }
+
+    map
+}
+
+/// Parse a specific operator value from a CFF Top DICT.
+fn parse_cff_top_dict_value(dict_data: &[u8], target_op: u8) -> u32 {
+    let mut i = 0;
+    let mut operand_stack: Vec<i64> = Vec::new();
+
+    while i < dict_data.len() {
+        let b0 = dict_data[i];
+        match b0 {
+            0..=21 => {
+                if b0 == target_op {
+                    return operand_stack.last().copied().unwrap_or(0) as u32;
+                }
+                operand_stack.clear();
+                if b0 == 12 {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            28 => {
+                if i + 2 < dict_data.len() {
+                    let val =
+                        i16::from_be_bytes([dict_data[i + 1], dict_data[i + 2]]) as i64;
+                    operand_stack.push(val);
+                }
+                i += 3;
+            }
+            29 => {
+                if i + 4 < dict_data.len() {
+                    let val = i32::from_be_bytes([
+                        dict_data[i + 1],
+                        dict_data[i + 2],
+                        dict_data[i + 3],
+                        dict_data[i + 4],
+                    ]) as i64;
+                    operand_stack.push(val);
+                }
+                i += 5;
+            }
+            30 => {
+                i += 1;
+                while i < dict_data.len() {
+                    let nibbles = dict_data[i];
+                    i += 1;
+                    if nibbles & 0x0F == 0x0F || nibbles >> 4 == 0x0F {
+                        break;
+                    }
+                }
+                operand_stack.push(0);
+            }
+            32..=246 => {
+                operand_stack.push(b0 as i64 - 139);
+                i += 1;
+            }
+            247..=250 => {
+                if i + 1 < dict_data.len() {
+                    let val = (b0 as i64 - 247) * 256 + dict_data[i + 1] as i64 + 108;
+                    operand_stack.push(val);
+                }
+                i += 2;
+            }
+            251..=254 => {
+                if i + 1 < dict_data.len() {
+                    let val = -(b0 as i64 - 251) * 256 - dict_data[i + 1] as i64 - 108;
+                    operand_stack.push(val);
+                }
+                i += 2;
+            }
+            255 => {
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
         }
     }
+    0
 }
 
-/// Convert a CFF SID to a glyph name.
-/// SIDs 0-390 are from the Adobe Standard Strings list.
-/// SIDs >= 391 come from the CFF String INDEX.
-fn sid_to_name(sid: u16, cff_data: &[u8]) -> Option<String> {
-    if (sid as usize) < CFF_STANDARD_STRINGS.len() {
-        return Some(CFF_STANDARD_STRINGS[sid as usize].to_string());
-    }
-
-    // SID >= 391 → read from CFF String INDEX.
-    // The String INDEX is the 4th structure in the CFF (after Header, Name INDEX, Top DICT INDEX).
-    let hdr_size = cff_data.get(2).copied()? as usize;
-    let after_name = skip_cff_index(cff_data, hdr_size)?;
-    let (_, after_top_dict) = read_cff_index_first(cff_data, after_name)?;
-
-    // String INDEX starts at after_top_dict
-    let str_index_entry = sid as usize - CFF_STANDARD_STRINGS.len();
-    read_cff_index_entry(cff_data, after_top_dict, str_index_entry)
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-}
-
-/// Read a specific entry from a CFF INDEX by index.
-fn read_cff_index_entry(data: &[u8], start: usize, index: usize) -> Option<Vec<u8>> {
-    if start + 2 > data.len() {
-        return None;
-    }
-    let count = u16::from_be_bytes([data[start], data[start + 1]]) as usize;
-    if index >= count {
-        return None;
-    }
-    if start + 3 > data.len() {
-        return None;
-    }
-    let off_size = data[start + 2] as usize;
-    if off_size == 0 || off_size > 4 {
-        return None;
-    }
-    let offsets_start = start + 3;
-    let off_a = read_cff_offset(data, offsets_start + index * off_size, off_size)?;
-    let off_b = read_cff_offset(data, offsets_start + (index + 1) * off_size, off_size)?;
-    let data_start = offsets_start + (count + 1) * off_size;
-    let entry_start = data_start + off_a - 1;
-    let entry_end = data_start + off_b - 1;
-    if entry_end > data.len() {
-        return None;
-    }
-    Some(data[entry_start..entry_end].to_vec())
-}
-
-/// Adobe Standard Strings for CFF SID 0-390.
-/// Only including the most common ones; full list in CFF spec.
-const CFF_STANDARD_STRINGS: &[&str] = &[
-    ".notdef", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent",
-    "ampersand", "quoteright", "parenleft", "parenright", "asterisk", "plus", "comma",
-    "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six",
-    "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater",
-    "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
-    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft",
-    "backslash", "bracketright", "asciicircum", "underscore", "quoteleft", "a", "b", "c",
-    "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
-    "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde",
-    "", "exclamdown", "cent", "sterling", "fraction", "yen", "florin", "section",
-    "currency", "quotesingle", "quotedblleft", "guillemotleft", "guilsinglleft",
-    "guilsinglright", "fi", "fl", "endash", "dagger", "daggerdbl", "periodcentered",
-    "paragraph", "bullet", "quotesinglbase", "quotedblbase", "quotedblright",
-    "guillemotright", "ellipsis", "perthousand", "questiondown", "grave", "acute",
-    "circumflex", "tilde", "macron", "breve", "dotaccent", "dieresis", "ring",
-    "cedilla", "hungarumlaut", "ogonek", "caron", "emdash", "AE", "ordfeminine",
-    "Lslash", "Oslash", "OE", "ordmasculine", "ae", "dotlessi", "lslash", "oslash",
-    "oe", "germandbls", "onesuperior", "logicalnot", "mu", "trademark", "Eth",
-    "onehalf", "plusminus", "Thorn", "onequarter", "divide", "brokenbar", "degree",
-    "thorn", "threequarters", "twosuperior", "registered", "minus", "eth",
-    "multiply", "threesuperior", "copyright", "Aacute", "Acircumflex", "Adieresis",
-    "Agrave", "Aring", "Atilde", "Ccedilla", "Eacute", "Ecircumflex", "Edieresis",
-    "Egrave", "Iacute", "Icircumflex", "Idieresis", "Igrave", "Ntilde", "Oacute",
-    "Ocircumflex", "Odieresis", "Ograve", "Otilde", "Scaron", "Uacute", "Ucircumflex",
-    "Udieresis", "Ugrave", "Yacute", "Ydieresis", "Zcaron", "exclamsmall",
-    "Hungarumlautsmall", "dollaroldstyle", "dollarsuperior", "ampersandsmall",
-    "Acutesmall", "parenleftsuperior", "parenrightsuperior", "twodotenleader",
-    "onedotenleader", "zerooldstyle", "oneoldstyle", "twooldstyle", "threeoldstyle",
-    "fouroldstyle", "fiveoldstyle", "sixoldstyle", "sevenoldstyle", "eightoldstyle",
-    "nineoldstyle", "commasuperior", "threequartersemdash", "periodsuperior",
-    "questionsmall", "asuperior", "bsuperior", "centsuperior", "dsuperior", "esuperior",
-    "isuperior", "lsuperior", "msuperior", "nsuperior", "osuperior", "rsuperior",
-    "ssuperior", "tsuperior", "ff", "ffi", "ffl", "parenleftinferior",
-    "parenrightinferior", "Circumflexsmall", "hyphensuperior", "Gravesmall", "Asmall",
-    "Bsmall", "Csmall", "Dsmall", "Esmall", "Fsmall", "Gsmall", "Hsmall", "Ismall",
-    "Jsmall", "Ksmall", "Lsmall", "Msmall", "Nsmall", "Osmall", "Psmall", "Qsmall",
-    "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall", "Wsmall", "Xsmall", "Ysmall",
-    "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall", "exclamdownsmall",
-    "centoldstyle", "Lslashsmall", "Scaronsmall", "Zcaronsmall", "Dieresissmall",
-    "Brevesmall", "Caronsmall", "Dotaccentsmall", "Macronsmall", "figuredash",
-    "hypheninferior", "Ogoneksmall", "Ringsmall", "Cedillasmall", "questiondownsmall",
-    "oneeighth", "threeeighths", "fiveeighths", "seveneighths", "onethird", "twothirds",
-    "zerosuperior", "foursuperior", "fivesuperior", "sixsuperior", "sevensuperior",
-    "eightsuperior", "ninesuperior", "zeroinferior", "oneinferior", "twoinferior",
-    "threeinferior", "fourinferior", "fiveinferior", "sixinferior", "seveninferior",
-    "eightinferior", "nineinferior", "centinferior", "dollarinferior", "periodinferior",
-    "commainferior", "Agravesmall", "Aacutesmall", "Acircumflexsmall", "Atildesmall",
-    "Adieresissmall", "Aringsmall", "AEsmall", "Ccedillasmall", "Egravesmall",
-    "Eacutesmall", "Ecircumflexsmall", "Edieresissmall", "Igravesmall", "Iacutesmall",
-    "Icircumflexsmall", "Idieresissmall", "Ethsmall", "Ntildesmall", "Ogravesmall",
-    "Oacutesmall", "Ocircumflexsmall", "Otildesmall", "Odieresissmall", "OEsmall",
-    "Oslashsmall", "Ugravesmall", "Uacutesmall", "Ucircumflexsmall", "Udieresissmall",
-    "Yacutesmall", "Thornsmall", "Ydieresissmall", "001.000", "001.001", "001.002",
-    "001.003", "Black", "Bold", "Book", "Light", "Medium", "Regular", "Roman",
-    "Semibold",
-];
 
 /// Skip a CFF INDEX structure and return the offset after it.
 fn skip_cff_index(data: &[u8], start: usize) -> Option<usize> {
