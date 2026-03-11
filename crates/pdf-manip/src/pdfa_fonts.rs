@@ -4635,12 +4635,14 @@ fn parse_cff_encoding_supplement(
         return;
     }
     let n_sups = data[start] as usize;
+    eprintln!("DEBUG supplement: n_sups={} cff_data_len={}", n_sups, cff_data.len());
     // Build a SID → GID map from the CFF charset.
     // veraPDF resolves supplement entries by SID, not by name.
     // In subset fonts, the same glyph name can have different SIDs
     // (standard SID vs custom String INDEX SID), so name-based matching
     // would incorrectly match glyphs that veraPDF considers unmapped.
     let sid_to_gid = parse_cff_charset_sid_map(cff_data);
+    eprintln!("DEBUG supplement: sid_to_gid has {} entries", sid_to_gid.len());
 
     for i in 0..n_sups {
         let entry_start = start + 1 + i * 3;
@@ -4652,7 +4654,10 @@ fn parse_cff_encoding_supplement(
 
         // Map SID → GID via charset. Only add if the exact SID is in the charset.
         if let Some(&gid) = sid_to_gid.get(&sid) {
+            eprintln!("DEBUG supplement: code={} sid={} -> gid={}", code, sid, gid);
             map.insert(code, gid);
+        } else {
+            eprintln!("DEBUG supplement: code={} sid={} -> NOT FOUND in charset", code, sid);
         }
         // If SID not in charset → .notdef (not added to map)
     }
@@ -4680,6 +4685,8 @@ fn parse_cff_charset_sid_map(data: &[u8]) -> std::collections::HashMap<u16, u16>
     let charset_offset = parse_cff_top_dict_value(&top_dict_data, 15);
     let charstrings_offset = parse_cff_top_dict_value(&top_dict_data, 17);
 
+    eprintln!("DEBUG charset_sid_map: dict_len={} charset_off={} charstrings_off={}", top_dict_data.len(), charset_offset, charstrings_offset);
+
     // Get number of glyphs from CharStrings INDEX.
     let n_glyphs = if charstrings_offset > 0 && (charstrings_offset as usize) + 2 <= data.len() {
         u16::from_be_bytes([
@@ -4687,14 +4694,18 @@ fn parse_cff_charset_sid_map(data: &[u8]) -> std::collections::HashMap<u16, u16>
             data[charstrings_offset as usize + 1],
         ])
     } else {
+        eprintln!("DEBUG charset_sid_map: EARLY EXIT charstrings_offset={}", charstrings_offset);
         return map;
     };
+
+    eprintln!("DEBUG charset_sid_map: n_glyphs={} format={}", n_glyphs, if (charset_offset as usize) < data.len() { data[charset_offset as usize] } else { 255 });
 
     // charset_offset 0 = ISOAdobe, 1 = Expert, 2 = ExpertSubset
     // For predefined charsets, all SIDs are standard → direct mapping works.
     if charset_offset <= 2 {
         // For predefined charsets, sid_to_gid is complex. Just return empty
         // and let the supplement fallback handle it.
+        eprintln!("DEBUG charset_sid_map: EARLY EXIT predefined charset={}", charset_offset);
         return map;
     }
 
