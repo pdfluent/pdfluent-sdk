@@ -4233,6 +4233,10 @@ fn compute_cff_type1_width_corrections(
         1.0
     };
 
+    if (scale - 1.0).abs() > 0.001 {
+        eprintln!("DEBUG CFF scale: matrix.sx={} scale={} data_len={}", matrix.sx, scale, font_data.len());
+    }
+
     let mut corrections = Vec::new();
 
     for (i, obj) in existing_widths.iter().enumerate() {
