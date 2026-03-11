@@ -6010,6 +6010,286 @@ fn fix_cid_text_string(
     changed
 }
 
+/// Fix .notdef references in symbolic simple fonts by modifying content streams.
+///
+/// Symbolic fonts (Symbol, Wingdings, phonetic fonts, etc.) are not handled by
+/// `fix_notdef_glyph_refs` because their custom encodings make Differences-based
+/// fixes unreliable. Instead, this function replaces undefined character codes
+/// directly in content streams with a valid code (typically space).
+pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
+    use std::collections::{HashMap, HashSet};
+
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    let mut total_fixed = 0;
+
+    for &page_id in &page_ids {
+        // Get font resources: resource_name -> font_obj_id
+        let font_map: HashMap<String, ObjectId> = {
+            let page = match doc.objects.get(&page_id) {
+                Some(Object::Dictionary(d)) => d.clone(),
+                _ => continue,
+            };
+            let resources = match page.get(b"Resources").ok() {
+                Some(Object::Dictionary(d)) => d.clone(),
+                Some(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Dictionary(d)) => d.clone(),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let fonts = match resources.get(b"Font").ok() {
+                Some(Object::Dictionary(d)) => d.clone(),
+                Some(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Dictionary(d)) => d.clone(),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let mut map = HashMap::new();
+            for (key, val) in fonts.iter() {
+                let name = String::from_utf8_lossy(key).to_string();
+                if let Object::Reference(id) = val {
+                    map.insert(name, *id);
+                }
+            }
+            map
+        };
+
+        // Find symbolic simple fonts with undefined glyphs.
+        // Map: resource_name -> (set of invalid codes, replacement code)
+        let mut notdef_fonts: HashMap<String, (HashSet<u8>, u8)> = HashMap::new();
+
+        for (res_name, font_id) in &font_map {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(font_id) else {
+                continue;
+            };
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+            if subtype != "TrueType" && subtype != "Type1" && subtype != "MMType1" {
+                continue;
+            }
+
+            // Only handle symbolic fonts (non-symbolic are fixed by fix_notdef_glyph_refs).
+            if !is_font_symbolic(doc, dict) {
+                continue;
+            }
+
+            // Skip fonts with standard encoding (handled by fix_notdef_glyph_refs).
+            let enc_name = get_name(dict, b"Encoding").unwrap_or_default();
+            if enc_name == "WinAnsiEncoding"
+                || enc_name == "MacRomanEncoding"
+                || enc_name == "MacExpertEncoding"
+            {
+                continue;
+            }
+
+            let fd_id = match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+            let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
+                continue;
+            };
+
+            let first_char = dict
+                .get(b"FirstChar")
+                .ok()
+                .and_then(|o| match o {
+                    Object::Integer(i) => Some(*i as u32),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let last_char = dict
+                .get(b"LastChar")
+                .ok()
+                .and_then(|o| match o {
+                    Object::Integer(i) => Some(*i as u32),
+                    _ => None,
+                })
+                .unwrap_or(255);
+
+            // Build set of invalid codes using font's cmap.
+            let mut invalid_codes = HashSet::new();
+            let mut replacement = 0x20u8;
+
+            if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+                // For TrueType symbolic fonts, try both direct char mapping and
+                // the 0xF000 offset (Microsoft Symbol cmap convention).
+                for code in first_char..=last_char.min(255) {
+                    let ch = char::from(code as u8);
+                    let sym_ch = char::from_u32(0xF000 + code);
+                    let has_glyph = face
+                        .glyph_index(ch)
+                        .map(|g| g.0 != 0)
+                        .unwrap_or(false)
+                        || sym_ch
+                            .and_then(|c| face.glyph_index(c))
+                            .map(|g| g.0 != 0)
+                            .unwrap_or(false);
+                    if !has_glyph {
+                        invalid_codes.insert(code as u8);
+                    }
+                }
+
+                // Find replacement code (prefer space).
+                if face
+                    .glyph_index(' ')
+                    .map(|g| g.0 != 0)
+                    .unwrap_or(false)
+                {
+                    replacement = 0x20;
+                } else {
+                    // Use the first valid code.
+                    for code in 0u32..=255 {
+                        if !invalid_codes.contains(&(code as u8)) {
+                            let ch = char::from(code as u8);
+                            if face
+                                .glyph_index(ch)
+                                .map(|g| g.0 != 0)
+                                .unwrap_or(false)
+                            {
+                                replacement = code as u8;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else if let Some(cff) = cff_parser::Table::parse(&font_data) {
+                // CFF symbolic font: use CFF encoding.
+                let enc_map = parse_cff_encoding_map(&font_data);
+                for code in first_char..=last_char.min(255) {
+                    let has_glyph = enc_map
+                        .get(&(code as u8))
+                        .map(|&gid| gid != 0)
+                        .unwrap_or(false);
+                    if !has_glyph {
+                        invalid_codes.insert(code as u8);
+                    }
+                }
+                // Find replacement: first valid code.
+                if !invalid_codes.contains(&0x20) {
+                    replacement = 0x20;
+                } else {
+                    for code in 0u32..=255 {
+                        if enc_map.get(&(code as u8)).map(|&gid| gid != 0).unwrap_or(false) {
+                            replacement = code as u8;
+                            break;
+                        }
+                    }
+                }
+                let _ = cff; // suppress unused warning
+            } else {
+                continue;
+            }
+
+            if !invalid_codes.is_empty() {
+                notdef_fonts.insert(res_name.clone(), (invalid_codes, replacement));
+            }
+        }
+
+        if notdef_fonts.is_empty() {
+            continue;
+        }
+
+        // Scan content streams and replace invalid codes.
+        let content_ids = crate::content_editor::get_content_stream_ids(doc, page_id);
+        let mut current_font = String::new();
+
+        for cs_id in content_ids {
+            let stream_data = match doc.objects.get(&cs_id) {
+                Some(Object::Stream(s)) => {
+                    let mut s = s.clone();
+                    let _ = s.decompress();
+                    s.content
+                }
+                _ => continue,
+            };
+
+            let Ok(editor) = crate::content_editor::ContentEditor::from_stream(&stream_data)
+            else {
+                continue;
+            };
+            let ops = editor.operations().to_vec();
+            let mut modified = false;
+            let mut new_ops = Vec::with_capacity(ops.len());
+
+            for op in &ops {
+                match op.operator.as_str() {
+                    "Tf" => {
+                        if let Some(Object::Name(name)) = op.operands.first() {
+                            current_font = String::from_utf8_lossy(name).to_string();
+                        }
+                        new_ops.push(op.clone());
+                    }
+                    "Tj" | "'" | "\"" => {
+                        if let Some((invalid_codes, repl)) = notdef_fonts.get(&current_font) {
+                            let mut new_op = op.clone();
+                            let str_idx = if op.operator == "\"" { 2 } else { 0 };
+                            if let Some(Object::String(bytes, _)) =
+                                new_op.operands.get_mut(str_idx)
+                            {
+                                if fix_simple_text_string(bytes, invalid_codes, *repl) {
+                                    modified = true;
+                                }
+                            }
+                            new_ops.push(new_op);
+                        } else {
+                            new_ops.push(op.clone());
+                        }
+                    }
+                    "TJ" => {
+                        if let Some((invalid_codes, repl)) = notdef_fonts.get(&current_font) {
+                            let mut new_op = op.clone();
+                            if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
+                                for item in arr.iter_mut() {
+                                    if let Object::String(bytes, _) = item {
+                                        if fix_simple_text_string(bytes, invalid_codes, *repl) {
+                                            modified = true;
+                                        }
+                                    }
+                                }
+                            }
+                            new_ops.push(new_op);
+                        } else {
+                            new_ops.push(op.clone());
+                        }
+                    }
+                    _ => {
+                        new_ops.push(op.clone());
+                    }
+                }
+            }
+
+            if modified {
+                let new_editor = crate::content_editor::ContentEditor::from_operations(new_ops);
+                if let Ok(encoded) = new_editor.encode() {
+                    if let Some(Object::Stream(s)) = doc.objects.get_mut(&cs_id) {
+                        s.set_plain_content(encoded);
+                        total_fixed += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    total_fixed
+}
+
+/// Replace single-byte codes in a simple font text string that are invalid.
+fn fix_simple_text_string(
+    bytes: &mut [u8],
+    invalid_codes: &std::collections::HashSet<u8>,
+    replacement: u8,
+) -> bool {
+    let mut changed = false;
+    for b in bytes.iter_mut() {
+        if invalid_codes.contains(b) {
+            *b = replacement;
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// Encoding info extracted from a font dictionary.
 struct EncodingInfo {
     /// Base encoding name (e.g., "WinAnsiEncoding").
@@ -6259,8 +6539,14 @@ fn fix_notdef_in_type1(
 
         // For codes below 32: control characters that standard encodings
         // don't map to real glyphs. Map to "space" to avoid .notdef.
+        // In subset fonts where "space" isn't available, use any existing
+        // glyph (control chars are invisible anyway).
         if code < 32 {
-            new_diffs.push((code, "space".to_string()));
+            if available_glyphs.contains("space") {
+                new_diffs.push((code, "space".to_string()));
+            } else if let Some(name) = available_glyphs.iter().next() {
+                new_diffs.push((code, name.clone()));
+            }
             continue;
         }
 

@@ -57,6 +57,10 @@ fn main() {
     let cid_notdef_fixed = pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
     eprintln!(".notdef refs (CID): fixed={cid_notdef_fixed}");
 
+    // Fix .notdef in symbolic simple fonts via content stream modification.
+    let sym_notdef_fixed = pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    eprintln!(".notdef refs (symbolic): fixed={sym_notdef_fixed}");
+
     // Ensure undefined WinAnsi codes have Differences entries (prevents
     // ambiguous glyph mapping between veraPDF and our width fixer).
     let undef_fixed = pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
