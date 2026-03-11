@@ -3149,21 +3149,6 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 &existing_widths,
                 &enc_info,
             );
-            // DEBUG: trace CFF corrections for failing fonts
-            if let Some(ref bfname) = get_name(doc.objects.get(&font_id).and_then(|o| if let Object::Dictionary(d) = o { Some(d) } else { None }).unwrap_or(&lopdf::Dictionary::new()), b"BaseFont") {
-                if bfname.contains("CMR10") || bfname.contains("CMTI10") || bfname.contains("CMSY") || bfname.contains("CMMIB") {
-                    eprintln!("DEBUG {bfname}: fc={first_char} widths={} corrections={} enc=({},{}) ff3={has_ff3}", existing_widths.len(), corrections.len(), enc_info.0, enc_info.1.len());
-                    // Check specific failing codes
-                    for check_code in [161u32, 174, 175, 176, 185, 188, 189, 193, 196] {
-                        if check_code < first_char { continue; }
-                        let idx = (check_code - first_char) as usize;
-                        if idx >= existing_widths.len() { continue; }
-                        let old = match &existing_widths[idx] { Object::Integer(v) => *v, _ => -1 };
-                        let correction = corrections.iter().find(|&&(i, _)| i == idx);
-                        eprintln!("  code {check_code}: old={old}, correction={correction:?}");
-                    }
-                }
-            }
         } else if has_ff2 && (subtype == "Type1" || subtype == "MMType1") {
             // Type1 font re-encoded as TrueType (after embedding fallback font).
             corrections = compute_truetype_width_corrections(
@@ -4222,7 +4207,6 @@ fn compute_cff_type1_width_corrections(
     if let Ok(face) = ttf_parser::Face::parse(font_data, 0) {
         let units_per_em = face.units_per_em() as f64;
         if units_per_em > 0.0 {
-            eprintln!("DEBUG cff_type1: OTF path taken, upem={units_per_em}");
             let scale = 1000.0 / units_per_em;
             return compute_otf_cff_corrections(
                 &face,
@@ -4237,7 +4221,6 @@ fn compute_cff_type1_width_corrections(
         }
     }
 
-    eprintln!("DEBUG cff_type1: raw CFF path taken");
     // Fall back to raw CFF parse (Type1C).
     let Some(cff) = cff_parser::Table::parse(font_data) else {
         return Vec::new();
@@ -4516,11 +4499,6 @@ fn cff_width_for_code(
     // veraPDF uses only the CFF's own encoding for Type1C fonts.
     if code <= 255 {
         let enc_map = parse_cff_encoding_map(font_data);
-        if [174, 175, 176, 185, 196].contains(&code) {
-            let in_map = enc_map.get(&(code as u8));
-            let notdef_w = cff.glyph_width(cff_parser::GlyphId(0)).map(|w| w as f64 * scale);
-            eprintln!("DEBUG cff_width code={code}: in_map={in_map:?}, enc_map_size={}, notdef_w={notdef_w:?}", enc_map.len());
-        }
         if let Some(&gid) = enc_map.get(&(code as u8)) {
             if gid != 0 {
                 return cff
@@ -4643,6 +4621,10 @@ fn parse_cff_encoding_map(data: &[u8]) -> std::collections::HashMap<u8, u16> {
 }
 
 /// Parse CFF encoding supplement entries.
+///
+/// Each supplement entry maps code → SID. We need to resolve SID → GID
+/// via the charset (not via `glyph_index()`, which has a Standard Encoding
+/// fallback that veraPDF does not use).
 fn parse_cff_encoding_supplement(
     data: &[u8],
     start: usize,
@@ -4653,25 +4635,144 @@ fn parse_cff_encoding_supplement(
         return;
     }
     let n_sups = data[start] as usize;
-    // Each supplement: code (u8) + SID (u16) = 3 bytes
-    // We need to map SID → GID via charset. Since we don't have easy
-    // charset access, parse via cff_parser for supplement entries.
-    if let Some(cff) = cff_parser::Table::parse(cff_data) {
-        for i in 0..n_sups {
-            let entry_start = start + 1 + i * 3;
-            if entry_start + 2 >= data.len() {
-                break;
+    let Some(cff) = cff_parser::Table::parse(cff_data) else {
+        return;
+    };
+
+    // Build a name → GID map from the CFF charset.
+    let mut name_to_gid: std::collections::HashMap<String, u16> = std::collections::HashMap::new();
+    for gid_raw in 1..cff.number_of_glyphs() {
+        if let Some(name) = cff.glyph_name(cff_parser::GlyphId(gid_raw)) {
+            name_to_gid.insert(name.to_string(), gid_raw);
+        }
+    }
+
+    for i in 0..n_sups {
+        let entry_start = start + 1 + i * 3;
+        if entry_start + 2 >= data.len() {
+            break;
+        }
+        let code = data[entry_start];
+        let sid = u16::from_be_bytes([data[entry_start + 1], data[entry_start + 2]]);
+
+        // Map SID → glyph name using standard strings + String INDEX.
+        let glyph_name = sid_to_name(sid, cff_data);
+        if let Some(name) = glyph_name {
+            if let Some(&gid) = name_to_gid.get(&name) {
+                map.insert(code, gid);
             }
-            let code = data[entry_start];
-            // The SID is at entry_start+1..entry_start+3
-            // We can look up the GID by searching for this SID in charset
-            // For now, use glyph_index as fallback for supplements
-            if let Some(gid) = cff.glyph_index(code) {
-                map.insert(code, gid.0);
-            }
+            // If name not in charset → .notdef (not added to map)
         }
     }
 }
+
+/// Convert a CFF SID to a glyph name.
+/// SIDs 0-390 are from the Adobe Standard Strings list.
+/// SIDs >= 391 come from the CFF String INDEX.
+fn sid_to_name(sid: u16, cff_data: &[u8]) -> Option<String> {
+    if (sid as usize) < CFF_STANDARD_STRINGS.len() {
+        return Some(CFF_STANDARD_STRINGS[sid as usize].to_string());
+    }
+
+    // SID >= 391 → read from CFF String INDEX.
+    // The String INDEX is the 4th structure in the CFF (after Header, Name INDEX, Top DICT INDEX).
+    let hdr_size = cff_data.get(2).copied()? as usize;
+    let after_name = skip_cff_index(cff_data, hdr_size)?;
+    let (_, after_top_dict) = read_cff_index_first(cff_data, after_name)?;
+
+    // String INDEX starts at after_top_dict
+    let str_index_entry = sid as usize - CFF_STANDARD_STRINGS.len();
+    read_cff_index_entry(cff_data, after_top_dict, str_index_entry)
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+}
+
+/// Read a specific entry from a CFF INDEX by index.
+fn read_cff_index_entry(data: &[u8], start: usize, index: usize) -> Option<Vec<u8>> {
+    if start + 2 > data.len() {
+        return None;
+    }
+    let count = u16::from_be_bytes([data[start], data[start + 1]]) as usize;
+    if index >= count {
+        return None;
+    }
+    if start + 3 > data.len() {
+        return None;
+    }
+    let off_size = data[start + 2] as usize;
+    if off_size == 0 || off_size > 4 {
+        return None;
+    }
+    let offsets_start = start + 3;
+    let off_a = read_cff_offset(data, offsets_start + index * off_size, off_size)?;
+    let off_b = read_cff_offset(data, offsets_start + (index + 1) * off_size, off_size)?;
+    let data_start = offsets_start + (count + 1) * off_size;
+    let entry_start = data_start + off_a - 1;
+    let entry_end = data_start + off_b - 1;
+    if entry_end > data.len() {
+        return None;
+    }
+    Some(data[entry_start..entry_end].to_vec())
+}
+
+/// Adobe Standard Strings for CFF SID 0-390.
+/// Only including the most common ones; full list in CFF spec.
+const CFF_STANDARD_STRINGS: &[&str] = &[
+    ".notdef", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent",
+    "ampersand", "quoteright", "parenleft", "parenright", "asterisk", "plus", "comma",
+    "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six",
+    "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater",
+    "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+    "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft",
+    "backslash", "bracketright", "asciicircum", "underscore", "quoteleft", "a", "b", "c",
+    "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+    "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde",
+    "", "exclamdown", "cent", "sterling", "fraction", "yen", "florin", "section",
+    "currency", "quotesingle", "quotedblleft", "guillemotleft", "guilsinglleft",
+    "guilsinglright", "fi", "fl", "endash", "dagger", "daggerdbl", "periodcentered",
+    "paragraph", "bullet", "quotesinglbase", "quotedblbase", "quotedblright",
+    "guillemotright", "ellipsis", "perthousand", "questiondown", "grave", "acute",
+    "circumflex", "tilde", "macron", "breve", "dotaccent", "dieresis", "ring",
+    "cedilla", "hungarumlaut", "ogonek", "caron", "emdash", "AE", "ordfeminine",
+    "Lslash", "Oslash", "OE", "ordmasculine", "ae", "dotlessi", "lslash", "oslash",
+    "oe", "germandbls", "onesuperior", "logicalnot", "mu", "trademark", "Eth",
+    "onehalf", "plusminus", "Thorn", "onequarter", "divide", "brokenbar", "degree",
+    "thorn", "threequarters", "twosuperior", "registered", "minus", "eth",
+    "multiply", "threesuperior", "copyright", "Aacute", "Acircumflex", "Adieresis",
+    "Agrave", "Aring", "Atilde", "Ccedilla", "Eacute", "Ecircumflex", "Edieresis",
+    "Egrave", "Iacute", "Icircumflex", "Idieresis", "Igrave", "Ntilde", "Oacute",
+    "Ocircumflex", "Odieresis", "Ograve", "Otilde", "Scaron", "Uacute", "Ucircumflex",
+    "Udieresis", "Ugrave", "Yacute", "Ydieresis", "Zcaron", "exclamsmall",
+    "Hungarumlautsmall", "dollaroldstyle", "dollarsuperior", "ampersandsmall",
+    "Acutesmall", "parenleftsuperior", "parenrightsuperior", "twodotenleader",
+    "onedotenleader", "zerooldstyle", "oneoldstyle", "twooldstyle", "threeoldstyle",
+    "fouroldstyle", "fiveoldstyle", "sixoldstyle", "sevenoldstyle", "eightoldstyle",
+    "nineoldstyle", "commasuperior", "threequartersemdash", "periodsuperior",
+    "questionsmall", "asuperior", "bsuperior", "centsuperior", "dsuperior", "esuperior",
+    "isuperior", "lsuperior", "msuperior", "nsuperior", "osuperior", "rsuperior",
+    "ssuperior", "tsuperior", "ff", "ffi", "ffl", "parenleftinferior",
+    "parenrightinferior", "Circumflexsmall", "hyphensuperior", "Gravesmall", "Asmall",
+    "Bsmall", "Csmall", "Dsmall", "Esmall", "Fsmall", "Gsmall", "Hsmall", "Ismall",
+    "Jsmall", "Ksmall", "Lsmall", "Msmall", "Nsmall", "Osmall", "Psmall", "Qsmall",
+    "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall", "Wsmall", "Xsmall", "Ysmall",
+    "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall", "exclamdownsmall",
+    "centoldstyle", "Lslashsmall", "Scaronsmall", "Zcaronsmall", "Dieresissmall",
+    "Brevesmall", "Caronsmall", "Dotaccentsmall", "Macronsmall", "figuredash",
+    "hypheninferior", "Ogoneksmall", "Ringsmall", "Cedillasmall", "questiondownsmall",
+    "oneeighth", "threeeighths", "fiveeighths", "seveneighths", "onethird", "twothirds",
+    "zerosuperior", "foursuperior", "fivesuperior", "sixsuperior", "sevensuperior",
+    "eightsuperior", "ninesuperior", "zeroinferior", "oneinferior", "twoinferior",
+    "threeinferior", "fourinferior", "fiveinferior", "sixinferior", "seveninferior",
+    "eightinferior", "nineinferior", "centinferior", "dollarinferior", "periodinferior",
+    "commainferior", "Agravesmall", "Aacutesmall", "Acircumflexsmall", "Atildesmall",
+    "Adieresissmall", "Aringsmall", "AEsmall", "Ccedillasmall", "Egravesmall",
+    "Eacutesmall", "Ecircumflexsmall", "Edieresissmall", "Igravesmall", "Iacutesmall",
+    "Icircumflexsmall", "Idieresissmall", "Ethsmall", "Ntildesmall", "Ogravesmall",
+    "Oacutesmall", "Ocircumflexsmall", "Otildesmall", "Odieresissmall", "OEsmall",
+    "Oslashsmall", "Ugravesmall", "Uacutesmall", "Ucircumflexsmall", "Udieresissmall",
+    "Yacutesmall", "Thornsmall", "Ydieresissmall", "001.000", "001.001", "001.002",
+    "001.003", "Black", "Bold", "Book", "Light", "Medium", "Regular", "Roman",
+    "Semibold",
+];
 
 /// Skip a CFF INDEX structure and return the offset after it.
 fn skip_cff_index(data: &[u8], start: usize) -> Option<usize> {
