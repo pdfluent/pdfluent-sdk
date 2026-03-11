@@ -4465,9 +4465,6 @@ fn cff_width_for_code(
         };
         if !glyph_name.is_empty() {
             if let Some(w) = find_cff_glyph_width_by_name_fractional(cff, &glyph_name, scale) {
-                if code >= 160 && code <= 200 {
-                    eprintln!("DEBUG cff_width: code={} name='{}' -> PDF_ENC width={}", code, glyph_name, w);
-                }
                 return Some(w);
             }
             // Try the standard AGL name if we used a "uniXXXX" form.
@@ -4490,13 +4487,9 @@ fn cff_width_for_code(
             // Glyph name not found in subset — veraPDF maps to .notdef (GID 0).
             // Return .notdef width so the PDF Widths array matches.
             if glyph_name != ".notdef" {
-                let notdef_w = cff
+                return cff
                     .glyph_width(cff_parser::GlyphId(0))
                     .map(|w| w as f64 * scale);
-                if code >= 160 && code <= 200 {
-                    eprintln!("DEBUG cff_width: code={} name='{}' -> NOTDEF width={:?}", code, glyph_name, notdef_w);
-                }
-                return notdef_w;
             }
         }
     }
@@ -4508,23 +4501,15 @@ fn cff_width_for_code(
         let enc_map = parse_cff_encoding_map(font_data);
         if let Some(&gid) = enc_map.get(&(code as u8)) {
             if gid != 0 {
-                let w = cff
+                return cff
                     .glyph_width(cff_parser::GlyphId(gid))
                     .map(|w| w as f64 * scale);
-                if code >= 160 && code <= 200 {
-                    eprintln!("DEBUG cff_width: code={} -> CFF_ENC gid={} width={:?}", code, gid, w);
-                }
-                return w;
             }
         }
         // Code not in CFF encoding or maps to .notdef → return .notdef width.
-        let notdef_w = cff
+        return cff
             .glyph_width(cff_parser::GlyphId(0))
             .map(|w| w as f64 * scale);
-        if code >= 160 && code <= 200 {
-            eprintln!("DEBUG cff_width: code={} -> CFF_NOTDEF width={:?}", code, notdef_w);
-        }
-        return notdef_w;
     }
 
     None
@@ -4580,7 +4565,6 @@ fn parse_cff_encoding_map(data: &[u8]) -> std::collections::HashMap<u8, u16> {
     }
 
     let format = data[offset] & 0x7F; // Low 7 bits = format, high bit = supplemental
-    let has_supplement = data[offset] & 0x80 != 0;
 
     match format {
         0 => {
@@ -4597,11 +4581,9 @@ fn parse_cff_encoding_map(data: &[u8]) -> std::collections::HashMap<u8, u16> {
                 // GID = i + 1 (.notdef is GID 0, implicit)
                 map.insert(code_byte, (i + 1) as u16);
             }
-            // Parse supplement if present
-            if has_supplement {
-                let sup_start = offset + 2 + n_codes;
-                parse_cff_encoding_supplement(data, sup_start, &mut map, data);
-            }
+            // NOTE: Supplement entries are intentionally NOT parsed.
+            // veraPDF does not use CFF encoding supplement entries for width
+            // comparison — supplement codes are treated as .notdef.
         }
         1 => {
             // Format 1: nRanges byte, then nRanges * (first: u8, nLeft: u8)
@@ -4623,242 +4605,15 @@ fn parse_cff_encoding_map(data: &[u8]) -> std::collections::HashMap<u8, u16> {
                     gid += 1;
                 }
             }
-            // Parse supplement if present
-            if has_supplement {
-                let sup_start = offset + 2 + n_ranges * 2;
-                parse_cff_encoding_supplement(data, sup_start, &mut map, data);
-            }
+            // NOTE: Supplement entries are intentionally NOT parsed.
+            // veraPDF does not use CFF encoding supplement entries for width
+            // comparison — supplement codes are treated as .notdef.
         }
         _ => {}
     }
 
     map
 }
-
-/// Parse CFF encoding supplement entries.
-///
-/// Each supplement entry maps code → SID. We need to resolve SID → GID
-/// via the charset (not via `glyph_index()`, which has a Standard Encoding
-/// fallback that veraPDF does not use).
-fn parse_cff_encoding_supplement(
-    data: &[u8],
-    start: usize,
-    map: &mut std::collections::HashMap<u8, u16>,
-    cff_data: &[u8],
-) {
-    if start >= data.len() {
-        return;
-    }
-    let n_sups = data[start] as usize;
-    eprintln!("DEBUG supplement: n_sups={} cff_data_len={}", n_sups, cff_data.len());
-    // Build a SID → GID map from the CFF charset.
-    // veraPDF resolves supplement entries by SID, not by name.
-    // In subset fonts, the same glyph name can have different SIDs
-    // (standard SID vs custom String INDEX SID), so name-based matching
-    // would incorrectly match glyphs that veraPDF considers unmapped.
-    let sid_to_gid = parse_cff_charset_sid_map(cff_data);
-    eprintln!("DEBUG supplement: sid_to_gid has {} entries", sid_to_gid.len());
-
-    for i in 0..n_sups {
-        let entry_start = start + 1 + i * 3;
-        if entry_start + 2 >= data.len() {
-            break;
-        }
-        let code = data[entry_start];
-        let sid = u16::from_be_bytes([data[entry_start + 1], data[entry_start + 2]]);
-
-        // Map SID → GID via charset. Only add if the exact SID is in the charset.
-        if let Some(&gid) = sid_to_gid.get(&sid) {
-            eprintln!("DEBUG supplement: code={} sid={} -> gid={}", code, sid, gid);
-            map.insert(code, gid);
-        } else {
-            eprintln!("DEBUG supplement: code={} sid={} -> NOT FOUND in charset", code, sid);
-        }
-        // If SID not in charset → .notdef (not added to map)
-    }
-}
-
-/// Parse the CFF charset to build a SID → GID map.
-///
-/// The charset maps GID → SID. We invert this to get SID → GID.
-/// The charset offset is found in the Top DICT (operator 15).
-fn parse_cff_charset_sid_map(data: &[u8]) -> std::collections::HashMap<u16, u16> {
-    let mut map = std::collections::HashMap::new();
-
-    if data.len() < 4 {
-        return map;
-    }
-    let hdr_size = data[2] as usize;
-    let Some(after_name) = skip_cff_index(data, hdr_size) else {
-        return map;
-    };
-    let Some((top_dict_data, _)) = read_cff_index_first(data, after_name) else {
-        return map;
-    };
-
-    // Parse Top DICT for charset offset (operator 15) and nGlyphs (from CharStrings INDEX).
-    let charset_offset = parse_cff_top_dict_value(&top_dict_data, 15);
-    let charstrings_offset = parse_cff_top_dict_value(&top_dict_data, 17);
-
-    eprintln!("DEBUG charset_sid_map: dict_len={} charset_off={} charstrings_off={}", top_dict_data.len(), charset_offset, charstrings_offset);
-
-    // Get number of glyphs from CharStrings INDEX.
-    let n_glyphs = if charstrings_offset > 0 && (charstrings_offset as usize) + 2 <= data.len() {
-        u16::from_be_bytes([
-            data[charstrings_offset as usize],
-            data[charstrings_offset as usize + 1],
-        ])
-    } else {
-        eprintln!("DEBUG charset_sid_map: EARLY EXIT charstrings_offset={}", charstrings_offset);
-        return map;
-    };
-
-    eprintln!("DEBUG charset_sid_map: n_glyphs={} format={}", n_glyphs, if (charset_offset as usize) < data.len() { data[charset_offset as usize] } else { 255 });
-
-    // charset_offset 0 = ISOAdobe, 1 = Expert, 2 = ExpertSubset
-    // For predefined charsets, all SIDs are standard → direct mapping works.
-    if charset_offset <= 2 {
-        // For predefined charsets, sid_to_gid is complex. Just return empty
-        // and let the supplement fallback handle it.
-        eprintln!("DEBUG charset_sid_map: EARLY EXIT predefined charset={}", charset_offset);
-        return map;
-    }
-
-    let offset = charset_offset as usize;
-    if offset >= data.len() {
-        return map;
-    }
-
-    let format = data[offset];
-    match format {
-        0 => {
-            // Format 0: n_glyphs-1 SIDs (GID 0 = .notdef is implicit)
-            for gid in 1..n_glyphs {
-                let pos = offset + 1 + (gid as usize - 1) * 2;
-                if pos + 1 >= data.len() {
-                    break;
-                }
-                let sid = u16::from_be_bytes([data[pos], data[pos + 1]]);
-                map.insert(sid, gid);
-            }
-        }
-        1 => {
-            // Format 1: ranges of (first_sid: u16, n_left: u8)
-            let mut gid: u16 = 1;
-            let mut pos = offset + 1;
-            while gid < n_glyphs && pos + 2 < data.len() {
-                let first_sid = u16::from_be_bytes([data[pos], data[pos + 1]]);
-                let n_left = data[pos + 2] as u16;
-                for j in 0..=n_left {
-                    if gid < n_glyphs {
-                        map.insert(first_sid + j, gid);
-                        gid += 1;
-                    }
-                }
-                pos += 3;
-            }
-        }
-        2 => {
-            // Format 2: ranges of (first_sid: u16, n_left: u16)
-            let mut gid: u16 = 1;
-            let mut pos = offset + 1;
-            while gid < n_glyphs && pos + 3 < data.len() {
-                let first_sid = u16::from_be_bytes([data[pos], data[pos + 1]]);
-                let n_left = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
-                for j in 0..=n_left {
-                    if gid < n_glyphs {
-                        map.insert(first_sid + j, gid);
-                        gid += 1;
-                    }
-                }
-                pos += 4;
-            }
-        }
-        _ => {}
-    }
-
-    map
-}
-
-/// Parse a specific operator value from a CFF Top DICT.
-fn parse_cff_top_dict_value(dict_data: &[u8], target_op: u8) -> u32 {
-    let mut i = 0;
-    let mut operand_stack: Vec<i64> = Vec::new();
-
-    while i < dict_data.len() {
-        let b0 = dict_data[i];
-        match b0 {
-            0..=21 => {
-                if b0 == target_op {
-                    return operand_stack.last().copied().unwrap_or(0) as u32;
-                }
-                operand_stack.clear();
-                if b0 == 12 {
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            28 => {
-                if i + 2 < dict_data.len() {
-                    let val =
-                        i16::from_be_bytes([dict_data[i + 1], dict_data[i + 2]]) as i64;
-                    operand_stack.push(val);
-                }
-                i += 3;
-            }
-            29 => {
-                if i + 4 < dict_data.len() {
-                    let val = i32::from_be_bytes([
-                        dict_data[i + 1],
-                        dict_data[i + 2],
-                        dict_data[i + 3],
-                        dict_data[i + 4],
-                    ]) as i64;
-                    operand_stack.push(val);
-                }
-                i += 5;
-            }
-            30 => {
-                i += 1;
-                while i < dict_data.len() {
-                    let nibbles = dict_data[i];
-                    i += 1;
-                    if nibbles & 0x0F == 0x0F || nibbles >> 4 == 0x0F {
-                        break;
-                    }
-                }
-                operand_stack.push(0);
-            }
-            32..=246 => {
-                operand_stack.push(b0 as i64 - 139);
-                i += 1;
-            }
-            247..=250 => {
-                if i + 1 < dict_data.len() {
-                    let val = (b0 as i64 - 247) * 256 + dict_data[i + 1] as i64 + 108;
-                    operand_stack.push(val);
-                }
-                i += 2;
-            }
-            251..=254 => {
-                if i + 1 < dict_data.len() {
-                    let val = -(b0 as i64 - 251) * 256 - dict_data[i + 1] as i64 - 108;
-                    operand_stack.push(val);
-                }
-                i += 2;
-            }
-            255 => {
-                i += 1;
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-    0
-}
-
 
 /// Skip a CFF INDEX structure and return the offset after it.
 fn skip_cff_index(data: &[u8], start: usize) -> Option<usize> {
