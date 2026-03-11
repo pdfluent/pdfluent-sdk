@@ -3036,14 +3036,42 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 _ => continue,
             }
 
-            // Skip fonts with known symbolic names ONLY when the FontDescriptor
+            // Skip fonts with known symbolic names when the FontDescriptor
             // has the Symbolic flag set (indicating the CFF encoding should be used).
-            // After embedding a non-symbolic fallback font (e.g. DejaVuSans for
-            // ZapfDingbats), the flags are updated to Nonsymbolic — in that case
-            // the standard cmap-based width mapping works correctly.
+            // Also skip symbolic-named CFF fonts (FontFile3) even when flags say
+            // Nonsymbolic — veraPDF validates CFF widths via CFF internal encoding,
+            // not PDF encoding.  update_simple_widths_cff_symbolic already set the
+            // correct widths during embedding.
+            // Only process symbolic fonts when they were re-embedded as TrueType
+            // (FontFile2) with a non-symbolic fallback (e.g. DejaVuSans).
             if let Some(name) = get_name(dict, b"BaseFont") {
-                if is_symbolic_font_name(&name) && is_font_symbolic(doc, dict) {
-                    continue;
+                if is_symbolic_font_name(&name) {
+                    if is_font_symbolic(doc, dict) {
+                        continue;
+                    }
+                    // CFF symbolic fonts: skip — widths are CFF-encoding-based.
+                    let has_ff3 = dict
+                        .get(b"FontDescriptor")
+                        .ok()
+                        .and_then(|o| {
+                            if let Object::Reference(id) = o {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        })
+                        .and_then(|fd_id| doc.objects.get(&fd_id))
+                        .and_then(|o| {
+                            if let Object::Dictionary(d) = o {
+                                Some(d)
+                            } else {
+                                None
+                            }
+                        })
+                        .is_some_and(|d| d.has(b"FontFile3"));
+                    if has_ff3 {
+                        continue;
+                    }
                 }
                 // NOTE: TrueType subset fonts (ABCDEF+Name) are processed normally.
                 // Subset cmaps ARE updated during subsetting, so cmap-based glyph
