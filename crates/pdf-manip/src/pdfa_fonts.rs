@@ -4453,32 +4453,6 @@ fn cff_width_for_code(
     differences: &std::collections::HashMap<u32, String>,
     scale: f64,
 ) -> Option<f64> {
-    // Check if the CFF has a custom encoding (not Standard/Expert).
-    // For custom encodings, the CFF encoding maps codes to GIDs directly and
-    // takes priority — veraPDF uses this for width comparison (rule 6.2.11.5:1).
-    // For Standard/Expert encoding, the PDF encoding is more reliable because
-    // subset fonts can reshuffle GIDs.
-    let has_custom_cff_enc = if code <= 255 {
-        cff_has_custom_encoding(font_data)
-    } else {
-        false
-    };
-
-    if has_custom_cff_enc {
-        let enc_map = parse_cff_encoding_map(font_data);
-        if let Some(&gid) = enc_map.get(&(code as u8)) {
-            if gid != 0 {
-                return cff
-                    .glyph_width(cff_parser::GlyphId(gid))
-                    .map(|w| w as f64 * scale);
-            }
-        }
-        // Code not in custom CFF encoding → .notdef.
-        return cff
-            .glyph_width(cff_parser::GlyphId(0))
-            .map(|w| w as f64 * scale);
-    }
-
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
 
     if has_pdf_encoding {
@@ -4491,6 +4465,25 @@ fn cff_width_for_code(
         };
         if !glyph_name.is_empty() {
             if let Some(w) = find_cff_glyph_width_by_name_fractional(cff, &glyph_name, scale) {
+                // Verify against CFF encoding: if the CFF encoding maps this code
+                // to a different GID with a different width, use the CFF width.
+                // This handles fonts where the PDF encoding name maps to a glyph
+                // with a different width than the CFF encoding assigns.
+                if code <= 255 {
+                    let enc_map = parse_cff_encoding_map(font_data);
+                    if let Some(&gid) = enc_map.get(&(code as u8)) {
+                        if gid != 0 {
+                            if let Some(cff_w) = cff
+                                .glyph_width(cff_parser::GlyphId(gid))
+                                .map(|cw| cw as f64 * scale)
+                            {
+                                if (cff_w - w).abs() > 1.0 {
+                                    return Some(cff_w);
+                                }
+                            }
+                        }
+                    }
+                }
                 return Some(w);
             }
             // Try the standard AGL name if we used a "uniXXXX" form.
@@ -4510,8 +4503,9 @@ fn cff_width_for_code(
                 }
             }
 
-            // Glyph name not found in subset. Check CFF encoding (Standard/Expert)
-            // before returning .notdef, as veraPDF may use it.
+            // Glyph name not found in subset. Check CFF encoding before
+            // returning .notdef — veraPDF uses the CFF encoding and may
+            // map this code to a valid GID even when the name doesn't match.
             if glyph_name != ".notdef" && code <= 255 {
                 let enc_map = parse_cff_encoding_map(font_data);
                 if let Some(&gid) = enc_map.get(&(code as u8)) {
@@ -4532,7 +4526,7 @@ fn cff_width_for_code(
         }
     }
 
-    // No PDF encoding. Fallback: CFF encoding (Standard/Expert).
+    // No PDF encoding. Fallback: CFF encoding.
     if code <= 255 {
         let enc_map = parse_cff_encoding_map(font_data);
         if let Some(&gid) = enc_map.get(&(code as u8)) {
@@ -4551,22 +4545,6 @@ fn cff_width_for_code(
 }
 
 /// Check if the CFF has a custom encoding (not Standard or Expert).
-fn cff_has_custom_encoding(data: &[u8]) -> bool {
-    if data.len() < 4 {
-        return false;
-    }
-    let header_size = data[2] as usize;
-    let Some(after_name) = skip_cff_index(data, header_size) else {
-        return false;
-    };
-    let Some((top_dict_data, _)) = read_cff_index_first(data, after_name) else {
-        return false;
-    };
-    let enc_offset = parse_cff_top_dict_encoding_offset(&top_dict_data);
-    // 0 = Standard, 1 = Expert, >1 = custom encoding
-    enc_offset > 1
-}
-
 /// Parse the CFF encoding table directly from raw CFF data, returning a
 /// code → GID map. Does NOT apply Standard Encoding fallback.
 fn parse_cff_encoding_map(data: &[u8]) -> std::collections::HashMap<u8, u16> {
