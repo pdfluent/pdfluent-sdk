@@ -4283,6 +4283,31 @@ fn compute_otf_cff_corrections(
         None
     };
 
+    // For fonts with PDF encoding AND custom CFF encoding, extract CFF for
+    // verification. veraPDF uses the CFF internal encoding for width comparison
+    // (rule 6.2.11.5:1), which may map codes to different GIDs than the PDF
+    // encoding. We use CFF charstring widths * FontMatrix (not hmtx) since
+    // veraPDF uses the CFF program widths.
+    let custom_cff_info: Option<(cff_parser::Table, std::collections::HashMap<u8, u16>, f64)> =
+        if has_pdf_encoding {
+            extract_cff_bytes_from_otf(font_data).and_then(|cff_bytes| {
+                if !cff_has_custom_encoding(cff_bytes) {
+                    return None;
+                }
+                let enc_map = parse_cff_encoding_map(cff_bytes);
+                let cff = cff_parser::Table::parse(cff_bytes)?;
+                let matrix = cff.matrix();
+                let cff_scale = if matrix.sx.abs() > f32::EPSILON {
+                    matrix.sx as f64 * 1000.0
+                } else {
+                    1.0
+                };
+                Some((cff, enc_map, cff_scale))
+            })
+        } else {
+            None
+        };
+
     let mut corrections = Vec::new();
 
     for (i, obj) in existing_widths.iter().enumerate() {
@@ -4295,7 +4320,31 @@ fn compute_otf_cff_corrections(
         let code = first_char + i as u32;
 
         let frac_w = if has_pdf_encoding {
-            get_otf_width_via_encoding(face, code, enc_name, differences, scale)
+            // For custom CFF encoding, use CFF encoding → GID → CFF charstring
+            // width. This takes priority over PDF encoding because veraPDF uses
+            // the CFF internal encoding for width comparison.
+            if let Some((ref cff, ref enc_map, cff_scale)) = custom_cff_info {
+                if code <= 255 {
+                    if let Some(&gid) = enc_map.get(&(code as u8)) {
+                        if gid != 0 {
+                            cff.glyph_width(cff_parser::GlyphId(gid))
+                                .map(|w| w as f64 * cff_scale)
+                        } else {
+                            // CFF maps to .notdef
+                            cff.glyph_width(cff_parser::GlyphId(0))
+                                .map(|w| w as f64 * cff_scale)
+                        }
+                    } else {
+                        // Code not in CFF encoding → .notdef
+                        cff.glyph_width(cff_parser::GlyphId(0))
+                            .map(|w| w as f64 * cff_scale)
+                    }
+                } else {
+                    get_otf_width_via_encoding(face, code, enc_name, differences, scale)
+                }
+            } else {
+                get_otf_width_via_encoding(face, code, enc_name, differences, scale)
+            }
         } else if let Some(ref cff) = cff_table {
             // No PDF encoding: use CFF internal encoding -> GID -> hmtx
             if code > 255 {
@@ -4354,8 +4403,8 @@ fn get_otf_width_via_encoding(
     None
 }
 
-/// Extract the CFF table from an OTF font.
-fn extract_cff_from_otf(font_data: &[u8]) -> Option<cff_parser::Table<'_>> {
+/// Extract the raw CFF table bytes from an OTF font.
+fn extract_cff_bytes_from_otf(font_data: &[u8]) -> Option<&[u8]> {
     if font_data.len() < 12 {
         return None;
     }
@@ -4383,9 +4432,7 @@ fn extract_cff_from_otf(font_data: &[u8]) -> Option<cff_parser::Table<'_>> {
 
         if tag == b"CFF " {
             if table_offset + table_length <= font_data.len() {
-                return cff_parser::Table::parse(
-                    &font_data[table_offset..table_offset + table_length],
-                );
+                return Some(&font_data[table_offset..table_offset + table_length]);
             }
             return None;
         }
@@ -4394,6 +4441,12 @@ fn extract_cff_from_otf(font_data: &[u8]) -> Option<cff_parser::Table<'_>> {
     }
 
     None
+}
+
+/// Extract the CFF table from an OTF font.
+fn extract_cff_from_otf(font_data: &[u8]) -> Option<cff_parser::Table<'_>> {
+    let cff_bytes = extract_cff_bytes_from_otf(font_data)?;
+    cff_parser::Table::parse(cff_bytes)
 }
 
 /// Like find_cff_glyph_width_by_name but returns f64 (unrounded) for fractional comparison.
@@ -4426,6 +4479,37 @@ fn compute_cff_single_width(
         let upem = face.units_per_em() as f64;
         if upem > 0.0 {
             let scale = 1000.0 / upem;
+            let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
+
+            // For custom CFF encoding, use CFF charstring widths (veraPDF uses
+            // CFF encoding for width comparison, not PDF encoding).
+            if has_pdf_encoding && code <= 255 {
+                if let Some(cff_bytes) = extract_cff_bytes_from_otf(font_data) {
+                    if cff_has_custom_encoding(cff_bytes) {
+                        let enc_map = parse_cff_encoding_map(cff_bytes);
+                        if let Some(cff) = cff_parser::Table::parse(cff_bytes) {
+                            let matrix = cff.matrix();
+                            let cff_scale = if matrix.sx.abs() > f32::EPSILON {
+                                matrix.sx as f64 * 1000.0
+                            } else {
+                                1.0
+                            };
+                            if let Some(&gid) = enc_map.get(&(code as u8)) {
+                                if gid != 0 {
+                                    return cff
+                                        .glyph_width(cff_parser::GlyphId(gid))
+                                        .map(|w| w as f64 * cff_scale);
+                                }
+                            }
+                            // Code not in CFF encoding → .notdef
+                            return cff
+                                .glyph_width(cff_parser::GlyphId(0))
+                                .map(|w| w as f64 * cff_scale);
+                        }
+                    }
+                }
+            }
+
             return get_truetype_glyph_width_fractional(&face, code, enc_name, differences, scale);
         }
     }
