@@ -5,10 +5,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+signing = ["ed25519-dalek/rand_core", "rand"]
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-hmac = "0.12"
-sha2 = "0.10"
 base64 = "0.22"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+rand = { version = "0.8", optional = true }

@@ -5,13 +5,17 @@ use thiserror::Error;
 /// License operation errors.
 #[derive(Debug, Error)]
 pub enum LicenseError {
-    /// The license token is malformed (not 3 base64 parts).
-    #[error("malformed token: {0}")]
+    /// The license file is malformed.
+    #[error("malformed license: {0}")]
     MalformedToken(String),
 
-    /// The HMAC signature does not match.
+    /// The Ed25519 signature does not match.
     #[error("invalid signature")]
     InvalidSignature,
+
+    /// The public key is invalid (not 32 bytes).
+    #[error("invalid public key")]
+    InvalidPublicKey,
 
     /// The license has expired.
     #[error("license expired at {0}")]
@@ -36,6 +40,10 @@ pub enum LicenseError {
     /// JSON serialization/deserialization error.
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// IO error (file loading).
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// Convenience result type.
