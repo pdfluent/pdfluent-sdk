@@ -4516,6 +4516,11 @@ fn cff_width_for_code(
     // veraPDF uses only the CFF's own encoding for Type1C fonts.
     if code <= 255 {
         let enc_map = parse_cff_encoding_map(font_data);
+        if [174, 175, 176, 185, 196].contains(&code) {
+            let in_map = enc_map.get(&(code as u8));
+            let notdef_w = cff.glyph_width(cff_parser::GlyphId(0)).map(|w| w as f64 * scale);
+            eprintln!("DEBUG cff_width code={code}: in_map={in_map:?}, enc_map_size={}, notdef_w={notdef_w:?}", enc_map.len());
+        }
         if let Some(&gid) = enc_map.get(&(code as u8)) {
             if gid != 0 {
                 return cff
