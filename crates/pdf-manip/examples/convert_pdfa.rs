@@ -58,7 +58,8 @@ fn main() {
     eprintln!(".notdef refs (CID): fixed={cid_notdef_fixed}");
 
     // Fix .notdef in symbolic simple fonts via content stream modification.
-    let sym_notdef_fixed = pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    //let sym_notdef_fixed = pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    let sym_notdef_fixed = 0;
     eprintln!(".notdef refs (symbolic): fixed={sym_notdef_fixed}");
 
     // Ensure undefined WinAnsi codes have Differences entries (prevents
