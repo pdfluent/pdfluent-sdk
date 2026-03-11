@@ -6057,7 +6057,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
 
         // Find symbolic simple fonts with undefined glyphs.
         // Map: resource_name -> (set of invalid codes, replacement code)
-        let mut notdef_fonts: HashMap<String, (HashSet<u8>, u8)> = HashMap::new();
+        let mut notdef_fonts: HashMap<String, HashSet<u8>> = HashMap::new();
 
         for (res_name, font_id) in &font_map {
             let Some(Object::Dictionary(dict)) = doc.objects.get(font_id) else {
@@ -6110,7 +6110,6 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
             // that actually have a (3,0) subtable — other "symbolic" fonts
             // use different encoding mechanisms.
             let mut invalid_codes = HashSet::new();
-            let mut replacement = 0x20u8;
 
             if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
                 // Check if font has a (3,0) Microsoft Symbol cmap subtable.
@@ -6120,12 +6119,14 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                     .map(|cmap| {
                         cmap.subtables
                             .into_iter()
-                            .any(|st| st.platform_id == ttf_parser::PlatformId::Windows && st.encoding_id == 0)
+                            .any(|st| {
+                                st.platform_id == ttf_parser::PlatformId::Windows
+                                    && st.encoding_id == 0
+                            })
                     })
                     .unwrap_or(false);
 
                 if !has_symbol_cmap {
-                    // Not a Symbol-type font — skip.
                     continue;
                 }
 
@@ -6139,31 +6140,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         invalid_codes.insert(code as u8);
                     }
                 }
-
-                // Find replacement code using same 0xF000 path.
-                let space_valid = char::from_u32(0xF020)
-                    .and_then(|c| face.glyph_index(c))
-                    .map(|g| g.0 != 0)
-                    .unwrap_or(false);
-                if space_valid {
-                    replacement = 0x20;
-                } else {
-                    // Use the first valid code (via 0xF000 path).
-                    for code in 0u32..=255 {
-                        if !invalid_codes.contains(&(code as u8)) {
-                            let sym_ch = char::from_u32(0xF000 + code);
-                            if sym_ch
-                                .and_then(|c| face.glyph_index(c))
-                                .map(|g| g.0 != 0)
-                                .unwrap_or(false)
-                            {
-                                replacement = code as u8;
-                                break;
-                            }
-                        }
-                    }
-                }
-            } else if let Some(cff) = cff_parser::Table::parse(&font_data) {
+            } else if cff_parser::Table::parse(&font_data).is_some() {
                 // CFF symbolic font: use CFF encoding.
                 let enc_map = parse_cff_encoding_map(&font_data);
                 for code in first_char..=last_char.min(255) {
@@ -6175,24 +6152,12 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         invalid_codes.insert(code as u8);
                     }
                 }
-                // Find replacement: first valid code.
-                if !invalid_codes.contains(&0x20) {
-                    replacement = 0x20;
-                } else {
-                    for code in 0u32..=255 {
-                        if enc_map.get(&(code as u8)).map(|&gid| gid != 0).unwrap_or(false) {
-                            replacement = code as u8;
-                            break;
-                        }
-                    }
-                }
-                let _ = cff; // suppress unused warning
             } else {
                 continue;
             }
 
             if !invalid_codes.is_empty() {
-                notdef_fonts.insert(res_name.clone(), (invalid_codes, replacement));
+                notdef_fonts.insert(res_name.clone(), invalid_codes);
             }
         }
 
@@ -6231,13 +6196,13 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         new_ops.push(op.clone());
                     }
                     "Tj" | "'" | "\"" => {
-                        if let Some((invalid_codes, repl)) = notdef_fonts.get(&current_font) {
+                        if let Some(invalid_codes) = notdef_fonts.get(&current_font) {
                             let mut new_op = op.clone();
                             let str_idx = if op.operator == "\"" { 2 } else { 0 };
                             if let Some(Object::String(bytes, _)) =
                                 new_op.operands.get_mut(str_idx)
                             {
-                                if fix_simple_text_string(bytes, invalid_codes, *repl) {
+                                if fix_simple_text_string(bytes, invalid_codes) {
                                     modified = true;
                                 }
                             }
@@ -6247,12 +6212,12 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         }
                     }
                     "TJ" => {
-                        if let Some((invalid_codes, repl)) = notdef_fonts.get(&current_font) {
+                        if let Some(invalid_codes) = notdef_fonts.get(&current_font) {
                             let mut new_op = op.clone();
                             if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                                 for item in arr.iter_mut() {
                                     if let Object::String(bytes, _) = item {
-                                        if fix_simple_text_string(bytes, invalid_codes, *repl) {
+                                        if fix_simple_text_string(bytes, invalid_codes) {
                                             modified = true;
                                         }
                                     }
@@ -6285,19 +6250,14 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
 }
 
 /// Replace single-byte codes in a simple font text string that are invalid.
+#[allow(clippy::ptr_arg)]
 fn fix_simple_text_string(
-    bytes: &mut [u8],
+    bytes: &mut Vec<u8>,
     invalid_codes: &std::collections::HashSet<u8>,
-    replacement: u8,
 ) -> bool {
-    let mut changed = false;
-    for b in bytes.iter_mut() {
-        if invalid_codes.contains(b) {
-            *b = replacement;
-            changed = true;
-        }
-    }
-    changed
+    let original_len = bytes.len();
+    bytes.retain(|b| !invalid_codes.contains(b));
+    bytes.len() != original_len
 }
 
 /// Encoding info extracted from a font dictionary.
