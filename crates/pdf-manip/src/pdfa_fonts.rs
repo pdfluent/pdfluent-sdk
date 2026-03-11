@@ -4453,11 +4453,18 @@ fn cff_width_for_code(
     differences: &std::collections::HashMap<u32, String>,
     scale: f64,
 ) -> Option<f64> {
-    // veraPDF uses the CFF internal encoding for width comparison (rule 6.2.11.5:1).
-    // Try the CFF encoding FIRST — it takes priority over the PDF encoding because
-    // the CFF encoding maps codes to GIDs directly, which may differ from the
-    // PDF encoding → glyph name → CFF name lookup path.
-    if code <= 255 {
+    // Check if the CFF has a custom encoding (not Standard/Expert).
+    // For custom encodings, the CFF encoding maps codes to GIDs directly and
+    // takes priority — veraPDF uses this for width comparison (rule 6.2.11.5:1).
+    // For Standard/Expert encoding, the PDF encoding is more reliable because
+    // subset fonts can reshuffle GIDs.
+    let has_custom_cff_enc = if code <= 255 {
+        cff_has_custom_encoding(font_data)
+    } else {
+        false
+    };
+
+    if has_custom_cff_enc {
         let enc_map = parse_cff_encoding_map(font_data);
         if let Some(&gid) = enc_map.get(&(code as u8)) {
             if gid != 0 {
@@ -4466,12 +4473,16 @@ fn cff_width_for_code(
                     .map(|w| w as f64 * scale);
             }
         }
+        // Code not in custom CFF encoding → .notdef.
+        return cff
+            .glyph_width(cff_parser::GlyphId(0))
+            .map(|w| w as f64 * scale);
     }
 
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
 
     if has_pdf_encoding {
-        // CFF encoding didn't map this code. Try PDF encoding → glyph name.
+        // Try PDF encoding → glyph name → CFF name lookup.
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.clone()
         } else {
@@ -4498,17 +4509,62 @@ fn cff_width_for_code(
                     return Some(w);
                 }
             }
+
+            // Glyph name not found in subset. Check CFF encoding (Standard/Expert)
+            // before returning .notdef, as veraPDF may use it.
+            if glyph_name != ".notdef" && code <= 255 {
+                let enc_map = parse_cff_encoding_map(font_data);
+                if let Some(&gid) = enc_map.get(&(code as u8)) {
+                    if gid != 0 {
+                        return cff
+                            .glyph_width(cff_parser::GlyphId(gid))
+                            .map(|w| w as f64 * scale);
+                    }
+                }
+            }
+
+            // Not found anywhere → .notdef.
+            if glyph_name != ".notdef" {
+                return cff
+                    .glyph_width(cff_parser::GlyphId(0))
+                    .map(|w| w as f64 * scale);
+            }
         }
     }
 
-    // Code not in CFF encoding and not found via PDF encoding → .notdef.
+    // No PDF encoding. Fallback: CFF encoding (Standard/Expert).
     if code <= 255 {
+        let enc_map = parse_cff_encoding_map(font_data);
+        if let Some(&gid) = enc_map.get(&(code as u8)) {
+            if gid != 0 {
+                return cff
+                    .glyph_width(cff_parser::GlyphId(gid))
+                    .map(|w| w as f64 * scale);
+            }
+        }
         return cff
             .glyph_width(cff_parser::GlyphId(0))
             .map(|w| w as f64 * scale);
     }
 
     None
+}
+
+/// Check if the CFF has a custom encoding (not Standard or Expert).
+fn cff_has_custom_encoding(data: &[u8]) -> bool {
+    if data.len() < 4 {
+        return false;
+    }
+    let header_size = data[2] as usize;
+    let Some(after_name) = skip_cff_index(data, header_size) else {
+        return false;
+    };
+    let Some((top_dict_data, _)) = read_cff_index_first(data, after_name) else {
+        return false;
+    };
+    let enc_offset = parse_cff_top_dict_encoding_offset(&top_dict_data);
+    // 0 = Standard, 1 = Expert, >1 = custom encoding
+    enc_offset > 1
 }
 
 /// Parse the CFF encoding table directly from raw CFF data, returning a
