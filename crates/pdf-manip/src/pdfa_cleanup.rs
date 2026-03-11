@@ -3159,9 +3159,7 @@ fn sanitize_hash_encoded_names(doc: &mut Document) {
             continue;
         }
         let res_entries = match doc.objects.get(id) {
-            Some(Object::Stream(s)) => {
-                collect_resource_sub_dicts_with_hash_keys(doc, &s.dict)
-            }
+            Some(Object::Stream(s)) => collect_resource_sub_dicts_with_hash_keys(doc, &s.dict),
             _ => Vec::new(),
         };
         if !res_entries.is_empty() {
@@ -3260,7 +3258,14 @@ fn collect_resource_sub_dicts_with_hash_keys(
     };
 
     let mut results = Vec::new();
-    let categories: &[&[u8]] = &[b"XObject", b"Font", b"ExtGState", b"ColorSpace", b"Pattern", b"Shading"];
+    let categories: &[&[u8]] = &[
+        b"XObject",
+        b"Font",
+        b"ExtGState",
+        b"ColorSpace",
+        b"Pattern",
+        b"Shading",
+    ];
 
     for category in categories {
         let sub_dict = match res_dict.get(category).ok() {
@@ -3325,8 +3330,12 @@ fn rename_resource_key(
         // Resources is inline — modify in place.
         let mut obj = doc.objects.get(&owner_id).cloned();
         let changed = match &mut obj {
-            Some(Object::Dictionary(d)) => rename_in_inline_resources(d, category, old_name, new_name),
-            Some(Object::Stream(s)) => rename_in_inline_resources(&mut s.dict, category, old_name, new_name),
+            Some(Object::Dictionary(d)) => {
+                rename_in_inline_resources(d, category, old_name, new_name)
+            }
+            Some(Object::Stream(s)) => {
+                rename_in_inline_resources(&mut s.dict, category, old_name, new_name)
+            }
             _ => false,
         };
         if changed {
@@ -3549,8 +3558,19 @@ fn replace_name_in_stream(data: &[u8], search: &[u8], replace: &[u8]) -> Vec<u8>
 fn is_pdf_delimiter(b: u8) -> bool {
     matches!(
         b,
-        b' ' | b'\t' | b'\n' | b'\r' | b'/' | b'[' | b']' | b'(' | b')' | b'<' | b'>' | b'{'
-            | b'}' | b'%'
+        b' ' | b'\t'
+            | b'\n'
+            | b'\r'
+            | b'/'
+            | b'['
+            | b']'
+            | b'('
+            | b')'
+            | b'<'
+            | b'>'
+            | b'{'
+            | b'}'
+            | b'%'
     )
 }
 

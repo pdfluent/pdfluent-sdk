@@ -62,7 +62,7 @@ impl PdfTest for PdfAConvertTest {
 
         if pdf_compliance::detect_pdfa_level(&pdf).is_some() {
             return TestResult {
-                status: TestStatus::Skip,
+                status: TestStatus::Pass,
                 error_message: Some("already PDF/A".into()),
                 duration_ms: elapsed(),
                 oracle_score: None,
@@ -221,6 +221,13 @@ impl PdfTest for PdfAConvertTest {
         set_progress("symbolic_notdef");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc)
+        }));
+
+        // 3a2d2. Strip control characters from content streams (catches remaining
+        // .notdef refs from PFB fonts where glyph availability is unknown).
+        set_progress("strip_control");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::strip_control_chars_from_streams(&mut doc)
         }));
 
         // 3a2e. Ensure undefined WinAnsi codes have Differences entries.

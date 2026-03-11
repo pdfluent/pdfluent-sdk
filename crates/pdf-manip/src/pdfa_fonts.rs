@@ -3513,12 +3513,17 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         // a specific glyph name that we look up in the CFF charset. This is
         // unambiguous, like WinAnsiEncoding.
         let has_differences_cff = has_ff3 && !enc_info.1.is_empty();
+        // TrueType (FontFile2) widths are computed via cmap tables, which
+        // provide a reliable code→GID mapping. Trust these even without a
+        // standard PDF encoding name.
+        let uses_truetype_fontfile = has_ff2;
         let total_widths = existing_widths.len();
         if !has_reliable_encoding
             && !uses_cff_encoding
             && !uses_custom_cff_encoding
             && !uses_type1_fontfile
             && !has_differences_cff
+            && !uses_truetype_fontfile
             && corrections.len() * 2 > total_widths
             && extensions.is_empty()
             && prepend_codes.is_empty()
@@ -4172,10 +4177,9 @@ fn parse_type1_program(data: &[u8]) -> Option<Type1Parsed> {
     let decrypted = eexec_decrypt(eexec_data);
 
     // Parse lenIV from cleartext first, then from decrypted Private dict.
-    let len_iv = parse_type1_len_iv(cleartext)
-        .or_else(|| parse_type1_len_iv_bytes(&decrypted))
-        .unwrap_or(4) as usize;
-
+    let len_iv_cleartext = parse_type1_len_iv(cleartext);
+    let len_iv_bytes = parse_type1_len_iv_bytes(&decrypted);
+    let len_iv = len_iv_cleartext.or(len_iv_bytes).unwrap_or(4) as usize;
     // Parse CharStrings from decrypted data.
     let charstring_widths = parse_type1_charstrings(&decrypted, len_iv);
 
@@ -4328,9 +4332,14 @@ fn parse_type1_len_iv(cleartext: &[u8]) -> Option<u32> {
 }
 
 /// Parse lenIV from raw bytes (e.g., decrypted Private dict).
+/// Only searches before /CharStrings to avoid false positives from
+/// binary charstring data that coincidentally contains the byte sequence.
 fn parse_type1_len_iv_bytes(data: &[u8]) -> Option<u32> {
-    let pos = find_bytes(data, b"/lenIV")?;
-    let after = &data[pos + 6..];
+    // Restrict search to Private dict text portion (before /CharStrings).
+    let search_end = find_bytes(data, b"/CharStrings").unwrap_or(data.len());
+    let search_data = &data[..search_end];
+    let pos = find_bytes(search_data, b"/lenIV")?;
+    let after = &search_data[pos + 6..];
     // Skip whitespace.
     let trimmed = after.iter().position(|b| !b.is_ascii_whitespace())?;
     let start = trimmed;
@@ -4439,7 +4448,6 @@ fn parse_type1_charstrings(
             // Check if this is /FontName or other non-charstring entry.
             let remaining = &decrypted[slash_pos..];
             if !remaining.starts_with(b"/CharStrings") {
-                // Likely past the end of CharStrings dict.
                 break;
             }
         }
@@ -4544,11 +4552,14 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
     // Skip lenIV random bytes.
     let cs = &decrypted[len_iv..];
 
-    // Parse first two integers (sbx, wx) followed by hsbw (13) or sbw (12 7).
+    // Parse integers followed by hsbw (13) or sbw (12 7).
+    // hsbw: sbx wx hsbw           → width = values[1]
+    // sbw:  sbx sby wx wy sbw     → width = values[2]
     // TeX fonts often use `div` (12 12) in the preamble, e.g. `59 2125 4 div hsbw`
     // to encode fractional widths.
     let mut pos = 0;
     let mut values = Vec::new();
+    let mut is_sbw = false;
 
     while pos < cs.len() && values.len() < 8 {
         let b = cs[pos];
@@ -4571,7 +4582,10 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
                 }
                 continue;
             }
-            // Other two-byte operator (e.g. sbw = 12 7).
+            if pos + 1 < cs.len() && cs[pos + 1] == 7 {
+                // sbw: stack has [sbx, sby, wx, wy]
+                is_sbw = true;
+            }
             break;
         }
         // Parse integer.
@@ -4603,8 +4617,12 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
         }
     }
 
-    // Width is the second value (values[1] = wx in hsbw/sbw).
-    values.get(1).copied()
+    // hsbw: width = values[1], sbw: width = values[2].
+    if is_sbw {
+        values.get(2).copied()
+    } else {
+        values.get(1).copied()
+    }
 }
 
 /// Compute the CFF font matrix scale factor, compensating for f32→f64 precision loss.
@@ -6710,6 +6728,171 @@ pub fn fix_notdef_glyph_refs(doc: &mut Document) -> usize {
     fixed
 }
 
+/// Strip control characters (0x00-0x1F except \t, \n, \r) from PDF string
+/// literals in all content streams. These characters are non-printing and
+/// frequently map to .notdef in fonts, causing PDF/A violations (6.2.11.8:1
+/// and 6.2.11.4.1:2).
+pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
+    // Collect only content-stream IDs: page Contents + Form XObjects.
+    // Font programs, images, ICC profiles etc. must NOT be touched.
+    let mut content_stream_ids: Vec<ObjectId> = Vec::new();
+
+    // 1. Page content streams.
+    for (_, page_id) in doc.get_pages() {
+        if let Some(Object::Dictionary(page)) = doc.objects.get(&page_id) {
+            if let Ok(contents) = page.get(b"Contents") {
+                match contents {
+                    Object::Reference(id) => content_stream_ids.push(*id),
+                    Object::Array(arr) => {
+                        for item in arr {
+                            if let Object::Reference(id) = item {
+                                content_stream_ids.push(*id);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // 2. Form XObject streams (/Type /XObject /Subtype /Form).
+    for (&id, obj) in &doc.objects {
+        if let Object::Stream(s) = obj {
+            let d = &s.dict;
+            if d.get(b"Subtype").and_then(|v| v.as_name()).ok() == Some(b"Form") {
+                content_stream_ids.push(id);
+            }
+        }
+    }
+
+    content_stream_ids.sort();
+    content_stream_ids.dedup();
+    let stream_ids = content_stream_ids;
+
+    let mut total_fixed = 0;
+    for sid in stream_ids {
+        let content = {
+            let Some(Object::Stream(ref stream)) = doc.objects.get(&sid) else {
+                continue;
+            };
+            match stream.decompressed_content() {
+                Ok(data) => data,
+                Err(_) => continue,
+            }
+        };
+
+        // Quick check: any control chars (raw or octal-escaped) in the stream?
+        let has_raw_control = content
+            .iter()
+            .any(|&b| b < 32 && b != b'\n' && b != b'\r' && b != b'\t');
+        let has_octal_control = content.windows(4).any(|w| {
+            w[0] == b'\\'
+                && w[1].is_ascii_digit()
+                && w[2].is_ascii_digit()
+                && w[3].is_ascii_digit()
+                && {
+                    let val =
+                        (w[1] - b'0') as u32 * 64 + (w[2] - b'0') as u32 * 8 + (w[3] - b'0') as u32;
+                    val < 32 && val != 9 && val != 10
+                }
+        }) || content.windows(3).any(|w| {
+            w[0] == b'\\' && w[1] == b'0' && w[2].is_ascii_digit() && {
+                let val = (w[1] - b'0') as u32 * 8 + (w[2] - b'0') as u32;
+                val < 32
+            }
+        });
+        if !has_raw_control && !has_octal_control {
+            continue;
+        }
+
+        // Remove control characters (raw and octal-escaped) from string literals.
+        let mut new_content = Vec::with_capacity(content.len());
+        let mut i = 0;
+        let mut in_string = 0i32;
+        let mut modified = false;
+        while i < content.len() {
+            if content[i] == b'(' {
+                in_string += 1;
+                new_content.push(content[i]);
+                i += 1;
+                continue;
+            }
+            if content[i] == b')' && in_string > 0 {
+                in_string -= 1;
+                new_content.push(content[i]);
+                i += 1;
+                continue;
+            }
+            if content[i] == b'\\' && in_string > 0 {
+                // Check for octal escape of control character.
+                let remaining = &content[i + 1..];
+                let oct_len = remaining
+                    .iter()
+                    .take(3)
+                    .take_while(|b| b.is_ascii_digit())
+                    .count();
+                if oct_len >= 1 {
+                    let oct_str: String = remaining[..oct_len].iter().map(|&b| b as char).collect();
+                    if let Ok(val) = u32::from_str_radix(&oct_str, 8) {
+                        if val < 32 && val != 9 && val != 10 {
+                            // Skip this octal escape (control character).
+                            i += 1 + oct_len;
+                            modified = true;
+                            continue;
+                        }
+                    }
+                }
+                // Non-control escape — keep it.
+                new_content.push(content[i]);
+                i += 1;
+                if i < content.len() {
+                    // For octal escapes, copy all digits.
+                    if oct_len > 0 {
+                        for _ in 0..oct_len {
+                            if i < content.len() {
+                                new_content.push(content[i]);
+                                i += 1;
+                            }
+                        }
+                    } else {
+                        new_content.push(content[i]);
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+            if in_string > 0
+                && content[i] < 32
+                && content[i] != b'\n'
+                && content[i] != b'\r'
+                && content[i] != b'\t'
+            {
+                // Strip raw control character from string literal.
+                modified = true;
+                i += 1;
+                continue;
+            }
+            new_content.push(content[i]);
+            i += 1;
+        }
+
+        if modified {
+            let len = new_content.len() as i64;
+            let new_stream = lopdf::Stream::new(
+                lopdf::dictionary! {
+                    "Length" => len,
+                },
+                new_content,
+            );
+            doc.objects.insert(sid, Object::Stream(new_stream));
+            total_fixed += 1;
+        }
+    }
+
+    total_fixed
+}
+
 /// Fix .notdef references in CID (Type0) fonts by modifying content streams.
 ///
 /// ISO 19005-2, §6.2.11.8: no .notdef glyph references allowed.
@@ -7428,35 +7611,57 @@ fn fix_notdef_in_truetype(
         }
     }
 
-    // Phase 1: Find .notdef entries in existing Differences.
+    // Phase 1: Find .notdef entries and entries referencing glyphs
+    // not present in the font program (which veraPDF treats as .notdef).
     let mut replacements: Vec<(u32, String)> = Vec::new();
 
     for (code, name) in &differences {
-        if name == ".notdef" {
-            // Try to find the correct glyph for this code.
+        let is_notdef = name == ".notdef";
+        let glyph_missing = !is_notdef && {
+            // Check if the glyph name resolves to a real glyph in the font.
+            let ch = glyph_name_to_unicode(name);
+            match ch.and_then(|c| face.glyph_index(c)) {
+                Some(gid) => !tt_glyph_has_data(&face, gid),
+                None => {
+                    // Try by post table name lookup.
+                    face.glyph_index_by_name(name).is_none()
+                }
+            }
+        };
+        if is_notdef || glyph_missing {
             let replacement = find_truetype_glyph_name_for_code(&face, *code, &base_encoding);
             replacements.push((*code, replacement));
         }
     }
 
     // Phase 2: Check base encoding for .notdef mappings.
-    // Only add new Differences if the font has the glyph AND the code
-    // is in the font's FirstChar..LastChar range (i.e., actually used).
-    //
-    // This is the "safe" part: we only add Differences for codes where
-    // the font PROVABLY has a glyph (via Unicode cmap lookup), or where
-    // the code is below 32 (control character range) and needs "space"
-    // to avoid .notdef.
     let mut new_diffs: Vec<(u32, String)> = Vec::new();
-    let existing_diff_codes: std::collections::HashSet<u32> =
-        differences.iter().map(|(c, _)| *c).collect();
 
-    // Check codes in the font's FirstChar..LastChar range.
+    // Codes that already have valid Differences entries (glyph present in font).
+    let valid_diff_codes: std::collections::HashSet<u32> = differences
+        .iter()
+        .filter(|(_, name)| {
+            if name == ".notdef" {
+                return false;
+            }
+            let ch = glyph_name_to_unicode(name);
+            match ch.and_then(|c| face.glyph_index(c)) {
+                Some(gid) => tt_glyph_has_data(&face, gid),
+                None => face.glyph_index_by_name(name).is_some(),
+            }
+        })
+        .map(|(c, _)| *c)
+        .collect();
+
     let check_start = first_char.min(255);
     let check_end = last_char.min(255);
     for code in check_start..=check_end {
-        if existing_diff_codes.contains(&code) {
-            continue; // Already handled in Phase 1.
+        if valid_diff_codes.contains(&code) {
+            continue;
+        }
+        // Skip codes already handled in Phase 1.
+        if replacements.iter().any(|(c, _)| *c == code) {
+            continue;
         }
 
         // For codes below 32: these are control characters that standard
@@ -7529,23 +7734,74 @@ fn fix_notdef_in_truetype(
     )
 }
 
-/// Fallback for fixing .notdef references when CFF parsing fails.
-/// The CFF is too small/corrupt to determine available glyphs, so we
-/// modify content streams to remove code 0 references (replace with empty
-/// string) since these are typically invisible control characters anyway.
+/// Fallback for fixing .notdef references when CFF parsing fails
+/// (i.e., PFB Type1 fonts or corrupt CFF data).
+///
+/// Two strategies:
+/// 1. Remap control characters (0-31) in Encoding/Differences to "space"
+///    so they don't resolve to .notdef through missing glyphs.
+/// 2. Remove control character bytes from content stream text strings.
 fn fix_notdef_control_chars_fallback(
     doc: &mut Document,
     font_id: ObjectId,
-    _enc_info: &EncodingInfo,
+    enc_info: &EncodingInfo,
     first_char: u32,
     _last_char: u32,
 ) -> bool {
-    if first_char > 0 {
+    if first_char > 31 {
         return false;
     }
 
-    // Find the font key name used in content streams (e.g. "F3").
-    // We need to scan page resources to find which key maps to font_id.
+    // Strategy 1: Remap control characters in Encoding/Differences to "space".
+    // For PFB fonts we can't determine available glyphs, but remapping control
+    // codes to "space" is always safe since they are non-printing.
+    let mut differences = enc_info.differences.clone();
+    let mut base_encoding = enc_info.base_encoding.clone();
+    let enc_ref = enc_info.enc_ref;
+
+    if let Some(ref_id) = enc_ref {
+        if let Some(Object::Dictionary(enc_dict)) = doc.objects.get(&ref_id) {
+            if base_encoding.is_empty() {
+                base_encoding = get_name(enc_dict, b"BaseEncoding").unwrap_or_default();
+            }
+            if let Ok(Object::Array(arr)) = enc_dict.get(b"Differences") {
+                differences = parse_differences_to_vec(arr);
+            }
+        } else if let Some(Object::Name(n)) = doc.objects.get(&ref_id) {
+            base_encoding = String::from_utf8(n.clone()).unwrap_or_default();
+        }
+    }
+
+    // Remap existing Differences for control codes (0-31) to "space".
+    let replacements: Vec<(u32, String)> = differences
+        .iter()
+        .filter(|(code, name)| *code < 32 && name != "space" && name != ".notdef")
+        .map(|(code, _)| (*code, "space".to_string()))
+        .collect();
+
+    // Add new Differences for control codes not yet in the array.
+    let existing_codes: std::collections::HashSet<u32> =
+        differences.iter().map(|(c, _)| *c).collect();
+    let new_diffs: Vec<(u32, String)> = (first_char..32)
+        .filter(|c| !existing_codes.contains(c))
+        .map(|c| (c, "space".to_string()))
+        .collect();
+
+    let encoding_fixed = if !replacements.is_empty() || !new_diffs.is_empty() {
+        apply_encoding_fixes(
+            doc,
+            font_id,
+            &base_encoding,
+            &differences,
+            &replacements,
+            &new_diffs,
+            enc_ref,
+        )
+    } else {
+        false
+    };
+
+    // Strategy 2: Remove control character bytes from content streams.
     let mut font_key: Option<Vec<u8>> = None;
     let page_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for pid in &page_ids {
@@ -7584,12 +7840,12 @@ fn fix_notdef_control_chars_fallback(
         }
     }
 
-    let Some(fk) = font_key else { return false };
+    let Some(fk) = font_key else {
+        return encoding_fixed;
+    };
     let font_key_str = format!("/{}", String::from_utf8_lossy(&fk));
 
-    // Now scan all content streams for this font + code 0 usage.
-    // Replace (\x00)Tj with ()Tj in content streams.
-    let mut fixed = false;
+    let mut stream_fixed = false;
     let content_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for cid in content_ids {
         let is_stream = matches!(doc.objects.get(&cid), Some(Object::Stream(_)));
@@ -7606,7 +7862,6 @@ fn fix_notdef_control_chars_fallback(
             }
         };
 
-        // Check if this content stream uses our font and has (\x00)Tj.
         let font_key_bytes = font_key_str.as_bytes();
         if !content
             .windows(font_key_bytes.len())
@@ -7614,24 +7869,71 @@ fn fix_notdef_control_chars_fallback(
         {
             continue;
         }
-        if !content.windows(3).any(|w| w == b"(\x00)") {
+
+        // Check for any control character in string literals.
+        let has_control = content.windows(2).any(|w| w[0] == b'(' && w[1] < 32)
+            || content.iter().enumerate().any(|(i, &b)| {
+                b < 32
+                    && b != b'\n'
+                    && b != b'\r'
+                    && b != b'\t'
+                    && i > 0
+                    && content[..i]
+                        .iter()
+                        .rev()
+                        .take_while(|&&c| c != b'(' && c != b')')
+                        .count()
+                        < content[..i]
+                            .iter()
+                            .rev()
+                            .position(|&c| c == b'(')
+                            .unwrap_or(usize::MAX)
+            });
+        if !has_control {
             continue;
         }
 
-        // Replace (\x00)Tj with ()Tj and (\x00) in TJ arrays with ()
+        // Remove control characters (0-31 except \n, \r, \t which are valid
+        // escape sequences) from PDF string literals in the content stream.
         let mut new_content = Vec::with_capacity(content.len());
         let mut i = 0;
+        let mut in_string = false;
         let mut modified = false;
         while i < content.len() {
-            if i + 2 < content.len() && &content[i..i + 3] == b"(\x00)" {
-                // Replace (\x00) with ()
-                new_content.extend_from_slice(b"()");
-                i += 3;
-                modified = true;
-            } else {
+            if content[i] == b'(' && !in_string {
+                in_string = true;
                 new_content.push(content[i]);
                 i += 1;
+                continue;
             }
+            if content[i] == b')' && in_string {
+                in_string = false;
+                new_content.push(content[i]);
+                i += 1;
+                continue;
+            }
+            if content[i] == b'\\' && in_string {
+                new_content.push(content[i]);
+                i += 1;
+                if i < content.len() {
+                    new_content.push(content[i]);
+                    i += 1;
+                }
+                continue;
+            }
+            if in_string
+                && content[i] < 32
+                && content[i] != b'\n'
+                && content[i] != b'\r'
+                && content[i] != b'\t'
+            {
+                // Skip control character.
+                modified = true;
+                i += 1;
+                continue;
+            }
+            new_content.push(content[i]);
+            i += 1;
         }
 
         if modified {
@@ -7643,11 +7945,11 @@ fn fix_notdef_control_chars_fallback(
                 new_content,
             );
             doc.objects.insert(cid, Object::Stream(new_stream));
-            fixed = true;
+            stream_fixed = true;
         }
     }
 
-    fixed
+    encoding_fixed || stream_fixed
 }
 
 /// Fix .notdef references in a Type1 (CFF) font.
@@ -7703,11 +8005,12 @@ fn fix_notdef_in_type1(
         }
     }
 
-    // Phase 1: Replace .notdef entries in existing Differences.
+    // Phase 1: Replace .notdef entries and entries referencing glyphs
+    // not present in the font program (which veraPDF treats as .notdef).
     let mut replacements: Vec<(u32, String)> = Vec::new();
 
     for (code, name) in &differences {
-        if name == ".notdef" {
+        if name == ".notdef" || !available_glyphs.contains(name) {
             let replacement =
                 find_type1_glyph_name_for_code(&available_glyphs, *code, &base_encoding);
             replacements.push((*code, replacement));
@@ -7717,13 +8020,22 @@ fn fix_notdef_in_type1(
     // Phase 2: Check base encoding for .notdef mappings (conservative).
     // Only check codes in the font's FirstChar..LastChar range.
     let mut new_diffs: Vec<(u32, String)> = Vec::new();
-    let existing_diff_codes: std::collections::HashSet<u32> =
-        differences.iter().map(|(c, _)| *c).collect();
+
+    // Codes that already have valid (present in font) Differences entries.
+    let valid_diff_codes: std::collections::HashSet<u32> = differences
+        .iter()
+        .filter(|(_, name)| name != ".notdef" && available_glyphs.contains(name))
+        .map(|(c, _)| *c)
+        .collect();
 
     let check_start = first_char.min(255);
     let check_end = last_char.min(255);
     for code in check_start..=check_end {
-        if existing_diff_codes.contains(&code) {
+        if valid_diff_codes.contains(&code) {
+            continue;
+        }
+        // Skip codes already handled in Phase 1 replacements.
+        if replacements.iter().any(|(c, _)| *c == code) {
             continue;
         }
 
