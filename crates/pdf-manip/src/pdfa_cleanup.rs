@@ -2694,6 +2694,53 @@ pub fn fix_pdf_header(data: &mut Vec<u8>) {
     }
 }
 
+/// Verify and fix the startxref pointer in saved PDF data.
+///
+/// lopdf occasionally writes an incorrect startxref offset (off by a few bytes).
+/// This scans backward from the end to find the actual `xref` keyword position
+/// and corrects startxref if it doesn't point to it.
+pub fn fix_startxref(data: &mut Vec<u8>) {
+    let Some(sx_pos) = find_last(data, b"startxref") else {
+        return;
+    };
+    // Read current startxref value.
+    let val_start = sx_pos + b"startxref".len();
+    let val_start = data[val_start..]
+        .iter()
+        .position(|b| b.is_ascii_digit())
+        .map(|p| val_start + p)
+        .unwrap_or(val_start);
+    let val_end = data[val_start..]
+        .iter()
+        .position(|b| !b.is_ascii_digit())
+        .map(|p| val_start + p)
+        .unwrap_or(data.len());
+    let current_sx: usize = std::str::from_utf8(&data[val_start..val_end])
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    // Check if current startxref actually points to "xref".
+    if current_sx < data.len()
+        && data.len() - current_sx >= 4
+        && &data[current_sx..current_sx + 4] == b"xref"
+    {
+        return; // Already correct.
+    }
+
+    // Find the actual xref position by searching backward from startxref.
+    let search_end = sx_pos.min(data.len());
+    if let Some(real_xref) = find_last(&data[..search_end], b"xref") {
+        // Verify it's a standalone "xref" (not part of "startxref").
+        let is_standalone =
+            real_xref == 0 || data[real_xref - 1] == b'\n' || data[real_xref - 1] == b'\r';
+        if is_standalone {
+            let new_sx_bytes = real_xref.to_string().into_bytes();
+            data.splice(val_start..val_end, new_sx_bytes);
+        }
+    }
+}
+
 /// Adjust xref table offsets after the header size changed.
 ///
 /// `shift` is positive if bytes were added, negative if removed.

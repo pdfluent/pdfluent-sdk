@@ -792,31 +792,33 @@ fn update_simple_widths(
 
     let mut widths = Vec::new();
     for code in first_char..=last_char {
-        let ch = encoding_to_char(code, &encoding_name);
-        let width = if let Some(glyph_id) = face.glyph_index(ch) {
-            face.glyph_hor_advance(glyph_id)
-                .map(|w| (w as f64 * scale).round() as i64)
-                .unwrap_or(0)
-        } else if let Some(glyph_name) = differences.get(&code) {
-            // Encoding Differences: look up glyph by name in the font program.
-            if let Some(gid) = face.glyph_index_by_name(glyph_name) {
-                face.glyph_hor_advance(gid)
+        // Differences override takes priority over base encoding.
+        let width = if let Some(glyph_name) = differences.get(&code) {
+            // Try glyph name → Unicode → (3,1) cmap.
+            let w = glyph_name_to_unicode(glyph_name)
+                .and_then(|u| face.glyph_index(u))
+                .and_then(|gid| face.glyph_hor_advance(gid))
+                .map(|w| (w as f64 * scale).round() as i64);
+            w.or_else(|| {
+                // Fallback: look up glyph by name directly.
+                face.glyph_index_by_name(glyph_name)
+                    .and_then(|gid| face.glyph_hor_advance(gid))
+                    .map(|w| (w as f64 * scale).round() as i64)
+            })
+            .unwrap_or(0)
+        } else {
+            let ch = encoding_to_char(code, &encoding_name);
+            if let Some(glyph_id) = face.glyph_index(ch) {
+                face.glyph_hor_advance(glyph_id)
+                    .map(|w| (w as f64 * scale).round() as i64)
+                    .unwrap_or(0)
+            } else if is_truetype_outline && code <= u16::MAX as u32 {
+                face.glyph_hor_advance(ttf_parser::GlyphId(code as u16))
                     .map(|w| (w as f64 * scale).round() as i64)
                     .unwrap_or(0)
             } else {
-                glyph_name_to_unicode(glyph_name)
-                    .and_then(|u| face.glyph_index(u))
-                    .and_then(|gid| face.glyph_hor_advance(gid))
-                    .map(|w| (w as f64 * scale).round() as i64)
-                    .unwrap_or(0)
+                0
             }
-        } else if is_truetype_outline && code <= u16::MAX as u32 {
-            // Fallback for TrueType: GlyphId == code (identity mapping).
-            face.glyph_hor_advance(ttf_parser::GlyphId(code as u16))
-                .map(|w| (w as f64 * scale).round() as i64)
-                .unwrap_or(0)
-        } else {
-            0
         };
         widths.push(Object::Integer(width));
     }
@@ -3107,6 +3109,175 @@ pub fn fix_symbolic_flags(doc: &mut Document) -> usize {
     fixed
 }
 
+/// Populate missing FirstChar/LastChar/Widths for embedded simple fonts.
+///
+/// Some PDFs (especially pre-PDF/A) omit these entries for standard 14 fonts.
+/// PDF/A requires them (ISO 32000-1:2008 9.6.1, rule 6.2.11.2:4-6).
+pub fn fix_missing_simple_font_widths(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if is_font_dict(dict) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let mut fixed = 0;
+
+    for font_id in font_ids {
+        let needs_fix = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+            if !matches!(subtype.as_str(), "Type1" | "TrueType" | "MMType1") {
+                continue;
+            }
+            // Check if Widths or FirstChar is missing.
+            let has_widths = dict.has(b"Widths");
+            let has_fc = dict.has(b"FirstChar");
+            if has_widths && has_fc {
+                continue;
+            }
+            // Must have an embedded font program.
+            if !has_embedded_font_program(doc, dict) {
+                continue;
+            }
+            true
+        };
+        if !needs_fix {
+            continue;
+        }
+
+        // Read encoding info and compute widths from the embedded font.
+        let (enc_name, differences, fd_id) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let mut enc = String::new();
+            let mut diffs = std::collections::HashMap::new();
+            match dict.get(b"Encoding").ok() {
+                Some(Object::Name(n)) => {
+                    enc = String::from_utf8(n.clone()).unwrap_or_default();
+                }
+                Some(Object::Dictionary(enc_dict)) => {
+                    if let Some(base) = get_name(enc_dict, b"BaseEncoding") {
+                        enc = base;
+                    }
+                    parse_differences(enc_dict, &mut diffs);
+                }
+                Some(Object::Reference(enc_ref)) => {
+                    if let Ok(Object::Dictionary(enc_dict)) = doc.get_object(*enc_ref) {
+                        if let Some(base) = get_name(enc_dict, b"BaseEncoding") {
+                            enc = base;
+                        }
+                        parse_differences(enc_dict, &mut diffs);
+                    }
+                }
+                _ => {}
+            }
+            if enc.is_empty() {
+                enc = "WinAnsiEncoding".to_string();
+            }
+            let fd_id = match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+            (enc, diffs, fd_id)
+        };
+
+        let font_data = read_embedded_font_data(doc, fd_id);
+        let Some(font_data) = font_data else {
+            continue;
+        };
+
+        // Compute widths for codes 0-255.
+        let first_char = 0u32;
+        let last_char = 255u32;
+
+        // Try TrueType/OTF first, then fall back to raw CFF.
+        let widths: Vec<Object> = if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+            let units_per_em = face.units_per_em() as f64;
+            if units_per_em == 0.0 {
+                continue;
+            }
+            let scale = 1000.0 / units_per_em;
+            (first_char..=last_char)
+                .map(|code| {
+                    let ch = if let Some(name) = differences.get(&code) {
+                        glyph_name_to_unicode(name).unwrap_or(encoding_to_char(code, &enc_name))
+                    } else {
+                        encoding_to_char(code, &enc_name)
+                    };
+                    let width = if let Some(gid) = face.glyph_index(ch) {
+                        face.glyph_hor_advance(gid)
+                            .map(|w| (w as f64 * scale).round() as i64)
+                            .unwrap_or(0)
+                    } else if let Some(name) = differences.get(&code) {
+                        if let Some(gid) = face.glyph_index_by_name(name) {
+                            face.glyph_hor_advance(gid)
+                                .map(|w| (w as f64 * scale).round() as i64)
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+                    Object::Integer(width)
+                })
+                .collect()
+        } else if let Some(cff) = cff_parser::Table::parse(&font_data) {
+            // Raw CFF (Type1C) font data.
+            let scale = cff_matrix_scale(cff.matrix().sx);
+            let enc_map = parse_cff_encoding_map(&font_data);
+            (first_char..=last_char)
+                .map(|code| {
+                    // Try Differences name → CFF charset → GID.
+                    let glyph_name = if let Some(name) = differences.get(&code) {
+                        Some(name.as_str().to_string())
+                    } else {
+                        // Map code via encoding to glyph name.
+                        let ch = encoding_to_char(code, &enc_name);
+                        unicode_to_glyph_name(ch)
+                    };
+                    let width = if let Some(name) = &glyph_name {
+                        cff.glyph_index_by_name(name)
+                            .and_then(|gid| cff.glyph_width(gid))
+                            .map(|w| (w as f64 * scale).round() as i64)
+                    } else {
+                        None
+                    };
+                    // Also try CFF internal encoding.
+                    let width = width.or_else(|| {
+                        enc_map
+                            .get(&(code as u8))
+                            .and_then(|&gid| cff.glyph_width(cff_parser::GlyphId(gid)))
+                            .map(|w| (w as f64 * scale).round() as i64)
+                    });
+                    Object::Integer(width.unwrap_or(0))
+                })
+                .collect()
+        } else {
+            continue;
+        };
+
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
+            dict.set("FirstChar", Object::Integer(first_char as i64));
+            dict.set("LastChar", Object::Integer(last_char as i64));
+            dict.set("Widths", Object::Array(widths));
+            fixed += 1;
+        }
+    }
+
+    fixed
+}
+
 /// Skips fonts where >50% of widths mismatch (indicates unreliable mapping).
 ///
 /// Returns count of fonts whose widths were corrected.
@@ -3709,7 +3880,8 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
         "asterisk" => Some('*'),
         "plus" => Some('+'),
         "comma" => Some(','),
-        "hyphen" | "minus" => Some('-'),
+        "hyphen" => Some('-'),
+        "minus" => Some('\u{2212}'),
         "period" => Some('.'),
         "slash" => Some('/'),
         "zero" => Some('0'),
@@ -3915,7 +4087,18 @@ fn compute_type1_fontfile_width_corrections(
             continue;
         }
 
-        let Some(&cs_width) = parsed.charstring_widths.get(glyph_name) else {
+        // Look up width by glyph name. If the Differences name doesn't match
+        // any charstring (e.g. Differences says "grave" but charstrings use "G47"),
+        // fall back to the Type1 internal encoding for this code.
+        let cs_width = if let Some(&w) = parsed.charstring_widths.get(glyph_name) {
+            w
+        } else if let Some(internal_name) = parsed.encoding.get(&(code as u8)) {
+            if let Some(&w) = parsed.charstring_widths.get(internal_name.as_str()) {
+                w
+            } else {
+                continue;
+            }
+        } else {
             continue;
         };
 
@@ -6159,12 +6342,6 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
                 None => continue,
             };
             if !is_symbolic_font_name(&name) {
-                continue;
-            }
-
-            // Skip subset fonts (ABCDEF+FontName) — their widths were set
-            // by the original PDF producer and match the embedded subset program.
-            if name.contains('+') {
                 continue;
             }
 
