@@ -6345,6 +6345,12 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
                 continue;
             }
 
+            // Skip subset fonts (ABCDEF+FontName) — their widths were set
+            // by the original PDF producer and match the embedded subset program.
+            if name.contains('+') {
+                continue;
+            }
+
             // Only apply to fonts where the FontDescriptor Flags say Symbolic.
             // If the font was re-embedded with a non-symbolic fallback, the flags
             // will be Nonsymbolic, and fix_font_width_mismatches handles that case.
