@@ -6106,13 +6106,29 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
 
             // Build set of invalid codes using font's cmap.
             // For symbolic fonts without Encoding, veraPDF uses the (3,0)
-            // Symbol cmap subtable with 0xF000 offset. face.glyph_index()
-            // may use a different subtable (3,1 Unicode), so we ONLY check
-            // the 0xF000 path to match veraPDF's behavior.
+            // Symbol cmap subtable with 0xF000 offset. Only process fonts
+            // that actually have a (3,0) subtable — other "symbolic" fonts
+            // use different encoding mechanisms.
             let mut invalid_codes = HashSet::new();
             let mut replacement = 0x20u8;
 
             if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+                // Check if font has a (3,0) Microsoft Symbol cmap subtable.
+                let has_symbol_cmap = face
+                    .tables()
+                    .cmap
+                    .map(|cmap| {
+                        cmap.subtables
+                            .into_iter()
+                            .any(|st| st.platform_id == ttf_parser::PlatformId::Windows && st.encoding_id == 0)
+                    })
+                    .unwrap_or(false);
+
+                if !has_symbol_cmap {
+                    // Not a Symbol-type font — skip.
+                    continue;
+                }
+
                 for code in first_char..=last_char.min(255) {
                     let sym_ch = char::from_u32(0xF000 + code);
                     let has_glyph = sym_ch
