@@ -12,7 +12,7 @@ libfuzzer-sys = "0.4"
 pdf-syntax = { path = "../crates/pdf-syntax", features = ["std", "images"] }
 xfa-dom-resolver = { path = "../crates/xfa-dom-resolver" }
 formcalc-interpreter = { path = "../crates/formcalc-interpreter" }
-lopdf = "0.39"
+lopdf = { path = "../crates/lopdf" }
 pdf-manip = { path = "../crates/pdf-manip" }
 pdf-redact = { path = "../crates/pdf-redact" }
 pdf-annot = { path = "../crates/pdf-annot" }
