@@ -499,10 +499,28 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
             // Check if the xref offset actually points to "xref" or a valid xref stream.
             if xref_offset < data.len() {
                 let at_offset = &data[xref_offset..];
-                let has_xref = at_offset.starts_with(b"xref")
-                    || (at_offset.len() > 5 && at_offset[0].is_ascii_digit());
+                let has_valid_xref = if at_offset.starts_with(b"xref") {
+                    // Check it's not an empty xref (immediately followed by "trailer").
+                    let after_keyword = &at_offset[4..];
+                    let trimmed = after_keyword
+                        .iter()
+                        .position(|b| !b.is_ascii_whitespace())
+                        .map(|p| &after_keyword[p..])
+                        .unwrap_or(b"");
+                    !trimmed.starts_with(b"trailer")
+                } else if at_offset.len() > 10 && at_offset[0].is_ascii_digit() {
+                    // Could be a cross-reference stream: "N 0 obj".
+                    // Distinguish from xref table entries ("0000NNNNNN 00000 n").
+                    // xref entries have a 10-digit offset; xref streams have "N 0 obj".
+                    at_offset
+                        .windows(5)
+                        .take(20)
+                        .any(|w| w == b"0 obj" || w == b"0 OBJ")
+                } else {
+                    false
+                };
 
-                if !has_xref {
+                if !has_valid_xref {
                     // The offset is wrong. Try to find the actual xref position.
                     if let Some(real_xref) = find_last_xref_pos(data) {
                         let mut repaired = data.to_vec();
@@ -513,6 +531,12 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
                         );
                         if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
                             return Some(doc);
+                        }
+                        // If it still fails, try fixing xref line endings too.
+                        if let Some(double_repaired) = try_fix_xref_line_endings(&repaired) {
+                            if let Ok(doc) = lopdf::Document::load_mem(&double_repaired) {
+                                return Some(doc);
+                            }
                         }
                     }
                 }
@@ -535,24 +559,330 @@ fn try_repair_xref(data: &[u8]) -> Option<lopdf::Document> {
         }
     }
 
-    None
-}
-
-/// Find the byte offset of the last "xref" keyword or xref stream object in the data.
-fn find_last_xref_pos(data: &[u8]) -> Option<usize> {
-    // First try: find "xref" keyword (traditional xref table).
-    let xref_pos = data.windows(4).rposition(|w| w == b"xref");
-
-    if let Some(pos) = xref_pos {
-        // Verify it's actually at the start of a line (preceded by newline or start of file).
-        if pos == 0 || data[pos - 1] == b'\n' || data[pos - 1] == b'\r' {
-            return Some(pos);
+    // Strategy: corrupt trailer dict (e.g., filled with `<<<<...`).
+    // Reconstruct trailer from xref table by scanning for /Root reference.
+    if let Some(repaired) = try_rebuild_trailer(data) {
+        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+            return Some(doc);
         }
     }
 
-    // Fallback: scan for cross-reference stream objects.
-    // These look like "N 0 obj" followed by a dictionary containing /Type /XRef.
-    // This is harder to find reliably, so we just return None for now.
+    // Strategy: corrupt /Size value (e.g., "/Size (h)" instead of "/Size 80").
+    // Fix by computing the correct size from the xref table.
+    if let Some(repaired) = try_fix_trailer_size(data) {
+        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+            return Some(doc);
+        }
+    }
+
+    // Strategy: comment after startxref value (e.g., "23291 %comment").
+    // Strip non-digit chars after the offset number.
+    if let Some(repaired) = try_fix_startxref_comment(data) {
+        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+            return Some(doc);
+        }
+    }
+
+    // Strategy: xref entries with wrong line endings (19 bytes with LF only
+    // instead of 20 bytes with CR+LF). Fix by normalizing to CR+LF.
+    if let Some(repaired) = try_fix_xref_line_endings(data) {
+        if let Ok(doc) = lopdf::Document::load_mem(&repaired) {
+            return Some(doc);
+        }
+    }
+
+    None
+}
+
+/// Rebuild a corrupt trailer by scanning for /Root in the xref range.
+fn try_rebuild_trailer(data: &[u8]) -> Option<Vec<u8>> {
+    // Find the xref table.
+    let xref_pos = find_last_xref_pos(data)?;
+    let after_xref = &data[xref_pos..];
+
+    // Parse the xref subsection header: "xref\nSTART COUNT\n"
+    let header_end = after_xref
+        .windows(1)
+        .skip(5) // "xref\n"
+        .position(|w| w[0] == b'\n')
+        .map(|p| p + 5 + 1)?;
+
+    let header_line = std::str::from_utf8(&after_xref[5..header_end]).ok()?;
+    let parts: Vec<&str> = header_line.split_whitespace().collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let _start: usize = parts[0].parse().ok()?;
+    let count: usize = parts[1].parse().ok()?;
+
+    // Find the trailer keyword.
+    let trailer_pos = data[xref_pos..].windows(7).position(|w| w == b"trailer")?;
+    let abs_trailer = xref_pos + trailer_pos;
+
+    // Check if trailer dict is corrupt (e.g., filled with `<` chars).
+    let after_trailer = &data[abs_trailer + 7..];
+    let dict_start = after_trailer
+        .iter()
+        .position(|&b| !b.is_ascii_whitespace())?;
+    let dict_data = &after_trailer[dict_start..];
+
+    // A valid trailer dict starts with "<<" followed by something other than "<".
+    let is_corrupt = dict_data.starts_with(b"<<<") || !dict_data.starts_with(b"<<");
+
+    if !is_corrupt {
+        return None;
+    }
+
+    // Scan all xref entries to find /Root by checking each object.
+    // Parse xref entries (20 bytes each): "OFFSET GENERATION STATUS\n"
+    let entries_start = xref_pos + header_end;
+    let mut root_ref = None;
+    for i in 1..count {
+        let entry_offset = entries_start + i * 20;
+        if entry_offset + 20 > data.len() {
+            break;
+        }
+        let entry = &data[entry_offset..entry_offset + 20];
+        if entry[17] == b'f' {
+            continue; // free entry
+        }
+        let offset_str = std::str::from_utf8(&entry[..10]).ok()?;
+        let obj_offset: usize = offset_str.trim().parse().ok()?;
+        if obj_offset + 20 >= data.len() {
+            continue;
+        }
+        // Check if this object contains /Type /Catalog.
+        let obj_data = &data[obj_offset..std::cmp::min(obj_offset + 4096, data.len())];
+        if obj_data
+            .windows(14)
+            .any(|w| w == b"/Type /Catalog" || w == b"/Type/Catalog")
+        {
+            root_ref = Some(i);
+            break;
+        }
+    }
+
+    let root_ref = root_ref?;
+
+    // Rebuild: everything up to trailer, then a valid trailer dict.
+    let mut repaired = data[..abs_trailer].to_vec();
+    repaired.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {count} /Root {root_ref} 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n"
+        )
+        .as_bytes(),
+    );
+    Some(repaired)
+}
+
+/// Fix trailer with invalid /Size value (e.g., "/Size (h)" instead of "/Size 80").
+fn try_fix_trailer_size(data: &[u8]) -> Option<Vec<u8>> {
+    // Find "/Size" in the trailer.
+    let trailer_pos = data.windows(7).rposition(|w| w == b"trailer")?;
+    let after_trailer = &data[trailer_pos..];
+
+    // Find /Size followed by non-integer value.
+    let size_pos = after_trailer.windows(5).position(|w| w == b"/Size")?;
+    let abs_size = trailer_pos + size_pos;
+    let after_size = &data[abs_size + 5..];
+
+    // Skip whitespace after /Size.
+    let val_start = after_size.iter().position(|b| !b.is_ascii_whitespace())?;
+
+    // If the value starts with a digit, /Size is already valid.
+    if after_size[val_start].is_ascii_digit() {
+        return None;
+    }
+
+    // Compute the correct size from the xref table.
+    let xref_pos = find_last_xref_pos(data)?;
+    let after_xref = &data[xref_pos..];
+    let header_end = after_xref
+        .windows(1)
+        .skip(5)
+        .position(|w| w[0] == b'\n')
+        .map(|p| p + 5 + 1)?;
+    let header_line = std::str::from_utf8(&after_xref[5..header_end]).ok()?;
+    let parts: Vec<&str> = header_line.split_whitespace().collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let count: usize = parts[1].parse().ok()?;
+
+    // Find the end of the bad value (next / or >>).
+    let val_end = after_size[val_start..]
+        .iter()
+        .position(|&b| b == b'/' || b == b'>')
+        .unwrap_or(after_size.len() - val_start);
+
+    let mut repaired = data[..abs_size + 5].to_vec();
+    repaired.push(b' ');
+    repaired.extend_from_slice(count.to_string().as_bytes());
+    repaired.push(b' ');
+    repaired.extend_from_slice(&data[abs_size + 5 + val_start + val_end..]);
+    Some(repaired)
+}
+
+/// Fix startxref with trailing comment (e.g., "23291 %Must be...").
+fn try_fix_startxref_comment(data: &[u8]) -> Option<Vec<u8>> {
+    let search_start = data.len().saturating_sub(4096);
+    let sxr_pos = data[search_start..]
+        .windows(9)
+        .rposition(|w| w == b"startxref")
+        .map(|p| search_start + p)?;
+
+    let after = &data[sxr_pos + 9..];
+
+    // Extract digits.
+    let digits_start = after.iter().position(|b| b.is_ascii_digit())?;
+    let digits_end = after[digits_start..]
+        .iter()
+        .position(|b| !b.is_ascii_digit())
+        .unwrap_or(after.len() - digits_start);
+
+    // Check if there's non-whitespace, non-EOF content after the digits.
+    let remainder = &after[digits_start + digits_end..];
+    let has_garbage = remainder
+        .iter()
+        .take_while(|&&b| b != b'%' || remainder.windows(5).any(|w| w != b"%%EOF"))
+        .any(|b| !b.is_ascii_whitespace() && *b != b'%');
+
+    // Also check: is there a '%' that is NOT '%%EOF'?
+    let after_digits = &after[digits_start + digits_end..];
+    let trimmed = after_digits
+        .iter()
+        .skip_while(|b| b.is_ascii_whitespace())
+        .cloned()
+        .collect::<Vec<u8>>();
+    let needs_fix = !trimmed.is_empty()
+        && !trimmed.starts_with(b"%%EOF")
+        && (trimmed[0] == b'%' || has_garbage);
+
+    if !needs_fix {
+        return None;
+    }
+
+    let offset_str = std::str::from_utf8(&after[digits_start..digits_start + digits_end]).ok()?;
+
+    let mut repaired = data[..sxr_pos].to_vec();
+    repaired.extend_from_slice(format!("startxref\n{offset_str}\n%%EOF\n").as_bytes());
+    Some(repaired)
+}
+
+/// Fix xref entries with wrong line endings (19 bytes with LF only).
+/// lopdf requires exactly 20-byte entries. Normalizes to CR+LF.
+fn try_fix_xref_line_endings(data: &[u8]) -> Option<Vec<u8>> {
+    let xref_pos = find_last_xref_pos(data)?;
+
+    // Find subsection header: "xref\nSTART COUNT\n"
+    let after = &data[xref_pos + 4..]; // skip "xref"
+    let header_start = after.iter().position(|b| !b.is_ascii_whitespace())?;
+    let header_end = after[header_start..]
+        .iter()
+        .position(|&b| b == b'\n')
+        .map(|p| header_start + p + 1)?;
+
+    let header_line = std::str::from_utf8(&after[header_start..header_end]).ok()?;
+    let parts: Vec<&str> = header_line.split_whitespace().collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let count: usize = parts[1].parse().ok()?;
+
+    // Find trailer position to delimit entries.
+    let trailer_pos = data[xref_pos..]
+        .windows(7)
+        .position(|w| w == b"trailer")
+        .map(|p| xref_pos + p)?;
+
+    let entries_start = xref_pos + 4 + header_end;
+    let entries_data = &data[entries_start..trailer_pos];
+
+    // Split entries by newline.
+    let entries: Vec<&[u8]> = entries_data
+        .split(|&b| b == b'\n')
+        .filter(|e| !e.is_empty())
+        .collect();
+
+    if entries.len() != count {
+        return None;
+    }
+
+    // Check if entries need fixing. After split by \n, entries with CR+LF
+    // end with \r (19 bytes), entries with LF-only don't (18 bytes).
+    // lopdf requires exactly 20-byte entries (content + SP + CR + LF).
+    let has_cr = entries.iter().any(|e| e.ends_with(b"\r"));
+    if has_cr {
+        // Already has CR+LF line endings — check for other issues.
+        let all_correct = entries.iter().all(|e| e.ends_with(b"\r") && e.len() == 19);
+        if all_correct {
+            return None;
+        }
+    }
+
+    // Rebuild with proper 20-byte entries (content + CR + LF).
+    let mut repaired = data[..entries_start].to_vec();
+    for entry in &entries {
+        let stripped = if entry.ends_with(b"\r") {
+            &entry[..entry.len() - 1]
+        } else {
+            entry
+        };
+        // Pad to 18 chars if needed (left-pad offset with zeros).
+        if stripped.len() == 18 {
+            repaired.extend_from_slice(stripped);
+        } else {
+            // Try to parse and reformat.
+            let s = std::str::from_utf8(stripped).ok()?;
+            let parts: Vec<&str> = s.split_whitespace().collect();
+            if parts.len() != 3 {
+                return None;
+            }
+            repaired.extend_from_slice(
+                format!("{:0>10} {:0>5} {}", parts[0], parts[1], parts[2]).as_bytes(),
+            );
+        }
+        repaired.extend_from_slice(b"\r\n");
+    }
+    repaired.extend_from_slice(&data[trailer_pos..]);
+
+    // Fix startxref to point to the xref in the repaired data.
+    // The xref position hasn't changed since we only modified entry content.
+    Some(repaired)
+}
+
+/// Find the byte offset of the last valid standalone "xref" keyword in the data.
+/// Skips "xref" substrings inside "startxref" and empty xref tables.
+fn find_last_xref_pos(data: &[u8]) -> Option<usize> {
+    // Iterate backwards through all "xref" matches.
+    let mut search_end = data.len();
+    while search_end >= 4 {
+        if let Some(pos) = data[..search_end].windows(4).rposition(|w| w == b"xref") {
+            // Skip if this is part of "startxref".
+            if pos >= 5 && &data[pos - 5..pos] == b"start" {
+                search_end = pos;
+                continue;
+            }
+            // Verify it's at the start of a line.
+            if pos == 0 || data[pos - 1] == b'\n' || data[pos - 1] == b'\r' {
+                // Skip empty xref tables ("xref\ntrailer" with no entries).
+                let after = &data[pos + 4..];
+                let non_ws = after
+                    .iter()
+                    .position(|b| !b.is_ascii_whitespace())
+                    .map(|p| &after[p..])
+                    .unwrap_or(b"");
+                if non_ws.starts_with(b"trailer") {
+                    search_end = pos;
+                    continue;
+                }
+                return Some(pos);
+            }
+            search_end = pos;
+        } else {
+            break;
+        }
+    }
     None
 }
 

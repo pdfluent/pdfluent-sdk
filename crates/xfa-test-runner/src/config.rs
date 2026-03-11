@@ -134,6 +134,8 @@ impl Config {
             "bookmarks" | "annotations" | "form_fields" | "signatures" | "sign_verify" => {
                 (base / 3).max(5)
             }
+            // Heavy tests with external oracle: 3x base for veraPDF overhead
+            "pdfa_convert" => base * 3,
             // Heavy tests: full base timeout
             _ => base,
         };
