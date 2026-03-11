@@ -4233,19 +4233,6 @@ fn compute_cff_type1_width_corrections(
         1.0
     };
 
-    if (scale - 1.0).abs() > 0.001 {
-        eprintln!("DEBUG CFF scale: matrix.sx={} scale={} n_glyphs={}", matrix.sx, scale, cff.number_of_glyphs());
-        // Collect unique widths
-        let mut widths_set = std::collections::BTreeSet::new();
-        for gid in 0..cff.number_of_glyphs() as u16 {
-            if let Some(w) = cff.glyph_width(cff_parser::GlyphId(gid)) {
-                widths_set.insert((w as f64 * 1000.0) as i64);
-            }
-        }
-        let unique: Vec<_> = widths_set.iter().copied().collect();
-        eprintln!("  unique widths (x1000): {:?}", &unique[..unique.len().min(30)]);
-    }
-
     let mut corrections = Vec::new();
 
     for (i, obj) in existing_widths.iter().enumerate() {
@@ -4466,10 +4453,25 @@ fn cff_width_for_code(
     differences: &std::collections::HashMap<u32, String>,
     scale: f64,
 ) -> Option<f64> {
+    // veraPDF uses the CFF internal encoding for width comparison (rule 6.2.11.5:1).
+    // Try the CFF encoding FIRST — it takes priority over the PDF encoding because
+    // the CFF encoding maps codes to GIDs directly, which may differ from the
+    // PDF encoding → glyph name → CFF name lookup path.
+    if code <= 255 {
+        let enc_map = parse_cff_encoding_map(font_data);
+        if let Some(&gid) = enc_map.get(&(code as u8)) {
+            if gid != 0 {
+                return cff
+                    .glyph_width(cff_parser::GlyphId(gid))
+                    .map(|w| w as f64 * scale);
+            }
+        }
+    }
+
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
 
     if has_pdf_encoding {
-        // Try PDF encoding glyph name.
+        // CFF encoding didn't map this code. Try PDF encoding → glyph name.
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.clone()
         } else {
@@ -4496,40 +4498,11 @@ fn cff_width_for_code(
                     return Some(w);
                 }
             }
-
-            // Glyph name not found by PDF encoding name. Before returning .notdef,
-            // check the CFF internal encoding — veraPDF uses the CFF encoding
-            // for width comparison, and it may map this code to a valid GID even
-            // when the PDF encoding name doesn't match any glyph in the subset.
-            if glyph_name != ".notdef" && code <= 255 {
-                let enc_map = parse_cff_encoding_map(font_data);
-                if let Some(&gid) = enc_map.get(&(code as u8)) {
-                    if gid != 0 {
-                        return cff
-                            .glyph_width(cff_parser::GlyphId(gid))
-                            .map(|w| w as f64 * scale);
-                    }
-                }
-                return cff
-                    .glyph_width(cff_parser::GlyphId(0))
-                    .map(|w| w as f64 * scale);
-            }
         }
     }
 
-    // Fallback: CFF internal encoding — parse directly to avoid the Standard
-    // Encoding fallback that cff_parser::Table::glyph_index() uses.
-    // veraPDF uses only the CFF's own encoding for Type1C fonts.
+    // Code not in CFF encoding and not found via PDF encoding → .notdef.
     if code <= 255 {
-        let enc_map = parse_cff_encoding_map(font_data);
-        if let Some(&gid) = enc_map.get(&(code as u8)) {
-            if gid != 0 {
-                return cff
-                    .glyph_width(cff_parser::GlyphId(gid))
-                    .map(|w| w as f64 * scale);
-            }
-        }
-        // Code not in CFF encoding or maps to .notdef → return .notdef width.
         return cff
             .glyph_width(cff_parser::GlyphId(0))
             .map(|w| w as f64 * scale);
