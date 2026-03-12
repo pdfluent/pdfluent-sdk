@@ -1699,37 +1699,70 @@ fn fix_cid_widths_from_cff(
         1.0
     };
 
-    // Collect widths for all glyphs from the CFF program.
-    let mut widths: Vec<(u16, i64)> = Vec::new();
+    // Collect widths for all glyphs from the CFF program, grouped by CID.
+    let mut by_cid: std::collections::HashMap<u16, Vec<i64>> = std::collections::HashMap::new();
     for gid in 0..num_glyphs {
         let glyph_id = cff_parser::GlyphId(gid);
         if let Some(w) = cff.glyph_width(glyph_id) {
             let scaled = (w as f64 * scale as f64).round() as i64;
             let cid = cff.glyph_cid(glyph_id).unwrap_or(gid);
-            widths.push((cid, scaled));
+            by_cid.entry(cid).or_default().push(scaled);
         }
     }
 
-    if widths.is_empty() {
+    if by_cid.is_empty() {
         // Some CID-keyed CFF subsets expose charset CIDs but no per-glyph widths
         // via cff_parser. Fall back to repairing duplicate CID entries using the
         // existing /W table as a conservative proxy.
         return fix_cid_duplicate_widths_from_w(doc, cid_font_id, cff);
     }
 
-    widths.sort_by_key(|(cid, _)| *cid);
-    widths.dedup_by_key(|(cid, _)| *cid);
+    // Resolve CID duplicates.
+    //
+    // Some subset CFF fonts repeat the same CID for multiple glyphs. veraPDF
+    // may resolve such collisions to .notdef width; choosing an arbitrary
+    // duplicate width causes persistent 6.2.11.5:1 mismatches. Prefer .notdef
+    // width when a CID has conflicting widths.
+    let notdef_dw = cff
+        .glyph_width(cff_parser::GlyphId(0))
+        .map(|w| (w as f64 * scale as f64).round() as i64);
 
-    // Determine DW (default width) — use the most common width.
+    let mut widths: Vec<(u16, i64)> = by_cid
+        .into_iter()
+        .map(|(cid, vals)| {
+            let resolved = if vals.len() <= 1 {
+                vals[0]
+            } else {
+                let mut freq: std::collections::HashMap<i64, usize> =
+                    std::collections::HashMap::new();
+                for v in &vals {
+                    *freq.entry(*v).or_default() += 1;
+                }
+                notdef_dw.unwrap_or_else(|| {
+                    freq.into_iter()
+                        .max_by_key(|(_, c)| *c)
+                        .map(|(w, _)| w)
+                        .unwrap_or(vals[0])
+                })
+            };
+            (cid, resolved)
+        })
+        .collect();
+    widths.sort_by_key(|(cid, _)| *cid);
+
+    // Determine DW (default width).
+    //
+    // Mode fallback for fonts where .notdef width is unavailable.
     let mut freq: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     for (_, w) in &widths {
         *freq.entry(*w).or_default() += 1;
     }
-    let dw = freq
+    let mode_dw = freq
         .iter()
         .max_by_key(|(_, count)| *count)
         .map(|(w, _)| *w)
         .unwrap_or(1000);
+    let dw = notdef_dw.unwrap_or(mode_dw);
 
     // Build /W array: consecutive runs of widths that differ from DW.
     // Format: [cid [w1 w2 ...] cid2 [w3 w4 ...] ...]
@@ -2330,7 +2363,11 @@ pub fn fix_cff_widths(doc: &mut Document) -> usize {
         let font_data = read_embedded_font_data(doc, fd_id);
         let Some(font_data) = font_data else { continue };
 
-        let Some(cff) = cff_parser::Table::parse(&font_data) else {
+        // CIDFontType0 streams may contain either raw CFF data or OTF-wrapped
+        // CFF. Support both so width repair covers embedded OpenType CFF fonts.
+        let Some(cff) =
+            cff_parser::Table::parse(&font_data).or_else(|| extract_cff_from_otf(&font_data))
+        else {
             continue;
         };
 
@@ -2424,23 +2461,37 @@ pub fn fix_truetype_cid_widths(doc: &mut Document) -> usize {
         }
         let scale = 1000.0 / units_per_em;
 
+        enum CidToGidMode {
+            Identity,
+            Stream(Vec<u8>),
+        }
+
         // Read CIDToGIDMap to determine mapping.
-        let is_identity = {
+        let cid_to_gid_mode = {
             let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_id) else {
                 continue;
             };
             match cid_dict.get(b"CIDToGIDMap").ok() {
-                Some(Object::Name(n)) => n == b"Identity",
-                None => true, // Default is Identity per spec.
-                _ => false,   // Stream-based map — skip for now.
+                Some(Object::Name(n)) if n == b"Identity" => CidToGidMode::Identity,
+                None => CidToGidMode::Identity, // Default is Identity per spec.
+                Some(Object::Reference(id)) => match doc.objects.get(id) {
+                    Some(Object::Stream(s)) => {
+                        let mut st = s.clone();
+                        let _ = st.decompress();
+                        CidToGidMode::Stream(st.content)
+                    }
+                    _ => continue,
+                },
+                Some(Object::Stream(s)) => {
+                    let mut st = s.clone();
+                    let _ = st.decompress();
+                    CidToGidMode::Stream(st.content)
+                }
+                _ => continue,
             }
         };
 
-        if !is_identity {
-            continue; // Only handle Identity mapping for now.
-        }
-
-        // For Identity mapping: CID == GID. Read widths from hmtx.
+        // Read widths from hmtx using CIDToGIDMap.
         let num_glyphs = face.number_of_glyphs();
         if num_glyphs == 0 {
             continue;
@@ -2448,12 +2499,34 @@ pub fn fix_truetype_cid_widths(doc: &mut Document) -> usize {
 
         // Collect widths: CID → width in PDF units.
         let mut widths: Vec<(u16, i64)> = Vec::new();
-        for gid in 0..num_glyphs {
-            let w = face
-                .glyph_hor_advance(ttf_parser::GlyphId(gid))
-                .map(|a| (a as f64 * scale).round() as i64)
-                .unwrap_or(0);
-            widths.push((gid, w));
+        match cid_to_gid_mode {
+            CidToGidMode::Identity => {
+                // Identity mapping: CID == GID.
+                for gid in 0..num_glyphs {
+                    let w = face
+                        .glyph_hor_advance(ttf_parser::GlyphId(gid))
+                        .map(|a| (a as f64 * scale).round() as i64)
+                        .unwrap_or(0);
+                    widths.push((gid, w));
+                }
+            }
+            CidToGidMode::Stream(map_bytes) => {
+                // Stream mapping: each 2-byte big-endian entry maps CID index -> GID.
+                for (cid, chunk) in map_bytes.chunks_exact(2).enumerate() {
+                    if cid > u16::MAX as usize {
+                        break;
+                    }
+                    let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                    let w = if gid < num_glyphs {
+                        face.glyph_hor_advance(ttf_parser::GlyphId(gid))
+                            .map(|a| (a as f64 * scale).round() as i64)
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    };
+                    widths.push((cid as u16, w));
+                }
+            }
         }
 
         if widths.is_empty() {
@@ -5609,18 +5682,39 @@ fn cff_glyph_name_alternatives(name: &str) -> &'static [&'static str] {
 const SYMBOLIC_FONTS: &[&str] = &[
     "Symbol",
     "SymbolMT",
+    "MTExtra",
     "ZapfDingbats",
     "Wingdings",
     "Webdings",
     "Dingbats",
+    "CMSY10",
+    "MSAM10",
+    "MSBM10",
+    "WASY8",
+    "WASY9",
+    "TXSY",
+    "TXSYC",
+    "TXEX",
 ];
 
 /// Check if a font name (with optional subset prefix) is a symbolic font.
 fn is_symbolic_font_name(name: &str) -> bool {
     let base = name.split('+').next_back().unwrap_or(name);
-    SYMBOLIC_FONTS
+    if SYMBOLIC_FONTS
         .iter()
         .any(|sym| base.eq_ignore_ascii_case(sym))
+    {
+        return true;
+    }
+
+    // TeX/Math symbolic families are often subsetted/renamed.
+    let up = base.to_ascii_uppercase();
+    up.starts_with("CMSY")
+        || up.starts_with("MSAM")
+        || up.starts_with("MSBM")
+        || up.starts_with("WASY")
+        || up.starts_with("TXSY")
+        || up.starts_with("TXEX")
 }
 
 /// Fix TrueType font encoding for PDF/A compliance (rules 6.2.11.6:2, 6.2.11.6:3).
@@ -6906,10 +7000,19 @@ pub fn fix_notdef_glyph_refs(doc: &mut Document) -> usize {
             }
 
             let base_font = get_name(dict, b"BaseFont").unwrap_or_default();
-            // Symbolic simple fonts are handled by fix_symbolic_font_notdef_streams().
-            // Do not apply Differences-based notdef repair here, because it can
-            // reintroduce /Encoding on symbolic TrueType fonts (6.2.11.6:3).
-            if is_symbolic_font_name(&base_font) || is_font_symbolic(doc, dict) {
+            let symbolic_name = is_symbolic_font_name(&base_font);
+            let symbolic_flags = is_font_symbolic(doc, dict);
+            let base_no_subset = strip_subset_prefix(&base_font);
+            // Some legacy NewBrunswick Type1 fonts are flagged Symbolic but still
+            // need the regular notdef path for missing space-glyph references.
+            let allow_symbolic_type1_override = base_no_subset.contains("NewBrunswick");
+            // Symbolic fonts by name are handled via stream-level repair.
+            // For TrueType symbolic fonts (by flags), avoid Differences-based
+            // edits here to prevent reintroducing /Encoding (6.2.11.6:3).
+            if (symbolic_name && !(subtype != "TrueType" && allow_symbolic_type1_override))
+                || (subtype == "TrueType" && symbolic_flags)
+                || (subtype != "TrueType" && symbolic_flags && !allow_symbolic_type1_override)
+            {
                 continue;
             }
 
@@ -7028,8 +7131,11 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
                     _ => String::new(),
                 };
 
-                // Only strip in simple 1-byte text fonts.
-                let can_strip = subtype == "TrueType" || subtype == "Type1" || subtype == "MMType1";
+                // Strip in 1-byte text fonts, including Type3.
+                let can_strip = subtype == "TrueType"
+                    || subtype == "Type1"
+                    || subtype == "MMType1"
+                    || subtype == "Type3";
                 map.insert(name, can_strip);
             }
             map
@@ -7121,9 +7227,17 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
 }
 
 fn strip_control_bytes(bytes: &mut Vec<u8>) -> bool {
+    let mut changed = false;
+
+    // Some malformed PDFs encode simple-font text as 2-byte pairs where one
+    // lane is a constant sentinel (00/FF). Collapse these to 1-byte codes.
+    if collapse_two_byte_simple_codes(bytes) {
+        changed = true;
+    }
+
     let original_len = bytes.len();
-    bytes.retain(|b| *b >= 32 || *b == b'\n' || *b == b'\r' || *b == b'\t');
-    bytes.len() != original_len
+    bytes.retain(|b| *b >= 32);
+    changed || bytes.len() != original_len
 }
 
 /// Fix .notdef references in CID (Type0) fonts by modifying content streams.
@@ -7252,18 +7366,110 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
             let mut space_cid: u16 = 0;
 
             if cid_subtype == "CIDFontType2" {
-                // TrueType-based CID font: GID = CID for Identity-H with Identity
-                // CIDToGIDMap (or default). GID 0 is .notdef, 1..num_glyphs are valid.
+                // TrueType-based CID font. Handle both Identity and stream
+                // CIDToGIDMap mappings.
                 match ttf_parser::Face::parse(&font_data, 0) {
                     Ok(face) => {
                         let num_glyphs = face.number_of_glyphs();
-                        for gid in 1..num_glyphs {
-                            valid_cids.insert(gid);
+                        if num_glyphs == 0 {
+                            continue;
                         }
-                        // Try to find space glyph via cmap.
-                        if let Some(gid) = face.glyph_index(' ') {
-                            if gid.0 > 0 {
-                                space_cid = gid.0;
+
+                        let map_obj = doc.objects.get(&desc_id).and_then(|o| {
+                            if let Object::Dictionary(d) = o {
+                                d.get(b"CIDToGIDMap").ok().cloned()
+                            } else {
+                                None
+                            }
+                        });
+
+                        let has_glyph_data = |gid: u16| -> bool {
+                            gid > 0
+                                && gid < num_glyphs
+                                && tt_glyph_has_data(&face, ttf_parser::GlyphId(gid))
+                        };
+                        let space_gid = face
+                            .glyph_index(' ')
+                            .map(|g| g.0)
+                            .filter(|gid| has_glyph_data(*gid))
+                            .unwrap_or(0);
+
+                        match map_obj {
+                            None => {
+                                // Identity mapping: CID == GID.
+                                for gid in 1..num_glyphs {
+                                    if has_glyph_data(gid) {
+                                        valid_cids.insert(gid);
+                                    }
+                                }
+                                if space_gid > 0 {
+                                    space_cid = space_gid;
+                                }
+                            }
+                            Some(Object::Name(n)) if n == b"Identity" => {
+                                // Identity mapping: CID == GID.
+                                for gid in 1..num_glyphs {
+                                    if has_glyph_data(gid) {
+                                        valid_cids.insert(gid);
+                                    }
+                                }
+                                if space_gid > 0 {
+                                    space_cid = space_gid;
+                                }
+                            }
+                            Some(Object::Reference(id)) => {
+                                let map_bytes = match doc.objects.get(&id) {
+                                    Some(Object::Stream(s)) => {
+                                        let mut st = s.clone();
+                                        let _ = st.decompress();
+                                        st.content
+                                    }
+                                    _ => Vec::new(),
+                                };
+                                for (cid, chunk) in map_bytes.chunks_exact(2).enumerate() {
+                                    if cid > u16::MAX as usize {
+                                        break;
+                                    }
+                                    let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                                    if has_glyph_data(gid) {
+                                        let cid_u16 = cid as u16;
+                                        valid_cids.insert(cid_u16);
+                                        if gid == space_gid {
+                                            space_cid = cid_u16;
+                                        }
+                                    }
+                                }
+                            }
+                            Some(Object::Stream(s)) => {
+                                let mut st = s.clone();
+                                let _ = st.decompress();
+                                for (cid, chunk) in st.content.chunks_exact(2).enumerate() {
+                                    if cid > u16::MAX as usize {
+                                        break;
+                                    }
+                                    let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                                    if has_glyph_data(gid) {
+                                        let cid_u16 = cid as u16;
+                                        valid_cids.insert(cid_u16);
+                                        if gid == space_gid {
+                                            space_cid = cid_u16;
+                                        }
+                                    }
+                                }
+                            }
+                            _ => continue,
+                        }
+
+                        // Fallback: if stream mapping yielded nothing, fall back
+                        // to Identity semantics.
+                        if valid_cids.is_empty() {
+                            for gid in 1..num_glyphs {
+                                if has_glyph_data(gid) {
+                                    valid_cids.insert(gid);
+                                }
+                            }
+                            if space_gid > 0 {
+                                space_cid = space_gid;
                             }
                         }
                     }
@@ -7526,6 +7732,7 @@ fn fix_cid_text_string(
     if bytes.len() < 2 || !bytes.len().is_multiple_of(2) {
         return false;
     }
+    let mut changed = false;
     // If font has no valid glyphs at all, clear the entire text string.
     // This happens with stub fonts like HiddenHorzOCR (only .notdef glyph).
     if valid_cids.is_empty() {
@@ -7535,7 +7742,6 @@ fn fix_cid_text_string(
         }
         return false;
     }
-    let mut changed = false;
     let space_hi = (space_cid >> 8) as u8;
     let space_lo = (space_cid & 0xFF) as u8;
     for i in (0..bytes.len()).step_by(2) {
@@ -7683,6 +7889,22 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         invalid_codes.insert(code as u8);
                     }
                 }
+            } else if let Some(parsed) = parse_type1_program(&font_data) {
+                // Classic Type1 (FontFile/PFB/PFA) symbolic font.
+                for code in first_char..=last_char.min(255) {
+                    let code_u8 = code as u8;
+                    let glyph_name = parsed.encoding.get(&code_u8).map(|s| s.as_str());
+                    let has_glyph = glyph_name
+                        .filter(|name| !name.is_empty() && *name != ".notdef")
+                        .and_then(|name| parsed.charstring_widths.get(name))
+                        // In these symbolic subsets, zero-width slots are
+                        // typically .notdef proxies and should be removed.
+                        .map(|w| *w > 0)
+                        .unwrap_or(false);
+                    if !has_glyph {
+                        invalid_codes.insert(code_u8);
+                    }
+                }
             } else {
                 continue;
             }
@@ -7784,9 +8006,34 @@ fn fix_simple_text_string(
     bytes: &mut Vec<u8>,
     invalid_codes: &std::collections::HashSet<u8>,
 ) -> bool {
+    let changed = collapse_two_byte_simple_codes(bytes);
     let original_len = bytes.len();
     bytes.retain(|b| !invalid_codes.contains(b));
-    bytes.len() != original_len
+    changed || bytes.len() != original_len
+}
+
+fn collapse_two_byte_simple_codes(bytes: &mut Vec<u8>) -> bool {
+    if bytes.len() < 2 || !bytes.len().is_multiple_of(2) {
+        return false;
+    }
+
+    let even_all_00 = bytes.iter().step_by(2).all(|b| *b == 0x00);
+    let even_all_ff = bytes.iter().step_by(2).all(|b| *b == 0xFF);
+    let odd_all_00 = bytes.iter().skip(1).step_by(2).all(|b| *b == 0x00);
+    let odd_all_ff = bytes.iter().skip(1).step_by(2).all(|b| *b == 0xFF);
+
+    if !(even_all_00 || even_all_ff || odd_all_00 || odd_all_ff) {
+        return false;
+    }
+
+    let take_odd = even_all_00 || even_all_ff;
+    let mut collapsed = Vec::with_capacity(bytes.len() / 2);
+    let start = if take_odd { 1 } else { 0 };
+    for i in (start..bytes.len()).step_by(2) {
+        collapsed.push(bytes[i]);
+    }
+    *bytes = collapsed;
+    true
 }
 
 fn replace_simple_font_code_refs(
@@ -7873,6 +8120,9 @@ fn replace_simple_font_code_refs(
                             let str_idx = if op.operator == "\"" { 2 } else { 0 };
                             if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx)
                             {
+                                if collapse_two_byte_simple_codes(bytes) {
+                                    modified = true;
+                                }
                                 if let Some(to) = to_code {
                                     for b in bytes.iter_mut() {
                                         if *b == from_code {
@@ -7897,6 +8147,9 @@ fn replace_simple_font_code_refs(
                             if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                                 for item in arr.iter_mut() {
                                     if let Object::String(bytes, _) = item {
+                                        if collapse_two_byte_simple_codes(bytes) {
+                                            modified = true;
+                                        }
                                         if let Some(to) = to_code {
                                             for b in bytes.iter_mut() {
                                                 if *b == from_code {
@@ -8408,8 +8661,8 @@ fn fix_notdef_control_chars_fallback(
             continue;
         }
 
-        // Remove control characters (0-31 except \n, \r, \t which are valid
-        // escape sequences) from PDF string literals in the content stream.
+        // Remove all control characters (0-31) from PDF string literals in
+        // the content stream.
         let mut new_content = Vec::with_capacity(content.len());
         let mut i = 0;
         let mut in_string = false;
@@ -8436,12 +8689,7 @@ fn fix_notdef_control_chars_fallback(
                 }
                 continue;
             }
-            if in_string
-                && content[i] < 32
-                && content[i] != b'\n'
-                && content[i] != b'\r'
-                && content[i] != b'\t'
-            {
+            if in_string && content[i] < 32 {
                 // Skip control character.
                 modified = true;
                 i += 1;
