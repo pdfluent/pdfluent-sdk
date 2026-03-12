@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -306,6 +307,35 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fixups::run_fixups(&mut doc)
         }));
 
+        // 3c1. Re-normalize color spaces after fixups. Some fixups can introduce
+        // or update DeviceN/Separation structures, so run 6.2.4.4 consistency
+        // checks once more before final validation.
+        set_progress("colorspace_post_fixups");
+        let colorspace_post_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc)
+        }));
+        match colorspace_post_result {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                return TestResult {
+                    status: TestStatus::Skip,
+                    error_message: Some(format!("post-fixups colorspace normalization failed: {e}")),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
+            Err(_) => {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some("panic in post-fixups normalize_colorspaces".into()),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
+        }
+
         set_progress("xmp_repair");
         let xmp_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_xmp::repair_xmp_metadata(
@@ -431,6 +461,17 @@ impl PdfTest for PdfAConvertTest {
                 Ok(verapdf_report) => {
                     let oracle_errors = verapdf_report.failed_rules as usize;
                     metadata.insert("verapdf_errors".into(), oracle_errors.to_string());
+                    if !verapdf_report.rule_failures.is_empty() {
+                        let failed_rules: Vec<String> = verapdf_report
+                            .rule_failures
+                            .iter()
+                            .map(|r| format!("{}:{}", r.clause, r.test_number))
+                            .collect();
+                        metadata.insert("verapdf_failed_rules".into(), failed_rules.join("|"));
+                        if let Some(first) = failed_rules.first() {
+                            metadata.insert("verapdf_first_rule".into(), first.clone());
+                        }
+                    }
 
                     if oracle_errors == 0 {
                         return TestResult {
@@ -496,9 +537,45 @@ fn write_temp_pdf(data: &[u8], original: &Path) -> Option<std::path::PathBuf> {
         .and_then(|s| s.to_str())
         .unwrap_or("tmp");
     let dir = std::env::temp_dir();
-    let path = dir.join(format!("{stem}_pdfa_converted.pdf"));
-    std::fs::write(&path, data).ok()?;
-    Some(path)
+    let safe_stem: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    for attempt in 0..8u8 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos();
+        let pid = std::process::id();
+        let path = dir.join(format!(
+            "{safe_stem}_{pid}_{nanos}_{attempt}_pdfa_converted.pdf"
+        ));
+
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                if f.write_all(data).is_ok() {
+                    return Some(path);
+                }
+                let _ = std::fs::remove_file(&path);
+                return None;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+
+    None
 }
 
 /// Accept a loaded Document only if it has at least 1 object.
