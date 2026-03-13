@@ -650,6 +650,9 @@ fn reencode_lzw_streams(doc: &mut Document) -> usize {
             LzwMode::None => {}
             LzwMode::Single => {
                 // Single LZWDecode filter — full decompress + re-encode as Flate.
+                // If LZW decompression fails (e.g. corrupt/fuzzer-generated data),
+                // fall back to wrapping the raw bytes in FlateDecode so the forbidden
+                // filter is removed even when the content cannot be recovered.
                 let decoded = {
                     if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
                         stream.decompressed_content().ok()
@@ -657,11 +660,17 @@ fn reencode_lzw_streams(doc: &mut Document) -> usize {
                         None
                     }
                 };
-                if let Some(raw_data) = decoded {
-                    let compressed = flate_compress(&raw_data);
-                    if let Some(compressed_data) = compressed {
+                let data_to_compress = if decoded.is_some() {
+                    decoded
+                } else if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+                    Some(stream.content.clone())
+                } else {
+                    None
+                };
+                if let Some(data) = data_to_compress {
+                    if let Some(compressed) = flate_compress(&data) {
                         if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
-                            stream.set_content(compressed_data);
+                            stream.set_content(compressed);
                             stream
                                 .dict
                                 .set("Filter", Object::Name(b"FlateDecode".to_vec()));
@@ -684,6 +693,8 @@ fn reencode_lzw_streams(doc: &mut Document) -> usize {
                 };
                 let Some(decoded_data) = lzw_decoded else {
                     // LZW decoding failed — try full decompress + re-encode.
+                    // Last resort: wrap raw bytes in FlateDecode to remove the
+                    // forbidden filter even when content cannot be recovered.
                     let decoded = {
                         if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
                             stream.decompressed_content().ok()
@@ -691,8 +702,15 @@ fn reencode_lzw_streams(doc: &mut Document) -> usize {
                             None
                         }
                     };
-                    if let Some(raw_data) = decoded {
-                        if let Some(compressed_data) = flate_compress(&raw_data) {
+                    let data_to_compress = if decoded.is_some() {
+                        decoded
+                    } else if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+                        Some(stream.content.clone())
+                    } else {
+                        None
+                    };
+                    if let Some(data) = data_to_compress {
+                        if let Some(compressed_data) = flate_compress(&data) {
                             if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
                                 stream.set_content(compressed_data);
                                 stream

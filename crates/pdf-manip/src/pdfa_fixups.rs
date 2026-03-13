@@ -726,8 +726,15 @@ fn reencode_stream(doc: &mut Document, id: ObjectId) -> bool {
         };
         stream.decompressed_content().ok()
     };
-    let Some(raw_data) = decoded else {
-        return false;
+    // If proper decompression failed, fall back to wrapping the raw bytes in
+    // FlateDecode so the forbidden filter is removed even for corrupt streams.
+    let raw_data = if let Some(d) = decoded {
+        d
+    } else {
+        let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+            return false;
+        };
+        stream.content.clone()
     };
 
     let compressed = {
