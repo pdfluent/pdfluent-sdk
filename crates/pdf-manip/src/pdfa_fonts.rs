@@ -3079,6 +3079,141 @@ pub fn fix_pfb_font_streams(doc: &mut Document) -> usize {
     fixed
 }
 
+/// Fix Type1 FontFile streams where the first byte of the binary eexec section
+/// is a PDF whitespace character (0x00, 0x09, 0x0A, 0x0C, 0x0D, 0x20).
+///
+/// veraPDF's `Type1FontProgram.parseFont()` calls `skipSpacesExceptNullByte()`
+/// before reading the eexec binary section, which skips any leading PDF
+/// whitespace bytes. If the first encrypted byte of the binary section happens
+/// to be a PDF whitespace character, veraPDF starts decryption from the wrong
+/// position, causing the Private dict to be garbage and `glyphWidths` to be
+/// null → `containsFontFile == false`.
+///
+/// Fix: decrypt the binary section, re-encrypt with new 4-byte seed values
+/// where the first encrypted byte is not a PDF whitespace character.
+///
+/// Returns the number of font streams fixed.
+pub fn fix_type1_eexec_space_prefix(doc: &mut Document) -> usize {
+    const PDF_SPACE: [u8; 6] = [0x00, 0x09, 0x0A, 0x0C, 0x0D, 0x20];
+
+    // Collect (fd_id, ff_stream_id) for FontDescriptors with Type1 FontFile streams.
+    let targets: Vec<(ObjectId, ObjectId)> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let Object::Dictionary(dict) = obj else {
+                return None;
+            };
+            if !matches!(get_name(dict, b"Type").as_deref(), Some("FontDescriptor")) {
+                return None;
+            }
+            let ff_id = match dict.get(b"FontFile").ok() {
+                Some(Object::Reference(r)) => *r,
+                _ => return None,
+            };
+            Some((*id, ff_id))
+        })
+        .collect();
+
+    let mut fixed = 0;
+
+    for (_fd_id, ff_id) in targets {
+        let (stream_data, l1, l2) = {
+            let Some(Object::Stream(s)) = doc.objects.get(&ff_id) else {
+                continue;
+            };
+            let mut s = s.clone();
+            let _ = s.decompress();
+            let data = s.content;
+            let l1 = match s.dict.get(b"Length1").ok() {
+                Some(Object::Integer(n)) => *n as usize,
+                _ => continue,
+            };
+            let l2 = match s.dict.get(b"Length2").ok() {
+                Some(Object::Integer(n)) => *n as usize,
+                _ => continue,
+            };
+            (data, l1, l2)
+        };
+
+        // Validate bounds.
+        if l1 >= stream_data.len() || l1 + l2 > stream_data.len() || l2 < 5 {
+            continue;
+        }
+
+        // Check if the first byte of the binary section is a PDF whitespace.
+        let first_binary_byte = stream_data[l1];
+        if !PDF_SPACE.contains(&first_binary_byte) {
+            continue;
+        }
+
+        let binary = &stream_data[l1..l1 + l2];
+
+        // Decrypt the binary section to extract the real font data.
+        let decrypted_all = type1_binary_eexec_decrypt(binary);
+        if decrypted_all.len() < 5 {
+            continue;
+        }
+        let real_data = &decrypted_all[4..]; // Skip 4 random seed bytes.
+
+        // Re-encrypt with new seed where first encrypted byte is not a space.
+        // Initial key = 55665. First encrypted byte = seed[0] ^ (55665 >> 8) = seed[0] ^ 0xD9.
+        // 0xAA ^ 0xD9 = 0x73 ('s'), which is not a PDF space character.
+        let new_binary = type1_binary_eexec_encrypt(real_data, 0xAA);
+        debug_assert_eq!(new_binary.len(), l2);
+        debug_assert!(!PDF_SPACE.contains(&new_binary[0]));
+
+        // Rebuild the full stream: cleartext + new_binary + trailing.
+        let mut new_stream = Vec::with_capacity(stream_data.len());
+        new_stream.extend_from_slice(&stream_data[..l1]);
+        new_stream.extend_from_slice(&new_binary);
+        new_stream.extend_from_slice(&stream_data[l1 + l2..]);
+
+        if let Some(Object::Stream(stream)) = doc.objects.get_mut(&ff_id) {
+            stream.set_plain_content(new_stream);
+            // Length1/Length2/Length3 remain the same.
+        }
+        fixed += 1;
+    }
+
+    fixed
+}
+
+/// Decrypt Type1 binary eexec-encoded data with key 55665 (binary only, no hex support).
+fn type1_binary_eexec_decrypt(data: &[u8]) -> Vec<u8> {
+    let mut key: u16 = 55665;
+    let mut result = Vec::with_capacity(data.len());
+    for &c in data {
+        let p = c ^ (key >> 8) as u8;
+        key = (c as u16)
+            .wrapping_add(key)
+            .wrapping_mul(52845)
+            .wrapping_add(22719);
+        result.push(p);
+    }
+    result
+}
+
+/// Re-encrypt real Type1 font data with 4 new seed bytes.
+///
+/// The first encrypted byte = `seed_first ^ (55665 >> 8)` = `seed_first ^ 0xD9`.
+/// Using seed_first=0xAA gives first_encrypted=0x73 ('s'), not a PDF whitespace.
+fn type1_binary_eexec_encrypt(real_data: &[u8], seed_first: u8) -> Vec<u8> {
+    let seeds = [seed_first, 0u8, 0u8, 0u8];
+    let full_plain: Vec<u8> = seeds.iter().chain(real_data.iter()).copied().collect();
+    let mut key: u16 = 55665;
+    let mut result = Vec::with_capacity(full_plain.len());
+    for &p in &full_plain {
+        let c = p ^ (key >> 8) as u8;
+        key = (c as u16)
+            .wrapping_add(key)
+            .wrapping_mul(52845)
+            .wrapping_add(22719);
+        result.push(c);
+    }
+    result
+}
+
 /// Parse PFB segments and return (raw_ps_data, length1, length2, length3).
 ///
 /// Length1 = cleartext (type-1) bytes before the binary section.
