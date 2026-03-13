@@ -1297,7 +1297,15 @@ fn fix_stream_lengths(doc: &mut Document) -> usize {
             _ => false,
         };
         // Also check for corrupted key names that look like Length.
+        // Exclude standard font-file keys Length1/Length2/Length3 which are
+        // legitimate PDF stream dict entries (ISO 32000-1 Table 126).
         let has_corrupted_length = stream.dict.iter().any(|(k, _)| {
+            // Standard keys that start with "Length" followed by a digit are valid.
+            let is_standard_length_n =
+                k.len() == 7 && k[..6].eq_ignore_ascii_case(b"Length") && k[6].is_ascii_digit();
+            if is_standard_length_n {
+                return false;
+            }
             k.as_slice() != b"Length" && k.len() >= 4 && k.len() <= 8 && {
                 // Heuristic: key is similar to "Length" (e.g. "Qength", "Lngth").
                 let lower: Vec<u8> = k.iter().map(|c| c.to_ascii_lowercase()).collect();
@@ -1313,11 +1321,17 @@ fn fix_stream_lengths(doc: &mut Document) -> usize {
             if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
                 let actual = stream.content.len() as i64;
                 stream.dict.set("Length", Object::Integer(actual));
-                // Remove corrupted length-like keys.
+                // Remove corrupted length-like keys (but preserve standard LengthN keys).
                 let corrupt_keys: Vec<Vec<u8>> = stream
                     .dict
                     .iter()
                     .filter(|(k, _)| {
+                        let is_standard_length_n = k.len() == 7
+                            && k[..6].eq_ignore_ascii_case(b"Length")
+                            && k[6].is_ascii_digit();
+                        if is_standard_length_n {
+                            return false;
+                        }
                         k.as_slice() != b"Length" && k.len() >= 4 && k.len() <= 8 && {
                             let lower: Vec<u8> = k.iter().map(|c| c.to_ascii_lowercase()).collect();
                             lower.contains(&b'e')
@@ -2668,6 +2682,17 @@ fn fix_cidsysteminfo_mismatch(doc: &mut Document) -> usize {
         let Some(encoding_obj) = encoding_obj else {
             continue;
         };
+
+        // Identity-H/V CMaps are exempt from CIDSystemInfo matching (ISO 19005-2 §6.2.11.3.1:
+        // "If the Encoding key … is Identity-H or Identity-V, any values … may be used").
+        // Skipping here prevents us from overwriting a valid CIDSystemInfo that is shared
+        // with another descendant font using a non-Identity CMap.
+        if let Object::Name(name) = &encoding_obj {
+            let n = String::from_utf8_lossy(name);
+            if n == "Identity-H" || n == "Identity-V" {
+                continue;
+            }
+        }
 
         // Get the CMap's CIDSystemInfo (from the CMap stream or predefined name).
         let cmap_csi = match &encoding_obj {
