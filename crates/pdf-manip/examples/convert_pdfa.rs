@@ -45,6 +45,12 @@ fn main() {
     let pfb_fixed = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     eprintln!("PFB font streams stripped: fixed={pfb_fixed}");
 
+    // Fix Type1 binary eexec sections whose first encrypted byte is a PDF
+    // whitespace character. veraPDF skips leading spaces before the binary
+    // section, causing it to start decryption from the wrong offset.
+    let eexec_fixed = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
+    eprintln!("Type1 eexec space prefix: fixed={eexec_fixed}");
+
     // NOTE: fix_width_mismatches and fix_font_descriptor_metrics disabled —
     // they cause width regression on already-embedded fonts.
     // CFF-only width fixing is safe (doesn't touch TrueType).
