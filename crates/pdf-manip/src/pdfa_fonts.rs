@@ -9,7 +9,7 @@
 //! - Width matching: updates Widths/DW from embedded font data
 
 use crate::error::{ManipError, Result};
-use lopdf::{Document, Object, ObjectId, Stream, dictionary};
+use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use std::path::PathBuf;
 
 /// Report from font embedding pass.
@@ -3535,7 +3535,11 @@ pub fn fix_mislabeled_truetype_as_cff(doc: &mut Document) -> usize {
             let mut s2 = s.clone();
             let _ = s2.decompress();
             let magic = s2.content.get(..4)?;
-            if magic == TT_MAGIC { Some(*id) } else { None }
+            if magic == TT_MAGIC {
+                Some(*id)
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -9315,7 +9319,11 @@ pub fn fix_undefined_encoding_codes(doc: &mut Document) -> usize {
                 },
                 _ => false,
             };
-            if is_winansi { Some(*id) } else { None }
+            if is_winansi {
+                Some(*id)
+            } else {
+                None
+            }
         })
         .collect();
 

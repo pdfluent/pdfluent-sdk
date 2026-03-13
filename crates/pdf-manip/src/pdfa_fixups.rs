@@ -42,6 +42,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let inline_image_interpolate_fixed = fix_inline_image_interpolate(doc);
     let concatenated_operators_fixed = fix_concatenated_operators(doc);
     let unknown_operators_stripped = strip_unknown_content_stream_operators(doc);
+    let page_boundary_fixed = fix_page_boundary_sizes(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
@@ -71,6 +72,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         jpx_colorspace_fixed,
         concatenated_operators_fixed,
         unknown_operators_stripped,
+        page_boundary_fixed,
     }
 }
 
@@ -102,6 +104,7 @@ pub struct FixupReport {
     pub jpx_colorspace_fixed: usize,
     pub concatenated_operators_fixed: usize,
     pub unknown_operators_stripped: usize,
+    pub page_boundary_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -5080,4 +5083,103 @@ fn is_pdf_delimiter(b: u8) -> bool {
         b,
         b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
     ) || b.is_ascii_whitespace()
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13:11 — Page boundary dimensions must be >= 3 and <= 14400 user units.
+// ISO 19005-2:2011 §6.1.13 test 11: "The size of any of the page boundaries
+// shall not be less than 3 units in either direction, nor shall it be greater
+// than 14 400 units in either direction."
+// Applies to MediaBox, CropBox, BleedBox, TrimBox, ArtBox.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn fix_page_boundary_sizes(doc: &mut Document) -> usize {
+    const MIN_DIM: f64 = 3.0;
+    const MAX_DIM: f64 = 14400.0;
+
+    let box_keys: &[&[u8]] = &[b"MediaBox", b"CropBox", b"BleedBox", b"TrimBox", b"ArtBox"];
+
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+            continue;
+        };
+
+        // Only process Page objects (and Pages that can inherit boxes).
+        let type_name = dict
+            .get(b"Type")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .map(|n| n.to_vec());
+        let is_page = matches!(type_name.as_deref(), Some(b"Page") | Some(b"Pages"));
+        if !is_page {
+            continue;
+        }
+
+        let mut changed = false;
+        let mut new_dict = dict.clone();
+
+        for key in box_keys {
+            let Ok(Object::Array(arr)) = new_dict.get(key) else {
+                continue;
+            };
+            if arr.len() != 4 {
+                continue;
+            }
+
+            // Parse [llx lly urx ury].
+            let mut vals = [0.0f64; 4];
+            let mut parseable = true;
+            for (i, obj) in arr.iter().enumerate() {
+                match obj {
+                    Object::Integer(v) => vals[i] = *v as f64,
+                    Object::Real(v) => vals[i] = *v as f64,
+                    _ => {
+                        parseable = false;
+                        break;
+                    }
+                }
+            }
+            if !parseable {
+                continue;
+            }
+
+            let llx = vals[0].min(vals[2]);
+            let lly = vals[1].min(vals[3]);
+            let urx = vals[0].max(vals[2]);
+            let ury = vals[1].max(vals[3]);
+
+            let width = urx - llx;
+            let height = ury - lly;
+
+            if (MIN_DIM..=MAX_DIM).contains(&width) && (MIN_DIM..=MAX_DIM).contains(&height) {
+                continue; // Already valid.
+            }
+
+            // Compute new urx/ury while keeping llx/lly fixed.
+            let new_width = width.clamp(MIN_DIM, MAX_DIM);
+            let new_height = height.clamp(MIN_DIM, MAX_DIM);
+            let new_urx = llx + new_width;
+            let new_ury = lly + new_height;
+
+            new_dict.set(
+                *key,
+                Object::Array(vec![
+                    Object::Real(llx as f32),
+                    Object::Real(lly as f32),
+                    Object::Real(new_urx as f32),
+                    Object::Real(new_ury as f32),
+                ]),
+            );
+            changed = true;
+        }
+
+        if changed {
+            doc.objects.insert(id, Object::Dictionary(new_dict));
+            count += 1;
+        }
+    }
+    count
 }
