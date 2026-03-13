@@ -261,11 +261,10 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc)
         }));
 
-        // Fix invalid CFF BCD real number encodings (NumberFormatException in veraPDF).
-        set_progress("cff_bcd");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc)
-        }));
+        // NOTE: fix_cff_invalid_bcd intentionally omitted — it scans the entire CFF
+        // stream including charstrings and incorrectly replaces 0x1e bytes used as
+        // charstring operators, causing veraPDF to crash on valid fonts. It is only
+        // safe for specific PDFs with known BCD corruption in the Top DICT.
 
         // Fix non-standard /CharStrings dict syntax in Type1 eexec sections.
         set_progress("type1_charstrings");

@@ -9,7 +9,7 @@
 //! - Width matching: updates Widths/DW from embedded font data
 
 use crate::error::{ManipError, Result};
-use lopdf::{dictionary, Document, Object, ObjectId, Stream};
+use lopdf::{Document, Object, ObjectId, Stream, dictionary};
 use std::path::PathBuf;
 
 /// Report from font embedding pass.
@@ -3535,11 +3535,7 @@ pub fn fix_mislabeled_truetype_as_cff(doc: &mut Document) -> usize {
             let mut s2 = s.clone();
             let _ = s2.decompress();
             let magic = s2.content.get(..4)?;
-            if magic == TT_MAGIC {
-                Some(*id)
-            } else {
-                None
-            }
+            if magic == TT_MAGIC { Some(*id) } else { None }
         })
         .collect();
 
@@ -5553,13 +5549,13 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 &enc_info,
             );
         } else if has_ff1 && (subtype == "Type1" || subtype == "MMType1") {
-            // Traditional Type1 font with FontFile — parse charstring widths.
-            corrections = compute_type1_fontfile_width_corrections(
-                &font_data,
-                first_char,
-                &existing_widths,
-                &enc_info,
-            );
+            // Skip: Type1 FontFile (PFA/PFB) charstring parsing is unreliable.
+            // Our charstring parser reads wrong widths for some fonts (e.g. Melior
+            // uses subroutines / non-standard charstring encoding that our parser
+            // misidentifies), causing false width corrections that veraPDF then
+            // rejects. Since PDF dicts for already-embedded Type1 fonts are
+            // typically correct, skipping this path avoids regressions.
+            continue;
         } else {
             continue;
         }
@@ -6539,87 +6535,6 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
         ".notdef" => None,
         _ => None,
     }
-}
-
-/// Compute width corrections for a Type 1 font with FontFile (PFB format).
-///
-/// Parses the Type 1 font program to extract FontMatrix, Encoding, and CharString
-/// widths. veraPDF validates Type 1 widths as: charstring_width * FontMatrix.sx * 1000.
-fn compute_type1_fontfile_width_corrections(
-    font_data: &[u8],
-    first_char: u32,
-    existing_widths: &[Object],
-    enc_info: &(String, std::collections::HashMap<u32, String>),
-) -> Vec<(usize, i64)> {
-    let Some(parsed) = parse_type1_program(font_data) else {
-        return Vec::new();
-    };
-
-    let (enc_name, differences) = enc_info;
-
-    let mut corrections = Vec::new();
-    for (i, obj) in existing_widths.iter().enumerate() {
-        let pdf_w = match obj {
-            Object::Integer(w) => *w as f64,
-            Object::Real(r) => *r as f64,
-            _ => continue,
-        };
-
-        let code = first_char + i as u32;
-
-        // Determine glyph name: PDF Differences override, then Type 1 encoding.
-        let glyph_name = if let Some(name) = differences.get(&code) {
-            name.clone()
-        } else if let Some(name) = parsed.encoding.get(&(code as u8)) {
-            name.clone()
-        } else {
-            let ch = encoding_to_char(code, enc_name);
-            let Some(name) = unicode_to_agl_name(ch).or_else(|| unicode_to_glyph_name(ch)) else {
-                continue;
-            };
-            name
-        };
-
-        if glyph_name == ".notdef" {
-            continue;
-        }
-
-        // Look up width by glyph name. If the Differences name doesn't match
-        // any charstring (e.g. Differences says "grave" but charstrings use "G47"),
-        // fall back to the Type1 internal encoding for this code.
-        let cs_width = if let Some(&w) = parsed.charstring_widths.get(glyph_name.as_str()) {
-            w
-        } else if let Some(internal_name) = parsed.encoding.get(&(code as u8)) {
-            if let Some(&w) = parsed.charstring_widths.get(internal_name.as_str()) {
-                w
-            } else {
-                continue;
-            }
-        } else {
-            continue;
-        };
-
-        let expected = (cs_width as f64 * parsed.font_matrix_sx * 1000.0).round();
-
-        // Sanity check: if the computed width is wildly different from the PDF
-        // width, the charstring parsing is probably wrong (happens with some
-        // TeX fonts where lenIV or encoding differs). Skip corrections where
-        // the ratio exceeds 5x — no real font has such extreme differences.
-        if pdf_w > 0.0 && expected > 0.0 {
-            let ratio = expected / pdf_w;
-            if !(0.2..=5.0).contains(&ratio) {
-                continue;
-            }
-        }
-
-        // ISO 19005-2 6.2.11.5:1 allows at most 1-unit drift. For classic
-        // Type1 FontFile widths, correct entries at or above that boundary.
-        if (pdf_w - expected).abs() >= 1.0 {
-            corrections.push((i, expected as i64));
-        }
-    }
-
-    corrections
 }
 
 /// Compute a single glyph width from a Type 1 FontFile program.
@@ -9344,11 +9259,7 @@ pub fn fix_undefined_encoding_codes(doc: &mut Document) -> usize {
                 },
                 _ => false,
             };
-            if is_winansi {
-                Some(*id)
-            } else {
-                None
-            }
+            if is_winansi { Some(*id) } else { None }
         })
         .collect();
 
