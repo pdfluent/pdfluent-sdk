@@ -1628,7 +1628,15 @@ fn fix_cidtogidmap_extra(doc: &mut Document) -> usize {
                             } else if is_cid2_with_embedded_ff2(doc, cidfont)
                                 && !has_valid_cidtogid(doc, cidfont)
                             {
-                                if let Some((gid, dw)) = cidfont_replacement_gid_dw(doc, cidfont) {
+                                // If fix_truetype_cid_widths already populated a W array,
+                                // the per-GID widths are correct for Identity mapping —
+                                // use Identity instead of a degenerate single-glyph map so
+                                // we don't clobber those widths.
+                                if cidfont.has(b"W") {
+                                    ref_targets.push(*desc_id);
+                                } else if let Some((gid, dw)) =
+                                    cidfont_replacement_gid_dw(doc, cidfont)
+                                {
                                     custom_map_targets.push((*desc_id, gid, dw));
                                 } else if needs_cidtogid_fix(doc, cidfont) {
                                     ref_targets.push(*desc_id);
@@ -1661,7 +1669,15 @@ fn fix_cidtogidmap_extra(doc: &mut Document) -> usize {
                             } else if is_cid2_with_embedded_ff2(doc, cidfont)
                                 && !has_valid_cidtogid(doc, cidfont)
                             {
-                                if let Some((gid, dw)) = cidfont_replacement_gid_dw(doc, cidfont) {
+                                // If fix_truetype_cid_widths already populated a W array,
+                                // the per-GID widths are correct for Identity mapping —
+                                // use Identity instead of a degenerate single-glyph map so
+                                // we don't clobber those widths.
+                                if cidfont.has(b"W") {
+                                    ref_targets.push(*desc_id);
+                                } else if let Some((gid, dw)) =
+                                    cidfont_replacement_gid_dw(doc, cidfont)
+                                {
                                     custom_map_targets.push((*desc_id, gid, dw));
                                 } else if needs_cidtogid_fix(doc, cidfont) {
                                     ref_targets.push(*desc_id);

@@ -1179,8 +1179,6 @@ fn update_cid_widths(doc: &mut Document, cid_id: ObjectId, face: &ttf_parser::Fa
         .unwrap_or(1000);
 
     if let Some(Object::Dictionary(ref mut cid)) = doc.objects.get_mut(&cid_id) {
-        let name = get_name(cid, b"BaseFont").unwrap_or_default();
-        eprintln!("DEBUG update_cid_widths: {} DW={} (removing W)", name, default_width);
         cid.set("DW", Object::Integer(default_width));
         // Remove W array to avoid width mismatches — DW will serve as fallback.
         cid.remove(b"W");
@@ -2838,8 +2836,6 @@ pub fn fix_truetype_cid_widths(doc: &mut Document) -> usize {
 
         // Update the CIDFont dictionary.
         if let Some(Object::Dictionary(ref mut cid_dict)) = doc.objects.get_mut(&cid_id) {
-            let dbg_name = get_name(cid_dict, b"BaseFont").unwrap_or_default();
-            eprintln!("DEBUG fix_truetype_cid_widths: {} DW={} W_entries={}", dbg_name, dw, w_array.len());
             cid_dict.set("DW", Object::Integer(dw));
             if w_array.is_empty() {
                 cid_dict.remove(b"W");
