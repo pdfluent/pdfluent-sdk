@@ -41,6 +41,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let odd_hex_strings_fixed = fix_odd_hex_strings_in_streams(doc);
     let inline_image_interpolate_fixed = fix_inline_image_interpolate(doc);
     let concatenated_operators_fixed = fix_concatenated_operators(doc);
+    let unknown_operators_stripped = strip_unknown_content_stream_operators(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
@@ -69,6 +70,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         inline_image_interpolate_fixed,
         jpx_colorspace_fixed,
         concatenated_operators_fixed,
+        unknown_operators_stripped,
     }
 }
 
@@ -99,6 +101,7 @@ pub struct FixupReport {
     pub inline_image_interpolate_fixed: usize,
     pub jpx_colorspace_fixed: usize,
     pub concatenated_operators_fixed: usize,
+    pub unknown_operators_stripped: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -4713,4 +4716,368 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
         }
     }
     count
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.2:1 / 6.2.2:2 — Strip unknown/non-ISO content stream operators
+// ---------------------------------------------------------------------------
+//
+// Some PDFs (especially fuzzer-generated or vendor-specific) contain operator
+// tokens that are not defined in ISO 32000-1. veraPDF fails 6.2.2:1 ("operator
+// not defined") and 6.2.2:2 ("undefined keyword") for these.
+//
+// Strategy: tokenise each content stream; emit only tokens that are either
+// operands or valid ISO 32000-1 operators. Discard unknown operator tokens
+// along with their preceding operands. BX/EX compatibility sections are passed
+// through verbatim. Inline-image blocks (BI…EI) are treated as opaque.
+
+/// All operator tokens defined in ISO 32000-1 §8 (content stream operators).
+const ISO32000_OPERATORS: &[&[u8]] = &[
+    // Graphics state
+    b"q", b"Q", b"cm", b"w", b"J", b"j", b"M", b"d", b"ri", b"i", b"gs",
+    // Path construction
+    b"m", b"l", b"c", b"v", b"y", b"h", b"re", // Path painting
+    b"S", b"s", b"F", b"f", b"f*", b"B", b"B*", b"b", b"b*", b"n", // Clipping
+    b"W", b"W*", // Text objects
+    b"BT", b"ET", // Text state
+    b"Tc", b"Tw", b"Tz", b"TL", b"Tf", b"Tr", b"Ts", // Text positioning
+    b"Td", b"TD", b"Tm", b"T*", // Text showing
+    b"Tj", b"TJ", b"'", b"\"", // Type 3
+    b"d0", b"d1", // Colour space / colour
+    b"CS", b"cs", b"SC", b"SCN", b"sc", b"scn", b"G", b"g", b"RG", b"rg", b"K", b"k",
+    // Shading
+    b"sh",
+    // Inline images (BI/ID/EI handled specially, but list them so they're not stripped)
+    b"BI", b"ID", b"EI", // XObjects
+    b"Do", // Marked content
+    b"MP", b"DP", b"BMC", b"BDC", b"EMC", // Compatibility
+    b"BX", b"EX",
+];
+
+fn strip_unknown_content_stream_operators(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let decoded = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        if let Some(new_content) = strip_unknown_ops_in_stream(&decoded) {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"Filter");
+                s.dict.remove(b"DecodeParms");
+                s.content = new_content;
+                let _ = s.compress();
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Returns `Some(new_bytes)` if any unknown operators were removed, else `None`.
+fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
+    let mut out: Vec<u8> = Vec::with_capacity(data.len());
+    // Pending buffer: operands (and whitespace) accumulated since the last
+    // emitted operator.  Flushed on a known operator, discarded on unknown.
+    let mut pending: Vec<u8> = Vec::new();
+    let mut i = 0;
+    let mut modified = false;
+    // BX/EX nesting depth: inside BX…EX all operators are considered valid.
+    let mut bx_depth: u32 = 0;
+
+    while i < data.len() {
+        // ── Whitespace → accumulate in pending ───────────────────────────────
+        if data[i].is_ascii_whitespace() {
+            pending.push(data[i]);
+            i += 1;
+            continue;
+        }
+
+        // ── Comment % … EOL → accumulate in pending ──────────────────────────
+        if data[i] == b'%' {
+            let start = i;
+            while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+                i += 1;
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Literal string (…) → operand ─────────────────────────────────────
+        if data[i] == b'(' {
+            let start = i;
+            i += 1;
+            let mut depth: u32 = 1;
+            while i < data.len() && depth > 0 {
+                match data[i] {
+                    b'\\' => {
+                        i += 1;
+                        if i < data.len() {
+                            i += 1;
+                        }
+                    }
+                    b'(' => {
+                        depth += 1;
+                        i += 1;
+                    }
+                    b')' => {
+                        depth -= 1;
+                        i += 1;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Dict << … >> → operand ───────────────────────────────────────────
+        if data[i] == b'<' && i + 1 < data.len() && data[i + 1] == b'<' {
+            let start = i;
+            i += 2;
+            let mut depth: u32 = 1;
+            while i + 1 < data.len() && depth > 0 {
+                if data[i] == b'<' && data[i + 1] == b'<' {
+                    depth += 1;
+                    i += 2;
+                } else if data[i] == b'>' && data[i + 1] == b'>' {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if depth > 0 {
+                i = data.len();
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Hex string <…> → operand ─────────────────────────────────────────
+        if data[i] == b'<' {
+            let start = i;
+            i += 1;
+            while i < data.len() && data[i] != b'>' {
+                i += 1;
+            }
+            if i < data.len() {
+                i += 1;
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Name /… → operand ────────────────────────────────────────────────
+        if data[i] == b'/' {
+            let start = i;
+            i += 1;
+            while i < data.len() && !is_pdf_delimiter(data[i]) {
+                i += 1;
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Array […] → operand ──────────────────────────────────────────────
+        if data[i] == b'[' {
+            let start = i;
+            i += 1;
+            let mut depth: u32 = 1;
+            while i < data.len() && depth > 0 {
+                match data[i] {
+                    b'[' => {
+                        depth += 1;
+                        i += 1;
+                    }
+                    b']' => {
+                        depth -= 1;
+                        i += 1;
+                    }
+                    b'(' => {
+                        // literal string inside array
+                        i += 1;
+                        let mut sd: u32 = 1;
+                        while i < data.len() && sd > 0 {
+                            match data[i] {
+                                b'\\' => {
+                                    i += 1;
+                                    if i < data.len() {
+                                        i += 1;
+                                    }
+                                }
+                                b'(' => {
+                                    sd += 1;
+                                    i += 1;
+                                }
+                                b')' => {
+                                    sd -= 1;
+                                    i += 1;
+                                }
+                                _ => {
+                                    i += 1;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Number: digit / +digit / -digit / .digit → operand ───────────────
+        if data[i].is_ascii_digit()
+            || ((data[i] == b'+' || data[i] == b'-')
+                && i + 1 < data.len()
+                && (data[i + 1].is_ascii_digit() || data[i + 1] == b'.'))
+            || (data[i] == b'.' && i + 1 < data.len() && data[i + 1].is_ascii_digit())
+        {
+            let start = i;
+            i += 1;
+            while i < data.len()
+                && (data[i].is_ascii_digit()
+                    || data[i] == b'.'
+                    || data[i] == b'e'
+                    || data[i] == b'E')
+            {
+                i += 1;
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Keyword / operator token: scan to next delimiter ─────────────────
+        let tok_start = i;
+        while i < data.len() && !is_pdf_delimiter(data[i]) {
+            i += 1;
+        }
+        if i == tok_start {
+            // Single unrecognised delimiter character — skip it silently.
+            i += 1;
+            continue;
+        }
+        let token = &data[tok_start..i];
+
+        // Boolean / null → operand
+        if token == b"true" || token == b"false" || token == b"null" {
+            pending.extend_from_slice(token);
+            continue;
+        }
+
+        // ── Inline image block BI … ID … EI → pass through opaque ────────────
+        if token == b"BI" {
+            // Flush pending operands then copy the whole BI…EI block verbatim.
+            out.extend_from_slice(&pending);
+            pending.clear();
+            out.extend_from_slice(b"BI");
+            // Scan to ID marker (whitespace-preceded).
+            let mut found_ei = false;
+            while i < data.len() {
+                // Look for whitespace + "ID"
+                if (data[i] == b' ' || data[i] == b'\n' || data[i] == b'\r' || data[i] == b'\t')
+                    && i + 3 <= data.len()
+                    && &data[i + 1..i + 3] == b"ID"
+                    && (i + 3 >= data.len()
+                        || data[i + 3] == b' '
+                        || data[i + 3] == b'\n'
+                        || data[i + 3] == b'\r')
+                {
+                    out.extend_from_slice(&data[tok_start + 2..i + 3]); // dict + "ID"
+                    i += 3;
+                    // Now scan binary data until EI
+                    while i < data.len() {
+                        if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
+                            && i + 3 <= data.len()
+                            && &data[i + 1..i + 3] == b"EI"
+                            && (i + 3 >= data.len()
+                                || data[i + 3].is_ascii_whitespace()
+                                || data[i + 3] == b'Q')
+                        {
+                            out.extend_from_slice(&data[i..i + 3]);
+                            i += 3;
+                            found_ei = true;
+                            break;
+                        }
+                        out.push(data[i]);
+                        i += 1;
+                    }
+                    break;
+                }
+                out.push(data[i]);
+                i += 1;
+            }
+            if !found_ei {
+                // Malformed: no EI found; continue from current position.
+            }
+            continue;
+        }
+
+        // ── BX / EX compatibility markers ────────────────────────────────────
+        if token == b"BX" {
+            bx_depth += 1;
+            out.extend_from_slice(&pending);
+            pending.clear();
+            out.extend_from_slice(b"BX");
+            continue;
+        }
+        if token == b"EX" {
+            bx_depth = bx_depth.saturating_sub(1);
+            out.extend_from_slice(&pending);
+            pending.clear();
+            out.extend_from_slice(b"EX");
+            continue;
+        }
+
+        // ── Operator: check validity ──────────────────────────────────────────
+        let is_valid = bx_depth > 0
+            || token.iter().all(|b| b.is_ascii()) // only strip tokens with all-ASCII bytes
+               && ISO32000_OPERATORS.contains(&token);
+
+        if is_valid {
+            out.extend_from_slice(&pending);
+            pending.clear();
+            out.extend_from_slice(token);
+        } else if token.iter().all(|b| b.is_ascii()) {
+            // Unknown ASCII operator: discard it and its pending operands.
+            modified = true;
+            pending.clear();
+            // Ensure token separation after the discard.
+            out.push(b'\n');
+        } else {
+            // Contains non-ASCII bytes: likely binary garbage in content
+            // stream. Pass through unchanged to avoid corrupting binary data.
+            pending.extend_from_slice(token);
+        }
+    }
+
+    // Flush any remaining pending operands (orphaned at end of stream).
+    out.extend_from_slice(&pending);
+
+    if modified {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Returns true if `b` is a PDF token delimiter character.
+#[inline]
+fn is_pdf_delimiter(b: u8) -> bool {
+    matches!(
+        b,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    ) || b.is_ascii_whitespace()
 }
