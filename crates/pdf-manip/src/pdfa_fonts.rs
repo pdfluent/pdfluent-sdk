@@ -246,15 +246,10 @@ fn is_usable_truetype_font_program(data: &[u8]) -> bool {
     let Ok(face) = ttf_parser::Face::parse(data, 0) else {
         return false;
     };
-
-    if face.number_of_glyphs() == 0 {
-        return false;
-    }
-
-    face.tables()
-        .cmap
-        .as_ref()
-        .is_some_and(|cmap| cmap.subtables.into_iter().next().is_some())
+    // CIDFontType2 subsets used with Identity-H/V encoding deliberately omit
+    // the cmap table (GID == CID, no encoding lookup needed). Only reject if
+    // the font is completely empty or unparseable.
+    face.number_of_glyphs() > 0
 }
 
 /// Get descendant CIDFont info: (object_id, is_embedded).
@@ -1184,6 +1179,8 @@ fn update_cid_widths(doc: &mut Document, cid_id: ObjectId, face: &ttf_parser::Fa
         .unwrap_or(1000);
 
     if let Some(Object::Dictionary(ref mut cid)) = doc.objects.get_mut(&cid_id) {
+        let name = get_name(cid, b"BaseFont").unwrap_or_default();
+        eprintln!("DEBUG update_cid_widths: {} DW={} (removing W)", name, default_width);
         cid.set("DW", Object::Integer(default_width));
         // Remove W array to avoid width mismatches — DW will serve as fallback.
         cid.remove(b"W");
@@ -2841,6 +2838,8 @@ pub fn fix_truetype_cid_widths(doc: &mut Document) -> usize {
 
         // Update the CIDFont dictionary.
         if let Some(Object::Dictionary(ref mut cid_dict)) = doc.objects.get_mut(&cid_id) {
+            let dbg_name = get_name(cid_dict, b"BaseFont").unwrap_or_default();
+            eprintln!("DEBUG fix_truetype_cid_widths: {} DW={} W_entries={}", dbg_name, dw, w_array.len());
             cid_dict.set("DW", Object::Integer(dw));
             if w_array.is_empty() {
                 cid_dict.remove(b"W");
@@ -3017,6 +3016,124 @@ fn extract_type1_glyph_names_to_charset(pfb_data: &[u8]) -> String {
     }
 
     extract_glyph_names_from_charstrings(&decrypted).unwrap_or_default()
+}
+
+/// Strip PFB (Printer Font Binary) headers from embedded Type1 FontFile streams.
+///
+/// PDF requires raw PostScript, not PFB format. This function finds all
+/// FontDescriptor FontFile streams starting with `\x80\x01` (PFB magic),
+/// strips the segment headers, and updates Length1/Length2/Length3 entries.
+///
+/// Returns the number of font streams fixed.
+pub fn fix_pfb_font_streams(doc: &mut Document) -> usize {
+    // Collect (fd_id, ff_stream_id) for FontDescriptors with PFB FontFile streams.
+    let targets: Vec<(ObjectId, ObjectId)> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let Object::Dictionary(dict) = obj else {
+                return None;
+            };
+            if !matches!(get_name(dict, b"Type").as_deref(), Some("FontDescriptor")) {
+                return None;
+            }
+            let ff_id = match dict.get(b"FontFile").ok() {
+                Some(Object::Reference(r)) => *r,
+                _ => return None,
+            };
+            Some((*id, ff_id))
+        })
+        .collect();
+
+    let mut fixed = 0;
+
+    for (_fd_id, ff_id) in targets {
+        // Read raw (possibly compressed) stream content.
+        let raw_data = {
+            let Some(Object::Stream(s)) = doc.objects.get(&ff_id) else {
+                continue;
+            };
+            let mut s = s.clone();
+            let _ = s.decompress();
+            s.content
+        };
+
+        // Skip if not PFB format.
+        if raw_data.len() < 6 || raw_data[0] != 0x80 || raw_data[1] != 0x01 {
+            continue;
+        }
+
+        let Some((stripped, l1, l2, l3)) = parse_pfb_segments(&raw_data) else {
+            continue;
+        };
+
+        if let Some(Object::Stream(stream)) = doc.objects.get_mut(&ff_id) {
+            stream.set_plain_content(stripped);
+            stream.dict.set("Length1", Object::Integer(l1));
+            stream.dict.set("Length2", Object::Integer(l2));
+            if l3 > 0 {
+                stream.dict.set("Length3", Object::Integer(l3));
+            } else {
+                stream.dict.remove(b"Length3");
+            }
+        }
+        fixed += 1;
+    }
+
+    fixed
+}
+
+/// Parse PFB segments and return (raw_ps_data, length1, length2, length3).
+///
+/// Length1 = cleartext (type-1) bytes before the binary section.
+/// Length2 = binary (type-2, eexec) bytes.
+/// Length3 = trailing cleartext (type-1) bytes after the binary section.
+fn parse_pfb_segments(data: &[u8]) -> Option<(Vec<u8>, i64, i64, i64)> {
+    if data.len() < 6 || data[0] != 0x80 {
+        return None;
+    }
+
+    let mut result = Vec::new();
+    let mut i = 0;
+    let mut l1: i64 = 0;
+    let mut l2: i64 = 0;
+    let mut l3: i64 = 0;
+    let mut seen_binary = false;
+
+    while i + 6 <= data.len() && data[i] == 0x80 {
+        let seg_type = data[i + 1];
+        if seg_type == 3 {
+            break; // EOF segment — no length field
+        }
+        let length =
+            u32::from_le_bytes([data[i + 2], data[i + 3], data[i + 4], data[i + 5]]) as usize;
+        i += 6;
+        let end = (i + length).min(data.len());
+        let seg = &data[i..end];
+
+        match seg_type {
+            1 => {
+                if seen_binary {
+                    l3 += seg.len() as i64;
+                } else {
+                    l1 += seg.len() as i64;
+                }
+            }
+            2 => {
+                l2 += seg.len() as i64;
+                seen_binary = true;
+            }
+            _ => {}
+        }
+        result.extend_from_slice(seg);
+        i = end;
+    }
+
+    if result.is_empty() {
+        return None;
+    }
+
+    Some((result, l1, l2, l3))
 }
 
 /// Strip PFB (Printer Font Binary) segment headers.

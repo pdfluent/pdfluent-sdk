@@ -40,6 +40,11 @@ fn main() {
         Err(e) => eprintln!("Font error: {e}"),
     }
 
+    // Strip PFB (Printer Font Binary) headers from Type1 FontFile streams.
+    // PDF spec requires raw PostScript, not PFB format (veraPDF rejects PFB).
+    let pfb_fixed = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
+    eprintln!("PFB font streams stripped: fixed={pfb_fixed}");
+
     // NOTE: fix_width_mismatches and fix_font_descriptor_metrics disabled —
     // they cause width regression on already-embedded fonts.
     // CFF-only width fixing is safe (doesn't touch TrueType).
