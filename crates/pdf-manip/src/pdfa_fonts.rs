@@ -3381,6 +3381,13 @@ pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
             s.content
         };
 
+        // Only process streams that begin with a valid CFF header (major version == 1).
+        // Streams starting with 0x00 or 0x4F ('O' for OTTO/OTF) are SFNT/TrueType and
+        // must NOT have their bytes patched as BCD — the 1e byte is a charstring op there.
+        if data.first() != Some(&1) {
+            continue;
+        }
+
         let mut patched = data.clone();
         let mut changed = false;
 
@@ -3417,6 +3424,135 @@ pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
     }
 
     fixed
+}
+
+/// Fix TrueType/SFNT font programs that are stored in `FontFile3` with `Subtype
+/// /CIDFontType0C` instead of the correct `FontFile2` (or `FontFile3` with
+/// `Subtype /CIDFontType2`).
+///
+/// Some PDFs embed TrueType (sfnt magic `00 01 00 00` or `4F 54 54 4F`) fonts
+/// but label them as CFF (`/Subtype /CIDFontType0C`). veraPDF's CFF parser
+/// immediately fails on non-CFF data → `successfullyParsed = false` →
+/// `containsFontFile == false` → rule 6.2.11.4.1:1 fails.
+///
+/// Fix:
+/// 1. Find `FontDescriptor` objects whose `FontFile3` stream starts with TrueType magic.
+/// 2. Rename the `FontFile3` key to `FontFile2` (TrueType container).
+/// 3. Remove the erroneous `Subtype` from the font stream dict.
+/// 4. For CIDFontType0 DescendantFont dicts linked to such a descriptor, change
+///    their `Subtype` to `CIDFontType2` (TrueType CID font).
+///
+/// Returns the number of font descriptors fixed.
+pub fn fix_mislabeled_truetype_as_cff(doc: &mut Document) -> usize {
+    // SFNT magic bytes: TrueType = 0x00010000, OTF-CFF = 'OTTO' (0x4F54544F)
+    const TT_MAGIC: [u8; 4] = [0x00, 0x01, 0x00, 0x00];
+    const OTF_MAGIC: [u8; 4] = [0x4f, 0x54, 0x54, 0x4f]; // 'OTTO'
+
+    // Step 1: Find FontDescriptor IDs whose FontFile3 is actually an SFNT stream.
+    let fd_to_fix: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let Object::Dictionary(d) = obj else {
+                return None;
+            };
+            if !matches!(get_name(d, b"Type").as_deref(), Some("FontDescriptor")) {
+                return None;
+            }
+            let ff3_id = match d.get(b"FontFile3").ok() {
+                Some(Object::Reference(r)) => *r,
+                _ => return None,
+            };
+            // Check the FontFile3 stream for SFNT magic.
+            let stream_obj = doc.objects.get(&ff3_id)?;
+            let Object::Stream(s) = stream_obj else {
+                return None;
+            };
+            let mut s2 = s.clone();
+            let _ = s2.decompress();
+            let magic = s2.content.get(..4)?;
+            if magic == TT_MAGIC || magic == OTF_MAGIC {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if fd_to_fix.is_empty() {
+        return 0;
+    }
+
+    // Step 2: For each such FontDescriptor, rename FontFile3 → FontFile2
+    // and collect the stream IDs.
+    let mut stream_ids_to_fix: Vec<ObjectId> = Vec::new();
+    let fd_ids: std::collections::HashSet<ObjectId> = fd_to_fix.iter().copied().collect();
+
+    for fd_id in &fd_to_fix {
+        let Some(Object::Dictionary(d)) = doc.objects.get_mut(fd_id) else {
+            continue;
+        };
+        if let Ok(Object::Reference(r)) = d.get(b"FontFile3").cloned() {
+            stream_ids_to_fix.push(r);
+            d.remove(b"FontFile3");
+            d.set(b"FontFile2", Object::Reference(r));
+        }
+    }
+
+    // Step 3: Remove Subtype from the (formerly FontFile3) font streams.
+    for sid in &stream_ids_to_fix {
+        if let Some(Object::Stream(s)) = doc.objects.get_mut(sid) {
+            s.dict.remove(b"Subtype");
+        }
+    }
+
+    // Step 4: Fix DescendantFont dicts that reference one of the fixed descriptors.
+    // DescendantFonts entries can be inline dicts (Object::Dictionary) inside arrays.
+    let type0_ids: Vec<ObjectId> = doc
+        .objects
+        .keys()
+        .copied()
+        .filter(|id| {
+            if let Some(Object::Dictionary(d)) = doc.objects.get(id) {
+                matches!(get_name(d, b"Type").as_deref(), Some("Font"))
+                    && matches!(get_name(d, b"Subtype").as_deref(), Some("Type0"))
+            } else {
+                false
+            }
+        })
+        .collect();
+
+    for t0_id in type0_ids {
+        let Some(Object::Dictionary(d)) = doc.objects.get_mut(&t0_id) else {
+            continue;
+        };
+        let df_arr = match d.get_mut(b"DescendantFonts") {
+            Ok(Object::Array(a)) => a,
+            _ => continue,
+        };
+        for elem in df_arr.iter_mut() {
+            let Object::Dictionary(cid_dict) = elem else {
+                continue;
+            };
+            // Change Subtype CIDFontType0 → CIDFontType2 if FontDescriptor is one we fixed.
+            let is_cid0 = matches!(
+                get_name(cid_dict, b"Subtype").as_deref(),
+                Some("CIDFontType0")
+            );
+            if !is_cid0 {
+                continue;
+            }
+            let fd_ref = match cid_dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(r)) => *r,
+                _ => continue,
+            };
+            if fd_ids.contains(&fd_ref) {
+                cid_dict.set(b"Subtype", Object::Name(b"CIDFontType2".to_vec()));
+            }
+        }
+    }
+
+    fd_to_fix.len()
 }
 
 /// Fix non-standard `/CharStrings` dict syntax in Type1 font eexec sections.
