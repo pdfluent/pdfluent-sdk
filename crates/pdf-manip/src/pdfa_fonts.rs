@@ -835,7 +835,7 @@ fn update_metrics_from_font(doc: &mut Document, info: &NonEmbeddedFont, font_dat
         // internal encoding to compute widths.  The Unicode cmap in OTF wrappers
         // maps unrelated Latin codepoints to symbol glyphs, producing wrong widths.
         let is_cff = face.tables().glyf.is_none();
-        let (base_encoding_name, skip_unreliable_simple_width_update) = {
+        let (_base_encoding_name, skip_unreliable_simple_width_update) = {
             let font_dict = match doc.objects.get(&info.font_id) {
                 Some(Object::Dictionary(d)) => d,
                 _ => return,
@@ -867,12 +867,12 @@ fn update_metrics_from_font(doc: &mut Document, info: &NonEmbeddedFont, font_dat
                     && has_existing_widths,
             )
         };
-        let use_symbolic_cff_widths = is_cff
-            && is_symbolic_font_name(&info.name)
-            && !matches!(
-                base_encoding_name.as_str(),
-                "WinAnsiEncoding" | "MacRomanEncoding"
-            );
+        // Always use CFF encoding for symbolic CFF fonts (Symbol, ZapfDingbats, etc.).
+        // Using WinAnsiEncoding/MacRomanEncoding + Unicode cmap produces wrong widths
+        // because the cmap maps unrelated Latin codepoints to symbol glyphs.
+        // fix_classic_symbolic_base14_encoding strips these encodings later anyway,
+        // so CFF-based widths are the correct source of truth from the start.
+        let use_symbolic_cff_widths = is_cff && is_symbolic_font_name(&info.name);
         if use_symbolic_cff_widths {
             update_simple_widths_cff_symbolic(doc, info, font_data, &face, scale);
         } else if !skip_unreliable_simple_width_update {
