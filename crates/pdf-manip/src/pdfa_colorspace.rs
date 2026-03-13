@@ -102,15 +102,53 @@ pub fn has_pdfa_output_intent(doc: &Document) -> bool {
 }
 
 /// Add an sRGB OutputIntent to the document for PDF/A compliance.
+///
+/// PDF/A-2 §6.2.3:2 requires that all OutputIntent entries with a
+/// DestOutputProfile key reference the **same** indirect ICC object. To
+/// satisfy this, we reuse the existing DestOutputProfile from any
+/// already-present OutputIntent (e.g. GTS_PDFX) instead of creating a new
+/// ICC stream, if one is found.
 pub fn add_srgb_output_intent(doc: &mut Document) -> Result<()> {
-    let icc_bytes = srgb_icc_profile_bytes();
-
-    let icc_dict = dictionary! {
-        "N" => Object::Integer(3),
-        "Alternate" => Object::Name(b"DeviceRGB".to_vec()),
+    // Look for an existing DestOutputProfile indirect reference in any
+    // OutputIntent already in the document. Reusing it avoids the rule
+    // 6.2.3:2 failure caused by multiple OutputIntents with different
+    // ICC profile objects.
+    let existing_icc_ref: Option<lopdf::ObjectId> = {
+        let catalog = get_catalog(doc);
+        catalog.and_then(|cat| {
+            let intents = match cat.get(b"OutputIntents").ok()? {
+                Object::Array(arr) => arr.clone(),
+                _ => return None,
+            };
+            for item in &intents {
+                let dict = match item {
+                    Object::Reference(id) => match doc.objects.get(id) {
+                        Some(Object::Dictionary(d)) => d,
+                        _ => continue,
+                    },
+                    Object::Dictionary(d) => d,
+                    _ => continue,
+                };
+                if let Ok(Object::Reference(icc_id)) = dict.get(b"DestOutputProfile") {
+                    return Some(*icc_id);
+                }
+            }
+            None
+        })
     };
-    let icc_stream = Stream::new(icc_dict, icc_bytes);
-    let icc_id = doc.add_object(Object::Stream(icc_stream));
+
+    let icc_id = match existing_icc_ref {
+        Some(id) => id,
+        None => {
+            let icc_bytes = srgb_icc_profile_bytes();
+            let icc_dict = dictionary! {
+                "N" => Object::Integer(3),
+                "Alternate" => Object::Name(b"DeviceRGB".to_vec()),
+            };
+            let icc_stream = Stream::new(icc_dict, icc_bytes);
+            doc.add_object(Object::Stream(icc_stream))
+        }
+    };
 
     let intent = dictionary! {
         "Type" => Object::Name(b"OutputIntent".to_vec()),

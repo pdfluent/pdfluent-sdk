@@ -2858,24 +2858,28 @@ fn get_cmap_supplement(doc: &Document, encoding_obj: &Object) -> Option<i64> {
 
 fn predefined_cmap_supplement(cmap_name: &str) -> Option<i64> {
     match cmap_name {
+        // Adobe-GB1-0: base GB 2312-80 CMaps (Supplement 0).
+        "GB-EUC-H" | "GB-EUC-V" | "GBpc-EUC-H" | "GBpc-EUC-V" => return Some(0),
+        // Adobe-GB1-2: GBK extension CMaps (Supplement 2).
+        "GBK-EUC-H" | "GBK-EUC-V" | "GBKp-EUC-H" | "GBKp-EUC-V" => return Some(2),
+        // Adobe-GB1-4: GBK2K and UniGB-UCS2 CMaps (Supplement 4).
+        "GBK2K-H" | "GBK2K-V" | "UniGB-UCS2-H" | "UniGB-UCS2-V" => return Some(4),
+        // Adobe-GB1-6: UniGB UTF-16 CMaps (Supplement 6).
+        "UniGB-UTF16-H" | "UniGB-UTF16-V" => return Some(6),
+        // Adobe-Japan1-0: base EUC CMaps (Supplement 0).
+        "EUC-H" | "EUC-V" => return Some(0),
         // Adobe Tech Note #5094: 90pv-RKSJ-H/V were introduced with
         // Adobe-Japan1-1.
         "90pv-RKSJ-H" | "90pv-RKSJ-V" => return Some(1),
+        // Adobe Tech Note #5094: these legacy CMaps were introduced with
+        // Adobe-Japan1-2.
+        "90ms-RKSJ-H" | "90ms-RKSJ-V" | "90msp-RKSJ-H" | "90msp-RKSJ-V" | "78ms-RKSJ-H"
+        | "78ms-RKSJ-V" | "UniJIS-UTF8-H" | "UniJIS-UTF8-V" => return Some(2),
         // The vendored Adobe-Japan1-7 UniJIS UCS2 CMaps advertise
         // CIDSystemInfo Supplement 4 in their headers.
         "UniJIS-UCS2-H" | "UniJIS-UCS2-V" | "UniJIS-UCS2-HW-H" | "UniJIS-UCS2-HW-V" => {
             return Some(4)
         }
-        // The vendored Adobe-GB1-6 UniGB UCS2 CMaps advertise
-        // CIDSystemInfo Supplement 4 in their headers.
-        "UniGB-UCS2-H" | "UniGB-UCS2-V" => return Some(4),
-        // The vendored Adobe-GB1-6 UniGB UTF16 CMaps advertise
-        // CIDSystemInfo Supplement 6 in their headers.
-        "UniGB-UTF16-H" | "UniGB-UTF16-V" => return Some(6),
-        // Adobe Tech Note #5094: these legacy CMaps were introduced with
-        // Adobe-Japan1-2.
-        "90ms-RKSJ-H" | "90ms-RKSJ-V" | "90msp-RKSJ-H" | "90msp-RKSJ-V" | "78ms-RKSJ-H"
-        | "78ms-RKSJ-V" | "UniJIS-UTF8-H" | "UniJIS-UTF8-V" => return Some(2),
         _ => {}
     }
     if cmap_name.contains("UniKS") {
