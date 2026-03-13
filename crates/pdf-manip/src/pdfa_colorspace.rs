@@ -1287,15 +1287,31 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
 /// Normalize Separation colorspaces so all with the same name use identical
 /// alternateSpace and tintTransform (PDF/A rule 6.2.4.4:2).
 fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+
+    // Materialize lazily-loaded objects (including objects inside object streams)
+    // so Separation arrays referenced outside the currently loaded object set are
+    // still considered for 6.2.4.4:2 consistency checks.
+    let max_id = doc.max_id;
+    for obj_num in 1..=max_id {
+        let id = (obj_num, 0);
+        if doc.objects.contains_key(&id) {
+            continue;
+        }
+        let loaded = doc.get_object(id).ok().cloned();
+        if let Some(obj) = loaded {
+            doc.objects.insert(id, obj);
+        }
+    }
 
     // Phase 1: Collect all Separation arrays across all objects.
     // A Separation array is: [/Separation name alternateCS tintTransform]
     // We record (ObjectId, name) → (alternateCS, tintTransform).
     let mut by_name: HashMap<Vec<u8>, Vec<(ObjectId, Object, Object)>> = HashMap::new();
+    let mut visited_refs: HashSet<ObjectId> = HashSet::new();
 
     for (&id, obj) in &doc.objects {
-        collect_separations_recursive(id, obj, &mut by_name);
+        collect_separations_recursive(doc, id, obj, &mut by_name, &mut visited_refs);
     }
 
     // Phase 2: For each name with conflicting definitions, unify to canonical (first found).
@@ -1323,9 +1339,11 @@ fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
 }
 
 fn collect_separations_recursive(
+    doc: &Document,
     id: ObjectId,
     obj: &Object,
     map: &mut std::collections::HashMap<Vec<u8>, Vec<(ObjectId, Object, Object)>>,
+    visited_refs: &mut std::collections::HashSet<ObjectId>,
 ) {
     match obj {
         Object::Array(arr) => {
@@ -1333,7 +1351,7 @@ fn collect_separations_recursive(
                 if let Object::Name(cs_type) = &arr[0] {
                     if cs_type == b"Separation" {
                         if let Object::Name(name) = &arr[1] {
-                            map.entry(name.clone()).or_default().push((
+                            map.entry(normalize_spot_name(name)).or_default().push((
                                 id,
                                 arr[2].clone(),
                                 arr[3].clone(),
@@ -1343,17 +1361,24 @@ fn collect_separations_recursive(
                 }
             }
             for item in arr {
-                collect_separations_recursive(id, item, map);
+                collect_separations_recursive(doc, id, item, map, visited_refs);
             }
         }
         Object::Dictionary(dict) => {
             for (_, val) in dict.iter() {
-                collect_separations_recursive(id, val, map);
+                collect_separations_recursive(doc, id, val, map, visited_refs);
             }
         }
         Object::Stream(stream) => {
             for (_, val) in stream.dict.iter() {
-                collect_separations_recursive(id, val, map);
+                collect_separations_recursive(doc, id, val, map, visited_refs);
+            }
+        }
+        Object::Reference(ref_id) => {
+            if visited_refs.insert(*ref_id) {
+                if let Ok(resolved) = doc.get_object(*ref_id) {
+                    collect_separations_recursive(doc, *ref_id, resolved, map, visited_refs);
+                }
             }
         }
         _ => {}
@@ -1367,7 +1392,7 @@ fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &
                 if let Object::Name(cs_type) = &arr[0] {
                     if cs_type == b"Separation" {
                         if let Object::Name(n) = &arr[1] {
-                            if n == name {
+                            if normalize_spot_name(n) == name {
                                 arr[2] = alt.clone();
                                 arr[3] = tint.clone();
                             }
@@ -1391,6 +1416,52 @@ fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &
         }
         _ => {}
     }
+}
+
+/// Normalize a PDF Name object for logical comparison.
+///
+/// PDF names may encode bytes using `#XX` hex escapes. For clause 6.2.4.4:2,
+/// names that differ only by escape form should be treated as the same spot
+/// color name.
+fn normalize_spot_name(name: &[u8]) -> Vec<u8> {
+    let mut decoded = Vec::with_capacity(name.len());
+    let mut i = 0usize;
+    while i < name.len() {
+        if name[i] == b'#' && i + 2 < name.len() {
+            let h1 = name[i + 1];
+            let h2 = name[i + 2];
+            let hi = (h1 as char).to_digit(16);
+            let lo = (h2 as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                decoded.push(((hi << 4) | lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        decoded.push(name[i]);
+        i += 1;
+    }
+
+    // Canonicalize ASCII names: trim/collapse whitespace and fold to upper-case
+    // so escape/case variants of the same spot name group together.
+    let mut out = Vec::with_capacity(decoded.len());
+    let mut prev_space = true;
+    for b in decoded {
+        let is_space = matches!(b, b' ' | b'\t' | b'\r' | b'\n');
+        if is_space {
+            if !prev_space {
+                out.push(b' ');
+            }
+            prev_space = true;
+            continue;
+        }
+        prev_space = false;
+        out.push(b.to_ascii_uppercase());
+    }
+    if out.last() == Some(&b' ') {
+        out.pop();
+    }
+    out
 }
 
 /// Fix overprint mode: set OPM to 0 when overprinting is enabled (PDF/A rule 6.2.4.2:2).

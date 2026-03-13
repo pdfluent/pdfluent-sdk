@@ -55,6 +55,9 @@ fn main() {
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");
 
+    let sym_cmap_fixed = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+    eprintln!("Symbolic TrueType cmap: fixed={sym_cmap_fixed}");
+
     // Add Unicode (3,1) cmap to TrueType fonts that only have Mac Roman (1,0).
     let cmap_fixed = pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
     eprintln!("TrueType Unicode cmap: fixed={cmap_fixed}");
@@ -71,6 +74,10 @@ fn main() {
     let sym_notdef_fixed = pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
     eprintln!(".notdef refs (symbolic): fixed={sym_notdef_fixed}");
 
+    // Remove simple-font bytes outside FirstChar..LastChar (avoids .notdef).
+    let simple_range_fixed = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc);
+    eprintln!(".notdef refs (simple range): fixed={simple_range_fixed}");
+
     // Strip control characters from content streams.
     let control_stripped = pdf_manip::pdfa_fonts::strip_control_chars_from_streams(&mut doc);
     eprintln!("Control chars stripped: streams={control_stripped}");
@@ -84,9 +91,16 @@ fn main() {
     let sym_flags = pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
     eprintln!("Symbolic flags: fixed={sym_flags}");
 
+    let classic_sym_enc = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc);
+    eprintln!("Classic symbolic encodings: fixed={classic_sym_enc}");
+
     // Populate missing FirstChar/LastChar/Widths for embedded fonts (6.2.11.2:4-6).
     let missing_widths = pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
     eprintln!("Missing font widths: populated={missing_widths}");
+
+    // Fix Type3 widths from CharProc d0/d1 operators (6.2.11.5:1).
+    let type3_widths = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
+    eprintln!("Type3 font widths: fixed={type3_widths}");
 
     // Conservative width mismatch fix: only updates individual mismatched entries
     // where the mapping is unambiguous. Skips fonts with >50% mismatches.
@@ -127,6 +141,16 @@ fn main() {
         fixup_report.jpx_colorspace_fixed,
         fixup_report.concatenated_operators_fixed,
     );
+
+    // Re-run colorspace normalization after fixups. Some fixups touch DeviceN
+    // / Colorants structures and can reintroduce 6.2.4.4:2 inconsistencies.
+    match pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc) {
+        Ok(r) => eprintln!(
+            "Colorspace (post-fixups): had_intent={}, added={}, device_cs={:?}",
+            r.had_output_intent, r.output_intent_added, r.device_colorspaces_found
+        ),
+        Err(e) => eprintln!("Colorspace (post-fixups) error: {e}"),
+    }
 
     match pdf_manip::pdfa_xmp::repair_xmp_metadata(
         &mut doc,
