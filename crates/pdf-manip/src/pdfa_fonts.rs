@@ -2759,10 +2759,12 @@ pub fn fix_truetype_cid_widths(doc: &mut Document) -> usize {
                         break;
                     }
                     let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
-                    // Some subsetters encode unmapped CIDs as 0xFFFF instead of 0.
-                    // Treat both sentinels as "no glyph" so they don't pollute DW/W
-                    // with artificial zero-width entries.
-                    if gid == 0 || gid == u16::MAX {
+                    // 0xFFFF is the "not mapped" sentinel used by some subsetters.
+                    // GID 0 (.notdef) is a real glyph with its own advance width;
+                    // veraPDF validates that the dictionary width matches the hmtx
+                    // advance for every rendered CID, including those that fall back
+                    // to .notdef, so we must include them rather than skipping them.
+                    if gid == u16::MAX {
                         continue;
                     }
                     let w = if gid < num_glyphs {
