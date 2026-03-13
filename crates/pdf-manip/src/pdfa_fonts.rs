@@ -3490,10 +3490,13 @@ pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
 /// /CIDFontType0C` instead of the correct `FontFile2` (or `FontFile3` with
 /// `Subtype /CIDFontType2`).
 ///
-/// Some PDFs embed TrueType (sfnt magic `00 01 00 00` or `4F 54 54 4F`) fonts
-/// but label them as CFF (`/Subtype /CIDFontType0C`). veraPDF's CFF parser
-/// immediately fails on non-CFF data → `successfullyParsed = false` →
-/// `containsFontFile == false` → rule 6.2.11.4.1:1 fails.
+/// Some PDFs embed TrueType (sfnt magic `00 01 00 00`) fonts but label them as
+/// CFF (`/Subtype /CIDFontType0C`). veraPDF's CFF parser immediately fails on
+/// non-CFF data → `successfullyParsed = false` → `containsFontFile == false` →
+/// rule 6.2.11.4.1:1 fails.
+///
+/// Note: OTTO (`4F 54 54 4F`) means OpenType CFF in SFNT; veraPDF can parse
+/// that in FontFile3 so those are left unchanged.
 ///
 /// Fix:
 /// 1. Find `FontDescriptor` objects whose `FontFile3` stream starts with TrueType magic.
@@ -3504,11 +3507,12 @@ pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
 ///
 /// Returns the number of font descriptors fixed.
 pub fn fix_mislabeled_truetype_as_cff(doc: &mut Document) -> usize {
-    // SFNT magic bytes: TrueType = 0x00010000, OTF-CFF = 'OTTO' (0x4F54544F)
+    // Only fix pure TrueType (sfnt 00010000). OTTO (4F54544F) is OpenType CFF
+    // in an SFNT wrapper; veraPDF can parse it in FontFile3/CIDFontType0C so
+    // renaming to FontFile2/CIDFontType2 would break those fonts.
     const TT_MAGIC: [u8; 4] = [0x00, 0x01, 0x00, 0x00];
-    const OTF_MAGIC: [u8; 4] = [0x4f, 0x54, 0x54, 0x4f]; // 'OTTO'
 
-    // Step 1: Find FontDescriptor IDs whose FontFile3 is actually an SFNT stream.
+    // Step 1: Find FontDescriptor IDs whose FontFile3 is actually a TrueType stream.
     let fd_to_fix: Vec<ObjectId> = doc
         .objects
         .iter()
@@ -3523,7 +3527,7 @@ pub fn fix_mislabeled_truetype_as_cff(doc: &mut Document) -> usize {
                 Some(Object::Reference(r)) => *r,
                 _ => return None,
             };
-            // Check the FontFile3 stream for SFNT magic.
+            // Check the FontFile3 stream for TrueType SFNT magic.
             let stream_obj = doc.objects.get(&ff3_id)?;
             let Object::Stream(s) = stream_obj else {
                 return None;
@@ -3531,7 +3535,7 @@ pub fn fix_mislabeled_truetype_as_cff(doc: &mut Document) -> usize {
             let mut s2 = s.clone();
             let _ = s2.decompress();
             let magic = s2.content.get(..4)?;
-            if magic == TT_MAGIC || magic == OTF_MAGIC {
+            if magic == TT_MAGIC {
                 Some(*id)
             } else {
                 None

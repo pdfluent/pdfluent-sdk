@@ -226,7 +226,13 @@ impl PdfTest for PdfAConvertTest {
             // trees gracefully, and veraPDF will catch genuinely broken PDFs.
         }
 
-        // 3a. Embed non-embedded fonts.
+        // 3a. Promote inline font dicts to standalone objects before embed_fonts.
+        set_progress("promote_inline_fonts");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc)
+        }));
+
+        // 3a1. Embed non-embedded fonts.
         set_progress("font_embed");
         let font_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::embed_fonts(&mut doc)
@@ -235,6 +241,43 @@ impl PdfTest for PdfAConvertTest {
             Ok(Ok(r)) => Some(r),
             _ => None,
         };
+
+        // 3a1a. Strip PFB headers from Type1 FontFile streams (PDF spec requires raw PS).
+        set_progress("pfb_streams");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc)
+        }));
+
+        // Fix stub Type1 fonts with only .notdef by redirecting to matching full-subset program.
+        set_progress("type1_stub_fonts");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc)
+        }));
+
+        // Fix TrueType font programs mislabeled as CIDFontType0C (CFF). Must run before
+        // width fixes so fix_font_width_mismatches compares against the right font type.
+        set_progress("mislabeled_truetype");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc)
+        }));
+
+        // Fix invalid CFF BCD real number encodings (NumberFormatException in veraPDF).
+        set_progress("cff_bcd");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc)
+        }));
+
+        // Fix non-standard /CharStrings dict syntax in Type1 eexec sections.
+        set_progress("type1_charstrings");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc)
+        }));
+
+        // Fix Type1 binary eexec sections with leading whitespace before binary data.
+        set_progress("type1_eexec_space");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc)
+        }));
 
         // NOTE: fix_width_mismatches disabled — causes regression on simple TrueType fonts.
         // CFF-only and CIDFontType2 width fixing is safe.
