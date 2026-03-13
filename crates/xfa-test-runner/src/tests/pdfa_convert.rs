@@ -1106,10 +1106,13 @@ fn try_rebuild_xref_from_objects(data: &[u8]) -> Option<lopdf::Document> {
                     // Check if this object is /Type /Catalog.
                     let obj_end = std::cmp::min(pos + 4096, data.len());
                     let obj_data = &data[pos..obj_end];
-                    if obj_data
-                        .windows(14)
-                        .any(|w| w == b"/Type /Catalog" || w == b"/Type/Catalog")
-                    {
+                    let has_catalog = obj_data
+                        .windows(b"/Type /Catalog".len())
+                        .any(|w| w == b"/Type /Catalog")
+                        || obj_data
+                            .windows(b"/Type/Catalog".len())
+                            .any(|w| w == b"/Type/Catalog");
+                    if has_catalog {
                         root_ref = Some(obj_info.0);
                     }
                     if obj_data
@@ -1162,10 +1165,16 @@ fn try_rebuild_xref_from_objects(data: &[u8]) -> Option<lopdf::Document> {
     let body = &data[header_start..];
 
     // Find the end of the last object (before any existing xref/trailer).
-    let body_end = if let Some(xp) = find_last_xref_pos(body) {
-        xp
-    } else {
-        body.len()
+    // For linearized PDFs the xref table appears BEFORE the page content objects,
+    // so we must not cut at the xref position — use the full body instead and
+    // let our new trailing xref+trailer take precedence over any embedded one.
+    let xref_cut = find_last_xref_pos(body);
+    let last_endobj = body.windows(6).rposition(|w| w == b"endobj").map(|p| p + 6);
+    // If there are objects after the xref cut point, include everything.
+    let body_end = match (xref_cut, last_endobj) {
+        (Some(xp), Some(le)) if le > xp => body.len(),
+        (Some(xp), _) => xp,
+        _ => body.len(),
     };
 
     // Build new PDF: original body + new xref + trailer.
