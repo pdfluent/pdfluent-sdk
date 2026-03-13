@@ -342,6 +342,66 @@ fn repair_invalid_font_names(doc: &mut Document, info: &NonEmbeddedFont, fd_id: 
     }
 }
 
+/// Promote inline font dictionaries in `/Resources /Font` to standalone objects.
+///
+/// Some PDFs define fonts as inline dicts inside the Resources `/Font` map
+/// instead of as standalone objects referenced by object ID.  For example:
+/// ```text
+/// /Font << /bannertopdf-font << /Type /Font /Subtype /Type1 /BaseFont /Courier >> >>
+/// ```
+/// `embed_fonts` only iterates `doc.objects`, so it never sees such inline dicts
+/// and cannot embed them.  This function:
+/// 1. Iterates all dict objects looking for an inline `/Font` sub-dict.
+/// 2. For each inline font dict (a `Dictionary`, not a `Reference`), creates
+///    a new document object and replaces the inline dict with a `Reference`.
+///
+/// Must run **before** `embed_fonts` so the promoted fonts become candidates
+/// for embedding.
+///
+/// Returns the number of inline font dicts promoted.
+pub fn promote_inline_font_dicts(doc: &mut Document) -> usize {
+    // Collect Resources-dict object IDs and their inline font dict entries.
+    // Structure: Vec<(resources_id, font_alias_name, font_dict_clone)>
+    let mut to_promote: Vec<(ObjectId, Vec<u8>, lopdf::Dictionary)> = Vec::new();
+
+    for (id, obj) in &doc.objects {
+        // Look for any dict that has a /Font sub-dict.
+        let fonts_dict = match obj {
+            Object::Dictionary(d) => match d.get(b"Font").ok() {
+                Some(Object::Dictionary(f)) => f.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+        // Collect inline (non-Reference) font entries.
+        for (alias, font_val) in fonts_dict.iter() {
+            if let Object::Dictionary(_) = font_val {
+                to_promote.push((*id, alias.to_vec(), {
+                    if let Object::Dictionary(fd) = font_val {
+                        fd.clone()
+                    } else {
+                        unreachable!()
+                    }
+                }));
+            }
+        }
+    }
+
+    let mut promoted = 0usize;
+    for (res_id, alias, font_dict) in to_promote {
+        // Add new object for the font dict.
+        let new_id = doc.add_object(Object::Dictionary(font_dict));
+        // Replace inline dict in the Resources /Font sub-dict with a Reference.
+        if let Some(Object::Dictionary(res_d)) = doc.objects.get_mut(&res_id) {
+            if let Ok(Object::Dictionary(fonts)) = res_d.get_mut(b"Font") {
+                fonts.set(alias.as_slice(), Object::Reference(new_id));
+            }
+        }
+        promoted += 1;
+    }
+    promoted
+}
+
 /// Embed fonts from system font files into the document.
 pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     let mut report = FontEmbedReport {
