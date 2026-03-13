@@ -2604,12 +2604,14 @@ pub fn fix_truetype_cid_widths(doc: &mut Document) -> usize {
         let Some(fd_id) = fd_id else { continue };
         let Some(cid_id) = cid_font_id else { continue };
 
-        // Only process fonts with FontFile2 (TrueType programs).
-        let has_ff2 = matches!(
+        // Process fonts with FontFile2 (TrueType) or FontFile3 (OTF/CFF).
+        // Some CIDFontType2 fonts embed an OTF CFF program as FontFile3 instead
+        // of FontFile2; ttf_parser handles both, so we include them here.
+        let has_embedded = matches!(
             doc.objects.get(&fd_id),
-            Some(Object::Dictionary(d)) if d.has(b"FontFile2")
+            Some(Object::Dictionary(d)) if d.has(b"FontFile2") || d.has(b"FontFile3")
         );
-        if !has_ff2 {
+        if !has_embedded {
             continue;
         }
 
@@ -3212,6 +3214,437 @@ fn type1_binary_eexec_encrypt(real_data: &[u8], seed_first: u8) -> Vec<u8> {
         result.push(c);
     }
     result
+}
+
+/// Fix stub Type1 fonts by redirecting their FontFile to a matching full font program.
+///
+/// Some PDF generators (e.g. dvips/LaTeX) include two versions of the same font:
+///  - A stub with only `.notdef` CharString and `/CharSet()` (empty)
+///  - A full subset with actual glyphs and a non-empty `/CharSet`
+///
+/// veraPDF's `Type1FontProgram.parseFont()` fails on stub fonts (no real CharStrings
+/// after skipping `.notdef`), so `containsFontFile == false` → rule 6.2.11.4.1:1 fails.
+///
+/// Fix: for each stub FontDescriptor (has `/CharSet()` empty), find another FontDescriptor
+/// whose base font name (strip 6-char prefix + optional `~XX` suffix) matches and has a
+/// parseable font program. Redirect the stub's `/FontFile` reference to the real font's
+/// FontFile stream and remove the empty `/CharSet` entry.
+///
+/// Returns the number of stub FontDescriptors fixed.
+pub fn fix_type1_stub_font_files(doc: &mut Document) -> usize {
+    // Step 1: Collect all Type1 FontDescriptors with FontFile streams.
+    // Record: font_name, fd_obj_id, ff_obj_id, charset_is_empty
+    #[derive(Debug, Clone)]
+    struct FdInfo {
+        fd_id: ObjectId,
+        ff_id: ObjectId,
+        full_name: String,
+        base_name: String, // after stripping 6-char prefix and ~XX suffix
+        charset_empty: bool,
+    }
+
+    let fd_infos: Vec<FdInfo> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let Object::Dictionary(dict) = obj else {
+                return None;
+            };
+            if !matches!(get_name(dict, b"Type").as_deref(), Some("FontDescriptor")) {
+                return None;
+            }
+            // Must have a FontFile (Type1) reference, not FontFile2 (TrueType) or FontFile3 (CFF)
+            let ff_id = match dict.get(b"FontFile").ok() {
+                Some(Object::Reference(r)) => *r,
+                _ => return None,
+            };
+            let full_name = match dict.get(b"FontName").ok() {
+                Some(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
+                _ => return None,
+            };
+            // Detect empty CharSet: /CharSet() or /CharSet with empty string value
+            let charset_empty = match dict.get(b"CharSet").ok() {
+                Some(Object::String(s, _)) => s.is_empty(),
+                Some(Object::Name(n)) => n.is_empty(),
+                None => false,
+                _ => false,
+            };
+            let base_name = type1_base_font_name(&full_name);
+            Some(FdInfo {
+                fd_id: *id,
+                ff_id,
+                full_name,
+                base_name,
+                charset_empty,
+            })
+        })
+        .collect();
+
+    // Step 2: Build map from base_name → ff_id for non-stub fonts
+    use std::collections::HashMap;
+    let mut real_font_map: HashMap<String, (ObjectId, String)> = HashMap::new();
+    for info in &fd_infos {
+        if !info.charset_empty {
+            real_font_map
+                .entry(info.base_name.clone())
+                .or_insert_with(|| (info.ff_id, info.full_name.clone()));
+        }
+    }
+
+    // Step 3: For each stub, redirect FontFile to real font's FontFile
+    let mut fixed = 0usize;
+    let stubs: Vec<FdInfo> = fd_infos.into_iter().filter(|i| i.charset_empty).collect();
+
+    for stub in &stubs {
+        let (real_ff_id, ref real_name) = match real_font_map.get(&stub.base_name) {
+            Some(r) => r.clone(),
+            None => continue, // No matching real font found
+        };
+        // Don't redirect to itself
+        if real_ff_id == stub.ff_id {
+            continue;
+        }
+        // Update the stub's FontDescriptor: redirect FontFile and remove CharSet
+        let fd_obj = match doc.objects.get_mut(&stub.fd_id) {
+            Some(Object::Dictionary(d)) => d,
+            _ => continue,
+        };
+        fd_obj.set(b"FontFile", Object::Reference(real_ff_id));
+        fd_obj.remove(b"CharSet");
+        eprintln!(
+            "fix_type1_stub_font_files: {} stub → redirect FontFile to {} ({})",
+            stub.full_name, real_name, real_ff_id.0
+        );
+        fixed += 1;
+    }
+
+    fixed
+}
+
+/// Fix invalid CFF BCD (Binary-Coded Decimal) real number encodings that cause
+/// veraPDF's CFF parser to throw `NumberFormatException` → `successfullyParsed = false`
+/// → rule 6.2.11.4.1:1 fails.
+///
+/// Two known invalid patterns:
+///
+///  1. `1e ff`: The byte `0xff` splits to nibbles `(0xf, 0xf)`.  Nibble `0xf` means
+///     "end of BCD", so the parser exits immediately with an **empty** `StringBuilder`.
+///     `Float.parseFloat("")` → `NumberFormatException`.
+///     Fix: replace `1e ff` → `1e 0f` → nibbles `(0, 0xf)` → string `"0"` → 0.0.
+///
+///  2. `1e c0 00 48 82 81 25 ff`: BCD starts with nibble `0xc` (`'E-'`) before any
+///     mantissa digits → string `"E-00048828125"` → `Float.parseFloat` fails.
+///     This was meant to encode `0.00048828125 = 1/2048` (FontMatrix scale for
+///     2048-unit-em fonts).
+///     Fix: replace with `1e 4a 88 28 12 5b e4 ff` → `"4.8828125E-4"` = 0.00048828125.
+///
+/// Only CFF streams (`/Subtype /CIDFontType0C` or `/Type1C`) are examined.
+///
+/// Returns the number of font streams patched.
+pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
+    // Pattern 1: 1e ff  →  1e 0f  ("" → "0")
+    const BAD_EMPTY: [u8; 2] = [0x1e, 0xff];
+    const GOOD_ZERO: [u8; 2] = [0x1e, 0x0f];
+
+    // Pattern 2: malformed FontMatrix 1/2048 BCD  →  correct "4.8828125E-4"
+    const BAD_FONTMATRIX: [u8; 8] = [0x1e, 0xc0, 0x00, 0x48, 0x82, 0x81, 0x25, 0xff];
+    const GOOD_FONTMATRIX: [u8; 8] = [0x1e, 0x4a, 0x88, 0x28, 0x12, 0x5b, 0xe4, 0xff];
+
+    // Collect IDs of CFF font streams.
+    let targets: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let Object::Stream(s) = obj else {
+                return None;
+            };
+            match s.dict.get(b"Subtype").ok() {
+                Some(Object::Name(n))
+                    if n.as_slice() == b"CIDFontType0C" || n.as_slice() == b"Type1C" =>
+                {
+                    Some(*id)
+                }
+                _ => None,
+            }
+        })
+        .collect();
+
+    let mut fixed = 0usize;
+
+    for id in targets {
+        let data = {
+            let Some(Object::Stream(s)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let mut s = s.clone();
+            let _ = s.decompress();
+            s.content
+        };
+
+        let mut patched = data.clone();
+        let mut changed = false;
+
+        // Apply pattern 2 first (longer → more specific, avoids overlap with p1).
+        let mut i = 0;
+        while i + BAD_FONTMATRIX.len() <= patched.len() {
+            if patched[i..i + BAD_FONTMATRIX.len()] == BAD_FONTMATRIX {
+                patched[i..i + GOOD_FONTMATRIX.len()].copy_from_slice(&GOOD_FONTMATRIX);
+                changed = true;
+                i += GOOD_FONTMATRIX.len();
+            } else {
+                i += 1;
+            }
+        }
+
+        // Apply pattern 1.
+        let mut i = 0;
+        while i + BAD_EMPTY.len() <= patched.len() {
+            if patched[i..i + BAD_EMPTY.len()] == BAD_EMPTY {
+                patched[i..i + GOOD_ZERO.len()].copy_from_slice(&GOOD_ZERO);
+                changed = true;
+                i += GOOD_ZERO.len();
+            } else {
+                i += 1;
+            }
+        }
+
+        if changed {
+            if let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) {
+                stream.set_plain_content(patched);
+            }
+            fixed += 1;
+        }
+    }
+
+    fixed
+}
+
+/// Fix non-standard `/CharStrings` dict syntax in Type1 font eexec sections.
+///
+/// Some old fonts (e.g. Keycap) use:
+/// ```text
+/// /CharStrings N dict def
+///   Private begin CharStrings begin
+/// ```
+/// instead of the standard:
+/// ```text
+/// /CharStrings N dict dup begin
+/// ```
+/// veraPDF's `Type1PrivateParser` expects exactly 3 tokens after the count
+/// (`dict`, `dup`, `begin`), so it misparses the non-standard form and
+/// `successfullyParsed` remains false → rule 6.2.11.4.1:1 fails.
+///
+/// Fix: decrypt the binary eexec section, replace the non-standard pattern
+/// with the standard one, re-encrypt, update `Length2`, and store as
+/// uncompressed plain content (filter removed).
+///
+/// Returns the number of font streams patched.
+pub fn fix_type1_nonstandard_charstrings(doc: &mut Document) -> usize {
+    // Collect (stream_id, l1, l2, l2_is_ref) for FontFile streams.
+    // l2_is_ref: the object ID of the /Length2 integer object, if it was a reference.
+    #[derive(Debug)]
+    struct Target {
+        stream_id: ObjectId,
+        l1: usize,
+        l2: usize,
+        l2_ref: Option<ObjectId>, // object to update when l2 changes
+    }
+
+    let targets: Vec<Target> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let Object::Stream(s) = obj else {
+                return None;
+            };
+            // Must have Length1 AND Length2 → Type1 font stream.
+            if s.dict.get(b"Length1").is_err() || s.dict.get(b"Length2").is_err() {
+                return None;
+            }
+            // Must NOT have /Subtype (FontFile3) — we want classic FontFile.
+            if s.dict.get(b"Subtype").is_ok() {
+                return None;
+            }
+            Some((*id, s.clone()))
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .filter_map(|(id, s)| {
+            let resolve_int = |obj: &Object| -> Option<(usize, Option<ObjectId>)> {
+                match obj {
+                    Object::Integer(n) => Some((*n as usize, None)),
+                    Object::Reference(r) => {
+                        if let Some(Object::Integer(n)) = doc.objects.get(r) {
+                            Some((*n as usize, Some(*r)))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            };
+            let l1_obj = s.dict.get(b"Length1").ok()?;
+            let l2_obj = s.dict.get(b"Length2").ok()?;
+            let (l1, _) = resolve_int(l1_obj)?;
+            let (l2, l2_ref) = resolve_int(l2_obj)?;
+            Some(Target {
+                stream_id: id,
+                l1,
+                l2,
+                l2_ref,
+            })
+        })
+        .collect();
+
+    let mut fixed = 0usize;
+
+    for t in targets {
+        // Decompress to get raw font bytes.
+        let content = {
+            let Some(Object::Stream(s)) = doc.objects.get(&t.stream_id) else {
+                continue;
+            };
+            let mut s2 = s.clone();
+            let _ = s2.decompress();
+            s2.content
+        };
+
+        if content.len() < t.l1 + 5 || t.l1 + t.l2 > content.len() {
+            continue;
+        }
+
+        let binary = &content[t.l1..t.l1 + t.l2];
+
+        // Decrypt the binary section.
+        let dec = type1_binary_eexec_decrypt(binary);
+        if dec.len() < 5 {
+            continue;
+        }
+        let real_data = &dec[4..]; // skip 4 random seed bytes
+
+        // Search for the non-standard pattern:
+        // "/CharStrings " + digits + " dict def" + whitespace + "Private begin CharStrings begin"
+        // (and optionally trailing whitespace/newline before the glyph definitions)
+        let Some((match_start, match_len, count_str)) = find_nonstandard_charstrings(real_data)
+        else {
+            continue;
+        };
+
+        // Build the replacement bytes: "/CharStrings N dict dup begin\n"
+        let mut replacement = Vec::new();
+        replacement.extend_from_slice(b"/CharStrings ");
+        replacement.extend_from_slice(count_str.as_bytes());
+        replacement.extend_from_slice(b" dict dup begin\n");
+
+        // Patch the real_data.
+        let mut new_real: Vec<u8> = Vec::with_capacity(real_data.len());
+        new_real.extend_from_slice(&real_data[..match_start]);
+        new_real.extend_from_slice(&replacement);
+        new_real.extend_from_slice(&real_data[match_start + match_len..]);
+
+        // Re-encrypt: seed_first=0xAA gives first_encrypted = 0xAA^0xD9 = 0x73 ('s').
+        let new_binary = type1_binary_eexec_encrypt(&new_real, 0xAA);
+        let new_l2 = new_binary.len();
+
+        // Rebuild the full decompressed stream.
+        let mut new_content: Vec<u8> =
+            Vec::with_capacity(t.l1 + new_l2 + (content.len() - t.l1 - t.l2));
+        new_content.extend_from_slice(&content[..t.l1]);
+        new_content.extend_from_slice(&new_binary);
+        new_content.extend_from_slice(&content[t.l1 + t.l2..]);
+
+        // Update /Length2 reference object (or inline value).
+        if let Some(ref_id) = t.l2_ref {
+            if let Some(obj) = doc.objects.get_mut(&ref_id) {
+                *obj = Object::Integer(new_l2 as i64);
+            }
+        } else {
+            // Inline Length2: patch directly in stream dict.
+            if let Some(Object::Stream(s)) = doc.objects.get_mut(&t.stream_id) {
+                s.dict.set(b"Length2", Object::Integer(new_l2 as i64));
+            }
+        }
+
+        // Store as plain (uncompressed) content — removes Filter/DecodeParms/Length.
+        if let Some(Object::Stream(stream)) = doc.objects.get_mut(&t.stream_id) {
+            stream.set_plain_content(new_content);
+        }
+        fixed += 1;
+    }
+
+    fixed
+}
+
+/// Search for the non-standard CharStrings header pattern in decrypted Type1 eexec data.
+///
+/// Matches: `/CharStrings N dict def` + whitespace + `Private begin CharStrings begin` + optional whitespace.
+/// Returns `(start_offset, match_length, count_string)` or `None` if not found.
+fn find_nonstandard_charstrings(data: &[u8]) -> Option<(usize, usize, String)> {
+    // Find "/CharStrings "
+    let prefix = b"/CharStrings ";
+    let mut i = 0;
+    while i + prefix.len() < data.len() {
+        if &data[i..i + prefix.len()] != prefix {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut j = i + prefix.len();
+        // Read digits (the count N).
+        let digit_start = j;
+        while j < data.len() && data[j].is_ascii_digit() {
+            j += 1;
+        }
+        if j == digit_start {
+            i += 1;
+            continue;
+        }
+        let count_str = std::str::from_utf8(&data[digit_start..j]).ok()?.to_string();
+        // Expect " dict def"
+        if data.get(j..j + 9) != Some(b" dict def") {
+            i += 1;
+            continue;
+        }
+        j += 9;
+        // Skip whitespace (newline, spaces).
+        while j < data.len() && matches!(data[j], b' ' | b'\t' | b'\n' | b'\r') {
+            j += 1;
+        }
+        // Expect "Private begin CharStrings begin"
+        let suffix = b"Private begin CharStrings begin";
+        if data.get(j..j + suffix.len()) != Some(suffix) {
+            i += 1;
+            continue;
+        }
+        j += suffix.len();
+        // Skip trailing whitespace/newline after "begin".
+        while j < data.len() && matches!(data[j], b' ' | b'\t' | b'\n' | b'\r') {
+            j += 1;
+        }
+        return Some((start, j - start, count_str));
+    }
+    None
+}
+
+/// Extract the base font name by stripping a 6-character random subset prefix
+/// (e.g. `YWFNOL+CMSY8` → `CMSY8`) and an optional `~XX` hex suffix
+/// (e.g. `TXCMVS+CMSY8~32` → `CMSY8`).
+fn type1_base_font_name(name: &str) -> String {
+    // Strip 6-char prefix + '+' if present
+    let after_prefix = if name.len() > 7 && name.as_bytes().get(6) == Some(&b'+') {
+        &name[7..]
+    } else {
+        name
+    };
+    // Strip ~XX suffix (tilde + 2 hex chars)
+    if after_prefix.len() >= 3 {
+        let bytes = after_prefix.as_bytes();
+        let last3 = &bytes[bytes.len() - 3..];
+        if last3[0] == b'~' && last3[1].is_ascii_hexdigit() && last3[2].is_ascii_hexdigit() {
+            return after_prefix[..after_prefix.len() - 3].to_string();
+        }
+    }
+    after_prefix.to_string()
 }
 
 /// Parse PFB segments and return (raw_ps_data, length1, length2, length3).
@@ -5421,6 +5854,84 @@ fn lookup_unicode_cmap_31(face: &ttf_parser::Face, unicode: u32) -> Option<ttf_p
         }
     }
     None
+}
+
+/// Load CMap cidrange data for any named predefined CMap, bypassing the
+/// unicode-only restriction in `load_predefined_unicode_cmap_ranges`.
+/// Used by EUC-style CMap handling to get the code→CID mapping.
+fn load_all_cmap_cidranges(cmap_name: &str) -> Option<Vec<(u16, u16, u16)>> {
+    let data = find_predefined_cmap_file(cmap_name)?;
+    parse_predefined_cmap_cid_ranges(&data)
+}
+
+/// Returns true for EUC-encoded CMaps (GB-EUC-H/V, KSC-EUC-H/V) that have a
+/// mixed 1-byte/2-byte codespace: bytes 0x00–0x80 are single-byte codes and
+/// bytes 0xA1–0xFE can start 2-byte sequences.
+fn is_euc_style_cmap(cmap_name: &str) -> bool {
+    let n = cmap_name.to_ascii_lowercase();
+    n.contains("euc")
+}
+
+/// Fix a CID text string in-place for EUC-style CMaps (e.g. GB-EUC-H).
+///
+/// Unlike `fix_cid_text_string` which always processes bytes as 2-byte pairs,
+/// this function respects the EUC codespace rules:
+///   - Byte b ≤ 0x80: single-byte character code → look up CID in `cmap_ranges`
+///   - Byte b ≥ 0xA1 followed by byte b2 ≥ 0xA1: 2-byte character code
+///   - All other bytes (lone high bytes, undefined ranges): removed
+///
+/// Invalid codes (CID not in `valid_cids`) are removed without replacement so
+/// that control-character table-rule sequences that map to .notdef do not
+/// appear in the output stream.
+fn fix_cid_text_string_euc(
+    bytes: &mut Vec<u8>,
+    cmap_ranges: &[(u16, u16, u16)],
+    valid_cids: &std::collections::HashSet<u16>,
+) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    let mut result = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        if b <= 0x80 {
+            // Single-byte EUC code in codespace [0x00, 0x80].
+            let cid = cmap_code_to_cid(cmap_ranges, b as u16);
+            let is_valid = cid.is_some_and(|c| valid_cids.contains(&c));
+            if is_valid {
+                result.push(b);
+            } else {
+                changed = true; // omit invalid 1-byte code
+            }
+            i += 1;
+        } else if b >= 0xA1 && i + 1 < bytes.len() && bytes[i + 1] >= 0xA1 {
+            // Valid 2-byte EUC pair.
+            let b2 = bytes[i + 1];
+            let code = (b as u16) * 256 + b2 as u16;
+            let cid = cmap_code_to_cid(cmap_ranges, code);
+            let is_valid = cid.is_some_and(|c| valid_cids.contains(&c));
+            if is_valid {
+                result.push(b);
+                result.push(b2);
+            } else {
+                changed = true; // omit invalid 2-byte code
+            }
+            i += 2;
+        } else {
+            // Lone high byte (0x81–0xA0 or lone 0xA1+ without valid pair): discard.
+            changed = true;
+            i += 1;
+        }
+    }
+
+    if changed {
+        *bytes = result;
+    }
+    changed
 }
 
 /// Look up a raw byte code in the (1,0) Macintosh Roman cmap subtable.
@@ -9703,6 +10214,9 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
     struct CidTextRepair {
         valid_values: HashSet<u16>,
         replacement_value: Option<u16>,
+        /// For EUC-style CMaps (GB-EUC-H etc.), the CMap cidranges used to
+        /// determine byte-code boundaries and code→CID mappings.
+        euc_cmap_ranges: Option<Vec<(u16, u16, u16)>>,
     }
 
     #[derive(Clone, Copy)]
@@ -9855,6 +10369,11 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                 .as_deref()
                 .filter(|name| !is_identity_type0_cmap(name))
                 .and_then(load_predefined_unicode_cmap_ranges);
+            let euc_cmap_ranges = cmap_name
+                .as_deref()
+                .filter(|name| !is_identity_type0_cmap(name))
+                .filter(|name| is_euc_style_cmap(name))
+                .and_then(load_all_cmap_cidranges);
 
             // Get descendant CIDFont (may be inline array or reference).
             let desc_arr = match font_dict.get(b"DescendantFonts").ok() {
@@ -10097,6 +10616,7 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                 CidTextRepair {
                     valid_values: valid_codes,
                     replacement_value,
+                    euc_cmap_ranges: None,
                 }
             } else {
                 CidTextRepair {
@@ -10106,6 +10626,7 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                     } else {
                         Some(space_cid)
                     },
+                    euc_cmap_ranges,
                 }
             };
             notdef_fonts.insert(res_name.clone(), repair);
@@ -10203,11 +10724,17 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                                 if let Some(Object::String(bytes, fmt)) =
                                     new_op.operands.get_mut(str_idx)
                                 {
-                                    let mut changed_here = fix_cid_text_string(
-                                        bytes,
-                                        &repair.valid_values,
-                                        repair.replacement_value,
-                                    );
+                                    let mut changed_here = if let Some(euc) =
+                                        repair.euc_cmap_ranges.as_deref()
+                                    {
+                                        fix_cid_text_string_euc(bytes, euc, &repair.valid_values)
+                                    } else {
+                                        fix_cid_text_string(
+                                            bytes,
+                                            &repair.valid_values,
+                                            repair.replacement_value,
+                                        )
+                                    };
                                     if *fmt != lopdf::StringFormat::Hexadecimal {
                                         *fmt = lopdf::StringFormat::Hexadecimal;
                                         changed_here = true;
@@ -10241,11 +10768,21 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                                 if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                                     for item in arr.iter_mut() {
                                         if let Object::String(bytes, fmt) = item {
-                                            let mut changed_here = fix_cid_text_string(
-                                                bytes,
-                                                &repair.valid_values,
-                                                repair.replacement_value,
-                                            );
+                                            let mut changed_here = if let Some(euc) =
+                                                repair.euc_cmap_ranges.as_deref()
+                                            {
+                                                fix_cid_text_string_euc(
+                                                    bytes,
+                                                    euc,
+                                                    &repair.valid_values,
+                                                )
+                                            } else {
+                                                fix_cid_text_string(
+                                                    bytes,
+                                                    &repair.valid_values,
+                                                    repair.replacement_value,
+                                                )
+                                            };
                                             if *fmt != lopdf::StringFormat::Hexadecimal {
                                                 *fmt = lopdf::StringFormat::Hexadecimal;
                                                 changed_here = true;
@@ -10361,11 +10898,16 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                             if let Some(Object::String(bytes, fmt)) =
                                 new_op.operands.get_mut(str_idx)
                             {
-                                let mut changed_here = fix_cid_text_string(
-                                    bytes,
-                                    &repair.valid_values,
-                                    repair.replacement_value,
-                                );
+                                let mut changed_here =
+                                    if let Some(euc) = repair.euc_cmap_ranges.as_deref() {
+                                        fix_cid_text_string_euc(bytes, euc, &repair.valid_values)
+                                    } else {
+                                        fix_cid_text_string(
+                                            bytes,
+                                            &repair.valid_values,
+                                            repair.replacement_value,
+                                        )
+                                    };
                                 if *fmt != lopdf::StringFormat::Hexadecimal {
                                     *fmt = lopdf::StringFormat::Hexadecimal;
                                     changed_here = true;
@@ -10399,11 +10941,20 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                             if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                                 for item in arr.iter_mut() {
                                     if let Object::String(bytes, fmt) = item {
-                                        let mut changed_here = fix_cid_text_string(
-                                            bytes,
-                                            &repair.valid_values,
-                                            repair.replacement_value,
-                                        );
+                                        let mut changed_here =
+                                            if let Some(euc) = repair.euc_cmap_ranges.as_deref() {
+                                                fix_cid_text_string_euc(
+                                                    bytes,
+                                                    euc,
+                                                    &repair.valid_values,
+                                                )
+                                            } else {
+                                                fix_cid_text_string(
+                                                    bytes,
+                                                    &repair.valid_values,
+                                                    repair.replacement_value,
+                                                )
+                                            };
                                         if *fmt != lopdf::StringFormat::Hexadecimal {
                                             *fmt = lopdf::StringFormat::Hexadecimal;
                                             changed_here = true;
