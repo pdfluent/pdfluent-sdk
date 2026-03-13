@@ -45,6 +45,22 @@ fn main() {
     let pfb_fixed = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     eprintln!("PFB font streams stripped: fixed={pfb_fixed}");
 
+    // Fix stub Type1 fonts (only .notdef, empty CharSet) by redirecting to matching
+    // full-subset font program so veraPDF can parse them (6.2.11.4.1:1).
+    let stub_fixed = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
+    eprintln!("Type1 stub font files: fixed={stub_fixed}");
+
+    // Fix invalid CFF BCD real number encodings that cause veraPDF CFF parser to throw
+    // NumberFormatException → successfullyParsed=false → 6.2.11.4.1:1 fails.
+    let bcd_fixed = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
+    eprintln!("CFF invalid BCD: fixed={bcd_fixed}");
+
+    // Fix non-standard /CharStrings dict syntax in Type1 eexec sections:
+    // "/CharStrings N dict def\n  Private begin CharStrings begin\n"
+    // → "/CharStrings N dict dup begin\n"  (6.2.11.4.1:1)
+    let charstrings_fixed = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
+    eprintln!("Type1 non-standard CharStrings: fixed={charstrings_fixed}");
+
     // Fix Type1 binary eexec sections whose first encrypted byte is a PDF
     // whitespace character. veraPDF skips leading spaces before the binary
     // section, causing it to start decryption from the wrong offset.
