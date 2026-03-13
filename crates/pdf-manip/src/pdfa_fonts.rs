@@ -5549,13 +5549,22 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 &enc_info,
             );
         } else if has_ff1 && (subtype == "Type1" || subtype == "MMType1") {
-            // Skip: Type1 FontFile (PFA/PFB) charstring parsing is unreliable.
-            // Our charstring parser reads wrong widths for some fonts (e.g. Melior
-            // uses subroutines / non-standard charstring encoding that our parser
-            // misidentifies), causing false width corrections that veraPDF then
-            // rejects. Since PDF dicts for already-embedded Type1 fonts are
-            // typically correct, skipping this path avoids regressions.
-            continue;
+            // Only correct widths for subset fonts (ABCDEF+FontName pattern).
+            // Full fonts like Melior have correct dict widths; our charstring parser
+            // misreads some glyphs (subroutines / non-standard encoding), causing
+            // false corrections that veraPDF then rejects.
+            // Subset fonts (e.g. MINIPA+Times.New.Roman) may have reindexed
+            // charstrings whose widths differ from the original dict.
+            let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
+            if !is_subset {
+                continue;
+            }
+            corrections = compute_type1_fontfile_width_corrections(
+                &font_data,
+                first_char,
+                &existing_widths,
+                &enc_info,
+            );
         } else {
             continue;
         }
@@ -6535,6 +6544,53 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
         ".notdef" => None,
         _ => None,
     }
+}
+
+/// Compute width corrections for a Type1 font with FontFile (PFA/PFB) program.
+///
+/// Returns (index_in_widths_array, correct_width) for mismatched entries.
+/// Only reliable for subset fonts where charstrings may differ from the original dict.
+fn compute_type1_fontfile_width_corrections(
+    font_data: &[u8],
+    first_char: u32,
+    existing_widths: &[Object],
+    enc_info: &(String, std::collections::HashMap<u32, String>),
+) -> Vec<(usize, i64)> {
+    let (enc_name, differences) = enc_info;
+    let Some(parsed) = parse_type1_program(font_data) else {
+        return Vec::new();
+    };
+    let scale = parsed.font_matrix_sx * 1000.0;
+    let mut corrections = Vec::new();
+    for (i, obj) in existing_widths.iter().enumerate() {
+        let pdf_w = match obj {
+            Object::Integer(w) => *w as f64,
+            Object::Real(r) => *r as f64,
+            _ => continue,
+        };
+        let code = first_char + i as u32;
+        let glyph_name = if let Some(name) = differences.get(&code) {
+            name.as_str().to_string()
+        } else if let Some(name) = parsed.encoding.get(&(code as u8)) {
+            name.clone()
+        } else {
+            let ch = encoding_to_char(code, enc_name);
+            unicode_to_agl_name(ch)
+                .or_else(|| unicode_to_glyph_name(ch))
+                .unwrap_or_default()
+        };
+        if glyph_name.is_empty() || glyph_name == ".notdef" {
+            continue;
+        }
+        let Some(&cs_width) = parsed.charstring_widths.get(glyph_name.as_str()) else {
+            continue;
+        };
+        let font_w = (cs_width as f64 * scale).round();
+        if (pdf_w - font_w).abs() >= 1.0 {
+            corrections.push((i, font_w as i64));
+        }
+    }
+    corrections
 }
 
 /// Compute a single glyph width from a Type 1 FontFile program.
