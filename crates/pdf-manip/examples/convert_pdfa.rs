@@ -26,6 +26,11 @@ fn main() {
         Err(e) => eprintln!("Cleanup error: {e}"),
     }
 
+    // Promote inline font dicts (inside Resources /Font) to standalone objects
+    // so that embed_fonts can find and embed them (6.2.11.4.1:1).
+    let inline_promoted = pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc);
+    eprintln!("Inline font dicts promoted: {inline_promoted}");
+
     match pdf_manip::pdfa_fonts::embed_fonts(&mut doc) {
         Ok(r) => {
             eprintln!(
@@ -49,6 +54,12 @@ fn main() {
     // full-subset font program so veraPDF can parse them (6.2.11.4.1:1).
     let stub_fixed = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     eprintln!("Type1 stub font files: fixed={stub_fixed}");
+
+    // Fix TrueType font programs mislabeled as CIDFontType0C (CFF). veraPDF CFF parser
+    // fails immediately on TrueType data → containsFontFile=false → 6.2.11.4.1:1 fails.
+    // Fix: rename FontFile3 → FontFile2, remove Subtype from stream, update CIDFont Subtype.
+    let tt_mislabeled = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    eprintln!("Mislabeled TrueType-as-CFF: fixed={tt_mislabeled}");
 
     // Fix invalid CFF BCD real number encodings that cause veraPDF CFF parser to throw
     // NumberFormatException → successfullyParsed=false → 6.2.11.4.1:1 fails.
