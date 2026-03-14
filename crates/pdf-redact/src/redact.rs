@@ -160,12 +160,22 @@ fn redact_page_content(
     let mut total_removed = 0;
 
     for content_id in content_ids {
+        // Decompress the stream before decoding — compressed content (FlateDecode)
+        // cannot be parsed directly by Content::decode.
         let content_bytes = match doc.get_object(content_id) {
-            Ok(Object::Stream(ref s)) => s.content.clone(),
+            Ok(Object::Stream(ref s)) => {
+                let mut stream = s.clone();
+                let _ = stream.decompress();
+                stream.content
+            }
             _ => continue,
         };
 
-        let content = match Content::decode(&content_bytes) {
+        // Strip inline images (BI…EI) before parsing — lopdf's content
+        // decoder cannot handle their binary payload.
+        let (parseable, _) = pdf_manip::content_editor::strip_inline_images(&content_bytes);
+
+        let content = match Content::decode(&parseable) {
             Ok(c) => c,
             Err(_) => continue,
         };
