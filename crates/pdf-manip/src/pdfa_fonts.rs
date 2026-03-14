@@ -6747,6 +6747,12 @@ fn compute_type1_fontfile_width_corrections(
         return Vec::new();
     };
     let scale = parsed.font_matrix_sx * 1000.0;
+    // Debug: show encoding for key codes
+    for code in [39u8, 170, 177, 186] {
+        let from_diff = differences.get(&(code as u32)).cloned();
+        let from_enc = parsed.encoding.get(&code).cloned();
+        eprintln!("[FF1_ENC] code={code} enc_name={enc_name:?} from_diff={from_diff:?} from_parsed_enc={from_enc:?}");
+    }
     let mut corrections = Vec::new();
     for (i, obj) in existing_widths.iter().enumerate() {
         let pdf_w = match obj {
