@@ -7148,8 +7148,14 @@ fn parse_type1_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::
 
         // Decrypt and scan for seac (12 6).
         let has_seac = charstring_contains_seac(subr_data, len_iv);
-        if subr_idx < 10 {
-            eprintln!("[SUBR_DEBUG] subr {subr_idx} len={cs_len} has_seac={has_seac}");
+        if subr_idx < 10 || subr_idx == 165 {
+            // Decode and dump for diagnostic.
+            let mut r2: u16 = 4330; let c1b: u16 = 52845; let c2b: u16 = 22719;
+            let mut dec2 = Vec::with_capacity(cs_len);
+            for &cipher in subr_data { let pl = cipher ^ (r2 >> 8) as u8; r2 = (cipher as u16).wrapping_add(r2).wrapping_mul(c1b).wrapping_add(c2b); dec2.push(pl); }
+            let content = if dec2.len() > len_iv { &dec2[len_iv..] } else { &[] as &[u8] };
+            let hex: Vec<String> = content.iter().map(|b| format!("{b:02x}")).collect();
+            eprintln!("[SUBR_DEBUG] subr {subr_idx} len={cs_len} has_seac={has_seac}: {}", hex.join(" "));
         }
         if has_seac {
             seac_subrs.insert(subr_idx);
