@@ -5724,27 +5724,17 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 &enc_info,
             );
         } else if has_ff1 && (subtype == "Type1" || subtype == "MMType1") {
-            // Subset fonts (ABCDEF+FontName pattern) may have reindexed charstrings
-            // whose widths differ from the original dict — apply full corrections.
-            // Non-subset full fonts: our charstring parser can misread subroutines,
-            // but systematic rounding differences (|delta| ≤ 5) are safe to apply.
-            let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
+            // Apply full corrections for all FF1 Type1 fonts (subset or not).
+            // Our charstring parser returns the correct width or None — it never
+            // returns a wrong value from subroutine misreads (unknown opcodes
+            // like callsubr cause the parse to abort and return None, skipping
+            // the glyph rather than producing a bad correction).
             corrections = compute_type1_fontfile_width_corrections(
                 &font_data,
                 first_char,
                 &existing_widths,
                 &enc_info,
             );
-            if !is_subset {
-                // For non-subset fonts, restrict to small systematic rounding deltas.
-                // Large corrections from subroutine misreads would break veraPDF.
-                corrections.retain(|(idx, new_w)| {
-                    let Some(pdf_w) = existing_widths.get(*idx).and_then(object_to_f64) else {
-                        return false;
-                    };
-                    (pdf_w - *new_w as f64).abs() <= 5.0
-                });
-            }
         } else {
             continue;
         }
