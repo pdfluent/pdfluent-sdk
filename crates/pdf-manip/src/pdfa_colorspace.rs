@@ -225,6 +225,14 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     fix_device_colorspaces_in_deep_structures(doc, cmyk_cs_id, rgb_cs_id);
 
     let separations_unified = normalize_separation_colorspaces(doc);
+
+    // Replace DeviceCMYK/DeviceRGB in Separation alternate colorspaces.
+    // veraPDF 6.2.4.3:3 fails when DeviceCMYK appears as a Separation alternate
+    // and the output intent is not CMYK. Replacing with ICCBased also helps
+    // 6.2.4.4:2 by ensuring the alternate field compares equal across traversal
+    // paths (same object reference, not just same name).
+    fix_separation_device_alternates(doc, cmyk_cs_id, rgb_cs_id);
+
     let overprint_mode_fixed = fix_overprint_mode(doc);
     let icc_n_fixed = fix_iccbased_n_value(doc);
 
@@ -1322,6 +1330,37 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
     }
 }
 
+/// Replace DeviceCMYK/DeviceRGB alternate colorspaces inside Separation arrays
+/// with ICCBased references. Fixes 6.2.4.3:3 (DeviceCMYK used without CMYK
+/// output intent) for Separation alternates. Also helps 6.2.4.4:2 by ensuring
+/// all occurrences of a Separation with the same name have an identical alternate
+/// object reference rather than a bare device colorspace name.
+fn fix_separation_device_alternates(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_id: ObjectId) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        if let Some(Object::Array(arr)) = doc.objects.get_mut(&id) {
+            if arr.len() >= 4 {
+                if let Object::Name(cs_type) = &arr[0] {
+                    if cs_type == b"Separation" {
+                        let repl = match &arr[2] {
+                            Object::Name(n) if n == b"DeviceCMYK" => {
+                                Some(Object::Reference(cmyk_cs_id))
+                            }
+                            Object::Name(n) if n == b"DeviceRGB" => {
+                                Some(Object::Reference(rgb_cs_id))
+                            }
+                            _ => None,
+                        };
+                        if let Some(new_alt) = repl {
+                            arr[2] = new_alt;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Normalize Separation colorspaces so all with the same name use identical
 /// alternateSpace and tintTransform (PDF/A rule 6.2.4.4:2).
 fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
@@ -1352,27 +1391,110 @@ fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
         collect_separations_recursive(doc, id, obj, &mut by_name, &mut visited_refs);
     }
 
-    // Phase 2: For each name with conflicting definitions, unify to canonical (first found).
-    let mut fixes: Vec<(ObjectId, Vec<u8>, Object, Object)> = Vec::new();
+    // Phase 2: For each name with multiple Separation array objects, pick a
+    // canonical object and redirect all other references to it. veraPDF checks
+    // 6.2.4.4:2 consistency by object identity: two Separation colorspaces with
+    // the same name must be THE SAME PDF object (same object number), not just
+    // equal-content objects. So we must make every /ColorSpace key that pointed
+    // to a non-canonical Separation array point to the canonical one instead.
+    //
+    // Additionally, unify the tintTransform within the canonical object: if the
+    // canonical has a Reference tintTransform, keep it; if it's inline, promote
+    // it to a standalone object so it can be shared via reference too.
+
+    // Build: for each spot-color name → canonical object ID, list of non-canonical IDs.
+    let mut redirects: Vec<(ObjectId, ObjectId)> = Vec::new(); // (old_id, new_id) for ref redirect
+    let mut content_fixes: Vec<(ObjectId, Vec<u8>, Object, Object)> = Vec::new();
+
     for (name, entries) in &by_name {
         if entries.len() <= 1 {
             continue;
         }
-        let (_, ref canon_alt, ref canon_tint) = entries[0];
-        for (id, alt, tint) in &entries[1..] {
-            if *alt != *canon_alt || *tint != *canon_tint {
-                fixes.push((*id, name.clone(), canon_alt.clone(), canon_tint.clone()));
+
+        // Deduplicate by object ID: the same Separation object may be recorded
+        // multiple times when encountered both directly and via reference following.
+        let mut seen_ids: HashSet<ObjectId> = HashSet::new();
+        let mut unique_entries: Vec<&(ObjectId, Object, Object)> = entries
+            .iter()
+            .filter(|(id, _, _)| seen_ids.insert(*id))
+            .collect();
+
+        if unique_entries.len() <= 1 {
+            continue;
+        }
+
+        // Sort by object ID (lowest first) for deterministic canonical selection.
+        // Using the lowest ID as canonical guarantees that the redirects always
+        // point from higher-numbered objects to a lower-numbered one. This avoids
+        // the case where the "canonical" is already the object that all references
+        // point to, making the redirect a no-op.
+        unique_entries.sort_by_key(|(id, _, _)| *id);
+
+        let (canon_id, canon_alt, canon_tint) = unique_entries[0];
+
+        // Promote the canonical tintTransform to a standalone object if it isn't
+        // already a reference. This gives us a stable ObjectId to share.
+        let canonical_tint_ref: Object = match canon_tint {
+            Object::Reference(_) => canon_tint.clone(),
+            other => {
+                let new_id = doc.add_object(other.clone());
+                Object::Reference(new_id)
+            }
+        };
+
+        // Update ALL Separation objects for this name (canonical + non-canonical)
+        // to have the same alternateSpace and tintTransform. veraPDF 6.2.4.4:2
+        // scans ALL objects in the file, including unreferenced ones, so we must
+        // make even non-canonical objects content-identical to the canonical.
+        for (obj_id, _, _) in &unique_entries {
+            content_fixes.push((
+                *obj_id,
+                name.clone(),
+                canon_alt.clone(),
+                canonical_tint_ref.clone(),
+            ));
+        }
+
+        // All non-canonical objects: redirect document references to the canon.
+        for (non_canon_id, _, _) in &unique_entries[1..] {
+            redirects.push((*non_canon_id, *canon_id));
+        }
+    }
+
+    // Phase 3: Update canonical Separation array content.
+    let mut seen: HashSet<(ObjectId, Vec<u8>)> = HashSet::new();
+    let mut count = 0usize;
+    for (id, name, alt, tint) in content_fixes {
+        if seen.insert((id, name.clone())) {
+            if let Some(obj) = doc.objects.get_mut(&id) {
+                fix_separation_recursive(obj, &name, &alt, &tint);
+                count += 1;
             }
         }
     }
 
-    // Phase 3: Apply fixes.
-    let count = fixes.len();
-    for (id, name, alt, tint) in fixes {
-        if let Some(obj) = doc.objects.get_mut(&id) {
-            fix_separation_recursive(obj, &name, &alt, &tint);
+    // Phase 4: Redirect all document references from non-canonical → canonical.
+    // Scan every object and replace Reference(old_id) with Reference(new_id).
+    if !redirects.is_empty() {
+        let all_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+        for obj_id in all_ids {
+            if let Some(obj) = doc.objects.get_mut(&obj_id) {
+                for (old_id, new_id) in &redirects {
+                    redirect_references_recursive(obj, *old_id, *new_id);
+                }
+            }
         }
+        count += redirects.len();
     }
+
+    // Phase 5: Delete non-canonical Separation objects from the document.
+    // veraPDF scans ALL objects (including unreferenced ones) for 6.2.4.4:2
+    // consistency. After redirecting references, non-canonical Separation objects
+    // are unreferenced, but veraPDF still finds them. Remove them entirely.
+    for (old_id, _new_id) in &redirects {
+        doc.objects.remove(old_id);
+    }
+
     count
 }
 
@@ -1417,6 +1539,33 @@ fn collect_separations_recursive(
                 if let Ok(resolved) = doc.get_object(*ref_id) {
                     collect_separations_recursive(doc, *ref_id, resolved, map, visited_refs);
                 }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recursively replace all Reference(old_id) with Reference(new_id) in an object tree.
+fn redirect_references_recursive(obj: &mut Object, old_id: ObjectId, new_id: ObjectId) {
+    match obj {
+        Object::Reference(r) => {
+            if *r == old_id {
+                *r = new_id;
+            }
+        }
+        Object::Array(arr) => {
+            for item in arr.iter_mut() {
+                redirect_references_recursive(item, old_id, new_id);
+            }
+        }
+        Object::Dictionary(dict) => {
+            for (_, val) in dict.iter_mut() {
+                redirect_references_recursive(val, old_id, new_id);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, val) in stream.dict.iter_mut() {
+                redirect_references_recursive(val, old_id, new_id);
             }
         }
         _ => {}
