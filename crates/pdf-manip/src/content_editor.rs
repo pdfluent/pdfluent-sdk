@@ -539,7 +539,7 @@ struct SavedState {
 }
 
 /// Get content stream object IDs for a page.
-pub(crate) fn get_content_stream_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
+pub fn get_content_stream_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
     let page_obj = match doc.get_object(page_id) {
         Ok(obj) => obj,
         Err(_) => return Vec::new(),
@@ -654,6 +654,105 @@ fn write_inline_value(buf: &mut Vec<u8>, obj: &Object) {
         Object::Null => buf.extend_from_slice(b"null"),
         _ => buf.extend_from_slice(b"null"),
     }
+}
+
+/// Strip `BI … EI` inline-image blocks from a content stream.
+///
+/// `lopdf::content::Content::decode` cannot handle the binary payload that
+/// follows the `ID` keyword inside an inline image block.  This function
+/// removes each block and returns:
+///   - the cleaned bytes (each block replaced by a single `\n`), and
+///   - the verbatim raw bytes for every extracted block (in document order).
+///
+/// Callers that need to preserve inline images should prepend the raw blobs
+/// back to the re-encoded content after editing.
+pub fn strip_inline_images(content: &[u8]) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let mut stripped = Vec::with_capacity(content.len());
+    let mut images: Vec<Vec<u8>> = Vec::new();
+    let mut i = 0;
+
+    while i < content.len() {
+        // Detect the "BI" keyword at a word boundary.
+        if i + 2 <= content.len()
+            && content[i] == b'B'
+            && content[i + 1] == b'I'
+            && (i == 0 || is_ws_or_delim(content[i - 1]))
+            && (i + 2 >= content.len() || is_ws_or_delim(content[i + 2]))
+        {
+            if let Some(ei_end) = find_ei_end(&content[i..]) {
+                images.push(content[i..i + ei_end].to_vec());
+                stripped.push(b'\n');
+                i += ei_end;
+                continue;
+            }
+        }
+        stripped.push(content[i]);
+        i += 1;
+    }
+
+    (stripped, images)
+}
+
+/// Find the offset just past the `EI` keyword that closes the `BI` block
+/// starting at `content[0]`.  Returns `None` if the block is malformed.
+fn find_ei_end(content: &[u8]) -> Option<usize> {
+    // Skip to the "ID" keyword (separates the dict from the binary data).
+    let mut j = 2; // skip "BI"
+    while j + 2 <= content.len() {
+        if content[j] == b'I'
+            && content[j + 1] == b'D'
+            && (j == 0 || is_ws_or_delim(content[j - 1]))
+            && (j + 2 >= content.len()
+                || content[j + 2] == b'\r'
+                || content[j + 2] == b'\n'
+                || is_ws_or_delim(content[j + 2]))
+        {
+            // Skip the single CRLF / LF that follows "ID".
+            let mut k = j + 2;
+            if k < content.len() && content[k] == b'\r' {
+                k += 1;
+            }
+            if k < content.len() && content[k] == b'\n' {
+                k += 1;
+            }
+            // Search for "EI" preceded by whitespace.
+            while k + 2 <= content.len() {
+                if content[k] == b'E'
+                    && content[k + 1] == b'I'
+                    && k > 0
+                    && is_ws_or_delim(content[k - 1])
+                    && (k + 2 >= content.len() || is_ws_or_delim(content[k + 2]))
+                {
+                    return Some(k + 2);
+                }
+                k += 1;
+            }
+            return None;
+        }
+        j += 1;
+    }
+    None
+}
+
+fn is_ws_or_delim(b: u8) -> bool {
+    matches!(
+        b,
+        b' ' | b'\t'
+            | b'\n'
+            | b'\r'
+            | b'\x0C'
+            | b'\x00'
+            | b'('
+            | b')'
+            | b'<'
+            | b'>'
+            | b'['
+            | b']'
+            | b'{'
+            | b'}'
+            | b'/'
+            | b'%'
+    )
 }
 
 /// Compress data with flate/zlib.

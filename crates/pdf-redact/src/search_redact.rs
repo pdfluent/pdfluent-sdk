@@ -124,6 +124,9 @@ pub fn search_and_redact(
     // Find all matches across pages.
     let mut all_areas: Vec<RedactionArea> = Vec::new();
     let mut total_matches = 0;
+    // Per-page match bounding boxes used for position-based op removal fallback.
+    let mut page_bboxes: std::collections::HashMap<u32, Vec<[f64; 4]>> =
+        std::collections::HashMap::new();
 
     for &page_num in &page_range {
         let chars = match pdf_extract::extract_positioned_chars(doc, page_num) {
@@ -172,6 +175,9 @@ pub fn search_and_redact(
 
             let bbox = compute_bounding_rect(matched_chars);
 
+            // Store bbox for position-based content removal fallback.
+            page_bboxes.entry(page_num).or_default().push(bbox);
+
             let mut area = RedactionArea::new(page_num, bbox);
             area = area.with_color(
                 options.fill_color[0],
@@ -204,7 +210,11 @@ pub fn search_and_redact(
     // text operations from the content stream.
     let mut extra_ops_removed = 0;
     for &page_num in &page_range {
-        let removed = remove_text_ops_for_page(doc, page_num, pattern, options)?;
+        let bboxes: &[[f64; 4]] = page_bboxes
+            .get(&page_num)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let removed = remove_text_ops_for_page(doc, page_num, pattern, options, bboxes)?;
         extra_ops_removed += removed;
     }
 
@@ -268,6 +278,23 @@ fn build_matcher(pattern: &str, options: &RedactSearchOptions) -> Result<TextMat
 // Bounding rectangle computation
 // ---------------------------------------------------------------------------
 
+/// Returns true if a text run's position overlaps any of the given bounding
+/// rectangles (page-space coords).  Used as a positional fallback when font
+/// encoding makes text-string matching impossible.
+fn run_overlaps_any_bbox(run: &pdf_manip::text_run::TextRun, bboxes: &[[f64; 4]]) -> bool {
+    // Small tolerance to accommodate sub-pixel alignment differences.
+    const TOL: f64 = 4.0;
+    let run_x1 = run.x + run.width.max(1.0);
+    for &bbox in bboxes {
+        let x_overlap = run.x < bbox[2] + TOL && run_x1 > bbox[0] - TOL;
+        let y_overlap = run.y <= bbox[3] + TOL && run.y >= bbox[1] - TOL;
+        if x_overlap && y_overlap {
+            return true;
+        }
+    }
+    false
+}
+
 fn compute_bounding_rect(chars: &[pdf_extract::PositionedChar]) -> [f64; 4] {
     let mut x0 = f64::MAX;
     let mut y0 = f64::MAX;
@@ -293,26 +320,58 @@ fn compute_bounding_rect(chars: &[pdf_extract::PositionedChar]) -> [f64; 4] {
 ///
 /// Processes both the page's direct content stream and any Form XObjects
 /// referenced in the page's Resources.
+///
+/// `match_bboxes` contains bounding rectangles (in page space) of all matches
+/// found on this page by the `pdf_extract`-based search.  These are used as a
+/// fallback when decoded text is unreadable (e.g. glyph-indexed fonts without
+/// a ToUnicode CMap): in that case we fall back to spatial matching, removing
+/// every text-showing op whose position overlaps one of the match bboxes.
 fn remove_text_ops_for_page(
     doc: &mut Document,
     page_num: u32,
     pattern: &str,
     options: &RedactSearchOptions,
+    match_bboxes: &[[f64; 4]],
 ) -> Result<usize> {
-    let editor = match pdf_manip::content_editor::editor_for_page(doc, page_num) {
-        Ok(e) => e,
-        Err(_) => return Ok(0),
-    };
-
     let fonts = match pdf_manip::text_run::FontMap::from_page(doc, page_num) {
         Ok(f) => f,
         Err(_) => return Ok(0),
     };
 
-    let runs = pdf_manip::text_run::extract_text_runs(&editor, &fonts);
     let matcher = build_matcher(pattern, options)?;
 
-    // Collect op indices to remove (text-showing ops that match).
+    // Try normal ContentEditor path first.  Falls back to inline-image-aware
+    // path when the content stream contains BI…EI binary image data that
+    // lopdf's decoder cannot handle.
+    let removed = match pdf_manip::content_editor::editor_for_page(doc, page_num) {
+        Ok(editor) => {
+            remove_text_ops_via_editor(doc, page_num, editor, &matcher, &fonts, match_bboxes)?
+        }
+        Err(_) => {
+            remove_text_ops_with_inline_images(doc, page_num, &matcher, &fonts, match_bboxes)?
+        }
+    };
+
+    // Also process Form XObjects referenced in the page's Resources.
+    let removed = removed + remove_text_ops_from_xobjects(doc, page_num, &matcher, &fonts)?;
+
+    // Also process annotation appearance streams.
+    let removed = removed + remove_text_ops_from_annotations(doc, page_num, &matcher, &fonts)?;
+
+    Ok(removed)
+}
+
+/// Normal content-edit path: parse → find matches → remove → write back.
+fn remove_text_ops_via_editor(
+    doc: &mut Document,
+    page_num: u32,
+    editor: pdf_manip::content_editor::ContentEditor,
+    matcher: &TextMatcher,
+    fonts: &pdf_manip::text_run::FontMap,
+    match_bboxes: &[[f64; 4]],
+) -> Result<usize> {
+    let runs = pdf_manip::text_run::extract_text_runs(&editor, fonts);
+
     let mut indices_to_remove: Vec<usize> = Vec::new();
     for run in &runs {
         if !matcher.find_all(&run.text).is_empty() {
@@ -322,28 +381,153 @@ fn remove_text_ops_for_page(
         }
     }
 
-    let mut removed = 0;
-
-    if !indices_to_remove.is_empty() {
-        indices_to_remove.sort_unstable();
-        indices_to_remove.dedup();
-
-        // Remove ops in reverse order to preserve indices.
-        let mut new_editor = editor;
-        for &idx in indices_to_remove.iter().rev() {
-            new_editor.remove_range(idx..idx + 1);
+    // Position-based fallback: when text decoding yields no matches (e.g.
+    // glyph-indexed fonts without a ToUnicode CMap), fall back to spatial
+    // matching — remove every text-showing op whose (CTM-transformed) position
+    // overlaps a match bbox obtained from the pdf_extract pass.
+    if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
+        for run in &runs {
+            if run_overlaps_any_bbox(run, match_bboxes) {
+                for idx in run.ops_range.clone() {
+                    indices_to_remove.push(idx);
+                }
+            }
         }
-
-        removed = indices_to_remove.len();
-        pdf_manip::content_editor::write_editor_to_page(doc, page_num, &new_editor)
-            .map_err(|e| RedactError::Other(format!("write content: {e}")))?;
     }
 
-    // Also process Form XObjects referenced in the page's Resources.
-    removed += remove_text_ops_from_xobjects(doc, page_num, &matcher, &fonts)?;
+    if indices_to_remove.is_empty() {
+        return Ok(0);
+    }
 
-    // Also process annotation appearance streams.
-    removed += remove_text_ops_from_annotations(doc, page_num, &matcher, &fonts)?;
+    indices_to_remove.sort_unstable();
+    indices_to_remove.dedup();
+
+    let mut new_editor = editor;
+    for &idx in indices_to_remove.iter().rev() {
+        new_editor.remove_range(idx..idx + 1);
+    }
+
+    let removed = indices_to_remove.len();
+    pdf_manip::content_editor::write_editor_to_page(doc, page_num, &new_editor)
+        .map_err(|e| RedactError::Other(format!("write content: {e}")))?;
+
+    Ok(removed)
+}
+
+/// Fallback path for pages whose content stream contains inline images
+/// (`BI … EI`).  Strips the images, edits the remaining text ops, then
+/// reconstructs the stream with the images prepended so z-order is preserved.
+fn remove_text_ops_with_inline_images(
+    doc: &mut Document,
+    page_num: u32,
+    matcher: &TextMatcher,
+    fonts: &pdf_manip::text_run::FontMap,
+    match_bboxes: &[[f64; 4]],
+) -> Result<usize> {
+    let pages = doc.get_pages();
+    let &page_id = match pages.get(&page_num) {
+        Some(id) => id,
+        None => return Ok(0),
+    };
+
+    // Decompressed concatenation of all content streams for this page.
+    let content_bytes = match doc.get_page_content(page_id) {
+        Ok(b) => b,
+        Err(_) => return Ok(0),
+    };
+
+    // Separate inline images from the rest.
+    let (stripped, inline_images) = pdf_manip::content_editor::strip_inline_images(&content_bytes);
+
+    let editor = match pdf_manip::content_editor::ContentEditor::from_stream(&stripped) {
+        Ok(e) => e,
+        Err(_) => return Ok(0),
+    };
+
+    let runs = pdf_manip::text_run::extract_text_runs(&editor, fonts);
+
+    let mut indices_to_remove: Vec<usize> = Vec::new();
+    for run in &runs {
+        if !matcher.find_all(&run.text).is_empty() {
+            for idx in run.ops_range.clone() {
+                indices_to_remove.push(idx);
+            }
+        }
+    }
+
+    // Position-based fallback (same as in remove_text_ops_via_editor).
+    if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
+        for run in &runs {
+            if run_overlaps_any_bbox(run, match_bboxes) {
+                for idx in run.ops_range.clone() {
+                    indices_to_remove.push(idx);
+                }
+            }
+        }
+    }
+
+    if indices_to_remove.is_empty() {
+        return Ok(0);
+    }
+
+    indices_to_remove.sort_unstable();
+    indices_to_remove.dedup();
+
+    let mut new_editor = editor;
+    for &idx in indices_to_remove.iter().rev() {
+        new_editor.remove_range(idx..idx + 1);
+    }
+
+    let removed = indices_to_remove.len();
+
+    // Re-encode the edited ops and prepend the raw inline image blobs so the
+    // visual z-order is preserved (images were originally before the text).
+    let re_encoded = new_editor
+        .encode()
+        .map_err(|e| RedactError::Other(format!("encode: {e}")))?;
+
+    let mut final_content = Vec::new();
+    for img in &inline_images {
+        final_content.extend_from_slice(img);
+        final_content.push(b'\n');
+    }
+    final_content.extend_from_slice(&re_encoded);
+
+    // Compress if it helps.
+    let compressed = {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        use std::io::Write as _;
+        if enc.write_all(&final_content).is_ok() {
+            enc.finish().unwrap_or_else(|_| final_content.clone())
+        } else {
+            final_content.clone()
+        }
+    };
+    let (stream_bytes, use_flate) = if compressed.len() < final_content.len() {
+        (compressed, true)
+    } else {
+        (final_content, false)
+    };
+
+    // Write to the first content stream and collapse multiple streams into one.
+    let content_ids = pdf_manip::content_editor::get_content_stream_ids(doc, page_id);
+    if let Some(&first_id) = content_ids.first() {
+        if let Ok(Object::Stream(ref mut s)) = doc.get_object_mut(first_id) {
+            s.content = stream_bytes;
+            if use_flate {
+                s.dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+            } else {
+                s.dict.remove(b"Filter");
+            }
+            s.dict
+                .set("Length", Object::Integer(s.content.len() as i64));
+        }
+        if content_ids.len() > 1 {
+            if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
+                page_dict.set("Contents", Object::Reference(first_id));
+            }
+        }
+    }
 
     Ok(removed)
 }
