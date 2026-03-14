@@ -4,6 +4,7 @@
 //! text bytes to Unicode using ToUnicode CMaps extracted from font resources.
 
 use crate::content_editor::{as_number, multiply_matrix, ContentEditor};
+use crate::encoding_utils::build_font_encoding;
 use crate::error::{ManipError, Result};
 use lopdf::content::Operation;
 use lopdf::{Document, Object, ObjectId};
@@ -46,6 +47,13 @@ pub(crate) struct FontInfo {
     pub(crate) to_unicode: Option<CMap>,
     pub(crate) encoding: FontEncoding,
     pub(crate) widths: GlyphWidths,
+    /// Differences-based code→Unicode map for fonts without ToUnicode.
+    /// Empty when no Encoding/Differences information is available.
+    pub(crate) differences_encoding: HashMap<u8, char>,
+    /// True when the BaseFont name has a subset prefix (e.g. "ABCDEF+FontName").
+    /// Subset fonts only contain the glyphs used in the document; encoding
+    /// replacement text with arbitrary characters is unsafe.
+    pub(crate) is_subset: bool,
 }
 
 /// Font encoding type.
@@ -156,7 +164,26 @@ impl FontMap {
             .unwrap_or(false)
     }
 
+    /// Returns true when the font is a subset (BaseFont has an "ABCDEF+" prefix).
+    ///
+    /// Subset fonts only contain the glyphs used in the source document.
+    /// Encoding arbitrary replacement text is unsafe because the required
+    /// glyphs may not be present.
+    pub(crate) fn is_subset_font(&self, font_name: &str) -> bool {
+        self.fonts
+            .get(font_name)
+            .map(|info| info.is_subset)
+            .unwrap_or(false)
+    }
+
     /// Build a reverse map (Unicode char → character code) for a font.
+    ///
+    /// Priority:
+    /// 1. ToUnicode CMap reverse map (most authoritative).
+    /// 2. Differences/Encoding-based reverse map (for fonts without ToUnicode
+    ///    but with explicit Encoding/Differences, e.g. TeX OT1 fonts). Only
+    ///    populated for single-byte (Builtin) fonts.
+    /// 3. Empty map — caller falls back to Latin-1.
     pub fn build_reverse_map(&self, font_name: &str) -> std::collections::HashMap<char, u32> {
         let mut reverse = std::collections::HashMap::new();
         let info = match self.fonts.get(font_name) {
@@ -164,20 +191,25 @@ impl FontMap {
             None => return reverse,
         };
 
-        let cmap: &CMap = match &info.to_unicode {
-            Some(c) => c,
-            None => return reverse,
-        };
+        if let Some(ref cmap) = info.to_unicode {
+            let max_code: u32 = if matches!(info.encoding, FontEncoding::Builtin) {
+                0xFF
+            } else {
+                0xFFFF
+            };
+            for code in 0..=max_code {
+                if let Some(BfString::Char(ch)) = cmap.lookup_bf_string(code) {
+                    reverse.entry(ch).or_insert(code);
+                }
+            }
+            return reverse;
+        }
 
-        let max_code: u32 = if matches!(info.encoding, FontEncoding::Builtin) {
-            0xFF
-        } else {
-            0xFFFF
-        };
-
-        for code in 0..=max_code {
-            if let Some(BfString::Char(ch)) = cmap.lookup_bf_string(code) {
-                reverse.entry(ch).or_insert(code);
+        // No ToUnicode: use Differences-based encoding if available.
+        // Build reverse from differences_encoding (char → code).
+        if !info.differences_encoding.is_empty() && matches!(info.encoding, FontEncoding::Builtin) {
+            for (&code, &ch) in &info.differences_encoding {
+                reverse.entry(ch).or_insert(u32::from(code));
             }
         }
 
@@ -589,6 +621,8 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
                 to_unicode: None,
                 encoding: FontEncoding::Builtin,
                 widths: GlyphWidths::empty(),
+                differences_encoding: HashMap::new(),
+                is_subset: false,
             }
         }
     };
@@ -602,10 +636,37 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
     // Extract glyph widths.
     let widths = extract_widths(doc, &font_dict);
 
+    // Build Differences-based encoding (used when there is no ToUnicode CMap).
+    // Only meaningful for single-byte (Builtin) fonts.
+    let differences_encoding = if to_unicode.is_none() && matches!(encoding, FontEncoding::Builtin)
+    {
+        build_font_encoding(doc, &font_dict)
+    } else {
+        HashMap::new()
+    };
+
+    // Detect subset fonts: BaseFont name starts with 6 uppercase ASCII letters
+    // followed by '+', e.g. "ABCDEF+CMR10".  Subset fonts only contain the
+    // glyphs actually used in the document, so encoding arbitrary replacement
+    // text is unsafe (the glyph might not be present in the subset).
+    let is_subset = font_dict
+        .get(b"BaseFont")
+        .ok()
+        .and_then(|o| match o {
+            Object::Name(ref n) => Some(n.clone()),
+            _ => None,
+        })
+        .map(|name| {
+            name.len() > 7 && name[6] == b'+' && name[..6].iter().all(|b| b.is_ascii_uppercase())
+        })
+        .unwrap_or(false);
+
     FontInfo {
         to_unicode,
         encoding,
         widths,
+        differences_encoding,
+        is_subset,
     }
 }
 
