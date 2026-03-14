@@ -7286,6 +7286,14 @@ fn parse_type1_charstrings(
             break;
         }
         let charstring_data = &decrypted[p..p + cs_len];
+        if matches!(glyph_name.as_str(), "ordfeminine" | "ordmasculine" | "plusminus" | "quotesingle") && cs_len < 300 {
+            // Debug: dump full decoded charstring
+            let mut r2: u16 = 4330; let c1b: u16 = 52845; let c2b: u16 = 22719;
+            let mut dec2 = Vec::with_capacity(cs_len);
+            for &cipher in charstring_data { let pl = cipher ^ (r2 >> 8) as u8; r2 = (cipher as u16).wrapping_add(r2).wrapping_mul(c1b).wrapping_add(c2b); dec2.push(pl); }
+            let hex: Vec<String> = dec2[len_iv..].iter().map(|b| format!("{b:02x}")).collect();
+            eprintln!("[CS_FULL] glyph={glyph_name} len={cs_len}: {}", hex.join(" "));
+        }
         if let Some(width) = decrypt_charstring_width(charstring_data, len_iv, seac_subrs) {
             widths.insert(glyph_name, width);
         }
