@@ -6770,7 +6770,15 @@ fn compute_type1_fontfile_width_corrections(
         }
         let cs_w_opt = parsed.charstring_widths.get(glyph_name.as_str()).copied();
         if matches!(code, 39 | 170 | 177 | 186) {
-            eprintln!("[FF1DBG2] code={code} glyph={glyph_name} pdf_w={pdf_w} cs_w={cs_w_opt:?}");
+            let enc_hit = differences.get(&code).map(|s| format!("diff:{s}"))
+                .or_else(|| parsed.encoding.get(&(code as u8)).map(|s| format!("font_enc:{s}")))
+                .unwrap_or_else(|| "fallback".to_string());
+            // Also show what "quoteright"/"ordfeminine"/"ordmasculine"/"plusminus" have
+            let alt_names = ["quoteright", "quotesingle", "ordmasculine", "ordfeminine", "plusminus", "quote"];
+            let alt: Vec<String> = alt_names.iter()
+                .filter_map(|n| parsed.charstring_widths.get(*n).map(|w| format!("{n}={w}")))
+                .collect();
+            eprintln!("[FF1DBG2] code={code} enc={enc_hit} glyph={glyph_name} pdf_w={pdf_w} cs_w={cs_w_opt:?} alts=[{}]", alt.join(","));
         }
         let Some(cs_width) = cs_w_opt else {
             continue;
