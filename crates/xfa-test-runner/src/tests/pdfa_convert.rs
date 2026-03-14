@@ -1134,6 +1134,12 @@ fn try_rebuild_xref_from_objects(data: &[u8]) -> Option<lopdf::Document> {
         pos += 1;
     }
 
+    // If no Catalog found via object scan (e.g. it's in a compressed ObjStm),
+    // try to extract /Root from an existing trailer dict as a fallback. (#445)
+    if root_ref.is_none() {
+        root_ref = extract_root_from_trailer(data);
+    }
+
     if objects.is_empty() || root_ref.is_none() {
         return None;
     }
@@ -1200,6 +1206,46 @@ fn try_rebuild_xref_from_objects(data: &[u8]) -> Option<lopdf::Document> {
     repaired.extend_from_slice(format!("startxref\n{xref_pos}\n%%EOF\n").as_bytes());
 
     try_load(&repaired)
+}
+
+/// Scan raw PDF bytes for a `trailer` dict and extract the `/Root N 0 R` value.
+///
+/// Used as a fallback when the Catalog can't be found by scanning object bodies
+/// (e.g. the Catalog is inside a compressed ObjStm).  Only reads the last trailer
+/// section so cross-reference updates are respected.  (#445)
+fn extract_root_from_trailer(data: &[u8]) -> Option<u32> {
+    // Search backward from the end for "trailer" keyword.
+    let mut search_end = data.len();
+    while search_end >= 7 {
+        let Some(pos) = data[..search_end].windows(7).rposition(|w| w == b"trailer") else {
+            break;
+        };
+        // Skip "startxref" false matches — "trailer" can appear in different contexts.
+        let after = &data[pos + 7..];
+        // Find "/Root" inside the trailer dict (<< ... >>).
+        if let Some(root_offset) = after.windows(5).position(|w| w == b"/Root") {
+            let after_root = &after[root_offset + 5..];
+            // Skip whitespace.
+            let digits_start = after_root
+                .iter()
+                .position(|b| b.is_ascii_digit())
+                .unwrap_or(after_root.len());
+            let digits: Vec<u8> = after_root[digits_start..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit())
+                .copied()
+                .collect();
+            if let Ok(s) = std::str::from_utf8(&digits) {
+                if let Ok(n) = s.parse::<u32>() {
+                    if n > 0 {
+                        return Some(n);
+                    }
+                }
+            }
+        }
+        search_end = pos;
+    }
+    None
 }
 
 /// Parse "N G obj" at the start of a byte slice. Returns (obj_num, gen_num) if valid.
