@@ -1,0 +1,14 @@
+[package]
+name = "cff-parser"
+version = "0.2.0"
+authors = ["Evgeniy Reizner <razrfalcon@gmail.com>", "Jeff Muizelaar <jrmuizel@gmail.com>"]
+keywords = ["cff", "font", "adobe"]
+categories = ["parser-implementations"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jrmuizel/cff-parser"
+documentation = "https://docs.rs/cff-parser/"
+description = "A parser for the Compact Font Format (CFF)"
+readme = "README.md"
+edition = "2021"
+
+[dependencies]
