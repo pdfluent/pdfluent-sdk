@@ -26,6 +26,11 @@ fn main() {
         Err(e) => eprintln!("Cleanup error: {e}"),
     }
 
+    // Promote inline font dicts (inside Resources /Font) to standalone objects
+    // so that embed_fonts can find and embed them (6.2.11.4.1:1).
+    let inline_promoted = pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc);
+    eprintln!("Inline font dicts promoted: {inline_promoted}");
+
     match pdf_manip::pdfa_fonts::embed_fonts(&mut doc) {
         Ok(r) => {
             eprintln!(
@@ -39,6 +44,39 @@ fn main() {
         }
         Err(e) => eprintln!("Font error: {e}"),
     }
+
+    // Strip PFB (Printer Font Binary) headers from Type1 FontFile streams.
+    // PDF spec requires raw PostScript, not PFB format (veraPDF rejects PFB).
+    let pfb_fixed = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
+    eprintln!("PFB font streams stripped: fixed={pfb_fixed}");
+
+    // Fix stub Type1 fonts (only .notdef, empty CharSet) by redirecting to matching
+    // full-subset font program so veraPDF can parse them (6.2.11.4.1:1).
+    let stub_fixed = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
+    eprintln!("Type1 stub font files: fixed={stub_fixed}");
+
+    // Fix TrueType font programs mislabeled as CIDFontType0C (CFF). veraPDF CFF parser
+    // fails immediately on TrueType data → containsFontFile=false → 6.2.11.4.1:1 fails.
+    // Fix: rename FontFile3 → FontFile2, remove Subtype from stream, update CIDFont Subtype.
+    let tt_mislabeled = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    eprintln!("Mislabeled TrueType-as-CFF: fixed={tt_mislabeled}");
+
+    // Fix invalid CFF BCD real number encodings that cause veraPDF CFF parser to throw
+    // NumberFormatException → successfullyParsed=false → 6.2.11.4.1:1 fails.
+    let bcd_fixed = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
+    eprintln!("CFF invalid BCD: fixed={bcd_fixed}");
+
+    // Fix non-standard /CharStrings dict syntax in Type1 eexec sections:
+    // "/CharStrings N dict def\n  Private begin CharStrings begin\n"
+    // → "/CharStrings N dict dup begin\n"  (6.2.11.4.1:1)
+    let charstrings_fixed = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
+    eprintln!("Type1 non-standard CharStrings: fixed={charstrings_fixed}");
+
+    // Fix Type1 binary eexec sections whose first encrypted byte is a PDF
+    // whitespace character. veraPDF skips leading spaces before the binary
+    // section, causing it to start decryption from the wrong offset.
+    let eexec_fixed = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
+    eprintln!("Type1 eexec space prefix: fixed={eexec_fixed}");
 
     // NOTE: fix_width_mismatches and fix_font_descriptor_metrics disabled —
     // they cause width regression on already-embedded fonts.
@@ -54,6 +92,9 @@ fn main() {
 
     let enc_fixed = pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
     eprintln!("TrueType encoding: fixed={enc_fixed}");
+
+    let sym_cmap_fixed = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+    eprintln!("Symbolic TrueType cmap: fixed={sym_cmap_fixed}");
 
     // Add Unicode (3,1) cmap to TrueType fonts that only have Mac Roman (1,0).
     let cmap_fixed = pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
@@ -71,6 +112,10 @@ fn main() {
     let sym_notdef_fixed = pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
     eprintln!(".notdef refs (symbolic): fixed={sym_notdef_fixed}");
 
+    // Remove simple-font bytes outside FirstChar..LastChar (avoids .notdef).
+    let simple_range_fixed = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc);
+    eprintln!(".notdef refs (simple range): fixed={simple_range_fixed}");
+
     // Strip control characters from content streams.
     let control_stripped = pdf_manip::pdfa_fonts::strip_control_chars_from_streams(&mut doc);
     eprintln!("Control chars stripped: streams={control_stripped}");
@@ -84,9 +129,16 @@ fn main() {
     let sym_flags = pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
     eprintln!("Symbolic flags: fixed={sym_flags}");
 
+    let classic_sym_enc = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc);
+    eprintln!("Classic symbolic encodings: fixed={classic_sym_enc}");
+
     // Populate missing FirstChar/LastChar/Widths for embedded fonts (6.2.11.2:4-6).
     let missing_widths = pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
     eprintln!("Missing font widths: populated={missing_widths}");
+
+    // Fix Type3 widths from CharProc d0/d1 operators (6.2.11.5:1).
+    let type3_widths = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
+    eprintln!("Type3 font widths: fixed={type3_widths}");
 
     // Conservative width mismatch fix: only updates individual mismatched entries
     // where the mapping is unambiguous. Skips fonts with >50% mismatches.
@@ -112,7 +164,7 @@ fn main() {
     // Supplementary fixups (small rule fixes).
     let fixup_report = pdf_manip::pdfa_fixups::run_fixups(&mut doc);
     eprintln!(
-        "Fixups: lengths={}, opi={}, stream_f={}, ps_xobj={}, ref_xobj={}, overflow={}, long_str={}, op_space={}, tiny_float={}, hex_str={}, inline_interp={}, jpx_cs={}, concat_op={}",
+        "Fixups: lengths={}, opi={}, stream_f={}, ps_xobj={}, ref_xobj={}, overflow={}, long_str={}, op_space={}, tiny_float={}, hex_str={}, non_ascii_names={}, inline_interp={}, jpx_cs={}, concat_op={}, unknown_ops={}, page_bounds={}",
         fixup_report.stream_lengths_fixed,
         fixup_report.opi_keys_removed,
         fixup_report.stream_f_keys_removed,
@@ -123,10 +175,23 @@ fn main() {
         fixup_report.operator_spacing_fixed,
         fixup_report.tiny_floats_fixed,
         fixup_report.odd_hex_strings_fixed,
+        fixup_report.non_ascii_names_fixed,
         fixup_report.inline_image_interpolate_fixed,
         fixup_report.jpx_colorspace_fixed,
         fixup_report.concatenated_operators_fixed,
+        fixup_report.unknown_operators_stripped,
+        fixup_report.page_boundary_fixed,
     );
+
+    // Re-run colorspace normalization after fixups. Some fixups touch DeviceN
+    // / Colorants structures and can reintroduce 6.2.4.4:2 inconsistencies.
+    match pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc) {
+        Ok(r) => eprintln!(
+            "Colorspace (post-fixups): had_intent={}, added={}, device_cs={:?}",
+            r.had_output_intent, r.output_intent_added, r.device_colorspaces_found
+        ),
+        Err(e) => eprintln!("Colorspace (post-fixups) error: {e}"),
+    }
 
     match pdf_manip::pdfa_xmp::repair_xmp_metadata(
         &mut doc,

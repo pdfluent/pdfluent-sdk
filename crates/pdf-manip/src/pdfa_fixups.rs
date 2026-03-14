@@ -3,7 +3,9 @@
 //! Additional passes that address remaining veraPDF rule failures
 //! not fully covered by pdfa_cleanup or pdfa_fonts modules.
 
+use flate2::read::ZlibDecoder;
 use lopdf::{dictionary, Document, Object, ObjectId};
+use std::io::Read;
 
 /// Run all supplementary PDF/A fixups.
 pub fn run_fixups(doc: &mut Document) -> FixupReport {
@@ -17,6 +19,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let cidtogidmap_fixed = fix_cidtogidmap_extra(doc);
     let cidsysteminfo_fixed = fix_cidsysteminfo_mismatch(doc);
     let cmap_embedded = embed_nonstandard_cmaps(doc);
+    let usecmap_stripped = strip_nonstandard_usecmap_references(doc);
     let opi_keys_removed = fix_opi_keys(doc);
     let stream_f_keys_removed = fix_stream_f_keys(doc);
     let postscript_xobjects_removed = fix_postscript_xobjects(doc);
@@ -26,11 +29,21 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let jpx_colorspace_fixed = fix_jpx_forbidden_colorspaces(doc);
     // Content stream modifications (decompress/recompress) must run before
     // fix_stream_lengths to ensure Length values are correct.
-    let operator_spacing_fixed = fix_content_stream_operator_spacing(doc);
-    let tiny_floats_fixed = fix_tiny_floats_in_streams(doc);
+    let unreadable_streams_fixed = fix_unreadable_content_streams(doc);
+    let invalid_prefix_fixed = fix_invalid_operator_preamble(doc);
+    let gs_nesting_fixed = fix_graphics_state_nesting_limit(doc);
+    let operator_spacing_fixed = fix_content_stream_operator_spacing(doc)
+        + invalid_prefix_fixed
+        + unreadable_streams_fixed
+        + gs_nesting_fixed;
+    let tiny_floats_fixed =
+        fix_tiny_floats_in_streams(doc) + fix_non_finite_numbers_in_streams(doc);
     let odd_hex_strings_fixed = fix_odd_hex_strings_in_streams(doc);
+    let non_ascii_names_fixed = fix_non_ascii_pdf_names(doc);
     let inline_image_interpolate_fixed = fix_inline_image_interpolate(doc);
     let concatenated_operators_fixed = fix_concatenated_operators(doc);
+    let unknown_operators_stripped = strip_unknown_content_stream_operators(doc);
+    let page_boundary_fixed = fix_page_boundary_sizes(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
@@ -46,6 +59,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         cidtogidmap_fixed,
         cidsysteminfo_fixed,
         cmap_embedded,
+        usecmap_stripped,
         opi_keys_removed,
         stream_f_keys_removed,
         postscript_xobjects_removed,
@@ -55,9 +69,12 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         operator_spacing_fixed,
         tiny_floats_fixed,
         odd_hex_strings_fixed,
+        non_ascii_names_fixed,
         inline_image_interpolate_fixed,
         jpx_colorspace_fixed,
         concatenated_operators_fixed,
+        unknown_operators_stripped,
+        page_boundary_fixed,
     }
 }
 
@@ -75,6 +92,7 @@ pub struct FixupReport {
     pub cidtogidmap_fixed: usize,
     pub cidsysteminfo_fixed: usize,
     pub cmap_embedded: usize,
+    pub usecmap_stripped: usize,
     pub opi_keys_removed: usize,
     pub stream_f_keys_removed: usize,
     pub postscript_xobjects_removed: usize,
@@ -84,9 +102,12 @@ pub struct FixupReport {
     pub operator_spacing_fixed: usize,
     pub tiny_floats_fixed: usize,
     pub odd_hex_strings_fixed: usize,
+    pub non_ascii_names_fixed: usize,
     pub inline_image_interpolate_fixed: usize,
     pub jpx_colorspace_fixed: usize,
     pub concatenated_operators_fixed: usize,
+    pub unknown_operators_stripped: usize,
+    pub page_boundary_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -583,41 +604,97 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
         }
     }
 
-    if forbidden_ids.is_empty() {
-        return 0;
+    // Remove forbidden annotation IDs from all page Annots arrays.
+    if !forbidden_ids.is_empty() {
+        let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+        for page_id in &page_ids {
+            let has_refs = {
+                let Some(Object::Dictionary(dict)) = doc.objects.get(page_id) else {
+                    continue;
+                };
+                match dict.get(b"Annots").ok() {
+                    Some(Object::Array(arr)) => arr.iter().any(|o| {
+                        if let Object::Reference(id) = o {
+                            forbidden_ids.contains(id)
+                        } else {
+                            false
+                        }
+                    }),
+                    _ => false,
+                }
+            };
+            if has_refs {
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(page_id) {
+                    if let Ok(Object::Array(ref mut arr)) = dict.get_mut(b"Annots") {
+                        let before = arr.len();
+                        arr.retain(|o| {
+                            if let Object::Reference(id) = o {
+                                !forbidden_ids.contains(id)
+                            } else {
+                                true
+                            }
+                        });
+                        count += before - arr.len();
+                    }
+                }
+            }
+        }
     }
 
-    // Remove these annotation IDs from all page Annots arrays.
-    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
-    for page_id in &page_ids {
-        let has_refs = {
-            let Some(Object::Dictionary(dict)) = doc.objects.get(page_id) else {
+    // Fix Stamp annotations where AP.N is a sub-appearance-states dict instead
+    // of a direct stream (6.3.3/4). veraPDF requires N to be a single stream.
+    // Collapse the dict by picking the first stream value and pointing N there.
+    for id in &ids {
+        let fix = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(id) else {
                 continue;
             };
-            match dict.get(b"Annots").ok() {
-                Some(Object::Array(arr)) => arr.iter().any(|o| {
-                    if let Object::Reference(id) = o {
-                        forbidden_ids.contains(id)
-                    } else {
-                        false
+            let is_stamp = matches!(
+                dict.get(b"Subtype").ok(),
+                Some(Object::Name(ref n)) if n == b"Stamp"
+            );
+            if !is_stamp {
+                continue;
+            }
+            // Get the AP dict.
+            let ap_ref: Option<ObjectId> = match dict.get(b"AP").ok() {
+                Some(Object::Reference(r)) => Some(*r),
+                _ => None,
+            };
+            ap_ref
+        };
+        let Some(ap_id) = fix else { continue };
+
+        // Check if AP.N is a dict (not a stream).
+        let target: Option<ObjectId> = {
+            let Some(Object::Dictionary(ap)) = doc.objects.get(&ap_id) else {
+                continue;
+            };
+            match ap.get(b"N").ok() {
+                Some(Object::Reference(n_id)) => {
+                    // N points to an object — check if it's a dict (not a stream).
+                    match doc.objects.get(n_id) {
+                        Some(Object::Dictionary(nd)) => {
+                            // Pick the first reference value in this sub-dict.
+                            nd.iter().find_map(|(_, v)| {
+                                if let Object::Reference(r) = v {
+                                    Some(*r)
+                                } else {
+                                    None
+                                }
+                            })
+                        }
+                        _ => None,
                     }
-                }),
-                _ => false,
+                }
+                _ => None,
             }
         };
-        if has_refs {
-            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(page_id) {
-                if let Ok(Object::Array(ref mut arr)) = dict.get_mut(b"Annots") {
-                    let before = arr.len();
-                    arr.retain(|o| {
-                        if let Object::Reference(id) = o {
-                            !forbidden_ids.contains(id)
-                        } else {
-                            true
-                        }
-                    });
-                    count += before - arr.len();
-                }
+
+        if let Some(stream_id) = target {
+            if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
+                ap.set("N", Object::Reference(stream_id));
+                count += 1;
             }
         }
     }
@@ -632,8 +709,24 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
 // LZW is handled by reencode_lzw_streams in pdfa_cleanup. This pass
 // catches Crypt filters and any non-standard filter names.
 
+/// Expand a PDF filter abbreviation to its full name (ISO 32000-1 Table 6).
+/// Returns None if `name` is already a full name or is unknown.
+fn expand_filter_abbrev(name: &[u8]) -> Option<&'static [u8]> {
+    match name {
+        b"AHx" => Some(b"ASCIIHexDecode"),
+        b"A85" => Some(b"ASCII85Decode"),
+        b"Fl" => Some(b"FlateDecode"),
+        b"RL" => Some(b"RunLengthDecode"),
+        b"CCF" => Some(b"CCITTFaxDecode"),
+        b"DCT" => Some(b"DCTDecode"),
+        _ => None,
+    }
+}
+
 fn fix_crypt_filters(doc: &mut Document) -> usize {
     let mut count = 0;
+    // Full filter names permitted by PDF/A-2b (6.1.7.2:1).
+    // LZWDecode is standard but forbidden — handled by pdfa_cleanup.
     let standard_filters: &[&[u8]] = &[
         b"ASCIIHexDecode",
         b"ASCII85Decode",
@@ -643,7 +736,6 @@ fn fix_crypt_filters(doc: &mut Document) -> usize {
         b"JBIG2Decode",
         b"DCTDecode",
         b"JPXDecode",
-        // LZWDecode is standard but forbidden — handled by pdfa_cleanup.
     ];
 
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
@@ -654,7 +746,10 @@ fn fix_crypt_filters(doc: &mut Document) -> usize {
             };
             match stream.dict.get(b"Filter").ok() {
                 Some(Object::Name(n)) => {
-                    if n == b"Crypt"
+                    if expand_filter_abbrev(n).is_some() {
+                        // Abbreviated filter name — expand in-place, no re-encode needed.
+                        CryptAction::ExpandAbbreviations
+                    } else if n == b"Crypt"
                         || (n != b"LZWDecode" && !standard_filters.contains(&n.as_slice()))
                     {
                         CryptAction::RemoveSingle
@@ -665,14 +760,21 @@ fn fix_crypt_filters(doc: &mut Document) -> usize {
                 Some(Object::Array(arr)) => {
                     let has_forbidden = arr.iter().any(|o| {
                         if let Object::Name(n) = o {
-                            n == b"Crypt"
-                                || (n != b"LZWDecode" && !standard_filters.contains(&n.as_slice()))
+                            expand_filter_abbrev(n).is_none()
+                                && (n == b"Crypt"
+                                    || (n != b"LZWDecode"
+                                        && !standard_filters.contains(&n.as_slice())))
                         } else {
                             false
                         }
                     });
+                    let has_abbrev = arr
+                        .iter()
+                        .any(|o| matches!(o, Object::Name(n) if expand_filter_abbrev(n).is_some()));
                     if has_forbidden {
                         CryptAction::FilterArray
+                    } else if has_abbrev {
+                        CryptAction::ExpandAbbreviations
                     } else {
                         CryptAction::None
                     }
@@ -683,6 +785,41 @@ fn fix_crypt_filters(doc: &mut Document) -> usize {
 
         match action {
             CryptAction::None => {}
+            CryptAction::ExpandAbbreviations => {
+                // Rename abbreviated filter names to their full equivalents.
+                // Content bytes are valid as-is — no re-encoding needed.
+                let new_filter = {
+                    let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+                        continue;
+                    };
+                    match stream.dict.get(b"Filter").ok() {
+                        Some(Object::Name(n)) => {
+                            expand_filter_abbrev(n).map(|full| Object::Name(full.to_vec()))
+                        }
+                        Some(Object::Array(arr)) => {
+                            let expanded: Vec<Object> = arr
+                                .iter()
+                                .map(|o| {
+                                    if let Object::Name(n) = o {
+                                        if let Some(full) = expand_filter_abbrev(n) {
+                                            return Object::Name(full.to_vec());
+                                        }
+                                    }
+                                    o.clone()
+                                })
+                                .collect();
+                            Some(Object::Array(expanded))
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(filter_obj) = new_filter {
+                    if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                        stream.dict.set("Filter", filter_obj);
+                        count += 1;
+                    }
+                }
+            }
             CryptAction::RemoveSingle => {
                 // Decompress and re-encode as FlateDecode.
                 if reencode_stream(doc, id) {
@@ -703,6 +840,7 @@ fn fix_crypt_filters(doc: &mut Document) -> usize {
 
 enum CryptAction {
     None,
+    ExpandAbbreviations,
     RemoveSingle,
     FilterArray,
 }
@@ -714,8 +852,15 @@ fn reencode_stream(doc: &mut Document, id: ObjectId) -> bool {
         };
         stream.decompressed_content().ok()
     };
-    let Some(raw_data) = decoded else {
-        return false;
+    // If proper decompression failed, fall back to wrapping the raw bytes in
+    // FlateDecode so the forbidden filter is removed even for corrupt streams.
+    let raw_data = if let Some(d) = decoded {
+        d
+    } else {
+        let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+            return false;
+        };
+        stream.content.clone()
     };
 
     let compressed = {
@@ -750,53 +895,63 @@ fn reencode_stream(doc: &mut Document, id: ObjectId) -> bool {
 // an explicit Type. This catches dicts that have /EF but no /Type /Filespec.
 
 fn fix_file_spec_ef_extra(doc: &mut Document) -> usize {
+    fn fix_filespec_dict(dict: &mut lopdf::Dictionary) -> bool {
+        if !dict.has(b"EF") {
+            return false;
+        }
+        dict.remove(b"EF");
+        // Ensure F and UF keys exist (required by 6.8/2).
+        if !dict.has(b"F") && !dict.has(b"UF") {
+            dict.set(
+                "F",
+                Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal),
+            );
+            dict.set(
+                "UF",
+                Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal),
+            );
+        } else if !dict.has(b"F") {
+            let uf = dict.get(b"UF").ok().cloned().unwrap_or_else(|| {
+                Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal)
+            });
+            dict.set("F", uf);
+        } else if !dict.has(b"UF") {
+            let f = dict.get(b"F").ok().cloned().unwrap_or_else(|| {
+                Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal)
+            });
+            dict.set("UF", f);
+        }
+        true
+    }
+
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
 
     for id in ids {
-        let needs_fix = {
-            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
-                continue;
-            };
-            // Detect file spec dicts by presence of EF key (regardless of Type).
-            if !dict.has(b"EF") {
-                continue;
-            }
-            // Skip if already handled (has /Type /Filespec).
-            let has_type = matches!(
-                dict.get(b"Type").ok(),
-                Some(Object::Name(ref n)) if n == b"Filespec"
-            );
-            !has_type
-        };
-
-        if needs_fix {
-            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
-                // Strip EF to avoid non-compliant embedded files.
-                dict.remove(b"EF");
-                // Ensure F and UF keys exist.
-                if !dict.has(b"F") && !dict.has(b"UF") {
-                    dict.set(
-                        "F",
-                        Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal),
-                    );
-                    dict.set(
-                        "UF",
-                        Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal),
-                    );
-                } else if !dict.has(b"F") {
-                    let uf = dict.get(b"UF").ok().cloned().unwrap_or_else(|| {
-                        Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal)
-                    });
-                    dict.set("F", uf);
-                } else if !dict.has(b"UF") {
-                    let f = dict.get(b"F").ok().cloned().unwrap_or_else(|| {
-                        Object::String(b"attachment".to_vec(), lopdf::StringFormat::Literal)
-                    });
-                    dict.set("UF", f);
+        match doc.objects.get_mut(&id) {
+            Some(Object::Dictionary(dict)) => {
+                // Fix standalone file spec dicts.
+                if fix_filespec_dict(dict) {
+                    count += 1;
                 }
-                count += 1;
+                // Also fix inline /FS sub-dicts (e.g. in FileAttachment annotations).
+                if let Ok(Object::Dictionary(ref mut fs_dict)) = dict.get_mut(b"FS") {
+                    if fix_filespec_dict(fs_dict) {
+                        count += 1;
+                    }
+                }
             }
+            Some(Object::Stream(s)) => {
+                if fix_filespec_dict(&mut s.dict) {
+                    count += 1;
+                }
+                if let Ok(Object::Dictionary(ref mut fs_dict)) = s.dict.get_mut(b"FS") {
+                    if fix_filespec_dict(fs_dict) {
+                        count += 1;
+                    }
+                }
+            }
+            _ => {}
         }
     }
     count
@@ -849,39 +1004,64 @@ fn fix_content_stream_resources_extra(doc: &mut Document) -> usize {
     count
 }
 
-/// Find Form XObjects that use font resources (e.g. /F1) in their content but
-/// don't declare them in their Resources/Font dict. Fix by finding the font
-/// reference from another object that has it and adding it.
+/// Find Form XObjects (and page content streams) that use resources not declared
+/// in their explicit Resources dict. Propagates missing Font, ExtGState,
+/// ColorSpace, XObject, and Pattern resources from the global document pool.
 fn propagate_missing_font_resources(doc: &mut Document) -> usize {
     use std::collections::{HashMap, HashSet};
 
-    // Step 1: Build a global map of font name → object reference from all Resources/Font dicts.
-    let mut global_fonts: HashMap<Vec<u8>, Object> = HashMap::new();
+    type ResMap = HashMap<Vec<u8>, Object>;
+
+    // Step 1: Build global resource maps from ALL dicts/stream dicts in the doc.
+    let mut global: [ResMap; 5] = [
+        HashMap::new(), // Font
+        HashMap::new(), // ExtGState
+        HashMap::new(), // ColorSpace
+        HashMap::new(), // XObject
+        HashMap::new(), // Pattern
+    ];
+    const CATS: [&[u8]; 5] = [b"Font", b"ExtGState", b"ColorSpace", b"XObject", b"Pattern"];
+
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
 
     for id in &ids {
-        let font_dict = match doc.objects.get(id) {
-            Some(Object::Stream(s)) => get_font_dict_from_resources(&s.dict, doc),
-            Some(Object::Dictionary(d)) => get_font_dict_from_resources(d, doc),
+        let source_dict = match doc.objects.get(id) {
+            Some(Object::Stream(s)) => Some(&s.dict),
+            Some(Object::Dictionary(d)) => Some(d),
             _ => None,
         };
-        if let Some(fd) = font_dict {
-            for (name, val) in fd.iter() {
-                if !global_fonts.contains_key(name) {
-                    global_fonts.insert(name.clone(), val.clone());
+        let Some(source_dict) = source_dict else {
+            continue;
+        };
+        for (i, cat) in CATS.iter().enumerate() {
+            if let Some(rd) = get_named_resource_dict_from_resources(source_dict, doc, cat) {
+                for (name, val) in rd.iter() {
+                    global[i].entry(name.clone()).or_insert_with(|| val.clone());
                 }
             }
         }
     }
 
-    if global_fonts.is_empty() {
+    if global.iter().all(|m| m.is_empty()) {
         return 0;
     }
 
-    // Step 2: For each Form XObject, check if content references fonts not in Resources.
+    // Helper: operators that name a resource in the preceding name operand.
+    // Format: (operator_bytes, resource_category_index)
+    const OP_TO_CAT: &[(&[u8], usize)] = &[
+        (b"Tf", 0),  // /FontName size Tf → Font
+        (b"gs", 1),  // /GSName gs → ExtGState
+        (b"cs", 2),  // /CSName cs → ColorSpace
+        (b"CS", 2),  // /CSName CS → ColorSpace
+        (b"Do", 3),  // /XObjName Do → XObject
+        (b"scn", 4), // /PatName scn → Pattern
+        (b"SCN", 4), // /PatName SCN → Pattern
+    ];
+
+    // Step 2: For each Form XObject, find missing resources and add them.
     let mut count = 0;
     for id in &ids {
-        let missing_fonts = {
+        let (content, existing_by_cat, is_form) = {
             let Some(Object::Stream(s)) = doc.objects.get(id) else {
                 continue;
             };
@@ -892,7 +1072,6 @@ fn propagate_missing_font_resources(doc: &mut Document) -> usize {
             if !is_form {
                 continue;
             }
-            // Parse content to find font references (/Fn where n is a name).
             let content = s.decompressed_content().ok().unwrap_or_else(|| {
                 if s.content.is_empty() {
                     vec![]
@@ -900,47 +1079,94 @@ fn propagate_missing_font_resources(doc: &mut Document) -> usize {
                     s.content.clone()
                 }
             });
-            let used_fonts = extract_font_names_from_content(&content);
-            if used_fonts.is_empty() {
-                continue;
-            }
-            // Check which are missing from Resources/Font.
-            let existing_fonts: HashSet<Vec<u8>> = get_font_dict_from_resources(&s.dict, doc)
-                .map(|fd| fd.iter().map(|(k, _)| k.clone()).collect())
-                .unwrap_or_default();
-
-            let mut missing = Vec::new();
-            for fname in used_fonts {
-                if !existing_fonts.contains(&fname) {
-                    if let Some(ref_obj) = global_fonts.get(&fname) {
-                        missing.push((fname, ref_obj.clone()));
-                    }
+            let mut existing_by_cat: [HashSet<Vec<u8>>; 5] = Default::default();
+            for (i, cat) in CATS.iter().enumerate() {
+                if let Some(rd) = get_named_resource_dict_from_resources(&s.dict, doc, cat) {
+                    existing_by_cat[i] = rd.iter().map(|(k, _)| k.clone()).collect();
                 }
             }
-            missing
+            (content, existing_by_cat, is_form)
         };
+        let _ = is_form;
 
-        if missing_fonts.is_empty() {
+        // Scan content for resource name references.
+        // Operators and their name-operand offset from the operator token:
+        //   Tf: /FontName size Tf  → name is at i-2
+        //   all others:  /Name op  → name is at i-1
+        let mut missing_by_cat: [Vec<(Vec<u8>, Object)>; 5] = Default::default();
+        let tokens: Vec<&[u8]> = content
+            .split(|&b| b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
+            .filter(|t| !t.is_empty())
+            .collect();
+        // Deduplicate within this XObject.
+        let mut seen: [std::collections::HashSet<Vec<u8>>; 5] = Default::default();
+        for i in 0..tokens.len() {
+            let tok = tokens[i];
+            for &(op, cat_idx) in OP_TO_CAT {
+                // Match exact operator OR operator immediately followed by non-alphanumeric
+                // (e.g. "Tf[<..." where "[" follows immediately without space).
+                let matches_op = tok == op
+                    || (tok.starts_with(op)
+                        && tok.get(op.len()).is_none_or(|b| !b.is_ascii_alphanumeric()));
+                if !matches_op {
+                    continue;
+                }
+                // Tf takes two operands before it; all others take one.
+                let name_offset = if op == b"Tf" { 2 } else { 1 };
+                if i < name_offset {
+                    continue;
+                }
+                let prev = tokens[i - name_offset];
+                if !prev.starts_with(b"/") {
+                    continue;
+                }
+                let name = prev[1..].to_vec();
+                if existing_by_cat[cat_idx].contains(&name) || seen[cat_idx].contains(&name) {
+                    continue;
+                }
+                if let Some(obj) = global[cat_idx].get(&name) {
+                    seen[cat_idx].insert(name.clone());
+                    missing_by_cat[cat_idx].push((name, obj.clone()));
+                }
+            }
+        }
+
+        if missing_by_cat.iter().all(|v| v.is_empty()) {
             continue;
         }
 
-        // Add missing fonts to the Form XObject's Resources/Font dict.
+        // Add missing resources to the Form XObject's Resources dictionary.
         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(id) {
-            // Ensure Resources dict exists.
             if !s.dict.has(b"Resources") {
                 s.dict
                     .set("Resources", Object::Dictionary(lopdf::Dictionary::new()));
             }
             if let Ok(Object::Dictionary(ref mut resources)) = s.dict.get_mut(b"Resources") {
-                // Ensure Font dict exists.
-                if !resources.has(b"Font") {
-                    resources.set("Font", Object::Dictionary(lopdf::Dictionary::new()));
-                }
-                if let Ok(Object::Dictionary(ref mut font_dict)) = resources.get_mut(b"Font") {
-                    for (name, obj) in missing_fonts {
-                        let key_str = String::from_utf8_lossy(&name).to_string();
-                        font_dict.set(key_str, obj);
+                let mut changed = false;
+                for (i, cat) in CATS.iter().enumerate() {
+                    if missing_by_cat[i].is_empty() {
+                        continue;
                     }
+                    let cat_str = String::from_utf8_lossy(cat).to_string();
+                    if !resources.has(cat) {
+                        resources.set(
+                            cat_str.clone(),
+                            Object::Dictionary(lopdf::Dictionary::new()),
+                        );
+                    }
+                    if let Ok(Object::Dictionary(ref mut cat_dict)) =
+                        resources.get_mut(cat.as_ref())
+                    {
+                        for (name, obj) in &missing_by_cat[i] {
+                            let key_str = String::from_utf8_lossy(name).to_string();
+                            if !cat_dict.has(name.as_slice()) {
+                                cat_dict.set(key_str, obj.clone());
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if changed {
                     count += 1;
                 }
             }
@@ -1069,9 +1295,12 @@ fn fix_type3_font_resources(doc: &mut Document) -> usize {
 }
 
 /// Get the Font dictionary from a Resources dictionary (which may be inline or referenced).
-fn get_font_dict_from_resources(
+/// Get a named resource sub-dictionary (e.g. Font, ExtGState, ColorSpace)
+/// from a Resources dictionary that may be inline or indirect.
+fn get_named_resource_dict_from_resources(
     dict: &lopdf::Dictionary,
     doc: &Document,
+    key: &[u8],
 ) -> Option<lopdf::Dictionary> {
     let resources = match dict.get(b"Resources").ok() {
         Some(Object::Dictionary(d)) => Some(d.clone()),
@@ -1082,7 +1311,7 @@ fn get_font_dict_from_resources(
         _ => None,
     };
     let resources = resources?;
-    match resources.get(b"Font").ok() {
+    match resources.get(key).ok() {
         Some(Object::Dictionary(fd)) => Some(fd.clone()),
         Some(Object::Reference(ref_id)) => match doc.objects.get(ref_id) {
             Some(Object::Dictionary(fd)) => Some(fd.clone()),
@@ -1090,46 +1319,6 @@ fn get_font_dict_from_resources(
         },
         _ => None,
     }
-}
-
-/// Extract font resource names (e.g. "F1", "F2") referenced in content stream bytes.
-fn extract_font_names_from_content(content: &[u8]) -> Vec<Vec<u8>> {
-    let mut names = Vec::new();
-    let text = String::from_utf8_lossy(content);
-    // Look for /Fn Tf patterns (font selection in content streams).
-    let mut i = 0;
-    let bytes = text.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == b'/' {
-            // Read the name
-            let start = i + 1;
-            let mut end = start;
-            while end < bytes.len()
-                && !matches!(
-                    bytes[end],
-                    b' ' | b'\t' | b'\n' | b'\r' | b'/' | b'[' | b']' | b'(' | b')' | b'<' | b'>'
-                )
-            {
-                end += 1;
-            }
-            let name = &bytes[start..end];
-            // Check if followed by a number and "Tf" (font selection operator).
-            let rest = &text[end..];
-            let trimmed = rest.trim_start();
-            // Pattern: /FontName <size> Tf
-            let tokens: Vec<&str> = trimmed.split_whitespace().take(2).collect();
-            if tokens.len() == 2 && tokens[1] == "Tf" {
-                let name_vec = name.to_vec();
-                if !names.contains(&name_vec) {
-                    names.push(name_vec);
-                }
-            }
-            i = end;
-        } else {
-            i += 1;
-        }
-    }
-    names
 }
 
 // ---------------------------------------------------------------------------
@@ -1155,7 +1344,15 @@ fn fix_stream_lengths(doc: &mut Document) -> usize {
             _ => false,
         };
         // Also check for corrupted key names that look like Length.
+        // Exclude standard font-file keys Length1/Length2/Length3 which are
+        // legitimate PDF stream dict entries (ISO 32000-1 Table 126).
         let has_corrupted_length = stream.dict.iter().any(|(k, _)| {
+            // Standard keys that start with "Length" followed by a digit are valid.
+            let is_standard_length_n =
+                k.len() == 7 && k[..6].eq_ignore_ascii_case(b"Length") && k[6].is_ascii_digit();
+            if is_standard_length_n {
+                return false;
+            }
             k.as_slice() != b"Length" && k.len() >= 4 && k.len() <= 8 && {
                 // Heuristic: key is similar to "Length" (e.g. "Qength", "Lngth").
                 let lower: Vec<u8> = k.iter().map(|c| c.to_ascii_lowercase()).collect();
@@ -1171,11 +1368,17 @@ fn fix_stream_lengths(doc: &mut Document) -> usize {
             if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
                 let actual = stream.content.len() as i64;
                 stream.dict.set("Length", Object::Integer(actual));
-                // Remove corrupted length-like keys.
+                // Remove corrupted length-like keys (but preserve standard LengthN keys).
                 let corrupt_keys: Vec<Vec<u8>> = stream
                     .dict
                     .iter()
                     .filter(|(k, _)| {
+                        let is_standard_length_n = k.len() == 7
+                            && k[..6].eq_ignore_ascii_case(b"Length")
+                            && k[6].is_ascii_digit();
+                        if is_standard_length_n {
+                            return false;
+                        }
                         k.as_slice() != b"Length" && k.len() >= 4 && k.len() <= 8 && {
                             let lower: Vec<u8> = k.iter().map(|c| c.to_ascii_lowercase()).collect();
                             lower.contains(&b'e')
@@ -1288,68 +1491,303 @@ fn extract_cmap_wmode(stream: &lopdf::Stream) -> Option<i64> {
 fn fix_cidtogidmap_extra(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut ref_targets: Vec<ObjectId> = Vec::new();
+    // (descendant CIDFont id, replacement gid, replacement width in text space)
+    let mut custom_map_targets: Vec<(ObjectId, u16, i64)> = Vec::new();
+    // (container object, is_type0_dict, index_in_desc_array)
+    let mut inline_targets: Vec<(ObjectId, bool, usize)> = Vec::new();
 
-    for id in ids {
-        let needs_fix = {
-            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
-                continue;
-            };
-            // Type 0 fonts have DescendantFonts referencing CIDFont dicts.
-            let is_type0 = matches!(
-                dict.get(b"Subtype").ok(),
-                Some(Object::Name(ref n)) if n == b"Type0"
-            );
-            if !is_type0 {
-                continue;
+    let has_valid_cidtogid = |doc: &Document, cidfont: &lopdf::Dictionary| -> bool {
+        match cidfont.get(b"CIDToGIDMap").ok() {
+            Some(Object::Name(n)) if n == b"Identity" => true,
+            Some(Object::Reference(r)) => matches!(doc.objects.get(r), Some(Object::Stream(_))),
+            Some(Object::Stream(_)) => true,
+            _ => false,
+        }
+    };
+
+    let type0_uses_identity = |doc: &Document, type0: &lopdf::Dictionary| -> bool {
+        match type0.get(b"Encoding").ok() {
+            Some(Object::Name(n)) => {
+                let s = String::from_utf8_lossy(n).to_ascii_lowercase();
+                s == "identity-h" || s == "identity-v"
             }
-            // Check DescendantFonts array.
-            let desc_refs: Vec<ObjectId> = match dict.get(b"DescendantFonts").ok() {
-                Some(Object::Array(arr)) => arr
-                    .iter()
-                    .filter_map(|o| {
-                        if let Object::Reference(r) = o {
-                            Some(*r)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect(),
-                _ => vec![],
+            Some(Object::Reference(r)) => match doc.objects.get(r) {
+                Some(Object::Name(n)) => {
+                    let s = String::from_utf8_lossy(n).to_ascii_lowercase();
+                    s == "identity-h" || s == "identity-v"
+                }
+                Some(Object::Dictionary(d)) => match d.get(b"CMapName").ok() {
+                    Some(Object::Name(n)) => {
+                        let s = String::from_utf8_lossy(n).to_ascii_lowercase();
+                        s == "identity-h" || s == "identity-v"
+                    }
+                    _ => false,
+                },
+                Some(Object::Stream(s)) => match s.dict.get(b"CMapName").ok() {
+                    Some(Object::Name(n)) => {
+                        let s = String::from_utf8_lossy(n).to_ascii_lowercase();
+                        s == "identity-h" || s == "identity-v"
+                    }
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
+        }
+    };
+
+    let tt_glyph_has_data = |face: &ttf_parser::Face, gid: ttf_parser::GlyphId| -> bool {
+        let raw = face.raw_face();
+        let Some(head) = raw.table(ttf_parser::Tag::from_bytes(b"head")) else {
+            return true;
+        };
+        let Some(loca) = raw.table(ttf_parser::Tag::from_bytes(b"loca")) else {
+            return true;
+        };
+        if head.len() < 52 {
+            return true;
+        }
+        let idx_format = i16::from_be_bytes([head[50], head[51]]);
+        let g = gid.0 as usize;
+
+        if idx_format == 0 {
+            let off = g * 2;
+            if off + 4 > loca.len() {
+                return true;
+            }
+            let o1 = u16::from_be_bytes([loca[off], loca[off + 1]]) as u32;
+            let o2 = u16::from_be_bytes([loca[off + 2], loca[off + 3]]) as u32;
+            o2 > o1
+        } else {
+            let off = g * 4;
+            if off + 8 > loca.len() {
+                return true;
+            }
+            let o1 = u32::from_be_bytes([loca[off], loca[off + 1], loca[off + 2], loca[off + 3]]);
+            let o2 =
+                u32::from_be_bytes([loca[off + 4], loca[off + 5], loca[off + 6], loca[off + 7]]);
+            o2 > o1
+        }
+    };
+
+    let cidfont_replacement_gid_dw =
+        |doc: &Document, cidfont: &lopdf::Dictionary| -> Option<(u16, i64)> {
+            let fd_id = match cidfont.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(fd_id)) => *fd_id,
+                _ => return None,
             };
-            let mut needs = Vec::new();
-            for desc_id in desc_refs {
-                let Some(Object::Dictionary(cidfont)) = doc.objects.get(&desc_id) else {
-                    continue;
-                };
-                let is_cid2 = matches!(
-                    cidfont.get(b"Subtype").ok(),
-                    Some(Object::Name(ref n)) if n == b"CIDFontType2"
-                );
-                if is_cid2 && !cidfont.has(b"CIDToGIDMap") {
-                    // Also verify it has an embedded font program (FontDescriptor with FontFile2).
-                    let has_embedded = match cidfont.get(b"FontDescriptor").ok() {
-                        Some(Object::Reference(fd_id)) => {
-                            matches!(
-                                doc.objects.get(fd_id),
-                                Some(Object::Dictionary(fd)) if fd.has(b"FontFile2")
-                            )
-                        }
-                        _ => false,
-                    };
-                    if has_embedded {
-                        needs.push(desc_id);
+            let fd = match doc.objects.get(&fd_id) {
+                Some(Object::Dictionary(fd)) => fd,
+                _ => return None,
+            };
+            let ff2_obj = fd.get(b"FontFile2").ok()?;
+            let mut font_stream = match ff2_obj {
+                Object::Reference(r) => match doc.objects.get(r) {
+                    Some(Object::Stream(s)) => s.clone(),
+                    _ => return None,
+                },
+                Object::Stream(s) => s.clone(),
+                _ => return None,
+            };
+            let _ = font_stream.decompress();
+            let font_data = font_stream.content;
+            let face = ttf_parser::Face::parse(&font_data, 0).ok()?;
+            let upm = face.units_per_em() as f64;
+            if upm <= 0.0 {
+                return None;
+            }
+            let scale = 1000.0 / upm;
+            let num = face.number_of_glyphs();
+            if num <= 1 {
+                return None;
+            }
+
+            let mut gid = face.glyph_index(' ').map(|g| g.0).filter(|g| {
+                *g > 0
+                    && face.glyph_hor_advance(ttf_parser::GlyphId(*g)).unwrap_or(0) > 0
+                    && tt_glyph_has_data(&face, ttf_parser::GlyphId(*g))
+            });
+
+            if gid.is_none() {
+                for g in 1..num {
+                    let adv = face.glyph_hor_advance(ttf_parser::GlyphId(g)).unwrap_or(0);
+                    if adv > 0 && tt_glyph_has_data(&face, ttf_parser::GlyphId(g)) {
+                        gid = Some(g);
+                        break;
                     }
                 }
             }
-            needs
+            let gid = gid?;
+            let adv = face
+                .glyph_hor_advance(ttf_parser::GlyphId(gid))
+                .unwrap_or(1000);
+            let dw = (adv as f64 * scale).round() as i64;
+            Some((gid, dw))
         };
-        for desc_id in needs_fix {
-            if let Some(Object::Dictionary(ref mut cidfont)) = doc.objects.get_mut(&desc_id) {
+
+    let is_cid2_with_embedded_ff2 = |doc: &Document, cidfont: &lopdf::Dictionary| -> bool {
+        let has_embedded_ff2 = match cidfont.get(b"FontDescriptor").ok() {
+            Some(Object::Reference(fd_id)) => {
+                matches!(
+                    doc.objects.get(fd_id),
+                    Some(Object::Dictionary(fd)) if fd.has(b"FontFile2")
+                )
+            }
+            _ => false,
+        };
+        let is_cid2 = matches!(
+            cidfont.get(b"Subtype").ok(),
+            Some(Object::Name(ref n)) if n == b"CIDFontType2"
+        ) || has_embedded_ff2;
+        is_cid2 && has_embedded_ff2
+    };
+
+    let needs_cidtogid_fix = |doc: &Document, cidfont: &lopdf::Dictionary| -> bool {
+        is_cid2_with_embedded_ff2(doc, cidfont) && !has_valid_cidtogid(doc, cidfont)
+    };
+
+    for id in ids {
+        let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+            continue;
+        };
+        let is_type0 = matches!(
+            dict.get(b"Subtype").ok(),
+            Some(Object::Name(ref n)) if n == b"Type0"
+        );
+        if !is_type0 {
+            continue;
+        }
+        let identity_parent = type0_uses_identity(doc, dict);
+
+        match dict.get(b"DescendantFonts").ok() {
+            Some(Object::Array(arr)) => {
+                for (idx, item) in arr.iter().enumerate() {
+                    match item {
+                        Object::Reference(desc_id) => {
+                            let Some(Object::Dictionary(cidfont)) = doc.objects.get(desc_id) else {
+                                continue;
+                            };
+                            if identity_parent {
+                                if needs_cidtogid_fix(doc, cidfont) {
+                                    ref_targets.push(*desc_id);
+                                }
+                            } else if is_cid2_with_embedded_ff2(doc, cidfont)
+                                && !has_valid_cidtogid(doc, cidfont)
+                            {
+                                // If fix_truetype_cid_widths already populated a W array,
+                                // the per-GID widths are correct for Identity mapping —
+                                // use Identity instead of a degenerate single-glyph map so
+                                // we don't clobber those widths.
+                                if cidfont.has(b"W") {
+                                    ref_targets.push(*desc_id);
+                                } else if let Some((gid, dw)) =
+                                    cidfont_replacement_gid_dw(doc, cidfont)
+                                {
+                                    custom_map_targets.push((*desc_id, gid, dw));
+                                } else if needs_cidtogid_fix(doc, cidfont) {
+                                    ref_targets.push(*desc_id);
+                                }
+                            }
+                        }
+                        Object::Dictionary(cidfont) => {
+                            if needs_cidtogid_fix(doc, cidfont) {
+                                inline_targets.push((id, true, idx));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Some(Object::Reference(arr_id)) => {
+                let Some(Object::Array(arr)) = doc.objects.get(arr_id) else {
+                    continue;
+                };
+                for (idx, item) in arr.iter().enumerate() {
+                    match item {
+                        Object::Reference(desc_id) => {
+                            let Some(Object::Dictionary(cidfont)) = doc.objects.get(desc_id) else {
+                                continue;
+                            };
+                            if identity_parent {
+                                if needs_cidtogid_fix(doc, cidfont) {
+                                    ref_targets.push(*desc_id);
+                                }
+                            } else if is_cid2_with_embedded_ff2(doc, cidfont)
+                                && !has_valid_cidtogid(doc, cidfont)
+                            {
+                                // If fix_truetype_cid_widths already populated a W array,
+                                // the per-GID widths are correct for Identity mapping —
+                                // use Identity instead of a degenerate single-glyph map so
+                                // we don't clobber those widths.
+                                if cidfont.has(b"W") {
+                                    ref_targets.push(*desc_id);
+                                } else if let Some((gid, dw)) =
+                                    cidfont_replacement_gid_dw(doc, cidfont)
+                                {
+                                    custom_map_targets.push((*desc_id, gid, dw));
+                                } else if needs_cidtogid_fix(doc, cidfont) {
+                                    ref_targets.push(*desc_id);
+                                }
+                            }
+                        }
+                        Object::Dictionary(cidfont) => {
+                            if needs_cidtogid_fix(doc, cidfont) {
+                                inline_targets.push((*arr_id, false, idx));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for desc_id in ref_targets {
+        if let Some(Object::Dictionary(ref mut cidfont)) = doc.objects.get_mut(&desc_id) {
+            cidfont.set("CIDToGIDMap", Object::Name(b"Identity".to_vec()));
+            count += 1;
+        }
+    }
+
+    for (desc_id, gid, dw) in custom_map_targets {
+        // Build a full 65536-entry map (2 bytes per CID) to one valid glyph.
+        let gid_be = gid.to_be_bytes();
+        let mut map = vec![0u8; 65536 * 2];
+        for i in (0..map.len()).step_by(2) {
+            map[i] = gid_be[0];
+            map[i + 1] = gid_be[1];
+        }
+        let map_id = doc.add_object(Object::Stream(lopdf::Stream::new(dictionary! {}, map)));
+
+        if let Some(Object::Dictionary(ref mut cidfont)) = doc.objects.get_mut(&desc_id) {
+            cidfont.set("CIDToGIDMap", Object::Reference(map_id));
+            // Keep dictionary width in sync with the forced replacement glyph.
+            cidfont.set("DW", Object::Integer(dw));
+            cidfont.remove(b"W");
+            count += 1;
+        }
+    }
+
+    for (container_id, is_type0_dict, idx) in inline_targets {
+        if is_type0_dict {
+            if let Some(Object::Dictionary(ref mut type0)) = doc.objects.get_mut(&container_id) {
+                if let Ok(Object::Array(arr)) = type0.get_mut(b"DescendantFonts") {
+                    if let Some(Object::Dictionary(ref mut cidfont)) = arr.get_mut(idx) {
+                        cidfont.set("CIDToGIDMap", Object::Name(b"Identity".to_vec()));
+                        count += 1;
+                    }
+                }
+            }
+        } else if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&container_id) {
+            if let Some(Object::Dictionary(ref mut cidfont)) = arr.get_mut(idx) {
                 cidfont.set("CIDToGIDMap", Object::Name(b"Identity".to_vec()));
                 count += 1;
             }
         }
     }
+
     count
 }
 
@@ -2308,6 +2746,17 @@ fn fix_cidsysteminfo_mismatch(doc: &mut Document) -> usize {
             continue;
         };
 
+        // Identity-H/V CMaps are exempt from CIDSystemInfo matching (ISO 19005-2 §6.2.11.3.1:
+        // "If the Encoding key … is Identity-H or Identity-V, any values … may be used").
+        // Skipping here prevents us from overwriting a valid CIDSystemInfo that is shared
+        // with another descendant font using a non-Identity CMap.
+        if let Object::Name(name) = &encoding_obj {
+            let n = String::from_utf8_lossy(name);
+            if n == "Identity-H" || n == "Identity-V" {
+                continue;
+            }
+        }
+
         // Get the CMap's CIDSystemInfo (from the CMap stream or predefined name).
         let cmap_csi = match &encoding_obj {
             Object::Name(name) => {
@@ -2368,11 +2817,12 @@ fn fix_cidsysteminfo_mismatch(doc: &mut Document) -> usize {
 
         // Check if they match.
         if cmap_registry == cidfont_reg && cmap_ordering == cidfont_ord {
-            // Registry/Ordering match — check Supplement (CIDFont ≤ CMap).
+            // Registry/Ordering match — keep Supplement in sync with the CMap.
+            // veraPDF validates exact compatibility here, not just CIDFont <= CMap.
             let cmap_supplement = get_cmap_supplement(doc, &encoding_obj);
             if let Some(cmap_sup) = cmap_supplement {
                 let cidfont_sup = get_cidfont_supplement(doc, cid_font_id);
-                if cidfont_sup > cmap_sup {
+                if cidfont_sup != cmap_sup {
                     set_cidfont_supplement(doc, cid_font_id, cmap_sup);
                     count += 1;
                 }
@@ -2469,11 +2919,7 @@ fn extract_cmap_string_value(text: &str, key: &str) -> Option<String> {
 /// Extract Supplement from a CMap (predefined name or stream).
 fn get_cmap_supplement(doc: &Document, encoding_obj: &Object) -> Option<i64> {
     match encoding_obj {
-        Object::Name(_) => {
-            // Predefined CMap — Supplement is encoded in the name for some.
-            // We can't reliably extract it; skip.
-            None
-        }
+        Object::Name(name) => predefined_cmap_supplement(&String::from_utf8_lossy(name)),
         Object::Reference(cmap_id) => {
             // CMap stream — look for /Supplement in the CIDSystemInfo dict on the stream.
             let stream = match doc.objects.get(cmap_id) {
@@ -2496,6 +2942,38 @@ fn get_cmap_supplement(doc: &Document, encoding_obj: &Object) -> Option<i64> {
         }
         _ => None,
     }
+}
+
+fn predefined_cmap_supplement(cmap_name: &str) -> Option<i64> {
+    match cmap_name {
+        // Adobe-GB1-0: base GB 2312-80 CMaps (Supplement 0).
+        "GB-EUC-H" | "GB-EUC-V" | "GBpc-EUC-H" | "GBpc-EUC-V" => return Some(0),
+        // Adobe-GB1-2: GBK extension CMaps (Supplement 2).
+        "GBK-EUC-H" | "GBK-EUC-V" | "GBKp-EUC-H" | "GBKp-EUC-V" => return Some(2),
+        // Adobe-GB1-4: GBK2K and UniGB-UCS2 CMaps (Supplement 4).
+        "GBK2K-H" | "GBK2K-V" | "UniGB-UCS2-H" | "UniGB-UCS2-V" => return Some(4),
+        // Adobe-GB1-6: UniGB UTF-16 CMaps (Supplement 6).
+        "UniGB-UTF16-H" | "UniGB-UTF16-V" => return Some(6),
+        // Adobe-Japan1-0: base EUC CMaps (Supplement 0).
+        "EUC-H" | "EUC-V" => return Some(0),
+        // Adobe Tech Note #5094: 90pv-RKSJ-H/V were introduced with
+        // Adobe-Japan1-1.
+        "90pv-RKSJ-H" | "90pv-RKSJ-V" => return Some(1),
+        // Adobe Tech Note #5094: these legacy CMaps were introduced with
+        // Adobe-Japan1-2.
+        "90ms-RKSJ-H" | "90ms-RKSJ-V" | "90msp-RKSJ-H" | "90msp-RKSJ-V" | "78ms-RKSJ-H"
+        | "78ms-RKSJ-V" | "UniJIS-UTF8-H" | "UniJIS-UTF8-V" => return Some(2),
+        // The vendored Adobe-Japan1-7 UniJIS UCS2 CMaps advertise
+        // CIDSystemInfo Supplement 4 in their headers.
+        "UniJIS-UCS2-H" | "UniJIS-UCS2-V" | "UniJIS-UCS2-HW-H" | "UniJIS-UCS2-HW-V" => {
+            return Some(4)
+        }
+        _ => {}
+    }
+    if cmap_name.contains("UniKS") {
+        return Some(1);
+    }
+    None
 }
 
 /// Extract the Supplement value from a CIDFont's CIDSystemInfo.
@@ -2562,10 +3040,10 @@ fn predefined_cmap_cidsysteminfo(cmap_name: &str) -> Option<(String, String)> {
     }
 
     // Adobe standard CMaps.
-    if cmap_name.contains("Japan") || cmap_name.starts_with("90") {
+    if cmap_name.contains("Japan") || cmap_name.starts_with("90") || cmap_name.contains("UniJIS") {
         return Some(("Adobe".to_string(), "Japan1".to_string()));
     }
-    if cmap_name.contains("Korea") || cmap_name.starts_with("KS") {
+    if cmap_name.contains("Korea") || cmap_name.starts_with("KS") || cmap_name.contains("UniKS") {
         return Some(("Adobe".to_string(), "Korea1".to_string()));
     }
     if cmap_name.contains("GB") || cmap_name.starts_with("GBK") {
@@ -2663,11 +3141,87 @@ const PREDEFINED_CMAPS: &[&str] = &[
 
 /// Directories where CMap files may be found.
 const CMAP_SEARCH_DIRS: &[&str] = &[
+    concat!(env!("CARGO_MANIFEST_DIR"), "/resources/cmap"),
     "/usr/share/poppler/cMap",
     "/usr/share/fonts/cmap",
     "/usr/share/fonts/cMap",
     "/usr/share/ghostscript/cMap",
 ];
+
+fn cmap_requires_embedding_for_verapdf(cmap_name: &str) -> bool {
+    // veraPDF 1.28's 6.2.11.3.3 whitelist does not treat these UniGB UTF16
+    // names as predefined, so keep them embedded to avoid false negatives.
+    matches!(cmap_name, "UniGB-UTF16-H" | "UniGB-UTF16-V")
+}
+
+/// Strip non-standard /UseCMap references from embedded CMap dictionaries.
+///
+/// PDF/A-2 6.2.11.3.3:3 allows references only to predefined CMaps from
+/// ISO 32000-1 Table 118. Keeping custom references (e.g. Adobe-Korea1-2)
+/// triggers both 6.2.11.3.3:3 and 6.2.11.3.3:1 in veraPDF.
+fn strip_nonstandard_usecmap_references(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut stripped = 0usize;
+
+    for id in ids {
+        let should_strip = {
+            let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let is_cmap = matches!(
+                stream.dict.get(b"Type").ok(),
+                Some(Object::Name(ref n)) if n == b"CMap"
+            ) || stream.dict.has(b"CMapName")
+                || stream.dict.has(b"UseCMap");
+            if !is_cmap {
+                continue;
+            }
+
+            match stream.dict.get(b"UseCMap").ok() {
+                Some(Object::Name(name)) => {
+                    let usecmap = String::from_utf8_lossy(name).to_string();
+                    !PREDEFINED_CMAPS.contains(&usecmap.as_str())
+                }
+                Some(Object::Reference(r)) => {
+                    // If the reference cannot be resolved to a predefined CMap name,
+                    // strip it to avoid forbidden non-standard CMap chains.
+                    match doc.objects.get(r) {
+                        Some(Object::Name(name)) => {
+                            let usecmap = String::from_utf8_lossy(name).to_string();
+                            !PREDEFINED_CMAPS.contains(&usecmap.as_str())
+                        }
+                        Some(Object::Dictionary(d)) => {
+                            let name = d.get(b"CMapName").ok().and_then(|o| match o {
+                                Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
+                                _ => None,
+                            });
+                            name.is_none_or(|n| !PREDEFINED_CMAPS.contains(&n.as_str()))
+                        }
+                        Some(Object::Stream(s)) => {
+                            let name = s.dict.get(b"CMapName").ok().and_then(|o| match o {
+                                Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
+                                _ => None,
+                            });
+                            name.is_none_or(|n| !PREDEFINED_CMAPS.contains(&n.as_str()))
+                        }
+                        _ => true,
+                    }
+                }
+                Some(_) => true,
+                None => false,
+            }
+        };
+
+        if should_strip {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.dict.remove(b"UseCMap");
+                stripped += 1;
+            }
+        }
+    }
+
+    stripped
+}
 
 /// Embed non-standard CMap files referenced by Type0 fonts (6.2.11.3.3).
 fn embed_nonstandard_cmaps(doc: &mut Document) -> usize {
@@ -2704,7 +3258,9 @@ fn embed_nonstandard_cmaps(doc: &mut Document) -> usize {
         if cmap_name.is_empty() {
             continue;
         }
-        if PREDEFINED_CMAPS.contains(&cmap_name.as_str()) {
+        if PREDEFINED_CMAPS.contains(&cmap_name.as_str())
+            && !cmap_requires_embedding_for_verapdf(&cmap_name)
+        {
             continue;
         }
 
@@ -3112,6 +3668,399 @@ fn collect_content_stream_ids(doc: &Document) -> std::collections::HashSet<Objec
     ids
 }
 
+/// Replace unreadable content streams (bad filter data) with empty streams.
+///
+/// Corrupt compressed content can surface as undefined operators during
+/// validation. For such streams, keep a valid but empty content stream.
+fn fix_unreadable_content_streams(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+
+    for id in ids {
+        let action = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            let unreadable_by_lopdf = s.dict.has(b"Filter") && s.decompressed_content().is_err();
+            // lopdf can occasionally report Ok(empty) for corrupt Flate payloads.
+            // Detect those with a strict zlib decode and neutralize the stream.
+            let unreadable_single_flate = is_single_flate_filter(s) && strict_flate_decode_fails(s);
+            if unreadable_by_lopdf || unreadable_single_flate {
+                1usize // clear
+            } else if is_single_flate_filter(s) {
+                // Detect double-compressed streams: FlateDecode content that starts
+                // with a zlib header (0x78) after decompression — re-decompress.
+                if let Ok(dec1) = s.decompressed_content() {
+                    if dec1.len() > 2 && dec1[0] == 0x78 {
+                        let mut dec2 = Vec::new();
+                        let mut decoder = ZlibDecoder::new(dec1.as_slice());
+                        if decoder.read_to_end(&mut dec2).is_ok() && !dec2.is_empty() {
+                            2 // re-decompress and store uncompressed
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        match action {
+            1 => {
+                if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                    s.dict.remove(b"Filter");
+                    s.dict.remove(b"DecodeParms");
+                    s.content.clear();
+                    count += 1;
+                }
+            }
+            2 => {
+                // Re-decompress double-compressed content, then store re-compressed.
+                let double_dec = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+                    s.decompressed_content().ok().and_then(|dec1| {
+                        let mut dec2 = Vec::new();
+                        let mut decoder = ZlibDecoder::new(dec1.as_slice());
+                        decoder.read_to_end(&mut dec2).ok().map(|_| dec2)
+                    })
+                } else {
+                    None
+                };
+                if let Some(inner) = double_dec {
+                    if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                        s.dict.remove(b"Filter");
+                        s.dict.remove(b"DecodeParms");
+                        s.content = inner;
+                        let _ = s.compress();
+                        count += 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    count
+}
+
+fn is_single_flate_filter(stream: &lopdf::Stream) -> bool {
+    match stream.dict.get(b"Filter").ok() {
+        Some(Object::Name(n)) => n == b"FlateDecode" || n == b"Fl",
+        Some(Object::Array(arr)) if arr.len() == 1 => {
+            matches!(&arr[0], Object::Name(n) if n == b"FlateDecode" || n == b"Fl")
+        }
+        _ => false,
+    }
+}
+
+fn strict_flate_decode_fails(stream: &lopdf::Stream) -> bool {
+    if stream.content.is_empty() {
+        return false;
+    }
+
+    let mut decoder = ZlibDecoder::new(stream.content.as_slice());
+    let mut decoded = Vec::new();
+    decoder.read_to_end(&mut decoded).is_err()
+}
+
+/// Strip invalid non-ASCII bytes before the first content token.
+///
+/// Some malformed content streams start with junk bytes (for example 0x80/0xC2),
+/// which validators report as undefined operators (PDF/A 6.2.2:1).
+fn fix_invalid_operator_preamble(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+
+    for id in ids {
+        let decoded = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+        if decoded.is_empty() {
+            continue;
+        }
+
+        let mut cut = 0usize;
+        while cut < decoded.len() {
+            let b = decoded[cut];
+            if b.is_ascii_whitespace() {
+                cut += 1;
+                continue;
+            }
+            if b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'/' | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'['
+                        | b']'
+                        | b'<'
+                        | b'>'
+                        | b'('
+                        | b'%'
+                        | b'q'
+                        | b'Q'
+                )
+            {
+                break;
+            }
+            cut += 1;
+        }
+
+        if cut == 0 {
+            continue;
+        }
+
+        let new_content = decoded[cut..].to_vec();
+        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            s.dict.remove(b"Filter");
+            s.dict.remove(b"DecodeParms");
+            s.content = new_content;
+            let _ = s.compress();
+            count += 1;
+        }
+    }
+
+    count
+}
+
+/// Fix cumulative q/Q depth across a page's multi-stream content array.
+///
+/// When a page's /Contents is an array, all streams are concatenated by the
+/// renderer, so q operators accumulate across streams. This pass rewrites
+/// individual streams to ensure the cumulative depth never exceeds 28.
+fn fix_page_content_stream_nesting(doc: &mut Document) -> usize {
+    use crate::content_editor::ContentEditor;
+
+    let page_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(d) = obj {
+                if d.get(b"Type").ok() == Some(&Object::Name(b"Page".to_vec())) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let mut total_removed = 0usize;
+
+    for page_id in page_ids {
+        // Collect content stream IDs for this page (array form only).
+        let stream_ids: Vec<ObjectId> = {
+            let Some(Object::Dictionary(page_dict)) = doc.objects.get(&page_id) else {
+                continue;
+            };
+            match page_dict.get(b"Contents").ok() {
+                Some(Object::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|o| {
+                        if let Object::Reference(id) = o {
+                            Some(*id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => continue, // single stream or missing — handled by per-stream pass
+            }
+        };
+
+        if stream_ids.len() < 2 {
+            continue;
+        }
+
+        // Compute cumulative q depth at the END of each stream.
+        let mut cum_depths: Vec<i64> = Vec::with_capacity(stream_ids.len());
+        let mut cur: i64 = 0;
+        let mut max_cum: i64 = 0;
+        for id in &stream_ids {
+            let delta: i64 = if let Some(Object::Stream(s)) = doc.objects.get(id) {
+                let dec = s
+                    .decompressed_content()
+                    .unwrap_or_else(|_| s.content.clone());
+                dec.split(|b| b" \t\r\n".contains(b))
+                    .filter(|t| !t.is_empty())
+                    .map(|t| {
+                        if t == b"q" {
+                            1
+                        } else if t == b"Q" {
+                            -1
+                        } else {
+                            0
+                        }
+                    })
+                    .sum()
+            } else {
+                0
+            };
+            cur += delta;
+            max_cum = max_cum.max(cur);
+            cum_depths.push(cur);
+        }
+
+        if max_cum <= 28 {
+            continue; // no fix needed
+        }
+
+        // Re-simulate and fix: rewrite streams to cap cumulative depth at 28.
+        let mut depth: i64 = 0;
+        let mut skipped_q: i64 = 0;
+
+        for id in &stream_ids {
+            let decoded = if let Some(Object::Stream(s)) = doc.objects.get(id) {
+                s.decompressed_content()
+                    .unwrap_or_else(|_| s.content.clone())
+            } else {
+                continue;
+            };
+
+            let editor = match ContentEditor::from_stream(&decoded) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            let mut modified = false;
+            let mut new_ops = Vec::with_capacity(editor.operations().len());
+
+            for op in editor.operations() {
+                match op.operator.as_str() {
+                    "q" => {
+                        if depth >= 28 {
+                            skipped_q += 1;
+                            total_removed += 1;
+                            modified = true;
+                            continue;
+                        }
+                        depth += 1;
+                        new_ops.push(op.clone());
+                    }
+                    "Q" => {
+                        if skipped_q > 0 {
+                            skipped_q -= 1;
+                            total_removed += 1;
+                            modified = true;
+                            continue;
+                        }
+                        depth = (depth - 1).max(0);
+                        new_ops.push(op.clone());
+                    }
+                    _ => new_ops.push(op.clone()),
+                }
+            }
+
+            if modified {
+                let new_content = match ContentEditor::from_operations(new_ops).encode() {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(id) {
+                    s.dict.remove(b"Filter");
+                    s.dict.remove(b"DecodeParms");
+                    s.content = new_content;
+                    let _ = s.compress();
+                }
+            }
+        }
+    }
+
+    total_removed
+}
+
+/// Enforce PDF/A graphics state nesting limit (6.1.13:8).
+///
+/// veraPDF requires q/Q nesting depth to stay <= 28. For malformed streams
+/// with deeper nesting, drop only the overflowing q operators and their
+/// corresponding Q operators, preserving valid depth transitions.
+fn fix_graphics_state_nesting_limit(doc: &mut Document) -> usize {
+    let mut removed_ops = 0usize;
+
+    // Pass 1: fix cumulative depth across multi-stream pages.
+    removed_ops += fix_page_content_stream_nesting(doc);
+
+    // Pass 2: fix individual content streams (Form XObjects, etc.).
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+
+    for id in ids {
+        let decoded = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+        if !decoded.iter().any(|b| *b == b'q' || *b == b'Q') {
+            continue;
+        }
+
+        let editor = match crate::content_editor::ContentEditor::from_stream(&decoded) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let mut depth = 0usize;
+        let mut skipped_q = 0usize;
+        let mut modified = false;
+        let mut new_ops = Vec::with_capacity(editor.operations().len());
+
+        for op in editor.operations() {
+            match op.operator.as_str() {
+                "q" => {
+                    if depth >= 28 {
+                        skipped_q += 1;
+                        removed_ops += 1;
+                        modified = true;
+                        continue;
+                    }
+                    depth += 1;
+                    new_ops.push(op.clone());
+                }
+                "Q" => {
+                    if skipped_q > 0 {
+                        skipped_q -= 1;
+                        removed_ops += 1;
+                        modified = true;
+                        continue;
+                    }
+                    depth = depth.saturating_sub(1);
+                    new_ops.push(op.clone());
+                }
+                _ => new_ops.push(op.clone()),
+            }
+        }
+
+        if !modified {
+            continue;
+        }
+
+        let new_content =
+            match crate::content_editor::ContentEditor::from_operations(new_ops).encode() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            s.dict.remove(b"Filter");
+            s.dict.remove(b"DecodeParms");
+            s.content = new_content;
+            let _ = s.compress();
+        }
+    }
+
+    removed_ops
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // 6.2.8:3 — Fix Interpolate=true in inline images.
@@ -3462,10 +4411,253 @@ fn is_number_byte(b: u8) -> bool {
     b.is_ascii_digit() || b == b'.' || b == b'-'
 }
 
+/// Replace non-finite numeric tokens in content streams with `0`.
+///
+/// Some generators emit `NaN`, `Infinity`, or `-Infinity` where ISO 32000-1
+/// expects a numeric operand. Validators then treat those tokens as undefined
+/// operators (for example `NaN w`). Sanitize only standalone tokens outside
+/// of strings/comments so the surrounding operator sequence remains valid.
+fn fix_non_finite_numbers_in_streams(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let content_ids = collect_content_stream_ids(doc);
+    let ids: Vec<ObjectId> = content_ids.into_iter().collect();
+
+    for id in ids {
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        if !decompressed.windows(3).any(|w| w == b"NaN")
+            && !decompressed.windows(8).any(|w| w == b"Infinity")
+        {
+            continue;
+        }
+
+        let mut new_content = Vec::with_capacity(decompressed.len());
+        let mut i = 0usize;
+        let mut fixed_any = false;
+        let mut string_depth = 0usize;
+        let mut escape = false;
+        let mut in_hex_string = false;
+        let mut in_comment = false;
+
+        while i < decompressed.len() {
+            let b = decompressed[i];
+
+            if in_comment {
+                new_content.push(b);
+                if b == b'\n' || b == b'\r' {
+                    in_comment = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            if string_depth > 0 {
+                new_content.push(b);
+                if escape {
+                    escape = false;
+                } else {
+                    match b {
+                        b'\\' => escape = true,
+                        b'(' => string_depth += 1,
+                        b')' => string_depth = string_depth.saturating_sub(1),
+                        _ => {}
+                    }
+                }
+                i += 1;
+                continue;
+            }
+
+            if in_hex_string {
+                new_content.push(b);
+                if b == b'>' {
+                    in_hex_string = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            match b {
+                b'%' => {
+                    in_comment = true;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                b'(' => {
+                    string_depth = 1;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                b'<' if i + 1 < decompressed.len() && decompressed[i + 1] != b'<' => {
+                    in_hex_string = true;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+
+            if let Some(token_len) = non_finite_number_token_len(&decompressed, i) {
+                let prev = if i == 0 {
+                    None
+                } else {
+                    Some(decompressed[i - 1])
+                };
+                let next = decompressed.get(i + token_len).copied();
+                let prev_ok = prev.is_none_or(is_non_finite_token_delimiter);
+                let next_ok = next.is_none_or(is_non_finite_token_delimiter);
+                let prev_is_name = prev == Some(b'/');
+                if prev_ok && next_ok && !prev_is_name {
+                    new_content.push(b'0');
+                    i += token_len;
+                    count += 1;
+                    fixed_any = true;
+                    continue;
+                }
+            }
+
+            new_content.push(b);
+            i += 1;
+        }
+
+        if fixed_any {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"Filter");
+                s.dict.remove(b"DecodeParms");
+                s.content = new_content;
+                let _ = s.compress();
+            }
+        }
+    }
+
+    count
+}
+
+fn non_finite_number_token_len(bytes: &[u8], start: usize) -> Option<usize> {
+    let tail = &bytes[start..];
+    if tail.starts_with(b"NaN") {
+        return Some(3);
+    }
+    if tail.starts_with(b"+Infinity") || tail.starts_with(b"-Infinity") {
+        return Some(9);
+    }
+    if tail.starts_with(b"Infinity") {
+        return Some(8);
+    }
+    None
+}
+
+fn is_non_finite_token_delimiter(b: u8) -> bool {
+    b.is_ascii_whitespace()
+        || matches!(
+            b,
+            b'[' | b']' | b'<' | b'>' | b'(' | b')' | b'/' | b'{' | b'}' | b'%'
+        )
+}
+
 // ---------------------------------------------------------------------------
-// 6.2.8.3:4 — Fix JPEG2000 forbidden enumerated colour spaces.
-// CIEJab (19) is not allowed in PDF/A. Change to sRGB (16).
+// 6.2.8.3 — JPEG2000 constraints:
+//   - test 1: nrColorChannels must be 1, 3, or 4
+//   - test 4: forbidden enumerated colour space 19 (CIEJab)
 // ---------------------------------------------------------------------------
+
+fn is_jpx_filter(obj: &Object) -> bool {
+    match obj {
+        Object::Name(n) => n == b"JPXDecode",
+        Object::Array(arr) => arr
+            .iter()
+            .any(|o| matches!(o, Object::Name(n) if n == b"JPXDecode")),
+        _ => false,
+    }
+}
+
+/// Parse number of channels from JP2 header (`ihdr`) or codestream SIZ marker.
+fn jpx_channel_count(data: &[u8]) -> Option<u16> {
+    // Prefer JP2 box `ihdr` when present.
+    let mut pos = 0usize;
+    while pos + 8 <= data.len() {
+        let lbox = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+        let box_type = &data[pos + 4..pos + 8];
+        let (box_len, header_len) = if lbox == 1 {
+            if pos + 16 > data.len() {
+                break;
+            }
+            let xl = u64::from_be_bytes([
+                data[pos + 8],
+                data[pos + 9],
+                data[pos + 10],
+                data[pos + 11],
+                data[pos + 12],
+                data[pos + 13],
+                data[pos + 14],
+                data[pos + 15],
+            ]) as usize;
+            (xl, 16usize)
+        } else if lbox == 0 {
+            (data.len() - pos, 8usize)
+        } else {
+            (lbox as usize, 8usize)
+        };
+
+        if box_len < header_len || pos + box_len > data.len() {
+            break;
+        }
+
+        if box_type == b"ihdr" {
+            let payload = pos + header_len;
+            if payload + 10 <= data.len() {
+                return Some(u16::from_be_bytes([data[payload + 8], data[payload + 9]]));
+            }
+        }
+
+        if box_len == 0 {
+            break;
+        }
+        pos += box_len;
+    }
+
+    // Fallback: find codestream SIZ marker (FF51) and read Csiz.
+    let mut i = 0usize;
+    while i + 3 < data.len() {
+        if data[i] == 0xFF && data[i + 1] == 0x51 {
+            let lsiz = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+            if lsiz >= 38 && i + 2 + lsiz <= data.len() {
+                let csiz_pos = i + 4 + 2 + 32; // after Lsiz + Rsiz + 8x u32 geometry fields
+                if csiz_pos + 1 < i + 2 + lsiz {
+                    return Some(u16::from_be_bytes([data[csiz_pos], data[csiz_pos + 1]]));
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Replace invalid JPX image stream with a minimal DeviceGray image placeholder.
+fn replace_invalid_jpx_with_placeholder(stream: &mut lopdf::Stream) {
+    stream.dict.set("Width", Object::Integer(1));
+    stream.dict.set("Height", Object::Integer(1));
+    stream.dict.set("BitsPerComponent", Object::Integer(8));
+    stream
+        .dict
+        .set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+    stream.dict.remove(b"SMask");
+    stream.dict.remove(b"Mask");
+    stream.dict.remove(b"SMaskInData");
+    stream.dict.remove(b"Decode");
+    stream.dict.remove(b"DecodeParms");
+    stream.dict.remove(b"ImageMask");
+    stream.dict.remove(b"Filter");
+    stream.content = vec![255u8];
+}
 
 fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
     let mut count = 0;
@@ -3473,12 +4665,7 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
 
     for id in ids {
         let is_jpx = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
-            s.dict
-                .get(b"Filter")
-                .ok()
-                .and_then(|o| o.as_name().ok())
-                .map(|n| n == b"JPXDecode")
-                .unwrap_or(false)
+            s.dict.get(b"Filter").ok().is_some_and(is_jpx_filter)
         } else {
             false
         };
@@ -3487,6 +4674,17 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
         }
 
         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            // PDF/A-2 6.2.8.3:1: allowed JPX channel counts are 1, 3 or 4.
+            // If the codestream contains an unsupported channel count, replace
+            // the stream with a minimal non-JPX image to keep the file compliant.
+            if let Some(channels) = jpx_channel_count(&s.content) {
+                if channels != 1 && channels != 3 && channels != 4 {
+                    replace_invalid_jpx_with_placeholder(s);
+                    count += 1;
+                    continue;
+                }
+            }
+
             // Find "colr" box in JP2 data and check enumCS.
             if let Some(pos) = find_subsequence(&s.content, b"colr") {
                 // colr box layout: [4 bytes len][4 bytes "colr"][1 byte method][...]
@@ -3530,33 +4728,9 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 fn fix_odd_hex_strings_in_streams(doc: &mut Document) -> usize {
     let mut count = 0;
-    // Process all streams except binary ones (images, fonts, ICC profiles).
-    let ids: Vec<ObjectId> = doc
-        .objects
-        .iter()
-        .filter_map(|(&id, obj)| {
-            if let Object::Stream(s) = obj {
-                // Skip binary streams that aren't text-based.
-                let subtype = s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok());
-                if matches!(
-                    subtype,
-                    Some(b"Image" | b"CIDFontType0C" | b"CIDFontType2" | b"Type1C" | b"OpenType")
-                ) {
-                    return None;
-                }
-                // Skip font file streams (have Length1/Length2).
-                if s.dict.has(b"Length1") || s.dict.has(b"Length2") {
-                    return None;
-                }
-                // Skip ICC profile streams.
-                if s.dict.has(b"N") && s.dict.has(b"Alternate") {
-                    return None;
-                }
-                return Some(id);
-            }
-            None
-        })
-        .collect();
+    // Only process actual content streams. Scanning arbitrary binary streams
+    // (font programs, images, ICC profiles) can corrupt embedded resources.
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
 
     for id in ids {
         let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
@@ -3669,30 +4843,50 @@ fn fix_odd_hex_strings_in_streams(doc: &mut Document) -> usize {
             }
             if decompressed[i] == b'<' {
                 // Start of hex string — find matching >.
-                let start = i;
                 i += 1;
-                let mut hex_count = 0u32;
+                let content_start = i;
                 while i < decompressed.len() && decompressed[i] != b'>' {
-                    if decompressed[i].is_ascii_hexdigit() {
-                        hex_count += 1;
-                    }
                     i += 1;
                 }
-                if i < decompressed.len() && decompressed[i] == b'>' && !hex_count.is_multiple_of(2)
-                {
-                    // Odd hex count — insert 0 before >.
-                    new_content.extend_from_slice(&decompressed[start..i]);
-                    new_content.push(b'0');
+                let content_end = i;
+                if i < decompressed.len() {
+                    i += 1; // skip '>'
+                }
+                let raw = &decompressed[content_start..content_end];
+
+                // Collect only valid hex digits and whitespace; strip anything else.
+                let mut hex_chars: Vec<u8> = raw
+                    .iter()
+                    .filter(|&&b| b.is_ascii_hexdigit() || b.is_ascii_whitespace())
+                    .copied()
+                    .collect();
+
+                // Count non-whitespace hex chars.
+                let hex_count = hex_chars
+                    .iter()
+                    .filter(|&&b| !b.is_ascii_whitespace())
+                    .count();
+
+                // Detect if anything changed (invalid chars removed or odd count).
+                let had_invalid = hex_chars.len() != raw.len();
+                let is_odd = hex_count % 2 != 0;
+
+                if had_invalid || is_odd {
+                    // Pad if odd.
+                    if is_odd {
+                        // Insert '0' at end (before any trailing whitespace).
+                        hex_chars.push(b'0');
+                    }
+                    new_content.push(b'<');
+                    new_content.extend_from_slice(&hex_chars);
                     new_content.push(b'>');
-                    i += 1;
                     count += 1;
                     fixed_any = true;
-                    continue;
-                }
-                // Even or not a valid hex string — copy as-is.
-                new_content.extend_from_slice(&decompressed[start..=i.min(decompressed.len() - 1)]);
-                if i < decompressed.len() {
-                    i += 1;
+                } else {
+                    // Unchanged — copy original bytes verbatim.
+                    new_content.push(b'<');
+                    new_content.extend_from_slice(raw);
+                    new_content.push(b'>');
                 }
                 continue;
             }
@@ -3771,6 +4965,540 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
                 s.content = new_content;
                 let _ = s.compress();
             }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.2:1 / 6.2.2:2 — Strip unknown/non-ISO content stream operators
+// ---------------------------------------------------------------------------
+//
+// Some PDFs (especially fuzzer-generated or vendor-specific) contain operator
+// tokens that are not defined in ISO 32000-1. veraPDF fails 6.2.2:1 ("operator
+// not defined") and 6.2.2:2 ("undefined keyword") for these.
+//
+// Strategy: tokenise each content stream; emit only tokens that are either
+// operands or valid ISO 32000-1 operators. Discard unknown operator tokens
+// along with their preceding operands. BX/EX compatibility sections are passed
+// through verbatim. Inline-image blocks (BI…EI) are treated as opaque.
+
+/// All operator tokens defined in ISO 32000-1 §8 (content stream operators).
+const ISO32000_OPERATORS: &[&[u8]] = &[
+    // Graphics state
+    b"q", b"Q", b"cm", b"w", b"J", b"j", b"M", b"d", b"ri", b"i", b"gs",
+    // Path construction
+    b"m", b"l", b"c", b"v", b"y", b"h", b"re", // Path painting
+    b"S", b"s", b"F", b"f", b"f*", b"B", b"B*", b"b", b"b*", b"n", // Clipping
+    b"W", b"W*", // Text objects
+    b"BT", b"ET", // Text state
+    b"Tc", b"Tw", b"Tz", b"TL", b"Tf", b"Tr", b"Ts", // Text positioning
+    b"Td", b"TD", b"Tm", b"T*", // Text showing
+    b"Tj", b"TJ", b"'", b"\"", // Type 3
+    b"d0", b"d1", // Colour space / colour
+    b"CS", b"cs", b"SC", b"SCN", b"sc", b"scn", b"G", b"g", b"RG", b"rg", b"K", b"k",
+    // Shading
+    b"sh",
+    // Inline images (BI/ID/EI handled specially, but list them so they're not stripped)
+    b"BI", b"ID", b"EI", // XObjects
+    b"Do", // Marked content
+    b"MP", b"DP", b"BMC", b"BDC", b"EMC", // Compatibility
+    b"BX", b"EX",
+];
+
+fn strip_unknown_content_stream_operators(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let decoded = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        if let Some(new_content) = strip_unknown_ops_in_stream(&decoded) {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"Filter");
+                s.dict.remove(b"DecodeParms");
+                s.content = new_content;
+                let _ = s.compress();
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Returns `Some(new_bytes)` if any unknown operators were removed, else `None`.
+fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
+    let mut out: Vec<u8> = Vec::with_capacity(data.len());
+    // Pending buffer: operands (and whitespace) accumulated since the last
+    // emitted operator.  Flushed on a known operator, discarded on unknown.
+    let mut pending: Vec<u8> = Vec::new();
+    let mut i = 0;
+    let mut modified = false;
+    // BX/EX nesting depth: inside BX…EX all operators are considered valid.
+    let mut bx_depth: u32 = 0;
+
+    while i < data.len() {
+        // ── Whitespace → accumulate in pending ───────────────────────────────
+        if data[i].is_ascii_whitespace() {
+            pending.push(data[i]);
+            i += 1;
+            continue;
+        }
+
+        // ── Comment % … EOL → accumulate in pending ──────────────────────────
+        if data[i] == b'%' {
+            let start = i;
+            while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+                i += 1;
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Literal string (…) → operand ─────────────────────────────────────
+        if data[i] == b'(' {
+            let start = i;
+            i += 1;
+            let mut depth: u32 = 1;
+            while i < data.len() && depth > 0 {
+                match data[i] {
+                    b'\\' => {
+                        i += 1;
+                        if i < data.len() {
+                            i += 1;
+                        }
+                    }
+                    b'(' => {
+                        depth += 1;
+                        i += 1;
+                    }
+                    b')' => {
+                        depth -= 1;
+                        i += 1;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Dict << … >> → operand ───────────────────────────────────────────
+        if data[i] == b'<' && i + 1 < data.len() && data[i + 1] == b'<' {
+            let start = i;
+            i += 2;
+            let mut depth: u32 = 1;
+            while i + 1 < data.len() && depth > 0 {
+                if data[i] == b'<' && data[i + 1] == b'<' {
+                    depth += 1;
+                    i += 2;
+                } else if data[i] == b'>' && data[i + 1] == b'>' {
+                    depth -= 1;
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if depth > 0 {
+                i = data.len();
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Hex string <…> → operand ─────────────────────────────────────────
+        if data[i] == b'<' {
+            let start = i;
+            i += 1;
+            while i < data.len() && data[i] != b'>' {
+                i += 1;
+            }
+            if i < data.len() {
+                i += 1;
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Name /… → operand ────────────────────────────────────────────────
+        if data[i] == b'/' {
+            let start = i;
+            i += 1;
+            while i < data.len() && !is_pdf_delimiter(data[i]) {
+                i += 1;
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Array […] → operand ──────────────────────────────────────────────
+        if data[i] == b'[' {
+            let start = i;
+            i += 1;
+            let mut depth: u32 = 1;
+            while i < data.len() && depth > 0 {
+                match data[i] {
+                    b'[' => {
+                        depth += 1;
+                        i += 1;
+                    }
+                    b']' => {
+                        depth -= 1;
+                        i += 1;
+                    }
+                    b'(' => {
+                        // literal string inside array
+                        i += 1;
+                        let mut sd: u32 = 1;
+                        while i < data.len() && sd > 0 {
+                            match data[i] {
+                                b'\\' => {
+                                    i += 1;
+                                    if i < data.len() {
+                                        i += 1;
+                                    }
+                                }
+                                b'(' => {
+                                    sd += 1;
+                                    i += 1;
+                                }
+                                b')' => {
+                                    sd -= 1;
+                                    i += 1;
+                                }
+                                _ => {
+                                    i += 1;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Number: digit / +digit / -digit / .digit → operand ───────────────
+        if data[i].is_ascii_digit()
+            || ((data[i] == b'+' || data[i] == b'-')
+                && i + 1 < data.len()
+                && (data[i + 1].is_ascii_digit() || data[i + 1] == b'.'))
+            || (data[i] == b'.' && i + 1 < data.len() && data[i + 1].is_ascii_digit())
+        {
+            let start = i;
+            i += 1;
+            while i < data.len()
+                && (data[i].is_ascii_digit()
+                    || data[i] == b'.'
+                    || data[i] == b'e'
+                    || data[i] == b'E')
+            {
+                i += 1;
+            }
+            pending.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // ── Keyword / operator token: scan to next delimiter ─────────────────
+        let tok_start = i;
+        while i < data.len() && !is_pdf_delimiter(data[i]) {
+            i += 1;
+        }
+        if i == tok_start {
+            // Stray delimiter character (e.g. orphaned `>` from `>>`): skip
+            // and mark the stream as modified so it gets rewritten without it.
+            modified = true;
+            i += 1;
+            continue;
+        }
+        let token = &data[tok_start..i];
+
+        // Boolean / null → operand
+        if token == b"true" || token == b"false" || token == b"null" {
+            pending.extend_from_slice(token);
+            continue;
+        }
+
+        // ── Inline image block BI … ID … EI → pass through opaque ────────────
+        if token == b"BI" {
+            // Flush pending operands then copy the whole BI…EI block verbatim.
+            out.extend_from_slice(&pending);
+            pending.clear();
+            out.extend_from_slice(b"BI");
+            // Scan to ID marker (whitespace-preceded).
+            let mut found_ei = false;
+            while i < data.len() {
+                // Look for whitespace + "ID"
+                if (data[i] == b' ' || data[i] == b'\n' || data[i] == b'\r' || data[i] == b'\t')
+                    && i + 3 <= data.len()
+                    && &data[i + 1..i + 3] == b"ID"
+                    && (i + 3 >= data.len()
+                        || data[i + 3] == b' '
+                        || data[i + 3] == b'\n'
+                        || data[i + 3] == b'\r')
+                {
+                    out.extend_from_slice(&data[tok_start + 2..i + 3]); // dict + "ID"
+                    i += 3;
+                    // Now scan binary data until EI
+                    while i < data.len() {
+                        if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
+                            && i + 3 <= data.len()
+                            && &data[i + 1..i + 3] == b"EI"
+                            && (i + 3 >= data.len()
+                                || data[i + 3].is_ascii_whitespace()
+                                || data[i + 3] == b'Q')
+                        {
+                            out.extend_from_slice(&data[i..i + 3]);
+                            i += 3;
+                            found_ei = true;
+                            break;
+                        }
+                        out.push(data[i]);
+                        i += 1;
+                    }
+                    break;
+                }
+                out.push(data[i]);
+                i += 1;
+            }
+            if !found_ei {
+                // Malformed: no EI found; continue from current position.
+            }
+            continue;
+        }
+
+        // ── BX / EX compatibility markers ────────────────────────────────────
+        if token == b"BX" {
+            bx_depth += 1;
+            out.extend_from_slice(&pending);
+            pending.clear();
+            out.extend_from_slice(b"BX");
+            continue;
+        }
+        if token == b"EX" {
+            bx_depth = bx_depth.saturating_sub(1);
+            out.extend_from_slice(&pending);
+            pending.clear();
+            out.extend_from_slice(b"EX");
+            continue;
+        }
+
+        // ── Operator: check validity ──────────────────────────────────────────
+        let is_valid = bx_depth > 0
+            || token.iter().all(|b| b.is_ascii()) // only strip tokens with all-ASCII bytes
+               && ISO32000_OPERATORS.contains(&token);
+
+        if is_valid {
+            out.extend_from_slice(&pending);
+            pending.clear();
+            out.extend_from_slice(token);
+        } else if token.iter().all(|b| b.is_ascii()) {
+            // Unknown ASCII operator: discard it and its pending operands.
+            modified = true;
+            pending.clear();
+            // Ensure token separation after the discard.
+            out.push(b'\n');
+        } else {
+            // Contains non-ASCII bytes: likely binary garbage in content
+            // stream. Pass through unchanged to avoid corrupting binary data.
+            pending.extend_from_slice(token);
+        }
+    }
+
+    // Flush any remaining pending operands (orphaned at end of stream).
+    out.extend_from_slice(&pending);
+
+    if modified {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// Returns true if `b` is a PDF token delimiter character.
+#[inline]
+fn is_pdf_delimiter(b: u8) -> bool {
+    matches!(
+        b,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    ) || b.is_ascii_whitespace()
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13:11 — Page boundary dimensions must be >= 3 and <= 14400 user units.
+// ISO 19005-2:2011 §6.1.13 test 11: "The size of any of the page boundaries
+// shall not be less than 3 units in either direction, nor shall it be greater
+// than 14 400 units in either direction."
+// Applies to MediaBox, CropBox, BleedBox, TrimBox, ArtBox.
+// ---------------------------------------------------------------------------
+
+pub(crate) fn fix_page_boundary_sizes(doc: &mut Document) -> usize {
+    const MIN_DIM: f64 = 3.0;
+    const MAX_DIM: f64 = 14400.0;
+
+    let box_keys: &[&[u8]] = &[b"MediaBox", b"CropBox", b"BleedBox", b"TrimBox", b"ArtBox"];
+
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+            continue;
+        };
+
+        // Only process Page objects (and Pages that can inherit boxes).
+        let type_name = dict
+            .get(b"Type")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .map(|n| n.to_vec());
+        let is_page = matches!(type_name.as_deref(), Some(b"Page") | Some(b"Pages"));
+        if !is_page {
+            continue;
+        }
+
+        let mut changed = false;
+        let mut new_dict = dict.clone();
+
+        for key in box_keys {
+            let Ok(Object::Array(arr)) = new_dict.get(key) else {
+                continue;
+            };
+            if arr.len() != 4 {
+                continue;
+            }
+
+            // Parse [llx lly urx ury].
+            let mut vals = [0.0f64; 4];
+            let mut parseable = true;
+            for (i, obj) in arr.iter().enumerate() {
+                match obj {
+                    Object::Integer(v) => vals[i] = *v as f64,
+                    Object::Real(v) => vals[i] = *v as f64,
+                    _ => {
+                        parseable = false;
+                        break;
+                    }
+                }
+            }
+            if !parseable {
+                continue;
+            }
+
+            let llx = vals[0].min(vals[2]);
+            let lly = vals[1].min(vals[3]);
+            let urx = vals[0].max(vals[2]);
+            let ury = vals[1].max(vals[3]);
+
+            let width = urx - llx;
+            let height = ury - lly;
+
+            if (MIN_DIM..=MAX_DIM).contains(&width) && (MIN_DIM..=MAX_DIM).contains(&height) {
+                continue; // Already valid.
+            }
+
+            // Compute new urx/ury while keeping llx/lly fixed.
+            let new_width = width.clamp(MIN_DIM, MAX_DIM);
+            let new_height = height.clamp(MIN_DIM, MAX_DIM);
+            let new_urx = llx + new_width;
+            let new_ury = lly + new_height;
+
+            new_dict.set(
+                *key,
+                Object::Array(vec![
+                    Object::Real(llx as f32),
+                    Object::Real(lly as f32),
+                    Object::Real(new_urx as f32),
+                    Object::Real(new_ury as f32),
+                ]),
+            );
+            changed = true;
+        }
+
+        if changed {
+            doc.objects.insert(id, Object::Dictionary(new_dict));
+            count += 1;
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.8:1 — Fix non-ASCII bytes in PDF name objects.
+//
+// PDF/A-1b requires that all PDF name values represent valid UTF-8 sequences.
+// Names that contain raw non-ASCII bytes (e.g. from Chinese/Japanese font names
+// like YYAAAA+\xCB\xCE\xCC\xE5) fail this check.
+//
+// Fix: replace each byte > 127 with its two-character ASCII hex representation
+// so that \xCB becomes the ASCII string "CB". The resulting name is pure ASCII
+// and therefore valid UTF-8. This is done consistently for all Name objects in
+// the document (dictionaries and arrays), excluding stream content.
+// ---------------------------------------------------------------------------
+
+fn fix_non_ascii_pdf_names(doc: &mut Document) -> usize {
+    /// Sanitize a single name: replace bytes > 127 with uppercase hex ASCII.
+    /// Truncates to 127 bytes to comply with ISO 19005-2 rule 6.1.13:4
+    /// ("A conforming file shall not contain any name longer than 127 bytes").
+    fn sanitize_name(name: &[u8]) -> Option<Vec<u8>> {
+        if name.iter().all(|&b| b <= 127) {
+            return None; // already ASCII-clean
+        }
+        let mut out = Vec::with_capacity(name.len() * 2);
+        for &b in name {
+            if b > 127 {
+                // Each non-ASCII byte becomes 2 hex digits; stop before exceeding 127.
+                if out.len() + 2 > 127 {
+                    break;
+                }
+                out.push(b"0123456789ABCDEF"[(b >> 4) as usize]);
+                out.push(b"0123456789ABCDEF"[(b & 0xf) as usize]);
+            } else {
+                if out.len() >= 127 {
+                    break;
+                }
+                out.push(b);
+            }
+        }
+        Some(out)
+    }
+
+    fn fix_obj(obj: &mut Object) -> usize {
+        match obj {
+            Object::Name(n) => {
+                if let Some(fixed) = sanitize_name(n) {
+                    *n = fixed;
+                    1
+                } else {
+                    0
+                }
+            }
+            Object::Array(arr) => arr.iter_mut().map(fix_obj).sum(),
+            Object::Dictionary(dict) => dict.iter_mut().map(|(_, v)| fix_obj(v)).sum(),
+            // Do not recurse into streams — stream content is binary and must
+            // not be modified here. Stream *dictionaries* are handled separately.
+            Object::Stream(s) => s.dict.iter_mut().map(|(_, v)| fix_obj(v)).sum(),
+            _ => 0,
+        }
+    }
+
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut count = 0;
+    for id in ids {
+        if let Some(obj) = doc.objects.get_mut(&id) {
+            count += fix_obj(obj);
         }
     }
     count
