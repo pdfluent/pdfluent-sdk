@@ -6768,19 +6768,7 @@ fn compute_type1_fontfile_width_corrections(
         if glyph_name.is_empty() || glyph_name == ".notdef" {
             continue;
         }
-        let cs_w_opt = parsed.charstring_widths.get(glyph_name.as_str()).copied();
-        if matches!(code, 39 | 170 | 177 | 186) {
-            let enc_hit = differences.get(&code).map(|s| format!("diff:{s}"))
-                .or_else(|| parsed.encoding.get(&(code as u8)).map(|s| format!("font_enc:{s}")))
-                .unwrap_or_else(|| "fallback".to_string());
-            // Also show what "quoteright"/"ordfeminine"/"ordmasculine"/"plusminus" have
-            let alt_names = ["quoteright", "quotesingle", "ordmasculine", "ordfeminine", "plusminus", "quote"];
-            let alt: Vec<String> = alt_names.iter()
-                .filter_map(|n| parsed.charstring_widths.get(*n).map(|w| format!("{n}={w}")))
-                .collect();
-            eprintln!("[FF1DBG2] code={code} enc={enc_hit} glyph={glyph_name} pdf_w={pdf_w} cs_w={cs_w_opt:?} alts=[{}]", alt.join(","));
-        }
-        let Some(cs_width) = cs_w_opt else {
+        let Some(cs_width) = parsed.charstring_widths.get(glyph_name.as_str()).copied() else {
             continue;
         };
         let font_w = (cs_width as f64 * scale).round();
@@ -6824,6 +6812,9 @@ struct Type1Parsed {
     font_matrix_sx: f64,
     encoding: std::collections::HashMap<u8, String>,
     charstring_widths: std::collections::HashMap<String, i32>,
+    /// Indices of local subroutines that contain a seac instruction (12 6).
+    /// Used to detect seac-via-callsubr patterns in charstrings.
+    seac_subrs: std::collections::HashSet<u32>,
 }
 
 /// Parse a Type 1 font program (PFB/PFA) to extract FontMatrix, Encoding, and widths.
@@ -6849,13 +6840,17 @@ fn parse_type1_program(data: &[u8]) -> Option<Type1Parsed> {
     // Some Type1 programs define/override Encoding inside eexec; merge those.
     encoding.extend(parse_type1_encoding_bytes(&decrypted));
 
+    // Parse which local subrs contain seac (for seac-via-callsubr detection).
+    let seac_subrs = parse_type1_seac_subrs(&decrypted, len_iv);
+
     // Parse CharStrings from decrypted data.
-    let charstring_widths = parse_type1_charstrings(&decrypted, len_iv);
+    let charstring_widths = parse_type1_charstrings(&decrypted, len_iv, &seac_subrs);
 
     Some(Type1Parsed {
         font_matrix_sx,
         encoding,
         charstring_widths,
+        seac_subrs,
     })
 }
 
@@ -7091,6 +7086,91 @@ fn hex_val(b: u8) -> u8 {
     }
 }
 
+/// Parse the local Subrs array and return the set of subr indices that contain
+/// a seac instruction (escape 12 6). Used to detect seac-via-callsubr patterns.
+fn parse_type1_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::HashSet<u32> {
+    let mut seac_subrs = std::collections::HashSet::new();
+
+    // Find /Subrs in the decrypted Private dict.
+    let Some(subrs_pos) = find_bytes(decrypted, b"/Subrs") else {
+        return seac_subrs;
+    };
+    let data = &decrypted[subrs_pos + 6..]; // skip "/Subrs"
+
+    // Scan for "dup <index> <len> RD <bytes>" entries.
+    let mut pos = 0;
+    while pos < data.len() {
+        // Find "dup".
+        let Some(dup_offset) = find_bytes(&data[pos..], b"dup") else { break };
+        pos += dup_offset + 3;
+
+        // Skip whitespace.
+        while pos < data.len() && data[pos].is_ascii_whitespace() { pos += 1; }
+
+        // Read subr index.
+        let idx_start = pos;
+        while pos < data.len() && data[pos].is_ascii_digit() { pos += 1; }
+        let Ok(subr_idx) = std::str::from_utf8(&data[idx_start..pos])
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or(())
+        else { continue };
+
+        // Skip whitespace, read length.
+        while pos < data.len() && data[pos].is_ascii_whitespace() { pos += 1; }
+        let len_start = pos;
+        while pos < data.len() && data[pos].is_ascii_digit() { pos += 1; }
+        let Ok(cs_len) = std::str::from_utf8(&data[len_start..pos])
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or(())
+        else { continue };
+
+        // Skip whitespace, find RD or -|.
+        while pos < data.len() && data[pos].is_ascii_whitespace() { pos += 1; }
+        if pos + 2 > data.len() { break; }
+        let marker = &data[pos..pos + 2];
+        if marker != b"RD" && marker != b"-|" { continue; }
+        pos += 2;
+        if pos < data.len() && matches!(data[pos], b' ' | b'\t') { pos += 1; }
+
+        if pos + cs_len > data.len() { break; }
+        let subr_data = &data[pos..pos + cs_len];
+        pos += cs_len;
+
+        // Decrypt and scan for seac (12 6).
+        if charstring_contains_seac(subr_data, len_iv) {
+            seac_subrs.insert(subr_idx);
+        }
+    }
+
+    seac_subrs
+}
+
+/// Decrypt a charstring/subr and check if it contains an inline seac instruction (12 6).
+fn charstring_contains_seac(data: &[u8], len_iv: usize) -> bool {
+    if data.len() <= len_iv {
+        return false;
+    }
+    let mut r: u16 = 4330;
+    let c1: u16 = 52845;
+    let c2: u16 = 22719;
+    let mut dec = Vec::with_capacity(data.len());
+    for &cipher in data {
+        let plain = cipher ^ (r >> 8) as u8;
+        r = (cipher as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
+        dec.push(plain);
+    }
+    let cs = &dec[len_iv..];
+    // Scan for 12 followed by 6 = seac.
+    for i in 0..cs.len().saturating_sub(1) {
+        if cs[i] == 12 && cs[i + 1] == 6 {
+            return true;
+        }
+    }
+    false
+}
+
 /// Parse CharStrings from decrypted eexec data to extract glyph widths.
 /// Parse CharStrings from decrypted eexec data (works with raw bytes).
 ///
@@ -7099,6 +7179,7 @@ fn hex_val(b: u8) -> u8 {
 fn parse_type1_charstrings(
     decrypted: &[u8],
     len_iv: usize,
+    seac_subrs: &std::collections::HashSet<u32>,
 ) -> std::collections::HashMap<String, i32> {
     let mut widths = std::collections::HashMap::new();
 
@@ -7193,12 +7274,7 @@ fn parse_type1_charstrings(
             break;
         }
         let charstring_data = &decrypted[p..p + cs_len];
-        if matches!(glyph_name.as_str(), "ordmasculine" | "ordfeminine" | "quotesingle" | "plusminus") {
-            // Debug: dump decoded charstring bytes
-            let debug_bytes = dump_charstring_bytes(charstring_data, len_iv);
-            eprintln!("[CS_DUMP] glyph={glyph_name} len={cs_len} bytes={debug_bytes}");
-        }
-        if let Some(width) = decrypt_charstring_width(charstring_data, len_iv) {
+        if let Some(width) = decrypt_charstring_width(charstring_data, len_iv, seac_subrs) {
             widths.insert(glyph_name, width);
         }
 
@@ -7209,25 +7285,13 @@ fn parse_type1_charstrings(
     widths
 }
 
-/// Debug helper: decrypt a charstring and return the first 30 decoded bytes as hex + interpretation.
-fn dump_charstring_bytes(data: &[u8], len_iv: usize) -> String {
-    if data.len() <= len_iv { return "(too short)".to_string(); }
-    let mut r: u16 = 4330;
-    let c1: u16 = 52845;
-    let c2: u16 = 22719;
-    let mut dec = Vec::with_capacity(data.len());
-    for &cipher in data {
-        let plain = cipher ^ (r >> 8) as u8;
-        r = (cipher as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
-        dec.push(plain);
-    }
-    let cs = &dec[len_iv..];
-    let preview: Vec<String> = cs.iter().take(30).map(|b| format!("{b:02x}")).collect();
-    preview.join(" ")
-}
 
 /// Decrypt a Type 1 charstring and extract the width (wx from hsbw/sbw).
-fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
+fn decrypt_charstring_width(
+    data: &[u8],
+    len_iv: usize,
+    seac_subrs: &std::collections::HashSet<u32>,
+) -> Option<i32> {
     if data.len() <= len_iv {
         return None;
     }
@@ -7332,26 +7396,54 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
     let candidate = if is_sbw { values.get(2).copied() } else { values.get(1).copied() };
     let Some(width) = candidate else { return None; };
 
-    // After finding hsbw/sbw, scan the rest of the charstring for seac (escape 12 6).
-    // seac composites: the advance width comes from the BASE CHARACTER's charstring,
-    // not from the hsbw in the accent/composite charstring. Return None so the caller
-    // keeps the original PDF dict value instead of overwriting it with a wrong width.
+    // After finding hsbw/sbw, scan the rest of the charstring for seac.
+    // seac can appear either inline (12 6) or via callsubr (10) where the subr
+    // contains seac. In both cases the hsbw-derived width is unreliable because
+    // Type1 spec mandates the BASE CHARACTER's width for composite glyphs.
+    //
+    // We track the value stack to know which subroutine is called (the TOS just
+    // before callsubr is the subroutine index).
     pos += if is_sbw { 2 } else { 1 };
+    let mut stack: Vec<i32> = Vec::with_capacity(8);
     while pos < cs.len() {
         let b = cs[pos];
         if b == 12 {
             if pos + 1 < cs.len() && cs[pos + 1] == 6 {
-                return None; // seac — hsbw-derived width is unreliable
+                return None; // inline seac — hsbw-derived width is unreliable
             }
             pos += 2;
-        } else if (32..=246).contains(&b) {
+            stack.clear();
+        } else if b == 10 {
+            // callsubr: TOS is the subroutine index.
+            if let Some(&subr_idx) = stack.last() {
+                if subr_idx >= 0 && seac_subrs.contains(&(subr_idx as u32)) {
+                    return None; // subr contains seac — hsbw-derived width is unreliable
+                }
+            }
             pos += 1;
-        } else if (247..=254).contains(&b) {
+            stack.clear();
+        } else if (32..=246).contains(&b) {
+            stack.push(b as i32 - 139);
+            pos += 1;
+        } else if (247..=250).contains(&b) {
+            if pos + 1 < cs.len() {
+                stack.push((b as i32 - 247) * 256 + cs[pos + 1] as i32 + 108);
+            }
+            pos += 2;
+        } else if (251..=254).contains(&b) {
+            if pos + 1 < cs.len() {
+                stack.push(-((b as i32 - 251) * 256) - cs[pos + 1] as i32 - 108);
+            }
             pos += 2;
         } else if b == 255 {
+            if pos + 4 < cs.len() {
+                stack.push(i32::from_be_bytes([cs[pos+1], cs[pos+2], cs[pos+3], cs[pos+4]]));
+            }
             pos += 5;
         } else {
+            // Other operator (endchar, hstem, vstem, rmoveto, …): clears stack.
             pos += 1;
+            stack.clear();
         }
     }
     Some(width)
