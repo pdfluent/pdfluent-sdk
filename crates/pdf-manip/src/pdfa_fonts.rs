@@ -7146,7 +7146,11 @@ fn parse_type1_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::
         pos += cs_len;
 
         // Decrypt and scan for seac (12 6).
-        if charstring_contains_seac(subr_data, len_iv) {
+        let has_seac = charstring_contains_seac(subr_data, len_iv);
+        if subr_idx < 10 {
+            eprintln!("[SUBR_DEBUG] subr {subr_idx} len={cs_len} has_seac={has_seac}");
+        }
+        if has_seac {
             seac_subrs.insert(subr_idx);
         }
     }
