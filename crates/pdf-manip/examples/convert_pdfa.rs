@@ -164,7 +164,7 @@ fn main() {
     // Supplementary fixups (small rule fixes).
     let fixup_report = pdf_manip::pdfa_fixups::run_fixups(&mut doc);
     eprintln!(
-        "Fixups: lengths={}, opi={}, stream_f={}, ps_xobj={}, ref_xobj={}, overflow={}, long_str={}, op_space={}, tiny_float={}, hex_str={}, inline_interp={}, jpx_cs={}, concat_op={}, unknown_ops={}, page_bounds={}",
+        "Fixups: lengths={}, opi={}, stream_f={}, ps_xobj={}, ref_xobj={}, overflow={}, long_str={}, op_space={}, tiny_float={}, hex_str={}, non_ascii_names={}, inline_interp={}, jpx_cs={}, concat_op={}, unknown_ops={}, page_bounds={}",
         fixup_report.stream_lengths_fixed,
         fixup_report.opi_keys_removed,
         fixup_report.stream_f_keys_removed,
@@ -175,6 +175,7 @@ fn main() {
         fixup_report.operator_spacing_fixed,
         fixup_report.tiny_floats_fixed,
         fixup_report.odd_hex_strings_fixed,
+        fixup_report.non_ascii_names_fixed,
         fixup_report.inline_image_interpolate_fixed,
         fixup_report.jpx_colorspace_fixed,
         fixup_report.concatenated_operators_fixed,
