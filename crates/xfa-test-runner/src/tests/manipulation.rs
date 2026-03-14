@@ -4,6 +4,10 @@ use std::path::Path;
 use super::{PdfTest, TestResult, TestStatus};
 
 /// Tests PDF manipulation operations (split, merge) via pdf-manip.
+///
+/// Stap 3 van issue #433: the merge result is serialized to bytes and
+/// reopened via both lopdf and pdf-syntax, verifying the full I/O roundtrip
+/// (lopdf writer → lopdf reader + pdf-syntax reader).
 pub struct ManipulationTest;
 
 impl PdfTest for ManipulationTest {
@@ -13,6 +17,7 @@ impl PdfTest for ManipulationTest {
 
     fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
         let start = std::time::Instant::now();
+        let elapsed = || start.elapsed().as_millis() as u64;
 
         let doc = match lopdf::Document::load_mem(pdf_data) {
             Ok(d) => d,
@@ -20,7 +25,7 @@ impl PdfTest for ManipulationTest {
                 return TestResult {
                     status: TestStatus::Skip,
                     error_message: Some(format!("lopdf load failed: {e}")),
-                    duration_ms: start.elapsed().as_millis() as u64,
+                    duration_ms: elapsed(),
                     oracle_score: None,
                     metadata: HashMap::new(),
                 };
@@ -32,7 +37,7 @@ impl PdfTest for ManipulationTest {
             return TestResult {
                 status: TestStatus::Skip,
                 error_message: Some("0 pages".to_string()),
-                duration_ms: start.elapsed().as_millis() as u64,
+                duration_ms: elapsed(),
                 oracle_score: None,
                 metadata: HashMap::new(),
             };
@@ -54,7 +59,7 @@ impl PdfTest for ManipulationTest {
                             "split returned {} parts, expected 1",
                             parts.len()
                         )),
-                        duration_ms: start.elapsed().as_millis() as u64,
+                        duration_ms: elapsed(),
                         oracle_score: None,
                         metadata,
                     };
@@ -65,7 +70,7 @@ impl PdfTest for ManipulationTest {
                     return TestResult {
                         status: TestStatus::Fail,
                         error_message: Some(format!("split page count {split_pages}, expected 1")),
-                        duration_ms: start.elapsed().as_millis() as u64,
+                        duration_ms: elapsed(),
                         oracle_score: None,
                         metadata,
                     };
@@ -75,17 +80,16 @@ impl PdfTest for ManipulationTest {
                 return TestResult {
                     status: TestStatus::Fail,
                     error_message: Some(format!("split failed: {e}")),
-                    duration_ms: start.elapsed().as_millis() as u64,
+                    duration_ms: elapsed(),
                     oracle_score: None,
                     metadata,
                 };
             }
             Err(panic_info) => {
-                let msg = panic_message(&panic_info);
                 return TestResult {
                     status: TestStatus::Fail,
-                    error_message: Some(format!("split panic: {msg}")),
-                    duration_ms: start.elapsed().as_millis() as u64,
+                    error_message: Some(format!("split panic: {}", panic_message(&panic_info))),
+                    duration_ms: elapsed(),
                     oracle_score: None,
                     metadata,
                 };
@@ -93,52 +97,120 @@ impl PdfTest for ManipulationTest {
         }
 
         // Test 2: Merge document with itself (catch panics from lopdf)
+        let expected_merged = original_pages * 2;
         let doc_clone = doc.clone();
         let merge_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pages::merge_documents(&[doc_clone, doc])
         }));
-        match merge_result {
+
+        let mut merged = match merge_result {
             Ok(Ok(merged)) => {
                 let merged_pages = merged.get_pages().len();
                 metadata.insert("merged_pages".to_string(), merged_pages.to_string());
-                let expected = original_pages * 2;
-                if merged_pages != expected {
+                if merged_pages != expected_merged {
                     return TestResult {
                         status: TestStatus::Fail,
                         error_message: Some(format!(
-                            "merge page count {merged_pages}, expected {expected}"
+                            "merge page count {merged_pages}, expected {expected_merged}"
                         )),
-                        duration_ms: start.elapsed().as_millis() as u64,
+                        duration_ms: elapsed(),
                         oracle_score: None,
                         metadata,
                     };
                 }
+                merged
             }
             Ok(Err(e)) => {
                 return TestResult {
                     status: TestStatus::Fail,
                     error_message: Some(format!("merge failed: {e}")),
-                    duration_ms: start.elapsed().as_millis() as u64,
+                    duration_ms: elapsed(),
                     oracle_score: None,
                     metadata,
                 };
             }
             Err(panic_info) => {
-                let msg = panic_message(&panic_info);
                 return TestResult {
                     status: TestStatus::Fail,
-                    error_message: Some(format!("merge panic: {msg}")),
-                    duration_ms: start.elapsed().as_millis() as u64,
+                    error_message: Some(format!("merge panic: {}", panic_message(&panic_info))),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata,
+                };
+            }
+        };
+
+        // Test 3: Serialize merged doc and reopen — verifies the full I/O roundtrip:
+        //   lopdf merge → lopdf writer → bytes → lopdf reader + pdf-syntax reader
+        let save_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut buf = Vec::new();
+            merged.save_to(&mut buf).map(|_| buf)
+        }));
+        let saved_bytes = match save_result {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some(format!("save merged doc failed: {e}")),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata,
+                };
+            }
+            Err(_) => {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some("panic in save merged doc".into()),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata,
+                };
+            }
+        };
+        metadata.insert("saved_bytes".to_string(), saved_bytes.len().to_string());
+
+        // Reopen with lopdf — tests lopdf write → lopdf read consistency
+        match lopdf::Document::load_mem(&saved_bytes) {
+            Ok(reopened) => {
+                let reopened_pages = reopened.get_pages().len();
+                if reopened_pages != expected_merged {
+                    return TestResult {
+                        status: TestStatus::Fail,
+                        error_message: Some(format!(
+                            "roundtrip: reopened page count {reopened_pages}, expected {expected_merged}"
+                        )),
+                        duration_ms: elapsed(),
+                        oracle_score: None,
+                        metadata,
+                    };
+                }
+            }
+            Err(e) => {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some(format!("roundtrip: lopdf reopen failed: {e}")),
+                    duration_ms: elapsed(),
                     oracle_score: None,
                     metadata,
                 };
             }
         }
 
+        // Reopen with pdf-syntax — tests lopdf write → pdf-syntax read compatibility
+        if let Err(e) = pdf_syntax::Pdf::new(saved_bytes) {
+            return TestResult {
+                status: TestStatus::Fail,
+                error_message: Some(format!("roundtrip: pdf-syntax reopen failed: {e:?}")),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata,
+            };
+        }
+
         TestResult {
             status: TestStatus::Pass,
             error_message: None,
-            duration_ms: start.elapsed().as_millis() as u64,
+            duration_ms: elapsed(),
             oracle_score: None,
             metadata,
         }
