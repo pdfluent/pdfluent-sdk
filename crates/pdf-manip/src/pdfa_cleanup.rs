@@ -214,13 +214,17 @@ pub fn remove_additional_actions(doc: &mut Document) -> usize {
                 match catalog.get(b"OpenAction").ok() {
                     Some(Object::Reference(action_id)) => {
                         if let Some(Object::Dictionary(action)) = doc.objects.get(action_id) {
-                            is_javascript_action(action) || is_action_forbidden(action)
+                            is_javascript_action(action)
+                                || is_action_forbidden(action)
+                                || action.get(b"S").is_err()
                         } else {
                             false
                         }
                     }
                     Some(Object::Dictionary(action)) => {
-                        is_javascript_action(action) || is_action_forbidden(action)
+                        is_javascript_action(action)
+                            || is_action_forbidden(action)
+                            || action.get(b"S").is_err()
                     }
                     _ => false,
                 }
