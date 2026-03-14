@@ -355,8 +355,12 @@ fn find_placeholders(
         .ok_or_else(|| SignError::CmsBuild("cannot locate /Contents placeholder".into()))?;
     let contents_hex_end = contents_hex_start + 1 + placeholder_hex_len + 1; // < + hex + >
 
-    // Find /ByteRange placeholder.
-    let byte_range_offsets = find_byte_range_offsets(buffer)
+    // Find /ByteRange placeholder — search BACKWARD from /Contents so that
+    // pre-existing /ByteRange entries (from signatures already in the PDF)
+    // are not mistakenly patched instead of our placeholder.
+    // Fixes #440: PDFs with pre-existing signatures contain earlier /ByteRange
+    // arrays; find_byte_range_offsets must find the one for our new signature.
+    let byte_range_offsets = find_byte_range_offsets(buffer, contents_hex_start)
         .ok_or_else(|| SignError::CmsBuild("cannot locate /ByteRange placeholder".into()))?;
 
     Ok(PlaceholderInfo {
@@ -386,11 +390,24 @@ fn find_contents_hex(buffer: &[u8], hex_len: usize) -> Option<usize> {
 
 /// Find the ByteRange placeholder offsets.
 ///
+/// Searches backward from `contents_pos` for the nearest `/ByteRange` entry,
+/// which belongs to our signature dict (the /Contents placeholder always
+/// appears after /ByteRange in the same sig dict, and any pre-existing
+/// signature dicts appear earlier in the serialized output).
+///
 /// Returns `[(offset, len); 4]` where each element is the (byte offset, digit length)
 /// of one of the four numbers in the ByteRange array.
-fn find_byte_range_offsets(buffer: &[u8]) -> Option<[(usize, usize); 4]> {
-    // Find "/ByteRange" followed by "[" and then the placeholder numbers.
-    let br_pos = find_subsequence(buffer, b"/ByteRange")?;
+fn find_byte_range_offsets(buffer: &[u8], contents_pos: usize) -> Option<[(usize, usize); 4]> {
+    // Search the region before /Contents for the nearest /ByteRange.
+    let needle = b"/ByteRange";
+    let search_in = &buffer[..contents_pos];
+
+    // Find the last occurrence (reverse scan).
+    let br_pos = search_in
+        .windows(needle.len())
+        .enumerate()
+        .rev()
+        .find_map(|(i, w)| if w == needle { Some(i) } else { None })?;
 
     // Find the '[' after /ByteRange.
     let bracket_start = buffer[br_pos..].iter().position(|&b| b == b'[')? + br_pos;
@@ -485,38 +502,135 @@ fn inject_signature(
 }
 
 /// Ensure the document has an AcroForm with the field in /Fields.
+///
+/// Handles all four combinations of inline vs. indirect-reference for
+/// /AcroForm and /Fields so that our signature field is reliably registered
+/// regardless of how the source PDF structures its form dictionary.
+/// Fixes #451: /Fields stored as an indirect array was silently skipped.
 fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignError> {
-    let catalog = doc
-        .catalog_mut()
-        .map_err(|e| SignError::CmsBuild(format!("catalog: {e}")))?;
+    // ── Phase 1: discover structure via temporary immutable borrows ──────────
+    // All results are owned values (ObjectId = (u32, u16) is Copy).
 
-    if let Ok(acroform_obj) = catalog.get_mut(b"AcroForm") {
-        if let Ok(af_dict) = acroform_obj.as_dict_mut() {
-            if let Ok(fields) = af_dict.get_mut(b"Fields") {
-                if let Ok(arr) = fields.as_array_mut() {
+    #[derive(Clone, Copy)]
+    enum AfLoc {
+        None,
+        Inline,
+        Ref(ObjectId),
+    }
+    #[derive(Clone, Copy)]
+    enum FlLoc {
+        None,
+        Inline,
+        Ref(ObjectId),
+    }
+
+    let af_loc: AfLoc = {
+        let cat = doc
+            .catalog()
+            .map_err(|e| SignError::CmsBuild(format!("catalog: {e}")))?;
+        match cat.get(b"AcroForm") {
+            Ok(Object::Reference(id)) => AfLoc::Ref(*id),
+            Ok(_) => AfLoc::Inline,
+            Err(_) => AfLoc::None,
+        }
+    }; // catalog borrow dropped
+
+    let fl_loc: FlLoc = match af_loc {
+        AfLoc::None => FlLoc::None,
+        AfLoc::Inline => {
+            let cat = doc
+                .catalog()
+                .map_err(|e| SignError::CmsBuild(format!("catalog: {e}")))?;
+            match cat.get(b"AcroForm") {
+                Ok(Object::Dictionary(af)) => match af.get(b"Fields") {
+                    Ok(Object::Reference(id)) => FlLoc::Ref(*id),
+                    Ok(Object::Array(_)) => FlLoc::Inline,
+                    _ => FlLoc::None,
+                },
+                _ => FlLoc::None,
+            }
+        } // catalog borrow dropped
+        AfLoc::Ref(aid) => match doc.get_dictionary(aid) {
+            Ok(af) => match af.get(b"Fields") {
+                Ok(Object::Reference(id)) => FlLoc::Ref(*id),
+                Ok(Object::Array(_)) => FlLoc::Inline,
+                _ => FlLoc::None,
+            },
+            Err(_) => FlLoc::None,
+        }, // dictionary borrow dropped
+    };
+
+    // ── Phase 2: mutate — all immutable borrows are now dropped ─────────────
+    match (af_loc, fl_loc) {
+        (AfLoc::None, _) => {
+            // No AcroForm at all — create a new inline one.
+            let cat = doc
+                .catalog_mut()
+                .map_err(|e| SignError::CmsBuild(format!("catalog: {e}")))?;
+            let acroform = dictionary! {
+                "Fields" => Object::Array(vec![Object::Reference(field_id)]),
+                "SigFlags" => Object::Integer(3),
+            };
+            cat.set("AcroForm", Object::Dictionary(acroform));
+        }
+        (AfLoc::Inline, FlLoc::Inline) => {
+            let cat = doc
+                .catalog_mut()
+                .map_err(|e| SignError::CmsBuild(format!("catalog: {e}")))?;
+            if let Ok(Object::Dictionary(af)) = cat.get_mut(b"AcroForm") {
+                if let Ok(Object::Array(arr)) = af.get_mut(b"Fields") {
                     arr.push(Object::Reference(field_id));
                 }
-            } else {
-                af_dict.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
+                af.set("SigFlags", Object::Integer(3));
             }
-            // Ensure /SigFlags 3 (SignaturesExist + AppendOnly).
-            af_dict.set("SigFlags", Object::Integer(3));
-            return Ok(());
+        }
+        (AfLoc::Inline, FlLoc::None) => {
+            let cat = doc
+                .catalog_mut()
+                .map_err(|e| SignError::CmsBuild(format!("catalog: {e}")))?;
+            if let Ok(Object::Dictionary(af)) = cat.get_mut(b"AcroForm") {
+                af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
+                af.set("SigFlags", Object::Integer(3));
+            }
+        }
+        (AfLoc::Inline, FlLoc::Ref(fid)) => {
+            // /Fields is an indirect array — push directly into the referenced object.
+            if let Ok(Object::Array(arr)) = doc.get_object_mut(fid) {
+                arr.push(Object::Reference(field_id));
+            } // mutable borrow of fid object dropped
+            let cat = doc
+                .catalog_mut()
+                .map_err(|e| SignError::CmsBuild(format!("catalog: {e}")))?;
+            if let Ok(Object::Dictionary(af)) = cat.get_mut(b"AcroForm") {
+                af.set("SigFlags", Object::Integer(3));
+            }
+        }
+        (AfLoc::Ref(aid), FlLoc::Inline) => {
+            if let Ok(af) = doc.get_dictionary_mut(aid) {
+                if let Ok(Object::Array(arr)) = af.get_mut(b"Fields") {
+                    arr.push(Object::Reference(field_id));
+                }
+                af.set("SigFlags", Object::Integer(3));
+            }
+        }
+        (AfLoc::Ref(aid), FlLoc::None) => {
+            if let Ok(af) = doc.get_dictionary_mut(aid) {
+                af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
+                af.set("SigFlags", Object::Integer(3));
+            }
+        }
+        (AfLoc::Ref(aid), FlLoc::Ref(fid)) => {
+            // Both AcroForm and Fields are indirect — modify both referenced objects.
+            if let Ok(Object::Array(arr)) = doc.get_object_mut(fid) {
+                arr.push(Object::Reference(field_id));
+            } // mutable borrow of fid dropped
+            if let Ok(af) = doc.get_dictionary_mut(aid) {
+                af.set("SigFlags", Object::Integer(3));
+            }
         }
     }
 
-    // No AcroForm — create one.
-    let acroform = dictionary! {
-        "Fields" => Object::Array(vec![Object::Reference(field_id)]),
-        "SigFlags" => Object::Integer(3),
-    };
-    catalog.set("AcroForm", Object::Dictionary(acroform));
     Ok(())
-}
-
-/// Find a byte subsequence.
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Hex-encode bytes to uppercase hex ASCII.

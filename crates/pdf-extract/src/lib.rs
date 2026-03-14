@@ -6,7 +6,10 @@ pub mod search;
 pub mod text;
 
 pub use error::{ExtractError, Result};
-pub use images::{extract_all_images, extract_page_images, ExtractedImage, ImageFilter};
+pub use images::{
+    extract_all_images, extract_images_from_page_id, extract_page_images, ExtractedImage,
+    ImageFilter,
+};
 pub use search::{
     count_occurrences, count_text_only, pages_containing, search_text, SearchOptions, SearchResult,
 };
