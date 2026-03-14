@@ -102,15 +102,53 @@ pub fn has_pdfa_output_intent(doc: &Document) -> bool {
 }
 
 /// Add an sRGB OutputIntent to the document for PDF/A compliance.
+///
+/// PDF/A-2 §6.2.3:2 requires that all OutputIntent entries with a
+/// DestOutputProfile key reference the **same** indirect ICC object. To
+/// satisfy this, we reuse the existing DestOutputProfile from any
+/// already-present OutputIntent (e.g. GTS_PDFX) instead of creating a new
+/// ICC stream, if one is found.
 pub fn add_srgb_output_intent(doc: &mut Document) -> Result<()> {
-    let icc_bytes = srgb_icc_profile_bytes();
-
-    let icc_dict = dictionary! {
-        "N" => Object::Integer(3),
-        "Alternate" => Object::Name(b"DeviceRGB".to_vec()),
+    // Look for an existing DestOutputProfile indirect reference in any
+    // OutputIntent already in the document. Reusing it avoids the rule
+    // 6.2.3:2 failure caused by multiple OutputIntents with different
+    // ICC profile objects.
+    let existing_icc_ref: Option<lopdf::ObjectId> = {
+        let catalog = get_catalog(doc);
+        catalog.and_then(|cat| {
+            let intents = match cat.get(b"OutputIntents").ok()? {
+                Object::Array(arr) => arr.clone(),
+                _ => return None,
+            };
+            for item in &intents {
+                let dict = match item {
+                    Object::Reference(id) => match doc.objects.get(id) {
+                        Some(Object::Dictionary(d)) => d,
+                        _ => continue,
+                    },
+                    Object::Dictionary(d) => d,
+                    _ => continue,
+                };
+                if let Ok(Object::Reference(icc_id)) = dict.get(b"DestOutputProfile") {
+                    return Some(*icc_id);
+                }
+            }
+            None
+        })
     };
-    let icc_stream = Stream::new(icc_dict, icc_bytes);
-    let icc_id = doc.add_object(Object::Stream(icc_stream));
+
+    let icc_id = match existing_icc_ref {
+        Some(id) => id,
+        None => {
+            let icc_bytes = srgb_icc_profile_bytes();
+            let icc_dict = dictionary! {
+                "N" => Object::Integer(3),
+                "Alternate" => Object::Name(b"DeviceRGB".to_vec()),
+            };
+            let icc_stream = Stream::new(icc_dict, icc_bytes);
+            doc.add_object(Object::Stream(icc_stream))
+        }
+    };
 
     let intent = dictionary! {
         "Type" => Object::Name(b"OutputIntent".to_vec()),
@@ -176,17 +214,27 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
         false
     };
 
-    // Always add DefaultCMYK to all pages — even if we don't detect CMYK usage,
-    // it may exist in compressed streams or inline images we can't easily scan.
-    // DefaultCMYK is harmless on pages that don't use DeviceCMYK.
+    // Always add Default{CMYK,RGB,Gray} to all pages — even if we don't detect
+    // usage, device color spaces may appear in compressed streams or inline images.
+    // These Default* entries are harmless on pages that don't use the color space.
+    // DefaultGray satisfies 6.2.4.3:4 regardless of OutputIntent presence.
     let cmyk_cs_id = add_default_cmyk_colorspace(doc);
     let rgb_cs_id = add_default_rgb_colorspace(doc);
+    add_default_gray_colorspace(doc);
 
     // Replace DeviceCMYK/DeviceRGB references in deep structures (Shading, Group, Pattern)
     // that are not covered by Default* resource fallback.
     fix_device_colorspaces_in_deep_structures(doc, cmyk_cs_id, rgb_cs_id);
 
     let separations_unified = normalize_separation_colorspaces(doc);
+
+    // Replace DeviceCMYK/DeviceRGB in Separation alternate colorspaces.
+    // veraPDF 6.2.4.3:3 fails when DeviceCMYK appears as a Separation alternate
+    // and the output intent is not CMYK. Replacing with ICCBased also helps
+    // 6.2.4.4:2 by ensuring the alternate field compares equal across traversal
+    // paths (same object reference, not just same name).
+    fix_separation_device_alternates(doc, cmyk_cs_id, rgb_cs_id);
+
     let overprint_mode_fixed = fix_overprint_mode(doc);
     let icc_n_fixed = fix_iccbased_n_value(doc);
 
@@ -953,6 +1001,209 @@ fn add_default_rgb_colorspace(doc: &mut Document) -> ObjectId {
     cs_id
 }
 
+/// Add a DefaultGray (sgray N=1 ICCBased) colorspace to all page, Form XObject,
+/// and tiling pattern Resources. Satisfies 6.2.4.3:4 ("DeviceGray shall only be
+/// used if a device independent DefaultGray colour space has been set").
+fn add_default_gray_colorspace(doc: &mut Document) -> ObjectId {
+    let icc_bytes = gray_icc_profile_bytes();
+    let icc_dict = dictionary! {
+        "N" => Object::Integer(1),
+        "Alternate" => Object::Name(b"DeviceGray".to_vec()),
+    };
+    let icc_stream = Stream::new(icc_dict, icc_bytes);
+    let icc_id = doc.add_object(Object::Stream(icc_stream));
+
+    let cs_array = Object::Array(vec![
+        Object::Name(b"ICCBased".to_vec()),
+        Object::Reference(icc_id),
+    ]);
+    let cs_id = doc.add_object(cs_array);
+
+    // Pages.
+    let page_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if get_name(dict, b"Type").as_deref() == Some("Page") {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for page_id in page_ids {
+        let res_id = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&page_id) else {
+                continue;
+            };
+            match dict.get(b"Resources").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        };
+
+        if let Some(res_id) = res_id {
+            let cs_ref_id = {
+                if let Some(Object::Dictionary(res)) = doc.objects.get(&res_id) {
+                    match res.get(b"ColorSpace").ok() {
+                        Some(Object::Reference(id)) => Some(*id),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(cs_ref_id) = cs_ref_id {
+                if let Some(Object::Dictionary(ref mut cs_dict)) = doc.objects.get_mut(&cs_ref_id) {
+                    if !cs_dict.has(b"DefaultGray") {
+                        cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                    }
+                }
+            } else if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultGray") {
+                    cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
+            let mut res = match dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultGray") {
+                cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
+    // Form XObjects.
+    let form_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Stream(stream) = obj {
+                if get_name(&stream.dict, b"Subtype").as_deref() == Some("Form") {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for form_id in form_ids {
+        let res_ref_id = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&form_id) {
+                match stream.dict.get(b"Resources").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(res_ref_id) = res_ref_id {
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultGray") {
+                    cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&form_id) {
+            let mut res = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultGray") {
+                cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                stream.dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
+    // Tiling patterns.
+    let pattern_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Stream(stream) = obj {
+                let pt = stream
+                    .dict
+                    .get(b"PatternType")
+                    .ok()
+                    .and_then(|o| o.as_i64().ok());
+                if pt == Some(1) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for pat_id in pattern_ids {
+        let res_ref_id = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&pat_id) {
+                match stream.dict.get(b"Resources").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(res_ref_id) = res_ref_id {
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultGray") {
+                    cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&pat_id) {
+            let mut res = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultGray") {
+                cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                stream.dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
+    cs_id
+}
+
 /// Replace `/ColorSpace /DeviceCMYK` and `/ColorSpace /DeviceRGB` in Shading dicts
 /// and `/CS /DeviceCMYK|DeviceRGB` in transparency Group dicts with ICCBased references.
 /// These deep structures are not covered by the Default* resource fallback mechanism.
@@ -1284,48 +1535,180 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
     }
 }
 
+/// Replace DeviceCMYK/DeviceRGB alternate colorspaces inside Separation arrays
+/// with ICCBased references. Fixes 6.2.4.3:3 (DeviceCMYK used without CMYK
+/// output intent) for Separation alternates. Also helps 6.2.4.4:2 by ensuring
+/// all occurrences of a Separation with the same name have an identical alternate
+/// object reference rather than a bare device colorspace name.
+fn fix_separation_device_alternates(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_id: ObjectId) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        if let Some(Object::Array(arr)) = doc.objects.get_mut(&id) {
+            if arr.len() >= 4 {
+                if let Object::Name(cs_type) = &arr[0] {
+                    if cs_type == b"Separation" {
+                        let repl = match &arr[2] {
+                            Object::Name(n) if n == b"DeviceCMYK" => {
+                                Some(Object::Reference(cmyk_cs_id))
+                            }
+                            Object::Name(n) if n == b"DeviceRGB" => {
+                                Some(Object::Reference(rgb_cs_id))
+                            }
+                            _ => None,
+                        };
+                        if let Some(new_alt) = repl {
+                            arr[2] = new_alt;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Normalize Separation colorspaces so all with the same name use identical
 /// alternateSpace and tintTransform (PDF/A rule 6.2.4.4:2).
 fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+
+    // Materialize lazily-loaded objects (including objects inside object streams)
+    // so Separation arrays referenced outside the currently loaded object set are
+    // still considered for 6.2.4.4:2 consistency checks.
+    let max_id = doc.max_id;
+    for obj_num in 1..=max_id {
+        let id = (obj_num, 0);
+        if doc.objects.contains_key(&id) {
+            continue;
+        }
+        let loaded = doc.get_object(id).ok().cloned();
+        if let Some(obj) = loaded {
+            doc.objects.insert(id, obj);
+        }
+    }
 
     // Phase 1: Collect all Separation arrays across all objects.
     // A Separation array is: [/Separation name alternateCS tintTransform]
     // We record (ObjectId, name) → (alternateCS, tintTransform).
     let mut by_name: HashMap<Vec<u8>, Vec<(ObjectId, Object, Object)>> = HashMap::new();
+    let mut visited_refs: HashSet<ObjectId> = HashSet::new();
 
     for (&id, obj) in &doc.objects {
-        collect_separations_recursive(id, obj, &mut by_name);
+        collect_separations_recursive(doc, id, obj, &mut by_name, &mut visited_refs);
     }
 
-    // Phase 2: For each name with conflicting definitions, unify to canonical (first found).
-    let mut fixes: Vec<(ObjectId, Vec<u8>, Object, Object)> = Vec::new();
+    // Phase 2: For each name with multiple Separation array objects, pick a
+    // canonical object and redirect all other references to it. veraPDF checks
+    // 6.2.4.4:2 consistency by object identity: two Separation colorspaces with
+    // the same name must be THE SAME PDF object (same object number), not just
+    // equal-content objects. So we must make every /ColorSpace key that pointed
+    // to a non-canonical Separation array point to the canonical one instead.
+    //
+    // Additionally, unify the tintTransform within the canonical object: if the
+    // canonical has a Reference tintTransform, keep it; if it's inline, promote
+    // it to a standalone object so it can be shared via reference too.
+
+    // Build: for each spot-color name → canonical object ID, list of non-canonical IDs.
+    let mut redirects: Vec<(ObjectId, ObjectId)> = Vec::new(); // (old_id, new_id) for ref redirect
+    let mut content_fixes: Vec<(ObjectId, Vec<u8>, Object, Object)> = Vec::new();
+
     for (name, entries) in &by_name {
         if entries.len() <= 1 {
             continue;
         }
-        let (_, ref canon_alt, ref canon_tint) = entries[0];
-        for (id, alt, tint) in &entries[1..] {
-            if *alt != *canon_alt || *tint != *canon_tint {
-                fixes.push((*id, name.clone(), canon_alt.clone(), canon_tint.clone()));
+
+        // Deduplicate by object ID: the same Separation object may be recorded
+        // multiple times when encountered both directly and via reference following.
+        let mut seen_ids: HashSet<ObjectId> = HashSet::new();
+        let mut unique_entries: Vec<&(ObjectId, Object, Object)> = entries
+            .iter()
+            .filter(|(id, _, _)| seen_ids.insert(*id))
+            .collect();
+
+        if unique_entries.len() <= 1 {
+            continue;
+        }
+
+        // Sort by object ID (lowest first) for deterministic canonical selection.
+        // Using the lowest ID as canonical guarantees that the redirects always
+        // point from higher-numbered objects to a lower-numbered one. This avoids
+        // the case where the "canonical" is already the object that all references
+        // point to, making the redirect a no-op.
+        unique_entries.sort_by_key(|(id, _, _)| *id);
+
+        let (canon_id, canon_alt, canon_tint) = unique_entries[0];
+
+        // Promote the canonical tintTransform to a standalone object if it isn't
+        // already a reference. This gives us a stable ObjectId to share.
+        let canonical_tint_ref: Object = match canon_tint {
+            Object::Reference(_) => canon_tint.clone(),
+            other => {
+                let new_id = doc.add_object(other.clone());
+                Object::Reference(new_id)
+            }
+        };
+
+        // Update ALL Separation objects for this name (canonical + non-canonical)
+        // to have the same alternateSpace and tintTransform. veraPDF 6.2.4.4:2
+        // scans ALL objects in the file, including unreferenced ones, so we must
+        // make even non-canonical objects content-identical to the canonical.
+        for (obj_id, _, _) in &unique_entries {
+            content_fixes.push((
+                *obj_id,
+                name.clone(),
+                canon_alt.clone(),
+                canonical_tint_ref.clone(),
+            ));
+        }
+
+        // All non-canonical objects: redirect document references to the canon.
+        for (non_canon_id, _, _) in &unique_entries[1..] {
+            redirects.push((*non_canon_id, *canon_id));
+        }
+    }
+
+    // Phase 3: Update canonical Separation array content.
+    let mut seen: HashSet<(ObjectId, Vec<u8>)> = HashSet::new();
+    let mut count = 0usize;
+    for (id, name, alt, tint) in content_fixes {
+        if seen.insert((id, name.clone())) {
+            if let Some(obj) = doc.objects.get_mut(&id) {
+                fix_separation_recursive(obj, &name, &alt, &tint);
+                count += 1;
             }
         }
     }
 
-    // Phase 3: Apply fixes.
-    let count = fixes.len();
-    for (id, name, alt, tint) in fixes {
-        if let Some(obj) = doc.objects.get_mut(&id) {
-            fix_separation_recursive(obj, &name, &alt, &tint);
+    // Phase 4: Redirect all document references from non-canonical → canonical.
+    // Scan every object and replace Reference(old_id) with Reference(new_id).
+    if !redirects.is_empty() {
+        let all_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+        for obj_id in all_ids {
+            if let Some(obj) = doc.objects.get_mut(&obj_id) {
+                for (old_id, new_id) in &redirects {
+                    redirect_references_recursive(obj, *old_id, *new_id);
+                }
+            }
         }
+        count += redirects.len();
     }
+
+    // Phase 5: Delete non-canonical Separation objects from the document.
+    // veraPDF scans ALL objects (including unreferenced ones) for 6.2.4.4:2
+    // consistency. After redirecting references, non-canonical Separation objects
+    // are unreferenced, but veraPDF still finds them. Remove them entirely.
+    for (old_id, _new_id) in &redirects {
+        doc.objects.remove(old_id);
+    }
+
     count
 }
 
 fn collect_separations_recursive(
+    doc: &Document,
     id: ObjectId,
     obj: &Object,
     map: &mut std::collections::HashMap<Vec<u8>, Vec<(ObjectId, Object, Object)>>,
+    visited_refs: &mut std::collections::HashSet<ObjectId>,
 ) {
     match obj {
         Object::Array(arr) => {
@@ -1333,7 +1716,7 @@ fn collect_separations_recursive(
                 if let Object::Name(cs_type) = &arr[0] {
                     if cs_type == b"Separation" {
                         if let Object::Name(name) = &arr[1] {
-                            map.entry(name.clone()).or_default().push((
+                            map.entry(normalize_spot_name(name)).or_default().push((
                                 id,
                                 arr[2].clone(),
                                 arr[3].clone(),
@@ -1343,17 +1726,51 @@ fn collect_separations_recursive(
                 }
             }
             for item in arr {
-                collect_separations_recursive(id, item, map);
+                collect_separations_recursive(doc, id, item, map, visited_refs);
             }
         }
         Object::Dictionary(dict) => {
             for (_, val) in dict.iter() {
-                collect_separations_recursive(id, val, map);
+                collect_separations_recursive(doc, id, val, map, visited_refs);
             }
         }
         Object::Stream(stream) => {
             for (_, val) in stream.dict.iter() {
-                collect_separations_recursive(id, val, map);
+                collect_separations_recursive(doc, id, val, map, visited_refs);
+            }
+        }
+        Object::Reference(ref_id) => {
+            if visited_refs.insert(*ref_id) {
+                if let Ok(resolved) = doc.get_object(*ref_id) {
+                    collect_separations_recursive(doc, *ref_id, resolved, map, visited_refs);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recursively replace all Reference(old_id) with Reference(new_id) in an object tree.
+fn redirect_references_recursive(obj: &mut Object, old_id: ObjectId, new_id: ObjectId) {
+    match obj {
+        Object::Reference(r) => {
+            if *r == old_id {
+                *r = new_id;
+            }
+        }
+        Object::Array(arr) => {
+            for item in arr.iter_mut() {
+                redirect_references_recursive(item, old_id, new_id);
+            }
+        }
+        Object::Dictionary(dict) => {
+            for (_, val) in dict.iter_mut() {
+                redirect_references_recursive(val, old_id, new_id);
+            }
+        }
+        Object::Stream(stream) => {
+            for (_, val) in stream.dict.iter_mut() {
+                redirect_references_recursive(val, old_id, new_id);
             }
         }
         _ => {}
@@ -1367,7 +1784,7 @@ fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &
                 if let Object::Name(cs_type) = &arr[0] {
                     if cs_type == b"Separation" {
                         if let Object::Name(n) = &arr[1] {
-                            if n == name {
+                            if normalize_spot_name(n) == name {
                                 arr[2] = alt.clone();
                                 arr[3] = tint.clone();
                             }
@@ -1391,6 +1808,52 @@ fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &
         }
         _ => {}
     }
+}
+
+/// Normalize a PDF Name object for logical comparison.
+///
+/// PDF names may encode bytes using `#XX` hex escapes. For clause 6.2.4.4:2,
+/// names that differ only by escape form should be treated as the same spot
+/// color name.
+fn normalize_spot_name(name: &[u8]) -> Vec<u8> {
+    let mut decoded = Vec::with_capacity(name.len());
+    let mut i = 0usize;
+    while i < name.len() {
+        if name[i] == b'#' && i + 2 < name.len() {
+            let h1 = name[i + 1];
+            let h2 = name[i + 2];
+            let hi = (h1 as char).to_digit(16);
+            let lo = (h2 as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                decoded.push(((hi << 4) | lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        decoded.push(name[i]);
+        i += 1;
+    }
+
+    // Canonicalize ASCII names: trim/collapse whitespace and fold to upper-case
+    // so escape/case variants of the same spot name group together.
+    let mut out = Vec::with_capacity(decoded.len());
+    let mut prev_space = true;
+    for b in decoded {
+        let is_space = matches!(b, b' ' | b'\t' | b'\r' | b'\n');
+        if is_space {
+            if !prev_space {
+                out.push(b' ');
+            }
+            prev_space = true;
+            continue;
+        }
+        prev_space = false;
+        out.push(b.to_ascii_uppercase());
+    }
+    if out.last() == Some(&b' ') {
+        out.pop();
+    }
+    out
 }
 
 /// Fix overprint mode: set OPM to 0 when overprinting is enabled (PDF/A rule 6.2.4.2:2).
