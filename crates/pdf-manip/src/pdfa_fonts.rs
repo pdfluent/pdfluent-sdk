@@ -6747,12 +6747,6 @@ fn compute_type1_fontfile_width_corrections(
         return Vec::new();
     };
     let scale = parsed.font_matrix_sx * 1000.0;
-    // Debug: show encoding for key codes
-    for code in [39u8, 170, 177, 186] {
-        let from_diff = differences.get(&(code as u32)).cloned();
-        let from_enc = parsed.encoding.get(&code).cloned();
-        eprintln!("[FF1_ENC] code={code} enc_name={enc_name:?} from_diff={from_diff:?} from_parsed_enc={from_enc:?}");
-    }
     let mut corrections = Vec::new();
     for (i, obj) in existing_widths.iter().enumerate() {
         let pdf_w = match obj {
@@ -6761,15 +6755,26 @@ fn compute_type1_fontfile_width_corrections(
             _ => continue,
         };
         let code = first_char + i as u32;
+        // Resolve code → glyph name using explicit mappings only.
+        // When enc_name is empty and no explicit mapping exists, the code→glyph
+        // resolution is ambiguous (no declared PDF or font-level encoding to
+        // fall back on). Using the WinAnsi heuristic for these codes produces
+        // wrong glyph matches for fonts with StandardEncoding or custom built-in
+        // encodings (e.g. Palatino), corrupting widths that were already correct.
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.as_str().to_string()
         } else if let Some(name) = parsed.encoding.get(&(code as u8)) {
             name.clone()
-        } else {
+        } else if !enc_name.is_empty() {
+            // PDF dict specifies an explicit base encoding — use it.
             let ch = encoding_to_char(code, enc_name);
             unicode_to_agl_name(ch)
                 .or_else(|| unicode_to_glyph_name(ch))
                 .unwrap_or_default()
+        } else {
+            // No explicit mapping available — skip this code to avoid
+            // corrupting widths with speculative glyph lookups.
+            String::new()
         };
         if glyph_name.is_empty() || glyph_name == ".notdef" {
             continue;
@@ -6779,7 +6784,6 @@ fn compute_type1_fontfile_width_corrections(
         };
         let font_w = (cs_width as f64 * scale).round();
         if (pdf_w - font_w).abs() >= 1.0 {
-            eprintln!("[FF1_CORR] code={code} glyph={glyph_name} pdf_w={pdf_w} cs_width={cs_width} scale={scale:.6} font_w={font_w}");
             corrections.push((i, font_w as i64));
         }
     }
@@ -6819,9 +6823,6 @@ struct Type1Parsed {
     font_matrix_sx: f64,
     encoding: std::collections::HashMap<u8, String>,
     charstring_widths: std::collections::HashMap<String, i32>,
-    /// Indices of local subroutines that contain a seac instruction (12 6).
-    /// Used to detect seac-via-callsubr patterns in charstrings.
-    seac_subrs: std::collections::HashSet<u32>,
 }
 
 /// Parse a Type 1 font program (PFB/PFA) to extract FontMatrix, Encoding, and widths.
@@ -6857,7 +6858,6 @@ fn parse_type1_program(data: &[u8]) -> Option<Type1Parsed> {
         font_matrix_sx,
         encoding,
         charstring_widths,
-        seac_subrs,
     })
 }
 
@@ -7100,16 +7100,9 @@ fn parse_type1_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::
 
     // Find /Subrs in the decrypted Private dict.
     let Some(subrs_pos) = find_bytes(decrypted, b"/Subrs") else {
-        eprintln!("[SUBR_DEBUG] /Subrs not found in decrypted ({} bytes)", decrypted.len());
         return seac_subrs;
     };
-    eprintln!("[SUBR_DEBUG] /Subrs found at offset {}", subrs_pos);
     let data = &decrypted[subrs_pos + 6..]; // skip "/Subrs"
-    // Show next 80 bytes for context
-    let preview: String = data.iter().take(80)
-        .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
-        .collect();
-    eprintln!("[SUBR_DEBUG] after /Subrs: {preview:?}");
 
     // Scan for "dup <index> <len> RD <bytes>" entries.
     let mut pos = 0;
@@ -7152,23 +7145,11 @@ fn parse_type1_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::
         let subr_data = &data[pos..pos + cs_len];
         pos += cs_len;
 
-        // Decrypt and scan for seac (12 6).
-        let has_seac = charstring_contains_seac(subr_data, len_iv);
-        if subr_idx < 10 || subr_idx == 165 {
-            // Decode and dump for diagnostic.
-            let mut r2: u16 = 4330; let c1b: u16 = 52845; let c2b: u16 = 22719;
-            let mut dec2 = Vec::with_capacity(cs_len);
-            for &cipher in subr_data { let pl = cipher ^ (r2 >> 8) as u8; r2 = (cipher as u16).wrapping_add(r2).wrapping_mul(c1b).wrapping_add(c2b); dec2.push(pl); }
-            let content = if dec2.len() > len_iv { &dec2[len_iv..] } else { &[] as &[u8] };
-            let hex: Vec<String> = content.iter().map(|b| format!("{b:02x}")).collect();
-            eprintln!("[SUBR_DEBUG] subr {subr_idx} len={cs_len} has_seac={has_seac}: {}", hex.join(" "));
-        }
-        if has_seac {
+        if charstring_contains_seac(subr_data, len_iv) {
             seac_subrs.insert(subr_idx);
         }
     }
 
-    eprintln!("[SUBR_DEBUG] found {} seac subrs: {:?}", seac_subrs.len(), seac_subrs);
     seac_subrs
 }
 
@@ -7299,14 +7280,6 @@ fn parse_type1_charstrings(
             break;
         }
         let charstring_data = &decrypted[p..p + cs_len];
-        if matches!(glyph_name.as_str(), "ordfeminine" | "ordmasculine" | "plusminus" | "quotesingle") && cs_len < 300 {
-            // Debug: dump full decoded charstring
-            let mut r2: u16 = 4330; let c1b: u16 = 52845; let c2b: u16 = 22719;
-            let mut dec2 = Vec::with_capacity(cs_len);
-            for &cipher in charstring_data { let pl = cipher ^ (r2 >> 8) as u8; r2 = (cipher as u16).wrapping_add(r2).wrapping_mul(c1b).wrapping_add(c2b); dec2.push(pl); }
-            let hex: Vec<String> = dec2[len_iv..].iter().map(|b| format!("{b:02x}")).collect();
-            eprintln!("[CS_FULL] glyph={glyph_name} len={cs_len}: {}", hex.join(" "));
-        }
         if let Some(width) = decrypt_charstring_width(charstring_data, len_iv, seac_subrs) {
             widths.insert(glyph_name, width);
         }
