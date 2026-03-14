@@ -7093,9 +7093,16 @@ fn parse_type1_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::
 
     // Find /Subrs in the decrypted Private dict.
     let Some(subrs_pos) = find_bytes(decrypted, b"/Subrs") else {
+        eprintln!("[SUBR_DEBUG] /Subrs not found in decrypted ({} bytes)", decrypted.len());
         return seac_subrs;
     };
+    eprintln!("[SUBR_DEBUG] /Subrs found at offset {}", subrs_pos);
     let data = &decrypted[subrs_pos + 6..]; // skip "/Subrs"
+    // Show next 80 bytes for context
+    let preview: String = data.iter().take(80)
+        .map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' })
+        .collect();
+    eprintln!("[SUBR_DEBUG] after /Subrs: {preview:?}");
 
     // Scan for "dup <index> <len> RD <bytes>" entries.
     let mut pos = 0;
