@@ -6773,6 +6773,7 @@ fn compute_type1_fontfile_width_corrections(
         };
         let font_w = (cs_width as f64 * scale).round();
         if (pdf_w - font_w).abs() >= 1.0 {
+            eprintln!("[FF1_CORR] code={code} glyph={glyph_name} pdf_w={pdf_w} cs_width={cs_width} scale={scale:.6} font_w={font_w}");
             corrections.push((i, font_w as i64));
         }
     }
