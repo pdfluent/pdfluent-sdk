@@ -7144,6 +7144,7 @@ fn parse_type1_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::
         }
     }
 
+    eprintln!("[SUBR_DEBUG] found {} seac subrs: {:?}", seac_subrs.len(), seac_subrs);
     seac_subrs
 }
 
