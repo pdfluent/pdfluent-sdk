@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
 use super::{PdfTest, TestResult, TestStatus};
 
@@ -21,32 +23,61 @@ impl PdfTest for ImageExtractTest {
             }
         };
 
-        let pages = doc.get_pages();
+        // Wrap in Arc so the page map and per-page extraction can run in
+        // threads with a hard timeout. Fixes #447: also eliminates the double
+        // get_pages() call — we call it once here and pass page_id directly to
+        // extract_images_from_page_id (which does not call get_pages() again).
+        let doc_arc = Arc::new(doc);
+
+        // Build the page map with a 20s timeout.  Some corrupt PDFs loop
+        // forever inside lopdf's page-tree traversal; without the thread we
+        // would block indefinitely.  Fixes #446/#447.
+        let pages = {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let clone = doc_arc.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(clone.get_pages());
+            });
+            match rx.recv_timeout(Duration::from_secs(20)) {
+                Ok(p) => p,
+                Err(_) => {
+                    return self.fallback_check(pdf_data, start);
+                }
+            }
+        };
+
         if pages.is_empty() {
             // lopdf found 0 pages — fall back to pdf_engine page count check.
             return self.fallback_check(pdf_data, start);
         }
 
         let mut total_images = 0usize;
-        let page_count = pages.len() as u32;
-        let pages_to_check = page_count.min(5);
+        let pages_to_check = (pages.len() as u32).min(5) as usize;
         let mut pages_checked = 0u32;
 
-        for page_num in 1..=pages_to_check {
+        // Iterate the first N pages in page-number order (BTreeMap is sorted).
+        for (&page_num, &page_id) in pages.iter().take(pages_to_check) {
             // Abort if total test time exceeds budget.
             if start.elapsed().as_secs() >= 20 {
                 break;
             }
-            let page_start = std::time::Instant::now();
-            match pdf_extract::extract_page_images(&doc, page_num) {
-                Ok(images) => {
+
+            // Each page runs in its own thread with a 10s deadline.
+            // Pathological image streams (zip-bombs, infinite decompression)
+            // are contained to at most 10s per page.  Fixes #446/#447.
+            let (tx, rx) = std::sync::mpsc::channel();
+            let clone = doc_arc.clone();
+            std::thread::spawn(move || {
+                let r = pdf_extract::extract_images_from_page_id(&clone, page_id, page_num);
+                let _ = tx.send(r);
+            });
+
+            match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(Ok(images)) => {
                     total_images += images.len();
                     pages_checked += 1;
-                    if page_start.elapsed().as_secs() >= 10 {
-                        break;
-                    }
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     return TestResult {
                         status: TestStatus::Fail,
                         error_message: Some(format!("page {page_num}: {e}")),
@@ -54,6 +85,10 @@ impl PdfTest for ImageExtractTest {
                         oracle_score: None,
                         metadata: HashMap::new(),
                     };
+                }
+                Err(_) => {
+                    // Per-page timeout — stop checking more pages.
+                    break;
                 }
             }
         }

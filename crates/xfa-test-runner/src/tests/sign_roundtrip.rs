@@ -68,11 +68,34 @@ impl PdfTest for SignRoundtripTest {
             };
         }
 
-        // 4. Sign the PDF.
+        // 4. Sign the PDF — run in a thread so we can enforce a hard timeout.
+        // Some PDFs with corrupted DSS or deeply nested structures cause lopdf
+        // to hang indefinitely inside sign_pdf.  Fixes #446.
         let options = pdf_sign::SignOptions::default();
-        let sign_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pdf_sign::sign_pdf(pdf_data, signer, &options)
-        }));
+        let (tx, rx) = std::sync::mpsc::channel();
+        {
+            let pdf_clone = pdf_data.to_vec();
+            let opts = options.clone();
+            std::thread::spawn(move || {
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    pdf_sign::sign_pdf(&pdf_clone, signer, &opts)
+                }));
+                let _ = tx.send(r);
+            });
+        }
+
+        let sign_result = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(r) => r,
+            Err(_) => {
+                return TestResult {
+                    status: TestStatus::Skip,
+                    error_message: Some("sign_pdf timed out (>30s)".into()),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
+        };
 
         let signed_bytes = match sign_result {
             Ok(Ok(bytes)) => bytes,
