@@ -6755,12 +6755,10 @@ fn compute_type1_fontfile_width_corrections(
             _ => continue,
         };
         let code = first_char + i as u32;
-        // Resolve code → glyph name using explicit mappings only.
-        // When enc_name is empty and no explicit mapping exists, the code→glyph
-        // resolution is ambiguous (no declared PDF or font-level encoding to
-        // fall back on). Using the WinAnsi heuristic for these codes produces
-        // wrong glyph matches for fonts with StandardEncoding or custom built-in
-        // encodings (e.g. Palatino), corrupting widths that were already correct.
+        // Resolve code → glyph name. Track whether we used an ambiguous fallback
+        // (no explicit PDF-level or font-level encoding for this code) so we can
+        // apply a conservative delta filter below.
+        let mut used_ambiguous_enc = false;
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.as_str().to_string()
         } else if let Some(name) = parsed.encoding.get(&(code as u8)) {
@@ -6772,9 +6770,15 @@ fn compute_type1_fontfile_width_corrections(
                 .or_else(|| unicode_to_glyph_name(ch))
                 .unwrap_or_default()
         } else {
-            // No explicit mapping available — skip this code to avoid
-            // corrupting widths with speculative glyph lookups.
-            String::new()
+            // No explicit encoding declared: fall back to heuristic Unicode mapping.
+            // Corrections from this path are restricted to delta ≤ 5 below, because
+            // the mapping can be wrong for seac-composite glyphs (e.g. Palatino
+            // ordfeminine: hsbw=333 but effective width=500 via seac chain).
+            used_ambiguous_enc = true;
+            let ch = encoding_to_char(code, enc_name);
+            unicode_to_agl_name(ch)
+                .or_else(|| unicode_to_glyph_name(ch))
+                .unwrap_or_default()
         };
         if glyph_name.is_empty() || glyph_name == ".notdef" {
             continue;
@@ -6783,8 +6787,15 @@ fn compute_type1_fontfile_width_corrections(
             continue;
         };
         let font_w = (cs_width as f64 * scale).round();
-        if (pdf_w - font_w).abs() >= 1.0 {
-            corrections.push((i, font_w as i64));
+        let delta = (pdf_w - font_w).abs();
+        if delta >= 1.0 {
+            // When using ambiguous encoding fallback (no explicit PDF or font-level
+            // encoding), restrict to small deltas to avoid corrupting widths based
+            // on wrong glyph matches (e.g. seac composites like Palatino ordfeminine
+            // where hsbw=333 but effective advance width=500 via seac chain).
+            if !used_ambiguous_enc || delta <= 5.0 {
+                corrections.push((i, font_w as i64));
+            }
         }
     }
     corrections
