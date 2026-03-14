@@ -5217,7 +5217,9 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
             i += 1;
         }
         if i == tok_start {
-            // Single unrecognised delimiter character — skip it silently.
+            // Stray delimiter character (e.g. orphaned `>` from `>>`): skip
+            // and mark the stream as modified so it gets rewritten without it.
+            modified = true;
             i += 1;
             continue;
         }
@@ -5448,6 +5450,8 @@ pub(crate) fn fix_page_boundary_sizes(doc: &mut Document) -> usize {
 
 fn fix_non_ascii_pdf_names(doc: &mut Document) -> usize {
     /// Sanitize a single name: replace bytes > 127 with uppercase hex ASCII.
+    /// Truncates to 127 bytes to comply with ISO 19005-2 rule 6.1.13:4
+    /// ("A conforming file shall not contain any name longer than 127 bytes").
     fn sanitize_name(name: &[u8]) -> Option<Vec<u8>> {
         if name.iter().all(|&b| b <= 127) {
             return None; // already ASCII-clean
@@ -5455,9 +5459,16 @@ fn fix_non_ascii_pdf_names(doc: &mut Document) -> usize {
         let mut out = Vec::with_capacity(name.len() * 2);
         for &b in name {
             if b > 127 {
+                // Each non-ASCII byte becomes 2 hex digits; stop before exceeding 127.
+                if out.len() + 2 > 127 {
+                    break;
+                }
                 out.push(b"0123456789ABCDEF"[(b >> 4) as usize]);
                 out.push(b"0123456789ABCDEF"[(b & 0xf) as usize]);
             } else {
+                if out.len() >= 127 {
+                    break;
+                }
                 out.push(b);
             }
         }

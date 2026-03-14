@@ -4422,16 +4422,15 @@ fn find_cff_glyph_width_by_name(
 /// in the embedded font program. This builds a complete CIDSet from the
 /// font's glyph count.
 pub fn fix_cidset(doc: &mut Document) -> usize {
-    // For PDF/A-2b, CIDSet is OPTIONAL. If present, it must correctly identify
-    // all CIDs in the font program. Generating a correct CIDSet for CID-keyed
-    // CFF fonts requires mapping GIDs to CIDs via the charset structure, which
-    // is complex and error-prone. The safest approach: REMOVE CIDSet entirely.
-    // This eliminates 6.2.11.4.2:2 validation errors without risk.
+    // For PDF/A-2b, CIDSet must correctly identify all CIDs in the font program
+    // (rule 6.2.11.7:1). For CIDFontType2 (TrueType) fonts with FontFile2, we
+    // can generate a correct CIDSet from the maxp table's numGlyphs field.
+    // For other font types the safe fallback is to REMOVE CIDSet entirely.
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
 
     for font_id in font_ids {
-        let fd_id = {
+        let (subtype, fd_id) = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
                 continue;
             };
@@ -4439,15 +4438,13 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
             if subtype != "CIDFontType0" && subtype != "CIDFontType2" {
                 continue;
             }
-
-            match dict.get(b"FontDescriptor").ok() {
+            let fd_id = match dict.get(b"FontDescriptor").ok() {
                 Some(Object::Reference(id)) => *id,
                 _ => continue,
-            }
+            };
+            (subtype, fd_id)
         };
 
-        // Remove CIDSet if present — it's optional for PDF/A-2b and
-        // incorrect CIDSet causes validation failures.
         let has_cidset = doc
             .objects
             .get(&fd_id)
@@ -4460,14 +4457,98 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
             })
             .unwrap_or(false);
 
-        if has_cidset {
-            if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
-                fd.remove(b"CIDSet");
-            }
-            fixed += 1;
+        if !has_cidset {
+            continue;
         }
+
+        // For CIDFontType2 with FontFile2 (TrueType): regenerate CIDSet from
+        // the maxp table so it correctly covers all glyphs in the font program.
+        if subtype == "CIDFontType2" {
+            let has_ff2 = doc
+                .objects
+                .get(&fd_id)
+                .and_then(|o| {
+                    if let Object::Dictionary(fd) = o {
+                        Some(fd.has(b"FontFile2"))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
+
+            if has_ff2 {
+                let font_data = read_embedded_font_data(doc, fd_id);
+                if let Some(ref data) = font_data {
+                    if let Some(num_glyphs) = truetype_num_glyphs(data) {
+                        let cidset_bytes = cidset_bitstream(num_glyphs);
+                        // Store new CIDSet stream and update FontDescriptor.
+                        let new_id = doc.new_object_id();
+                        let mut stream_dict = lopdf::Dictionary::new();
+                        stream_dict.set("Length", Object::Integer(cidset_bytes.len() as i64));
+                        let stream = lopdf::Stream::new(stream_dict, cidset_bytes);
+                        doc.objects.insert(new_id, Object::Stream(stream));
+                        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                            fd.set("CIDSet", Object::Reference(new_id));
+                        }
+                        fixed += 1;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Fallback: remove CIDSet when we can't regenerate it correctly.
+        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+            fd.remove(b"CIDSet");
+        }
+        fixed += 1;
     }
     fixed
+}
+
+/// Extract numGlyphs from a TrueType font's maxp table.
+fn truetype_num_glyphs(data: &[u8]) -> Option<u16> {
+    if data.len() < 12 {
+        return None;
+    }
+    // sfnt header: sfVersion(4) + numTables(2) + searchRange(2) + ...
+    let num_tables = u16::from_be_bytes([data[4], data[5]]) as usize;
+    // Table directory starts at offset 12, each entry is 16 bytes.
+    for i in 0..num_tables {
+        let entry_off = 12 + i * 16;
+        if entry_off + 16 > data.len() {
+            break;
+        }
+        if &data[entry_off..entry_off + 4] == b"maxp" {
+            let table_off = u32::from_be_bytes([
+                data[entry_off + 8],
+                data[entry_off + 9],
+                data[entry_off + 10],
+                data[entry_off + 11],
+            ]) as usize;
+            if table_off + 6 <= data.len() {
+                let num_glyphs = u16::from_be_bytes([data[table_off + 4], data[table_off + 5]]);
+                return Some(num_glyphs);
+            }
+        }
+    }
+    None
+}
+
+/// Build a CIDSet bitstream with bits 0..num_glyphs-1 set (big-endian bit order).
+fn cidset_bitstream(num_glyphs: u16) -> Vec<u8> {
+    if num_glyphs == 0 {
+        return vec![0u8];
+    }
+    let num_bytes = (num_glyphs as usize).div_ceil(8);
+    let mut bits = vec![0xFFu8; num_bytes];
+    // Clear trailing bits if numGlyphs is not a multiple of 8.
+    let remainder = num_glyphs as usize % 8;
+    if remainder != 0 {
+        // Keep only the top `remainder` bits of the last byte.
+        bits[num_bytes - 1] = 0xFFu8 << (8 - remainder);
+    }
+    bits
 }
 
 /// Fix font width mismatches between /Widths array and embedded font program (6.2.11.5:1).
