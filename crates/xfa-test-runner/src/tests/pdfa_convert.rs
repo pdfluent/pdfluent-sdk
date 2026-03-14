@@ -398,6 +398,13 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_cidset(&mut doc)
         }));
 
+        // 3a6. Add CIDToGIDMap /Identity to CIDFontType2 dicts missing it.
+        // ISO 19005-2 §6.2.11.3.2 requires explicit CIDToGIDMap. (#439)
+        set_progress("cidtogidmap");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc)
+        }));
+
         // 3b. Normalize color spaces: add sRGB OutputIntent if missing.
         set_progress("colorspace");
         fix_wrong_root(&mut doc);

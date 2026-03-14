@@ -4416,6 +4416,39 @@ fn find_cff_glyph_width_by_name(
     None
 }
 
+/// Add CIDToGIDMap /Identity to CIDFontType2 dicts that are missing it.
+///
+/// ISO 19005-2 §6.2.11.3.2 requires that CIDFontType2 (TrueType) dicts
+/// have an explicit CIDToGIDMap entry. The PDF spec defaults to Identity
+/// when absent, but veraPDF treats the absence as a violation. (#439)
+pub fn fix_missing_cidtogidmap(doc: &mut Document) -> usize {
+    // Collect all object IDs that are CIDFontType2 with no CIDToGIDMap.
+    let ids_to_fix: Vec<lopdf::ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            let dict = obj.as_dict().ok()?;
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+            if subtype != "CIDFontType2" {
+                return None;
+            }
+            if dict.get(b"CIDToGIDMap").is_ok() {
+                return None; // already has CIDToGIDMap
+            }
+            Some(id)
+        })
+        .collect();
+
+    let count = ids_to_fix.len();
+    for id in ids_to_fix {
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+            // Default per PDF spec is Identity, make it explicit for PDF/A compliance.
+            dict.set("CIDToGIDMap", Object::Name(b"Identity".to_vec()));
+        }
+    }
+    count
+}
+
 /// Fix CIDSet streams for all CID fonts (6.2.11.8:1).
 ///
 /// CIDSet must be a stream containing a bitmap covering all CIDs present
@@ -8918,19 +8951,7 @@ pub fn fix_existing_symbolic_truetype_cmaps(doc: &mut Document) -> usize {
             (fd_id, ff2_id)
         };
 
-        let before = match doc.objects.get(&ff2_id) {
-            Some(Object::Stream(s)) => s.content.clone(),
-            _ => continue,
-        };
         fix_symbolic_truetype_cmap(doc, ff2_id);
-        let after = match doc.objects.get(&ff2_id) {
-            Some(Object::Stream(s)) => s.content.clone(),
-            _ => continue,
-        };
-        if before != after {
-            fixed += 1;
-            continue;
-        }
 
         let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
             continue;
