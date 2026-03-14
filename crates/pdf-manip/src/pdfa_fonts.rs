@@ -5634,22 +5634,27 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 &enc_info,
             );
         } else if has_ff1 && (subtype == "Type1" || subtype == "MMType1") {
-            // Only correct widths for subset fonts (ABCDEF+FontName pattern).
-            // Full fonts like Melior have correct dict widths; our charstring parser
-            // misreads some glyphs (subroutines / non-standard encoding), causing
-            // false corrections that veraPDF then rejects.
-            // Subset fonts (e.g. MINIPA+Times.New.Roman) may have reindexed
-            // charstrings whose widths differ from the original dict.
+            // Subset fonts (ABCDEF+FontName pattern) may have reindexed charstrings
+            // whose widths differ from the original dict — apply full corrections.
+            // Non-subset full fonts: our charstring parser can misread subroutines,
+            // but systematic rounding differences (|delta| ≤ 5) are safe to apply.
             let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
-            if !is_subset {
-                continue;
-            }
             corrections = compute_type1_fontfile_width_corrections(
                 &font_data,
                 first_char,
                 &existing_widths,
                 &enc_info,
             );
+            if !is_subset {
+                // For non-subset fonts, restrict to small systematic rounding deltas.
+                // Large corrections from subroutine misreads would break veraPDF.
+                corrections.retain(|(idx, new_w)| {
+                    let Some(pdf_w) = existing_widths.get(*idx).and_then(object_to_f64) else {
+                        return false;
+                    };
+                    (pdf_w - *new_w as f64).abs() <= 5.0
+                });
+            }
         } else {
             continue;
         }
@@ -13144,11 +13149,21 @@ fn fix_notdef_in_type1_fontfile(
 
     let mut new_diffs: Vec<(u32, String)> = Vec::new();
     if !replacements.iter().any(|(code, _)| *code == 32) {
-        let internal_32_ok = parsed
-            .encoding
-            .get(&32)
-            .map(|name| !name.is_empty() && name != ".notdef")
-            .unwrap_or(false);
+        // If parse_type1_encoding returned an empty map, the font uses a named
+        // encoding form (e.g. "/Encoding StandardEncoding def") that our parser
+        // can't enumerate. Validate code 32 via base_encoding instead.
+        let internal_32_ok = if parsed.encoding.is_empty() {
+            let ch = encoding_to_char(32, &base_encoding);
+            unicode_to_glyph_name(ch)
+                .as_ref()
+                .is_some_and(|name| available_glyphs.contains(name))
+        } else {
+            parsed
+                .encoding
+                .get(&32)
+                .map(|name| !name.is_empty() && name != ".notdef")
+                .unwrap_or(false)
+        };
 
         let has_valid_32 = differences
             .iter()
