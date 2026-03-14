@@ -5655,6 +5655,12 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             // Get encoding info.
             let enc_info = get_simple_encoding_info(doc, dict);
 
+            // Track whether the font has an explicit PDF-level Encoding entry.
+            // Fonts without explicit encoding rely on a defaulted mapping that
+            // may not match veraPDF's interpretation — large corrections are
+            // unreliable in that case.
+            let has_explicit_encoding = dict.has(b"Encoding");
+
             (
                 subtype,
                 base_font,
@@ -5663,10 +5669,11 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 existing_widths,
                 enc_info,
                 widths_ref,
+                has_explicit_encoding,
             )
         };
 
-        let (subtype, base_font, fd_id, first_char, existing_widths, enc_info, widths_ref) = info;
+        let (subtype, base_font, fd_id, first_char, existing_widths, enc_info, widths_ref, has_explicit_encoding) = info;
 
         // Check if font program is embedded (FontFile key exists).
         // We don't verify stream content here — read_embedded_font_data handles that.
@@ -5724,17 +5731,26 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 &enc_info,
             );
         } else if has_ff1 && (subtype == "Type1" || subtype == "MMType1") {
-            // Apply full corrections for all FF1 Type1 fonts (subset or not).
-            // Our charstring parser returns the correct width or None — it never
-            // returns a wrong value from subroutine misreads (unknown opcodes
-            // like callsubr cause the parse to abort and return None, skipping
-            // the glyph rather than producing a bad correction).
             corrections = compute_type1_fontfile_width_corrections(
                 &font_data,
                 first_char,
                 &existing_widths,
                 &enc_info,
             );
+            // For non-subset fonts without an explicit PDF-level Encoding dict,
+            // the code→glyph mapping is ambiguous (we default to WinAnsiEncoding
+            // but the font's internal encoding or veraPDF's interpretation may
+            // differ). Restrict to small deltas to avoid overwriting correct
+            // original widths with wrong charstring-derived values.
+            let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
+            if !is_subset && !has_explicit_encoding {
+                corrections.retain(|(idx, new_w)| {
+                    let Some(pdf_w) = existing_widths.get(*idx).and_then(object_to_f64) else {
+                        return false;
+                    };
+                    (pdf_w - *new_w as f64).abs() <= 5.0
+                });
+            }
         } else {
             continue;
         }
@@ -7205,14 +7221,21 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
     // sbw:  sbx sby wx wy sbw     → width = values[2]
     // TeX fonts often use `div` (12 12) in the preamble, e.g. `59 2125 4 div hsbw`
     // to encode fractional widths.
+    //
+    // IMPORTANT: only return a width when hsbw/sbw is actually reached.
+    // Other escape operators (e.g. seac = 12 6) leave unrelated values on the
+    // stack; returning values[1] in that case yields wrong results (e.g. the
+    // seac accent x-offset instead of the actual glyph width).
     let mut pos = 0;
     let mut values = Vec::new();
+    let mut found_width_op = false;
     let mut is_sbw = false;
 
     while pos < cs.len() && values.len() < 8 {
         let b = cs[pos];
         if b == 13 {
             // hsbw: stack has [sbx, wx]
+            found_width_op = true;
             break;
         }
         if b == 12 {
@@ -7233,7 +7256,9 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
             if pos + 1 < cs.len() && cs[pos + 1] == 7 {
                 // sbw: stack has [sbx, sby, wx, wy]
                 is_sbw = true;
+                found_width_op = true;
             }
+            // Any other escape (seac, flex, etc.) — stop without a result.
             break;
         }
         // Parse integer.
@@ -7260,17 +7285,42 @@ fn decrypt_charstring_width(data: &[u8], len_iv: usize) -> Option<i32> {
             values.push(val);
             pos += 5;
         } else {
-            // Unknown operator before width was found.
+            // Unknown operator before width was found — stop without a result.
             break;
         }
     }
 
-    // hsbw: width = values[1], sbw: width = values[2].
-    if is_sbw {
-        values.get(2).copied()
-    } else {
-        values.get(1).copied()
+    if !found_width_op {
+        return None;
     }
+
+    // hsbw: width = values[1], sbw: width = values[2].
+    let candidate = if is_sbw { values.get(2).copied() } else { values.get(1).copied() };
+    let Some(width) = candidate else { return None; };
+
+    // After finding hsbw/sbw, scan the rest of the charstring for seac (escape 12 6).
+    // seac composites: the advance width comes from the BASE CHARACTER's charstring,
+    // not from the hsbw in the accent/composite charstring. Return None so the caller
+    // keeps the original PDF dict value instead of overwriting it with a wrong width.
+    pos += if is_sbw { 2 } else { 1 };
+    while pos < cs.len() {
+        let b = cs[pos];
+        if b == 12 {
+            if pos + 1 < cs.len() && cs[pos + 1] == 6 {
+                return None; // seac — hsbw-derived width is unreliable
+            }
+            pos += 2;
+        } else if (32..=246).contains(&b) {
+            pos += 1;
+        } else if (247..=254).contains(&b) {
+            pos += 2;
+        } else if b == 255 {
+            pos += 5;
+        } else {
+            pos += 1;
+        }
+    }
+    Some(width)
 }
 
 /// Compute the CFF font matrix scale factor, compensating for f32→f64 precision loss.
