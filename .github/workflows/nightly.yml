@@ -29,6 +29,21 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace -- -D warnings
 
+      - name: Set up Java (for veraPDF oracle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install veraPDF
+        run: |
+          curl -sL https://downloads.verapdf.com/rel/verapdf-installer.zip -o /tmp/verapdf.zip
+          unzip -q /tmp/verapdf.zip -d /tmp/verapdf-install
+          /tmp/verapdf-install/verapdf-*-installer.jar -console -dir /opt/verapdf 2>/dev/null || \
+            java -jar /tmp/verapdf-install/verapdf-*-installer.jar -console -dir /opt/verapdf 2>/dev/null || true
+          echo "/opt/verapdf" >> $GITHUB_PATH
+          /opt/verapdf/verapdf --version 2>/dev/null || echo "veraPDF install optional — proceeding without oracle"
+
       - name: Run corpus tests (extended matrix)
         run: |
           if [[ -d corpus/ ]] && [[ $(find corpus/ -name '*.pdf' 2>/dev/null | head -1) ]]; then
@@ -37,8 +52,7 @@ jobs:
               --db /tmp/nightly-results.sqlite \
               --workers 2 \
               --timeout 15 \
-              --tier full \
-              --no-verapdf
+              --tier full
 
             # Check for crashes.
             CRASHES=$(sqlite3 /tmp/nightly-results.sqlite \

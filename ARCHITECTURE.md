@@ -1,7 +1,7 @@
 # XFA-Native-Rust — Technical Architecture
 
 > Complete technical reference for the XFA PDF SDK.
-> Last updated: 2026-03-09
+> Last updated: 2026-03-14
 
 ---
 
@@ -122,7 +122,7 @@ This dual-stack design allows read-only operations (rendering, text extraction, 
 
 ## 3. Crate Map
 
-### Overview: 38 crates + 1 fuzzing harness
+### Overview: 39 crates + 1 fuzzing harness
 
 ```
 crates/
@@ -133,6 +133,7 @@ crates/
 ├── pdf-interpret/         # Content stream interpreter
 ├── pdf-font/              # Font parsing (Type1, CFF, CMap)
 ├── pdf-render/            # Pure Rust rasterizer (vello_cpu)
+├── cff-parser/            # CFF/Type2 font parser — local fork with CID glyph_width fix (#423)
 ├── pdf-engine/            # Unified document API
 ├── pdf-forms/             # AcroForm engine
 ├── pdf-annot/             # Annotation engine
@@ -782,22 +783,49 @@ Comprehensive documentation and example code for all bindings (#340).
 ### 15.1 Test Ecosystem
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    xfa-test-runner                        │
-│  ┌─────────────┐  ┌──────────┐  ┌───────────────────┐  │
-│  │ Corpus       │  │ Oracles  │  │ Results Database  │  │
-│  │ Manager      │  │          │  │                   │  │
-│  │              │  │ veraPDF  │  │ SQLite per run    │  │
-│  │ 181K PDFs    │  │ PDFium   │  │ Trend tracking    │  │
-│  │ 32K stress   │  │ Poppler  │  │ Regression detect │  │
-│  └──────────────┘  └──────────┘  └───────────────────┘  │
-│                                                          │
-│  12 conformance tests per PDF:                           │
-│  parse, metadata, text, render, forms, annotations,      │
-│  signatures, compliance, manipulation, encrypt/decrypt,  │
-│  round-trip, performance                                  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                       xfa-test-runner                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────┐ │
+│  │ Corpus        │  │ Oracles      │  │ Results Database      │ │
+│  │ Manager       │  │              │  │                       │ │
+│  │               │  │ veraPDF 1.28 │  │ SQLite per run        │ │
+│  │ 181K PDFs     │  │ PDFium       │  │ Trend tracking        │ │
+│  │ 32K stress    │  │ Poppler      │  │ Regression detection  │ │
+│  │ 974 curated   │  │ pdftotext    │  │ Oracle result cache   │ │
+│  └───────────────┘  └──────────────┘  └───────────────────────┘ │
+│                                                                  │
+│  25 test modules, 4 tiers:                                       │
+│  Fast (7):    parse, metadata, geometry, bookmarks,             │
+│               signatures, form_fields, annotations               │
+│  Standard (4): + render, text_extract, compliance, search       │
+│  Full (14):   + text_oracle, metadata_oracle, manipulation,     │
+│               images, sign_verify, sign_roundtrip, form_write,  │
+│               annot_create, content_roundtrip, text_replace,    │
+│               redact, pdfa_convert, ocr, render_oracle           │
+│  Oracle (2):  text_oracle, metadata_oracle                      │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+### 15.1a Crate Coverage Matrix (issue #433)
+
+| Crate | Test modules | Tier |
+|-------|-------------|------|
+| `pdf-syntax` | parse, metadata, content_roundtrip | Fast/Full |
+| `pdf-interpret` | render, text_extract | Standard |
+| `pdf-font` | render, pdfa_convert | Standard/Full |
+| `cff-parser` | pdfa_convert (CID width fix #423) | Full |
+| `hayro-ccitt/jbig2/jpeg2000` | images | Full |
+| `pdf-engine` | geometry, bookmarks, manipulation | Fast/Full |
+| `pdf-forms` | form_fields, form_write | Fast/Full |
+| `pdf-annot` | annotations, annot_create | Fast/Full |
+| `pdf-sign` | signatures, sign_verify, sign_roundtrip | Fast/Full |
+| `pdf-compliance` | compliance, pdfa_convert | Standard/Full |
+| `pdf-manip` | manipulation, content_roundtrip, text_replace, redact, pdfa_convert | Full |
+| `pdf-extract` | text_extract, search, text_oracle | Standard/Full |
+| `pdf-redact` | redact | Full |
+| `pdf-ocr` | ocr | Full |
+| `pdfium-ffi-bridge` | render_oracle | Full (feature-gated) |
+| `lopdf` | content_roundtrip, manipulation, pdfa_convert | Full |
 
 ### 15.2 Test Infrastructure (VPS)
 
@@ -954,6 +982,7 @@ pdf-extract (text/images) → pdf-redact (GDPR)
 |-------|---------|---------|
 | `subsetter` | 0.2 | Font subsetting |
 | `xmp-writer` | 0.3 | XMP metadata generation |
+| `cff-parser` | 0.2 (local fork) | CFF/Type2 font parsing; local fork adds CID `glyph_width()` fix (#423) |
 
 ### Binding Frameworks
 
@@ -1075,6 +1104,7 @@ pdf-extract (text/images) → pdf-redact (GDPR)
 | **SDK Core 3** | Compliance conversion + document conversions | #317–#327 |
 | **Signing** | PdfSigner + PKCS#12, CMS builder, two-pass signing, DocMDP, TSA timestamps | #396–#398 |
 | **OCR** | PaddleOCR pipeline: DBNet detection, SVTR recognition, angle classifier, model management | #399–#401 |
+| **CFF fork** | Local cff-parser fork with CID `glyph_width()` fix (FDSelect→FDArray→PrivateDict) | #423 |
 
 ### Open — Desktop Application (Fase 4)
 
@@ -1105,6 +1135,7 @@ pdf-extract (text/images) → pdf-redact (GDPR)
 |-------|---------|--------|
 | #239 | Corpus expansion (GovDocs1 + SafeDocs full) | Open |
 | #349–#359 | Test runner improvements (11 issues) | Open |
+| #433 | Test coverage matrix: corpus augmentation, manipulation roundtrip, tier docs | Partial (see §15.1a) |
 
 ---
 
