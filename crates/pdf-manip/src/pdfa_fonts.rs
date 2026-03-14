@@ -4422,10 +4422,21 @@ fn find_cff_glyph_width_by_name(
 /// in the embedded font program. This builds a complete CIDSet from the
 /// font's glyph count.
 pub fn fix_cidset(doc: &mut Document) -> usize {
-    // For PDF/A-2b, CIDSet must correctly identify all CIDs in the font program
-    // (rule 6.2.11.7:1). For CIDFontType2 (TrueType) fonts with FontFile2, we
-    // can generate a correct CIDSet from the maxp table's numGlyphs field.
-    // For other font types the safe fallback is to REMOVE CIDSet entirely.
+    // For PDF/A-2b, rule 6.2.11.4.2:2: if a CIDSet stream exists in the
+    // FontDescriptor, it must correctly identify all CIDs present in the font.
+    //
+    // veraPDF's CIDFontType2Program.containsCID(i) logic:
+    //   - Returns true for any CID i where 1 <= i < cidToGidMappingSize,
+    //     regardless of whether the GID value is 0/notdef.
+    //   - For Identity CIDToGIDMap: returns true for 1 <= i < numGlyphs.
+    //
+    // Therefore:
+    //   - Non-identity CIDToGIDMap (stream): CIDSet must have bits 1..N-1 set,
+    //     where N = decompressed stream length / 2 (the mapping size).
+    //   - Identity CIDToGIDMap or no CIDToGIDMap: CIDSet must have bits
+    //     0..numGlyphs-1 set (from maxp).
+    //   - For CIDFontType0 (CFF) or when we cannot determine coverage: remove
+    //     CIDSet entirely (containsCIDSet==false satisfies the rule).
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
 
@@ -4461,8 +4472,7 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
             continue;
         }
 
-        // For CIDFontType2 with FontFile2 (TrueType): regenerate CIDSet from
-        // the maxp table so it correctly covers all glyphs in the font program.
+        // For CIDFontType2 with FontFile2 (TrueType): regenerate CIDSet.
         if subtype == "CIDFontType2" {
             let has_ff2 = doc
                 .objects
@@ -4477,27 +4487,68 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
                 .unwrap_or(false);
 
             if has_ff2 {
-                let font_data = read_embedded_font_data(doc, fd_id);
-                if let Some(ref data) = font_data {
-                    if let Some(num_glyphs) = truetype_num_glyphs(data) {
-                        let cidset_bytes = cidset_bitstream(num_glyphs);
-                        // Store new CIDSet stream and update FontDescriptor.
-                        let new_id = doc.new_object_id();
-                        let mut stream_dict = lopdf::Dictionary::new();
-                        stream_dict.set("Length", Object::Integer(cidset_bytes.len() as i64));
-                        let stream = lopdf::Stream::new(stream_dict, cidset_bytes);
-                        doc.objects.insert(new_id, Object::Stream(stream));
-                        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
-                            fd.set("CIDSet", Object::Reference(new_id));
+                // Determine if the CIDFont has a non-Identity CIDToGIDMap stream.
+                let cid_to_gid_map_id: Option<ObjectId> = {
+                    if let Some(Object::Dictionary(d)) = doc.objects.get(&font_id) {
+                        match d.get(b"CIDToGIDMap").ok() {
+                            Some(Object::Reference(id)) => Some(*id),
+                            _ => None, // Identity or absent
                         }
-                        fixed += 1;
-                        continue;
+                    } else {
+                        None
                     }
+                };
+
+                // Compute the CIDSet bit coverage based on CIDToGIDMap type.
+                let cidset_bytes: Option<Vec<u8>> = if let Some(map_id) = cid_to_gid_map_id {
+                    // Non-identity CIDToGIDMap stream: coverage = bits 1..N-1
+                    // where N = decompressed stream length / 2.
+                    if let Some(Object::Stream(s)) = doc.objects.get(&map_id) {
+                        let mut s2 = s.clone();
+                        let _ = s2.decompress();
+                        let map_size = s2.content.len() / 2;
+                        Some(cidset_bitstream_nonidentity(map_size))
+                    } else {
+                        None
+                    }
+                } else {
+                    // Identity or absent CIDToGIDMap.
+                    // veraPDF uses widths.length (= hhea.numberOfHMetrics) for
+                    // getCIDList() and maxp.numGlyphs for containsCID(). If
+                    // numberOfHMetrics > numGlyphs (corrupt font), no valid CIDSet
+                    // exists — fall through to removal.
+                    let font_data = read_embedded_font_data(doc, fd_id);
+                    match font_data.as_deref() {
+                        Some(data) => {
+                            let num_glyphs = truetype_num_glyphs(data);
+                            let n_hmetrics = truetype_n_hmetrics(data);
+                            match (num_glyphs, n_hmetrics) {
+                                (Some(ng), Some(nh)) if nh <= ng => Some(cidset_bitstream(ng)),
+                                (Some(ng), None) => Some(cidset_bitstream(ng)),
+                                _ => None, // corrupt or numberOfHMetrics > numGlyphs
+                            }
+                        }
+                        None => None,
+                    }
+                };
+
+                if let Some(bytes) = cidset_bytes {
+                    let new_id = doc.new_object_id();
+                    let mut stream_dict = lopdf::Dictionary::new();
+                    stream_dict.set("Length", Object::Integer(bytes.len() as i64));
+                    let stream = lopdf::Stream::new(stream_dict, bytes);
+                    doc.objects.insert(new_id, Object::Stream(stream));
+                    if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                        fd.set("CIDSet", Object::Reference(new_id));
+                    }
+                    fixed += 1;
+                    continue;
                 }
             }
         }
 
         // Fallback: remove CIDSet when we can't regenerate it correctly.
+        // containsCIDSet==false satisfies rule 6.2.11.4.2:2.
         if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
             fd.remove(b"CIDSet");
         }
@@ -4506,33 +4557,72 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
     fixed
 }
 
-/// Extract numGlyphs from a TrueType font's maxp table.
-fn truetype_num_glyphs(data: &[u8]) -> Option<u16> {
+/// Build a CIDSet bitstream for a CIDFontType2 with a non-Identity CIDToGIDMap
+/// stream. veraPDF's containsCID(i) returns true for 1 <= i < map_size
+/// (regardless of GID value), so we must cover exactly bits 1..map_size-1.
+fn cidset_bitstream_nonidentity(map_size: usize) -> Vec<u8> {
+    if map_size <= 1 {
+        // No valid CIDs (only CID 0 which is excluded): all-zero bitstream.
+        return vec![0u8];
+    }
+    // We need bits 1..map_size-1 set. Total bit positions: 0..map_size-1.
+    let num_bytes = map_size.div_ceil(8);
+    let mut bits = vec![0xFFu8; num_bytes];
+    // Clear bit 0 (CID 0 must NOT be set per veraPDF logic).
+    bits[0] &= 0x7F;
+    // Clear trailing bits beyond map_size-1.
+    let remainder = map_size % 8;
+    if remainder != 0 {
+        bits[num_bytes - 1] =
+            (0xFFu8 << (8 - remainder)) & if num_bytes == 1 { 0x7F } else { 0xFF };
+    }
+    bits
+}
+
+/// Extract a table offset from a TrueType font's directory.
+fn truetype_table_offset(data: &[u8], tag: &[u8; 4]) -> Option<usize> {
     if data.len() < 12 {
         return None;
     }
-    // sfnt header: sfVersion(4) + numTables(2) + searchRange(2) + ...
     let num_tables = u16::from_be_bytes([data[4], data[5]]) as usize;
-    // Table directory starts at offset 12, each entry is 16 bytes.
     for i in 0..num_tables {
         let entry_off = 12 + i * 16;
         if entry_off + 16 > data.len() {
             break;
         }
-        if &data[entry_off..entry_off + 4] == b"maxp" {
+        if &data[entry_off..entry_off + 4] == tag {
             let table_off = u32::from_be_bytes([
                 data[entry_off + 8],
                 data[entry_off + 9],
                 data[entry_off + 10],
                 data[entry_off + 11],
             ]) as usize;
-            if table_off + 6 <= data.len() {
-                let num_glyphs = u16::from_be_bytes([data[table_off + 4], data[table_off + 5]]);
-                return Some(num_glyphs);
-            }
+            return Some(table_off);
         }
     }
     None
+}
+
+/// Extract numGlyphs from a TrueType font's maxp table.
+fn truetype_num_glyphs(data: &[u8]) -> Option<u16> {
+    let off = truetype_table_offset(data, b"maxp")?;
+    if off + 6 <= data.len() {
+        Some(u16::from_be_bytes([data[off + 4], data[off + 5]]))
+    } else {
+        None
+    }
+}
+
+/// Extract numberOfHMetrics from a TrueType font's hhea table.
+/// Returns None if the table is absent or malformed.
+fn truetype_n_hmetrics(data: &[u8]) -> Option<u16> {
+    let off = truetype_table_offset(data, b"hhea")?;
+    // hhea: 36 bytes total; numberOfHMetrics is at offset +34 (uint16).
+    if off + 36 <= data.len() {
+        Some(u16::from_be_bytes([data[off + 34], data[off + 35]]))
+    } else {
+        None
+    }
 }
 
 /// Build a CIDSet bitstream with bits 0..num_glyphs-1 set (big-endian bit order).
