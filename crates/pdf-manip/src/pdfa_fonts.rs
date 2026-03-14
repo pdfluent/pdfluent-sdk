@@ -5673,7 +5673,16 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             )
         };
 
-        let (subtype, base_font, fd_id, first_char, existing_widths, enc_info, widths_ref, has_explicit_encoding) = info;
+        let (
+            subtype,
+            base_font,
+            fd_id,
+            first_char,
+            existing_widths,
+            enc_info,
+            widths_ref,
+            has_explicit_encoding,
+        ) = info;
 
         // Check if font program is embedded (FontFile key exists).
         // We don't verify stream content here — read_embedded_font_data handles that.
@@ -7119,40 +7128,64 @@ fn parse_type1_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::
     let mut pos = 0;
     while pos < data.len() {
         // Find "dup".
-        let Some(dup_offset) = find_bytes(&data[pos..], b"dup") else { break };
+        let Some(dup_offset) = find_bytes(&data[pos..], b"dup") else {
+            break;
+        };
         pos += dup_offset + 3;
 
         // Skip whitespace.
-        while pos < data.len() && data[pos].is_ascii_whitespace() { pos += 1; }
+        while pos < data.len() && data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
 
         // Read subr index.
         let idx_start = pos;
-        while pos < data.len() && data[pos].is_ascii_digit() { pos += 1; }
+        while pos < data.len() && data[pos].is_ascii_digit() {
+            pos += 1;
+        }
         let Ok(subr_idx) = std::str::from_utf8(&data[idx_start..pos])
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
             .ok_or(())
-        else { continue };
+        else {
+            continue;
+        };
 
         // Skip whitespace, read length.
-        while pos < data.len() && data[pos].is_ascii_whitespace() { pos += 1; }
+        while pos < data.len() && data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
         let len_start = pos;
-        while pos < data.len() && data[pos].is_ascii_digit() { pos += 1; }
+        while pos < data.len() && data[pos].is_ascii_digit() {
+            pos += 1;
+        }
         let Ok(cs_len) = std::str::from_utf8(&data[len_start..pos])
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .ok_or(())
-        else { continue };
+        else {
+            continue;
+        };
 
         // Skip whitespace, find RD or -|.
-        while pos < data.len() && data[pos].is_ascii_whitespace() { pos += 1; }
-        if pos + 2 > data.len() { break; }
+        while pos < data.len() && data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos + 2 > data.len() {
+            break;
+        }
         let marker = &data[pos..pos + 2];
-        if marker != b"RD" && marker != b"-|" { continue; }
+        if marker != b"RD" && marker != b"-|" {
+            continue;
+        }
         pos += 2;
-        if pos < data.len() && matches!(data[pos], b' ' | b'\t') { pos += 1; }
+        if pos < data.len() && matches!(data[pos], b' ' | b'\t') {
+            pos += 1;
+        }
 
-        if pos + cs_len > data.len() { break; }
+        if pos + cs_len > data.len() {
+            break;
+        }
         let subr_data = &data[pos..pos + cs_len];
         pos += cs_len;
 
@@ -7175,7 +7208,10 @@ fn charstring_contains_seac(data: &[u8], len_iv: usize) -> bool {
     let mut dec = Vec::with_capacity(data.len());
     for &cipher in data {
         let plain = cipher ^ (r >> 8) as u8;
-        r = (cipher as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
+        r = (cipher as u16)
+            .wrapping_add(r)
+            .wrapping_mul(c1)
+            .wrapping_add(c2);
         dec.push(plain);
     }
     let cs = &dec[len_iv..];
@@ -7302,7 +7338,6 @@ fn parse_type1_charstrings(
     widths
 }
 
-
 /// Decrypt a Type 1 charstring and extract the width (wx from hsbw/sbw).
 fn decrypt_charstring_width(
     data: &[u8],
@@ -7410,8 +7445,11 @@ fn decrypt_charstring_width(
     }
 
     // hsbw: width = values[1], sbw: width = values[2].
-    let candidate = if is_sbw { values.get(2).copied() } else { values.get(1).copied() };
-    let Some(width) = candidate else { return None; };
+    let width = if is_sbw {
+        values.get(2).copied()
+    } else {
+        values.get(1).copied()
+    }?;
 
     // After finding hsbw/sbw, scan the rest of the charstring for seac.
     // seac can appear either inline (12 6) or via callsubr (10) where the subr
@@ -7454,7 +7492,12 @@ fn decrypt_charstring_width(
             pos += 2;
         } else if b == 255 {
             if pos + 4 < cs.len() {
-                stack.push(i32::from_be_bytes([cs[pos+1], cs[pos+2], cs[pos+3], cs[pos+4]]));
+                stack.push(i32::from_be_bytes([
+                    cs[pos + 1],
+                    cs[pos + 2],
+                    cs[pos + 3],
+                    cs[pos + 4],
+                ]));
             }
             pos += 5;
         } else {
