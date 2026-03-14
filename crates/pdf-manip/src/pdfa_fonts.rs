@@ -6768,7 +6768,11 @@ fn compute_type1_fontfile_width_corrections(
         if glyph_name.is_empty() || glyph_name == ".notdef" {
             continue;
         }
-        let Some(&cs_width) = parsed.charstring_widths.get(glyph_name.as_str()) else {
+        let cs_w_opt = parsed.charstring_widths.get(glyph_name.as_str()).copied();
+        if matches!(code, 39 | 170 | 177 | 186) {
+            eprintln!("[FF1DBG2] code={code} glyph={glyph_name} pdf_w={pdf_w} cs_w={cs_w_opt:?}");
+        }
+        let Some(cs_width) = cs_w_opt else {
             continue;
         };
         let font_w = (cs_width as f64 * scale).round();
