@@ -4831,6 +4831,10 @@ pub fn check_tounicode_cmap(pdf: &Pdf, report: &mut ComplianceReport) {
 
 /// Check ToUnicode CMap values for forbidden Unicode code points (§6.2.11.7.2).
 /// U+0000, U+FEFF (BOM), and U+FFFE are forbidden.
+///
+/// Only destination values in beginbfchar/beginbfrange sections are checked.
+/// Codespace range bounds (e.g. `<0000> <FFFF>`) are NOT destinations and
+/// must not be flagged as violations.
 pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
     for_each_font(pdf, |name, font_dict, page_idx| {
         let Some(cmap_stream) = font_dict.get::<Stream<'_>>(keys::TO_UNICODE) else {
@@ -4840,27 +4844,60 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
             return;
         };
         let text = String::from_utf8_lossy(&data);
-        // Parse "beginbfchar" and "beginbfrange" sections for hex Unicode values
-        // Format: <XXXX> <YYYY> where YYYY is the Unicode value
-        for cap in text.split('<') {
-            let Some(hex_end) = cap.find('>') else {
-                continue;
-            };
-            let hex = &cap[..hex_end];
-            if hex.len() != 4 {
+
+        // Parse line by line, tracking which section we are in.
+        // beginbfchar: each line is  <srccode> <dstcode>  — check dstcode (2nd token)
+        // beginbfrange: each line is <srclo> <srchi> <dststart> — check dststart (3rd token)
+        // codespacerange lines look like beginbfchar but must NOT be checked.
+        let mut in_bfchar = false;
+        let mut in_bfrange = false;
+
+        for line in text.lines() {
+            let t = line.trim();
+            if t.ends_with("beginbfchar") {
+                in_bfchar = true;
                 continue;
             }
-            let Ok(val) = u16::from_str_radix(hex, 16) else {
+            if t == "endbfchar" {
+                in_bfchar = false;
                 continue;
-            };
-            if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
-                error_at(
-                    report,
-                    "6.2.11.7.2",
-                    format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
-                    format!("page {}", page_idx + 1),
-                );
-                return; // one error per font is enough
+            }
+            if t.ends_with("beginbfrange") {
+                in_bfrange = true;
+                continue;
+            }
+            if t == "endbfrange" {
+                in_bfrange = false;
+                continue;
+            }
+
+            if !in_bfchar && !in_bfrange {
+                continue;
+            }
+
+            // Collect all <XXXX> hex tokens on this line.
+            let tokens: Vec<u16> = t
+                .split('<')
+                .skip(1) // first chunk is before the first '<'
+                .filter_map(|chunk| {
+                    let end = chunk.find('>')?;
+                    let hex = &chunk[..end];
+                    u16::from_str_radix(hex, 16).ok()
+                })
+                .collect();
+
+            // Destination is the 2nd token in bfchar, 3rd token in bfrange.
+            let dst_idx = if in_bfchar { 1 } else { 2 };
+            if let Some(&val) = tokens.get(dst_idx) {
+                if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
+                    error_at(
+                        report,
+                        "6.2.11.7.2",
+                        format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
+                        format!("page {}", page_idx + 1),
+                    );
+                    return; // one error per font is enough
+                }
             }
         }
     });
