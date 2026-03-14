@@ -1592,8 +1592,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.5") => Some("6.2.9"),
 
             // Optional content restrictions
-            // PDF/A-1: §6.1.13, PDF/A-2/3/4: §6.1.11
+            // PDF/A-1: OCProperties forbidden → §6.1.13 (in PDF/A-1 numbering)
+            //          check.rs emits "6.1.11", remap to "6.1.13" for PDF/A-1
             (1, "6.1.11") => Some("6.1.13"),
+            // PDF/A-2/3 OC checks emit "6.6.4"; no remap needed (correct already)
 
             // Image XObject restrictions (OPI, Alternates, Interpolate)
             // PDF/A-1: §6.2.4 sub-clauses mapped to 6.2.8.x in PDF/A-2/3

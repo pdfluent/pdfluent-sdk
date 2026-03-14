@@ -3936,20 +3936,43 @@ pub fn check_optional_content(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceR
         );
         return;
     }
+    // §6.6.4.3: /AS entries must not contain Export or Print events.
+    let oc_rule = if pdfa_part == 4 { "6.10" } else { "6.6.4" };
     if let Some(as_arr) = ocprops.get::<Array<'_>>(keys::AS) {
         for as_dict in as_arr.iter::<Dict<'_>>() {
             if let Some(event) = as_dict.get::<Name>(b"Event" as &[u8]) {
                 let evt = event.as_ref();
                 if evt == b"Export" || evt == b"Print" {
                     let e = std::str::from_utf8(evt).unwrap_or("?");
-                    error(report, "6.1.11", format!("OCProperties /AS event '{e}'"));
+                    error(
+                        report,
+                        oc_rule,
+                        format!("OCProperties /AS entry uses forbidden event '{e}' (only 'View' allowed)"),
+                    );
                 }
             }
         }
     }
-    // §6.10 (PDF/A-4): OCG configuration dicts must have /Name entry
+    // §6.6.4 (PDF/A-2/3) / §6.10 (PDF/A-4): OCG/config dicts must have /Name entry.
+    // Also check individual OCG dictionaries in OCProperties/OCGs array — each
+    // OCG must have /Name per §6.6.4.1 (Fixes #439 false-negative cluster).
     if pdfa_part >= 2 {
-        let rule = if pdfa_part == 4 { "6.10" } else { "6.1.11" };
+        let rule = if pdfa_part == 4 { "6.10" } else { "6.6.4" };
+
+        // Check each individual OCG dictionary for required /Name.
+        if let Some(ocgs) = ocprops.get::<Array<'_>>(b"OCGs" as &[u8]) {
+            for (idx, ocg) in ocgs.iter::<Dict<'_>>().enumerate() {
+                if ocg.get::<Object<'_>>(keys::NAME).is_none() {
+                    error(
+                        report,
+                        rule,
+                        format!("OCG dictionary {idx} missing required /Name entry"),
+                    );
+                }
+            }
+        }
+
+        // Check default OCG configuration dictionary.
         if let Some(d_dict) = ocprops.get::<Dict<'_>>(b"D" as &[u8]) {
             if d_dict.get::<Object<'_>>(keys::NAME).is_none() {
                 error(
@@ -3957,6 +3980,16 @@ pub fn check_optional_content(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceR
                     rule,
                     "Default OCG configuration dictionary missing /Name entry",
                 );
+            }
+            // §6.6.4.2: /BaseState in default config must be /ON or /OFF (not /Unchanged).
+            if let Some(bs) = d_dict.get::<Name>(b"BaseState" as &[u8]) {
+                if bs.as_ref() == b"Unchanged" {
+                    error(
+                        report,
+                        rule,
+                        "Default OCG configuration /BaseState must not be /Unchanged",
+                    );
+                }
             }
         }
         if let Some(configs) = ocprops.get::<Array<'_>>(b"Configs" as &[u8]) {
