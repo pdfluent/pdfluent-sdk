@@ -7185,6 +7185,11 @@ fn parse_type1_charstrings(
             break;
         }
         let charstring_data = &decrypted[p..p + cs_len];
+        if matches!(glyph_name.as_str(), "ordmasculine" | "ordfeminine" | "quotesingle" | "plusminus") {
+            // Debug: dump decoded charstring bytes
+            let debug_bytes = dump_charstring_bytes(charstring_data, len_iv);
+            eprintln!("[CS_DUMP] glyph={glyph_name} len={cs_len} bytes={debug_bytes}");
+        }
         if let Some(width) = decrypt_charstring_width(charstring_data, len_iv) {
             widths.insert(glyph_name, width);
         }
@@ -7194,6 +7199,23 @@ fn parse_type1_charstrings(
     }
 
     widths
+}
+
+/// Debug helper: decrypt a charstring and return the first 30 decoded bytes as hex + interpretation.
+fn dump_charstring_bytes(data: &[u8], len_iv: usize) -> String {
+    if data.len() <= len_iv { return "(too short)".to_string(); }
+    let mut r: u16 = 4330;
+    let c1: u16 = 52845;
+    let c2: u16 = 22719;
+    let mut dec = Vec::with_capacity(data.len());
+    for &cipher in data {
+        let plain = cipher ^ (r >> 8) as u8;
+        r = (cipher as u16).wrapping_add(r).wrapping_mul(c1).wrapping_add(c2);
+        dec.push(plain);
+    }
+    let cs = &dec[len_iv..];
+    let preview: Vec<String> = cs.iter().take(30).map(|b| format!("{b:02x}")).collect();
+    preview.join(" ")
 }
 
 /// Decrypt a Type 1 charstring and extract the width (wx from hsbw/sbw).
