@@ -214,11 +214,13 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
         false
     };
 
-    // Always add DefaultCMYK to all pages — even if we don't detect CMYK usage,
-    // it may exist in compressed streams or inline images we can't easily scan.
-    // DefaultCMYK is harmless on pages that don't use DeviceCMYK.
+    // Always add Default{CMYK,RGB,Gray} to all pages — even if we don't detect
+    // usage, device color spaces may appear in compressed streams or inline images.
+    // These Default* entries are harmless on pages that don't use the color space.
+    // DefaultGray satisfies 6.2.4.3:4 regardless of OutputIntent presence.
     let cmyk_cs_id = add_default_cmyk_colorspace(doc);
     let rgb_cs_id = add_default_rgb_colorspace(doc);
+    add_default_gray_colorspace(doc);
 
     // Replace DeviceCMYK/DeviceRGB references in deep structures (Shading, Group, Pattern)
     // that are not covered by Default* resource fallback.
@@ -990,6 +992,209 @@ fn add_default_rgb_colorspace(doc: &mut Document) -> ObjectId {
             };
             if !cs_dict.has(b"DefaultRGB") {
                 cs_dict.set("DefaultRGB", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                stream.dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
+    cs_id
+}
+
+/// Add a DefaultGray (sgray N=1 ICCBased) colorspace to all page, Form XObject,
+/// and tiling pattern Resources. Satisfies 6.2.4.3:4 ("DeviceGray shall only be
+/// used if a device independent DefaultGray colour space has been set").
+fn add_default_gray_colorspace(doc: &mut Document) -> ObjectId {
+    let icc_bytes = gray_icc_profile_bytes();
+    let icc_dict = dictionary! {
+        "N" => Object::Integer(1),
+        "Alternate" => Object::Name(b"DeviceGray".to_vec()),
+    };
+    let icc_stream = Stream::new(icc_dict, icc_bytes);
+    let icc_id = doc.add_object(Object::Stream(icc_stream));
+
+    let cs_array = Object::Array(vec![
+        Object::Name(b"ICCBased".to_vec()),
+        Object::Reference(icc_id),
+    ]);
+    let cs_id = doc.add_object(cs_array);
+
+    // Pages.
+    let page_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if get_name(dict, b"Type").as_deref() == Some("Page") {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for page_id in page_ids {
+        let res_id = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&page_id) else {
+                continue;
+            };
+            match dict.get(b"Resources").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        };
+
+        if let Some(res_id) = res_id {
+            let cs_ref_id = {
+                if let Some(Object::Dictionary(res)) = doc.objects.get(&res_id) {
+                    match res.get(b"ColorSpace").ok() {
+                        Some(Object::Reference(id)) => Some(*id),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            };
+            if let Some(cs_ref_id) = cs_ref_id {
+                if let Some(Object::Dictionary(ref mut cs_dict)) = doc.objects.get_mut(&cs_ref_id) {
+                    if !cs_dict.has(b"DefaultGray") {
+                        cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                    }
+                }
+            } else if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultGray") {
+                    cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
+            let mut res = match dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultGray") {
+                cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
+    // Form XObjects.
+    let form_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Stream(stream) = obj {
+                if get_name(&stream.dict, b"Subtype").as_deref() == Some("Form") {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for form_id in form_ids {
+        let res_ref_id = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&form_id) {
+                match stream.dict.get(b"Resources").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(res_ref_id) = res_ref_id {
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultGray") {
+                    cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&form_id) {
+            let mut res = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultGray") {
+                cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                stream.dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
+
+    // Tiling patterns.
+    let pattern_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Stream(stream) = obj {
+                let pt = stream
+                    .dict
+                    .get(b"PatternType")
+                    .ok()
+                    .and_then(|o| o.as_i64().ok());
+                if pt == Some(1) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    for pat_id in pattern_ids {
+        let res_ref_id = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&pat_id) {
+                match stream.dict.get(b"Resources").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(res_ref_id) = res_ref_id {
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(b"DefaultGray") {
+                    cs_dict.set("DefaultGray", Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&pat_id) {
+            let mut res = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(b"DefaultGray") {
+                cs_dict.set("DefaultGray", Object::Reference(cs_id));
                 res.set("ColorSpace", Object::Dictionary(cs_dict));
                 stream.dict.set("Resources", Object::Dictionary(res));
             }
