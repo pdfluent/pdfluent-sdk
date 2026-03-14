@@ -223,11 +223,17 @@ fn get_stream_bytes(stream: &lopdf::Stream, _doc: &Document) -> Vec<u8> {
     }
 }
 
-/// Decompress flate-encoded data.
+/// Maximum bytes to decompress from a single image stream (64 MB).
+/// Prevents zip-bomb hangs on pathological PDFs.
+const FLATE_MAX_DECOMPRESS_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Decompress flate-encoded data, capped at `FLATE_MAX_DECOMPRESS_BYTES`.
 fn decompress_flate(data: &[u8]) -> std::result::Result<Vec<u8>, std::io::Error> {
-    let mut decoder = flate2::read::ZlibDecoder::new(data);
+    let decoder = flate2::read::ZlibDecoder::new(data);
     let mut decoded = Vec::new();
-    decoder.read_to_end(&mut decoded)?;
+    decoder
+        .take(FLATE_MAX_DECOMPRESS_BYTES)
+        .read_to_end(&mut decoded)?;
     Ok(decoded)
 }
 
