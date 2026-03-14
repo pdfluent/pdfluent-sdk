@@ -98,6 +98,7 @@ const PREDEFINED_PREFIXES: &[&str] = &[
     "xmpNote:",
     "rdf:",
     "xml:",
+    "xmlns:", // reserved XML namespace-declaration attribute prefix (always valid)
     "x:",
     "Iptc4xmpCore:",
     "Iptc4xmpExt:",
@@ -203,7 +204,10 @@ fn extract_top_level_li_blocks(content: &str) -> Vec<String> {
                 }
                 pos += close_tag.len();
             } else {
-                pos += 1;
+                // Advance by one Unicode scalar to avoid splitting multi-byte UTF-8
+                // sequences — `pos += 1` would leave `pos` inside a multi-byte char,
+                // causing `content[pos..]` to panic on the next iteration. (#448)
+                pos += content[pos..].chars().next().map_or(1, |c| c.len_utf8());
             }
         };
 
@@ -1090,6 +1094,52 @@ mod tests {
             extract_rdf_seq_value(xmp, "dc:creator"),
             Some("John Doe".to_string())
         );
+    }
+
+    /// Regression test for #448: multi-byte UTF-8 chars inside rdf:Bag content
+    /// must not cause a `byte index N is not a char boundary` panic.
+    #[test]
+    fn extract_li_blocks_multibyte_utf8_no_panic() {
+        // Simulate XMP where rdf:li text contains non-ASCII (é, Ü, 中文 …).
+        let xmp = "<rdf:Bag>\
+            <rdf:li>Héllo</rdf:li>\
+            <rdf:li>Wörld — 日本語</rdf:li>\
+            </rdf:Bag>";
+        // Must not panic.
+        let blocks = extract_top_level_li_blocks(xmp);
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks[0].contains("Héllo"));
+        assert!(blocks[1].contains("Wörld"));
+    }
+
+    #[test]
+    fn xmlns_prefix_not_flagged() {
+        // xmlns: is a reserved XML namespace-declaration attribute — should not
+        // be reported as an undeclared namespace prefix (#443).
+        let mut report = ComplianceReport::default();
+        let xmp = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">
+      <pdfaid:part>2</pdfaid:part>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#;
+        let schemas = parse_extension_schemas(xmp);
+        check_property_namespaces(
+            xmp,
+            &schemas,
+            crate::PdfALevel::A2b,
+            &mut report,
+        );
+        // `xmlns:` must not produce a false-positive namespace error
+        let xmlns_errors: Vec<_> = report
+            .issues
+            .iter()
+            .filter(|i| i.message.contains("xmlns"))
+            .collect();
+        assert!(xmlns_errors.is_empty(), "unexpected xmlns: errors: {xmlns_errors:?}");
     }
 
     #[test]
