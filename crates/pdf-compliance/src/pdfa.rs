@@ -1647,6 +1647,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Name UTF-8 validation — always maps to 6.1.7 for all PDF/A parts
             (_, "6.1.7-names") => Some("6.1.7"),
 
+            // CIDSet for subset CID fonts
+            // PDF/A-1: §6.3.5, PDF/A-2/3: §6.2.11.5
+            (2..=3, "6.3.5") => Some("6.2.11.5"),
+
             // Font embedding
             // PDF/A-1: §6.3.3 → §6.3.4 (veraPDF uses 6.3.4 for font embedding in PDF/A-1)
             (1, "6.3.3") => Some("6.3.4"),
