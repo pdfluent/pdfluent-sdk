@@ -61,11 +61,7 @@ impl LicenseGuard {
     }
 
     /// Load a license from a file path and validate it.
-    pub fn from_license_path(
-        public_key: &[u8],
-        path: &std::path::Path,
-        now: u64,
-    ) -> Result<Self> {
+    pub fn from_license_path(public_key: &[u8], path: &std::path::Path, now: u64) -> Result<Self> {
         let license_json = std::fs::read_to_string(path)?;
         Self::from_license(public_key, &license_json, now)
     }

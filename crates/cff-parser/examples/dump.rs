@@ -1,7 +1,7 @@
 use std::io::Read;
 
-use cff_parser::{StringId, Table, string_by_id};
 use cff_parser::charset::Charset;
+use cff_parser::{string_by_id, StringId, Table};
 
 fn main() {
     // open the file passed on the comanmand line
@@ -9,7 +9,9 @@ fn main() {
     let file = std::fs::File::open(&path).expect("could not open file");
     let mut reader = std::io::BufReader::new(file);
     let mut buffer = Vec::new();
-    reader.read_to_end(&mut buffer).expect("could not read file");
+    reader
+        .read_to_end(&mut buffer)
+        .expect("could not read file");
     let table = Table::parse(&buffer).unwrap();
     dbg!(&table);
     println!("full name: {:?}", table.full_name());
@@ -20,7 +22,6 @@ fn main() {
 
     println!("charset:");
     match table.charset {
-
         Charset::ISOAdobe => println!("ISOAdobe"),
         Charset::Expert => println!("Expert"),
         Charset::ExpertSubset => println!("ExpertSubset"),
@@ -37,7 +38,10 @@ fn main() {
                 let count = range.left;
                 println!("  {:?} {:?}", sid, count);
                 for i in 0..=count {
-                    println!("    {:?}", string_by_id(&table, StringId(sid.0 + u16::from(i))));
+                    println!(
+                        "    {:?}",
+                        string_by_id(&table, StringId(sid.0 + u16::from(i)))
+                    );
                 }
             }
         }

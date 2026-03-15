@@ -127,17 +127,20 @@ impl Charset<'_> {
 
     pub fn get_table(&self) -> Vec<StringId> {
         match self {
-            Charset::ISOAdobe => {
-                (0..=228).map(StringId).collect()
-            }
+            Charset::ISOAdobe => (0..=228).map(StringId).collect(),
             Charset::Expert => EXPERT_ENCODING.iter().map(|&n| StringId(n)).collect(),
-            Charset::ExpertSubset => EXPERT_SUBSET_ENCODING.iter().map(|&n| StringId(n)).collect(),
+            Charset::ExpertSubset => EXPERT_SUBSET_ENCODING
+                .iter()
+                .map(|&n| StringId(n))
+                .collect(),
             Charset::Format0(ref array) => array.clone().into_iter().collect(),
             Charset::Format1(array) => {
                 let mut vec = Vec::new();
                 for range in *array {
                     vec.push(range.first);
-                    vec.extend((range.first.0 + 1..=range.first.0 + (range.left as u16)).map(StringId));
+                    vec.extend(
+                        (range.first.0 + 1..=range.first.0 + (range.left as u16)).map(StringId),
+                    );
                 }
                 vec
             }

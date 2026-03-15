@@ -31,7 +31,11 @@ fn main() {
             issue.severity,
             issue.rule,
             issue.message,
-            issue.location.as_deref().map(|l| format!(" ({})", l)).unwrap_or_default()
+            issue
+                .location
+                .as_deref()
+                .map(|l| format!(" ({})", l))
+                .unwrap_or_default()
         );
     }
 }

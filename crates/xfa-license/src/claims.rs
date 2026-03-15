@@ -264,12 +264,7 @@ pub struct LicenseFile {
 impl LicensePayload {
     /// Convert to LicenseClaims for use with the metering system.
     pub fn to_claims(&self) -> LicenseClaims {
-        LicenseClaims::new(
-            &self.licensee,
-            self.tier,
-            self.issued_at,
-            self.expires_at,
-        )
+        LicenseClaims::new(&self.licensee, self.tier, self.issued_at, self.expires_at)
     }
 
     /// Check if the license has expired.
