@@ -42,6 +42,12 @@ use pdf_syntax::Pdf;
 ///
 /// Walks the AcroForm /Fields array looking for signature fields
 /// (field type /Sig) and returns wrapped `SigDict` values for each.
+///
+/// Falls back to a full-object scan when AcroForm traversal stops early
+/// due to broken indirect references (wrong generation numbers) in /Fields.
+/// Fixes #458: some corpus PDFs have `1167 0 R` in /Fields but the actual
+/// object is `1167 11 obj` (gen 11 ≠ 0); pdf_syntax stops iterating on the
+/// first unresolvable reference, never reaching our appended sig field.
 pub fn signature_fields<'a>(pdf: &'a Pdf) -> Vec<SignatureInfo<'a>> {
     let xref = pdf.xref();
     let root: Dict<'_> = match xref.get(xref.root_id()) {
@@ -61,7 +67,41 @@ pub fn signature_fields<'a>(pdf: &'a Pdf) -> Vec<SignatureInfo<'a>> {
 
     let mut sigs = Vec::new();
     collect_sig_fields(&fields, &mut sigs, None);
+
+    // Fallback: if AcroForm traversal found nothing, scan all PDF objects for
+    // signature dicts. This handles PDFs where /Fields contains references with
+    // wrong generation numbers — the iterator stops early and misses our sig field.
+    if sigs.is_empty() {
+        scan_sig_dicts(pdf, &mut sigs);
+    }
+
     sigs
+}
+
+/// Fallback: scan all objects in the PDF looking for signature dictionaries.
+///
+/// Identifies sig dicts by the presence of /ByteRange and /Contents and a
+/// known /SubFilter. Used when AcroForm /Fields traversal stops early due to
+/// broken indirect references in the fields array.
+fn scan_sig_dicts<'a>(pdf: &'a Pdf, out: &mut Vec<SignatureInfo<'a>>) {
+    use pdf_syntax::object::dict::keys::{BYTERANGE, CONTENTS, SUB_FILTER};
+
+    for obj in pdf.objects() {
+        if let Object::Dict(dict) = obj {
+            // Signature dicts have /ByteRange, /Contents, and /SubFilter.
+            let has_byterange = dict.get::<Array<'_>>(BYTERANGE).is_some();
+            let has_contents = dict.contains_key(CONTENTS);
+            let has_subfilter = dict.get::<Name>(SUB_FILTER).is_some();
+            if has_byterange && has_contents && has_subfilter {
+                let sig = SigDict::from_dict(dict.clone());
+                out.push(SignatureInfo {
+                    field_name: "Signature1".to_string(),
+                    sig,
+                    field_dict: dict,
+                });
+            }
+        }
+    }
 }
 
 fn collect_sig_fields<'a>(
