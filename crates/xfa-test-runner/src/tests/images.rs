@@ -15,11 +15,19 @@ impl PdfTest for ImageExtractTest {
     fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
         let start = std::time::Instant::now();
 
-        let doc = match lopdf::Document::load_mem(pdf_data) {
-            Ok(d) => d,
-            Err(_) => {
-                // lopdf can't parse — fall back to pdf_engine to verify the PDF is valid.
-                return self.fallback_check(pdf_data, start);
+        // Load via lopdf in a thread — lopdf::load_mem can hang indefinitely on
+        // some corrupt PDFs before reaching the page-tree traversal.  #452
+        let doc = {
+            let pdf_owned = pdf_data.to_vec();
+            let (tx_load, rx_load) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx_load.send(lopdf::Document::load_mem(&pdf_owned));
+            });
+            match rx_load.recv_timeout(Duration::from_secs(30)) {
+                Ok(Ok(d)) => d,
+                Ok(Err(_)) | Err(_) => {
+                    return self.fallback_check(pdf_data, start);
+                }
             }
         };
 

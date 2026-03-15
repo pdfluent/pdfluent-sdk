@@ -15,166 +15,192 @@ impl PdfTest for TextReplaceTest {
     }
 
     fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
-        let start = std::time::Instant::now();
-        let elapsed = || start.elapsed().as_millis() as u64;
+        // Wrap entire execution in a thread to guard against lopdf hangs on
+        // corrupt PDFs (page-tree loops, infinite decompression, etc.). #452
+        let pdf_owned = pdf_data.to_vec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));
+            let _ = tx.send(r);
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => TestResult {
+                status: TestStatus::Crash,
+                error_message: Some("panic in test execution".into()),
+                duration_ms: 0,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            },
+            Err(_) => TestResult {
+                status: TestStatus::Timeout,
+                error_message: Some("test timed out (>30s)".into()),
+                duration_ms: 30_000,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            },
+        }
+    }
+}
 
-        // 1. Extract text from page 1 to find a word to replace.
-        let text = match extract_page1_text(pdf_data) {
-            Some(t) if !t.trim().is_empty() => t,
-            _ => {
-                return TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some("no text on page 1".into()),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-        };
+fn run_inner(pdf: Vec<u8>) -> TestResult {
+    let start = std::time::Instant::now();
+    let elapsed = || start.elapsed().as_millis() as u64;
 
-        // Pick the first word ≥ 3 characters (to avoid single-char noise).
-        let search_word = match text
-            .split_whitespace()
-            .find(|w| w.len() >= 3 && w.chars().all(|c| c.is_alphanumeric()))
-        {
-            Some(w) => w.to_string(),
-            None => {
-                return TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some("no suitable word found".into()),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-        };
-
-        let replacement = "__XFA_REPLACED__";
-
-        // 2. Load via lopdf and perform replacement on page 1 only.
-        let mut doc = match lopdf::Document::load_mem(pdf_data) {
-            Ok(d) => d,
-            Err(e) => {
-                return TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some(format!("lopdf load failed: {e}")),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-        };
-
-        let fonts = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            FontMap::from_page(&doc, 1)
-        })) {
-            Ok(Ok(f)) => f,
-            Ok(Err(e)) => {
-                return TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some(format!("font map failed: {e}")),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-            Err(_) => {
-                return TestResult {
-                    status: TestStatus::Fail,
-                    error_message: Some("panic building font map".into()),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-        };
-
-        let replace_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            replace_text(&mut doc, 1, &search_word, replacement, &fonts)
-        }));
-
-        let replacements: usize = match replace_result {
-            Ok(Ok(n)) => n,
-            Ok(Err(e)) => {
-                return TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some(format!("replace failed: {e}")),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-            Err(_) => {
-                return TestResult {
-                    status: TestStatus::Fail,
-                    error_message: Some("panic in text replacement".into()),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-        };
-
-        if replacements == 0 {
+    // 1. Extract text from page 1 to find a word to replace.
+    let text = match extract_page1_text(&pdf) {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => {
             return TestResult {
                 status: TestStatus::Skip,
-                error_message: Some(
-                    "0 replacements on page 1 (font encoding or split text)".into(),
-                ),
+                error_message: Some("no text on page 1".into()),
                 duration_ms: elapsed(),
                 oracle_score: None,
                 metadata: HashMap::new(),
             };
         }
+    };
 
-        // 3. Save to bytes.
-        let mut saved = Vec::new();
-        if let Err(e) = doc.save_to(&mut saved) {
+    // Pick the first word ≥ 3 characters (to avoid single-char noise).
+    let search_word = match text
+        .split_whitespace()
+        .find(|w| w.len() >= 3 && w.chars().all(|c| c.is_alphanumeric()))
+    {
+        Some(w) => w.to_string(),
+        None => {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("no suitable word found".into()),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+    };
+
+    let replacement = "__XFA_REPLACED__";
+
+    // 2. Load via lopdf and perform replacement on page 1 only.
+    let mut doc = match lopdf::Document::load_mem(&pdf) {
+        Ok(d) => d,
+        Err(e) => {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some(format!("lopdf load failed: {e}")),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+    };
+
+    let fonts = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        FontMap::from_page(&doc, 1)
+    })) {
+        Ok(Ok(f)) => f,
+        Ok(Err(e)) => {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some(format!("font map failed: {e}")),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+        Err(_) => {
             return TestResult {
                 status: TestStatus::Fail,
-                error_message: Some(format!("save failed: {e}")),
+                error_message: Some("panic building font map".into()),
                 duration_ms: elapsed(),
                 oracle_score: None,
                 metadata: HashMap::new(),
             };
         }
+    };
 
-        // 4. Reopen and verify replacement text is present.
-        let new_text = match extract_page1_text(&saved) {
-            Some(t) => t,
-            None => {
-                return TestResult {
-                    status: TestStatus::Fail,
-                    error_message: Some("cannot extract text after roundtrip".into()),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-        };
+    let replace_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        replace_text(&mut doc, 1, &search_word, replacement, &fonts)
+    }));
 
-        let mut metadata = HashMap::new();
-        metadata.insert("search_word".into(), search_word.clone());
-        metadata.insert("replacements".into(), replacements.to_string());
-
-        if new_text.contains(replacement) {
-            TestResult {
-                status: TestStatus::Pass,
-                error_message: None,
+    let replacements: usize = match replace_result {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some(format!("replace failed: {e}")),
                 duration_ms: elapsed(),
                 oracle_score: None,
-                metadata,
-            }
-        } else {
-            TestResult {
+                metadata: HashMap::new(),
+            };
+        }
+        Err(_) => {
+            return TestResult {
                 status: TestStatus::Fail,
-                error_message: Some(format!(
-                    "replacement text '{replacement}' not found in output"
-                )),
+                error_message: Some("panic in text replacement".into()),
                 duration_ms: elapsed(),
                 oracle_score: None,
-                metadata,
-            }
+                metadata: HashMap::new(),
+            };
+        }
+    };
+
+    if replacements == 0 {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some("0 replacements on page 1 (font encoding or split text)".into()),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata: HashMap::new(),
+        };
+    }
+
+    // 3. Save to bytes.
+    let mut saved = Vec::new();
+    if let Err(e) = doc.save_to(&mut saved) {
+        return TestResult {
+            status: TestStatus::Fail,
+            error_message: Some(format!("save failed: {e}")),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata: HashMap::new(),
+        };
+    }
+
+    // 4. Reopen and verify replacement text is present.
+    let new_text = match extract_page1_text(&saved) {
+        Some(t) => t,
+        None => {
+            return TestResult {
+                status: TestStatus::Fail,
+                error_message: Some("cannot extract text after roundtrip".into()),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+    };
+
+    let mut metadata = HashMap::new();
+    metadata.insert("search_word".into(), search_word.clone());
+    metadata.insert("replacements".into(), replacements.to_string());
+
+    if new_text.contains(replacement) {
+        TestResult {
+            status: TestStatus::Pass,
+            error_message: None,
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata,
+        }
+    } else {
+        TestResult {
+            status: TestStatus::Fail,
+            error_message: Some(format!(
+                "replacement text '{replacement}' not found in output"
+            )),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata,
         }
     }
 }

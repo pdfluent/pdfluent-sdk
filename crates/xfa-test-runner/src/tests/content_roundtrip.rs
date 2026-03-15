@@ -12,126 +12,154 @@ impl PdfTest for ContentRoundtripTest {
     }
 
     fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
-        let start = std::time::Instant::now();
-        let elapsed = || start.elapsed().as_millis() as u64;
+        // Wrap entire execution in a thread to guard against lopdf hangs on
+        // corrupt PDFs (page-tree loops, infinite decompression, etc.). #452
+        let pdf_owned = pdf_data.to_vec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));
+            let _ = tx.send(r);
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => TestResult {
+                status: TestStatus::Crash,
+                error_message: Some("panic in test execution".into()),
+                duration_ms: 0,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            },
+            Err(_) => TestResult {
+                status: TestStatus::Timeout,
+                error_message: Some("test timed out (>30s)".into()),
+                duration_ms: 30_000,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            },
+        }
+    }
+}
 
-        // 1. Load via lopdf to get page content streams.
-        let doc = match lopdf::Document::load_mem(pdf_data) {
-            Ok(d) => d,
-            Err(e) => {
-                return TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some(format!("lopdf load failed: {e}")),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata: HashMap::new(),
-                };
-            }
-        };
+fn run_inner(pdf: Vec<u8>) -> TestResult {
+    let start = std::time::Instant::now();
+    let elapsed = || start.elapsed().as_millis() as u64;
 
-        let pages = doc.get_pages();
-        if pages.is_empty() {
+    // 1. Load via lopdf to get page content streams.
+    let doc = match lopdf::Document::load_mem(&pdf) {
+        Ok(d) => d,
+        Err(e) => {
             return TestResult {
                 status: TestStatus::Skip,
-                error_message: Some("0 pages".into()),
+                error_message: Some(format!("lopdf load failed: {e}")),
                 duration_ms: elapsed(),
                 oracle_score: None,
                 metadata: HashMap::new(),
             };
         }
+    };
 
-        // Test up to 3 pages.
-        let max_pages = pages.len().min(3);
-        let mut pages_tested = 0usize;
-        let mut pages_skipped = 0usize;
-        let mut total_ops = 0usize;
+    let pages = doc.get_pages();
+    if pages.is_empty() {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some("0 pages".into()),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata: HashMap::new(),
+        };
+    }
 
-        for page_num in 1..=(max_pages as u32) {
-            let page_id = match pages.get(&page_num) {
-                Some(id) => *id,
-                None => {
-                    pages_skipped += 1;
-                    continue;
-                }
-            };
+    // Test up to 3 pages.
+    let max_pages = pages.len().min(3);
+    let mut pages_tested = 0usize;
+    let mut pages_skipped = 0usize;
+    let mut total_ops = 0usize;
 
-            // Get content stream bytes.
-            let stream_bytes = match get_page_content_bytes(&doc, page_id) {
-                Some(b) if !b.is_empty() => b,
-                _ => {
-                    pages_skipped += 1;
-                    continue;
-                }
-            };
+    for page_num in 1..=(max_pages as u32) {
+        let page_id = match pages.get(&page_num) {
+            Some(id) => *id,
+            None => {
+                pages_skipped += 1;
+                continue;
+            }
+        };
 
-            // Decode → encode → decode roundtrip (catch panics).
-            let rt_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                roundtrip_content(&stream_bytes)
-            }));
+        // Get content stream bytes.
+        let stream_bytes = match get_page_content_bytes(&doc, page_id) {
+            Some(b) if !b.is_empty() => b,
+            _ => {
+                pages_skipped += 1;
+                continue;
+            }
+        };
 
-            match rt_result {
-                Ok(Ok((orig_count, rt_count))) => {
-                    total_ops += orig_count;
-                    if orig_count != rt_count {
-                        return TestResult {
-                            status: TestStatus::Fail,
-                            error_message: Some(format!(
-                                "page {page_num}: op count mismatch {orig_count} → {rt_count}"
-                            )),
-                            duration_ms: elapsed(),
-                            oracle_score: None,
-                            metadata: HashMap::new(),
-                        };
-                    }
-                    pages_tested += 1;
-                }
-                Ok(Err(e)) => {
-                    // Decode/encode error is not uncommon — skip.
-                    pages_skipped += 1;
-                    if pages_tested == 0 && page_num == max_pages as u32 {
-                        return TestResult {
-                            status: TestStatus::Skip,
-                            error_message: Some(format!("all pages failed: {e}")),
-                            duration_ms: elapsed(),
-                            oracle_score: None,
-                            metadata: HashMap::new(),
-                        };
-                    }
-                }
-                Err(_) => {
+        // Decode → encode → decode roundtrip (catch panics).
+        let rt_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            roundtrip_content(&stream_bytes)
+        }));
+
+        match rt_result {
+            Ok(Ok((orig_count, rt_count))) => {
+                total_ops += orig_count;
+                if orig_count != rt_count {
                     return TestResult {
                         status: TestStatus::Fail,
-                        error_message: Some(format!("page {page_num}: panic in content roundtrip")),
+                        error_message: Some(format!(
+                            "page {page_num}: op count mismatch {orig_count} → {rt_count}"
+                        )),
+                        duration_ms: elapsed(),
+                        oracle_score: None,
+                        metadata: HashMap::new(),
+                    };
+                }
+                pages_tested += 1;
+            }
+            Ok(Err(e)) => {
+                // Decode/encode error is not uncommon — skip.
+                pages_skipped += 1;
+                if pages_tested == 0 && page_num == max_pages as u32 {
+                    return TestResult {
+                        status: TestStatus::Skip,
+                        error_message: Some(format!("all pages failed: {e}")),
                         duration_ms: elapsed(),
                         oracle_score: None,
                         metadata: HashMap::new(),
                     };
                 }
             }
+            Err(_) => {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some(format!("page {page_num}: panic in content roundtrip")),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
         }
+    }
 
-        if pages_tested == 0 {
-            return TestResult {
-                status: TestStatus::Skip,
-                error_message: Some("no decodable content streams".into()),
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata: HashMap::new(),
-            };
-        }
-
-        let mut metadata = HashMap::new();
-        metadata.insert("pages_tested".into(), pages_tested.to_string());
-        metadata.insert("pages_skipped".into(), pages_skipped.to_string());
-        metadata.insert("total_ops".into(), total_ops.to_string());
-
-        TestResult {
-            status: TestStatus::Pass,
-            error_message: None,
+    if pages_tested == 0 {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some("no decodable content streams".into()),
             duration_ms: elapsed(),
             oracle_score: None,
-            metadata,
-        }
+            metadata: HashMap::new(),
+        };
+    }
+
+    let mut metadata = HashMap::new();
+    metadata.insert("pages_tested".into(), pages_tested.to_string());
+    metadata.insert("pages_skipped".into(), pages_skipped.to_string());
+    metadata.insert("total_ops".into(), total_ops.to_string());
+
+    TestResult {
+        status: TestStatus::Pass,
+        error_message: None,
+        duration_ms: elapsed(),
+        oracle_score: None,
+        metadata,
     }
 }
 

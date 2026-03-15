@@ -58,7 +58,17 @@ impl PdfTest for SignRoundtripTest {
         }
 
         // 3. Also verify lopdf can load it (required for signing).
-        if lopdf::Document::load_mem(pdf_data).is_err() {
+        // Run in a thread — lopdf::load_mem can hang on corrupt PDFs. #452
+        let lopdf_ok = {
+            let pdf_clone2 = pdf_data.to_vec();
+            let (tx_l, rx_l) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx_l.send(lopdf::Document::load_mem(&pdf_clone2).is_ok());
+            });
+            rx_l.recv_timeout(std::time::Duration::from_secs(30))
+                .unwrap_or(false)
+        };
+        if !lopdf_ok {
             return TestResult {
                 status: TestStatus::Skip,
                 error_message: Some("lopdf load failed (skip signing)".into()),
