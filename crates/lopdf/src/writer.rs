@@ -5,7 +5,7 @@ use std::vec;
 
 use super::Object::*;
 use super::{Dictionary, Document, Object, Stream, StringFormat};
-use crate::{xref::*, IncrementalDocument};
+use crate::{IncrementalDocument, xref::*};
 
 impl Document {
     /// Save PDF document to specified file path.
@@ -23,7 +23,11 @@ impl Document {
     }
 
     /// Save PDF with custom options
-    pub fn save_with_options<W: Write>(&mut self, target: &mut W, options: crate::SaveOptions) -> Result<()> {
+    pub fn save_with_options<W: Write>(
+        &mut self,
+        target: &mut W,
+        options: crate::SaveOptions,
+    ) -> Result<()> {
         if options.use_object_streams {
             self.save_with_object_streams(target, options)
         } else {
@@ -55,7 +59,14 @@ impl Document {
         for (&(id, generation), object) in &self.objects {
             if object
                 .type_name()
-                .map(|name| [b"ObjStm".as_slice(), b"XRef".as_slice(), b"Linearized".as_slice()].contains(&name))
+                .map(|name| {
+                    [
+                        b"ObjStm".as_slice(),
+                        b"XRef".as_slice(),
+                        b"Linearized".as_slice(),
+                    ]
+                    .contains(&name)
+                })
                 .ok()
                 != Some(true)
             {
@@ -83,10 +94,14 @@ impl Document {
     }
 
     /// Save PDF with object streams enabled
-    fn save_with_object_streams<W: Write>(&mut self, target: &mut W, options: crate::SaveOptions) -> Result<()> {
+    fn save_with_object_streams<W: Write>(
+        &mut self,
+        target: &mut W,
+        options: crate::SaveOptions,
+    ) -> Result<()> {
         use crate::ObjectStream;
         use std::collections::HashMap;
-        
+
         let mut target = CountingWrite {
             inner: target,
             bytes_written: 0,
@@ -123,14 +138,16 @@ impl Document {
                     }
                 }
             }
-            
+
             if generation == 0 && ObjectStream::can_be_compressed((id, generation), object, self) {
                 // Object can be compressed
                 // Find or create an object stream for it
                 let stream_index = object_streams.len().saturating_sub(1);
-                
-                if object_streams.is_empty() || 
-                   object_streams[stream_index].object_count() >= options.object_stream_config.max_objects_per_stream {
+
+                if object_streams.is_empty()
+                    || object_streams[stream_index].object_count()
+                        >= options.object_stream_config.max_objects_per_stream
+                {
                     // Create new object stream
                     let new_stream = ObjectStream::builder()
                         .max_objects(options.object_stream_config.max_objects_per_stream)
@@ -138,9 +155,11 @@ impl Document {
                         .build();
                     object_streams.push(new_stream);
                 }
-                
+
                 let stream_index = object_streams.len() - 1;
-                object_streams[stream_index].add_object((id, generation), object.clone()).ok();
+                object_streams[stream_index]
+                    .add_object((id, generation), object.clone())
+                    .ok();
                 object_to_stream_map.insert((id, generation), stream_index);
             } else {
                 // Object must be written directly
@@ -157,21 +176,32 @@ impl Document {
         let mut stream_count = 0;
         for obj_stream in object_streams.into_iter() {
             let stream_id = self.max_id + 1 + stream_count;
-            let stream_obj = obj_stream.to_stream_object().map_err(std::io::Error::other)?;
-            
+            let stream_obj = obj_stream
+                .to_stream_object()
+                .map_err(std::io::Error::other)?;
+
             // Record compressed objects in xref
             // Must use the same sort order as build_stream_content()
             let mut sorted_objects: Vec<_> = obj_stream.objects.keys().cloned().collect();
             sorted_objects.sort_by_key(|id| *id);
             for (index_in_stream, (obj_id, _gen)) in sorted_objects.iter().enumerate() {
-                xref.insert(*obj_id, XrefEntry::Compressed {
-                    container: stream_id,
-                    index: index_in_stream as u16,
-                });
+                xref.insert(
+                    *obj_id,
+                    XrefEntry::Compressed {
+                        container: stream_id,
+                        index: index_in_stream as u16,
+                    },
+                );
             }
-            
+
             // Write the object stream
-            Writer::write_indirect_object(&mut target, stream_id, 0, &Object::Stream(stream_obj), &mut xref)?;
+            Writer::write_indirect_object(
+                &mut target,
+                stream_id,
+                0,
+                &Object::Stream(stream_obj),
+                &mut xref,
+            )?;
             stream_count += 1;
         }
 
@@ -200,7 +230,10 @@ impl Document {
     /// Insert an `Object` to the end of the PDF (not visible when inspecting `Document`).
     /// Note: This is different from the "Cross Reference Table".
     fn write_cross_reference_stream<W: Write>(
-        &mut self, file: &mut CountingWrite<&mut W>, xref: &mut Xref, xref_start: u32,
+        &mut self,
+        file: &mut CountingWrite<&mut W>,
+        xref: &mut Xref,
+        xref_start: u32,
     ) -> Result<()> {
         // Increment max_id to account for CRS.
         self.max_id += 1;
@@ -218,7 +251,8 @@ impl Document {
         // Set the size of each entry in bytes (default for PDFs is `[1 2 1]`)
         // In our case we use `[u8, u32, u16]` for each entry
         // to keep things simple and working at all times.
-        self.trailer.set("W", Array(vec![Integer(1), Integer(4), Integer(2)]));
+        self.trailer
+            .set("W", Array(vec![Integer(1), Integer(4), Integer(2)]));
         // Note that `ASCIIHexDecode` does not work correctly,
         // but is still useful for debugging sometimes.
         let filter = XRefStreamFilter::None;
@@ -284,7 +318,9 @@ impl IncrementalDocument {
         // Write/Append new document version.
         let mut xref = Xref::new(
             self.new_document.max_id + 1,
-            self.get_prev_documents().reference_table.cross_reference_type,
+            self.get_prev_documents()
+                .reference_table
+                .cross_reference_type,
         );
 
         if let Some(last_byte) = prev_document_bytes.last() {
@@ -300,7 +336,14 @@ impl IncrementalDocument {
         for (&(id, generation), object) in &self.new_document.objects {
             if object
                 .type_name()
-                .map(|name| [b"ObjStm".as_slice(), b"XRef".as_slice(), b"Linearized".as_slice()].contains(&name))
+                .map(|name| {
+                    [
+                        b"ObjStm".as_slice(),
+                        b"XRef".as_slice(),
+                        b"Linearized".as_slice(),
+                    ]
+                    .contains(&name)
+                })
                 .ok()
                 != Some(true)
             {
@@ -318,8 +361,11 @@ impl IncrementalDocument {
             }
             XrefType::CrossReferenceStream => {
                 // Cross Reference Stream instead of XRef and Trailer
-                self.new_document
-                    .write_cross_reference_stream(&mut target, &mut xref, xref_start as u32)?;
+                self.new_document.write_cross_reference_stream(
+                    &mut target,
+                    &mut xref,
+                    xref_start as u32,
+                )?;
             }
         }
         // Write `startxref` part of trailer
@@ -340,7 +386,10 @@ pub enum XRefStreamFilter {
 
 impl Writer {
     fn need_separator(object: &Object) -> bool {
-        matches!(*object, Null | Boolean(_) | Integer(_) | Real(_) | Reference(_))
+        matches!(
+            *object,
+            Null | Boolean(_) | Integer(_) | Real(_) | Reference(_)
+        )
     }
 
     fn need_end_separator(object: &Object) -> bool {
@@ -371,7 +420,10 @@ impl Writer {
                         // Add entry
                         xref_section.add_entry(XrefEntry::Normal { offset, generation });
                     }
-                    XrefEntry::Compressed { container: _, index: _ } => {
+                    XrefEntry::Compressed {
+                        container: _,
+                        index: _,
+                    } => {
                         xref_section.add_unusable_free_entry();
                     }
                     XrefEntry::Free => {
@@ -397,7 +449,10 @@ impl Writer {
     }
 
     /// Create stream for Cross reference stream.
-    fn create_xref_steam(xref: &Xref, filter: XRefStreamFilter) -> Result<(Vec<u8>, usize, Object)> {
+    fn create_xref_steam(
+        xref: &Xref,
+        filter: XRefStreamFilter,
+    ) -> Result<(Vec<u8>, usize, Object)> {
         let mut xref_sections = Vec::new();
         let mut xref_section = XrefSection::new(0);
 
@@ -475,7 +530,11 @@ impl Writer {
     }
 
     fn write_indirect_object<W: Write>(
-        file: &mut CountingWrite<&mut W>, id: u32, generation: u16, object: &Object, xref: &mut Xref,
+        file: &mut CountingWrite<&mut W>,
+        id: u32,
+        generation: u16,
+        object: &Object,
+        xref: &mut Xref,
     ) -> Result<()> {
         let offset = file.bytes_written as u32;
         xref.insert(id, XrefEntry::Normal { offset, generation });
@@ -484,13 +543,21 @@ impl Writer {
             "{} {} obj\n{}",
             id,
             generation,
-            if Writer::need_separator(object) { " " } else { "" }
+            if Writer::need_separator(object) {
+                " "
+            } else {
+                ""
+            }
         )?;
         Writer::write_object(file, object)?;
         writeln!(
             file,
             "{}\nendobj",
-            if Writer::need_end_separator(object) { " " } else { "" }
+            if Writer::need_end_separator(object) {
+                " "
+            } else {
+                ""
+            }
         )?;
         Ok(())
     }
@@ -677,8 +744,10 @@ fn save_document() {
     doc.objects.insert((2, 0), Boolean(true));
     doc.objects.insert((3, 0), Integer(3));
     doc.objects.insert((4, 0), Real(0.5));
-    doc.objects
-        .insert((5, 0), String("text((\r)".as_bytes().to_vec(), StringFormat::Literal));
+    doc.objects.insert(
+        (5, 0),
+        String("text((\r)".as_bytes().to_vec(), StringFormat::Literal),
+    );
     doc.objects.insert(
         (6, 0),
         String("text((\r)".as_bytes().to_vec(), StringFormat::Hexadecimal),
@@ -687,8 +756,10 @@ fn save_document() {
     doc.objects.insert((8, 0), Reference((1, 0)));
     doc.objects
         .insert((9, 2), Array(vec![Integer(1), Integer(2), Integer(3)]));
-    doc.objects
-        .insert((11, 0), Stream(Stream::new(Dictionary::new(), vec![0x41, 0x42, 0x43])));
+    doc.objects.insert(
+        (11, 0),
+        Stream(Stream::new(Dictionary::new(), vec![0x41, 0x42, 0x43])),
+    );
     let mut dict = Dictionary::new();
     dict.set("A", Null);
     dict.set("B", false);

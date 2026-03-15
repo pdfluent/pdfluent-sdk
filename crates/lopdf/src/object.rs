@@ -1,6 +1,6 @@
 use crate::encodings;
-use crate::encodings::cmap::ToUnicodeCMap;
 use crate::encodings::Encoding;
+use crate::encodings::cmap::ToUnicodeCMap;
 use crate::error::DecompressError;
 use crate::{Document, Error, Result};
 use indexmap::IndexMap;
@@ -320,7 +320,9 @@ impl fmt::Debug for Object {
             Object::Integer(value) => write!(f, "{value}"),
             Object::Real(value) => write!(f, "{value}"),
             Object::Name(name) => write!(f, "/{}", String::from_utf8_lossy(name)),
-            Object::String(text, StringFormat::Literal) => write!(f, "({})", String::from_utf8_lossy(text)),
+            Object::String(text, StringFormat::Literal) => {
+                write!(f, "({})", String::from_utf8_lossy(text))
+            }
             Object::String(text, StringFormat::Hexadecimal) => {
                 write!(f, "<")?;
                 for b in text {
@@ -329,7 +331,10 @@ impl fmt::Debug for Object {
                 write!(f, ">")
             }
             Object::Array(array) => {
-                let items = array.iter().map(|item| format!("{item:?}")).collect::<Vec<String>>();
+                let items = array
+                    .iter()
+                    .map(|item| format!("{item:?}"))
+                    .collect::<Vec<String>>();
                 write!(f, "[{}]", items.join(" "))
             }
             Object::Dictionary(dict) => write!(f, "{dict:?}"),
@@ -420,8 +425,12 @@ impl Dictionary {
         // - predefined CJK CMAP other than indicated in SimpleEncoding
         match self.get(b"Encoding").and_then(Object::as_name) {
             Ok(b"StandardEncoding") => Ok(Encoding::OneByteEncoding(&encodings::STANDARD_ENCODING)),
-            Ok(b"MacRomanEncoding") => Ok(Encoding::OneByteEncoding(&encodings::MAC_ROMAN_ENCODING)),
-            Ok(b"MacExpertEncoding") => Ok(Encoding::OneByteEncoding(&encodings::MAC_EXPERT_ENCODING)),
+            Ok(b"MacRomanEncoding") => {
+                Ok(Encoding::OneByteEncoding(&encodings::MAC_ROMAN_ENCODING))
+            }
+            Ok(b"MacExpertEncoding") => {
+                Ok(Encoding::OneByteEncoding(&encodings::MAC_EXPERT_ENCODING))
+            }
             Ok(b"WinAnsiEncoding") => Ok(Encoding::OneByteEncoding(&encodings::WIN_ANSI_ENCODING)),
             Ok(b"PDFDocEncoding") => {
                 log::warn!("PDFDocEncoding is not a valid character encoding for a font");
@@ -436,7 +445,9 @@ impl Dictionary {
                 warn!(
                     "Could not parse the encoding, error: {err:#?}\nFont: {self:#?}\nTrying to retrieve ToUnicode."
                 );
-                let stream = self.get_deref(b"ToUnicode", doc).and_then(Object::as_stream);
+                let stream = self
+                    .get_deref(b"ToUnicode", doc)
+                    .and_then(Object::as_stream);
                 if let Ok(stream) = stream {
                     return self.get_encoding_from_to_unicode_cmap(stream);
                 }
@@ -454,23 +465,25 @@ impl Dictionary {
     }
 
     pub fn extend(&mut self, other: &Dictionary) {
-        let keep_both_objects =
-            |new_dict: &mut IndexMap<Vec<u8>, Object>, key: &Vec<u8>, value: &Object, old_value: Object| {
-                let mut final_array;
+        let keep_both_objects = |new_dict: &mut IndexMap<Vec<u8>, Object>,
+                                 key: &Vec<u8>,
+                                 value: &Object,
+                                 old_value: Object| {
+            let mut final_array;
 
-                match value {
-                    Object::Array(array) => {
-                        final_array = Vec::with_capacity(array.len() + 1);
-                        final_array.push(old_value);
-                        final_array.extend(array.to_owned());
-                    }
-                    _ => {
-                        final_array = vec![value.to_owned(), old_value];
-                    }
+            match value {
+                Object::Array(array) => {
+                    final_array = Vec::with_capacity(array.len() + 1);
+                    final_array.push(old_value);
+                    final_array.extend(array.to_owned());
                 }
+                _ => {
+                    final_array = vec![value.to_owned(), old_value];
+                }
+            }
 
-                new_dict.insert(key.to_owned(), Object::Array(final_array));
-            };
+            new_dict.insert(key.to_owned(), Object::Array(final_array));
+        };
 
         let mut new_dict = std::mem::take(&mut self.0);
         new_dict.reserve_exact(other.0.len());
@@ -505,10 +518,16 @@ impl Dictionary {
                         new_dict.insert(key.to_owned(), Object::Array(array));
                     }
                     (Object::Reference(old_object_id), Object::Reference(object_id)) => {
-                        let array = vec![Object::Reference(*old_object_id), Object::Reference(*object_id)];
+                        let array = vec![
+                            Object::Reference(*old_object_id),
+                            Object::Reference(*object_id),
+                        ];
                         new_dict.insert(key.to_owned(), Object::Array(array));
                     }
-                    (Object::Null, _) | (Object::Boolean(_), _) | (Object::Name(_), _) | (Object::Stream(_), _) => {
+                    (Object::Null, _)
+                    | (Object::Boolean(_), _)
+                    | (Object::Name(_), _)
+                    | (Object::Stream(_), _) => {
                         new_dict.insert(key.to_owned(), old_value);
                     }
                     (_, _) => keep_both_objects(&mut new_dict, key, value, old_value),
@@ -660,8 +679,8 @@ impl Stream {
     }
 
     pub fn compress(&mut self) -> Result<()> {
-        use flate2::write::ZlibEncoder;
         use flate2::Compression;
+        use flate2::write::ZlibEncoder;
         use std::io::prelude::*;
 
         if self.dict.get(b"Filter").is_err() {
@@ -697,7 +716,7 @@ impl Stream {
     }
 
     fn decompress_lzw(input: &[u8], params: Option<&Dictionary>) -> Result<Vec<u8>> {
-        use weezl::{decode::Decoder, BitOrder};
+        use weezl::{BitOrder, decode::Decoder};
         const MIN_BITS: u8 = 9;
 
         let early_change = params
@@ -757,7 +776,10 @@ impl Stream {
         for &ch in input_no_eod {
             if ch == b'z' {
                 if count != 0 {
-                    return Err(DecompressError::Ascii85("z character is not allowed in the middle of a group").into());
+                    return Err(DecompressError::Ascii85(
+                        "z character is not allowed in the middle of a group",
+                    )
+                    .into());
                 }
                 output.extend_from_slice(&[0, 0, 0, 0]);
                 continue;
@@ -802,11 +824,26 @@ impl Stream {
         use crate::filters::png;
 
         if let Some(params) = params {
-            let predictor = params.get(b"Predictor").and_then(Object::as_i64).unwrap_or(1);
+            let predictor = params
+                .get(b"Predictor")
+                .and_then(Object::as_i64)
+                .unwrap_or(1);
             if (10..=15).contains(&predictor) {
-                let pixels_per_row = max(1, params.get(b"Columns").and_then(Object::as_i64).unwrap_or(1)) as usize;
-                let colors = max(1, params.get(b"Colors").and_then(Object::as_i64).unwrap_or(1)) as usize;
-                let bits = max(8, params.get(b"BitsPerComponent").and_then(Object::as_i64).unwrap_or(8)) as usize;
+                let pixels_per_row = max(
+                    1,
+                    params.get(b"Columns").and_then(Object::as_i64).unwrap_or(1),
+                ) as usize;
+                let colors = max(
+                    1,
+                    params.get(b"Colors").and_then(Object::as_i64).unwrap_or(1),
+                ) as usize;
+                let bits = max(
+                    8,
+                    params
+                        .get(b"BitsPerComponent")
+                        .and_then(Object::as_i64)
+                        .unwrap_or(8),
+                ) as usize;
                 let bytes_per_pixel = colors * bits / 8;
                 data = png::decode_frame(data.as_slice(), bytes_per_pixel, pixels_per_row)?;
             }
@@ -831,7 +868,7 @@ impl Stream {
 
 #[cfg(test)]
 mod test {
-    use crate::{error::DecompressError, Error};
+    use crate::{Error, error::DecompressError};
 
     use super::Stream;
 
@@ -853,6 +890,9 @@ mod test {
         let input = b"uuuuu~>";
         let output = Stream::decode_ascii85(input);
         // let expected: Result<Vec<u8>, Error> = Err(Error::ContentDecode);
-        assert!(matches!(output, Err(Error::Decompress(DecompressError::Ascii85(_)))));
+        assert!(matches!(
+            output,
+            Err(Error::Decompress(DecompressError::Ascii85(_)))
+        ));
     }
 }
