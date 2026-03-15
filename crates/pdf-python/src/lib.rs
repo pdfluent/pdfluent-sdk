@@ -10,6 +10,12 @@ use pyo3::exceptions::{PyIOError, PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use pdf_compliance::{
+    detect_pdfa_level, validate_pdfa as compliance_validate_pdfa, PdfALevel,
+};
+use pdf_manip::pages;
+use pdf_syntax::Pdf;
+
 use pdf_engine::{
     BookmarkItem, DocumentInfo, EngineError, PageGeometry, PdfDocument, RenderOptions,
     RenderedPage, TextBlock, TextSpan, ThumbnailOptions,
@@ -18,6 +24,10 @@ use pdf_engine::{
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn manip_err_to_py(e: pdf_manip::error::ManipError) -> PyErr {
+    PyRuntimeError::new_err(e.to_string())
+}
 
 fn engine_err_to_py(e: EngineError) -> PyErr {
     match e {
@@ -46,6 +56,7 @@ fn engine_err_to_py(e: EngineError) -> PyErr {
 #[pyclass(name = "Document")]
 struct PyDocument {
     inner: Arc<PdfDocument>,
+    raw_bytes: Arc<Vec<u8>>,
 }
 
 #[pymethods]
@@ -72,13 +83,18 @@ impl PyDocument {
             ));
         };
 
+        let raw_bytes = Arc::new(data);
         let doc = match password {
-            Some(pw) => PdfDocument::open_with_password(data, pw).map_err(engine_err_to_py)?,
-            None => PdfDocument::open(data).map_err(engine_err_to_py)?,
+            Some(pw) => {
+                PdfDocument::open_with_password(Arc::clone(&raw_bytes), pw)
+                    .map_err(engine_err_to_py)?
+            }
+            None => PdfDocument::open(Arc::clone(&raw_bytes)).map_err(engine_err_to_py)?,
         };
 
         Ok(Self {
             inner: Arc::new(doc),
+            raw_bytes,
         })
     }
 
@@ -173,6 +189,21 @@ impl PyDocument {
     /// Returns a list of 0-based page indices containing the query.
     fn search(&self, query: &str) -> Vec<usize> {
         self.inner.search_text(query)
+    }
+
+    /// Extract all text from a specific page (0-based index).
+    fn extract_text(&self, page_num: usize) -> PyResult<String> {
+        self.inner.extract_text(page_num).map_err(engine_err_to_py)
+    }
+
+    /// Save the PDF to a file path.
+    ///
+    /// Writes the original PDF bytes to the given path. For merged documents
+    /// created with ``merge_pdfs()``, use that function's ``output_path``
+    /// parameter directly.
+    fn save(&self, path: &str) -> PyResult<()> {
+        std::fs::write(path, self.raw_bytes.as_ref())
+            .map_err(|e| PyIOError::new_err(e.to_string()))
     }
 
     fn __repr__(&self) -> String {
@@ -643,6 +674,213 @@ impl PyPageGeometry {
 }
 
 // ---------------------------------------------------------------------------
+// ComplianceIssue / ComplianceReport
+// ---------------------------------------------------------------------------
+
+/// A single compliance issue found during PDF/A validation.
+#[pyclass(name = "ComplianceIssue")]
+struct PyComplianceIssue(pdf_compliance::ComplianceIssue);
+
+#[pymethods]
+impl PyComplianceIssue {
+    /// Rule identifier (e.g. "6.1.2" for PDF/A clause).
+    #[getter]
+    fn rule(&self) -> &str {
+        &self.0.rule
+    }
+
+    /// Severity: ``"error"``, ``"warning"``, or ``"info"``.
+    #[getter]
+    fn severity(&self) -> &'static str {
+        match self.0.severity {
+            pdf_compliance::Severity::Error => "error",
+            pdf_compliance::Severity::Warning => "warning",
+            pdf_compliance::Severity::Info => "info",
+        }
+    }
+
+    /// Human-readable description of the issue.
+    #[getter]
+    fn message(&self) -> &str {
+        &self.0.message
+    }
+
+    /// Location in the document (object number, page, etc.), or ``None``.
+    #[getter]
+    fn location(&self) -> Option<&str> {
+        self.0.location.as_deref()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ComplianceIssue(severity={:?}, rule={:?}, message={:?})",
+            self.severity(),
+            self.0.rule,
+            self.0.message,
+        )
+    }
+}
+
+/// Result of a PDF/A compliance validation.
+///
+/// Attributes
+/// ----------
+/// is_compliant : bool
+///     True if no errors were found (warnings/info are allowed).
+/// error_count : int
+///     Number of conformance errors.
+/// warning_count : int
+///     Number of warnings.
+/// issues : list[ComplianceIssue]
+///     All issues found.
+/// pdfa_level : str or None
+///     The detected/validated PDF/A level (e.g. ``"PDF/A-2B"``), or ``None``.
+#[pyclass(name = "ComplianceReport")]
+struct PyComplianceReport(pdf_compliance::ComplianceReport);
+
+#[pymethods]
+impl PyComplianceReport {
+    /// True if no conformance errors were found.
+    #[getter]
+    fn is_compliant(&self) -> bool {
+        self.0.is_compliant()
+    }
+
+    /// Number of conformance errors.
+    #[getter]
+    fn error_count(&self) -> usize {
+        self.0.error_count()
+    }
+
+    /// Number of warnings.
+    #[getter]
+    fn warning_count(&self) -> usize {
+        self.0.warning_count()
+    }
+
+    /// All issues found during validation.
+    #[getter]
+    fn issues(&self) -> Vec<PyComplianceIssue> {
+        self.0
+            .issues
+            .iter()
+            .cloned()
+            .map(PyComplianceIssue)
+            .collect()
+    }
+
+    /// Detected PDF/A level string (e.g. ``"PDF/A-2B"``), or ``None``.
+    #[getter]
+    fn pdfa_level(&self) -> Option<String> {
+        self.0
+            .pdfa_level
+            .map(|l| format!("PDF/A-{}{}", l.part(), l.conformance()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ComplianceReport(compliant={}, errors={}, warnings={})",
+            self.0.is_compliant(),
+            self.0.error_count(),
+            self.0.warning_count(),
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Module-level functions
+// ---------------------------------------------------------------------------
+
+/// Open a PDF from a file path, returning a ``Document``.
+///
+/// Equivalent to ``Document(path)`` but reads more naturally in code.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     File-system path to the PDF.
+/// password : str, optional
+///     Password for encrypted PDFs.
+///
+/// Returns
+/// -------
+/// Document
+#[pyfunction]
+#[pyo3(signature = (path, password=None))]
+fn open_pdf(path: &str, password: Option<&str>) -> PyResult<PyDocument> {
+    let data =
+        std::fs::read(path).map_err(|e| PyIOError::new_err(format!("{path}: {e}")))?;
+    let raw_bytes = Arc::new(data);
+    let doc = match password {
+        Some(pw) => {
+            PdfDocument::open_with_password(Arc::clone(&raw_bytes), pw)
+                .map_err(engine_err_to_py)?
+        }
+        None => PdfDocument::open(Arc::clone(&raw_bytes)).map_err(engine_err_to_py)?,
+    };
+    Ok(PyDocument {
+        inner: Arc::new(doc),
+        raw_bytes,
+    })
+}
+
+/// Merge multiple PDF files into a single output file.
+///
+/// Parameters
+/// ----------
+/// input_paths : list[str]
+///     Ordered list of PDF paths to merge.
+/// output_path : str
+///     Destination path for the merged PDF.
+///
+/// Examples
+/// --------
+/// >>> merge_pdfs(["a.pdf", "b.pdf"], "merged.pdf")
+#[pyfunction]
+fn merge_pdfs(input_paths: Vec<String>, output_path: &str) -> PyResult<()> {
+    if input_paths.is_empty() {
+        return Err(PyValueError::new_err("input_paths must not be empty"));
+    }
+    let mut doc = pages::merge(&input_paths).map_err(manip_err_to_py)?;
+    doc.save(output_path)
+        .map_err(|e| PyIOError::new_err(e.to_string()))?;
+    Ok(())
+}
+
+/// Validate a PDF file against PDF/A conformance requirements.
+///
+/// Auto-detects the declared PDF/A level from XMP metadata.
+/// Falls back to PDF/A-2B if no level is declared.
+///
+/// Parameters
+/// ----------
+/// path : str
+///     Path to the PDF file to validate.
+///
+/// Returns
+/// -------
+/// ComplianceReport
+///
+/// Examples
+/// --------
+/// >>> report = validate_pdfa("document.pdf")
+/// >>> if report.is_compliant:
+/// ...     print("PDF/A compliant")
+/// ... else:
+/// ...     for issue in report.issues:
+/// ...         print(f"[{issue.severity}] {issue.rule}: {issue.message}")
+#[pyfunction]
+fn validate_pdfa(path: &str) -> PyResult<PyComplianceReport> {
+    let data =
+        std::fs::read(path).map_err(|e| PyIOError::new_err(e.to_string()))?;
+    let pdf = Pdf::new(Arc::new(data))
+        .map_err(|e| PyValueError::new_err(format!("invalid PDF: {e:?}")))?;
+    let level = detect_pdfa_level(&pdf).unwrap_or(PdfALevel::A2b);
+    let report = compliance_validate_pdfa(&pdf, level);
+    Ok(PyComplianceReport(report))
+}
+
+// ---------------------------------------------------------------------------
 // Module
 // ---------------------------------------------------------------------------
 
@@ -657,5 +895,10 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyDocumentInfo>()?;
     m.add_class::<PyBookmark>()?;
     m.add_class::<PyPageGeometry>()?;
+    m.add_class::<PyComplianceIssue>()?;
+    m.add_class::<PyComplianceReport>()?;
+    m.add_function(wrap_pyfunction!(open_pdf, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_pdfs, m)?)?;
+    m.add_function(wrap_pyfunction!(validate_pdfa, m)?)?;
     Ok(())
 }

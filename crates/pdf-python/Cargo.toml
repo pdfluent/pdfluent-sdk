@@ -14,4 +14,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pdf-engine = { path = "../pdf-engine" }
 pdf-sign = { path = "../pdf-sign" }
+pdf-manip = { path = "../pdf-manip", default-features = false }
+pdf-compliance = { path = "../pdf-compliance" }
+pdf-syntax = { path = "../pdf-syntax" }
 pyo3 = { version = "0.24", features = ["extension-module"] }
