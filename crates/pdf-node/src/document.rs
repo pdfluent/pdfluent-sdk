@@ -436,6 +436,18 @@ impl PdfDocument {
             .collect()
     }
 
+    /// Save the document to a file path.
+    ///
+    /// Writes the original PDF bytes to disk. For a freshly-opened document
+    /// this is equivalent to a copy; for merged or modified documents use
+    /// the return value of `mergePdfs`.
+    #[napi]
+    pub fn save(&self, path: String) -> Result<()> {
+        let bytes: &[u8] = self.inner.pdf().data().as_ref();
+        std::fs::write(&path, bytes)
+            .map_err(|e| napi::Error::from_reason(format!("cannot write '{path}': {e}")))
+    }
+
     /// Validate the document against a PDF/A conformance level.
     ///
     /// Level is specified as a string: "1a", "1b", "2a", "2b", "2u", "3a", "3b", "3u".
@@ -447,7 +459,7 @@ impl PdfDocument {
     }
 }
 
-fn parse_pdfa_level(s: &str) -> Result<pdf_compliance::PdfALevel> {
+pub(crate) fn parse_pdfa_level(s: &str) -> Result<pdf_compliance::PdfALevel> {
     match s.to_lowercase().as_str() {
         "1a" => Ok(pdf_compliance::PdfALevel::A1a),
         "1b" => Ok(pdf_compliance::PdfALevel::A1b),
@@ -463,7 +475,7 @@ fn parse_pdfa_level(s: &str) -> Result<pdf_compliance::PdfALevel> {
     }
 }
 
-fn compliance_to_info(report: pdf_compliance::ComplianceReport) -> ComplianceReportInfo {
+pub(crate) fn compliance_to_info(report: pdf_compliance::ComplianceReport) -> ComplianceReportInfo {
     ComplianceReportInfo {
         compliant: report.is_compliant(),
         error_count: report.error_count() as u32,

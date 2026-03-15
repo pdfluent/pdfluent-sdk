@@ -7,4 +7,5 @@ mod annotation;
 mod document;
 mod error;
 mod form;
+mod functions;
 mod page;

@@ -17,6 +17,7 @@ pdf-annot = { path = "../pdf-annot" }
 pdf-sign = { path = "../pdf-sign" }
 pdf-compliance = { path = "../pdf-compliance" }
 pdf-syntax = { path = "../pdf-syntax" }
+pdf-manip = { path = "../pdf-manip", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt"] }
