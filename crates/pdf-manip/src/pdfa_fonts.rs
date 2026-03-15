@@ -6366,10 +6366,13 @@ fn lookup_unicode_cmap_31(face: &ttf_parser::Face, unicode: u32) -> Option<ttf_p
     None
 }
 
+/// `(start_code, end_code, start_cid)` triple from a CMap cidrange entry.
+type CmapRange = (u16, u16, u16);
+
 /// Load CMap cidrange data for any named predefined CMap, bypassing the
 /// unicode-only restriction in `load_predefined_unicode_cmap_ranges`.
 /// Used by EUC-style CMap handling to get the code→CID mapping.
-fn load_all_cmap_cidranges(cmap_name: &str) -> Option<Vec<(u16, u16, u16)>> {
+fn load_all_cmap_cidranges(cmap_name: &str) -> Option<Vec<CmapRange>> {
     let data = find_predefined_cmap_file(cmap_name)?;
     parse_predefined_cmap_cid_ranges(&data)
 }
@@ -6385,7 +6388,7 @@ fn load_all_cmap_cidranges(cmap_name: &str) -> Option<Vec<(u16, u16, u16)>> {
 fn load_embedded_cmap_stream_ranges(
     doc: &Document,
     font_dict: &lopdf::Dictionary,
-) -> Option<(Vec<(u16, u16, u16)>, bool)> {
+) -> Option<(Vec<CmapRange>, bool)> {
     let enc_id = match font_dict.get(b"Encoding").ok()? {
         Object::Reference(r) => *r,
         _ => return None,
@@ -6572,7 +6575,7 @@ fn find_predefined_cmap_file(cmap_name: &str) -> Option<Vec<u8>> {
     None
 }
 
-fn parse_predefined_cmap_cid_ranges(data: &[u8]) -> Option<Vec<(u16, u16, u16)>> {
+fn parse_predefined_cmap_cid_ranges(data: &[u8]) -> Option<Vec<CmapRange>> {
     let text = std::str::from_utf8(data).ok()?;
     let mut ranges = Vec::new();
 
@@ -6617,7 +6620,7 @@ fn parse_predefined_cmap_cid_ranges(data: &[u8]) -> Option<Vec<(u16, u16, u16)>>
     }
 }
 
-fn load_predefined_unicode_cmap_ranges(cmap_name: &str) -> Option<Vec<(u16, u16, u16)>> {
+fn load_predefined_unicode_cmap_ranges(cmap_name: &str) -> Option<Vec<CmapRange>> {
     if !is_unicode_predefined_type0_cmap(cmap_name) {
         return None;
     }
@@ -10934,7 +10937,7 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
         replacement_value: Option<u16>,
         /// For EUC-style CMaps (GB-EUC-H etc.), the CMap cidranges used to
         /// determine byte-code boundaries and code→CID mappings.
-        euc_cmap_ranges: Option<Vec<(u16, u16, u16)>>,
+        euc_cmap_ranges: Option<Vec<CmapRange>>,
     }
 
     #[derive(Clone, Copy)]
