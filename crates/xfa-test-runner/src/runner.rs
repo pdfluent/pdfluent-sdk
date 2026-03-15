@@ -66,7 +66,7 @@ impl Runner {
 
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.config.workers)
-            .stack_size(8 * 1024 * 1024) // 8 MB — inline nesting depth limit prevents stack overflow
+            .stack_size(64 * 1024 * 1024) // 64 MB — pathological PDFs can deep-recurse in lopdf
             .build()
             .expect("Failed to create thread pool");
 
