@@ -100,13 +100,79 @@ pub fn insert_pages(target: &mut Document, source: &Document, position: u32) -> 
         }
     }
 
-    if let Some(Object::Dictionary(ref mut pages_dict)) = target.objects.get_mut(&pages_id) {
-        if let Ok(Object::Array(ref mut kids)) = pages_dict.get_mut(b"Kids") {
-            let insert_idx = ((position - 1) as usize).min(kids.len());
+    // The Kids entry in the Pages dict may be an indirect reference (Object::Reference)
+    // rather than an inline Array.  Resolve it so we can actually insert the new pages.
+    let kids_ref: Option<ObjectId> = target
+        .objects
+        .get(&pages_id)
+        .and_then(|o| {
+            if let Object::Dictionary(d) = o {
+                Some(d)
+            } else {
+                None
+            }
+        })
+        .and_then(|d| d.get(b"Kids").ok())
+        .and_then(|o| {
+            if let Object::Reference(r) = o {
+                Some(*r)
+            } else {
+                None
+            }
+        });
+
+    let insert_idx = ((position - 1) as usize).min(
+        // Try to determine current Kids length for the clamp, defaulting to 0.
+        kids_ref
+            .and_then(|r| target.objects.get(&r))
+            .and_then(|o| {
+                if let Object::Array(a) = o {
+                    Some(a.len())
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                target
+                    .objects
+                    .get(&pages_id)
+                    .and_then(|o| {
+                        if let Object::Dictionary(d) = o {
+                            Some(d)
+                        } else {
+                            None
+                        }
+                    })
+                    .and_then(|d| d.get(b"Kids").ok())
+                    .and_then(|o| {
+                        if let Object::Array(a) = o {
+                            Some(a.len())
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .unwrap_or(0),
+    );
+
+    if let Some(kids_obj_id) = kids_ref {
+        // Kids is an indirect reference — modify the referenced Array object.
+        if let Some(Object::Array(ref mut kids)) = target.objects.get_mut(&kids_obj_id) {
             for (i, page_id) in source_page_ids.iter().enumerate() {
                 kids.insert(insert_idx + i, Object::Reference(*page_id));
             }
         }
+    } else if let Some(Object::Dictionary(ref mut pages_dict)) = target.objects.get_mut(&pages_id) {
+        // Kids is inline — modify it in place.
+        if let Ok(Object::Array(ref mut kids)) = pages_dict.get_mut(b"Kids") {
+            for (i, page_id) in source_page_ids.iter().enumerate() {
+                kids.insert(insert_idx + i, Object::Reference(*page_id));
+            }
+        }
+    }
+
+    // Update Count (replace any indirect reference with an inline integer).
+    if let Some(Object::Dictionary(ref mut pages_dict)) = target.objects.get_mut(&pages_id) {
         let new_count = target_count + source_page_ids.len() as u32;
         pages_dict.set("Count", Object::Integer(new_count as i64));
     }

@@ -153,6 +153,11 @@ fn main() {
     let cidset_fixed = pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
     eprintln!("CIDSet: fixed={cidset_fixed}");
 
+    // Add CIDToGIDMap /Identity to CIDFontType2 dicts that are missing it.
+    // ISO 19005-2 §6.2.11.3.2 requires this entry to be explicit. (#439)
+    let cidtogid_fixed = pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc);
+    eprintln!("CIDToGIDMap: fixed={cidtogid_fixed}");
+
     match pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc) {
         Ok(r) => eprintln!(
             "Colorspace: had_intent={}, added={}, device_cs={:?}",
