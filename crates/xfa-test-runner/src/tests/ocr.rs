@@ -73,155 +73,180 @@ impl PdfTest for OcrTest {
     }
 
     fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
-        let start = std::time::Instant::now();
-        let elapsed = || start.elapsed().as_millis() as u64;
+        // Wrap entire execution in a thread to guard against lopdf hangs on
+        // corrupt PDFs (page-tree loops, infinite decompression, etc.). #452
+        let pdf_owned = pdf_data.to_vec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));
+            let _ = tx.send(r);
+        });
+        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => TestResult {
+                status: TestStatus::Crash,
+                error_message: Some("panic in test execution".into()),
+                duration_ms: 0,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            },
+            Err(_) => TestResult {
+                status: TestStatus::Timeout,
+                error_message: Some("test timed out (>30s)".into()),
+                duration_ms: 30_000,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            },
+        }
+    }
+}
 
-        // 1. Load with lopdf.
-        let doc = match lopdf::Document::load_mem(pdf_data) {
-            Ok(d) => d,
-            Err(e) => {
+fn run_inner(pdf: Vec<u8>) -> TestResult {
+    let start = std::time::Instant::now();
+    let elapsed = || start.elapsed().as_millis() as u64;
+
+    // 1. Load with lopdf.
+    let doc = match lopdf::Document::load_mem(&pdf) {
+        Ok(d) => d,
+        Err(e) => {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some(format!("lopdf load failed: {e}")),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+    };
+
+    // 2. Detect scanned pages (max 5 pages, 10-char threshold).
+    let pages = doc.get_pages();
+    let total_pages = pages.len();
+    let max_pages = total_pages.min(5);
+    let mut scanned_pages = Vec::new();
+
+    for page_num in 1..=(max_pages as u32) {
+        if let Some(&page_id) = pages.get(&page_num) {
+            if page_needs_ocr(&doc, page_id, 10) {
+                scanned_pages.push(page_num);
+            }
+        }
+    }
+
+    let mut metadata = HashMap::new();
+    metadata.insert("total_pages".into(), total_pages.to_string());
+    metadata.insert("pages_checked".into(), max_pages.to_string());
+    metadata.insert("scanned_pages".into(), scanned_pages.len().to_string());
+
+    if scanned_pages.is_empty() {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some("no scanned pages detected".into()),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata,
+        };
+    }
+
+    metadata.insert(
+        "scanned_page_nums".into(),
+        scanned_pages
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+
+    // 3. Run OCR if PaddleOCR is available.
+    #[cfg(feature = "paddle-ocr")]
+    {
+        use pdf_ocr::OcrEngine;
+        let engine = match get_paddle_engine() {
+            Some(e) => e,
+            None => {
+                metadata.insert("ocr_engine".into(), "unavailable".into());
                 return TestResult {
                     status: TestStatus::Skip,
-                    error_message: Some(format!("lopdf load failed: {e}")),
+                    error_message: Some("PaddleOCR engine not available (models missing?)".into()),
                     duration_ms: elapsed(),
                     oracle_score: None,
-                    metadata: HashMap::new(),
+                    metadata,
                 };
             }
         };
 
-        // 2. Detect scanned pages (max 5 pages, 10-char threshold).
-        let pages = doc.get_pages();
-        let total_pages = pages.len();
-        let max_pages = total_pages.min(5);
-        let mut scanned_pages = Vec::new();
+        metadata.insert("ocr_engine".into(), "paddle".into());
 
-        for page_num in 1..=(max_pages as u32) {
-            if let Some(&page_id) = pages.get(&page_num) {
-                if page_needs_ocr(&doc, page_id, 10) {
-                    scanned_pages.push(page_num);
-                }
-            }
-        }
+        // Render first scanned page and run OCR.
+        let target_page = scanned_pages[0];
+        let render_result = render_page(&pdf, target_page);
 
-        let mut metadata = HashMap::new();
-        metadata.insert("total_pages".into(), total_pages.to_string());
-        metadata.insert("pages_checked".into(), max_pages.to_string());
-        metadata.insert("scanned_pages".into(), scanned_pages.len().to_string());
+        match render_result {
+            Ok((pixels, width, height)) => {
+                let ocr_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    engine.recognize(&pixels, width, height, 300)
+                }));
 
-        if scanned_pages.is_empty() {
-            return TestResult {
-                status: TestStatus::Skip,
-                error_message: Some("no scanned pages detected".into()),
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata,
-            };
-        }
+                match ocr_result {
+                    Ok(Ok(result)) => {
+                        let word_count = result.words.len();
+                        let text = result.full_text();
+                        let preview = if text.len() > 100 {
+                            format!("{}...", &text[..100])
+                        } else {
+                            text.clone()
+                        };
 
-        metadata.insert(
-            "scanned_page_nums".into(),
-            scanned_pages
-                .iter()
-                .map(|p| p.to_string())
-                .collect::<Vec<_>>()
-                .join(","),
-        );
+                        metadata.insert("words_recognized".into(), word_count.to_string());
+                        metadata.insert("confidence".into(), format!("{:.2}", result.confidence));
+                        metadata.insert("text_preview".into(), preview);
 
-        // 3. Run OCR if PaddleOCR is available.
-        #[cfg(feature = "paddle-ocr")]
-        {
-            use pdf_ocr::OcrEngine;
-            let engine = match get_paddle_engine() {
-                Some(e) => e,
-                None => {
-                    metadata.insert("ocr_engine".into(), "unavailable".into());
-                    return TestResult {
-                        status: TestStatus::Skip,
-                        error_message: Some(
-                            "PaddleOCR engine not available (models missing?)".into(),
-                        ),
+                        TestResult {
+                            status: TestStatus::Pass,
+                            error_message: None,
+                            duration_ms: elapsed(),
+                            oracle_score: Some(result.confidence as f64),
+                            metadata,
+                        }
+                    }
+                    Ok(Err(e)) => TestResult {
+                        status: TestStatus::Fail,
+                        error_message: Some(format!("OCR recognition failed: {e}")),
                         duration_ms: elapsed(),
                         oracle_score: None,
                         metadata,
-                    };
+                    },
+                    Err(_) => TestResult {
+                        status: TestStatus::Fail,
+                        error_message: Some("panic in OCR recognition".into()),
+                        duration_ms: elapsed(),
+                        oracle_score: None,
+                        metadata,
+                    },
                 }
-            };
-
-            metadata.insert("ocr_engine".into(), "paddle".into());
-
-            // Render first scanned page and run OCR.
-            let target_page = scanned_pages[0];
-            let render_result = render_page(pdf_data, target_page);
-
-            match render_result {
-                Ok((pixels, width, height)) => {
-                    let ocr_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        engine.recognize(&pixels, width, height, 300)
-                    }));
-
-                    match ocr_result {
-                        Ok(Ok(result)) => {
-                            let word_count = result.words.len();
-                            let text = result.full_text();
-                            let preview = if text.len() > 100 {
-                                format!("{}...", &text[..100])
-                            } else {
-                                text.clone()
-                            };
-
-                            metadata.insert("words_recognized".into(), word_count.to_string());
-                            metadata
-                                .insert("confidence".into(), format!("{:.2}", result.confidence));
-                            metadata.insert("text_preview".into(), preview);
-
-                            TestResult {
-                                status: TestStatus::Pass,
-                                error_message: None,
-                                duration_ms: elapsed(),
-                                oracle_score: Some(result.confidence as f64),
-                                metadata,
-                            }
-                        }
-                        Ok(Err(e)) => TestResult {
-                            status: TestStatus::Fail,
-                            error_message: Some(format!("OCR recognition failed: {e}")),
-                            duration_ms: elapsed(),
-                            oracle_score: None,
-                            metadata,
-                        },
-                        Err(_) => TestResult {
-                            status: TestStatus::Fail,
-                            error_message: Some("panic in OCR recognition".into()),
-                            duration_ms: elapsed(),
-                            oracle_score: None,
-                            metadata,
-                        },
-                    }
-                }
-                Err(e) => TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some(format!("render failed for page {target_page}: {e}")),
-                    duration_ms: elapsed(),
-                    oracle_score: None,
-                    metadata,
-                },
             }
-        }
-
-        #[cfg(not(feature = "paddle-ocr"))]
-        {
-            metadata.insert("ocr_engine".into(), "none".into());
-            TestResult {
-                status: TestStatus::Pass,
-                error_message: Some(format!(
-                    "{} scanned pages detected (OCR engine not compiled in)",
-                    scanned_pages.len()
-                )),
+            Err(e) => TestResult {
+                status: TestStatus::Skip,
+                error_message: Some(format!("render failed for page {target_page}: {e}")),
                 duration_ms: elapsed(),
                 oracle_score: None,
                 metadata,
-            }
+            },
+        }
+    }
+
+    #[cfg(not(feature = "paddle-ocr"))]
+    {
+        metadata.insert("ocr_engine".into(), "none".into());
+        TestResult {
+            status: TestStatus::Pass,
+            error_message: Some(format!(
+                "{} scanned pages detected (OCR engine not compiled in)",
+                scanned_pages.len()
+            )),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata,
         }
     }
 }
