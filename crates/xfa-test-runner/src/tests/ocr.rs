@@ -77,10 +77,14 @@ impl PdfTest for OcrTest {
         // corrupt PDFs (page-tree loops, infinite decompression, etc.). #452
         let pdf_owned = pdf_data.to_vec();
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));
-            let _ = tx.send(r);
-        });
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(move || {
+                let r =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));
+                let _ = tx.send(r);
+            })
+            .expect("thread spawn");
         match rx.recv_timeout(std::time::Duration::from_secs(30)) {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => TestResult {

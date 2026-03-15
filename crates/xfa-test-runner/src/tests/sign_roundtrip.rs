@@ -62,9 +62,11 @@ impl PdfTest for SignRoundtripTest {
         let lopdf_ok = {
             let pdf_clone2 = pdf_data.to_vec();
             let (tx_l, rx_l) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx_l.send(lopdf::Document::load_mem(&pdf_clone2).is_ok());
-            });
+            std::thread::Builder::new()
+                .stack_size(32 * 1024 * 1024)
+                .spawn(move || {
+                    let _ = tx_l.send(lopdf::Document::load_mem(&pdf_clone2).is_ok());
+                });
             rx_l.recv_timeout(std::time::Duration::from_secs(30))
                 .unwrap_or(false)
         };
@@ -86,12 +88,14 @@ impl PdfTest for SignRoundtripTest {
         {
             let pdf_clone = pdf_data.to_vec();
             let opts = options.clone();
-            std::thread::spawn(move || {
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    pdf_sign::sign_pdf(&pdf_clone, signer, &opts)
-                }));
-                let _ = tx.send(r);
-            });
+            std::thread::Builder::new()
+                .stack_size(32 * 1024 * 1024)
+                .spawn(move || {
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        pdf_sign::sign_pdf(&pdf_clone, signer, &opts)
+                    }));
+                    let _ = tx.send(r);
+                });
         }
 
         let sign_result = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
