@@ -19,6 +19,11 @@ from pdfengine._native import (
     DocumentInfo,
     Bookmark,
     PageGeometry,
+    ComplianceIssue,
+    ComplianceReport,
+    open_pdf,
+    merge_pdfs,
+    validate_pdfa,
 )
 
 __all__ = [
@@ -30,6 +35,11 @@ __all__ = [
     "DocumentInfo",
     "Bookmark",
     "PageGeometry",
+    "ComplianceIssue",
+    "ComplianceReport",
+    "open_pdf",
+    "merge_pdfs",
+    "validate_pdfa",
 ]
 
 __version__ = "0.1.0"

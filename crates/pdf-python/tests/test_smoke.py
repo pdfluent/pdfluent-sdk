@@ -20,6 +20,9 @@ MULTI_PDF = os.path.join(FIXTURES, "multi-page.pdf")
 # Import the native module — skip all if not built
 pdfengine = pytest.importorskip("pdfengine._native")
 Document = pdfengine.Document
+open_pdf = pdfengine.open_pdf
+merge_pdfs = pdfengine.merge_pdfs
+validate_pdfa = pdfengine.validate_pdfa
 
 
 # ---------- Scenario 1: Open PDF, count pages ----------
@@ -100,16 +103,25 @@ def test_annotation_highlight():
 
 # ---------- Scenario 9: Validate PDF/A ----------
 
-@pytest.mark.skip(reason="TODO: PDF/A validation not yet exposed in Python binding")
 def test_pdfa_validation():
-    pass
+    report = validate_pdfa(SAMPLE_PDF)
+    assert hasattr(report, "is_compliant")
+    assert hasattr(report, "error_count")
+    assert hasattr(report, "warning_count")
+    assert hasattr(report, "issues")
+    assert isinstance(report.issues, list)
+    assert isinstance(report.is_compliant, bool)
 
 
 # ---------- Scenario 10: Merge 2 PDFs ----------
 
-@pytest.mark.skip(reason="TODO: PDF merge not yet exposed in Python binding")
-def test_merge_pdfs():
-    pass
+def test_merge_pdfs(tmp_path):
+    output = str(tmp_path / "merged.pdf")
+    merge_pdfs([SAMPLE_PDF, MULTI_PDF], output)
+    merged = Document(output)
+    doc_a = Document(SAMPLE_PDF)
+    doc_b = Document(MULTI_PDF)
+    assert merged.page_count == doc_a.page_count + doc_b.page_count
 
 
 # ---------- Scenario 11: Verify signature ----------
@@ -124,6 +136,31 @@ def test_verify_signature():
 @pytest.mark.skip(reason="TODO: Image extraction not yet exposed in Python binding")
 def test_extract_images():
     pass
+
+
+# ---------- Extra: open_pdf convenience function ----------
+
+def test_open_pdf_function():
+    doc = open_pdf(SAMPLE_PDF)
+    assert doc.page_count >= 1
+
+
+# ---------- Extra: document.extract_text(page_num) ----------
+
+def test_document_extract_text():
+    doc = Document(SAMPLE_PDF)
+    text = doc.extract_text(0)
+    assert isinstance(text, str)
+
+
+# ---------- Extra: document.save ----------
+
+def test_document_save(tmp_path):
+    doc = Document(SAMPLE_PDF)
+    out = str(tmp_path / "copy.pdf")
+    doc.save(out)
+    copy = Document(out)
+    assert copy.page_count == doc.page_count
 
 
 # ---------- Extra: context manager ----------
