@@ -325,7 +325,7 @@ impl Runner {
         let rss_before = current_rss_bytes();
 
         std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
+            .stack_size(64 * 1024 * 1024) // 64 MB: lopdf deeply recurses on pathological PDFs
             .spawn(move || {
                 let start = Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
