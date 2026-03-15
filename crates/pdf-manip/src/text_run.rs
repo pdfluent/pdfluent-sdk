@@ -722,15 +722,6 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
     // Extract glyph widths.
     let widths = extract_widths(doc, &font_dict);
 
-    // Build Differences-based encoding (used when there is no ToUnicode CMap).
-    // Only meaningful for single-byte (Builtin) fonts.
-    let differences_encoding = if to_unicode.is_none() && matches!(encoding, FontEncoding::Builtin)
-    {
-        build_font_encoding(doc, &font_dict)
-    } else {
-        HashMap::new()
-    };
-
     // Detect subset fonts: BaseFont name starts with 6 uppercase ASCII letters
     // followed by '+', e.g. "ABCDEF+CMR10".  Subset fonts only contain the
     // glyphs actually used in the document, so encoding arbitrary replacement
@@ -748,12 +739,29 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
         .unwrap_or(false);
 
     // Detect symbolic fonts via FontDescriptor.Flags bit 3 (value 4).
-    // Symbolic fonts use the font's built-in encoding, which may differ from
-    // StandardEncoding (the PDF default for fonts with no Encoding entry).
-    // Without a ToUnicode CMap or explicit Encoding/Differences, Latin-1
-    // fallback encoding would produce incorrect bytes for these fonts.
+    // Symbolic fonts use the font's built-in encoding from the embedded font
+    // program rather than the PDF-level /Encoding entry or StandardEncoding
+    // (the implicit default for non-symbolic fonts).  PDF readers such as
+    // pdf_engine therefore IGNORE any /Encoding /Differences array for
+    // symbolic fonts — so a reverse map built from that array would map
+    // characters to the wrong byte codes.  We set differences_encoding to
+    // empty for symbolic fonts (when there is no ToUnicode CMap) so that
+    // encode_text_for_font hits the is_symbolic_font guard and returns Err
+    // rather than producing a byte sequence that pdf_engine cannot round-trip.
+    // Fixes #455.
     let flags = get_font_descriptor_flags(doc, &font_dict);
     let is_symbolic = flags & 4 != 0; // bit 3 (1-indexed) = Symbolic
+
+    // Build Differences-based encoding (used when there is no ToUnicode CMap).
+    // Only meaningful for single-byte (Builtin) non-symbolic fonts: symbolic
+    // fonts rely on the font program's built-in encoding, not the PDF-level
+    // Encoding dict, so building a reverse map from it would be incorrect.
+    let differences_encoding =
+        if to_unicode.is_none() && matches!(encoding, FontEncoding::Builtin) && !is_symbolic {
+            build_font_encoding(doc, &font_dict)
+        } else {
+            HashMap::new()
+        };
 
     FontInfo {
         to_unicode,
