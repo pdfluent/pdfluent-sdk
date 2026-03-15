@@ -461,15 +461,26 @@ fn encode_text_for_font(font_name: &str, text: &str, fonts: &FontMap) -> Result<
     }
 
     // No reverse map available (font has neither ToUnicode nor an explicit
-    // Encoding dict).  For subset fonts ("ABCDEF+" prefix) we refuse: we do
-    // not know which glyphs are present, so writing arbitrary bytes would
-    // produce unrenderable glyphs and a FAIL on round-trip verification.
-    // For full (non-subset) fonts we fall back to Latin-1, which is safe for
-    // standard Western fonts (WinAnsi / MacRoman / AdobeStandard share the
-    // same byte values for printable ASCII).
+    // Encoding dict).  Refuse for two classes of fonts where Latin-1 is unsafe:
+    //
+    // 1. Subset fonts ("ABCDEF+" prefix): only the glyphs used in the source
+    //    document are embedded; writing arbitrary bytes may produce unrenderable
+    //    glyphs and a FAIL on round-trip verification.
+    //
+    // 2. Symbolic fonts (FontDescriptor.Flags bit 3): these use the font's
+    //    built-in encoding, which may differ arbitrarily from StandardEncoding
+    //    (the PDF default for fonts without an Encoding entry).  A Latin-1
+    //    encoding of, e.g., '_' as 0x5F would fail round-trip verification if
+    //    the font maps 0x5F to a different glyph. Fixes #455.
     if fonts.is_subset_font(font_name) {
         return Err(ManipError::Other(format!(
             "font '{}' is a subset with no known encoding — cannot safely encode replacement text",
+            font_name
+        )));
+    }
+    if fonts.is_symbolic_font(font_name) {
+        return Err(ManipError::Other(format!(
+            "font '{}' is symbolic with no known encoding — Latin-1 fallback unsafe",
             font_name
         )));
     }

@@ -54,6 +54,12 @@ pub(crate) struct FontInfo {
     /// Subset fonts only contain the glyphs used in the document; encoding
     /// replacement text with arbitrary characters is unsafe.
     pub(crate) is_subset: bool,
+    /// True when the FontDescriptor Flags field has the Symbolic bit set (bit 3,
+    /// value 4).  Symbolic fonts use the font's built-in encoding rather than
+    /// the PDF-level Encoding or StandardEncoding.  Without a ToUnicode CMap or
+    /// explicit Encoding/Differences we cannot determine the correct byte→char
+    /// mapping, so Latin-1 fallback encoding is unsafe for these fonts.
+    pub(crate) is_symbolic: bool,
 }
 
 /// Font encoding type.
@@ -219,6 +225,19 @@ impl FontMap {
         self.fonts
             .get(font_name)
             .map(|info| info.is_subset)
+            .unwrap_or(false)
+    }
+
+    /// Returns true when the font has the Symbolic flag set in its FontDescriptor.
+    ///
+    /// Symbolic fonts use the font's built-in encoding rather than the PDF-level
+    /// Encoding entry or the StandardEncoding default.  Without a ToUnicode CMap
+    /// or explicit Differences we cannot reliably infer the byte→char mapping,
+    /// making Latin-1 fallback encoding unsafe.
+    pub(crate) fn is_symbolic_font(&self, font_name: &str) -> bool {
+        self.fonts
+            .get(font_name)
+            .map(|info| info.is_symbolic)
             .unwrap_or(false)
     }
 
@@ -658,6 +677,26 @@ fn get_page_font_dict(doc: &Document, page_id: ObjectId) -> HashMap<String, Obje
     result
 }
 
+/// Extract the Flags integer from a font's FontDescriptor (0 if absent).
+fn get_font_descriptor_flags(doc: &Document, font_dict: &lopdf::Dictionary) -> u32 {
+    let desc_obj = match font_dict.get(b"FontDescriptor").ok() {
+        Some(o) => o.clone(),
+        None => return 0,
+    };
+    let desc_dict = match desc_obj {
+        Object::Reference(id) => match doc.get_object(id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => return 0,
+        },
+        Object::Dictionary(ref d) => d.clone(),
+        _ => return 0,
+    };
+    match desc_dict.get(b"Flags").ok() {
+        Some(Object::Integer(i)) => *i as u32,
+        _ => 0,
+    }
+}
+
 /// Build FontInfo from a font dictionary in the document.
 fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
     let font_dict = match doc.get_object(*font_id) {
@@ -669,6 +708,7 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
                 widths: GlyphWidths::empty(),
                 differences_encoding: HashMap::new(),
                 is_subset: false,
+                is_symbolic: false,
             }
         }
     };
@@ -707,12 +747,21 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
         })
         .unwrap_or(false);
 
+    // Detect symbolic fonts via FontDescriptor.Flags bit 3 (value 4).
+    // Symbolic fonts use the font's built-in encoding, which may differ from
+    // StandardEncoding (the PDF default for fonts with no Encoding entry).
+    // Without a ToUnicode CMap or explicit Encoding/Differences, Latin-1
+    // fallback encoding would produce incorrect bytes for these fonts.
+    let flags = get_font_descriptor_flags(doc, &font_dict);
+    let is_symbolic = flags & 4 != 0; // bit 3 (1-indexed) = Symbolic
+
     FontInfo {
         to_unicode,
         encoding,
         widths,
         differences_encoding,
         is_subset,
+        is_symbolic,
     }
 }
 
