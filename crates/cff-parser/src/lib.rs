@@ -15,22 +15,22 @@
     clippy::expl_impl_clone_on_copy,
     clippy::unnecessary_cast,
     clippy::derivable_impls,
-    mismatched_lifetime_syntaxes,
+    mismatched_lifetime_syntaxes
 )]
 
-mod parser;
-mod index;
+mod argstack;
+mod cff;
 pub mod charset;
 mod charstring;
 mod dict;
-mod argstack;
-mod std_names;
 mod encoding;
-mod cff;
+mod index;
+mod parser;
+mod std_names;
 
-pub use cff::{Table, string_by_id};
-use parser::{FromData, Stream, TryNumFrom};
+pub use cff::{string_by_id, Table};
 pub use encoding::{Encoding, EncodingKind, Format1Range, STANDARD_ENCODING};
+use parser::{FromData, Stream, TryNumFrom};
 
 /// A type-safe wrapper for string ID.
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
@@ -74,12 +74,10 @@ pub enum CFFError {
     InvalidSeacCode,
 }
 
-
 #[inline]
 pub fn f32_abs(n: f32) -> f32 {
     n.abs()
 }
-
 
 #[inline]
 pub fn conv_subroutine_index(index: f32, bias: u16) -> Result<u32, CFFError> {
@@ -129,7 +127,6 @@ pub trait OutlineBuilder {
     fn close(&mut self);
 }
 
-
 struct DummyOutline;
 impl OutlineBuilder for DummyOutline {
     fn move_to(&mut self, _: f32, _: f32) {}
@@ -138,7 +135,6 @@ impl OutlineBuilder for DummyOutline {
     fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {}
     fn close(&mut self) {}
 }
-
 
 pub(crate) struct Builder<'a> {
     builder: &'a mut dyn OutlineBuilder,
@@ -259,8 +255,6 @@ impl RectF {
     }
 }
 
-
-
 /// A type-safe wrapper for glyph ID.
 #[repr(transparent)]
 #[derive(Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Default, Debug)]
@@ -274,5 +268,3 @@ impl FromData for GlyphId {
         u16::parse(data).map(GlyphId)
     }
 }
-
-

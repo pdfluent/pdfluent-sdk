@@ -1127,19 +1127,17 @@ mod tests {
 </x:xmpmeta>
 <?xpacket end="w"?>"#;
         let schemas = parse_extension_schemas(xmp);
-        check_property_namespaces(
-            xmp,
-            &schemas,
-            crate::PdfALevel::A2b,
-            &mut report,
-        );
+        check_property_namespaces(xmp, &schemas, crate::PdfALevel::A2b, &mut report);
         // `xmlns:` must not produce a false-positive namespace error
         let xmlns_errors: Vec<_> = report
             .issues
             .iter()
             .filter(|i| i.message.contains("xmlns"))
             .collect();
-        assert!(xmlns_errors.is_empty(), "unexpected xmlns: errors: {xmlns_errors:?}");
+        assert!(
+            xmlns_errors.is_empty(),
+            "unexpected xmlns: errors: {xmlns_errors:?}"
+        );
     }
 
     #[test]

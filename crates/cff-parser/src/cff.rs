@@ -63,13 +63,13 @@ mod operator {
 /// Enumerates some operators defined in the Adobe Technical Note #5176,
 /// Table 9 Top DICT Operator Entries
 mod top_dict_operator {
-    pub const VERSION: u16                      = 0;
-    pub const NOTICE: u16                       = 1;
-    pub const FULL_NAME: u16                    = 2;
-    pub const FAMILY_NAME: u16                  = 3;
-    pub const CHARSET_OFFSET: u16               = 15;
-    pub const ENCODING_OFFSET: u16              = 16;
-    pub const CHAR_STRINGS_OFFSET: u16          = 17;
+    pub const VERSION: u16 = 0;
+    pub const NOTICE: u16 = 1;
+    pub const FULL_NAME: u16 = 2;
+    pub const FAMILY_NAME: u16 = 3;
+    pub const CHARSET_OFFSET: u16 = 15;
+    pub const ENCODING_OFFSET: u16 = 16;
+    pub const CHAR_STRINGS_OFFSET: u16 = 17;
     pub const PRIVATE_DICT_SIZE_AND_OFFSET: u16 = 18;
     pub const FONT_MATRIX: u16 = 1207;
     pub const ROS: u16 = 1230;

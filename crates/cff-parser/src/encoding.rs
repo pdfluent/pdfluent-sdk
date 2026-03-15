@@ -49,7 +49,6 @@ pub const EXPERT_ENCODING: [u16; 256] = [
     363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378,
 ];
 
-
 #[derive(Clone, Copy, Debug)]
 pub struct Format1Range {
     pub first: u8,
@@ -178,7 +177,7 @@ impl Encoding<'_> {
                     result.insert(i as u8, StringId(STANDARD_ENCODING[i] as u16));
                 }
                 result
-            },
+            }
             EncodingKind::Expert => {
                 let mut result = HashMap::new();
                 let charset = charset.get_table();
@@ -187,7 +186,7 @@ impl Encoding<'_> {
                     result.insert(i as u8, StringId(EXPERT_ENCODING[i] as u16));
                 }
                 result
-            },
+            }
             EncodingKind::Format0(ref encoding) => {
                 let enc: Vec<_> = encoding.clone().into_iter().collect();
                 let charset = charset.get_table();
