@@ -6,9 +6,9 @@ pub enum TestTier {
     Fast,     // parse, metadata, geometry, bookmarks, signatures, form_fields, annotations (7)
     Standard, // Fast + render, text_extract, compliance, search (11)
     Full,     // All 25 modules: Standard + text_oracle, metadata_oracle, manipulation, images,
-              // sign_verify, sign_roundtrip, form_write, annot_create, content_roundtrip,
-              // text_replace, redact, pdfa_convert, ocr, render_oracle (feature-gated)
-    Oracle,   // only text_oracle, metadata_oracle
+    // sign_verify, sign_roundtrip, form_write, annot_create, content_roundtrip,
+    // text_replace, redact, pdfa_convert, ocr, render_oracle (feature-gated)
+    Oracle, // only text_oracle, metadata_oracle
 }
 
 impl TestTier {

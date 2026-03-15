@@ -25,4 +25,13 @@ fn main() {
     println!("Validation: {:?}", elapsed);
     println!("Issues: {}", report.issues.len());
     println!("Compliant: {}", report.compliant);
+    for issue in &report.issues {
+        println!(
+            "  [{:?}] {} — {}{}",
+            issue.severity,
+            issue.rule,
+            issue.message,
+            issue.location.as_deref().map(|l| format!(" ({})", l)).unwrap_or_default()
+        );
+    }
 }

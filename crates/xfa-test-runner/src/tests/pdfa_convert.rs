@@ -48,28 +48,32 @@ impl PdfTest for PdfAConvertTest {
 
         set_progress("parsing");
 
-        // 1. Check if already PDF/A-compliant — skip.
-        let pdf = match pdf_syntax::Pdf::new(pdf_data.to_vec()) {
-            Ok(p) => p,
-            Err(_) => {
+        // Early-out for files that are not PDFs at all (no %PDF- header).
+        // pdf-syntax and lopdf would both reject them; skip immediately. (#445)
+        if !pdf_data.windows(5).any(|w| w == b"%PDF-") {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("not a PDF file (missing %PDF header)".into()),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+
+        // 1. Check if already PDF/A-compliant — skip conversion.
+        // If pdf-syntax fails (e.g. XRef-stream PDF, corrupt xref), fall through
+        // to the lopdf load + repair path rather than giving up immediately. (#445)
+        match pdf_syntax::Pdf::new(pdf_data.to_vec()) {
+            Ok(pdf) if pdf_compliance::detect_pdfa_level(&pdf).is_some() => {
                 return TestResult {
-                    status: TestStatus::Skip,
-                    error_message: Some("pdf-syntax parse failed".into()),
+                    status: TestStatus::Pass,
+                    error_message: Some("already PDF/A".into()),
                     duration_ms: elapsed(),
                     oracle_score: None,
                     metadata: HashMap::new(),
                 };
             }
-        };
-
-        if pdf_compliance::detect_pdfa_level(&pdf).is_some() {
-            return TestResult {
-                status: TestStatus::Pass,
-                error_message: Some("already PDF/A".into()),
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata: HashMap::new(),
-            };
+            _ => {}
         }
 
         // 2. Load via lopdf for mutation.
@@ -392,6 +396,13 @@ impl PdfTest for PdfAConvertTest {
         set_progress("cidset");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::fix_cidset(&mut doc)
+        }));
+
+        // 3a6. Add CIDToGIDMap /Identity to CIDFontType2 dicts missing it.
+        // ISO 19005-2 §6.2.11.3.2 requires explicit CIDToGIDMap. (#439)
+        set_progress("cidtogidmap");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc)
         }));
 
         // 3b. Normalize color spaces: add sRGB OutputIntent if missing.
@@ -1104,7 +1115,9 @@ fn try_rebuild_xref_from_objects(data: &[u8]) -> Option<lopdf::Document> {
                 if let Some(obj_info) = parse_obj_marker(chunk) {
                     objects.push((obj_info.0, pos));
                     // Check if this object is /Type /Catalog.
-                    let obj_end = std::cmp::min(pos + 4096, data.len());
+                    // Use a 64 KiB window — large objects (e.g. signed PDFs with
+                    // embedded PKCS7 data) can push /Type/Catalog far from the header.
+                    let obj_end = std::cmp::min(pos + 65536, data.len());
                     let obj_data = &data[pos..obj_end];
                     let has_catalog = obj_data
                         .windows(b"/Type /Catalog".len())

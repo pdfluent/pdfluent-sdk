@@ -45,7 +45,7 @@ pub fn set_text_value(tree: &mut FieldTree, id: FieldId, text: &str) -> bool {
     if tree.effective_flags(id).read_only() {
         return false;
     }
-    let max_len = tree.get(id).max_len;
+    let max_len = tree.effective_max_len(id);
     let value = if let Some(ml) = max_len {
         text.chars().take(ml as usize).collect()
     } else {
@@ -57,12 +57,11 @@ pub fn set_text_value(tree: &mut FieldTree, id: FieldId, text: &str) -> bool {
 
 /// For comb fields, compute the width of each cell.
 pub fn comb_cell_width(tree: &FieldTree, id: FieldId) -> Option<f32> {
-    let node = tree.get(id);
-    let max_len = node.max_len?;
+    let max_len = tree.effective_max_len(id)?;
     if max_len == 0 {
         return None;
     }
-    let rect = node.rect?;
+    let rect = tree.get(id).rect?;
     Some((rect[2] - rect[0]) / max_len as f32)
 }
 

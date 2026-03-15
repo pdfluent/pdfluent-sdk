@@ -423,16 +423,20 @@ fn rebuild_tj_array_same_length(
 
 /// Encode Unicode text back to PDF string bytes for the given font.
 ///
-/// For builtin (single-byte) fonts without a ToUnicode CMap, we encode
-/// as Latin-1 (ISO 8859-1). For fonts with a reverse CMap, we attempt
-/// the reverse lookup. Returns an error if characters can't be encoded.
+/// Priority:
+/// 1. ToUnicode CMap reverse map (authoritative).
+/// 2. Differences/Encoding-based reverse map (for fonts without ToUnicode
+///    but with explicit Encoding in the PDF dict, e.g. WinAnsiEncoding).
+/// 3. Latin-1 fallback for full (non-subset) fonts only.  Subset fonts
+///    (BaseFont prefix like "ABCDEF+") have unknown glyph inventories,
+///    so we return an error to avoid silently writing unrenderable bytes.
 fn encode_text_for_font(font_name: &str, text: &str, fonts: &FontMap) -> Result<Vec<u8>> {
     if fonts.is_cid_font(font_name) {
         return encode_cid_text(font_name, text, fonts);
     }
 
-    // For fonts with a ToUnicode CMap, use the reverse CMap to encode.
-    // This respects font-specific Encoding/Differences and subset glyphs.
+    // Reverse map covers both ToUnicode CMap entries and Differences-based
+    // encoding entries (built in FontMap::build_reverse_map).
     let reverse = fonts.build_reverse_map(font_name);
     if !reverse.is_empty() {
         let mut bytes = Vec::with_capacity(text.len());
@@ -456,8 +460,21 @@ fn encode_text_for_font(font_name: &str, text: &str, fonts: &FontMap) -> Result<
         return Ok(bytes);
     }
 
-    // Fallback: Latin-1 encoding for fonts without a ToUnicode CMap
-    // (standard fonts with standard encoding).
+    // No reverse map available (font has neither ToUnicode nor an explicit
+    // Encoding dict).  For subset fonts ("ABCDEF+" prefix) we refuse: we do
+    // not know which glyphs are present, so writing arbitrary bytes would
+    // produce unrenderable glyphs and a FAIL on round-trip verification.
+    // For full (non-subset) fonts we fall back to Latin-1, which is safe for
+    // standard Western fonts (WinAnsi / MacRoman / AdobeStandard share the
+    // same byte values for printable ASCII).
+    if fonts.is_subset_font(font_name) {
+        return Err(ManipError::Other(format!(
+            "font '{}' is a subset with no known encoding — cannot safely encode replacement text",
+            font_name
+        )));
+    }
+
+    // Latin-1 fallback for full fonts without explicit Encoding.
     let mut bytes = Vec::with_capacity(text.len());
     for ch in text.chars() {
         let code = ch as u32;

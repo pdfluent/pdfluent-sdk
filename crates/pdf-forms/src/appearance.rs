@@ -130,7 +130,7 @@ pub fn generate_text_appearance(
 
     match kind {
         crate::text::TextFieldKind::Comb => {
-            if let Some(max_len) = node.max_len {
+            if let Some(max_len) = tree.effective_max_len(id) {
                 let cell_w = width / max_len as f32;
                 for (i, ch) in display_text.chars().take(max_len as usize).enumerate() {
                     let x = margin + cell_w * i as f32 + cell_w * 0.25;

@@ -17,6 +17,7 @@ pub mod bookmarks;
 pub mod content_editor;
 #[cfg(feature = "image-insert")]
 pub mod downsample;
+pub(crate) mod encoding_utils;
 pub mod encrypt;
 pub mod error;
 #[cfg(feature = "font-subset")]

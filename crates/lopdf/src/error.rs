@@ -1,14 +1,16 @@
 use thiserror::Error;
 
 use crate::encodings::cmap::UnicodeCMapError;
-use crate::{encryption, ObjectId};
+use crate::{ObjectId, encryption};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
     /// Lopdf does not (yet) implement a needed feature.
-    #[error("missing feature of lopdf: {0}; please open an issue at https://github.com/J-F-Liu/lopdf/ to let the developers know of your usecase")]
+    #[error(
+        "missing feature of lopdf: {0}; please open an issue at https://github.com/J-F-Liu/lopdf/ to let the developers know of your usecase"
+    )]
     Unimplemented(&'static str),
 
     /// An Object has the wrong type, e.g. the Object is an Array where a Name would be expected.
@@ -18,7 +20,10 @@ pub enum Error {
         found: &'static str,
     },
     #[error("dictionary has wrong type: ")]
-    DictType { expected: &'static str, found: String },
+    DictType {
+        expected: &'static str,
+        found: String,
+    },
     /// PDF document is already encrypted.
     #[error("PDF document is already encrypted")]
     AlreadyEncrypted,

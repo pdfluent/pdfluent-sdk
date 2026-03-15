@@ -1,16 +1,15 @@
-use crate::cmap_section::{ArrayOfTargetStrings, CMapParseError, CMapSection, CodeLen, SourceCode, SourceRangeMapping};
-use crate::parser::{comment, dict_dup, dictionary, eol, hex_char, name, NomResult, ParserInput};
+use crate::cmap_section::{
+    ArrayOfTargetStrings, CMapParseError, CMapSection, CodeLen, SourceCode, SourceRangeMapping,
+};
+use crate::parser::{NomResult, ParserInput, comment, dict_dup, dictionary, eol, hex_char, name};
+use nom::Parser;
 use nom::branch::alt;
 pub use nom::bytes::complete::tag;
 use nom::combinator::{map, opt};
 use nom::error::ParseError;
-use nom::multi::{fold_many0, fold_many1, fold_many_m_n, many0, many1, many_m_n, separated_list1};
+use nom::multi::{fold_many_m_n, fold_many0, fold_many1, many_m_n, many0, many1, separated_list1};
 use nom::sequence::{pair, preceded, separated_pair, terminated};
-use nom::Parser;
-use nom::{
-    character::complete::digit1,
-    sequence::delimited,
-};
+use nom::{character::complete::digit1, sequence::delimited};
 
 impl<E> From<nom::Err<E>> for CMapParseError {
     fn from(err: nom::Err<E>) -> Self {
@@ -34,7 +33,8 @@ fn cmap_stream(input: ParserInput) -> NomResult<Vec<CMapSection>> {
         cidinit_procset,
         cmap_resource_dictionary,
         (tag(&b"end"[..]), multispace0),
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 fn space0(input: ParserInput) -> NomResult<()> {
@@ -71,11 +71,20 @@ fn cidinit_procset(input: ParserInput) -> NomResult<()> {
         space1,
         tag(&b"begin"[..]),
         multispace1,
-    ).parse(input).map(|(i, _)| (i, ()))
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
 }
 
 fn cmap_resource_dictionary(input: ParserInput) -> NomResult<Vec<CMapSection>> {
-    let begin_parser = (digit1, space1, tag(&b"dict"[..]), space1, tag(&b"begin"[..]), multispace1);
+    let begin_parser = (
+        digit1,
+        space1,
+        tag(&b"dict"[..]),
+        space1,
+        tag(&b"begin"[..]),
+        multispace1,
+    );
     let end_parser = (tag(&b"end"[..]), multispace1);
     delimited(begin_parser, cmap_data, end_parser).parse(input)
 }
@@ -99,7 +108,8 @@ fn cmap_data(input: ParserInput) -> NomResult<Vec<CMapSection>> {
         (tag(&b"begincmap"[..]), multispace1),
         preceded(cmap_metadata, cmap_codespace_and_mappings),
         cmap_end,
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 fn cmap_metadata(input: ParserInput) -> NomResult<()> {
@@ -117,26 +127,57 @@ fn cid_system_info(input: ParserInput) -> NomResult<()> {
         multispace1,
         tag(&b"def"[..]),
         multispace1,
-    ).parse(input).map(|(i, _)| (i, ()))
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
 }
 
 fn cmap_name(input: ParserInput) -> NomResult<()> {
-    (tag(&b"/CMapName"[..]), space0, name, space1, tag(&b"def"[..]), multispace1).parse(input).map(|(i, _)| (i, ()))
+    (
+        tag(&b"/CMapName"[..]),
+        space0,
+        name,
+        space1,
+        tag(&b"def"[..]),
+        multispace1,
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
 }
 
 fn cmap_type(input: ParserInput) -> NomResult<()> {
-    (tag(&b"/CMapType"[..]), space1, digit1, space1, tag(&b"def"[..]), multispace1).parse(input).map(|(i, _)| (i, ()))
+    (
+        tag(&b"/CMapType"[..]),
+        space1,
+        digit1,
+        space1,
+        tag(&b"def"[..]),
+        multispace1,
+    )
+        .parse(input)
+        .map(|(i, _)| (i, ()))
 }
 
 fn cmap_codespace_and_mappings(input: ParserInput) -> NomResult<Vec<CMapSection>> {
-    many1(alt((codespace_range_section, bf_char_section, bf_range_section))).parse(input)
+    many1(alt((
+        codespace_range_section,
+        bf_char_section,
+        bf_range_section,
+    )))
+    .parse(input)
 }
 
 fn codespace_range_section(input: ParserInput) -> NomResult<CMapSection> {
-    let begin_section = (digit1, space1, tag(&b"begincodespacerange"[..]), multispace1);
+    let begin_section = (
+        digit1,
+        space1,
+        tag(&b"begincodespacerange"[..]),
+        multispace1,
+    );
     let end_section = (tag(&b"endcodespacerange"[..]), multispace1);
     let parse_range = delimited(space0, code_range_pair, multispace1);
-    let (rest_of_input, ranges_result) = delimited(begin_section, many1(parse_range), end_section).parse(input)?;
+    let (rest_of_input, ranges_result) =
+        delimited(begin_section, many1(parse_range), end_section).parse(input)?;
     Ok((rest_of_input, CMapSection::CsRange(ranges_result)))
 }
 
@@ -150,7 +191,9 @@ fn code_range_pair(input: ParserInput) -> NomResult<(SourceCode, SourceCode, Cod
     }
 }
 
-fn create_code_len_err<'a, T, E: ParseError<ParserInput<'a>>>(input: ParserInput<'a>) -> Result<T, nom::Err<E>> {
+fn create_code_len_err<'a, T, E: ParseError<ParserInput<'a>>>(
+    input: ParserInput<'a>,
+) -> Result<T, nom::Err<E>> {
     Err(nom::Err::Failure(nom::error::make_error(
         input,
         nom::error::ErrorKind::LengthValue,
@@ -158,7 +201,8 @@ fn create_code_len_err<'a, T, E: ParseError<ParserInput<'a>>>(input: ParserInput
 }
 
 fn source_code(input: ParserInput) -> NomResult<(SourceCode, CodeLen)> {
-    let (rest_of_input, bytes) = delimited(tag(&b"<"[..]), many_m_n(1, 4, hex_char), tag(&b">"[..])).parse(input)?;
+    let (rest_of_input, bytes) =
+        delimited(tag(&b"<"[..]), many_m_n(1, 4, hex_char), tag(&b">"[..])).parse(input)?;
     let code_len = bytes.len();
     let source_code = bytes
         .into_iter()
@@ -170,23 +214,36 @@ fn source_code(input: ParserInput) -> NomResult<(SourceCode, CodeLen)> {
 }
 
 fn hex_u16(input: ParserInput) -> NomResult<u16> {
-    map(pair(hex_char, hex_char), |(h1, h2)| h1 as u16 * 256 + h2 as u16).parse(input)
+    map(pair(hex_char, hex_char), |(h1, h2)| {
+        h1 as u16 * 256 + h2 as u16
+    })
+    .parse(input)
 }
 
 fn bf_char_section(input: ParserInput) -> NomResult<CMapSection> {
     let begin_section = (digit1, space1, tag(&b"beginbfchar"[..]), multispace1);
     let end_section = (tag(&b"endbfchar"[..]), multispace1);
-    let bf_char_line = delimited(space0, separated_pair(source_code, space0, target_string), multispace1);
+    let bf_char_line = delimited(
+        space0,
+        separated_pair(source_code, space0, target_string),
+        multispace1,
+    );
     // Some real-world ToUnicode CMaps contain sections like `0 beginbfchar ... endbfchar`.
     // Accept empty sections to avoid failing extraction (specifically calling extract_text)
-    let (rest_of_input, bf_char_mappings) = delimited(begin_section, many0(bf_char_line), end_section).parse(input)?;
+    let (rest_of_input, bf_char_mappings) =
+        delimited(begin_section, many0(bf_char_line), end_section).parse(input)?;
     Ok((rest_of_input, CMapSection::BfChar(bf_char_mappings)))
 }
 
 fn target_string(input: ParserInput) -> NomResult<Vec<u16>> {
     // according to specification dstString can be up to 512 bytes
     // in ToUnicode cmap these should be 2-byte big endian Unicode values
-    delimited(tag(&b"<"[..]), many_m_n(1, 256, terminated(hex_u16, multispace0)), tag(&b">"[..])).parse(input)
+    delimited(
+        tag(&b"<"[..]),
+        many_m_n(1, 256, terminated(hex_u16, multispace0)),
+        tag(&b">"[..]),
+    )
+    .parse(input)
 }
 
 fn bf_range_section(input: ParserInput) -> NomResult<CMapSection> {
@@ -194,7 +251,8 @@ fn bf_range_section(input: ParserInput) -> NomResult<CMapSection> {
     let end_section = (tag(&b"endbfrange"[..]), multispace1);
     // Some real-world ToUnicode CMaps contain sections like `0 beginbfrange ... endbfrange`.
     // Accept empty sections to avoid failing extraction (specifically calling extract_text)
-    let (rest_of_input, bf_range_mappings) = delimited(begin_section, many0(bf_range_line), end_section).parse(input)?;
+    let (rest_of_input, bf_range_mappings) =
+        delimited(begin_section, many0(bf_range_line), end_section).parse(input)?;
     Ok((rest_of_input, CMapSection::BfRange(bf_range_mappings)))
 }
 
@@ -212,7 +270,8 @@ fn range_target_array(input: ParserInput) -> NomResult<ArrayOfTargetStrings> {
         (tag(&b"["[..]), space0),
         separated_list1(space1, target_string),
         (space0, tag(&b"]"[..])),
-    ).parse(input)
+    )
+    .parse(input)
 }
 
 #[cfg(test)]
@@ -293,7 +352,13 @@ mod tests {
         let data = b"<080f> <08ff> [ <09000110> <08fe> ] \n";
         let (rem, res) = bf_range_line(test_span(data)).unwrap();
         assert_eq!(*rem, b"");
-        assert_eq!(res, ((0x080f, 0x08ff, 2), vec![vec![0x0900, 0x0110], vec![0x08fe]]));
+        assert_eq!(
+            res,
+            (
+                (0x080f, 0x08ff, 2),
+                vec![vec![0x0900, 0x0110], vec![0x08fe]]
+            )
+        );
     }
     #[test]
     fn parse_invalid_bfrange_line() {
@@ -326,7 +391,10 @@ mod tests {
             CMapSection::BfRange(vec![
                 ((0x0000, 0x000f, 2), vec![vec![0x0000]]),
                 ((0x0010, 0x001f, 2), vec![vec![0x0000, 0x0010]]),
-                ((0x0020, 0x002f, 2), vec![vec![0x0000], vec![0x0000, 0x0010]]),
+                (
+                    (0x0020, 0x002f, 2),
+                    vec![vec![0x0000], vec![0x0000, 0x0010]]
+                ),
             ])
         );
     }

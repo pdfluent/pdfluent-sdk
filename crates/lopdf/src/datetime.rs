@@ -2,7 +2,7 @@ use super::Object;
 
 #[cfg(feature = "chrono")]
 mod chrono_impl {
-    use crate::{datetime::convert_utc_offset, Object};
+    use crate::{Object, datetime::convert_utc_offset};
     use chrono::prelude::*;
 
     impl From<DateTime<Local>> for Object {
@@ -39,7 +39,7 @@ mod chrono_impl {
 
 #[cfg(feature = "jiff")]
 mod jiff_impl {
-    use crate::{datetime::convert_utc_offset, Object};
+    use crate::{Object, datetime::convert_utc_offset};
     use jiff::{Timestamp, Zoned};
 
     impl From<Zoned> for Object {
@@ -83,10 +83,16 @@ mod jiff_impl {
             //
             // In all cases we return a `Zoned` object here to preserve the timezone.
             Zoned::strptime("%Y%m%d%H%M%S%#z", &value.0)
-                .or_else(|_| DateTime::strptime("%Y%m%d%H%M%SZ", &value.0).and_then(|dt| dt.in_tz("UTC")))
+                .or_else(|_| {
+                    DateTime::strptime("%Y%m%d%H%M%SZ", &value.0).and_then(|dt| dt.in_tz("UTC"))
+                })
                 .or_else(|_| Zoned::strptime("%Y%m%d%H%M%#z", &value.0))
-                .or_else(|_| DateTime::strptime("%Y%m%d%H%MZ", &value.0).and_then(|dt| dt.in_tz("UTC")))
-                .or_else(|_| Date::strptime("%Y%m%d", &value.0).and_then(|dt| dt.at(0, 0, 0, 0).in_tz("GMT")))
+                .or_else(|_| {
+                    DateTime::strptime("%Y%m%d%H%MZ", &value.0).and_then(|dt| dt.in_tz("UTC"))
+                })
+                .or_else(|_| {
+                    Date::strptime("%Y%m%d", &value.0).and_then(|dt| dt.at(0, 0, 0, 0).in_tz("GMT"))
+                })
         }
     }
 }
@@ -94,7 +100,7 @@ mod jiff_impl {
 #[cfg(feature = "time")]
 mod time_impl {
     use crate::Object;
-    use time::{format_description::FormatItem, OffsetDateTime, Time};
+    use time::{OffsetDateTime, Time, format_description::FormatItem};
 
     impl From<Time> for Object {
         fn from(date: Time) -> Self {
@@ -102,7 +108,8 @@ mod time_impl {
             Object::string_literal(
                 format!(
                     "D:{}",
-                    date.format(&FormatItem::Literal("%Y%m%d%H%M%SZ".as_bytes())).unwrap()
+                    date.format(&FormatItem::Literal("%Y%m%d%H%M%SZ".as_bytes()))
+                        .unwrap()
                 )
                 .into_bytes(),
             )

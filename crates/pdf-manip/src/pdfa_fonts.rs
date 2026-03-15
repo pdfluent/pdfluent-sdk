@@ -4416,6 +4416,39 @@ fn find_cff_glyph_width_by_name(
     None
 }
 
+/// Add CIDToGIDMap /Identity to CIDFontType2 dicts that are missing it.
+///
+/// ISO 19005-2 §6.2.11.3.2 requires that CIDFontType2 (TrueType) dicts
+/// have an explicit CIDToGIDMap entry. The PDF spec defaults to Identity
+/// when absent, but veraPDF treats the absence as a violation. (#439)
+pub fn fix_missing_cidtogidmap(doc: &mut Document) -> usize {
+    // Collect all object IDs that are CIDFontType2 with no CIDToGIDMap.
+    let ids_to_fix: Vec<lopdf::ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            let dict = obj.as_dict().ok()?;
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+            if subtype != "CIDFontType2" {
+                return None;
+            }
+            if dict.get(b"CIDToGIDMap").is_ok() {
+                return None; // already has CIDToGIDMap
+            }
+            Some(id)
+        })
+        .collect();
+
+    let count = ids_to_fix.len();
+    for id in ids_to_fix {
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+            // Default per PDF spec is Identity, make it explicit for PDF/A compliance.
+            dict.set("CIDToGIDMap", Object::Name(b"Identity".to_vec()));
+        }
+    }
+    count
+}
+
 /// Fix CIDSet streams for all CID fonts (6.2.11.8:1).
 ///
 /// CIDSet must be a stream containing a bitmap covering all CIDs present
@@ -4441,7 +4474,7 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
     let mut fixed = 0;
 
     for font_id in font_ids {
-        let (subtype, fd_id) = {
+        let (subtype, base_font, fd_id) = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
                 continue;
             };
@@ -4449,11 +4482,12 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
             if subtype != "CIDFontType0" && subtype != "CIDFontType2" {
                 continue;
             }
+            let base_font = get_name(dict, b"BaseFont").unwrap_or_default();
             let fd_id = match dict.get(b"FontDescriptor").ok() {
                 Some(Object::Reference(id)) => *id,
                 _ => continue,
             };
-            (subtype, fd_id)
+            (subtype, base_font, fd_id)
         };
 
         let has_cidset = doc
@@ -4468,7 +4502,52 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
             })
             .unwrap_or(false);
 
-        if !has_cidset {
+        // For CIDFontType0 (CFF-based CID fonts): generate CIDSet from the CFF
+        // charset. Required for subset fonts (XXXXXX+ prefix) per ISO 19005-2
+        // §6.2.11.5:1. We enumerate all GIDs and collect their CIDs from the CFF
+        // charset to build a correct bitmap. (#439)
+        if subtype == "CIDFontType0" {
+            let is_subset = {
+                let b = base_font.as_bytes();
+                b.len() >= 7 && b[6] == b'+' && b[..6].iter().all(|x| x.is_ascii_uppercase())
+            };
+            if is_subset {
+                let cidset = build_cidset_from_cff(doc, fd_id);
+                if let Some(bytes) = cidset {
+                    let new_id = doc.new_object_id();
+                    let mut sd = lopdf::Dictionary::new();
+                    sd.set("Length", Object::Integer(bytes.len() as i64));
+                    doc.objects
+                        .insert(new_id, Object::Stream(lopdf::Stream::new(sd, bytes)));
+                    if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                        fd.set("CIDSet", Object::Reference(new_id));
+                    }
+                    fixed += 1;
+                } else if has_cidset {
+                    // Can't generate correct CIDSet → remove (wrong > absent).
+                    if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                        fd.remove(b"CIDSet");
+                    }
+                    fixed += 1;
+                }
+            } else if has_cidset {
+                // Non-subset CIDFontType0: CIDSet not required; remove if present.
+                if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                    fd.remove(b"CIDSet");
+                }
+                fixed += 1;
+            }
+            continue;
+        }
+
+        // For CIDFontType2 without a CIDSet: only generate one for subset fonts
+        // (XXXXXX+ prefix), which require CIDSet per ISO 19005-2. Non-subset fonts
+        // don't need one. (#439)
+        let is_subset = {
+            let b = base_font.as_bytes();
+            b.len() >= 7 && b[6] == b'+' && b[..6].iter().all(|x| x.is_ascii_uppercase())
+        };
+        if !has_cidset && !is_subset {
             continue;
         }
 
@@ -4639,6 +4718,37 @@ fn cidset_bitstream(num_glyphs: u16) -> Vec<u8> {
         bits[num_bytes - 1] = 0xFFu8 << (8 - remainder);
     }
     bits
+}
+
+/// Build a CIDSet bitmap for a CIDFontType0 (CFF-based CID font) by enumerating
+/// all glyphs and collecting their CIDs from the CFF charset. (#439)
+///
+/// Returns None if the CFF data can't be parsed or is not a CID-keyed font.
+fn build_cidset_from_cff(doc: &Document, fd_id: ObjectId) -> Option<Vec<u8>> {
+    let data = read_embedded_font_data(doc, fd_id)?;
+    let table = cff_parser::Table::parse(&data)?;
+    let n = table.number_of_glyphs();
+    let mut max_cid = 0u16;
+    let mut cids: Vec<u16> = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        // glyph_cid returns None for SID-keyed (non-CID) fonts; skip those.
+        if let Some(cid) = table.glyph_cid(cff_parser::GlyphId(i)) {
+            if cid > max_cid {
+                max_cid = cid;
+            }
+            cids.push(cid);
+        }
+    }
+    if cids.is_empty() {
+        return None;
+    }
+    // Bitmap: bit k (MSB-first within each byte) represents CID k.
+    let num_bytes = (max_cid as usize / 8) + 1;
+    let mut bits = vec![0u8; num_bytes];
+    for cid in cids {
+        bits[cid as usize / 8] |= 0x80u8 >> (cid % 8);
+    }
+    Some(bits)
 }
 
 /// Fix font width mismatches between /Widths array and embedded font program (6.2.11.5:1).
@@ -8841,19 +8951,7 @@ pub fn fix_existing_symbolic_truetype_cmaps(doc: &mut Document) -> usize {
             (fd_id, ff2_id)
         };
 
-        let before = match doc.objects.get(&ff2_id) {
-            Some(Object::Stream(s)) => s.content.clone(),
-            _ => continue,
-        };
         fix_symbolic_truetype_cmap(doc, ff2_id);
-        let after = match doc.objects.get(&ff2_id) {
-            Some(Object::Stream(s)) => s.content.clone(),
-            _ => continue,
-        };
-        if before != after {
-            fixed += 1;
-            continue;
-        }
 
         let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
             continue;

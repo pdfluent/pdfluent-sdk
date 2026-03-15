@@ -278,6 +278,22 @@ impl FieldTree {
         self.get(id).flags
     }
 
+    /// Walk up the tree to find the effective MaxLen.
+    ///
+    /// `/MaxLen` is treated as inheritable (like `/FT`, `/DA`, `/Q`): if a
+    /// widget does not carry it directly, the value propagates from the nearest
+    /// ancestor that does.
+    pub fn effective_max_len(&self, id: FieldId) -> Option<u32> {
+        let mut cur = Some(id);
+        while let Some(cid) = cur {
+            if let Some(ml) = self.get(cid).max_len {
+                return Some(ml);
+            }
+            cur = self.get(cid).parent;
+        }
+        None
+    }
+
     /// Find a terminal field by fully qualified name.
     pub fn find_by_name(&self, name: &str) -> Option<FieldId> {
         self.terminal_fields()
@@ -358,5 +374,37 @@ mod tests {
         tree.document_da = Some("0 g /Helv 12 Tf".into());
         let id = tree.alloc(make_node("field"));
         assert_eq!(tree.effective_da(id), Some("0 g /Helv 12 Tf"));
+    }
+
+    #[test]
+    fn inherited_max_len() {
+        let mut tree = FieldTree::new();
+        // Parent carries MaxLen; child does not.
+        let mut parent = make_node("group");
+        parent.max_len = Some(10);
+        let parent_id = tree.alloc(parent);
+
+        let mut child = make_node("field");
+        child.parent = Some(parent_id);
+        let child_id = tree.alloc(child);
+        tree.get_mut(parent_id).children.push(child_id);
+
+        assert_eq!(tree.effective_max_len(child_id), Some(10));
+    }
+
+    #[test]
+    fn own_max_len_overrides_parent() {
+        let mut tree = FieldTree::new();
+        let mut parent = make_node("group");
+        parent.max_len = Some(10);
+        let parent_id = tree.alloc(parent);
+
+        let mut child = make_node("field");
+        child.parent = Some(parent_id);
+        child.max_len = Some(5);
+        let child_id = tree.alloc(child);
+        tree.get_mut(parent_id).children.push(child_id);
+
+        assert_eq!(tree.effective_max_len(child_id), Some(5));
     }
 }

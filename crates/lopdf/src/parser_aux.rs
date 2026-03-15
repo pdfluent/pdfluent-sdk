@@ -1,6 +1,8 @@
 use log::warn;
 
+use crate::{Dictionary, Object, ObjectId, Stream, parser};
 use crate::{
+    Error, Result,
     content::{Content, Operation},
     document::Document,
     encodings::Encoding,
@@ -8,9 +10,7 @@ use crate::{
     object::Object::Name,
     parser::ParserInput,
     xref::{Xref, XrefEntry, XrefType},
-    Error, Result,
 };
-use crate::{parser, Dictionary, Object, ObjectId, Stream};
 use std::{
     collections::BTreeMap,
     io::{Cursor, Read},
@@ -33,13 +33,20 @@ impl Stream {
 
 impl Document {
     /// Get decoded page content;
-    pub fn get_and_decode_page_content(&self, page_id: ObjectId) -> Result<Content<Vec<Operation>>> {
+    pub fn get_and_decode_page_content(
+        &self,
+        page_id: ObjectId,
+    ) -> Result<Content<Vec<Operation>>> {
         let content_data = self.get_page_content(page_id)?;
         Content::decode(&content_data)
     }
 
     /// Add content to a page. All existing content will be unchanged.
-    pub fn add_to_page_content(&mut self, page_id: ObjectId, content: Content<Vec<Operation>>) -> Result<()> {
+    pub fn add_to_page_content(
+        &mut self,
+        page_id: ObjectId,
+        content: Content<Vec<Operation>>,
+    ) -> Result<()> {
         let content_data = Content::encode(&content)?;
         self.add_page_contents(page_id, content_data)?;
         Ok(())
@@ -71,11 +78,15 @@ impl Document {
     }
 
     fn extract_text_chunks_from_page(
-        &self, pages: &BTreeMap<u32, (u32, u16)>, page_number: u32,
+        &self,
+        pages: &BTreeMap<u32, (u32, u16)>,
+        page_number: u32,
     ) -> Result<Vec<Result<String>>> {
         let mut collected_chunks_and_errs: Vec<std::result::Result<String, Error>> = Vec::new();
 
-        let page_id = *pages.get(&page_number).ok_or(Error::PageNumberNotFound(page_number))?;
+        let page_id = *pages
+            .get(&page_number)
+            .ok_or(Error::PageNumberNotFound(page_number))?;
         let fonts = self.get_page_fonts(page_id)?;
         let encodings: BTreeMap<Vec<u8>, Encoding> = fonts
             .into_iter()
@@ -139,7 +150,11 @@ impl Document {
     }
 
     pub fn replace_text(
-        &mut self, page_number: u32, text: &str, other_text: &str, default_str: Option<&str>,
+        &mut self,
+        page_number: u32,
+        text: &str,
+        other_text: &str,
+        default_str: Option<&str>,
     ) -> Result<()> {
         let page = page_number.saturating_sub(1) as usize;
         let page_id = self
@@ -164,14 +179,18 @@ impl Document {
                         .as_name()?;
                     current_encoding = encodings.get(current_font);
                 }
-                "Tj" | "TJ" => {
-                    match current_encoding {
-                        Some(encoding) => {
-                            try_to_replace_encoded_text(operation, encoding, text, other_text, default_str.unwrap_or(""))?
-                        }
-                        None => {
-                            warn!("Could not decode extracted text, some of the occurances might not be properly replaced")
-                        }
+                "Tj" | "TJ" => match current_encoding {
+                    Some(encoding) => try_to_replace_encoded_text(
+                        operation,
+                        encoding,
+                        text,
+                        other_text,
+                        default_str.unwrap_or(""),
+                    )?,
+                    None => {
+                        warn!(
+                            "Could not decode extracted text, some of the occurances might not be properly replaced"
+                        )
                     }
                 },
                 _ => {}
@@ -193,18 +212,18 @@ impl Document {
             .page_iter()
             .nth(page)
             .ok_or(Error::PageNumberNotFound(page_number))?;
-        
+
         let encodings: BTreeMap<Vec<u8>, Encoding> = self
             .get_page_fonts(page_id)?
             .into_iter()
             .map(|(name, font)| font.get_font_encoding(self).map(|it| (name, it)))
             .collect::<Result<BTreeMap<Vec<u8>, Encoding>>>()?;
-        
+
         let content_data = self.get_page_content(page_id)?;
         let mut content = Content::decode(&content_data)?;
         let mut current_encoding = None;
         let mut replacement_count = 0;
-        
+
         for operation in &mut content.operations {
             match operation.operator.as_ref() {
                 "Tf" => {
@@ -231,17 +250,21 @@ impl Document {
                 _ => {}
             }
         }
-        
+
         if replacement_count > 0 {
             let modified_content = content.encode()?;
             self.change_page_content(page_id, modified_content)?;
         }
-        
+
         Ok(replacement_count)
     }
 
     pub fn insert_image(
-        &mut self, page_id: ObjectId, img_object: Stream, position: (f32, f32), size: (f32, f32),
+        &mut self,
+        page_id: ObjectId,
+        img_object: Stream,
+        position: (f32, f32),
+        size: (f32, f32),
     ) -> Result<()> {
         let img_id = self.add_object(img_object);
         let img_name = format!("X{}", img_id.0);
@@ -261,9 +284,10 @@ impl Document {
                 position.1.into(),
             ],
         ));
-        content
-            .operations
-            .push(Operation::new("Do", vec![Name(img_name.as_bytes().to_vec())]));
+        content.operations.push(Operation::new(
+            "Do",
+            vec![Name(img_name.as_bytes().to_vec())],
+        ));
         content.operations.push(Operation::new("Q", vec![]));
 
         self.change_page_content(page_id, content.encode()?)
@@ -276,9 +300,10 @@ impl Document {
         let mut content = self.get_and_decode_page_content(page_id)?;
         content.operations.insert(0, Operation::new("q", vec![]));
         content.operations.push(Operation::new("Q", vec![]));
-        content
-            .operations
-            .push(Operation::new("Do", vec![Name(form_name.as_bytes().to_vec())]));
+        content.operations.push(Operation::new(
+            "Do",
+            vec![Name(form_name.as_bytes().to_vec())],
+        ));
         let modified_content = content.encode()?;
         self.add_xobject(page_id, form_name, form_id)?;
 
@@ -326,7 +351,10 @@ pub fn substr(s: &str, start: usize, len: usize) -> &str {
     &s[start_idx..end_idx]
 }
 pub fn substring(s: &str, start: usize) -> &str {
-    s.char_indices().nth(start).map(|(idx, _)| &s[idx..]).unwrap_or("")
+    s.char_indices()
+        .nth(start)
+        .map(|(idx, _)| &s[idx..])
+        .unwrap_or("")
 }
 
 fn encode(encoding: &Encoding, txt: &str, default_str: &str) -> Vec<u8> {
@@ -349,7 +377,11 @@ fn encode(encoding: &Encoding, txt: &str, default_str: &str) -> Vec<u8> {
     }
 }
 fn try_to_replace_encoded_text(
-    operation: &mut Operation, encoding: &Encoding, text_to_replace: &str, replacement: &str, default_str: &str,
+    operation: &mut Operation,
+    encoding: &Encoding,
+    text_to_replace: &str,
+    replacement: &str,
+    default_str: &str,
 ) -> Result<()> {
     for operand in &mut operation.operands {
         match operand {
@@ -401,7 +433,7 @@ fn replace_partial_in_operation(
     default_char: &str,
 ) -> Result<usize> {
     let mut replacement_count = 0;
-    
+
     for operand in &mut operation.operands {
         match operand {
             Object::String(bytes, _) => {
@@ -425,7 +457,7 @@ fn replace_partial_in_operation(
             _ => {}
         }
     }
-    
+
     Ok(replacement_count)
 }
 
@@ -449,20 +481,16 @@ fn replace_partial_in_array(
             }
         }
     }
-    
+
     Ok(replacement_count)
 }
 
-fn encode_with_fallback(
-    encoding: &Encoding,
-    text: &str,
-    default_char: &str,
-) -> Vec<u8> {
+fn encode_with_fallback(encoding: &Encoding, text: &str, default_char: &str) -> Vec<u8> {
     let encoded = Document::encode_text(encoding, text);
     if !encoded.is_empty() {
         return encoded;
     }
-    
+
     encode(encoding, text, default_char)
 }
 
@@ -528,9 +556,14 @@ pub fn decode_xref_stream(mut stream: Stream) -> Result<(Xref, Dictionary)> {
                     }
                     2 => {
                         // compressed object
-                        let container = read_big_endian_integer(&mut reader, bytes2.as_mut_slice())?;
-                        let index = read_big_endian_integer(&mut reader, bytes3.as_mut_slice())? as u16;
-                        xref.insert((start + j) as u32, XrefEntry::Compressed { container, index });
+                        let container =
+                            read_big_endian_integer(&mut reader, bytes2.as_mut_slice())?;
+                        let index =
+                            read_big_endian_integer(&mut reader, bytes3.as_mut_slice())? as u16;
+                        xref.insert(
+                            (start + j) as u32,
+                            XrefEntry::Compressed { container, index },
+                        );
                     }
                     _ => {}
                 }
@@ -568,8 +601,8 @@ mod tests {
     #[cfg(not(feature = "async"))]
     #[test]
     fn load_and_save() {
-        use crate::creator::tests::{create_document, save_document};
         use crate::Document;
+        use crate::creator::tests::{create_document, save_document};
 
         // test load_from() and save_to()
         use std::fs::File;
@@ -628,7 +661,7 @@ mod tests {
         let mut doc = create_document_with_texts(&["Hello World! Hello Universe!"]);
         let replacements = doc.replace_partial_text(1, "Hello", "Hi", None).unwrap();
         assert_eq!(replacements, 2); // Should replace both occurrences
-        
+
         let extracted_text = doc.extract_text(&[1]).unwrap();
         assert!(extracted_text.contains("Hi World! Hi Universe!"));
     }

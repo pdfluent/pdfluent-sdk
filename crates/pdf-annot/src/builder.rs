@@ -928,7 +928,10 @@ enum AnnotsAction {
 
 /// Add an annotation reference to a page's /Annots array.
 ///
-/// Handles both inline arrays and indirect (referenced) arrays.
+/// Handles both inline arrays and indirect (referenced) arrays.  When the
+/// indirect Annots array cannot be resolved (e.g. it lives in a compressed
+/// ObjStm that lopdf failed to expand), falls back to replacing the /Annots
+/// entry with a new inline array so the annotation is never silently dropped.
 #[cfg(feature = "write")]
 pub fn add_annotation_to_page(
     doc: &mut Document,
@@ -941,10 +944,11 @@ pub fn add_annotation_to_page(
         .get(&page_num)
         .ok_or(AnnotBuildError::PageOutOfRange(page_num, page_count))?;
 
-    // First, check what kind of /Annots the page has.
+    // Read the current /Annots entry using get_dictionary (follows indirect
+    // refs, handles compressed-stream pages).
     let annots_action = {
-        if let Some(Object::Dictionary(page_dict)) = doc.objects.get(&page_id) {
-            match page_dict.get(b"Annots").ok() {
+        match doc.get_dictionary(page_id) {
+            Ok(page_dict) => match page_dict.get(b"Annots").ok() {
                 Some(Object::Array(arr)) => {
                     let mut new_arr = arr.clone();
                     new_arr.push(Object::Reference(annot_id));
@@ -952,21 +956,38 @@ pub fn add_annotation_to_page(
                 }
                 Some(Object::Reference(r)) => AnnotsAction::AppendIndirect(*r),
                 _ => AnnotsAction::SetArray(vec![Object::Reference(annot_id)]),
-            }
-        } else {
-            return Ok(());
+            },
+            // Page dict not accessible: still attempt to set an inline Annots.
+            Err(_) => AnnotsAction::SetArray(vec![Object::Reference(annot_id)]),
         }
     };
 
     match annots_action {
         AnnotsAction::SetArray(arr) => {
-            if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+            if let Ok(page_dict) = doc.get_dictionary_mut(page_id) {
                 page_dict.set("Annots", Object::Array(arr));
             }
         }
         AnnotsAction::AppendIndirect(annots_ref) => {
-            if let Ok(Object::Array(ref mut arr)) = doc.get_object_mut(annots_ref) {
-                arr.push(Object::Reference(annot_id));
+            // Attempt to mutate the indirect array in place.
+            let appended = {
+                if let Ok(Object::Array(ref mut arr)) = doc.get_object_mut(annots_ref) {
+                    arr.push(Object::Reference(annot_id));
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if !appended {
+                // Fallback: indirect array not accessible (e.g. lives in a
+                // compressed ObjStm that was skipped or not yet decompressed).
+                // Replace /Annots with a new inline array.  Existing annots
+                // referenced from the unresolvable array are already
+                // inaccessible, so we only lose what was already broken.
+                if let Ok(page_dict) = doc.get_dictionary_mut(page_id) {
+                    page_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
+                }
             }
         }
     }

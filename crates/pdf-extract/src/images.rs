@@ -76,6 +76,20 @@ pub fn extract_page_images(doc: &Document, page_num: u32) -> Result<Vec<Extracte
         .get(&page_num)
         .ok_or(ExtractError::PageOutOfRange(page_num, total))?;
 
+    extract_images_from_page_id(doc, page_id, page_num)
+}
+
+/// Extract images from a page identified by its object ID.
+///
+/// Unlike [`extract_page_images`], this function does not call `get_pages()`
+/// internally. Use this when the caller already holds a page map from a
+/// prior `doc.get_pages()` call to avoid redundant page-tree traversals.
+/// Fixes #447: eliminates the double `get_pages()` call in the images test.
+pub fn extract_images_from_page_id(
+    doc: &Document,
+    page_id: lopdf::ObjectId,
+    page_num: u32,
+) -> Result<Vec<ExtractedImage>> {
     let obj_ids = collect_page_xobject_ids(doc, page_id);
     let mut images = Vec::new();
 
