@@ -6374,6 +6374,49 @@ fn load_all_cmap_cidranges(cmap_name: &str) -> Option<Vec<(u16, u16, u16)>> {
     parse_predefined_cmap_cid_ranges(&data)
 }
 
+/// Load CID ranges from an embedded CMap stream in a font's /Encoding entry.
+///
+/// Used as a fallback when the encoding is a CMap stream object rather than a
+/// named predefined CMap. Decompresses the stream, parses cidranges, and
+/// detects whether the CMap uses an EUC/GBK-style mixed codespace (needed to
+/// pick the correct text-string repair path in `fix_cid_font_notdef`).
+///
+/// Returns `(ranges, is_euc_style)` or `None` if the Encoding is not a stream.
+fn load_embedded_cmap_stream_ranges(
+    doc: &Document,
+    font_dict: &lopdf::Dictionary,
+) -> Option<(Vec<(u16, u16, u16)>, bool)> {
+    let enc_id = match font_dict.get(b"Encoding").ok()? {
+        Object::Reference(r) => *r,
+        _ => return None,
+    };
+    let stream = match doc.objects.get(&enc_id) {
+        Some(Object::Stream(s)) => s,
+        _ => return None,
+    };
+    let mut s = stream.clone();
+    let _ = s.decompress();
+    let ranges = parse_predefined_cmap_cid_ranges(&s.content)?;
+
+    // Detect EUC/GBK-style by reading the internal /CMapName definition
+    // inside the PostScript CMap program (may differ from the stream dict's
+    // CMapName). Fonts like FOUNDER-GBK-EUC-H carry "euc" in the name even
+    // when the PDF dict labels the stream "Fdr-gbk-5".
+    let is_euc_style = std::str::from_utf8(&s.content).ok().is_some_and(|text| {
+        if let Some(pos) = text.find("/CMapName") {
+            let after = text[pos + 9..].trim_start();
+            if let Some(name) = after.strip_prefix('/') {
+                let name_end = name.find(|c: char| c.is_whitespace()).unwrap_or(name.len());
+                let name_lower = name[..name_end].to_ascii_lowercase();
+                return name_lower.contains("euc") || name_lower.contains("gbk");
+            }
+        }
+        false
+    });
+
+    Some((ranges, is_euc_style))
+}
+
 /// Returns true for EUC-encoded CMaps (GB-EUC-H/V, KSC-EUC-H/V) that have a
 /// mixed 1-byte/2-byte codespace: bytes 0x00–0x80 are single-byte codes and
 /// bytes 0xA1–0xFE can start 2-byte sequences.
@@ -11044,11 +11087,23 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                 .as_deref()
                 .filter(|name| !is_identity_type0_cmap(name))
                 .and_then(load_predefined_unicode_cmap_ranges);
-            let euc_cmap_ranges = cmap_name
-                .as_deref()
-                .filter(|name| !is_identity_type0_cmap(name))
-                .filter(|name| is_euc_style_cmap(name))
-                .and_then(load_all_cmap_cidranges);
+            let euc_cmap_ranges =
+                cmap_name
+                    .as_deref()
+                    .filter(|name| !is_identity_type0_cmap(name))
+                    .filter(|name| is_euc_style_cmap(name))
+                    .and_then(load_all_cmap_cidranges)
+                    .or_else(|| {
+                        // Fallback: read cidranges directly from an embedded CMap stream.
+                        // Needed for fonts whose /Encoding references a CMap stream with
+                        // an internal EUC/GBK name (e.g. FOUNDER-GBK-EUC-H stored under
+                        // the stream label "Fdr-gbk-5") — the dict-level CMapName "Fdr-gbk-5"
+                        // doesn't contain "euc" so the file-based lookup above finds nothing.
+                        // Fixes #460: prevents fix_cid_text_string from treating GBK char
+                        // codes as raw CID pairs and corrupting the text stream.
+                        load_embedded_cmap_stream_ranges(doc, font_dict)
+                            .and_then(|(ranges, is_euc)| if is_euc { Some(ranges) } else { None })
+                    });
 
             // Get descendant CIDFont (may be inline array or reference).
             let desc_arr = match font_dict.get(b"DescendantFonts").ok() {
