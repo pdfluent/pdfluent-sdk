@@ -507,6 +507,9 @@ fn inject_signature(
 /// /AcroForm and /Fields so that our signature field is reliably registered
 /// regardless of how the source PDF structures its form dictionary.
 /// Fixes #451: /Fields stored as an indirect array was silently skipped.
+/// Fixes #458: silent if-let failures (e.g. /AcroForm null in catalog, or
+/// inaccessible indirect AcroForm) now fall back to creating a fresh inline
+/// AcroForm so the signature is always registered.
 fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignError> {
     // ── Phase 1: discover structure via temporary immutable borrows ──────────
     // All results are owned values (ObjectId = (u32, u16) is Copy).
@@ -561,7 +564,8 @@ fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignErr
     };
 
     // ── Phase 2: mutate — all immutable borrows are now dropped ─────────────
-    match (af_loc, fl_loc) {
+    // Returns true if the field was successfully added, false on silent failure.
+    let field_added = match (af_loc, fl_loc) {
         (AfLoc::None, _) => {
             // No AcroForm at all — create a new inline one.
             let cat = doc
@@ -572,6 +576,7 @@ fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignErr
                 "SigFlags" => Object::Integer(3),
             };
             cat.set("AcroForm", Object::Dictionary(acroform));
+            true
         }
         (AfLoc::Inline, FlLoc::Inline) => {
             let cat = doc
@@ -582,6 +587,9 @@ fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignErr
                     arr.push(Object::Reference(field_id));
                 }
                 af.set("SigFlags", Object::Integer(3));
+                true
+            } else {
+                false
             }
         }
         (AfLoc::Inline, FlLoc::None) => {
@@ -591,19 +599,26 @@ fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignErr
             if let Ok(Object::Dictionary(af)) = cat.get_mut(b"AcroForm") {
                 af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
                 af.set("SigFlags", Object::Integer(3));
+                true
+            } else {
+                false
             }
         }
         (AfLoc::Inline, FlLoc::Ref(fid)) => {
             // /Fields is an indirect array — push directly into the referenced object.
-            if let Ok(Object::Array(arr)) = doc.get_object_mut(fid) {
+            let pushed = if let Ok(Object::Array(arr)) = doc.get_object_mut(fid) {
                 arr.push(Object::Reference(field_id));
-            } // mutable borrow of fid object dropped
+                true
+            } else {
+                false
+            }; // mutable borrow of fid object dropped
             let cat = doc
                 .catalog_mut()
                 .map_err(|e| SignError::CmsBuild(format!("catalog: {e}")))?;
             if let Ok(Object::Dictionary(af)) = cat.get_mut(b"AcroForm") {
                 af.set("SigFlags", Object::Integer(3));
             }
+            pushed
         }
         (AfLoc::Ref(aid), FlLoc::Inline) => {
             if let Ok(af) = doc.get_dictionary_mut(aid) {
@@ -611,23 +626,48 @@ fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignErr
                     arr.push(Object::Reference(field_id));
                 }
                 af.set("SigFlags", Object::Integer(3));
+                true
+            } else {
+                false
             }
         }
         (AfLoc::Ref(aid), FlLoc::None) => {
             if let Ok(af) = doc.get_dictionary_mut(aid) {
                 af.set("Fields", Object::Array(vec![Object::Reference(field_id)]));
                 af.set("SigFlags", Object::Integer(3));
+                true
+            } else {
+                false
             }
         }
         (AfLoc::Ref(aid), FlLoc::Ref(fid)) => {
             // Both AcroForm and Fields are indirect — modify both referenced objects.
-            if let Ok(Object::Array(arr)) = doc.get_object_mut(fid) {
+            let pushed = if let Ok(Object::Array(arr)) = doc.get_object_mut(fid) {
                 arr.push(Object::Reference(field_id));
-            } // mutable borrow of fid dropped
+                true
+            } else {
+                false
+            }; // mutable borrow of fid dropped
             if let Ok(af) = doc.get_dictionary_mut(aid) {
                 af.set("SigFlags", Object::Integer(3));
             }
+            pushed
         }
+    };
+
+    // Fallback: if the field was not successfully registered (e.g. /AcroForm null
+    // in catalog, or an inaccessible indirect AcroForm object), create a fresh
+    // inline AcroForm. This guarantees our signature field is always present
+    // after signing, even for unusual/corrupt AcroForm structures. Fixes #458.
+    if !field_added {
+        let cat = doc
+            .catalog_mut()
+            .map_err(|e| SignError::CmsBuild(format!("catalog (fallback): {e}")))?;
+        let acroform = dictionary! {
+            "Fields" => Object::Array(vec![Object::Reference(field_id)]),
+            "SigFlags" => Object::Integer(3),
+        };
+        cat.set("AcroForm", Object::Dictionary(acroform));
     }
 
     Ok(())

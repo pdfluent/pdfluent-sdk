@@ -35,7 +35,7 @@ pub use types::*;
 pub use x509::X509Certificate;
 
 use pdf_syntax::object::dict::keys::*;
-use pdf_syntax::object::{Array, Dict, Name};
+use pdf_syntax::object::{Array, Dict, Name, Object};
 use pdf_syntax::Pdf;
 
 /// Extract all signature fields from a PDF document.
@@ -69,7 +69,15 @@ fn collect_sig_fields<'a>(
     out: &mut Vec<SignatureInfo<'a>>,
     parent_name: Option<&str>,
 ) {
-    for dict in fields.iter::<Dict<'_>>() {
+    // Use iter::<Object>() rather than iter::<Dict>() so that a broken or
+    // non-dict field reference does not cause the iterator to return None and
+    // stop — we skip non-dict elements and continue to reach our sig field,
+    // which is always appended last. Fixes #458.
+    for obj in fields.iter::<Object<'_>>() {
+        let dict = match obj {
+            Object::Dict(d) => d,
+            _ => continue,
+        };
         let partial = dict
             .get::<pdf_syntax::object::String>(T)
             .map(|s| string_util::pdf_string_to_string(&s));
