@@ -129,6 +129,52 @@ impl FontMap {
         }
     }
 
+    /// Build a FontMap from a Form XObject's (or AP stream's) own Resources/Font
+    /// dictionary.  The XObject's fonts take priority over `page_fonts` so that
+    /// character-code decoding uses the correct CMap for each stream.
+    ///
+    /// Falls back to `page_fonts` for any name not found in the stream's own
+    /// Resources, and uses `page_fonts` as-is when the stream has no Resources.
+    pub fn from_xobject_stream(doc: &Document, stream_id: ObjectId, page_fonts: &FontMap) -> Self {
+        // Start with page-level fonts as the base (fallback for any missing entries).
+        let mut fonts = page_fonts.fonts.clone();
+
+        let stream_dict = match doc.get_object(stream_id) {
+            Ok(Object::Stream(ref s)) => s.dict.clone(),
+            _ => return Self { fonts },
+        };
+
+        let resources = match stream_dict.get(b"Resources") {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            Ok(Object::Reference(id)) => match doc.get_object(*id) {
+                Ok(Object::Dictionary(ref d)) => d.clone(),
+                _ => return Self { fonts },
+            },
+            _ => return Self { fonts },
+        };
+
+        let font_dict = match resources.get(b"Font") {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            Ok(Object::Reference(id)) => match doc.get_object(*id) {
+                Ok(Object::Dictionary(ref d)) => d.clone(),
+                _ => return Self { fonts },
+            },
+            _ => return Self { fonts },
+        };
+
+        for (key, value) in font_dict.iter() {
+            let name = String::from_utf8_lossy(key).to_string();
+            if let Object::Reference(id) = value {
+                // XObject's own font definition overrides any page-level entry
+                // with the same name, ensuring correct CMap decoding.
+                let info = build_font_info(doc, id);
+                fonts.insert(name, info);
+            }
+        }
+
+        Self { fonts }
+    }
+
     /// Decode a PDF string from a Tj/TJ operand using the font's ToUnicode CMap.
     pub fn decode_string(&self, font_name: &str, bytes: &[u8]) -> String {
         let info = match self.fonts.get(font_name) {

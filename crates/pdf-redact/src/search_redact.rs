@@ -533,6 +533,15 @@ fn remove_text_ops_with_inline_images(
 }
 
 /// Find and process Form XObjects in the page's Resources/XObject dictionary.
+///
+/// Delegates to `remove_text_ops_from_stream` for each top-level XObject so
+/// that:
+/// - Each XObject's own Resources/Font dict is used for correct CMap decoding.
+/// - Nested Form XObjects (`Do` inside an XObject) are handled recursively.
+///
+/// Fixes #457: previously this function used the page-level FontMap and did
+/// not recurse into nested XObjects, leaving redacted text extractable when it
+/// resided in a Form XObject hierarchy.
 fn remove_text_ops_from_xobjects(
     doc: &mut Document,
     page_num: u32,
@@ -545,68 +554,17 @@ fn remove_text_ops_from_xobjects(
         None => return Ok(0),
     };
 
-    // Collect Form XObject IDs from the page's Resources/XObject dict.
     let xobject_ids = collect_form_xobject_ids(doc, page_id);
     if xobject_ids.is_empty() {
         return Ok(0);
     }
 
     let mut total_removed = 0;
-
     for xobj_id in xobject_ids {
-        // Decode the XObject's content stream.
-        let content_bytes = match doc.get_object(xobj_id) {
-            Ok(Object::Stream(ref s)) => {
-                let mut stream = s.clone();
-                let _ = stream.decompress();
-                stream.content.clone()
-            }
-            _ => continue,
-        };
-
-        let editor = match pdf_manip::content_editor::ContentEditor::from_stream(&content_bytes) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let runs = pdf_manip::text_run::extract_text_runs(&editor, fonts);
-
-        let mut indices_to_remove: Vec<usize> = Vec::new();
-        for run in &runs {
-            if !matcher.find_all(&run.text).is_empty() {
-                for idx in run.ops_range.clone() {
-                    indices_to_remove.push(idx);
-                }
-            }
-        }
-
-        if indices_to_remove.is_empty() {
-            continue;
-        }
-
-        indices_to_remove.sort_unstable();
-        indices_to_remove.dedup();
-
-        let mut new_editor = editor;
-        for &idx in indices_to_remove.iter().rev() {
-            new_editor.remove_range(idx..idx + 1);
-        }
-
-        total_removed += indices_to_remove.len();
-
-        // Write back the modified content stream.
-        let encoded = new_editor
-            .encode()
-            .map_err(|e| RedactError::Other(format!("encode xobject: {e}")))?;
-
-        if let Ok(Object::Stream(ref mut s)) = doc.get_object_mut(xobj_id) {
-            s.dict.remove(b"Filter");
-            s.content = encoded;
-            s.dict
-                .set("Length", Object::Integer(s.content.len() as i64));
-        }
+        // remove_text_ops_from_stream builds its own per-stream FontMap and
+        // recurses into nested Form XObjects automatically.
+        total_removed += remove_text_ops_from_stream(doc, xobj_id, matcher, fonts)?;
     }
-
     Ok(total_removed)
 }
 
@@ -638,11 +596,16 @@ fn remove_text_ops_from_annotations(
 }
 
 /// Remove matching text operations from a single stream object.
+///
+/// Builds a stream-local FontMap from the stream's own Resources/Font dict
+/// (merged with the caller-supplied page-level `page_fonts` as fallback) so
+/// that CMap decoding is correct for Form XObjects and AP streams that define
+/// their own font resources.
 fn remove_text_ops_from_stream(
     doc: &mut Document,
     stream_id: ObjectId,
     matcher: &TextMatcher,
-    fonts: &pdf_manip::text_run::FontMap,
+    page_fonts: &pdf_manip::text_run::FontMap,
 ) -> Result<usize> {
     let content_bytes = match doc.get_object(stream_id) {
         Ok(Object::Stream(ref s)) => {
@@ -657,6 +620,12 @@ fn remove_text_ops_from_stream(
         Ok(e) => e,
         Err(_) => return Ok(0),
     };
+
+    // Use the stream's own font resources so CMap decoding is correct.
+    // Fixes #457: XObjects/AP streams often define fonts not present on the page.
+    let stream_fonts =
+        pdf_manip::text_run::FontMap::from_xobject_stream(doc, stream_id, page_fonts);
+    let fonts = &stream_fonts;
 
     let runs = pdf_manip::text_run::extract_text_runs(&editor, fonts);
 
@@ -1009,5 +978,128 @@ mod tests {
         let opts = RedactSearchOptions::default().fill_color(1.0, 0.0, 0.0);
         let report = search_and_redact(&mut doc, "Secret", &opts).unwrap();
         assert!(report.matches_found >= 1);
+    }
+
+    /// Build a document where the word "Classified" lives only inside a Form
+    /// XObject — not in the page's own content stream.  The XObject has its
+    /// own Resources/Font dictionary that differs from the page-level one.
+    ///
+    /// Before the #457 fix, `remove_text_ops_from_xobjects` used the wrong
+    /// (page-level) FontMap and did not recurse into nested XObjects, so the
+    /// Tj operator was never removed from the XObject stream.
+    fn make_doc_with_xobject_text() -> (Document, ObjectId) {
+        let mut doc = Document::with_version("1.7");
+
+        // Font defined only in the XObject's own Resources (not on the page).
+        let xobj_font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Times-Roman",
+        };
+        let xobj_font_id = doc.add_object(Object::Dictionary(xobj_font));
+        let xobj_font_res = dictionary! { "FX" => Object::Reference(xobj_font_id) };
+        let xobj_resources = dictionary! {
+            "Font" => Object::Dictionary(xobj_font_res),
+        };
+
+        // Form XObject stream containing the sensitive text.
+        let xobj_content = b"BT /FX 12 Tf 0 0 Td (Classified) Tj ET".to_vec();
+        let xobj_stream = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 300_i64.into(), 20_i64.into()],
+                "Resources" => Object::Dictionary(xobj_resources),
+            },
+            xobj_content,
+        );
+        let xobj_id = doc.add_object(Object::Stream(xobj_stream));
+
+        // Page has a different font (F1/Helvetica) but no reference to FX.
+        let page_font = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+        };
+        let page_font_id = doc.add_object(Object::Dictionary(page_font));
+        let page_font_res = dictionary! { "F1" => Object::Reference(page_font_id) };
+        let xobj_map = dictionary! { "Xobj1" => Object::Reference(xobj_id) };
+        let page_resources = dictionary! {
+            "Font" => Object::Dictionary(page_font_res),
+            "XObject" => Object::Dictionary(xobj_map),
+        };
+
+        // Page content only invokes the XObject — no direct Tj operators.
+        let page_content = b"q 1 0 0 1 100 700 cm /Xobj1 Do Q".to_vec();
+        let content_stream = Stream::new(dictionary! {}, page_content);
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(page_resources),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        (doc, xobj_id)
+    }
+
+    /// Verify that text inside a Form XObject is removed from the XObject's
+    /// content stream after redaction (Fixes #457).
+    ///
+    /// We check the raw bytes of the XObject stream directly rather than
+    /// going through text extraction, so the test does not depend on
+    /// pdf_extract being able to parse this minimal synthetic PDF.
+    #[test]
+    fn redact_removes_text_from_xobject_stream() {
+        let (mut doc, xobj_id) = make_doc_with_xobject_text();
+
+        // Build a TextMatcher and FontMap and call remove_text_ops_for_page
+        // indirectly by exercising the XObject-removal path directly.
+        // We use the page-level FontMap (which does NOT contain "FX"); the fix
+        // must still correctly use the XObject's own Resources to decode.
+        let page_fonts = pdf_manip::text_run::FontMap::empty();
+        let matcher_opts = RedactSearchOptions::default();
+        let matcher = build_matcher("Classified", &matcher_opts).unwrap();
+
+        // Call the private helper via remove_text_ops_from_stream.
+        // We test it indirectly: verify the XObject stream bytes change.
+        let removed =
+            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts).unwrap();
+
+        assert!(
+            removed > 0,
+            "Expected at least one op removed from XObject stream, got 0"
+        );
+
+        // Confirm the raw bytes of the XObject no longer contain the literal.
+        if let Ok(Object::Stream(ref s)) = doc.get_object(xobj_id) {
+            let content = std::str::from_utf8(&s.content).unwrap_or("");
+            assert!(
+                !content.contains("Classified"),
+                "XObject stream still contains 'Classified' after redaction"
+            );
+        } else {
+            panic!("XObject is not a stream after redaction");
+        }
     }
 }
