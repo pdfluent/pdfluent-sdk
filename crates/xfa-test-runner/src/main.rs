@@ -1,3 +1,10 @@
+// Replace glibc malloc with jemalloc to prevent heap fragmentation OOM (#461).
+// lopdf creates thousands of small allocations per PDF; glibc retains freed
+// pages in its sbrk free-list, growing anon-rss ~10 MB per PDF. jemalloc
+// returns unused pages to the OS via madvise(MADV_FREE), keeping RSS bounded.
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 mod classifier;
 #[allow(dead_code)]
 mod clustering;
