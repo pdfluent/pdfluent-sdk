@@ -78,7 +78,7 @@ impl PdfTest for OcrTest {
         let pdf_owned = pdf_data.to_vec();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::Builder::new()
-            .stack_size(32 * 1024 * 1024)
+            .stack_size(64 * 1024 * 1024)
             .spawn(move || {
                 let r =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));

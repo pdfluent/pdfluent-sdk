@@ -21,7 +21,7 @@ impl PdfTest for ImageExtractTest {
             let pdf_owned = pdf_data.to_vec();
             let (tx_load, rx_load) = std::sync::mpsc::channel();
             std::thread::Builder::new()
-                .stack_size(32 * 1024 * 1024)
+                .stack_size(64 * 1024 * 1024)
                 .spawn(move || {
                     let _ = tx_load.send(lopdf::Document::load_mem(&pdf_owned));
                 });
@@ -46,7 +46,7 @@ impl PdfTest for ImageExtractTest {
             let (tx, rx) = std::sync::mpsc::channel();
             let clone = doc_arc.clone();
             std::thread::Builder::new()
-                .stack_size(32 * 1024 * 1024)
+                .stack_size(64 * 1024 * 1024)
                 .spawn(move || {
                     let _ = tx.send(clone.get_pages());
                 });
@@ -80,7 +80,7 @@ impl PdfTest for ImageExtractTest {
             let (tx, rx) = std::sync::mpsc::channel();
             let clone = doc_arc.clone();
             std::thread::Builder::new()
-                .stack_size(32 * 1024 * 1024)
+                .stack_size(64 * 1024 * 1024)
                 .spawn(move || {
                     let r = pdf_extract::extract_images_from_page_id(&clone, page_id, page_num);
                     let _ = tx.send(r);
