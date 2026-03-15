@@ -16,7 +16,7 @@ use crate::tests::{PdfTest, TestStatus};
 
 /// Maximum number of spawned test threads allowed in-flight at once.
 /// Prevents unbounded thread accumulation when tests repeatedly time out.
-/// With 8 MB stacks, 64 threads = 512 MB max thread stack usage.
+/// With 64 MB stacks, 64 threads = 4 GB max thread stack virtual address space.
 const MAX_IN_FLIGHT_THREADS: usize = 64;
 
 pub struct Runner {
