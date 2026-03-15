@@ -46,11 +46,15 @@ impl PdfTest for FormWriteTest {
         let names = tree.field_names();
 
         // Find first text field that is writable.
+        // Use effective_field_type (walks up ancestor chain) so that fields
+        // where /FT /Tx lives only on a parent node are correctly identified.
+        // Fixes #459: MaxLen inheritance PDFs have no /FT on the widget itself.
         let text_field = names.iter().find(|name| {
             if let Some(id) = tree.find_by_name(name) {
-                let node = tree.get(id);
-                matches!(node.field_type, Some(pdf_forms::FieldType::Text))
-                    && !node.flags.read_only()
+                matches!(
+                    tree.effective_field_type(id),
+                    Some(pdf_forms::FieldType::Text)
+                ) && !tree.get(id).flags.read_only()
             } else {
                 false
             }
