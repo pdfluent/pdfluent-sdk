@@ -19,6 +19,14 @@ use crate::tests::{PdfTest, TestStatus};
 /// With 64 MB stacks, 64 threads = 4 GB max thread stack virtual address space.
 const MAX_IN_FLIGHT_THREADS: usize = 64;
 
+/// RSS threshold (bytes) at which new test spawns are paused.
+/// Acts as a safety net against OOM kills (#461): glibc heap fragmentation or
+/// zombie threads holding large lopdf Documents can push RSS toward the system
+/// limit. Pausing lets zombie threads finish and jemalloc return pages to OS.
+/// Set to 22 GB — conservative enough for a 32 GB Hetzner CX53.
+#[cfg(target_os = "linux")]
+const RSS_PAUSE_THRESHOLD: u64 = 22 * 1024 * 1024 * 1024;
+
 pub struct Runner {
     config: Config,
     tests: Vec<Arc<dyn PdfTest>>,
@@ -309,8 +317,18 @@ impl Runner {
         // Backpressure: wait if too many test threads are actively being awaited.
         // Counter is decremented by the *caller* after recv_timeout, so permanently
         // hung threads don't prevent progress — only concurrent waiters count.
-        while self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT_THREADS {
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        // Also pause when RSS exceeds the safety threshold to prevent OOM (#461).
+        loop {
+            let too_many_threads = self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT_THREADS;
+            #[cfg(target_os = "linux")]
+            let rss_too_high = current_rss_bytes()
+                .map_or(false, |rss| rss > RSS_PAUSE_THRESHOLD);
+            #[cfg(not(target_os = "linux"))]
+            let rss_too_high = false;
+            if !too_many_threads && !rss_too_high {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
         }
         self.in_flight.fetch_add(1, Ordering::Relaxed);
 
