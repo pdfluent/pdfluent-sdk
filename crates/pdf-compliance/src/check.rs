@@ -3903,8 +3903,7 @@ fn check_action_recursive(
             // Named actions are allowed only for the four navigation destinations.
             // PDF/A-1b §6.6.1: only NextPage, PrevPage, FirstPage, LastPage.
             // Flagging ALL Named actions was causing false positives. Fixes #455.
-            const ALLOWED_NAMED: &[&[u8]] =
-                &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
+            const ALLOWED_NAMED: &[&[u8]] = &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
             if let Some(n) = action.get::<Name>(keys::N) {
                 if !ALLOWED_NAMED.contains(&n.as_ref()) {
                     let n_str = std::str::from_utf8(n.as_ref()).unwrap_or("?");
