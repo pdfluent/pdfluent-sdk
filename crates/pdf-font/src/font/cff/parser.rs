@@ -457,10 +457,14 @@ impl<'a> Stream<'a> {
     /// Reads N bytes from the stream.
     #[inline]
     pub(crate) fn read_bytes(&mut self, len: usize) -> Option<&'a [u8]> {
-        // An integer overflow here on 32bit systems is almost guarantee to be caused
-        // by an incorrect parsing logic from the caller side.
-        // Simply using `checked_add` here would silently swallow errors, which is not what we want.
-        debug_assert!(self.offset as u64 + len as u64 <= u32::MAX as u64);
+        // Guard against adversarial data that encodes offsets near u32::MAX.
+        // On 32-bit systems this would overflow usize; on 64-bit the slice
+        // access below would safely return None anyway, but the guard makes
+        // the intent explicit and prevents debug_assert panics in fuzz builds.
+        // Fixes fuzz crash: CFF index last_offset ~= u32::MAX triggers panic.
+        if self.offset as u64 + len as u64 > u32::MAX as u64 {
+            return None;
+        }
 
         let v = self.data.get(self.offset..self.offset + len)?;
         self.advance(len);

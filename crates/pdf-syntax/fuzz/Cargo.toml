@@ -1,0 +1,25 @@
+[workspace]
+
+[package]
+name = "pdf-syntax-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.pdf-syntax]
+path = ".."
+default-features = false
+features = ["std"]
+
+[[bin]]
+name = "parse_pdf"
+path = "fuzz_targets/parse_pdf.rs"
+test = false
+doc = false
+bench = false

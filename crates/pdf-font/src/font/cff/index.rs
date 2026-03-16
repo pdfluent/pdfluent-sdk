@@ -233,4 +233,22 @@ mod tests {
         );
         assert_eq!(Stream::new(&[0x05]).read::<OffsetSize>(), None);
     }
+
+    /// Regression test for fuzz crash: CFF index whose last offset encodes a
+    /// value near u32::MAX triggers `debug_assert!` in `Stream::read_bytes`.
+    /// The parser must return None (parse failure) instead of panicking.
+    /// Reproducer: crash-43ede9e1d5626812f773bef1640426e47e4157df
+    #[test]
+    fn parse_index_huge_offset_returns_none() {
+        // Crafted input: count=0x0109 (u16), offset_size=0x01, then
+        // offset table filled with 0xFF bytes so the last entry decodes to
+        // a near-u32::MAX value.  Must not panic.
+        let data: &[u8] = &[
+            0x01, 0x09, 0x25, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x09, 0xee,
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        ];
+        let mut s = Stream::new(data);
+        // parse_index::<u16> must complete without panicking.
+        let _result = parse_index::<u16>(&mut s);
+    }
 }
