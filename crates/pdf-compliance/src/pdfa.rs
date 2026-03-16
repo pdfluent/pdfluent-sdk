@@ -1715,22 +1715,25 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.3.3") => Some("6.2.10.4.1"),
 
             // OutputIntent ICC profile class (prtr/mntr) check
-            // PDF/A-1: §6.6.2.3.1, PDF/A-2/3/4: §6.2.3
-            (1, "6.2.3") => Some("6.6.2.3.1"),
+            // PDF/A-1: veraPDF uses §6.2.2 for all OutputIntent ICC violations.
+            // PDF/A-2/3/4: §6.2.3 → no remap needed (direct internal clause).
+            (1, "6.2.3") => Some("6.2.2"),
 
             // Device color vs OutputIntent: §6.2.3.3 is correct for ALL PDF/A parts.
             // veraPDF emits "6.2.3.3" for PDF/A-1 too — no remap needed. (#467)
             // (Removed wrong (1,"6.2.3.3")=>"6.6.2.3.3" mapping that hid FN.)
 
             // OutputIntent ICC profile version check (internal rule "6.2.3.3-iccver")
-            // PDF/A-1: §6.6.2.3.3, PDF/A-2/3/4: §6.2.3.3
-            (_, "6.2.3.3-iccver") => {
-                if part == 1 {
-                    Some("6.6.2.3.3")
-                } else {
-                    Some("6.2.3.3")
-                }
-            }
+            // PDF/A-1: §6.2.2 (veraPDF groups ICC validity under OutputIntent clause)
+            // PDF/A-2/3/4: §6.2.3.3
+            (1, "6.2.3.3-iccver") => Some("6.2.2"),
+            (_, "6.2.3.3-iccver") => Some("6.2.3.3"),
+
+            // OutputIntent ICC profile header checks (size, signature)
+            // PDF/A-1: veraPDF groups these under §6.2.2 (OutputIntent validity)
+            // PDF/A-2+: §6.6.2.3.1 / §6.6.2.3.3 (kept as-is — already matched by test runner)
+            (1, "6.6.2.3.1") => Some("6.2.2"),
+            (1, "6.6.2.3.3") => Some("6.2.2"),
 
             // OutputIntent DestOutputProfile required
             // PDF/A-1: §6.6.2.3.2, PDF/A-2/3/4: §6.2.3.2
