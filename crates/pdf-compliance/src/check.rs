@@ -4991,8 +4991,12 @@ fn page_fonts_use_transparency(res: &Resources<'_>) -> bool {
 }
 
 /// Check for PostScript XObjects (forbidden in PDF/A, §6.2.9 test 3).
-pub fn check_postscript_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
-    let rule = if part == 4 { "6.2.9" } else { "6.2.10" };
+///
+/// veraPDF uses "6.2.9" for all PDF/A parts. The remap converts "6.2.9" to
+/// "6.2.5" for PDF/A-1 where needed. Previously used "6.2.10" for non-PDF/A-4
+/// which was wrong. (#467)
+pub fn check_postscript_xobjects(pdf: &Pdf, _part: u8, report: &mut ComplianceReport) {
+    let rule = "6.2.9";
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let xobjects = &page.resources().x_objects;
         for (name, _) in xobjects.entries() {
@@ -7040,15 +7044,38 @@ fn check_resource_refs_in_stream(
 pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let data = pdf.data().as_ref();
 
-    // PDF/A-1/2/3: trailer must contain /ID (§6.1.3)
-    if part <= 3 {
-        let has_id = if let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") {
+    // All PDF/A parts require /ID in trailer (§6.1.3).
+    // PDF/A-4 §6.1.3 explicitly requires ID entry. (#467)
+    if part >= 1 {
+        // Check presence and non-empty values of /ID in trailer.
+        // /ID [<> <>] (empty hex strings) is treated as "empty" by veraPDF.
+        let id_status = if let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") {
             let end = data.len().min(trailer_pos + 2000);
             let trailer_region = &data[trailer_pos..end];
-            trailer_region.windows(3).any(|w| w == b"/ID")
+            if !trailer_region.windows(3).any(|w| w == b"/ID") {
+                0u8 // absent
+            } else {
+                // Find "/ID [" then check first hex string is non-empty
+                if let Some(id_off) = trailer_region.windows(4).position(|w| w == b"/ID ") {
+                    let after_id = &trailer_region[id_off + 4..];
+                    // Skip '[' and whitespace to find first '<'
+                    let stripped = after_id
+                        .iter()
+                        .skip_while(|&&b| b == b'[' || b == b' ' || b == b'\n' || b == b'\r')
+                        .collect::<Vec<_>>();
+                    // Check if first hex string is '<>'  (empty)
+                    if stripped.first() == Some(&&b'<') && stripped.get(1) == Some(&&b'>') {
+                        2u8 // present but empty
+                    } else {
+                        1u8 // present and non-empty
+                    }
+                } else {
+                    1u8 // has /ID but different format — assume ok
+                }
+            }
         } else {
             // Cross-reference stream — check for /ID in xref stream dicts
-            pdf.objects().into_iter().any(|obj| {
+            let found = pdf.objects().into_iter().any(|obj| {
                 if let Object::Stream(s) = obj {
                     let dict = s.dict();
                     dict.get::<Name>(keys::TYPE)
@@ -7057,13 +7084,24 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
                 } else {
                     false
                 }
-            })
+            });
+            if found {
+                1u8
+            } else {
+                0u8
+            }
         };
-        if !has_id {
+        if id_status == 0 {
             error(
                 report,
                 "6.1.3",
                 "Trailer dictionary missing required /ID key",
+            );
+        } else if id_status == 2 {
+            error(
+                report,
+                "6.1.3",
+                "Trailer /ID contains empty identifiers — both ID values must be non-empty",
             );
         }
     }
@@ -7076,6 +7114,7 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
 /// Check that Info key is not present in trailer for PDF/A-4 (§6.1.3).
 ///
 /// Unless there's a PieceInfo entry in the document catalog.
+/// When PieceInfo is present (exemption), the Info dict must contain only /ModDate. (#467)
 fn check_trailer_info_key(pdf: &Pdf, report: &mut ComplianceReport) {
     // Check if trailer has /Info by scanning raw bytes
     let data = pdf.data().as_ref();
@@ -7092,17 +7131,41 @@ fn check_trailer_info_key(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 
     // Check if catalog has /PieceInfo (exemption)
-    if let Some(cat) = catalog(pdf) {
-        if cat.contains_key(b"PieceInfo" as &[u8]) {
-            return;
-        }
+    let has_piece_info = catalog(pdf).is_some_and(|cat| cat.contains_key(b"PieceInfo" as &[u8]));
+
+    if !has_piece_info {
+        error(
+            report,
+            "6.1.3",
+            "Info key present in trailer without PieceInfo in catalog (forbidden in PDF/A-4)",
+        );
+        return;
     }
 
-    error(
-        report,
-        "6.1.3",
-        "Info key present in trailer without PieceInfo in catalog (forbidden in PDF/A-4)",
-    );
+    // PDF/A-4 §6.1.3: when /Info is allowed (PieceInfo present), the Info
+    // dictionary shall only contain the ModDate entry. Entries like Author,
+    // Creator, Producer, CreationDate etc. are all forbidden. (#467)
+    let meta = pdf.metadata();
+    let forbidden: &[(&str, bool)] = &[
+        ("Title", meta.title.is_some()),
+        ("Author", meta.author.is_some()),
+        ("Subject", meta.subject.is_some()),
+        ("Keywords", meta.keywords.is_some()),
+        ("Creator", meta.creator.is_some()),
+        ("Producer", meta.producer.is_some()),
+        ("CreationDate", meta.creation_date.is_some()),
+    ];
+    for (key, present) in forbidden {
+        if *present {
+            error(
+                report,
+                "6.1.3",
+                format!(
+                    "Info dictionary contains /{key} which is forbidden in PDF/A-4 (only ModDate allowed)"
+                ),
+            );
+        }
+    }
 }
 
 // ─── §6.1.7 — Stream Length verification ─────────────────────────────────────
@@ -7124,7 +7187,7 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         };
         let abs_stream = pos + stream_off;
 
-        // stream keyword must be followed by \r\n or \n
+        // stream keyword must be followed by \r\n or \n (§6.1.7.1). (#467)
         let data_start = abs_stream + 6; // skip "stream"
         if data_start >= len {
             break;
@@ -7135,6 +7198,12 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
             } else if data[data_start] == b'\n' {
                 data_start + 1
             } else {
+                // Extra whitespace or wrong EOL after 'stream' keyword
+                error(
+                    report,
+                    "6.1.7.1",
+                    "Stream keyword not followed by required CR LF or LF end-of-line",
+                );
                 pos = abs_stream + 6;
                 continue;
             };
