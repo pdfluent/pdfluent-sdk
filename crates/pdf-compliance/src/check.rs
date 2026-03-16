@@ -2798,6 +2798,95 @@ fn check_image_restrictions_in_res(
                 location,
             );
         }
+
+        // §6.2.8.3 — JPEG2000 (JPXDecode) images must have a valid 'colr' box.
+        // Valid METH values: 1 (enumerated CS), 2 (sRGB), 3 (restricted ICC).
+        // METH=4 (enumerated with restricted ICC) and others are forbidden. (#467)
+        let is_jpx = dict
+            .get::<Name>(keys::FILTER)
+            .is_some_and(|f| f.as_ref() == keys::JPX_DECODE);
+        if is_jpx {
+            let raw = stream.raw_data();
+            check_jpeg2000_colr_box(&raw, xobj_name, location, report);
+        }
+    }
+}
+
+/// Check JPEG2000 'colr' box METH value for §6.2.8.3.
+///
+/// PDF/A-2 §6.2.8.3: JPEG2000 images must have a ColorSpace entry, and if the
+/// colour space information is defined through a 'colr' box:
+/// - METH must be 0x01 (Enumerated CS), 0x02 (Restricted ICC), or 0x03 (Any ICC).
+///   METH=0x04 and above are not permitted.
+/// - If METH=0x01, the Enumerated CS value must be 16 (sRGB), 17 (greyscale),
+///   or 18 (sYCC). Other values (e.g. 19=CIEJab) are forbidden. (#467)
+fn check_jpeg2000_colr_box(
+    jp2_data: &[u8],
+    xobj_name: &str,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    // Scan for the 'colr' box tag anywhere in the data.
+    let colr_tag = b"colr";
+    let mut search_pos = 0;
+    while search_pos + 8 < jp2_data.len() {
+        // 'colr' box type is at bytes [pos+4..pos+8]
+        if &jp2_data[search_pos + 4..search_pos + 8] == colr_tag {
+            // Box header: 4 bytes length + 4 bytes type
+            let box_len = u32::from_be_bytes([
+                jp2_data[search_pos],
+                jp2_data[search_pos + 1],
+                jp2_data[search_pos + 2],
+                jp2_data[search_pos + 3],
+            ]) as usize;
+            if box_len >= 9 && search_pos + box_len <= jp2_data.len() {
+                let meth = jp2_data[search_pos + 8];
+                // Valid METH for PDF/A: 1, 2, or 3
+                if meth == 0 || meth > 3 {
+                    error_at(
+                        report,
+                        "6.2.8.3",
+                        format!(
+                            "JPEG2000 image {xobj_name} has invalid 'colr' box METH value \
+                             {meth:#04x} (must be 0x01, 0x02, or 0x03)"
+                        ),
+                        location,
+                    );
+                    return;
+                }
+                // METH=1: Enumerated CS — check that CS value is sRGB/Grey/sYCC
+                if meth == 1 && box_len >= 12 {
+                    let cs_bytes = &jp2_data[search_pos + 9..search_pos + 12];
+                    // EnumCS is a 4-byte big-endian value at offset 9 (after METH+PREC+APPROX)
+                    let enum_cs = if box_len >= 13 {
+                        u32::from_be_bytes([
+                            jp2_data[search_pos + 9],
+                            jp2_data[search_pos + 10],
+                            jp2_data[search_pos + 11],
+                            jp2_data[search_pos + 12],
+                        ])
+                    } else {
+                        // Fallback: try 3-byte read
+                        u32::from_be_bytes([0, cs_bytes[0], cs_bytes[1], cs_bytes[2]])
+                    };
+                    // Allowed: 16=sRGB, 17=greyscale, 18=sYCC
+                    if enum_cs != 16 && enum_cs != 17 && enum_cs != 18 {
+                        error_at(
+                            report,
+                            "6.2.8.3",
+                            format!(
+                                "JPEG2000 image {xobj_name} uses enumerated colour space {enum_cs} \
+                                 which is not permitted (only sRGB=16, greyscale=17, sYCC=18)"
+                            ),
+                            location,
+                        );
+                        return;
+                    }
+                }
+            }
+            break; // Found the colr box, done
+        }
+        search_pos += 1;
     }
 }
 
@@ -5406,7 +5495,11 @@ pub fn check_font_widths(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
-/// Validate symbolic TrueType font encoding (§6.3.6).
+/// Validate symbolic TrueType font encoding (§6.3.7).
+///
+/// Symbolic fonts (bit 2 of Flags set) shall not specify a character encoding.
+/// Note: this was previously labelled §6.3.6 but veraPDF (and ISO 19005-1 §6.3.7)
+/// reports this as §6.3.7. §6.3.6 is the Differences array restriction. (#467)
 pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
     for_each_font(pdf, |name, font_dict, page_idx| {
         let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
@@ -5425,12 +5518,12 @@ pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport
         let symbolic = flags & 0x04 != 0;
 
         if symbolic {
-            // Symbolic TrueType must not have ANY /Encoding entry
+            // Symbolic TrueType must not have ANY /Encoding entry (§6.3.7)
             if font_dict.get::<Object<'_>>(keys::ENCODING).is_some() {
                 error_at(
                     report,
-                    "6.3.6",
-                    format!("Symbolic TrueType font {name} should not have /Encoding"),
+                    "6.3.7",
+                    format!("Symbolic TrueType font {name} shall not specify /Encoding"),
                     format!("page {}", page_idx + 1),
                 );
             }
