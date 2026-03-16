@@ -933,7 +933,7 @@ fn fix_optional_content(doc: &mut Document) -> usize {
         return count;
     }
 
-    let ocprops_id = ocprops_id.unwrap();
+    let ocprops_id = ocprops_id.expect("ocprops_id.is_none() branch returns above");
 
     // Get OCGs list for Order fixing.
     let ocgs: Vec<Object> = {

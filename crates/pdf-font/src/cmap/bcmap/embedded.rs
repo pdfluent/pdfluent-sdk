@@ -6,21 +6,22 @@ use super::reader::Reader;
 use crate::cmap::CMapName;
 
 pub(super) static BUNDLE: LazyLock<Bundle> = LazyLock::new(|| {
-    // We already know the bundle is valid, so we can skip validation and just
-    // unwrap everywhere.
-
     let compressed = include_bytes!("../../../assets/cmaps.brotli");
     let mut decompressed = Vec::new();
     let mut reader = compressed.as_slice();
 
     brotli::BrotliDecompress(&mut reader, &mut decompressed)
-        .ok()
-        .unwrap();
+        .expect("embedded cmap bundle decompression failed");
 
     let mut reader = Reader::new(&decompressed);
-    let huff_size = reader.read_u32().unwrap() as usize;
-    let huff_data = reader.read_bytes(huff_size).unwrap();
-    let (delta_table, count_table) = huffman::decode_tables(huff_data).unwrap();
+    let huff_size = reader
+        .read_u32()
+        .expect("embedded cmap bundle: missing huffman size") as usize;
+    let huff_data = reader
+        .read_bytes(huff_size)
+        .expect("embedded cmap bundle: truncated huffman data");
+    let (delta_table, count_table) =
+        huffman::decode_tables(huff_data).expect("embedded cmap bundle: corrupt huffman tables");
 
     let mut entries = Vec::new();
 
@@ -28,10 +29,16 @@ pub(super) static BUNDLE: LazyLock<Bundle> = LazyLock::new(|| {
         let start = reader.position();
 
         // Skip file magic and version.
-        reader.read_bytes(6).unwrap();
-        let file_len = reader.read_u32().unwrap() as usize;
+        reader
+            .read_bytes(6)
+            .expect("embedded cmap bundle: truncated entry header");
+        let file_len = reader
+            .read_u32()
+            .expect("embedded cmap bundle: missing file_len") as usize;
 
-        reader.read_bytes(file_len - 10).unwrap();
+        reader
+            .read_bytes(file_len - 10)
+            .expect("embedded cmap bundle: truncated entry data");
         entries.push(start..start + file_len);
     }
 

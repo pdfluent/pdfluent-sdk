@@ -39,7 +39,8 @@ pub(crate) fn decode_into(data: &[u8], out: &mut Vec<u8>) -> Option<()> {
                         _ => [b'0', b'0', next],
                     };
 
-                    let str = core::str::from_utf8(&bytes).unwrap();
+                    let str = core::str::from_utf8(&bytes)
+                        .expect("octal digit bytes are always valid UTF-8");
 
                     if let Ok(num) = u8::from_str_radix(str, 8) {
                         out.push(num);

@@ -4146,7 +4146,9 @@ pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
                 _ => None,
             };
             let enc = match enc.as_deref() {
-                Some("WinAnsiEncoding") | Some("MacRomanEncoding") => enc.unwrap(),
+                Some("WinAnsiEncoding") | Some("MacRomanEncoding") => {
+                    enc.expect("matched arm guarantees enc is Some")
+                }
                 _ => continue, // Skip fonts without standard encoding.
             };
 
@@ -7549,8 +7551,8 @@ fn decrypt_charstring_width(
                 // div: pop two values, push quotient (a b div → a/b).
                 pos += 2;
                 if values.len() >= 2 {
-                    let divisor = values.pop().unwrap();
-                    let dividend = values.pop().unwrap();
+                    let divisor = values.pop().expect("guarded by values.len() >= 2");
+                    let dividend = values.pop().expect("guarded by values.len() >= 2");
                     if divisor != 0 {
                         values.push(dividend / divisor);
                     } else {
@@ -13245,7 +13247,7 @@ fn fix_notdef_in_type1(
         }
         return fix_notdef_control_chars_fallback(doc, font_id, enc_info, first_char, last_char);
     }
-    let cff = cff.unwrap();
+    let cff = cff.expect("cff.is_none() branch returns above");
 
     // Build set of available glyph names.
     let mut available_glyphs: std::collections::HashSet<String> = std::collections::HashSet::new();

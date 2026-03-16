@@ -598,7 +598,7 @@ impl AnnotationBuilder {
                 let d_arr: Vec<Object> = self
                     .dash_pattern
                     .as_ref()
-                    .unwrap()
+                    .expect("guarded by has_dash which checks is_some()")
                     .iter()
                     .map(|&v| Object::Real(v as f32))
                     .collect();

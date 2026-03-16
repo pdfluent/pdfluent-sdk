@@ -519,7 +519,11 @@ fn write_bookmark_siblings(
         }
     }
 
-    Ok((ids[0], *ids.last().unwrap()))
+    Ok((
+        ids[0],
+        *ids.last()
+            .expect("ids mirrors bookmarks which is non-empty"),
+    ))
 }
 
 fn build_dest_array(page_id: ObjectId, fit: &FitType) -> Vec<Object> {
