@@ -3400,6 +3400,11 @@ pub fn fix_type1_stub_font_files(doc: &mut Document) -> usize {
 ///
 /// Only CFF streams (`/Subtype /CIDFontType0C` or `/Type1C`) are examined.
 ///
+/// Safety: scanning is limited to bytes before the CharStrings INDEX section. In CFF
+/// charstrings, byte `0x1e` is the `vhcurveto` operator (value 30), so replacing `1e ff`
+/// in charstring data would corrupt the font. By stopping at `charstrings_offset` we only
+/// touch DICT sections (Top DICT, Private DICTs) where `0x1e` marks BCD real numbers.
+///
 /// Returns the number of font streams patched.
 pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
     // Pattern 1: 1e ff  →  1e 0f  ("" → "0")
@@ -3448,12 +3453,17 @@ pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
             continue;
         }
 
+        // Limit the scan to the DICT sections (before CharStrings INDEX). Byte 0x1e is
+        // the `vhcurveto` operator in Type 2 charstrings, so replacing it in charstring
+        // data would corrupt the font program. (#465)
+        let scan_end = cff_charstrings_offset(&data).unwrap_or(data.len());
+
         let mut patched = data.clone();
         let mut changed = false;
 
         // Apply pattern 2 first (longer → more specific, avoids overlap with p1).
         let mut i = 0;
-        while i + BAD_FONTMATRIX.len() <= patched.len() {
+        while i + BAD_FONTMATRIX.len() <= scan_end.min(patched.len()) {
             if patched[i..i + BAD_FONTMATRIX.len()] == BAD_FONTMATRIX {
                 patched[i..i + GOOD_FONTMATRIX.len()].copy_from_slice(&GOOD_FONTMATRIX);
                 changed = true;
@@ -3465,7 +3475,7 @@ pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
 
         // Apply pattern 1.
         let mut i = 0;
-        while i + BAD_EMPTY.len() <= patched.len() {
+        while i + BAD_EMPTY.len() <= scan_end.min(patched.len()) {
             if patched[i..i + BAD_EMPTY.len()] == BAD_EMPTY {
                 patched[i..i + GOOD_ZERO.len()].copy_from_slice(&GOOD_ZERO);
                 changed = true;
@@ -3484,6 +3494,165 @@ pub fn fix_cff_invalid_bcd(doc: &mut Document) -> usize {
     }
 
     fixed
+}
+
+/// Find the byte offset in a raw CFF stream where the CharStrings INDEX begins.
+///
+/// BCD real numbers (byte `0x1e`) only appear in DICT sections. In Type 2 charstrings,
+/// `0x1e` is the `vhcurveto` operator. Scanning only up to `charstrings_offset` makes
+/// BCD replacement safe: we never touch charstring bytes. (#465)
+///
+/// Returns `None` if the CFF structure can't be parsed (caller falls back to full scan).
+fn cff_charstrings_offset(data: &[u8]) -> Option<usize> {
+    // CFF header: major(1), minor(1), hdrSize(1), offSize(1)
+    if data.len() < 4 || data[0] != 1 {
+        return None;
+    }
+    let hdr_size = data[2] as usize;
+
+    // Skip Name INDEX → find Top DICT INDEX start.
+    let top_dict_start = cff_skip_index(data, hdr_size)?;
+
+    // Parse Top DICT INDEX header: count(2), offSize(1), offsets[(count+1)*offSize], data.
+    if top_dict_start + 2 > data.len() {
+        return None;
+    }
+    let count = u16::from_be_bytes([data[top_dict_start], data[top_dict_start + 1]]) as usize;
+    if count == 0 {
+        return None;
+    }
+    let off_size = *data.get(top_dict_start + 2)? as usize;
+    if off_size == 0 || off_size > 4 {
+        return None;
+    }
+    let offsets_end = top_dict_start + 3 + (count + 1) * off_size;
+    if offsets_end > data.len() {
+        return None;
+    }
+
+    // Read offset[0] and offset[count] (1-based) to determine Top DICT data bounds.
+    let read_off = |i: usize| -> Option<usize> {
+        let start = top_dict_start + 3 + i * off_size;
+        let bytes = data.get(start..start + off_size)?;
+        let mut val = 0usize;
+        for &b in bytes {
+            val = (val << 8) | b as usize;
+        }
+        val.checked_sub(1) // CFF offsets are 1-based
+    };
+
+    let first_off = read_off(0).unwrap_or(0);
+    let last_off = read_off(count)?;
+    let td_start = offsets_end + first_off;
+    let td_end = offsets_end + last_off;
+    if td_end > data.len() {
+        return None;
+    }
+
+    // Scan Top DICT data for operator 17 (CharStrings offset operand).
+    // CFF DICT encoding: integers/reals (operands) precede their operator byte.
+    let td = &data[td_start..td_end];
+    let mut i = 0;
+    let mut last_int: Option<usize> = None;
+    while i < td.len() {
+        let b = td[i];
+        match b {
+            17 => {
+                // CharStrings operator — preceding integer is the absolute stream offset.
+                return last_int;
+            }
+            12 => {
+                // 2-byte operator escape.
+                last_int = None;
+                i += 2;
+            }
+            0..=21 => {
+                // 1-byte operator (other than 12 and 17, handled above).
+                last_int = None;
+                i += 1;
+            }
+            28 => {
+                // shortint: 3 bytes total (op + 2-byte big-endian value).
+                if i + 2 < td.len() {
+                    let v = i16::from_be_bytes([td[i + 1], td[i + 2]]);
+                    last_int = if v >= 0 { Some(v as usize) } else { None };
+                }
+                i += 3;
+            }
+            29 => {
+                // longint: 5 bytes total (op + 4-byte big-endian value).
+                if i + 4 < td.len() {
+                    let v = i32::from_be_bytes([td[i + 1], td[i + 2], td[i + 3], td[i + 4]]);
+                    last_int = if v >= 0 { Some(v as usize) } else { None };
+                }
+                i += 5;
+            }
+            30 => {
+                // BCD real number: variable length, ends when a nibble 0xF is seen.
+                i += 1;
+                while i < td.len() {
+                    let byte = td[i];
+                    i += 1;
+                    if (byte >> 4) == 0xF || (byte & 0xF) == 0xF {
+                        break;
+                    }
+                }
+                last_int = None; // CharStrings offset is always an integer.
+            }
+            32..=246 => {
+                // 1-byte integer: value = b − 139.
+                let v = b as i32 - 139;
+                last_int = if v >= 0 { Some(v as usize) } else { None };
+                i += 1;
+            }
+            247..=250 => {
+                // 2-byte positive integer.
+                if i + 1 < td.len() {
+                    let v = (b as u32 - 247) * 256 + td[i + 1] as u32 + 108;
+                    last_int = Some(v as usize);
+                }
+                i += 2;
+            }
+            251..=254 => {
+                // 2-byte negative integer (negative offsets are not valid CharStrings offsets).
+                last_int = None;
+                i += 2;
+            }
+            _ => {
+                last_int = None;
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
+/// Skip over a CFF INDEX at `start` in `data`, returning the offset of the next byte.
+fn cff_skip_index(data: &[u8], start: usize) -> Option<usize> {
+    if start + 2 > data.len() {
+        return None;
+    }
+    let count = u16::from_be_bytes([data[start], data[start + 1]]) as usize;
+    if count == 0 {
+        return Some(start + 2);
+    }
+    let off_size = *data.get(start + 2)? as usize;
+    if off_size == 0 || off_size > 4 {
+        return None;
+    }
+    let offsets_end = start + 3 + (count + 1) * off_size;
+    if offsets_end > data.len() {
+        return None;
+    }
+    // Read the last offset value (1-based) to determine data section end.
+    let last_off_start = start + 3 + count * off_size;
+    let last_off_bytes = data.get(last_off_start..last_off_start + off_size)?;
+    let mut last_off = 0usize;
+    for &b in last_off_bytes {
+        last_off = (last_off << 8) | b as usize;
+    }
+    // last_off is 1-based, so actual end = offsets_end + last_off - 1.
+    Some(offsets_end + last_off.saturating_sub(1))
 }
 
 /// Fix TrueType/SFNT font programs that are stored in `FontFile3` with `Subtype
@@ -4475,6 +4644,48 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
 
+    // Pre-scan: multiple CIDFontType2 objects may share the same FontDescriptor
+    // but have different CIDToGIDMaps. The CIDSet in the shared FD must cover
+    // the MAXIMUM map size across all CIDFonts using that FD. Without this,
+    // the last-processed font wins, potentially generating a CIDSet that's too
+    // small for earlier fonts — triggering 6.2.11.4.2:2. (#465)
+    let fd_nonidentity_max_map: std::collections::HashMap<ObjectId, usize> = {
+        let mut map: std::collections::HashMap<ObjectId, usize> =
+            std::collections::HashMap::new();
+        for &fid in &font_ids {
+            let dict = match doc.objects.get(&fid) {
+                Some(Object::Dictionary(d)) => d,
+                _ => continue,
+            };
+            if get_name(dict, b"Subtype").unwrap_or_default() != "CIDFontType2" {
+                continue;
+            }
+            let fd_id = match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+            // Only track subset fonts (XXXXXX+ prefix) since non-subset are removed.
+            let bf = get_name(dict, b"BaseFont").unwrap_or_default();
+            let bf = bf.as_bytes();
+            if !(bf.len() >= 7 && bf[6] == b'+' && bf[..6].iter().all(|x| x.is_ascii_uppercase()))
+            {
+                continue;
+            }
+            if let Ok(Object::Reference(map_id)) = dict.get(b"CIDToGIDMap") {
+                if let Some(Object::Stream(s)) = doc.objects.get(map_id) {
+                    let mut s2 = s.clone();
+                    let _ = s2.decompress();
+                    let map_size = s2.content.len() / 2;
+                    let entry = map.entry(fd_id).or_insert(0);
+                    if map_size > *entry {
+                        *entry = map_size;
+                    }
+                }
+            }
+        }
+        map
+    };
+
     for font_id in font_ids {
         let (subtype, base_font, fd_id) = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
@@ -4581,14 +4792,26 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
                 };
 
                 // Compute the CIDSet bit coverage based on CIDToGIDMap type.
+                // Use the maximum map_size across all CIDFonts sharing this FD
+                // (pre-scanned above) to handle shared FontDescriptors correctly. (#465)
                 let cidset_bytes: Option<Vec<u8>> = if let Some(map_id) = cid_to_gid_map_id {
                     // Non-identity CIDToGIDMap stream: coverage = bits 1..N-1
-                    // where N = decompressed stream length / 2.
-                    if let Some(Object::Stream(s)) = doc.objects.get(&map_id) {
+                    // where N = max(decompressed stream length / 2) across all sharers.
+                    let this_map_size = if let Some(Object::Stream(s)) =
+                        doc.objects.get(&map_id)
+                    {
                         let mut s2 = s.clone();
                         let _ = s2.decompress();
-                        let map_size = s2.content.len() / 2;
-                        Some(cidset_bitstream_nonidentity(map_size))
+                        s2.content.len() / 2
+                    } else {
+                        0
+                    };
+                    let max_map_size = fd_nonidentity_max_map
+                        .get(&fd_id)
+                        .copied()
+                        .unwrap_or(this_map_size);
+                    if max_map_size > 0 {
+                        Some(cidset_bitstream_nonidentity(max_map_size))
                     } else {
                         None
                     }
