@@ -119,7 +119,17 @@ impl PdfTest for ComplianceTest {
                         };
                     }
                     Err(e) => {
-                        metadata.insert("verapdf_error".to_string(), e);
+                        // veraPDF cannot process this PDF (corrupt/encrypted) — skip
+                        // rather than silently passing, so false negatives aren't hidden.
+                        // Fixes #469.
+                        metadata.insert("verapdf_error".to_string(), e.clone());
+                        return TestResult {
+                            status: TestStatus::Skip,
+                            error_message: Some(format!("veraPDF error: {e}")),
+                            duration_ms: start.elapsed().as_millis() as u64,
+                            oracle_score: None,
+                            metadata,
+                        };
                     }
                 }
             }
