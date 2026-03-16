@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 
 use crate::classifier::{classify_error, ErrorCategory};
 use crate::config::Config;
-use crate::db::{Database, RunSummary, TestResultRow};
+use crate::db::{Database, MemoryLogRow, RunSummary, TestResultRow};
 use crate::tests::{PdfTest, TestStatus};
 
 /// Maximum number of test threads actively being awaited by a rayon worker.
@@ -211,6 +211,10 @@ impl Runner {
                     return;
                 }
 
+                // Measure RSS before all tests for this PDF (per-PDF memory baseline).
+                let rss_before_pdf_kb =
+                    current_rss_bytes().map(|b| b as i64 / 1024).unwrap_or(-1);
+
                 for test in &self.tests {
                     if let Some(filter) = &self.config.test_filter {
                         if !filter.iter().any(|f| f == test.name()) {
@@ -293,6 +297,30 @@ impl Runner {
                         eprintln!("DB write error: {}", e);
                     }
                 }
+
+                // Measure RSS after all tests for this PDF and log the delta.
+                let rss_after_pdf_kb =
+                    current_rss_bytes().map(|b| b as i64 / 1024).unwrap_or(-1);
+                let rss_delta_kb = rss_after_pdf_kb - rss_before_pdf_kb;
+                let worker_id = rayon::current_thread_index().unwrap_or(0) as i64;
+                if rss_delta_kb > 500_000 {
+                    // 500 MB+ spike — likely a leak or an unusually large document.
+                    eprintln!(
+                        "WARNING: RSS +{:.0} MB for {} (worker {})",
+                        rss_delta_kb as f64 / 1024.0,
+                        path_str,
+                        worker_id,
+                    );
+                }
+                let _ = self.db.insert_memory_log(&MemoryLogRow {
+                    pdf_path: path_str.clone(),
+                    test_name: "all".to_string(),
+                    worker_id,
+                    pdf_size_bytes: pdf_size,
+                    rss_before_kb: rss_before_pdf_kb,
+                    rss_after_kb: rss_after_pdf_kb,
+                    rss_delta_kb,
+                });
 
                 let p = pass_count.load(Ordering::Relaxed);
                 let f = fail_count.load(Ordering::Relaxed);
