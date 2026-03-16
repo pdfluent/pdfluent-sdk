@@ -5,7 +5,7 @@
 //! and permission management.
 
 use crate::error::{ManipError, Result};
-use lopdf::{dictionary, Document, Object};
+use lopdf::{Document, EncryptionState, EncryptionVersion, Object, Permissions as LopdfPerms};
 use std::io::Write;
 use std::path::Path;
 
@@ -190,85 +190,69 @@ impl Default for EncryptConfig {
     }
 }
 
-/// Set up encryption metadata and save.
+/// Encrypt and save a document to an arbitrary writer.
 ///
-/// Configures the encryption dictionary. lopdf handles the actual
-/// byte-level encryption during save.
+/// Calls lopdf's encryption pipeline, which encrypts every object in-place
+/// before writing.  The caller's `doc` is mutated (encrypted) after the call.
 pub fn encrypt_and_save<W: Write>(
     doc: &mut Document,
     config: &EncryptConfig,
     mut w: W,
 ) -> Result<()> {
-    let algo = &config.algorithm;
-    let p_value = config.permissions.to_p_value();
+    let user_pw = std::str::from_utf8(&config.user_password)
+        .map_err(|_| ManipError::Encryption("user_password is not valid UTF-8".into()))?;
+    let owner_pw = std::str::from_utf8(&config.owner_password)
+        .map_err(|_| ManipError::Encryption("owner_password is not valid UTF-8".into()))?;
 
-    let mut encrypt_dict = lopdf::Dictionary::new();
-    encrypt_dict.set("Filter", Object::Name(b"Standard".to_vec()));
-    encrypt_dict.set("V", Object::Integer(algo.version()));
-    encrypt_dict.set("R", Object::Integer(algo.revision()));
-    encrypt_dict.set("Length", Object::Integer(algo.key_length()));
-    encrypt_dict.set("P", Object::Integer(p_value as i64));
+    let state = match config.algorithm {
+        // AES-256 (PDF 2.0, V=5, R=6) — no /ID required; random key generated internally.
+        EncryptionAlgorithm::Aes256 | EncryptionAlgorithm::Aes128 => {
+            lopdf::aes256_encryption_state(owner_pw, user_pw, LopdfPerms::all())
+                .map_err(|e| ManipError::Encryption(e.to_string()))?
+        }
+        // RC4-128 (V=2, R=3) — requires /ID in the trailer.
+        EncryptionAlgorithm::Rc4_128 => {
+            ensure_document_id(doc);
+            EncryptionState::try_from(EncryptionVersion::V2 {
+                document: doc,
+                owner_password: owner_pw,
+                user_password: user_pw,
+                key_length: 128,
+                permissions: LopdfPerms::all(),
+            })
+            .map_err(|e| ManipError::Encryption(e.to_string()))?
+        }
+        // RC4-40 (V=1, R=2) — requires /ID in the trailer.
+        EncryptionAlgorithm::Rc4_40 => {
+            ensure_document_id(doc);
+            EncryptionState::try_from(EncryptionVersion::V1 {
+                document: doc,
+                owner_password: owner_pw,
+                user_password: user_pw,
+                permissions: LopdfPerms::all(),
+            })
+            .map_err(|e| ManipError::Encryption(e.to_string()))?
+        }
+    };
 
-    if matches!(
-        algo,
-        EncryptionAlgorithm::Aes128 | EncryptionAlgorithm::Aes256
-    ) {
-        let cfm = if matches!(algo, EncryptionAlgorithm::Aes256) {
-            "AESV3"
-        } else {
-            "AESV2"
-        };
-        let std_cf = dictionary! {
-            "Type" => "CryptFilter",
-            "CFM" => Object::Name(cfm.as_bytes().to_vec()),
-            "Length" => Object::Integer(algo.key_length() / 8),
-        };
-        let cf = dictionary! { "StdCF" => Object::Dictionary(std_cf) };
-        encrypt_dict.set("CF", Object::Dictionary(cf));
-        encrypt_dict.set("StmF", Object::Name(b"StdCF".to_vec()));
-        encrypt_dict.set("StrF", Object::Name(b"StdCF".to_vec()));
-    }
-
-    // Placeholder hashes (actual computation happens in lopdf's save pipeline).
-    let hash32 = Object::String(vec![0u8; 32], lopdf::StringFormat::Hexadecimal);
-    let hash48 = Object::String(vec![0u8; 48], lopdf::StringFormat::Hexadecimal);
-
-    if matches!(algo, EncryptionAlgorithm::Aes256) {
-        encrypt_dict.set("O", hash48.clone());
-        encrypt_dict.set("U", hash48);
-        encrypt_dict.set("OE", hash32.clone());
-        encrypt_dict.set("UE", hash32.clone());
-        encrypt_dict.set(
-            "Perms",
-            Object::String(vec![0u8; 16], lopdf::StringFormat::Hexadecimal),
-        );
-    } else {
-        encrypt_dict.set("O", hash32.clone());
-        encrypt_dict.set("U", hash32);
-    }
-
-    let encrypt_id = doc.add_object(Object::Dictionary(encrypt_dict));
-    doc.trailer.set("Encrypt", Object::Reference(encrypt_id));
-
-    // Ensure document ID exists.
-    if doc.trailer.get(b"ID").is_err() {
-        let id = generate_document_id();
-        let id_obj = Object::String(id.clone(), lopdf::StringFormat::Hexadecimal);
-        doc.trailer
-            .set("ID", Object::Array(vec![id_obj.clone(), id_obj]));
-    }
-
+    doc.encrypt(&state)
+        .map_err(|e| ManipError::Encryption(e.to_string()))?;
     doc.save_to(&mut w)?;
     Ok(())
 }
 
-fn generate_document_id() -> Vec<u8> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    (0..16).map(|i| ((nanos >> (i * 8)) & 0xFF) as u8).collect()
+fn ensure_document_id(doc: &mut Document) {
+    if doc.trailer.get(b"ID").is_err() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let id: Vec<u8> = (0..16).map(|i| ((nanos >> (i * 8)) & 0xFF) as u8).collect();
+        let id_obj = Object::String(id, lopdf::StringFormat::Hexadecimal);
+        doc.trailer
+            .set("ID", Object::Array(vec![id_obj.clone(), id_obj]));
+    }
 }
 
 #[cfg(test)]
