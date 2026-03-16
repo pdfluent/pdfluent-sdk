@@ -127,6 +127,24 @@ impl Config {
     }
 
     /// Per-test timeout: fast tests get a shorter timeout, heavy tests get the full timeout.
+    ///
+    /// Inner-thread timeouts in each test are set slightly below these outer limits so the
+    /// test's run() always returns a result before the runner's recv_timeout fires:
+    ///
+    /// | test             | outer  | inner strategy                           |
+    /// |------------------|--------|------------------------------------------|
+    /// | parse/metadata   | base/5 | no inner thread                          |
+    /// | bookmarks/annots | base/3 | no inner thread                          |
+    /// | manipulation     | base   | single thread, 25s inner                 |
+    /// | search           | base   | single thread, 25s inner                 |
+    /// | text_replace     | base   | single thread, 25s inner                 |
+    /// | redact           | base   | single thread, 25s inner                 |
+    /// | content_roundtrip| base   | single thread, 25s inner                 |
+    /// | annot_create     | base   | single thread, 25s inner                 |
+    /// | images           | base   | multi-thread: 30s load + 20s pages + 10s/page |
+    /// | ocr              | 2×base | single thread, 25s inner (OCR is heavy)  |
+    /// | sign_roundtrip   | base   | two sequential threads, 12s each (shared 26s budget) |
+    /// | pdfa_convert     | 3×base | progress-tracked, inner threads managed by test |
     pub fn timeout_for_test(&self, test_name: &str) -> Duration {
         let base = self.timeout.as_secs();
         let secs = match test_name {
@@ -136,6 +154,9 @@ impl Config {
             "bookmarks" | "annotations" | "form_fields" | "signatures" | "sign_verify" => {
                 (base / 3).max(5)
             }
+            // OCR can be heavier: allow 2× base so the inner 25s budget has room
+            // and actual OCR inference (when enabled) does not get cut short.
+            "ocr" => base * 2,
             // Heavy tests with external oracle: 3x base for veraPDF overhead
             "pdfa_convert" => base * 3,
             // Heavy tests: full base timeout

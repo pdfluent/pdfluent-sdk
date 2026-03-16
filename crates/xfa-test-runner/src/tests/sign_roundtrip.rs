@@ -1,8 +1,18 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use super::{PdfTest, TestResult, TestStatus};
+
+/// Total time budget for sign_roundtrip.run() before the outer runner's 30s timer fires.
+/// The two sequential inner threads (lopdf load + sign_pdf) share this budget, leaving
+/// 4s of margin so run() always returns before the outer runner's recv_timeout.
+const SIGN_BUDGET_SECS: u64 = 26;
+
+/// Maximum time granted to a single inner operation (lopdf or sign_pdf).
+/// Two operations at 12s each = 24s ≤ SIGN_BUDGET_SECS.
+const SIGN_OP_MAX_SECS: u64 = 12;
 
 /// Sign-roundtrip test: signs a PDF using our PKCS#12 signer, then validates
 /// the resulting signature with our validation pipeline.
@@ -31,6 +41,14 @@ impl PdfTest for SignRoundtripTest {
     fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
         let start = std::time::Instant::now();
         let elapsed = || start.elapsed().as_millis() as u64;
+        let budget = Duration::from_secs(SIGN_BUDGET_SECS);
+        // Compute how much time remains in the overall budget, capped at SIGN_OP_MAX_SECS.
+        // Shared across both inner threads so their combined duration stays within budget.
+        let remaining = || {
+            budget
+                .saturating_sub(start.elapsed())
+                .min(Duration::from_secs(SIGN_OP_MAX_SECS))
+        };
 
         // 1. Get the shared signer.
         let signer = match get_signer() {
@@ -67,13 +85,15 @@ impl PdfTest for SignRoundtripTest {
                 .spawn(move || {
                     let _ = tx_l.send(lopdf::Document::load_mem(&pdf_clone2).is_ok());
                 });
-            rx_l.recv_timeout(std::time::Duration::from_secs(30))
-                .unwrap_or(false)
+            rx_l.recv_timeout(remaining()).unwrap_or(false)
         };
         if !lopdf_ok {
             return TestResult {
                 status: TestStatus::Skip,
-                error_message: Some("lopdf load failed (skip signing)".into()),
+                error_message: Some(format!(
+                    "lopdf load failed or timed out ({}ms elapsed)",
+                    elapsed()
+                )),
                 duration_ms: elapsed(),
                 oracle_score: None,
                 metadata: HashMap::new(),
@@ -98,12 +118,16 @@ impl PdfTest for SignRoundtripTest {
                 });
         }
 
-        let sign_result = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+        let sign_result = match rx.recv_timeout(remaining()) {
             Ok(r) => r,
             Err(_) => {
                 return TestResult {
                     status: TestStatus::Skip,
-                    error_message: Some("sign_pdf timed out (>30s)".into()),
+                    error_message: Some(format!(
+                        "sign_pdf timed out after {}ms (budget: {}s)",
+                        elapsed(),
+                        SIGN_BUDGET_SECS
+                    )),
                     duration_ms: elapsed(),
                     oracle_score: None,
                     metadata: HashMap::new(),

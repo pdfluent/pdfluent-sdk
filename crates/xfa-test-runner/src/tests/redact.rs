@@ -26,7 +26,7 @@ impl PdfTest for RedactTest {
                 let _ = tx.send(r);
             })
             .expect("thread spawn");
-        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+        match rx.recv_timeout(std::time::Duration::from_secs(25)) {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => TestResult {
                 status: TestStatus::Crash,
@@ -37,7 +37,7 @@ impl PdfTest for RedactTest {
             },
             Err(_) => TestResult {
                 status: TestStatus::Timeout,
-                error_message: Some("test timed out (>30s)".into()),
+                error_message: Some("test timed out (>25s)".into()),
                 duration_ms: 30_000,
                 oracle_score: None,
                 metadata: HashMap::new(),
