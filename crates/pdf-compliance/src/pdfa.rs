@@ -1658,9 +1658,14 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.1.7.1") => Some("6.1.6.1"),
             (4, "6.1.7") => Some("6.1.6.1"),
 
-            // Widget annotation actions
+            // Widget annotation actions / NeedAppearances
             // PDF/A-1: §6.6.1, PDF/A-2/3: §6.4.1
+            // PDF/A-4: veraPDF uses §6.4.x which normalizes to §6.6.x in comparison.
+            // Remap our internal §6.4.x to §6.6.x for PDF/A-4 output. (#467)
             (1, "6.4.1") => Some("6.6.1"),
+            (4, "6.4.1") => Some("6.6.1"),
+            (4, "6.4.2") => Some("6.6.2"),
+            (4, "6.4.3") => Some("6.6.3"),
 
             // Transparency (SMask) restrictions
             // PDF/A-1: §6.4, PDF/A-2/3/4: §6.2.10.7

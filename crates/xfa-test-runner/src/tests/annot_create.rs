@@ -77,7 +77,22 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     }
 
     // Count existing annotations on page 1 before mutation.
-    let annots_before = count_annotations_lopdf(&doc, 1);
+    // Count annotations using the same method as after the round-trip (pdf_annot
+    // via pdf_syntax) so that the before/after comparison is apple-to-apple.
+    // Using lopdf's raw Annots array count gave inflated numbers (e.g. 103) that
+    // pdf_annot's typed parser couldn't match after save (e.g. 5), causing a
+    // persistent FAIL even when the new annotation was correctly written. (#467)
+    let annots_before = match pdf_syntax::Pdf::new(pdf.clone()) {
+        Ok(p) => {
+            let pages = p.pages();
+            if pages.is_empty() {
+                0
+            } else {
+                pdf_annot::Annotation::from_page(&pages[0]).len()
+            }
+        }
+        Err(_) => 0,
+    };
 
     // 2. Add a highlight annotation on page 1.
     let build_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -195,26 +210,5 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
             oracle_score: None,
             metadata,
         }
-    }
-}
-
-/// Count annotations on a page via lopdf (fallible, returns 0 on error).
-fn count_annotations_lopdf(doc: &lopdf::Document, page_num: u32) -> usize {
-    let pages = doc.get_pages();
-    let page_id = match pages.get(&page_num) {
-        Some(id) => *id,
-        None => return 0,
-    };
-    let page = match doc.get_object(page_id) {
-        Ok(lopdf::Object::Dictionary(d)) => d,
-        _ => return 0,
-    };
-    match page.get(b"Annots") {
-        Ok(lopdf::Object::Array(arr)) => arr.len(),
-        Ok(lopdf::Object::Reference(r)) => match doc.get_object(*r) {
-            Ok(lopdf::Object::Array(arr)) => arr.len(),
-            _ => 0,
-        },
-        _ => 0,
     }
 }
