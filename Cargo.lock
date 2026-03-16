@@ -4026,6 +4026,9 @@ dependencies = [
  "lopdf",
  "pdf-compliance",
  "pdf-engine",
+ "pdf-extract",
+ "pdf-forms",
+ "pdf-manip",
  "pdf-syntax",
  "pdfium-ffi-bridge",
  "xfa-dom-resolver",
@@ -4168,7 +4171,14 @@ name = "pdf-java"
 version = "0.1.0"
 dependencies = [
  "jni",
+ "lopdf",
+ "pdf-annot",
+ "pdf-compliance",
  "pdf-engine",
+ "pdf-forms",
+ "pdf-manip",
+ "pdf-redact",
+ "pdf-syntax",
 ]
 
 [[package]]
@@ -4264,6 +4274,7 @@ dependencies = [
  "image",
  "kurbo 0.13.0",
  "log",
+ "lopdf",
  "pdf-interpret",
  "vello_cpu",
 ]

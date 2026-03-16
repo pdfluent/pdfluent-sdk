@@ -334,8 +334,7 @@ impl Runner {
             let too_many_waiting = self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT_THREADS;
             let too_many_alive = self.spawned.load(Ordering::Relaxed) >= MAX_SPAWNED_THREADS;
             #[cfg(target_os = "linux")]
-            let rss_too_high = current_rss_bytes()
-                .map_or(false, |rss| rss > RSS_PAUSE_THRESHOLD);
+            let rss_too_high = current_rss_bytes().map_or(false, |rss| rss > RSS_PAUSE_THRESHOLD);
             #[cfg(not(target_os = "linux"))]
             let rss_too_high = false;
             if !too_many_waiting && !too_many_alive && !rss_too_high {
