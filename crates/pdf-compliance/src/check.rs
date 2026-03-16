@@ -2045,6 +2045,26 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                     }
                 }
             }
+            // veraPDF requires rdf:Alt/rdf:li to have xml:lang="x-default".
+            // If dc:title exists but lacks an x-default language entry,
+            // veraPDF treats the title as null → §6.7.3 mismatch. (#467)
+            let dc_title_region = xmp_text
+                .find("<dc:title>")
+                .or_else(|| xmp_text.find("<dc:title "));
+            if let Some(pos) = dc_title_region {
+                let region_end = xmp_text[pos..].find("</dc:title>").unwrap_or(0) + pos;
+                let region = &xmp_text[pos..region_end];
+                let has_xdefault = region.contains("xml:lang=\"x-default\"")
+                    || region.contains("xml:lang='x-default'");
+                if !has_xdefault && xmp_title.is_some() {
+                    // Title value exists but lacks x-default lang tag
+                    error(
+                        report,
+                        "6.7.3",
+                        "dc:title in XMP lacks xml:lang=\"x-default\" — value not accessible as x-default",
+                    );
+                }
+            }
         }
     }
 
@@ -2100,11 +2120,14 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                 }
             }
-        } else if !has_lowercase_keywords {
+        } else {
+            // pdf:Keywords (correct case) is absent. veraPDF emits §6.7.3 regardless
+            // of whether pdf:keywords (lowercase) exists — the correct property is
+            // missing. Emit §6.7.3 unconditionally here. (#467)
             error(
                 report,
                 "6.7.3",
-                "/Info has Keywords but XMP is missing pdf:Keywords",
+                "/Info has Keywords but XMP is missing pdf:Keywords (correct-case property)",
             );
         }
     }
