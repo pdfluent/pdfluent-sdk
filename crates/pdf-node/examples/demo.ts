@@ -3,10 +3,6 @@
  *
  * Run from the crates/pdf-node directory after `npm run build`:
  *   npx ts-node examples/demo.ts [path/to/file.pdf]
- *
- * Or compile first:
- *   npx tsc examples/demo.ts --outDir examples/dist --esModuleInterop true
- *   node examples/dist/demo.js
  */
 
 import * as fs from 'fs';
@@ -16,12 +12,12 @@ import {
   PdfDocument,
   ComplianceReportInfo,
   DocumentInfo,
+  FormFieldInfo,
+  RedactionResult,
   openPdf,
   mergePdfs,
   validatePdfa,
 } from '../index';
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 function banner(title: string): void {
   console.log('\n' + '─'.repeat(60));
@@ -29,77 +25,109 @@ function banner(title: string): void {
   console.log('─'.repeat(60));
 }
 
-// ── main ─────────────────────────────────────────────────────────────────────
-
 const inputPath: string =
   process.argv[2] ??
   path.join(__dirname, '..', '..', '..', 'fixtures', 'sample.pdf');
+const acroformPath: string =
+  process.argv[3] ??
+  path.join(__dirname, '..', '..', '..', 'fixtures', 'acroform.pdf');
 
 if (!fs.existsSync(inputPath)) {
   console.error(`File not found: ${inputPath}`);
-  console.error('Usage: npx ts-node examples/demo.ts [path/to/file.pdf]');
   process.exit(1);
 }
 
-// 1. Open document via path helper ───────────────────────────────────────────
+// ── 1. Open ────────────────────────────────────────────────────────────────
 banner('1. openPdf(path) → PdfDocument');
 const doc: PdfDocument = openPdf(inputPath);
 console.log(`Opened: ${inputPath}`);
 
-// 2. Page count ───────────────────────────────────────────────────────────────
+// ── 2. Page count ──────────────────────────────────────────────────────────
 banner('2. document.pageCount');
 const count: number = doc.pageCount;
 console.log(`Pages: ${count}`);
 
-// 3. Metadata ─────────────────────────────────────────────────────────────────
+// ── 3. Metadata ────────────────────────────────────────────────────────────
 banner('3. document.info()');
 const info: DocumentInfo = doc.info();
 console.log('Title:   ', info.title ?? '(none)');
 console.log('Author:  ', info.author ?? '(none)');
-console.log('Creator: ', info.creator ?? '(none)');
 
-// 4. Extract text from first page ─────────────────────────────────────────────
+// ── 4. Extract text ────────────────────────────────────────────────────────
 banner('4. document.extractText(0)');
 const text: string = doc.extractText(0);
 const preview = text.trim().slice(0, 200).replace(/\n/g, ' ');
-console.log(`Text (first 200 chars): ${preview || '(no text)'}`);
+console.log(`Text: ${preview || '(no text)'}`);
 
-// 5. Page geometry ─────────────────────────────────────────────────────────────
-banner('5. document.page(0) geometry');
-const page = doc.page(0);
-console.log(`Width: ${page.width.toFixed(1)} pt  Height: ${page.height.toFixed(1)} pt`);
-
-// 6. Save to temp file ────────────────────────────────────────────────────────
-banner('6. document.save(path)');
-const tmpOut: string = path.join(os.tmpdir(), 'pdf-node-demo-ts-save.pdf');
-doc.save(tmpOut);
-const savedSize: number = fs.statSync(tmpOut).size;
-console.log(`Saved to: ${tmpOut} (${savedSize} bytes)`);
-fs.unlinkSync(tmpOut);
-
-// 7. Merge two copies of the input ────────────────────────────────────────────
-banner('7. mergePdfs([path, path], outputPath)');
-const mergedOut: string = path.join(os.tmpdir(), 'pdf-node-demo-ts-merged.pdf');
-mergePdfs([inputPath, inputPath], mergedOut);
-const mergedDoc: PdfDocument = openPdf(mergedOut);
-console.log(`Merged ${count} + ${count} pages → ${mergedDoc.pageCount} pages`);
-console.log(`Written to: ${mergedOut}`);
-fs.unlinkSync(mergedOut);
-
-// 8. Validate PDF/A ────────────────────────────────────────────────────────────
-banner('8. validatePdfA(path, "2b")');
-const report: ComplianceReportInfo = validatePdfa(inputPath, '2b');
-console.log(`Compliant: ${report.compliant}`);
-console.log(`Errors:    ${report.errorCount}`);
-console.log(`Warnings:  ${report.warningCount}`);
-if (report.issues.length > 0) {
-  console.log('First issue:', report.issues[0].message);
+// ── 5. Form fields (read) ──────────────────────────────────────────────────
+banner('5. formFields() + setFieldValue()');
+if (fs.existsSync(acroformPath)) {
+  const formDoc: PdfDocument = openPdf(acroformPath);
+  const fields: FormFieldInfo[] = formDoc.formFields();
+  console.log(`Found ${fields.length} form fields`);
+  fields.slice(0, 3).forEach(f =>
+    console.log(`  ${f.fieldType.padEnd(9)} ${f.name} = ${f.value ?? '(empty)'}`)
+  );
+  const textField = fields.find(f => f.fieldType === 'text');
+  if (textField) {
+    formDoc.setFieldValue(textField.name, 'filled by pdf-node TS');
+    console.log(`Updated '${textField.name}'`);
+    const savedForm = path.join(os.tmpdir(), 'pdf-node-ts-demo-form.pdf');
+    formDoc.save(savedForm);
+    console.log(`Saved: ${savedForm}`);
+    fs.unlinkSync(savedForm);
+  }
 }
 
-// 9. Open via Buffer (low-level) ───────────────────────────────────────────────
-banner('9. PdfDocument.open(buffer)');
-const buf: Buffer = fs.readFileSync(inputPath);
-const docFromBuf: PdfDocument = PdfDocument.open(buf);
-console.log(`Opened from Buffer — pageCount: ${docFromBuf.pageCount}`);
+// ── 6. Add annotations ────────────────────────────────────────────────────
+banner('6. document.addAnnotation(page, type, rect, content)');
+doc.addAnnotation(0, 'highlight', [72, 700, 540, 720], 'highlighted');
+doc.addAnnotation(0, 'freetext', [72, 650, 400, 680], 'a note');
+doc.addAnnotation(0, 'note', [520, 740, 540, 760], 'sticky');
+console.log('Added highlight, freetext, note.');
+
+// ── 7. Read annotations ───────────────────────────────────────────────────
+banner('7. document.annotations(page)');
+const annots = doc.annotations(0);
+console.log(`${annots.length} annotations on page 0`);
+
+// ── 8. Redact text ────────────────────────────────────────────────────────
+banner('8. document.redactText(term)');
+const redactDoc: PdfDocument = openPdf(inputPath);
+const rr: RedactionResult = redactDoc.redactText('Test');
+console.log(`matches=${rr.matchesFound}  areas=${rr.areasRedacted}  pages=${rr.pagesAffected}`);
+const redactOut = path.join(os.tmpdir(), 'pdf-node-ts-redacted.pdf');
+redactDoc.save(redactOut);
+console.log(`Saved: ${redactOut}`);
+fs.unlinkSync(redactOut);
+
+// ── 9. Save with annotations ──────────────────────────────────────────────
+banner('9. document.save(path)');
+const saveOut = path.join(os.tmpdir(), 'pdf-node-ts-save.pdf');
+doc.save(saveOut);
+console.log(`Saved: ${saveOut} (${fs.statSync(saveOut).size} bytes)`);
+fs.unlinkSync(saveOut);
+
+// ── 10. Merge ─────────────────────────────────────────────────────────────
+banner('10. mergePdfs([path, path], outputPath)');
+const mergedOut = path.join(os.tmpdir(), 'pdf-node-ts-merged.pdf');
+mergePdfs([inputPath, inputPath], mergedOut);
+const mergedDoc: PdfDocument = openPdf(mergedOut);
+console.log(`Merged → ${mergedDoc.pageCount} pages`);
+fs.unlinkSync(mergedOut);
+
+// ── 11. Encrypt ───────────────────────────────────────────────────────────
+banner('11. encrypt(path, pw)');
+const encOut = path.join(os.tmpdir(), 'pdf-node-ts-encrypted.pdf');
+const plainDoc: PdfDocument = openPdf(inputPath);
+plainDoc.encrypt(encOut, 'ts-demo-pw');
+console.log(`Encrypted: ${encOut} (${fs.statSync(encOut).size} bytes)`);
+fs.unlinkSync(encOut);
+// decrypt() is available on PdfDocument.openWithPassword(buf, pw) documents.
+
+// ── 12. validatePdfA standalone ───────────────────────────────────────────
+banner('12. validatePdfa(path, level)');
+const pdfaReport: ComplianceReportInfo = validatePdfa(inputPath, '2b');
+console.log(`compliant=${pdfaReport.compliant}  errors=${pdfaReport.errorCount}`);
 
 console.log('\n✓ All demos completed successfully.\n');

@@ -18,6 +18,8 @@ pdf-sign = { path = "../pdf-sign" }
 pdf-compliance = { path = "../pdf-compliance" }
 pdf-syntax = { path = "../pdf-syntax" }
 pdf-manip = { path = "../pdf-manip", default-features = false }
+pdf-redact = { path = "../pdf-redact" }
+lopdf.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt"] }
