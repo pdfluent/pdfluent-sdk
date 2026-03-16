@@ -222,6 +222,63 @@ pub(crate) fn glyph_name_to_char(name: &str) -> Option<char> {
         "compwordmark" => None, // TeX \| — invisible
         "visiblespace" => Some(' '),
         "dotlessj" => Some('\u{0237}'),
+        // Greek uppercase letters (Adobe Glyph List v1.7).
+        // These appear in Differences arrays of Symbol-style and Greek fonts.
+        // Without these entries `apply_differences` removes the code from the
+        // encoding map, causing `build_reverse_map` to omit Latin lookalikes
+        // (e.g. 'X'→0x58 removed because /Xi overrides it).  That makes
+        // `encode_text_for_font` return Err for Latin replacement chars and
+        // triggers the Helvetica fallback.  Fixes text_replace failures on
+        // PDFs that use Greek/symbol fonts. Fixes #468.
+        "Alpha" => Some('\u{0391}'),
+        "Beta" => Some('\u{0392}'),
+        "Gamma" => Some('\u{0393}'),
+        // "Delta" already mapped to U+2206 (INCREMENT) per AGL — leave as-is.
+        "Epsilon" => Some('\u{0395}'),
+        "Zeta" => Some('\u{0396}'),
+        "Eta" => Some('\u{0397}'),
+        "Theta" => Some('\u{0398}'),
+        "Iota" => Some('\u{0399}'),
+        "Kappa" => Some('\u{039A}'),
+        "Lambda" => Some('\u{039B}'),
+        "Mu" => Some('\u{039C}'),
+        "Nu" => Some('\u{039D}'),
+        "Xi" => Some('\u{039E}'),
+        "Omicron" => Some('\u{039F}'),
+        "Pi" => Some('\u{03A0}'),
+        "Rho" => Some('\u{03A1}'),
+        "Sigma" => Some('\u{03A3}'),
+        "Tau" => Some('\u{03A4}'),
+        "Upsilon" => Some('\u{03A5}'),
+        "Phi" => Some('\u{03A6}'),
+        "Chi" => Some('\u{03A7}'),
+        "Psi" => Some('\u{03A8}'),
+        // "Omega" already mapped to U+03A9 — leave as-is.
+        // Greek lowercase letters (AGL v1.7).
+        "alpha" => Some('\u{03B1}'),
+        "beta" => Some('\u{03B2}'),
+        "gamma" => Some('\u{03B3}'),
+        "delta" => Some('\u{03B4}'),
+        "epsilon" => Some('\u{03B5}'),
+        "zeta" => Some('\u{03B6}'),
+        "eta" => Some('\u{03B7}'),
+        "theta" => Some('\u{03B8}'),
+        "iota" => Some('\u{03B9}'),
+        "kappa" => Some('\u{03BA}'),
+        "lambda" => Some('\u{03BB}'),
+        // "mu" already mapped to U+00B5 (MICRO SIGN) per AGL — leave as-is.
+        "nu" => Some('\u{03BD}'),
+        "xi" => Some('\u{03BE}'),
+        "omicron" => Some('\u{03BF}'),
+        // "pi" already mapped to U+03C0 — leave as-is.
+        "rho" => Some('\u{03C1}'),
+        "sigma" => Some('\u{03C3}'),
+        "tau" => Some('\u{03C4}'),
+        "upsilon" => Some('\u{03C5}'),
+        "phi" => Some('\u{03C6}'),
+        "chi" => Some('\u{03C7}'),
+        "psi" => Some('\u{03C8}'),
+        "omega" => Some('\u{03C9}'),
         _ => None,
     }
 }

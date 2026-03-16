@@ -493,6 +493,17 @@ fn encode_text_for_font(font_name: &str, text: &str, fonts: &FontMap) -> Result<
                 )));
             }
         }
+        // Round-trip verification: decode back and confirm we get the original text.
+        // Catches ToUnicode CMaps where the reverse map maps a char to a code that
+        // the CMap decodes to a different character (e.g. partial CMap with overlap).
+        // Fixes #468.
+        let decoded_back = fonts.decode_string(font_name, &bytes);
+        if decoded_back != text {
+            return Err(ManipError::Other(format!(
+                "encoding round-trip mismatch for font '{}': '{}' re-decodes as '{}'",
+                font_name, text, decoded_back
+            )));
+        }
         return Ok(bytes);
     }
 
