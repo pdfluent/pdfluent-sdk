@@ -268,12 +268,25 @@ fn extract_xmp_value(text: &str, key: &str) -> Option<String> {
     Some(text[start..end].trim().to_string())
 }
 
-/// Extract a value from an XMP attribute like `ns:key="value"`.
+/// Extract a value from an XMP attribute like `ns:key="value"` or `ns:key='value'`.
 fn extract_xmp_attr(text: &str, key: &str) -> Option<String> {
-    let pattern = format!("{key}=\"");
-    let start = text.find(&pattern)? + pattern.len();
-    let end = text[start..].find('"')? + start;
-    Some(text[start..end].trim().to_string())
+    // Try double-quoted attribute first
+    let pattern_dq = format!("{key}=\"");
+    if let Some(start) = text.find(&pattern_dq) {
+        let val_start = start + pattern_dq.len();
+        if let Some(end) = text[val_start..].find('"') {
+            return Some(text[val_start..val_start + end].trim().to_string());
+        }
+    }
+    // Fall back to single-quoted attribute (e.g. pdfaid:part='2')
+    let pattern_sq = format!("{key}='");
+    if let Some(start) = text.find(&pattern_sq) {
+        let val_start = start + pattern_sq.len();
+        if let Some(end) = text[val_start..].find('\'') {
+            return Some(text[val_start..val_start + end].trim().to_string());
+        }
+    }
+    None
 }
 
 /// Extract the first value from an rdf:Alt container (e.g., dc:title).
@@ -2043,6 +2056,17 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
 
     // Check Keywords (/Info Keywords vs pdf:Keywords)
     if let Some(keywords) = &metadata.keywords {
+        // Detect wrong-case variant: pdf:keywords (lowercase) is not a valid XMP property.
+        // veraPDF flags this as §6.7.9 (XMP schema conformance), not §6.7.3. (#467)
+        let has_lowercase_keywords = xmp_text.contains("<pdf:keywords>")
+            || xmp_text.contains("pdf:keywords=");
+        if has_lowercase_keywords {
+            error(
+                report,
+                "6.7.9",
+                "XMP contains 'pdf:keywords' (lowercase) — correct property name is 'pdf:Keywords'",
+            );
+        }
         let xmp_keywords = extract_xmp_value(xmp_text, "pdf:Keywords")
             .or_else(|| extract_xmp_attr(xmp_text, "pdf:Keywords"));
         if let Some(xmp_val) = &xmp_keywords {
@@ -2059,7 +2083,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                 }
             }
-        } else {
+        } else if !has_lowercase_keywords {
             error(
                 report,
                 "6.7.3",
@@ -5129,13 +5153,16 @@ pub fn check_tounicode_cmap(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
-/// Check ToUnicode CMap values for forbidden Unicode code points (§6.2.11.7.2).
-/// U+0000, U+FEFF (BOM), and U+FFFE are forbidden.
+/// Check ToUnicode CMap values for forbidden Unicode code points.
+///
+/// §6.2.11.7.2: U+0000, U+FEFF (BOM), and U+FFFE are forbidden.
+/// §6.2.11.7.3: U+FFFF is forbidden (replacement character sentinel).
 ///
 /// Only destination values in beginbfchar/beginbfrange sections are checked.
 /// Codespace range bounds (e.g. `<0000> <FFFF>`) are NOT destinations and
 /// must not be flagged as violations.
 pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
+    // First pass: scan fonts and their direct ToUnicode streams.
     for_each_font(pdf, |name, font_dict, page_idx| {
         let Some(cmap_stream) = font_dict.get::<Stream<'_>>(keys::TO_UNICODE) else {
             return;
@@ -5189,6 +5216,17 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
             // Destination is the 2nd token in bfchar, 3rd token in bfrange.
             let dst_idx = if in_bfchar { 1 } else { 2 };
             if let Some(&val) = tokens.get(dst_idx) {
+                // §6.2.11.7.3: U+FFFF forbidden
+                if val == 0xFFFF {
+                    error_at(
+                        report,
+                        "6.2.11.7.3",
+                        format!("Font {name} ToUnicode CMap contains forbidden U+FFFF"),
+                        format!("page {}", page_idx + 1),
+                    );
+                    return; // one error per font is enough
+                }
+                // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE forbidden
                 if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
                     error_at(
                         report,
@@ -5201,6 +5239,71 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
     });
+
+    // Second pass: scan all CMap streams in the PDF for §6.2.11.7.3 violations.
+    // ToUnicode CMaps may chain via /UseCMap to resource streams that are not
+    // directly linked as font ToUnicode — those must also be checked. (#467)
+    check_cmap_streams_for_ffff(pdf, report);
+}
+
+/// Scan all stream objects that look like CMap programs for U+FFFF destination values.
+fn check_cmap_streams_for_ffff(pdf: &Pdf, report: &mut ComplianceReport) {
+    for obj in pdf.objects() {
+        let stream = match &obj {
+            Object::Stream(s) => s,
+            _ => continue,
+        };
+        let Ok(data) = stream.decoded() else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&data);
+        if !text.contains("beginbfchar") && !text.contains("beginbfrange") {
+            continue;
+        }
+        let mut in_bfchar = false;
+        let mut in_bfrange = false;
+        for line in text.lines() {
+            let t = line.trim();
+            if t.ends_with("beginbfchar") {
+                in_bfchar = true;
+                continue;
+            }
+            if t == "endbfchar" {
+                in_bfchar = false;
+                continue;
+            }
+            if t.ends_with("beginbfrange") {
+                in_bfrange = true;
+                continue;
+            }
+            if t == "endbfrange" {
+                in_bfrange = false;
+                continue;
+            }
+            if !in_bfchar && !in_bfrange {
+                continue;
+            }
+            let tokens: Vec<u16> = t
+                .split('<')
+                .skip(1)
+                .filter_map(|chunk| {
+                    let end = chunk.find('>')?;
+                    u16::from_str_radix(&chunk[..end], 16).ok()
+                })
+                .collect();
+            let dst_idx = if in_bfchar { 1 } else { 2 };
+            if let Some(&val) = tokens.get(dst_idx) {
+                if val == 0xFFFF {
+                    error(
+                        report,
+                        "6.2.11.7.3",
+                        "ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+FFFF",
+                    );
+                    return; // one error per document is enough
+                }
+            }
+        }
+    }
 }
 
 const STANDARD_14: &[&str] = &[

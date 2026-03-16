@@ -469,6 +469,9 @@ fn is_valid_value_type(vtype: &str, custom_types: &HashSet<String>) -> bool {
 ///
 /// Replaces the simpler check in check.rs with one that actually
 /// parses extension schemas and validates specific properties.
+///
+/// Also checks that each used namespace prefix has a corresponding `xmlns:prefix`
+/// declaration in the XMP document (per XML namespace spec, required by PDF/A).
 fn check_property_namespaces(
     xmp: &str,
     schemas: &[ExtensionSchema],
@@ -488,6 +491,30 @@ fn check_property_namespaces(
         .filter(|s| !s.prefix.is_empty())
         .map(|s| format!("{}:", s.prefix))
         .collect();
+
+    // Collect all xmlns:prefix declarations present in the XMP document.
+    // Per the XML namespace spec, every used prefix must be declared with xmlns:prefix=.
+    // The only XML-predefined prefix is "xml:" (no declaration needed).
+    let declared_prefixes: HashSet<String> = {
+        let mut decls = HashSet::new();
+        let mut search = 0;
+        while let Some(pos) = xmp[search..].find("xmlns:") {
+            let abs = search + pos + 6; // skip "xmlns:"
+            if let Some(eq) = xmp[abs..].find('=') {
+                if eq < 40 {
+                    let prefix_name = &xmp[abs..abs + eq];
+                    if prefix_name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                    {
+                        decls.insert(format!("{prefix_name}:"));
+                    }
+                }
+            }
+            search = abs;
+        }
+        decls
+    };
 
     // Scan for namespace-prefixed properties
     let bytes = xmp.as_bytes();
@@ -512,12 +539,16 @@ fn check_property_namespaces(
                             continue;
                         }
 
-                        // Check if all chars in prefix are valid
+                        // Skip xmlns: attribute declarations themselves
+                        if prefix == "xmlns:" {
+                            pos = prefix_end;
+                            continue;
+                        }
+
                         if prefix
                             .chars()
                             .all(|c| c.is_ascii_alphanumeric() || c == ':')
-                            && !valid_prefixes.contains(prefix)
-                            && !extension_prefixes.contains(prefix)
+                            && !reported.contains(prefix)
                         {
                             // Find the full property name
                             let prop_end = xmp[prefix_end..]
@@ -526,20 +557,27 @@ fn check_property_namespaces(
                                 .unwrap_or(prefix_end);
                             let full_prop = &xmp[start..prop_end];
 
-                            if !full_prop.is_empty()
-                                && full_prop.contains(':')
-                                && !reported.contains(prefix)
-                            {
-                                error(
-                                    report,
-                                    rule,
-                                    format!(
-                                        "XMP property '{}' uses undeclared namespace prefix '{}'",
-                                        full_prop,
-                                        prefix.trim_end_matches(':')
-                                    ),
-                                );
-                                reported.insert(prefix.to_string());
+                            if !full_prop.is_empty() && full_prop.contains(':') {
+                                // Check 1: prefix not in predefined/extension sets
+                                let unknown_prefix = !valid_prefixes.contains(prefix)
+                                    && !extension_prefixes.contains(prefix);
+                                // Check 2: prefix is predefined but xmlns:prefix not declared
+                                // (xml: is the only XML-spec pre-declared prefix)
+                                let undeclared = prefix != "xml:"
+                                    && !declared_prefixes.contains(prefix);
+
+                                if unknown_prefix || undeclared {
+                                    error(
+                                        report,
+                                        rule,
+                                        format!(
+                                            "XMP property '{}' uses undeclared namespace prefix '{}'",
+                                            full_prop,
+                                            prefix.trim_end_matches(':')
+                                        ),
+                                    );
+                                    reported.insert(prefix.to_string());
+                                }
                             }
                         }
                     }
@@ -905,6 +943,11 @@ fn is_valid_iso8601(date: &str) -> bool {
 /// The XMP specification requires that the payload be wrapped in
 /// `<x:xmpmeta>` and contain an `<rdf:RDF>` element.  Absent these
 /// elements the stream cannot carry any PDF/A metadata properties.
+///
+/// Also checks §6.7.11 — the RDF namespace URI must be canonical
+/// (`http://www.w3.org/1999/02/22-rdf-syntax-ns#`).  A non-canonical
+/// URI (e.g. with `1999/2` instead of `1999/02`) makes the XMP
+/// non-conformant.
 fn check_xmp_rdf_structure(xmp: &str, report: &mut ComplianceReport) {
     if !xmp.contains("<rdf:RDF") {
         error(
@@ -912,6 +955,57 @@ fn check_xmp_rdf_structure(xmp: &str, report: &mut ComplianceReport) {
             "6.7.3",
             "XMP metadata stream is missing required <rdf:RDF> element",
         );
+    }
+
+    // Check that rdf:Description elements use rdf:about (qualified), not unqualified about=.
+    // Per RDF/XML spec, the about attribute must be namespace-qualified as rdf:about.
+    // Using bare `about=""` is invalid RDF/XML and triggers §6.7.3. (#467)
+    if xmp.contains(" about=\"") || xmp.contains(" about='") {
+        // Make sure this isn't just rdf:about (which is correct)
+        // Look for about= that is NOT preceded by rdf:
+        let bytes = xmp.as_bytes();
+        let mut i = 0;
+        while i + 6 < bytes.len() {
+            if &bytes[i..i + 7] == b" about=" || &bytes[i..i + 7] == b"\tabout=" {
+                // Check it's not "rdf:about=" pattern — look back for "rdf:"
+                let prefix_start = i.saturating_sub(4);
+                if &bytes[prefix_start..i] != b"rdf:" {
+                    error(
+                        report,
+                        "6.7.3",
+                        "rdf:Description uses unqualified 'about' attribute instead of 'rdf:about'",
+                    );
+                    break;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    // Check that the RDF namespace URI is the canonical form.
+    const CANONICAL_RDF_NS: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+    if let Some(pos) = xmp.find("xmlns:rdf=") {
+        // Extract the URI value (handles both double- and single-quoted)
+        let after = &xmp[pos + 10..];
+        let uri = if let Some(s) = after.strip_prefix('"') {
+            s.split('"').next()
+        } else if let Some(s) = after.strip_prefix('\'') {
+            s.split('\'').next()
+        } else {
+            None
+        };
+        if let Some(uri) = uri {
+            if uri != CANONICAL_RDF_NS {
+                error(
+                    report,
+                    "6.7.11",
+                    format!(
+                        "XMP uses non-canonical RDF namespace URI '{}' (expected '{}')",
+                        uri, CANONICAL_RDF_NS
+                    ),
+                );
+            }
+        }
     }
 }
 
