@@ -4198,6 +4198,7 @@ dependencies = [
 name = "pdf-node"
 version = "0.1.0"
 dependencies = [
+ "lopdf",
  "napi",
  "napi-build",
  "napi-derive",
@@ -4206,6 +4207,7 @@ dependencies = [
  "pdf-engine",
  "pdf-forms",
  "pdf-manip",
+ "pdf-redact",
  "pdf-sign",
  "pdf-syntax",
  "serde",

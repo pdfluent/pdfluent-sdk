@@ -80,6 +80,15 @@ export interface TextBlockInfo {
   /** Individual spans within this block. */
   spans: Array<TextSpanInfo>
 }
+/** Result of a text redaction operation. */
+export interface RedactionResult {
+  /** Number of text matches found. */
+  matchesFound: number
+  /** Number of page areas redacted. */
+  areasRedacted: number
+  /** Number of pages affected. */
+  pagesAffected: number
+}
 /** Signature validation result. */
 export interface SignatureResult {
   /** Validation status: "valid", "invalid", or "unknown". */
@@ -200,7 +209,12 @@ export declare class PdfDocument {
   formFields(): Array<FormFieldInfo>
   /** Get the value of a form field by its fully qualified name. */
   getFieldValue(name: string): string | null
-  /** Set the value of a form field by its fully qualified name. */
+  /**
+   * Set the value of a form field by its fully qualified name.
+   *
+   * The change is persisted to the document — a subsequent `save()` will
+   * write the updated value.
+   */
   setFieldValue(name: string, value: string): void
   /** Get annotations on a specific page (0-based index). */
   annotations(pageIndex: number): Array<AnnotationInfo>
@@ -209,11 +223,44 @@ export declare class PdfDocument {
   /**
    * Save the document to a file path.
    *
-   * Writes the original PDF bytes to disk. For a freshly-opened document
-   * this is equivalent to a copy; for merged or modified documents use
-   * the return value of `mergePdfs`.
+   * Writes the current (possibly modified) document to disk. Any changes
+   * from `setFieldValue`, `addAnnotation`, or `redactText` are included.
    */
   save(path: string): void
+  /**
+   * Add an annotation to a page (0-based index).
+   *
+   * `annot_type` must be one of: `"highlight"`, `"freetext"`, `"note"`,
+   * `"underline"`, `"strikeout"`, `"squiggly"`.
+   *
+   * `rect` is `[x0, y0, x1, y1]` in PDF user-space coordinates.
+   * For `"freetext"`, `content` becomes the visible text.
+   */
+  addAnnotation(page: number, annotType: string, rect: Array<number>, content?: string | undefined | null): void
+  /**
+   * Redact all occurrences of `search_term` on a page (0-based index).
+   *
+   * Pass `page = u32::MAX` (or omit via a wrapper) to redact across all pages.
+   * The document is modified in-place; call `save()` to persist.
+   *
+   * Returns a summary of what was redacted.
+   */
+  redactText(searchTerm: string, page?: number | undefined | null): RedactionResult
+  /**
+   * Encrypt the document and write it to `output_path`.
+   *
+   * Uses AES-256 with `password` as both the user and owner password.
+   * The current in-memory document is not modified — only the written file
+   * is encrypted.
+   */
+  encrypt(outputPath: string, password: string): void
+  /**
+   * Remove encryption and write the decrypted document to `output_path`.
+   *
+   * Only useful if the document was opened with `openWithPassword`.
+   * After this call the saved file has no password protection.
+   */
+  decrypt(outputPath: string): void
   /**
    * Validate the document against a PDF/A conformance level.
    *

@@ -4,10 +4,15 @@ use crate::annotation::{self, AnnotationInfo};
 use crate::error::to_napi_error;
 use crate::form::{FormEngine, FormFieldInfo};
 use crate::page::PdfPage;
+use lopdf::Document as LopdfDocument;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pdf_engine::{PdfDocument as RustDocument, RenderOptions, RenderedPage, ThumbnailOptions};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+fn lopdf_err(e: impl std::fmt::Display) -> napi::Error {
+    napi::Error::from_reason(format!("{e}"))
+}
 
 /// A PDF document handle.
 ///
@@ -17,6 +22,25 @@ use std::sync::Arc;
 pub struct PdfDocument {
     inner: Arc<RustDocument>,
     form_engine: Option<Arc<FormEngine>>,
+    /// Mutable lopdf document for write operations (annotations, redact, encrypt, save).
+    /// `None` if the PDF could not be loaded by lopdf (rare edge case).
+    doc: Option<Arc<Mutex<LopdfDocument>>>,
+}
+
+impl PdfDocument {
+    /// Apply a closure to the mutable lopdf document, returning an error if
+    /// the document is not writable.
+    fn with_doc_mut<T, F>(&self, f: F) -> napi::Result<T>
+    where
+        F: FnOnce(&mut LopdfDocument) -> napi::Result<T>,
+    {
+        let arc = self
+            .doc
+            .as_ref()
+            .ok_or_else(|| napi::Error::from_reason("document is not writable"))?;
+        let mut doc = arc.lock().unwrap();
+        f(&mut doc)
+    }
 }
 
 /// Document metadata.
@@ -94,6 +118,17 @@ pub struct TextBlockInfo {
     pub text: String,
     /// Individual spans within this block.
     pub spans: Vec<TextSpanInfo>,
+}
+
+/// Result of a text redaction operation.
+#[napi(object)]
+pub struct RedactionResult {
+    /// Number of text matches found.
+    pub matches_found: u32,
+    /// Number of page areas redacted.
+    pub areas_redacted: u32,
+    /// Number of pages affected.
+    pub pages_affected: u32,
 }
 
 /// Signature validation result.
@@ -189,11 +224,15 @@ impl PdfDocument {
     #[napi(factory)]
     pub fn open(data: Buffer) -> Result<PdfDocument> {
         let bytes: Vec<u8> = data.to_vec();
-        let doc = RustDocument::open(bytes).map_err(to_napi_error)?;
+        let doc = RustDocument::open(bytes.clone()).map_err(to_napi_error)?;
         let form_engine = FormEngine::from_pdf(doc.pdf()).map(Arc::new);
+        let lopdf_doc = LopdfDocument::load_mem(&bytes)
+            .ok()
+            .map(|d| Arc::new(Mutex::new(d)));
         Ok(PdfDocument {
             inner: Arc::new(doc),
             form_engine,
+            doc: lopdf_doc,
         })
     }
 
@@ -201,14 +240,20 @@ impl PdfDocument {
     #[napi(factory)]
     pub async fn open_async(data: Buffer) -> Result<PdfDocument> {
         let bytes: Vec<u8> = data.to_vec();
-        let doc = tokio::task::spawn_blocking(move || RustDocument::open(bytes))
-            .await
-            .map_err(|e| napi::Error::from_reason(format!("join error: {e}")))?
-            .map_err(to_napi_error)?;
-        let form_engine = FormEngine::from_pdf(doc.pdf()).map(Arc::new);
+        let doc = tokio::task::spawn_blocking(move || {
+            let pdf = RustDocument::open(bytes.clone())?;
+            let lopdf = LopdfDocument::load_mem(&bytes).ok();
+            Ok::<_, pdf_engine::EngineError>((pdf, lopdf))
+        })
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("join error: {e}")))?
+        .map_err(to_napi_error)?;
+        let (pdf_doc, lopdf_doc) = doc;
+        let form_engine = FormEngine::from_pdf(pdf_doc.pdf()).map(Arc::new);
         Ok(PdfDocument {
-            inner: Arc::new(doc),
+            inner: Arc::new(pdf_doc),
             form_engine,
+            doc: lopdf_doc.map(|d| Arc::new(Mutex::new(d))),
         })
     }
 
@@ -216,11 +261,15 @@ impl PdfDocument {
     #[napi(factory)]
     pub fn open_with_password(data: Buffer, password: String) -> Result<PdfDocument> {
         let bytes: Vec<u8> = data.to_vec();
-        let doc = RustDocument::open_with_password(bytes, &password).map_err(to_napi_error)?;
+        let doc = RustDocument::open_with_password(bytes.clone(), &password).map_err(to_napi_error)?;
         let form_engine = FormEngine::from_pdf(doc.pdf()).map(Arc::new);
+        let lopdf_doc = LopdfDocument::load_mem_with_password(&bytes, &password)
+            .ok()
+            .map(|d| Arc::new(Mutex::new(d)));
         Ok(PdfDocument {
             inner: Arc::new(doc),
             form_engine,
+            doc: lopdf_doc,
         })
     }
 
@@ -398,13 +447,27 @@ impl PdfDocument {
     }
 
     /// Set the value of a form field by its fully qualified name.
+    ///
+    /// The change is persisted to the document — a subsequent `save()` will
+    /// write the updated value.
     #[napi]
     pub fn set_field_value(&self, name: String, value: String) -> Result<()> {
         let fe = self
             .form_engine
             .as_ref()
             .ok_or_else(|| napi::Error::from_reason("document has no form fields"))?;
-        fe.set_value(&name, &value)
+        fe.set_value(&name, &value)?;
+        // Sync the new value to the lopdf document so save() persists it.
+        if let Some(obj_id) = fe.object_id_for(&name) {
+            if let Some(arc) = &self.doc {
+                let mut doc = arc.lock().unwrap();
+                let lopdf_id = (obj_id.0 as u32, obj_id.1 as u16);
+                if let Ok(lopdf::Object::Dictionary(dict)) = doc.get_object_mut(lopdf_id) {
+                    dict.set("V", lopdf::Object::string_literal(value.as_bytes()));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Get annotations on a specific page (0-based index).
@@ -438,14 +501,135 @@ impl PdfDocument {
 
     /// Save the document to a file path.
     ///
-    /// Writes the original PDF bytes to disk. For a freshly-opened document
-    /// this is equivalent to a copy; for merged or modified documents use
-    /// the return value of `mergePdfs`.
+    /// Writes the current (possibly modified) document to disk. Any changes
+    /// from `setFieldValue`, `addAnnotation`, or `redactText` are included.
     #[napi]
     pub fn save(&self, path: String) -> Result<()> {
-        let bytes: &[u8] = self.inner.pdf().data().as_ref();
-        std::fs::write(&path, bytes)
-            .map_err(|e| napi::Error::from_reason(format!("cannot write '{path}': {e}")))
+        if let Some(arc) = &self.doc {
+            let mut doc = arc.lock().unwrap();
+            doc.save(&path)
+                .map(|_| ())
+                .map_err(|e| napi::Error::from_reason(format!("cannot save to '{path}': {e}")))
+        } else {
+            // Fallback: write original bytes unchanged.
+            let bytes: &[u8] = self.inner.pdf().data().as_ref();
+            std::fs::write(&path, bytes)
+                .map_err(|e| napi::Error::from_reason(format!("cannot write '{path}': {e}")))
+        }
+    }
+
+    /// Add an annotation to a page (0-based index).
+    ///
+    /// `annot_type` must be one of: `"highlight"`, `"freetext"`, `"note"`,
+    /// `"underline"`, `"strikeout"`, `"squiggly"`.
+    ///
+    /// `rect` is `[x0, y0, x1, y1]` in PDF user-space coordinates.
+    /// For `"freetext"`, `content` becomes the visible text.
+    #[napi]
+    pub fn add_annotation(
+        &self,
+        page: u32,
+        annot_type: String,
+        rect: Vec<f64>,
+        content: Option<String>,
+    ) -> Result<()> {
+        if rect.len() < 4 {
+            return Err(napi::Error::from_reason("rect must have 4 elements [x0,y0,x1,y1]"));
+        }
+        let ar = pdf_annot::builder::AnnotRect::new(rect[0], rect[1], rect[2], rect[3]);
+        self.with_doc_mut(|doc| {
+            let builder = match annot_type.to_lowercase().as_str() {
+                "highlight" => pdf_annot::builder::AnnotationBuilder::highlight(ar),
+                "underline" => pdf_annot::builder::AnnotationBuilder::underline(ar),
+                "strikeout" => pdf_annot::builder::AnnotationBuilder::strikeout(ar),
+                "squiggly" => pdf_annot::builder::AnnotationBuilder::squiggly(ar),
+                "freetext" => {
+                    let text = content.as_deref().unwrap_or("");
+                    pdf_annot::builder::AnnotationBuilder::free_text(ar, text, 12.0)
+                }
+                "note" => {
+                    pdf_annot::builder::AnnotationBuilder::sticky_note(
+                        ar,
+                        pdf_annot::builder::TextIcon::Note,
+                    )
+                }
+                other => {
+                    return Err(napi::Error::from_reason(format!(
+                        "unknown annotation type '{other}'; expected: highlight, freetext, note, underline, strikeout, squiggly"
+                    )))
+                }
+            };
+            let builder = if let Some(c) = &content {
+                builder.contents(c.clone())
+            } else {
+                builder
+            };
+            // build() adds the annotation object to the document
+            let annot_id = builder
+                .build(doc)
+                .map_err(|e| napi::Error::from_reason(format!("build annotation: {e}")))?;
+            // page is 0-based in our API; lopdf uses 1-based
+            pdf_annot::builder::add_annotation_to_page(doc, page + 1, annot_id)
+                .map_err(|e| napi::Error::from_reason(format!("add annotation to page: {e}")))
+        })
+    }
+
+    /// Redact all occurrences of `search_term` on a page (0-based index).
+    ///
+    /// Pass `page = u32::MAX` (or omit via a wrapper) to redact across all pages.
+    /// The document is modified in-place; call `save()` to persist.
+    ///
+    /// Returns a summary of what was redacted.
+    #[napi]
+    pub fn redact_text(&self, search_term: String, page: Option<u32>) -> Result<RedactionResult> {
+        self.with_doc_mut(|doc| {
+            let mut opts = pdf_redact::RedactSearchOptions::exact(&search_term);
+            if let Some(p) = page {
+                opts = opts.pages(vec![p + 1]); // convert to 1-based
+            }
+            let report = pdf_redact::search_and_redact(doc, &search_term, &opts)
+                .map_err(|e| napi::Error::from_reason(format!("redact failed: {e}")))?;
+            Ok(RedactionResult {
+                matches_found: report.matches_found as u32,
+                areas_redacted: report.areas_redacted as u32,
+                pages_affected: report.pages_affected as u32,
+            })
+        })
+    }
+
+    /// Encrypt the document and write it to `output_path`.
+    ///
+    /// Uses AES-256 with `password` as both the user and owner password.
+    /// The current in-memory document is not modified — only the written file
+    /// is encrypted.
+    #[napi]
+    pub fn encrypt(&self, output_path: String, password: String) -> Result<()> {
+        self.with_doc_mut(|doc| {
+            let config = pdf_manip::encrypt::EncryptConfig {
+                user_password: password.as_bytes().to_vec(),
+                owner_password: password.as_bytes().to_vec(),
+                ..Default::default() // AES-256, all permissions
+            };
+            let file = std::fs::File::create(&output_path)
+                .map_err(|e| napi::Error::from_reason(format!("cannot create '{output_path}': {e}")))?;
+            let mut writer = std::io::BufWriter::new(file);
+            pdf_manip::encrypt::encrypt_and_save(doc, &config, &mut writer)
+                .map_err(|e| napi::Error::from_reason(format!("encrypt failed: {e}")))
+        })
+    }
+
+    /// Remove encryption and write the decrypted document to `output_path`.
+    ///
+    /// Only useful if the document was opened with `openWithPassword`.
+    /// After this call the saved file has no password protection.
+    #[napi]
+    pub fn decrypt(&self, output_path: String) -> Result<()> {
+        self.with_doc_mut(|doc| {
+            pdf_manip::encrypt::remove_encryption(doc);
+            doc.save(&output_path)
+                .map(|_| ())
+                .map_err(|e| napi::Error::from_reason(format!("cannot save '{output_path}': {e}")))
+        })
     }
 
     /// Validate the document against a PDF/A conformance level.
