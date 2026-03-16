@@ -4,7 +4,18 @@
 //! as a native Python module `pdfengine._native`.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+
+use lopdf::{
+    Document as LopdfDocument, EncryptionVersion, Object as LopdfObject,
+    Permissions as LopdfPermissions, StringFormat,
+};
+
+use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder};
+use pdf_annot::Annotation;
+use pdf_forms::{parse_acroform, FieldType, FieldValue};
+use pdf_manip::encrypt::remove_encryption;
+use pdf_redact::{search_and_redact, RedactSearchOptions};
 
 use pyo3::exceptions::{PyIOError, PyIndexError, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -57,6 +68,9 @@ fn engine_err_to_py(e: EngineError) -> PyErr {
 struct PyDocument {
     inner: Arc<PdfDocument>,
     raw_bytes: Arc<Vec<u8>>,
+    /// Lazily-initialised mutable document for write operations.
+    /// None until the first mutation (form fill, annotation, redact, …).
+    lopdf: Mutex<Option<LopdfDocument>>,
 }
 
 #[pymethods]
@@ -95,6 +109,7 @@ impl PyDocument {
         Ok(Self {
             inner: Arc::new(doc),
             raw_bytes,
+            lopdf: Mutex::new(None),
         })
     }
 
@@ -198,16 +213,361 @@ impl PyDocument {
 
     /// Save the PDF to a file path.
     ///
-    /// Writes the original PDF bytes to the given path. For merged documents
-    /// created with ``merge_pdfs()``, use that function's ``output_path``
-    /// parameter directly.
+    /// If the document has been mutated (form fill, annotations, redactions,
+    /// …) the mutated state is written. Otherwise the original bytes are
+    /// copied verbatim.
     fn save(&self, path: &str) -> PyResult<()> {
-        std::fs::write(path, self.raw_bytes.as_ref())
-            .map_err(|e| PyIOError::new_err(e.to_string()))
+        let mut guard = self.lopdf.lock().unwrap();
+        if let Some(ref mut doc) = *guard {
+            let mut buf = Vec::new();
+            doc.save_to(&mut buf)
+                .map_err(|e| PyIOError::new_err(format!("save failed: {e}")))?;
+            std::fs::write(path, &buf).map_err(|e| PyIOError::new_err(e.to_string()))
+        } else {
+            std::fs::write(path, self.raw_bytes.as_ref())
+                .map_err(|e| PyIOError::new_err(e.to_string()))
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Form fields
+    // ------------------------------------------------------------------
+
+    /// Return all interactive form fields in the document.
+    ///
+    /// Returns
+    /// -------
+    /// list[FormField]
+    fn get_form_fields(&self) -> Vec<PyFormField> {
+        let Some(tree) = parse_acroform(self.inner.pdf()) else {
+            return vec![];
+        };
+        tree.terminal_fields()
+            .into_iter()
+            .map(|id| {
+                let name = tree.fully_qualified_name(id);
+                let field_type = tree
+                    .effective_field_type(id)
+                    .map(|ft| match ft {
+                        FieldType::Text => "text",
+                        FieldType::Button => "button",
+                        FieldType::Choice => "choice",
+                        FieldType::Signature => "signature",
+                    })
+                    .unwrap_or("unknown")
+                    .to_string();
+                let value = tree.effective_value(id).map(|v| match v {
+                    FieldValue::Text(s) => s.clone(),
+                    FieldValue::StringArray(a) => a.join(", "),
+                });
+                let page = tree.get(id).page_index;
+                PyFormField {
+                    name,
+                    field_type,
+                    value,
+                    page,
+                }
+            })
+            .collect()
+    }
+
+    /// Set the value of a form field by its fully-qualified name.
+    ///
+    /// Parameters
+    /// ----------
+    /// name : str
+    ///     Fully-qualified field name (e.g. ``"Address.Street"``).
+    /// value : str
+    ///     New text value.
+    ///
+    /// Returns
+    /// -------
+    /// bool
+    ///     ``True`` if the field was found and updated.
+    fn set_form_field(&self, name: &str, value: &str) -> PyResult<bool> {
+        let Some(tree) = parse_acroform(self.inner.pdf()) else {
+            return Ok(false);
+        };
+        let Some(field_id) = tree.find_by_name(name) else {
+            return Ok(false);
+        };
+        let Some((obj_num, gen_num)) = tree.get(field_id).object_id else {
+            return Ok(false);
+        };
+        let lopdf_oid = (obj_num as u32, gen_num as u16);
+
+        let mut guard = self.init_lopdf()?;
+        let doc = guard.as_mut().unwrap();
+
+        if let Ok(LopdfObject::Dictionary(ref mut dict)) = doc.get_object_mut(lopdf_oid) {
+            dict.set(
+                "V",
+                LopdfObject::String(value.as_bytes().to_vec(), StringFormat::Literal),
+            );
+            // Mark NeedsAppearances so viewers regenerate widget visuals.
+            if let Ok(obj) = doc.get_object_mut(
+                doc.trailer
+                    .get(b"Root")
+                    .ok()
+                    .and_then(|o| o.as_reference().ok())
+                    .unwrap_or((0, 0)),
+            ) {
+                if let LopdfObject::Dictionary(ref mut catalog) = obj {
+                    if let Ok(LopdfObject::Dictionary(ref mut af)) =
+                        catalog.get_mut(b"AcroForm")
+                    {
+                        af.set("NeedsAppearances", LopdfObject::Boolean(true));
+                    }
+                }
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Annotations
+    // ------------------------------------------------------------------
+
+    /// Return all annotations on the given page (0-based).
+    ///
+    /// Parameters
+    /// ----------
+    /// page : int
+    ///     0-based page index.
+    ///
+    /// Returns
+    /// -------
+    /// list[Annotation]
+    fn get_annotations(&self, page: usize) -> PyResult<Vec<PyAnnotation>> {
+        let pages = self.inner.pdf().pages();
+        if page >= pages.len() {
+            return Err(PyIndexError::new_err(format!(
+                "page {page} out of range ({} pages)",
+                pages.len()
+            )));
+        }
+        let raw_annots = Annotation::from_page(&pages[page]);
+        Ok(raw_annots
+            .into_iter()
+            .map(|a| {
+                let annot_type = format!("{:?}", a.annotation_type());
+                let rect = a
+                    .rect()
+                    .map(|r| (r.x0, r.y0, r.x1, r.y1))
+                    .unwrap_or((0.0, 0.0, 0.0, 0.0));
+                PyAnnotation {
+                    page,
+                    annot_type,
+                    rect,
+                    contents: a.contents(),
+                    author: a.author(),
+                }
+            })
+            .collect())
+    }
+
+    /// Add an annotation to a page.
+    ///
+    /// Parameters
+    /// ----------
+    /// page : int
+    ///     0-based page index.
+    /// annot_type : str
+    ///     ``"highlight"`` or ``"freetext"``.
+    /// rect : tuple[float, float, float, float]
+    ///     Bounding box as ``(x0, y0, x1, y1)`` in PDF user-space points.
+    ///     Origin is bottom-left of the page.
+    /// content : str, optional
+    ///     Text content of the annotation.
+    #[pyo3(signature = (page, annot_type, rect, content=None))]
+    fn add_annotation(
+        &self,
+        page: usize,
+        annot_type: &str,
+        rect: (f64, f64, f64, f64),
+        content: Option<&str>,
+    ) -> PyResult<()> {
+        let page_1based = (page + 1) as u32;
+        let ar = AnnotRect::new(rect.0, rect.1, rect.2, rect.3);
+
+        let builder = match annot_type.to_lowercase().as_str() {
+            "highlight" => {
+                let b = AnnotationBuilder::highlight(ar).quad_points_from_rect(&ar);
+                if let Some(text) = content {
+                    b.contents(text)
+                } else {
+                    b
+                }
+            }
+            "freetext" | "free_text" => {
+                let text = content.unwrap_or("");
+                AnnotationBuilder::free_text(ar, text, 12.0)
+            }
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unsupported annotation type {other:?}; use 'highlight' or 'freetext'"
+                )));
+            }
+        };
+
+        let mut guard = self.init_lopdf()?;
+        let doc = guard.as_mut().unwrap();
+
+        let annot_id = builder
+            .build(doc)
+            .map_err(|e| PyRuntimeError::new_err(format!("annotation build failed: {e:?}")))?;
+
+        add_annotation_to_page(doc, page_1based, annot_id)
+            .map_err(|e| PyRuntimeError::new_err(format!("add to page failed: {e:?}")))?;
+
+        Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Redaction
+    // ------------------------------------------------------------------
+
+    /// Search for text and redact all occurrences.
+    ///
+    /// Parameters
+    /// ----------
+    /// search_term : str
+    ///     Text to search for (literal match, case-insensitive).
+    /// page : int, optional
+    ///     0-based page index to limit search to. ``None`` searches all pages.
+    ///
+    /// Returns
+    /// -------
+    /// RedactReport
+    #[pyo3(signature = (search_term, page=None))]
+    fn redact_text(&self, search_term: &str, page: Option<usize>) -> PyResult<PyRedactReport> {
+        let mut options = RedactSearchOptions::default();
+        if let Some(p) = page {
+            options = options.pages(vec![(p + 1) as u32]);
+        }
+
+        let mut guard = self.init_lopdf()?;
+        let doc = guard.as_mut().unwrap();
+
+        let report = search_and_redact(doc, search_term, &options)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        Ok(PyRedactReport {
+            matches_found: report.matches_found,
+            areas_redacted: report.areas_redacted,
+            pages_affected: report.pages_affected,
+        })
+    }
+
+    // ------------------------------------------------------------------
+    // Encryption
+    // ------------------------------------------------------------------
+
+    /// Save an encrypted (password-protected) copy of the document.
+    ///
+    /// Parameters
+    /// ----------
+    /// output_path : str
+    ///     Destination file path.
+    /// password : str
+    ///     User password (required to open).
+    /// owner_password : str, optional
+    ///     Owner password (for permissions). Defaults to ``password``.
+    #[pyo3(signature = (output_path, password, owner_password=None))]
+    fn encrypt(
+        &self,
+        output_path: &str,
+        password: &str,
+        owner_password: Option<&str>,
+    ) -> PyResult<()> {
+        let owner_pw = owner_password.unwrap_or(password);
+        let mut guard = self.init_lopdf()?;
+        let doc = guard.as_mut().unwrap();
+
+        // PDF encryption requires a /ID in the trailer. Generate one if absent.
+        if doc.trailer.get(b"ID").is_err() {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let seed = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(12345678);
+            // Simple deterministic 16-byte ID derived from seed.
+            let mut id = [0u8; 16];
+            let seed_bytes = seed.to_le_bytes();
+            for (i, b) in id.iter_mut().enumerate() {
+                *b = seed_bytes[i % 4].wrapping_add(i as u8);
+            }
+            let id_obj = LopdfObject::String(id.to_vec(), StringFormat::Hexadecimal);
+            doc.trailer.set(
+                "ID",
+                LopdfObject::Array(vec![id_obj.clone(), id_obj]),
+            );
+        }
+
+        // Use lopdf's V2 (RC4-128, revision 3) — fully supported for read-back.
+        let state = lopdf::EncryptionState::try_from(EncryptionVersion::V2 {
+            document: doc,
+            owner_password: owner_pw,
+            user_password: password,
+            key_length: 128,
+            permissions: LopdfPermissions::all(),
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("encryption setup failed: {e}")))?;
+
+        doc.encrypt(&state)
+            .map_err(|e| PyRuntimeError::new_err(format!("encryption failed: {e}")))?;
+
+        doc.save(output_path)
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Save a decrypted copy of an encrypted document.
+    ///
+    /// Parameters
+    /// ----------
+    /// output_path : str
+    ///     Destination file path for the decrypted PDF.
+    /// password : str
+    ///     User or owner password.
+    fn decrypt(&self, output_path: &str, password: &str) -> PyResult<()> {
+        let mut doc =
+            LopdfDocument::load_mem_with_password(self.raw_bytes.as_ref(), password)
+                .map_err(|e| {
+                    PyValueError::new_err(format!("failed to open with password: {e}"))
+                })?;
+        remove_encryption(&mut doc);
+        doc.save(output_path)
+            .map_err(|e| PyIOError::new_err(e.to_string()))?;
+        Ok(())
     }
 
     fn __repr__(&self) -> String {
         format!("Document(pages={})", self.inner.page_count())
+    }
+}
+
+impl PyDocument {
+    /// Lazily initialise the lopdf document from raw bytes.
+    ///
+    /// Returns a `MutexGuard` holding `Some(LopdfDocument)`.
+    fn init_lopdf(
+        &self,
+    ) -> PyResult<std::sync::MutexGuard<'_, Option<LopdfDocument>>> {
+        let mut guard = self.lopdf.lock().unwrap();
+        if guard.is_none() {
+            match LopdfDocument::load_mem(self.raw_bytes.as_ref()) {
+                Ok(doc) => *guard = Some(doc),
+                Err(e) => {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "failed to load PDF for mutation: {e}"
+                    )))
+                }
+            }
+        }
+        Ok(guard)
     }
 }
 
@@ -788,6 +1148,90 @@ impl PyComplianceReport {
 }
 
 // ---------------------------------------------------------------------------
+// FormField
+// ---------------------------------------------------------------------------
+
+/// An interactive form field (AcroForm widget).
+#[pyclass(name = "FormField")]
+#[derive(Clone)]
+struct PyFormField {
+    #[pyo3(get)]
+    name: String,
+    #[pyo3(get)]
+    field_type: String,
+    #[pyo3(get)]
+    value: Option<String>,
+    #[pyo3(get)]
+    page: Option<usize>,
+}
+
+#[pymethods]
+impl PyFormField {
+    fn __repr__(&self) -> String {
+        format!(
+            "FormField(name={:?}, type={:?}, value={:?})",
+            self.name, self.field_type, self.value
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Annotation
+// ---------------------------------------------------------------------------
+
+/// A PDF annotation (highlight, freetext, etc.).
+#[pyclass(name = "Annotation")]
+#[derive(Clone)]
+struct PyAnnotation {
+    #[pyo3(get)]
+    page: usize,
+    #[pyo3(get)]
+    annot_type: String,
+    /// Bounding box as (x0, y0, x1, y1) in PDF user-space points.
+    #[pyo3(get)]
+    rect: (f64, f64, f64, f64),
+    #[pyo3(get)]
+    contents: Option<String>,
+    #[pyo3(get)]
+    author: Option<String>,
+}
+
+#[pymethods]
+impl PyAnnotation {
+    fn __repr__(&self) -> String {
+        format!(
+            "Annotation(page={}, type={:?}, contents={:?})",
+            self.page, self.annot_type, self.contents
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RedactReport
+// ---------------------------------------------------------------------------
+
+/// Result of a search-and-redact operation.
+#[pyclass(name = "RedactReport")]
+struct PyRedactReport {
+    #[pyo3(get)]
+    matches_found: usize,
+    #[pyo3(get)]
+    areas_redacted: usize,
+    #[pyo3(get)]
+    pages_affected: usize,
+}
+
+#[pymethods]
+impl PyRedactReport {
+    fn __repr__(&self) -> String {
+        format!(
+            "RedactReport(matches={}, redacted={}, pages={})",
+            self.matches_found, self.areas_redacted, self.pages_affected
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Module-level functions
 // ---------------------------------------------------------------------------
 
@@ -821,6 +1265,7 @@ fn open_pdf(path: &str, password: Option<&str>) -> PyResult<PyDocument> {
     Ok(PyDocument {
         inner: Arc::new(doc),
         raw_bytes,
+        lopdf: Mutex::new(None),
     })
 }
 
@@ -842,6 +1287,28 @@ fn merge_pdfs(input_paths: Vec<String>, output_path: &str) -> PyResult<()> {
         return Err(PyValueError::new_err("input_paths must not be empty"));
     }
     let mut doc = pages::merge(&input_paths).map_err(manip_err_to_py)?;
+    doc.save(output_path)
+        .map_err(|e| PyIOError::new_err(e.to_string()))?;
+    Ok(())
+}
+
+/// Decrypt a password-protected PDF and write the decrypted copy to a file.
+///
+/// Parameters
+/// ----------
+/// input_path : str
+///     Path to the encrypted PDF.
+/// output_path : str
+///     Destination path for the decrypted PDF.
+/// password : str
+///     User or owner password.
+#[pyfunction]
+fn decrypt_pdf(input_path: &str, output_path: &str, password: &str) -> PyResult<()> {
+    let data = std::fs::read(input_path)
+        .map_err(|e| PyIOError::new_err(format!("{input_path}: {e}")))?;
+    let mut doc = LopdfDocument::load_mem_with_password(&data, password)
+        .map_err(|e| PyValueError::new_err(format!("failed to open with password: {e}")))?;
+    remove_encryption(&mut doc);
     doc.save(output_path)
         .map_err(|e| PyIOError::new_err(e.to_string()))?;
     Ok(())
@@ -897,8 +1364,12 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPageGeometry>()?;
     m.add_class::<PyComplianceIssue>()?;
     m.add_class::<PyComplianceReport>()?;
+    m.add_class::<PyFormField>()?;
+    m.add_class::<PyAnnotation>()?;
+    m.add_class::<PyRedactReport>()?;
     m.add_function(wrap_pyfunction!(open_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(merge_pdfs, m)?)?;
     m.add_function(wrap_pyfunction!(validate_pdfa, m)?)?;
+    m.add_function(wrap_pyfunction!(decrypt_pdf, m)?)?;
     Ok(())
 }

@@ -23,6 +23,10 @@ Document = pdfengine.Document
 open_pdf = pdfengine.open_pdf
 merge_pdfs = pdfengine.merge_pdfs
 validate_pdfa = pdfengine.validate_pdfa
+decrypt_pdf = pdfengine.decrypt_pdf
+FormField = pdfengine.FormField
+Annotation = pdfengine.Annotation
+RedactReport = pdfengine.RedactReport
 
 
 # ---------- Scenario 1: Open PDF, count pages ----------
@@ -73,32 +77,72 @@ def test_metadata():
 
 # ---------- Scenario 5: Read AcroForm fields ----------
 
-@pytest.mark.skip(reason="TODO: Document.form_fields() not yet exposed in Python binding")
 def test_form_fields_read():
     doc = Document(ACROFORM_PDF)
-    # TODO: fields = doc.form_fields()
-    # assert len(fields) > 0
+    fields = doc.get_form_fields()
+    assert isinstance(fields, list)
+    assert len(fields) > 0
+    for f in fields:
+        assert isinstance(f.name, str)
+        assert isinstance(f.field_type, str)
+        assert f.field_type in ("text", "button", "choice", "signature", "unknown")
+        # value may be None for empty fields
+        assert f.value is None or isinstance(f.value, str)
+        # page may be None if widget has no page association
+        assert f.page is None or isinstance(f.page, int)
 
 
 # ---------- Scenario 6: Fill text field, save ----------
 
-@pytest.mark.skip(reason="TODO: Form write API not yet exposed in Python binding")
-def test_form_field_write():
-    pass
+def test_form_field_write(tmp_path):
+    doc = Document(ACROFORM_PDF)
+    fields = doc.get_form_fields()
+    # Find the first text field
+    text_fields = [f for f in fields if f.field_type == "text"]
+    if not text_fields:
+        pytest.skip("no text fields in acroform.pdf")
+    field_name = text_fields[0].name
+    result = doc.set_form_field(field_name, "Test Value")
+    assert isinstance(result, bool)
+    # Save and reload to verify structure preserved
+    out = str(tmp_path / "filled.pdf")
+    doc.save(out)
+    reloaded = Document(out)
+    assert reloaded.page_count == doc.page_count
 
 
 # ---------- Scenario 7: Read annotations ----------
 
-@pytest.mark.skip(reason="TODO: Annotation reading not yet exposed in Python binding")
 def test_annotations_read():
-    pass
+    doc = Document(SAMPLE_PDF)
+    annots = doc.get_annotations(0)
+    assert isinstance(annots, list)
+    for a in annots:
+        assert isinstance(a.annot_type, str)
+        assert isinstance(a.rect, tuple)
+        assert len(a.rect) == 4
 
 
 # ---------- Scenario 8: Add highlight, save ----------
 
-@pytest.mark.skip(reason="TODO: Annotation creation not yet exposed in Python binding")
-def test_annotation_highlight():
-    pass
+def test_annotation_highlight(tmp_path):
+    doc = Document(SAMPLE_PDF)
+    doc.add_annotation(0, "highlight", (72.0, 700.0, 300.0, 720.0), "highlighted text")
+    out = str(tmp_path / "annotated.pdf")
+    doc.save(out)
+    reloaded = Document(out)
+    assert reloaded.page_count == doc.page_count
+    annots = reloaded.get_annotations(0)
+    assert len(annots) >= 1
+
+
+def test_annotation_freetext(tmp_path):
+    doc = Document(SAMPLE_PDF)
+    doc.add_annotation(0, "freetext", (72.0, 600.0, 300.0, 650.0), "Free text note")
+    out = str(tmp_path / "freetext.pdf")
+    doc.save(out)
+    reloaded = Document(out)
+    assert reloaded.page_count == doc.page_count
 
 
 # ---------- Scenario 9: Validate PDF/A ----------
@@ -122,6 +166,55 @@ def test_merge_pdfs(tmp_path):
     doc_a = Document(SAMPLE_PDF)
     doc_b = Document(MULTI_PDF)
     assert merged.page_count == doc_a.page_count + doc_b.page_count
+
+
+# ---------- Scenario 9b: Redact text ----------
+
+def test_redact_text(tmp_path):
+    doc = Document(SAMPLE_PDF)
+    report = doc.redact_text("the")
+    assert isinstance(report, RedactReport)
+    assert isinstance(report.matches_found, int)
+    assert isinstance(report.areas_redacted, int)
+    assert isinstance(report.pages_affected, int)
+    out = str(tmp_path / "redacted.pdf")
+    doc.save(out)
+    assert os.path.exists(out)
+
+
+def test_redact_text_no_match():
+    doc = Document(SAMPLE_PDF)
+    report = doc.redact_text("ZZZZZZNOTFOUNDZZZZ")
+    assert report.matches_found == 0
+    assert report.areas_redacted == 0
+
+
+def test_redact_text_specific_page():
+    doc = Document(MULTI_PDF)
+    report = doc.redact_text("the", page=0)
+    assert isinstance(report.matches_found, int)
+
+
+# ---------- Scenario 10b: Encrypt / decrypt ----------
+
+def test_encrypt_decrypt(tmp_path):
+    doc = Document(SAMPLE_PDF)
+    enc_path = str(tmp_path / "encrypted.pdf")
+    doc.encrypt(enc_path, "secret123")
+    assert os.path.exists(enc_path)
+    # Decrypt using standalone decrypt_pdf (pdf-syntax doesn't support AES-256 reading)
+    dec_path = str(tmp_path / "decrypted.pdf")
+    decrypt_pdf(enc_path, dec_path, "secret123")
+    dec_doc = Document(dec_path)
+    assert dec_doc.page_count == doc.page_count
+
+
+def test_encrypt_wrong_password(tmp_path):
+    doc = Document(SAMPLE_PDF)
+    enc_path = str(tmp_path / "encrypted.pdf")
+    doc.encrypt(enc_path, "correct")
+    with pytest.raises(Exception):
+        decrypt_pdf(enc_path, str(tmp_path / "out.pdf"), "wrong")
 
 
 # ---------- Scenario 11: Verify signature ----------
