@@ -670,6 +670,31 @@ impl EncryptionState {
     }
 }
 
+/// Create an AES-256 (PDF 2.0, V=5, R=6) [`EncryptionState`] for a document.
+///
+/// Generates a cryptographically random 32-byte file encryption key internally.
+/// The returned state can be passed directly to [`Document::encrypt`].
+pub fn aes256_encryption_state(
+    owner_password: &str,
+    user_password: &str,
+    permissions: Permissions,
+) -> crate::Result<EncryptionState> {
+    use rand::Rng as _;
+    let mut file_key = [0u8; 32];
+    rand::rng().fill(&mut file_key);
+    let crypt_filter: Arc<dyn CryptFilter> = Arc::new(Aes256CryptFilter);
+    EncryptionState::try_from(EncryptionVersion::V5 {
+        encrypt_metadata: true,
+        crypt_filters: BTreeMap::from([(b"StdCF".to_vec(), crypt_filter)]),
+        file_encryption_key: &file_key,
+        stream_filter: b"StdCF".to_vec(),
+        string_filter: b"StdCF".to_vec(),
+        owner_password,
+        user_password,
+        permissions,
+    })
+}
+
 /// Encrypts `obj`.
 pub fn encrypt_object(
     state: &EncryptionState,

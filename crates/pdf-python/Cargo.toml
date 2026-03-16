@@ -17,4 +17,8 @@ pdf-sign = { path = "../pdf-sign" }
 pdf-manip = { path = "../pdf-manip", default-features = false }
 pdf-compliance = { path = "../pdf-compliance" }
 pdf-syntax = { path = "../pdf-syntax" }
+pdf-forms = { path = "../pdf-forms" }
+pdf-annot = { path = "../pdf-annot" }
+pdf-redact = { path = "../pdf-redact" }
+lopdf = { path = "../lopdf" }
 pyo3 = { version = "0.24", features = ["extension-module"] }

@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use lopdf::{
-    Document as LopdfDocument, EncryptionVersion, Object as LopdfObject,
-    Permissions as LopdfPermissions, StringFormat,
+    Document as LopdfDocument, Object as LopdfObject, Permissions as LopdfPermissions,
+    StringFormat,
 };
 
 use pdf_annot::builder::{add_annotation_to_page, AnnotRect, AnnotationBuilder};
@@ -486,35 +486,9 @@ impl PyDocument {
         let mut guard = self.init_lopdf()?;
         let doc = guard.as_mut().unwrap();
 
-        // PDF encryption requires a /ID in the trailer. Generate one if absent.
-        if doc.trailer.get(b"ID").is_err() {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let seed = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.subsec_nanos())
-                .unwrap_or(12345678);
-            // Simple deterministic 16-byte ID derived from seed.
-            let mut id = [0u8; 16];
-            let seed_bytes = seed.to_le_bytes();
-            for (i, b) in id.iter_mut().enumerate() {
-                *b = seed_bytes[i % 4].wrapping_add(i as u8);
-            }
-            let id_obj = LopdfObject::String(id.to_vec(), StringFormat::Hexadecimal);
-            doc.trailer.set(
-                "ID",
-                LopdfObject::Array(vec![id_obj.clone(), id_obj]),
-            );
-        }
-
-        // Use lopdf's V2 (RC4-128, revision 3) — fully supported for read-back.
-        let state = lopdf::EncryptionState::try_from(EncryptionVersion::V2 {
-            document: doc,
-            owner_password: owner_pw,
-            user_password: password,
-            key_length: 128,
-            permissions: LopdfPermissions::all(),
-        })
-        .map_err(|e| PyRuntimeError::new_err(format!("encryption setup failed: {e}")))?;
+        // AES-256 (PDF 2.0, V=5, R=6) — random key generated internally.
+        let state = lopdf::aes256_encryption_state(owner_pw, password, LopdfPermissions::all())
+            .map_err(|e| PyRuntimeError::new_err(format!("encryption setup failed: {e}")))?;
 
         doc.encrypt(&state)
             .map_err(|e| PyRuntimeError::new_err(format!("encryption failed: {e}")))?;
