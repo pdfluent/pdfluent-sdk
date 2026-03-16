@@ -6,7 +6,7 @@ license = "MIT"
 description = "Python bindings for the PDF engine via PyO3."
 
 [lib]
-name = "pdfengine"
+name = "xfa_pdf"
 crate-type = ["cdylib"]
 
 [workspace]

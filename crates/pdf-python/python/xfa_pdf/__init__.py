@@ -1,8 +1,10 @@
-"""High-performance PDF engine — rendering, text extraction, forms, signatures.
+"""xfa-pdf — Enterprise PDF SDK for Python.
+
+Built on a pure-Rust PDF stack via PyO3. Zero system dependencies.
 
 Usage
 -----
->>> from pdfengine import Document
+>>> from xfa_pdf import Document
 >>> with Document("invoice.pdf") as doc:
 ...     print(f"{doc.page_count} pages")
 ...     for page in doc:
@@ -10,7 +12,7 @@ Usage
 ...         img.save(f"page_{page.index}.png")
 """
 
-from pdfengine._native import (
+from xfa_pdf._native import (
     Document,
     Page,
     RenderedImage,

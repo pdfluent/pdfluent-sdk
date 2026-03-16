@@ -18,15 +18,15 @@ SIGNED_PDF = os.path.join(FIXTURES, "signed.pdf")
 MULTI_PDF = os.path.join(FIXTURES, "multi-page.pdf")
 
 # Import the native module — skip all if not built
-pdfengine = pytest.importorskip("pdfengine._native")
-Document = pdfengine.Document
-open_pdf = pdfengine.open_pdf
-merge_pdfs = pdfengine.merge_pdfs
-validate_pdfa = pdfengine.validate_pdfa
-decrypt_pdf = pdfengine.decrypt_pdf
-FormField = pdfengine.FormField
-Annotation = pdfengine.Annotation
-RedactReport = pdfengine.RedactReport
+xfa_pdf = pytest.importorskip("xfa_pdf._native")
+Document = xfa_pdf.Document
+open_pdf = xfa_pdf.open_pdf
+merge_pdfs = xfa_pdf.merge_pdfs
+validate_pdfa = xfa_pdf.validate_pdfa
+decrypt_pdf = xfa_pdf.decrypt_pdf
+FormField = xfa_pdf.FormField
+Annotation = xfa_pdf.Annotation
+RedactReport = xfa_pdf.RedactReport
 
 
 # ---------- Scenario 1: Open PDF, count pages ----------
