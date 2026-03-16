@@ -21,9 +21,13 @@ from pdfengine._native import (
     PageGeometry,
     ComplianceIssue,
     ComplianceReport,
+    FormField,
+    Annotation,
+    RedactReport,
     open_pdf,
     merge_pdfs,
     validate_pdfa,
+    decrypt_pdf,
 )
 
 __all__ = [
@@ -37,9 +41,13 @@ __all__ = [
     "PageGeometry",
     "ComplianceIssue",
     "ComplianceReport",
+    "FormField",
+    "Annotation",
+    "RedactReport",
     "open_pdf",
     "merge_pdfs",
     "validate_pdfa",
+    "decrypt_pdf",
 ]
 
 __version__ = "0.1.0"

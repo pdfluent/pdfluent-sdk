@@ -5,7 +5,7 @@ pdfengine — demo of core PDF operations.
 Run:
     cd crates/pdf-python
     maturin develop
-    python examples/demo.py path/to/document.pdf
+    python examples/demo.py path/to/document.pdf [path/to/acroform.pdf]
 """
 
 import sys
@@ -18,6 +18,7 @@ try:
         open_pdf,
         merge_pdfs,
         validate_pdfa,
+        decrypt_pdf,
     )
 except ImportError:
     print("pdfengine not installed. Run: maturin develop")
@@ -102,11 +103,88 @@ def main(pdf_path: str) -> None:
     print(f"   author:   {meta.author!r}")
     print(f"   producer: {meta.producer!r}")
 
+    # ------------------------------------------------------------------ #
+    # 8. get_form_fields / set_form_field                                 #
+    # ------------------------------------------------------------------ #
+    print("\n8. get_form_fields() / set_form_field()")
+    if len(sys.argv) >= 3:
+        acroform_path = sys.argv[2]
+        form_doc = Document(acroform_path)
+        fields = form_doc.get_form_fields()
+        print(f"   {len(fields)} fields found")
+        for f in fields[:5]:
+            print(f"   [{f.field_type}] {f.name!r} = {f.value!r}  (page {f.page})")
+        if fields:
+            text_fields = [f for f in fields if f.field_type == "text"]
+            if text_fields:
+                name = text_fields[0].name
+                ok = form_doc.set_form_field(name, "Hello from pdfengine")
+                print(f"   set_form_field({name!r}) → {ok}")
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+                    filled_path = tf.name
+                form_doc.save(filled_path)
+                print(f"   saved filled form to {filled_path}")
+                os.unlink(filled_path)
+    else:
+        print("   (pass a second path to an AcroForm PDF to demo form fields)")
+
+    # ------------------------------------------------------------------ #
+    # 9. get_annotations / add_annotation                                 #
+    # ------------------------------------------------------------------ #
+    print("\n9. add_annotation() / get_annotations()")
+    annot_doc = Document(pdf_path)
+    annot_doc.add_annotation(0, "highlight", (72.0, 700.0, 300.0, 720.0), "Demo highlight")
+    annot_doc.add_annotation(0, "freetext", (72.0, 650.0, 300.0, 680.0), "Demo note")
+    annots_before = annot_doc.get_annotations(0)
+    print(f"   annotations on page 0: {len(annots_before)}")
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+        annot_path = tf.name
+    annot_doc.save(annot_path)
+    # Read back
+    reloaded = Document(annot_path)
+    annots_after = reloaded.get_annotations(0)
+    print(f"   after save+reload: {len(annots_after)} annotations")
+    for a in annots_after:
+        print(f"   [{a.annot_type}] rect={a.rect}  contents={a.contents!r}")
+    os.unlink(annot_path)
+
+    # ------------------------------------------------------------------ #
+    # 10. redact_text                                                      #
+    # ------------------------------------------------------------------ #
+    print("\n10. redact_text()")
+    redact_doc = Document(pdf_path)
+    report = redact_doc.redact_text("the")
+    print(
+        f"   matches={report.matches_found}  redacted={report.areas_redacted}"
+        f"  pages={report.pages_affected}"
+    )
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+        redacted_path = tf.name
+    redact_doc.save(redacted_path)
+    print(f"   redacted PDF saved to {redacted_path}")
+    os.unlink(redacted_path)
+
+    # ------------------------------------------------------------------ #
+    # 11. encrypt / decrypt                                                #
+    # ------------------------------------------------------------------ #
+    print("\n11. encrypt() / decrypt()")
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+        enc_path = tf.name
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+        dec_path = tf.name
+    doc.encrypt(enc_path, "secret123")
+    print(f"   encrypted → {enc_path}")
+    decrypt_pdf(enc_path, dec_path, "secret123")
+    dec_doc = Document(dec_path)
+    print(f"   decrypted → {dec_path}  ({dec_doc.page_count} pages)")
+    os.unlink(enc_path)
+    os.unlink(dec_path)
+
     print("\nDemo complete.")
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <path-to-pdf>")
+        print(f"Usage: {sys.argv[0]} <path-to-pdf> [path-to-acroform-pdf]")
         sys.exit(1)
     main(sys.argv[1])
