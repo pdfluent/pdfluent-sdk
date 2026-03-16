@@ -1650,6 +1650,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.8.1") => Some("6.2.4"),
             (1, "6.2.8.2") => Some("6.2.4"),
             (1, "6.2.8.3") => Some("6.2.4"),
+            // PDF/A-4: OPI/Alternates/Interpolate checks use §6.2.7.x
+            (4, "6.2.8.3") => Some("6.2.7.1"), // OPI key forbidden (#467)
 
             // Implementation limits
             // PDF/A-1: §6.1.12, PDF/A-2/3/4: §6.1.13
