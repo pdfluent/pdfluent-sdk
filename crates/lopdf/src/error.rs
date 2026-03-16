@@ -116,6 +116,15 @@ pub enum Error {
     /// Encountered an unsupported security handler.
     #[error("unsupported security handler")]
     UnsupportedSecurityHandler(Vec<u8>),
+    /// Input buffer exceeds the configured per-document size limit.
+    ///
+    /// Returned by `Document::load_mem_with_options` / `load_with_options`
+    /// when the input size exceeds `LoadOptions::max_file_bytes`.
+    #[error("document too large: {size} bytes exceeds limit of {limit} bytes")]
+    DocumentTooLarge { size: usize, limit: usize },
+    /// An ObjStm stream could not be decompressed during lazy resolution.
+    #[error("failed to decompress ObjStm object {container_id}")]
+    ObjStmDecompress { container_id: u32 },
 }
 
 #[derive(Error, Debug)]

@@ -1,1 +1,2 @@
-// Benchmark support crate — no library code, only benches.
+// Benchmark support crate.
+pub mod mem_measure;

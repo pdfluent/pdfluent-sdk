@@ -20,6 +20,7 @@ use tokio::pin;
 
 use crate::encryption::{self, EncryptionState};
 use crate::error::{ParseError, XrefError};
+use crate::load_options::LoadOptions;
 use crate::object_stream::ObjectStream;
 use crate::parser::{self, ParserInput};
 use crate::xref::XrefEntry;
@@ -79,6 +80,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password,
+            options: LoadOptions::default(),
         }
         .read(filter_func)
     }
@@ -86,6 +88,65 @@ impl Document {
     /// Load a PDF document from a memory slice.
     pub fn load_mem(buffer: &[u8]) -> Result<Document> {
         buffer.try_into()
+    }
+
+    /// Load a PDF document from a memory slice with custom load options.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(Error::DocumentTooLarge)` if `opts.max_file_bytes` is set
+    /// and `buffer.len()` exceeds that limit.
+    pub fn load_mem_with_options(buffer: &[u8], opts: &LoadOptions) -> Result<Document> {
+        // Phase 1 (Issue #468): reject inputs that exceed the configured size limit
+        // before allocating the full object graph.
+        if let Some(limit) = opts.max_file_bytes {
+            if buffer.len() > limit {
+                return Err(Error::DocumentTooLarge {
+                    size: buffer.len(),
+                    limit,
+                });
+            }
+        }
+        Reader {
+            buffer,
+            document: Document::new(),
+            encryption_state: None,
+            raw_objects: BTreeMap::new(),
+            password: None,
+            options: opts.clone(),
+        }
+        .read(None)
+    }
+
+    /// Load a PDF document from a file path with custom load options.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(Error::DocumentTooLarge)` if `opts.max_file_bytes` is set
+    /// and the file size exceeds that limit.
+    pub fn load_with_options<P: AsRef<Path>>(path: P, opts: &LoadOptions) -> Result<Document> {
+        let file = File::open(path.as_ref())?;
+        let file_size = file.metadata()?.len() as usize;
+        if let Some(limit) = opts.max_file_bytes {
+            if file_size > limit {
+                return Err(Error::DocumentTooLarge {
+                    size: file_size,
+                    limit,
+                });
+            }
+        }
+        let mut buffer = Vec::with_capacity(file_size);
+        let mut f = file;
+        f.read_to_end(&mut buffer)?;
+        Reader {
+            buffer: &buffer,
+            document: Document::new(),
+            encryption_state: None,
+            raw_objects: BTreeMap::new(),
+            password: None,
+            options: opts.clone(),
+        }
+        .read(None)
     }
 
     /// Load a PDF document from a memory slice with a password for encrypted PDFs.
@@ -96,6 +157,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: Some(password.to_string()),
+            options: LoadOptions::default(),
         }
         .read(None)
     }
@@ -144,6 +206,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: None,
+            options: LoadOptions::default(),
         }
         .read_metadata()
     }
@@ -157,6 +220,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: Some(password.to_string()),
+            options: LoadOptions::default(),
         }
         .read_metadata()
     }
@@ -175,6 +239,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password,
+            options: LoadOptions::default(),
         }
         .read_metadata()
     }
@@ -224,6 +289,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password,
+            options: LoadOptions::default(),
         }
         .read(filter_func)
     }
@@ -279,6 +345,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: None,
+            options: LoadOptions::default(),
         }
         .read_metadata()
     }
@@ -292,6 +359,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: Some(password.to_string()),
+            options: LoadOptions::default(),
         }
         .read_metadata()
     }
@@ -312,6 +380,7 @@ impl Document {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password,
+            options: LoadOptions::default(),
         }
         .read_metadata()
     }
@@ -327,6 +396,7 @@ impl TryInto<Document> for &[u8] {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: None,
+            options: LoadOptions::default(),
         }
         .read(None)
     }
@@ -358,6 +428,7 @@ impl IncrementalDocument {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: None,
+            options: LoadOptions::default(),
         }
         .read(None)?;
 
@@ -399,6 +470,7 @@ impl IncrementalDocument {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: None,
+            options: LoadOptions::default(),
         }
         .read(None)?;
 
@@ -421,6 +493,7 @@ impl TryInto<IncrementalDocument> for &[u8] {
             encryption_state: None,
             raw_objects: BTreeMap::new(),
             password: None,
+            options: LoadOptions::default(),
         }
         .read(None)?;
 
@@ -434,6 +507,7 @@ pub struct Reader<'a> {
     pub encryption_state: Option<EncryptionState>,
     pub raw_objects: BTreeMap<ObjectId, Vec<u8>>, // Store raw bytes for encrypted objects
     pub password: Option<String>,                 // Password for encrypted PDFs
+    pub options: LoadOptions,
 }
 
 /// Maximum allowed embedding of literal strings.
@@ -962,6 +1036,10 @@ impl Reader<'_> {
         let is_encrypted = self.document.trailer.get(b"Encrypt").is_ok();
         let zero_length_streams = Mutex::new(vec![]);
         let object_streams = Mutex::new(vec![]);
+        // Phase 2 (Issue #468): track ObjStm containers kept for lazy resolution.
+        let pending_obj_stream_ids: Mutex<Vec<ObjectId>> = Mutex::new(vec![]);
+        // Copy bool so the closure captures it by value (no borrow of self.options).
+        let lazy_objstm = self.options.lazy_objstm;
 
         let entries_filter_map = |(_, entry): (&_, &_)| {
             if let XrefEntry::Normal { offset, .. } = *entry {
@@ -986,21 +1064,38 @@ impl Reader<'_> {
 
                 if let Ok(ref mut stream) = object.as_stream_mut() {
                     if stream.dict.has_type(b"ObjStm") && !is_encrypted {
-                        let obj_stream = ObjectStream::new(stream).ok()?;
-                        let mut object_streams = object_streams.lock().unwrap();
-                        // TODO: Is insert and replace intended behavior?
-                        // See https://github.com/J-F-Liu/lopdf/issues/160 for more info
-                        if let Some(filter_func) = filter_func {
-                            let objects: BTreeMap<(u32, u16), Object> = obj_stream
-                                .objects
-                                .into_iter()
-                                .filter_map(|(object_id, mut object)| {
-                                    filter_func(object_id, &mut object)
-                                })
-                                .collect();
-                            object_streams.extend(objects);
+                        if lazy_objstm {
+                            // Phase 2b (Issue #468): defer decompression.
+                            // Keep the container in document.objects and record its
+                            // ID so the caller can call resolve_pending_object_streams.
+                            pending_obj_stream_ids.lock().unwrap().push(object_id);
+                            // Fall through to Some((object_id, object)) below.
                         } else {
-                            object_streams.extend(obj_stream.objects);
+                            // Phase 2a (Issue #468): eager extraction, drop container.
+                            // Extract contained objects now, then return None so the
+                            // ObjStm container itself is NOT added to document.objects.
+                            // This eliminates the decompressed-container double-memory
+                            // problem: the decompressed bytes (stream.content) are freed
+                            // when `object` is dropped at the end of this arm.
+                            if let Ok(obj_stream) = ObjectStream::new(stream) {
+                                let mut object_streams = object_streams.lock().unwrap();
+                                // TODO: Is insert and replace intended behavior?
+                                // See https://github.com/J-F-Liu/lopdf/issues/160 for more info
+                                if let Some(filter_func) = filter_func {
+                                    let objects: BTreeMap<(u32, u16), Object> = obj_stream
+                                        .objects
+                                        .into_iter()
+                                        .filter_map(|(object_id, mut object)| {
+                                            filter_func(object_id, &mut object)
+                                        })
+                                        .collect();
+                                    object_streams.extend(objects);
+                                } else {
+                                    object_streams.extend(obj_stream.objects);
+                                }
+                            }
+                            // Return None: container is dropped here, freeing its bytes.
+                            return None;
                         }
                     } else if stream.content.is_empty() {
                         let mut zero_length_streams = zero_length_streams.lock().unwrap();
@@ -1043,6 +1138,10 @@ impl Reader<'_> {
         for object_id in zero_length_streams.into_inner().unwrap() {
             let _ = self.read_stream_content(object_id);
         }
+
+        // Phase 2b (Issue #468): store pending ObjStm container IDs in the document
+        // so the caller can resolve them later via resolve_pending_object_streams.
+        self.document.pending_obj_streams = pending_obj_stream_ids.into_inner().unwrap();
 
         Ok(())
     }
@@ -1498,4 +1597,96 @@ fn search_substring_finds_last_occurrence() {
         Reader::search_substring(buffer_with_many_percents, b"%%EOF", 0),
         Some(27)
     );
+}
+
+// ── Phase 1 & 2 tests (Issue #468) ───────────────────────────────────────────
+
+/// A minimal but valid PDF containing a single page with no objects in ObjStm.
+/// Used as a fixture for LoadOptions tests.
+#[cfg(test)]
+fn minimal_pdf_bytes() -> &'static [u8] {
+    include_bytes!("../assets/example.pdf")
+}
+
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn load_with_options_accepts_normal_document() {
+    // Default options (256 MiB limit) should accept the small example PDF.
+    let data = minimal_pdf_bytes();
+    let opts = LoadOptions::new();
+    let doc = Document::load_mem_with_options(data, &opts)
+        .expect("example.pdf should be accepted by default options");
+    assert_eq!(doc.version, "1.5");
+}
+
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn load_with_options_rejects_oversized_document() {
+    // Set a 1-byte limit — any real PDF must exceed it.
+    let data = minimal_pdf_bytes();
+    let opts = LoadOptions::new().max_file_bytes(1usize);
+    let err = Document::load_mem_with_options(data, &opts)
+        .expect_err("document larger than 1 byte must be rejected");
+    match err {
+        Error::DocumentTooLarge { size, limit } => {
+            assert_eq!(limit, 1);
+            assert_eq!(size, data.len());
+        }
+        other => panic!("expected DocumentTooLarge, got {other:?}"),
+    }
+}
+
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn load_with_options_unlimited() {
+    // None = no size check — should succeed for any document.
+    let data = minimal_pdf_bytes();
+    let opts = LoadOptions::new().max_file_bytes(None);
+    let doc = Document::load_mem_with_options(data, &opts)
+        .expect("unlimited options must not reject documents");
+    assert_eq!(doc.version, "1.5");
+}
+
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn load_mem_with_options_lazy_objstm_no_objects_lost() {
+    // When lazy_objstm = true, objects inside ObjStm must be accessible after
+    // calling resolve_pending_object_streams.
+    //
+    // example.pdf uses ObjStm (PDF 1.5 cross-reference streams), so this
+    // exercises the lazy path on real data.
+    let data = minimal_pdf_bytes();
+    let opts = LoadOptions::new().lazy_objstm(true).max_file_bytes(None);
+    let mut lazy_doc = Document::load_mem_with_options(data, &opts)
+        .expect("lazy load of example.pdf should succeed");
+
+    // Eager-loaded reference document.
+    let eager_doc = Document::load_mem(data).expect("eager load of example.pdf should succeed");
+
+    // Before resolving, the lazy doc may have fewer objects.
+    // After resolving it must match the eager doc.
+    lazy_doc
+        .resolve_pending_object_streams()
+        .expect("resolve_pending_object_streams should not fail on valid data");
+
+    assert_eq!(lazy_doc.objects.len(), eager_doc.objects.len(),
+        "after resolve, lazy doc must have same object count as eager doc");
+    assert!(lazy_doc.pending_obj_streams.is_empty(),
+        "pending_obj_streams must be empty after resolve");
+}
+
+#[test]
+fn load_options_builder() {
+    let opts = LoadOptions::new()
+        .max_file_bytes(64 * 1024 * 1024)
+        .lazy_objstm(true);
+    assert_eq!(opts.max_file_bytes, Some(64 * 1024 * 1024));
+    assert!(opts.lazy_objstm);
+
+    let no_limit = LoadOptions::new().max_file_bytes(None);
+    assert_eq!(no_limit.max_file_bytes, None);
+
+    let default = LoadOptions::default();
+    assert_eq!(default.max_file_bytes, Some(crate::load_options::DEFAULT_MAX_FILE_BYTES));
+    assert!(!default.lazy_objstm);
 }
