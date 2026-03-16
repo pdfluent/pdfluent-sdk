@@ -10,6 +10,9 @@ publish = false
 pdf-syntax = { path = "../pdf-syntax", features = ["std", "images"] }
 pdf-engine = { path = "../pdf-engine" }
 pdf-compliance = { path = "../pdf-compliance" }
+pdf-extract = { path = "../pdf-extract" }
+pdf-manip = { path = "../pdf-manip" }
+pdf-forms = { path = "../pdf-forms" }
 pdfium-ffi-bridge.workspace = true
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
@@ -29,5 +32,9 @@ harness = false
 
 [[bench]]
 name = "sdk_operations"
+harness = false
+
+[[bench]]
+name = "pdf_benchmarks"
 harness = false
 
