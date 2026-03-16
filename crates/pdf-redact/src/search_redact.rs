@@ -353,7 +353,10 @@ fn remove_text_ops_for_page(
     };
 
     // Also process Form XObjects referenced in the page's Resources.
-    let removed = removed + remove_text_ops_from_xobjects(doc, page_num, &matcher, &fonts)?;
+    // Pass match_bboxes so that XObjects whose font encoding prevents text
+    // matching can still be cleaned via the spatial fallback. Fixes #466 bugs 5–6.
+    let removed =
+        removed + remove_text_ops_from_xobjects(doc, page_num, &matcher, &fonts, match_bboxes)?;
 
     // Also process annotation appearance streams.
     let removed = removed + remove_text_ops_from_annotations(doc, page_num, &matcher, &fonts)?;
@@ -539,6 +542,9 @@ fn remove_text_ops_with_inline_images(
 /// - Each XObject's own Resources/Font dict is used for correct CMap decoding.
 /// - Nested Form XObjects (`Do` inside an XObject) are handled recursively.
 ///
+/// `match_bboxes` are forwarded so that XObjects with non-decodable font
+/// encodings can still be cleaned via the spatial fallback.
+///
 /// Fixes #457: previously this function used the page-level FontMap and did
 /// not recurse into nested XObjects, leaving redacted text extractable when it
 /// resided in a Form XObject hierarchy.
@@ -547,6 +553,7 @@ fn remove_text_ops_from_xobjects(
     page_num: u32,
     matcher: &TextMatcher,
     fonts: &pdf_manip::text_run::FontMap,
+    match_bboxes: &[[f64; 4]],
 ) -> Result<usize> {
     let pages = doc.get_pages();
     let &page_id = match pages.get(&page_num) {
@@ -563,7 +570,8 @@ fn remove_text_ops_from_xobjects(
     for xobj_id in xobject_ids {
         // remove_text_ops_from_stream builds its own per-stream FontMap and
         // recurses into nested Form XObjects automatically.
-        total_removed += remove_text_ops_from_stream(doc, xobj_id, matcher, fonts)?;
+        total_removed +=
+            remove_text_ops_from_stream(doc, xobj_id, matcher, fonts, match_bboxes)?;
     }
     Ok(total_removed)
 }
@@ -589,7 +597,9 @@ fn remove_text_ops_from_annotations(
 
     let mut total_removed = 0;
     for stream_id in ap_stream_ids {
-        total_removed += remove_text_ops_from_stream(doc, stream_id, matcher, fonts)?;
+        // Annotation appearance streams use their own local coordinate space, so
+        // page-space bboxes are not applicable — pass an empty slice.
+        total_removed += remove_text_ops_from_stream(doc, stream_id, matcher, fonts, &[])?;
     }
 
     Ok(total_removed)
@@ -601,11 +611,17 @@ fn remove_text_ops_from_annotations(
 /// (merged with the caller-supplied page-level `page_fonts` as fallback) so
 /// that CMap decoding is correct for Form XObjects and AP streams that define
 /// their own font resources.
+///
+/// `match_bboxes` are page-space bounding rectangles used as a spatial
+/// fallback when the font encoding makes text-string matching impossible.
+/// Pass `&[]` for annotation appearance streams whose coordinates are in a
+/// local (non-page) space.
 fn remove_text_ops_from_stream(
     doc: &mut Document,
     stream_id: ObjectId,
     matcher: &TextMatcher,
     page_fonts: &pdf_manip::text_run::FontMap,
+    match_bboxes: &[[f64; 4]],
 ) -> Result<usize> {
     let content_bytes = match doc.get_object(stream_id) {
         Ok(Object::Stream(ref s)) => {
@@ -638,12 +654,27 @@ fn remove_text_ops_from_stream(
         }
     }
 
+    // Spatial fallback: when font encoding prevents text matching (e.g. a
+    // subset font whose ToUnicode CMap decodes to unexpected code points),
+    // fall back to removing every text-showing op whose CTM-transformed
+    // position overlaps a known match bbox. Fixes #466 bugs 5–6.
+    if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
+        for run in &runs {
+            if run_overlaps_any_bbox(run, match_bboxes) {
+                for idx in run.ops_range.clone() {
+                    indices_to_remove.push(idx);
+                }
+            }
+        }
+    }
+
     if indices_to_remove.is_empty() {
         // Check for nested Form XObjects within this stream (e.g., signature appearances).
         let nested_ids = collect_nested_form_xobjects(doc, stream_id);
         let mut nested_removed = 0;
         for nested_id in nested_ids {
-            nested_removed += remove_text_ops_from_stream(doc, nested_id, matcher, fonts)?;
+            nested_removed +=
+                remove_text_ops_from_stream(doc, nested_id, matcher, fonts, match_bboxes)?;
         }
         return Ok(nested_removed);
     }
@@ -673,7 +704,8 @@ fn remove_text_ops_from_stream(
     let nested_ids = collect_nested_form_xobjects(doc, stream_id);
     let mut nested_removed = removed;
     for nested_id in nested_ids {
-        nested_removed += remove_text_ops_from_stream(doc, nested_id, matcher, fonts)?;
+        nested_removed +=
+            remove_text_ops_from_stream(doc, nested_id, matcher, fonts, match_bboxes)?;
     }
 
     Ok(nested_removed)
@@ -1084,7 +1116,7 @@ mod tests {
         // Call the private helper via remove_text_ops_from_stream.
         // We test it indirectly: verify the XObject stream bytes change.
         let removed =
-            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts).unwrap();
+            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts, &[]).unwrap();
 
         assert!(
             removed > 0,
