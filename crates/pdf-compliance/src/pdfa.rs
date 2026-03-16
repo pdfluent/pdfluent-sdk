@@ -535,7 +535,10 @@ pub fn validate_with_progress(
         "check_stream_length_pdfa",
         check_stream_length_pdfa(pdf, &mut report)
     );
-    tracked!("check_object_syntax", check_object_syntax(pdf, level, &mut report));
+    tracked!(
+        "check_object_syntax",
+        check_object_syntax(pdf, level, &mut report)
+    );
     tracked!(
         "check_xmp_extension_schema",
         check_xmp_extension_schema_pdfa(pdf, &mut report)
@@ -901,7 +904,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         "check_stream_length_pdfa",
         check_stream_length_pdfa(pdf, &mut report)
     );
-    timed!("check_object_syntax", check_object_syntax(pdf, level, &mut report));
+    timed!(
+        "check_object_syntax",
+        check_object_syntax(pdf, level, &mut report)
+    );
     timed!(
         "check_xmp_extension_schema",
         check_xmp_extension_schema_pdfa(pdf, &mut report)

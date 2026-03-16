@@ -471,7 +471,6 @@ fn is_valid_value_type(vtype: &str, custom_types: &HashSet<String>) -> bool {
     custom_types.contains(vtype)
 }
 
-
 /// §6.7.9 / §6.6.2.3.1 / §6.5.2 — Validate all XMP properties use known or declared namespaces.
 ///
 /// Replaces the simpler check in check.rs with one that actually
@@ -570,8 +569,8 @@ fn check_property_namespaces(
                                     && !extension_prefixes.contains(prefix);
                                 // Check 2: prefix is predefined but xmlns:prefix not declared
                                 // (xml: is the only XML-spec pre-declared prefix)
-                                let undeclared = prefix != "xml:"
-                                    && !declared_prefixes.contains(prefix);
+                                let undeclared =
+                                    prefix != "xml:" && !declared_prefixes.contains(prefix);
 
                                 if unknown_prefix || undeclared {
                                     error(
@@ -863,7 +862,10 @@ fn check_date_formats(xmp: &str, report: &mut ComplianceReport) {
                 error(
                     report,
                     "6.7.9",
-                    format!("XMP date property '{}' value '{}' is not valid ISO 8601 format", prop, date),
+                    format!(
+                        "XMP date property '{}' value '{}' is not valid ISO 8601 format",
+                        prop, date
+                    ),
                 );
             }
         }
@@ -1025,15 +1027,14 @@ fn check_xmp_rdf_structure(xmp: &str, report: &mut ComplianceReport) {
 fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     // Extract pdfaid:part — element form <pdfaid:part>N</pdfaid:part>
     // or attribute form pdfaid:part="N"
-    let declared_part = extract_nested_value(xmp, "pdfaid:part")
-        .or_else(|| {
-            // Try attribute-style: pdfaid:part="N"
-            let pat = "pdfaid:part=\"";
-            xmp.find(pat).and_then(|s| {
-                let rest = &xmp[s + pat.len()..];
-                rest.find('"').map(|e| rest[..e].trim().to_string())
-            })
-        });
+    let declared_part = extract_nested_value(xmp, "pdfaid:part").or_else(|| {
+        // Try attribute-style: pdfaid:part="N"
+        let pat = "pdfaid:part=\"";
+        xmp.find(pat).and_then(|s| {
+            let rest = &xmp[s + pat.len()..];
+            rest.find('"').map(|e| rest[..e].trim().to_string())
+        })
+    });
 
     if let Some(ref part_str) = declared_part {
         let expected = level.part().to_string();
@@ -1563,7 +1564,10 @@ fn check_pdf_namespace_properties(xmp: &str, level: PdfALevel, report: &mut Comp
                 let prop_name = &xmp[name_start..name_end];
 
                 // Skip closing tags, xmlns: declarations, and rdf:container
-                if !prop_name.starts_with('/') && !prop_name.is_empty() && !reported.contains(prop_name) {
+                if !prop_name.starts_with('/')
+                    && !prop_name.is_empty()
+                    && !reported.contains(prop_name)
+                {
                     // Check if this is a known pdf: property
                     if !VALID_PDF_PROPERTIES.contains(&prop_name) {
                         error(
@@ -1599,11 +1603,7 @@ fn check_pdf_namespace_properties(xmp: &str, level: PdfALevel, report: &mut Comp
 ///
 /// This check covers the veraPDF test suite 6-6-2-3-1-tXX-fail cases and
 /// the isartor-6-7-2-tXX-fail cases. (#467)
-fn check_predefined_property_types(
-    xmp: &str,
-    level: PdfALevel,
-    report: &mut ComplianceReport,
-) {
+fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     let rule = match level.part() {
         1 => "6.7.9",
         4 => "6.5.2",
@@ -1651,12 +1651,18 @@ fn check_predefined_property_types(
                 // Find the element body between '>' and '</tag_name>'
                 let close_start = match xmp[name_end..].find('>') {
                     Some(i) => name_end + i + 1,
-                    None => { pos = name_end; continue; }
+                    None => {
+                        pos = name_end;
+                        continue;
+                    }
                 };
                 let close_tag = format!("</{}>", tag_name);
                 let body_end = match xmp[close_start..].find(&close_tag) {
                     Some(i) => close_start + i,
-                    None => { pos = close_start; continue; }
+                    None => {
+                        pos = close_start;
+                        continue;
+                    }
                 };
                 let body = &xmp[close_start..body_end];
 
@@ -1679,7 +1685,8 @@ fn check_predefined_property_types(
                             // Accept empty (missing) value without flagging; the
                             // scalar container check above covers the container case.
                             // Only flag non-empty values that look like reals.
-                            if !val.is_empty() && !val.starts_with('<') && is_non_integer_value(val) {
+                            if !val.is_empty() && !val.starts_with('<') && is_non_integer_value(val)
+                            {
                                 Some(format!(
                                     "XMP property '{}' requires an Integer value but got '{}'",
                                     tag_name,
@@ -1728,7 +1735,10 @@ fn check_predefined_property_types(
                                 "XMP property '{}' requires 'seq' (rdf:Seq) but uses rdf:Bag or rdf:Alt",
                                 tag_name
                             ))
-                        } else if !has_seq && !body.trim().is_empty() && !body.trim().starts_with('<') {
+                        } else if !has_seq
+                            && !body.trim().is_empty()
+                            && !body.trim().starts_with('<')
+                        {
                             // Plain text where Seq required (e.g. dc:creator "text", exif:ComponentsConfiguration "1.0 2.0")
                             Some(format!(
                                 "XMP property '{}' requires 'seq' (rdf:Seq) but is plain text",
@@ -1744,7 +1754,10 @@ fn check_predefined_property_types(
                                 "XMP property '{}' requires 'bag' (rdf:Bag) but uses rdf:Seq or rdf:Alt",
                                 tag_name
                             ))
-                        } else if !has_bag && !body.trim().is_empty() && !body.trim().starts_with('<') {
+                        } else if !has_bag
+                            && !body.trim().is_empty()
+                            && !body.trim().starts_with('<')
+                        {
                             // Plain text where Bag required (e.g. xmpRights:Owner "Some owner")
                             Some(format!(
                                 "XMP property '{}' requires 'bag' (rdf:Bag) but is plain text",
