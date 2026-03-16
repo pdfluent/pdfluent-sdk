@@ -600,22 +600,28 @@ impl PdfDocument {
     /// Encrypt the document and write it to `output_path`.
     ///
     /// Uses AES-256 with `password` as both the user and owner password.
-    /// The current in-memory document is not modified — only the written file
-    /// is encrypted.
+    /// The in-memory document is not modified — encryption is applied to a
+    /// temporary clone and only the written file is encrypted.
     #[napi]
     pub fn encrypt(&self, output_path: String, password: String) -> Result<()> {
-        self.with_doc_mut(|doc| {
-            let config = pdf_manip::encrypt::EncryptConfig {
-                user_password: password.as_bytes().to_vec(),
-                owner_password: password.as_bytes().to_vec(),
-                ..Default::default() // AES-256, all permissions
-            };
-            let file = std::fs::File::create(&output_path)
-                .map_err(|e| napi::Error::from_reason(format!("cannot create '{output_path}': {e}")))?;
-            let mut writer = std::io::BufWriter::new(file);
-            pdf_manip::encrypt::encrypt_and_save(doc, &config, &mut writer)
-                .map_err(|e| napi::Error::from_reason(format!("encrypt failed: {e}")))
-        })
+        // Clone before encrypting so the shared document stays in plaintext state.
+        let mut doc_clone = {
+            let arc = self
+                .doc
+                .as_ref()
+                .ok_or_else(|| napi::Error::from_reason("document is not writable"))?;
+            arc.lock().unwrap().clone()
+        };
+        let config = pdf_manip::encrypt::EncryptConfig {
+            user_password: password.as_bytes().to_vec(),
+            owner_password: password.as_bytes().to_vec(),
+            ..Default::default() // AES-256, all permissions
+        };
+        let file = std::fs::File::create(&output_path)
+            .map_err(|e| napi::Error::from_reason(format!("cannot create '{output_path}': {e}")))?;
+        let mut writer = std::io::BufWriter::new(file);
+        pdf_manip::encrypt::encrypt_and_save(&mut doc_clone, &config, &mut writer)
+            .map_err(|e| napi::Error::from_reason(format!("encrypt failed: {e}")))
     }
 
     /// Remove encryption and write the decrypted document to `output_path`.
