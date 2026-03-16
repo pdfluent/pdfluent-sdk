@@ -2058,8 +2058,8 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     if let Some(keywords) = &metadata.keywords {
         // Detect wrong-case variant: pdf:keywords (lowercase) is not a valid XMP property.
         // veraPDF flags this as §6.7.9 (XMP schema conformance), not §6.7.3. (#467)
-        let has_lowercase_keywords = xmp_text.contains("<pdf:keywords>")
-            || xmp_text.contains("pdf:keywords=");
+        let has_lowercase_keywords =
+            xmp_text.contains("<pdf:keywords>") || xmp_text.contains("pdf:keywords=");
         if has_lowercase_keywords {
             error(
                 report,
@@ -3637,10 +3637,9 @@ pub fn check_output_intent_profile_class(pdf: &Pdf, report: &mut ComplianceRepor
 pub fn check_output_intent_icc_signature(pdf: &Pdf, report: &mut ComplianceReport) {
     // Known valid ICC color space signatures (ICC.1:2004, Table 18)
     const VALID_SIGNATURES: &[&[u8]] = &[
-        b"RGB ", b"CMYK", b"GRAY", b"Lab ", b"XYZ ", b"Luv ", b"YCbr", b"Yxy ",
-        b"HSV ", b"HLS ", b"CMY ", b"2CLR", b"3CLR", b"4CLR", b"5CLR", b"6CLR",
-        b"7CLR", b"8CLR", b"9CLR", b"ACLR", b"BCLR", b"CCLR", b"DCLR", b"ECLR",
-        b"FCLR", b"ncl ", // n-channel, colour not known
+        b"RGB ", b"CMYK", b"GRAY", b"Lab ", b"XYZ ", b"Luv ", b"YCbr", b"Yxy ", b"HSV ", b"HLS ",
+        b"CMY ", b"2CLR", b"3CLR", b"4CLR", b"5CLR", b"6CLR", b"7CLR", b"8CLR", b"9CLR", b"ACLR",
+        b"BCLR", b"CCLR", b"DCLR", b"ECLR", b"FCLR", b"ncl ", // n-channel, colour not known
     ];
 
     let Some(cat) = catalog(pdf) else { return };
@@ -3670,7 +3669,8 @@ pub fn check_output_intent_icc_signature(pdf: &Pdf, report: &mut ComplianceRepor
                 "6.6.2.3.3",
                 format!(
                     "OutputIntent ICC profile declared size {} does not match actual size {}",
-                    declared_size, data.len()
+                    declared_size,
+                    data.len()
                 ),
             );
         }
@@ -3757,11 +3757,7 @@ pub fn check_transparency_blending_vs_output_intent(
 /// When multiple OutputIntents each carry a DestOutputProfile the profiles
 /// must be identical (same ICC data).  Uses a byte-level prefix comparison
 /// of the first 64 bytes to avoid decompressing full profiles twice.
-pub fn check_output_intent_consistency_pdfa(
-    pdf: &Pdf,
-    part: u8,
-    report: &mut ComplianceReport,
-) {
+pub fn check_output_intent_consistency_pdfa(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else { return };
     let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) else {
         return;
