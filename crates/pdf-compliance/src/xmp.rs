@@ -137,6 +137,21 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_xmp_rdf_structure(xmp_text, report);
 
     check_xmp_packet_header(xmp_text, report);
+    // §6.7.2.1 — forbidden 'bytes' attribute in the <?xpacket?> PI. (#467)
+    // The bytes= attribute is not permitted in any PDF/A version. veraPDF reports
+    // this as §6.7.2.1 regardless of the PDF/A part (confirmed by veraPDF test suite
+    // 6-7-2-1-t01-fail-b.pdf which is PDF/A-4 but veraPDF emits §6.7.2.1).
+    if let Some(xp_start) = xmp_text.find("<?xpacket") {
+        let xp_end = xmp_text[xp_start..].find("?>").unwrap_or(0);
+        let xp_header = &xmp_text[xp_start..xp_start + xp_end + 2];
+        if xp_header.contains("bytes=") {
+            error(
+                report,
+                "6.7.2.1",
+                "XMP packet header contains forbidden 'bytes' attribute (§6.7.2.1)",
+            );
+        }
+    }
     let schemas = parse_extension_schemas(xmp_text);
     check_extension_schema_structure(xmp_text, &schemas, report);
     check_property_namespaces(xmp_text, &schemas, level, report);
@@ -1556,13 +1571,16 @@ const VALID_PDF_PROPERTIES: &[&str] = &[
     "pdf:Trapped",
 ];
 
-/// §6.7.9 test=3 / §6.6.2.3.1 test=3 — Non-standard property in restricted XMP namespace.
+/// §6.7.2 (PDF/A-1) / §6.6.2.3.1 (PDF/A-2/3/4) — Non-standard property in restricted XMP namespace.
 ///
 /// The `pdf:` namespace is a "closed" namespace with exactly four defined properties.
-/// Any other `pdf:X` property is not in the predefined schemas and triggers §6.7.9. (#467)
+/// Any other `pdf:X` property (e.g. `pdf:ModDate`) is not defined in the Adobe PDF
+/// Schema and triggers §6.7.2 for PDF/A-1 and §6.6.2.3.1 for PDF/A-2+. (#467)
 fn check_pdf_namespace_properties(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     let rule = match level.part() {
-        1 => "6.7.9",
+        // PDF/A-1: property not defined in the predefined schema → §6.7.2
+        // (veraPDF groups invalid pdf: properties under §6.7.2, not §6.7.9)
+        1 => "6.7.2",
         4 => "6.5.2",
         _ => "6.6.2.3.1",
     };
@@ -1616,7 +1634,7 @@ fn check_pdf_namespace_properties(xmp: &str, level: PdfALevel, report: &mut Comp
     }
 }
 
-/// §6.6.2.3.1 test=2 / §6.7.9 test=3 — Validate value types of predefined XMP properties.
+/// §6.7.2 (PDF/A-1) / §6.6.2.3.1 (PDF/A-2/3/4) — Validate value types of predefined XMP properties.
 ///
 /// For every well-known predefined XMP property found in the XMP stream,
 /// verify that its value is serialised in the correct RDF/XML form:
@@ -1630,9 +1648,14 @@ fn check_pdf_namespace_properties(xmp: &str, level: PdfALevel, report: &mut Comp
 ///
 /// This check covers the veraPDF test suite 6-6-2-3-1-tXX-fail cases and
 /// the isartor-6-7-2-tXX-fail cases. (#467)
+///
+/// Note: veraPDF uses §6.7.2 (not §6.7.9) for property type/definition
+/// violations in PDF/A-1. §6.7.9 is reserved for undeclared schema namespaces. (#467)
 fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     let rule = match level.part() {
-        1 => "6.7.9",
+        // PDF/A-1: property used inconsistently with schema definition → §6.7.2
+        // veraPDF uses §6.7.2 for these cases (not §6.7.9). (#467)
+        1 => "6.7.2",
         4 => "6.5.2",
         _ => "6.6.2.3.1",
     };
