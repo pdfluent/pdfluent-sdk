@@ -128,9 +128,13 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
         return; // Missing XMP is caught by check_xmp_metadata
     };
     let Ok(xmp_text) = std::str::from_utf8(&xmp_data) else {
-        error(report, "6.6.2", "XMP metadata stream is not valid UTF-8");
+        // §6.7.3 — XMP metadata stream must be UTF-8 encoded
+        error(report, "6.7.3", "XMP metadata stream is not valid UTF-8");
         return;
     };
+
+    // §6.7.3 — XMP stream must contain valid RDF structure
+    check_xmp_rdf_structure(xmp_text, report);
 
     check_xmp_packet_header(xmp_text, report);
     let schemas = parse_extension_schemas(xmp_text);
@@ -139,6 +143,7 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_info_xmp_deep(pdf, xmp_text, report);
     check_date_formats(xmp_text, report);
     check_pdfa_id_properties(xmp_text, level, report);
+    check_pdfa_version_match(xmp_text, level, report);
     check_dc_title_consistency(pdf, xmp_text, report);
     check_deprecated_types(xmp_text, report);
 }
@@ -793,38 +798,29 @@ fn extract_rdf_seq_value(xmp: &str, property: &str) -> Option<String> {
     None
 }
 
-/// §6.7.3.3 / §6.7.3.4 — Date values must be valid ISO 8601 format.
+/// §6.7.9 — All XMP date/time values must be valid ISO 8601 format.
 fn check_date_formats(xmp: &str, report: &mut ComplianceReport) {
-    // Check xmp:CreateDate
-    if let Some(date) = extract_nested_value(xmp, "xmp:CreateDate") {
-        if !is_valid_iso8601(&date) {
-            error(
-                report,
-                "6.7.3.3",
-                format!("xmp:CreateDate '{}' is not valid ISO 8601 format", date),
-            );
-        }
-    }
+    // All date-type XMP properties that must conform to ISO 8601
+    let date_properties = [
+        "xmp:CreateDate",
+        "xmp:ModifyDate",
+        "xmp:MetadataDate",
+        "photoshop:DateCreated",
+        "dc:date",
+        "pdf:CreationDate",
+        "pdf:ModDate",
+        "xmpMM:CreateDate",
+    ];
 
-    // Check xmp:ModifyDate
-    if let Some(date) = extract_nested_value(xmp, "xmp:ModifyDate") {
-        if !is_valid_iso8601(&date) {
-            error(
-                report,
-                "6.7.3.4",
-                format!("xmp:ModifyDate '{}' is not valid ISO 8601 format", date),
-            );
-        }
-    }
-
-    // Check xmp:MetadataDate
-    if let Some(date) = extract_nested_value(xmp, "xmp:MetadataDate") {
-        if !is_valid_iso8601(&date) {
-            error(
-                report,
-                "6.7.3.4",
-                format!("xmp:MetadataDate '{}' is not valid ISO 8601 format", date),
-            );
+    for prop in &date_properties {
+        if let Some(date) = extract_nested_value(xmp, prop) {
+            if !is_valid_iso8601(&date) {
+                error(
+                    report,
+                    "6.7.9",
+                    format!("XMP date property '{}' value '{}' is not valid ISO 8601 format", prop, date),
+                );
+            }
         }
     }
 }
@@ -902,6 +898,89 @@ fn is_valid_iso8601(date: &str) -> bool {
     }
 
     true
+}
+
+/// §6.7.3 — XMP stream must contain a valid RDF root element.
+///
+/// The XMP specification requires that the payload be wrapped in
+/// `<x:xmpmeta>` and contain an `<rdf:RDF>` element.  Absent these
+/// elements the stream cannot carry any PDF/A metadata properties.
+fn check_xmp_rdf_structure(xmp: &str, report: &mut ComplianceReport) {
+    if !xmp.contains("<rdf:RDF") {
+        error(
+            report,
+            "6.7.3",
+            "XMP metadata stream is missing required <rdf:RDF> element",
+        );
+    }
+}
+
+/// §6.7.11 — pdfaid:part and pdfaid:conformance must match the actual PDF/A level.
+///
+/// Checks that the values declared in the XMP PDF/A Identification Schema
+/// are consistent with the level that the validator is validating against.
+/// A mismatch means the document either claims a different PDF/A version
+/// than it actually conforms to, or the identification properties are wrong.
+fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
+    // Extract pdfaid:part — element form <pdfaid:part>N</pdfaid:part>
+    // or attribute form pdfaid:part="N"
+    let declared_part = extract_nested_value(xmp, "pdfaid:part")
+        .or_else(|| {
+            // Try attribute-style: pdfaid:part="N"
+            let pat = "pdfaid:part=\"";
+            xmp.find(pat).and_then(|s| {
+                let rest = &xmp[s + pat.len()..];
+                rest.find('"').map(|e| rest[..e].trim().to_string())
+            })
+        });
+
+    if let Some(ref part_str) = declared_part {
+        let expected = level.part().to_string();
+        if part_str.trim() != expected {
+            error(
+                report,
+                "6.7.11",
+                format!(
+                    "XMP pdfaid:part is '{}' but document is being validated as PDF/A-{}",
+                    part_str.trim(),
+                    level.part()
+                ),
+            );
+            // If part already mismatches, conformance check is moot
+            return;
+        }
+    }
+
+    // Extract pdfaid:conformance and compare with level.conformance()
+    // PDF/A-4 must NOT have pdfaid:conformance (checked separately in
+    // check_pdfa4_conformance_absent); skip the comparison for part 4.
+    if level.part() != 4 {
+        let declared_conformance = extract_nested_value(xmp, "pdfaid:conformance").or_else(|| {
+            let pat = "pdfaid:conformance=\"";
+            xmp.find(pat).and_then(|s| {
+                let rest = &xmp[s + pat.len()..];
+                rest.find('"').map(|e| rest[..e].trim().to_string())
+            })
+        });
+
+        if let Some(ref conf_str) = declared_conformance {
+            let expected_conf = level.conformance();
+            if !expected_conf.is_empty()
+                && conf_str.trim().to_uppercase() != expected_conf.to_uppercase()
+            {
+                error(
+                    report,
+                    "6.7.11",
+                    format!(
+                        "XMP pdfaid:conformance is '{}' but document is being validated as PDF/A-{}{}",
+                        conf_str.trim(),
+                        level.part(),
+                        level.conformance()
+                    ),
+                );
+            }
+        }
+    }
 }
 
 /// §6.7.4 — pdfaid:amd must not be present in PDF/A-2, PDF/A-3, or PDF/A-4.
