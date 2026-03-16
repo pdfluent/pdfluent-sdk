@@ -17,6 +17,7 @@ fast_image_resize = { version = "6.0", default-features = false, features = ["st
 
 [dev-dependencies]
 log = "0.4"
+lopdf = { path = "../lopdf" }
 
 [features]
 default = ["embed-fonts", "embed-cmaps"]

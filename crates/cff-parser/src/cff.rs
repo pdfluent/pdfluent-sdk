@@ -1237,4 +1237,69 @@ mod width_tests {
             "GID 2 is out of range and must return None"
         );
     }
+
+    #[test]
+    fn number_of_glyphs_matches_charstrings_count() {
+        let table = Table::parse(MINIMAL_CID_CFF).expect("CID CFF should parse");
+        assert_eq!(table.number_of_glyphs(), 2);
+    }
+
+    #[test]
+    fn glyph_cid_notdef() {
+        // GID 0 is always .notdef with CID 0 in a CID-keyed font.
+        let table = Table::parse(MINIMAL_CID_CFF).expect("CID CFF should parse");
+        assert_eq!(table.glyph_cid(GlyphId(0)), Some(0));
+    }
+
+    #[test]
+    fn glyph_cid_gid1() {
+        // Charset Format 0 maps GID 1 → SID/CID 1.
+        let table = Table::parse(MINIMAL_CID_CFF).expect("CID CFF should parse");
+        assert_eq!(table.glyph_cid(GlyphId(1)), Some(1));
+    }
+
+    #[test]
+    fn glyph_cid_out_of_range() {
+        let table = Table::parse(MINIMAL_CID_CFF).expect("CID CFF should parse");
+        assert_eq!(table.glyph_cid(GlyphId(2)), None);
+    }
+
+    #[test]
+    fn glyph_name_returns_none_for_cid_font() {
+        // CID-keyed fonts have no glyph names.
+        let table = Table::parse(MINIMAL_CID_CFF).expect("CID CFF should parse");
+        assert_eq!(table.glyph_name(GlyphId(0)), None);
+        assert_eq!(table.glyph_name(GlyphId(1)), None);
+    }
+
+    #[test]
+    fn glyph_index_returns_none_for_cid_font() {
+        // CID-keyed fonts use FDSelect, not encoding-based lookup.
+        let table = Table::parse(MINIMAL_CID_CFF).expect("CID CFF should parse");
+        assert_eq!(table.glyph_index(0x41), None); // 'A'
+    }
+
+    #[test]
+    fn matrix_is_default_when_absent() {
+        // MINIMAL_CID_CFF has no Matrix entry → default (0.001 identity).
+        let table = Table::parse(MINIMAL_CID_CFF).expect("CID CFF should parse");
+        let m = table.matrix();
+        assert!((m.sx - 0.001).abs() < f32::EPSILON);
+        assert!((m.sy - 0.001).abs() < f32::EPSILON);
+        assert_eq!(m.kx, 0.0);
+        assert_eq!(m.ky, 0.0);
+        assert_eq!(m.tx, 0.0);
+        assert_eq!(m.ty, 0.0);
+    }
+
+    #[test]
+    fn parse_empty_data_returns_none() {
+        assert!(Table::parse(&[]).is_none());
+    }
+
+    #[test]
+    fn parse_truncated_header_returns_none() {
+        // Header is 4 bytes; 3 bytes is not enough.
+        assert!(Table::parse(&[0x01, 0x00, 0x04]).is_none());
+    }
 }

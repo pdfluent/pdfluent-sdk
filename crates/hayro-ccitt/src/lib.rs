@@ -510,3 +510,133 @@ impl<'a, T: Decoder> DecoderContext<'a, T> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    // Collects decoded pixels row by row. true = white, false = black.
+    struct PixelCollector {
+        rows: Vec<Vec<bool>>,
+        current: Vec<bool>,
+    }
+
+    impl PixelCollector {
+        fn new() -> Self {
+            Self {
+                rows: Vec::new(),
+                current: Vec::new(),
+            }
+        }
+    }
+
+    impl Decoder for PixelCollector {
+        fn push_pixel(&mut self, white: bool) {
+            self.current.push(white);
+        }
+
+        fn push_pixel_chunk(&mut self, white: bool, chunk_count: u32) {
+            for _ in 0..chunk_count * 8 {
+                self.current.push(white);
+            }
+        }
+
+        fn next_line(&mut self) {
+            self.rows.push(core::mem::take(&mut self.current));
+        }
+    }
+
+    fn g3_1d(columns: u32, rows: u32) -> DecodeSettings {
+        DecodeSettings {
+            columns,
+            rows,
+            end_of_block: false,
+            end_of_line: false,
+            rows_are_byte_aligned: false,
+            encoding: EncodingMode::Group3_1D,
+            invert_black: false,
+        }
+    }
+
+    fn g4(columns: u32, rows: u32) -> DecodeSettings {
+        DecodeSettings {
+            columns,
+            rows,
+            end_of_block: false,
+            end_of_line: false,
+            rows_are_byte_aligned: false,
+            encoding: EncodingMode::Group4,
+            invert_black: false,
+        }
+    }
+
+    const W: bool = true;
+    const B: bool = false;
+
+    // Group 3 1D: 4-column all-white row.
+    // White(4) = 0b1011 → padded to byte 0b10110000 = 0xB0.
+    #[test]
+    fn g3_1d_all_white() {
+        let mut sink = PixelCollector::new();
+        decode(&[0xB0], &mut sink, &g3_1d(4, 1)).unwrap();
+        assert_eq!(sink.rows, [[W, W, W, W]]);
+    }
+
+    // Group 3 1D: 4 cols, W(2)+B(2).
+    // White(2)=0b0111 (4 bits), Black(2)=0b11 (2 bits) → 0b01111100 = 0x7C.
+    #[test]
+    fn g3_1d_white_then_black() {
+        let mut sink = PixelCollector::new();
+        decode(&[0x7C], &mut sink, &g3_1d(4, 1)).unwrap();
+        assert_eq!(sink.rows, [[W, W, B, B]]);
+    }
+
+    // Group 3 1D: 4-column all-black row.
+    // White(0)=0b00110101 (8 bits), Black(4)=0b0011 (4 bits) → [0x35, 0x30].
+    #[test]
+    fn g3_1d_all_black() {
+        let mut sink = PixelCollector::new();
+        decode(&[0x35, 0x30], &mut sink, &g3_1d(4, 1)).unwrap();
+        assert_eq!(sink.rows, [[B, B, B, B]]);
+    }
+
+    // Group 3 1D: two rows of 4 white pixels each.
+    // W(4) W(4) = 0b10111011 = 0xBB.
+    #[test]
+    fn g3_1d_two_rows() {
+        let mut sink = PixelCollector::new();
+        decode(&[0xBB], &mut sink, &g3_1d(4, 2)).unwrap();
+        assert_eq!(sink.rows, [[W, W, W, W], [W, W, W, W]]);
+    }
+
+    // Group 4: 4-column all-white row.
+    // V(0)=0b1 (1 bit) → a1=b1=4 → 4 white pixels → 0b10000000 = 0x80.
+    #[test]
+    fn group4_all_white() {
+        let mut sink = PixelCollector::new();
+        decode(&[0x80], &mut sink, &g4(4, 1)).unwrap();
+        assert_eq!(sink.rows, [[W, W, W, W]]);
+    }
+
+    // invert_black: a white-coded pixel should be returned as black when the flag is set.
+    // 1 col, White(1) = 0b000111 → 0b00011100 = 0x1C.
+    #[test]
+    fn invert_black_flag() {
+        let mut sink = PixelCollector::new();
+        let settings = DecodeSettings {
+            invert_black: true,
+            ..g3_1d(1, 1)
+        };
+        decode(&[0x1C], &mut sink, &settings).unwrap();
+        assert_eq!(sink.rows, [[B]]);
+    }
+
+    // Empty input must return UnexpectedEof immediately.
+    #[test]
+    fn empty_data_returns_unexpected_eof() {
+        let mut sink = PixelCollector::new();
+        let err = decode(&[], &mut sink, &g3_1d(4, 1)).unwrap_err();
+        assert_eq!(err, DecodeError::UnexpectedEof);
+    }
+}
