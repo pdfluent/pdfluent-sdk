@@ -14,10 +14,15 @@ use crate::config::Config;
 use crate::db::{Database, RunSummary, TestResultRow};
 use crate::tests::{PdfTest, TestStatus};
 
-/// Maximum number of spawned test threads allowed in-flight at once.
-/// Prevents unbounded thread accumulation when tests repeatedly time out.
-/// With 64 MB stacks, 64 threads = 4 GB max thread stack virtual address space.
+/// Maximum number of test threads actively being awaited by a rayon worker.
+/// In practice this is bounded by `workers` (≤ 14), so this is a safety ceiling.
 const MAX_IN_FLIGHT_THREADS: usize = 64;
+
+/// Maximum number of test threads alive at any moment, including zombie threads
+/// that have already timed out but are still running (holding lopdf Documents).
+/// Fix #461: without this, timed-out pdfa_convert threads accumulate unboundedly.
+/// Each thread can hold up to ~200 MB; 32 × 200 MB = 6.4 GB well within 32 GB VPS.
+const MAX_SPAWNED_THREADS: usize = 32;
 
 /// RSS threshold (bytes) at which new test spawns are paused.
 /// Acts as a safety net against OOM kills (#461): glibc heap fragmentation or
@@ -31,7 +36,11 @@ pub struct Runner {
     config: Config,
     tests: Vec<Arc<dyn PdfTest>>,
     db: Arc<Database>,
+    /// Threads currently being awaited (decremented when recv_timeout returns).
     in_flight: Arc<AtomicUsize>,
+    /// All alive threads, including zombie threads that timed out but still run.
+    /// Decremented inside the thread closure when the thread actually exits (#461).
+    spawned: Arc<AtomicUsize>,
 }
 
 impl Runner {
@@ -41,6 +50,7 @@ impl Runner {
             tests: tests.into_iter().map(Arc::from).collect(),
             db: Arc::new(db),
             in_flight: Arc::new(AtomicUsize::new(0)),
+            spawned: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -314,23 +324,27 @@ impl Runner {
         let timeout = self.config.timeout_for_test(test.name());
         let test_name = test.name().to_string();
 
-        // Backpressure: wait if too many test threads are actively being awaited.
-        // Counter is decremented by the *caller* after recv_timeout, so permanently
-        // hung threads don't prevent progress — only concurrent waiters count.
-        // Also pause when RSS exceeds the safety threshold to prevent OOM (#461).
+        // Backpressure: wait if too many test threads are alive (in-flight or zombie).
+        // - in_flight: threads we are currently waiting on via recv_timeout
+        // - spawned:   ALL alive threads, including zombies that timed out but still run
+        // Fix #461: bounding `spawned` is the key — timed-out pdfa_convert threads
+        // accumulate without this guard and hold large lopdf Documents until OOM.
+        // Also pause when RSS exceeds the safety threshold as a secondary guard.
         loop {
-            let too_many_threads = self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT_THREADS;
+            let too_many_waiting = self.in_flight.load(Ordering::Relaxed) >= MAX_IN_FLIGHT_THREADS;
+            let too_many_alive = self.spawned.load(Ordering::Relaxed) >= MAX_SPAWNED_THREADS;
             #[cfg(target_os = "linux")]
             let rss_too_high = current_rss_bytes()
                 .map_or(false, |rss| rss > RSS_PAUSE_THRESHOLD);
             #[cfg(not(target_os = "linux"))]
             let rss_too_high = false;
-            if !too_many_threads && !rss_too_high {
+            if !too_many_waiting && !too_many_alive && !rss_too_high {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
         self.in_flight.fetch_add(1, Ordering::Relaxed);
+        self.spawned.fetch_add(1, Ordering::Relaxed);
 
         let progress = test.progress_tracker();
 
@@ -341,6 +355,11 @@ impl Runner {
         let (tx, rx) = std::sync::mpsc::channel();
 
         let rss_before = current_rss_bytes();
+
+        // Clone the spawned counter so the thread can decrement it on exit.
+        // This is what makes the zombie-thread bound work: the counter drops
+        // when the thread actually finishes, not when we stop waiting (#461).
+        let spawned_counter = Arc::clone(&self.spawned);
 
         std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024) // 64 MB: lopdf deeply recurses on pathological PDFs
@@ -388,6 +407,10 @@ impl Runner {
                 }
 
                 let _ = tx.send(test_result);
+                // Decrement here (inside the thread) so zombie threads — those that
+                // already timed out from the caller's perspective — are still counted
+                // until they actually exit and release their memory (#461).
+                spawned_counter.fetch_sub(1, Ordering::Relaxed);
             })
             .expect("failed to spawn test thread");
 
