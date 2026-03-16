@@ -278,21 +278,84 @@ fn build_matcher(pattern: &str, options: &RedactSearchOptions) -> Result<TextMat
 // Bounding rectangle computation
 // ---------------------------------------------------------------------------
 
-/// Returns true if a text run's position overlaps any of the given bounding
-/// rectangles (page-space coords).  Used as a positional fallback when font
-/// encoding makes text-string matching impossible.
-fn run_overlaps_any_bbox(run: &pdf_manip::text_run::TextRun, bboxes: &[[f64; 4]]) -> bool {
+/// Returns true if a text run's position overlaps a single bounding rectangle.
+fn run_overlaps_single_bbox(run: &pdf_manip::text_run::TextRun, bbox: [f64; 4]) -> bool {
     // Small tolerance to accommodate sub-pixel alignment differences.
     const TOL: f64 = 4.0;
     let run_x1 = run.x + run.width.max(1.0);
+    let x_overlap = run.x < bbox[2] + TOL && run_x1 > bbox[0] - TOL;
+    let y_overlap = run.y <= bbox[3] + TOL && run.y >= bbox[1] - TOL;
+    x_overlap && y_overlap
+}
+
+/// Extract the Latin-1–decoded text from a text-showing content operation.
+///
+/// Decodes Tj/TJ/"/"' string operands by treating each byte as its Latin-1
+/// code point — the same strategy used by `pdf_extract::extract_positioned_chars`.
+/// Used as a last-resort fallback when ToUnicode CMap decoding produces
+/// characters that do not match the search pattern (misleading CMap entries).
+fn raw_text_from_op(op: &lopdf::content::Operation) -> Option<String> {
+    use lopdf::Object;
+    match op.operator.as_str() {
+        "Tj" | "'" => {
+            if let Some(Object::String(ref bytes, _)) = op.operands.first() {
+                Some(bytes.iter().map(|&b| b as char).collect())
+            } else {
+                None
+            }
+        }
+        "TJ" => {
+            if let Some(Object::Array(ref arr)) = op.operands.first() {
+                let s: String = arr
+                    .iter()
+                    .filter_map(|item| match item {
+                        Object::String(ref bytes, _) => {
+                            Some(bytes.iter().map(|&b| b as char).collect::<String>())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if s.is_empty() { None } else { Some(s) }
+            } else {
+                None
+            }
+        }
+        "\"" => op.operands.get(2).and_then(|obj| match obj {
+            Object::String(ref bytes, _) => Some(bytes.iter().map(|&b| b as char).collect()),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+/// Apply per-bbox spatial fallback: for each match bbox not already covered
+/// by a text-matched run, add the ops of every run that spatially overlaps it.
+///
+/// This handles "partial token" cases where the search word is split across
+/// multiple Tj ops (so no single run contains the full word) but another
+/// occurrence of the same word elsewhere on the page was text-matched,
+/// preventing the old global `is_empty()` spatial fallback from firing.
+fn apply_per_bbox_spatial_fallback(
+    runs: &[pdf_manip::text_run::TextRun],
+    indices_to_remove: &mut Vec<usize>,
+    bboxes: &[[f64; 4]],
+) {
     for &bbox in bboxes {
-        let x_overlap = run.x < bbox[2] + TOL && run_x1 > bbox[0] - TOL;
-        let y_overlap = run.y <= bbox[3] + TOL && run.y >= bbox[1] - TOL;
-        if x_overlap && y_overlap {
-            return true;
+        // Skip this bbox if a text-matched run already covers it.
+        let covered = runs.iter().any(|run| {
+            let was_matched = run.ops_range.clone().any(|i| indices_to_remove.contains(&i));
+            was_matched && run_overlaps_single_bbox(run, bbox)
+        });
+        if !covered {
+            for run in runs {
+                if run_overlaps_single_bbox(run, bbox) {
+                    for idx in run.ops_range.clone() {
+                        indices_to_remove.push(idx);
+                    }
+                }
+            }
         }
     }
-    false
 }
 
 fn compute_bounding_rect(chars: &[pdf_extract::PositionedChar]) -> [f64; 4] {
@@ -358,8 +421,10 @@ fn remove_text_ops_for_page(
     let removed =
         removed + remove_text_ops_from_xobjects(doc, page_num, &matcher, &fonts, match_bboxes)?;
 
-    // Also process annotation appearance streams.
-    let removed = removed + remove_text_ops_from_annotations(doc, page_num, &matcher, &fonts)?;
+    // Also process annotation appearance streams.  Pass match_bboxes so the
+    // raw-byte fallback can fire for AP streams with misleading ToUnicode CMaps.
+    let removed =
+        removed + remove_text_ops_from_annotations(doc, page_num, &matcher, &fonts, match_bboxes)?;
 
     Ok(removed)
 }
@@ -384,18 +449,12 @@ fn remove_text_ops_via_editor(
         }
     }
 
-    // Position-based fallback: when text decoding yields no matches (e.g.
-    // glyph-indexed fonts without a ToUnicode CMap), fall back to spatial
-    // matching — remove every text-showing op whose (CTM-transformed) position
-    // overlaps a match bbox obtained from the pdf_extract pass.
-    if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
-        for run in &runs {
-            if run_overlaps_any_bbox(run, match_bboxes) {
-                for idx in run.ops_range.clone() {
-                    indices_to_remove.push(idx);
-                }
-            }
-        }
+    // Per-bbox spatial fallback: for each match bbox not covered by a
+    // text-matched run, remove every run that spatially overlaps it.
+    // Fixes partial-token splits (e.g. "(LI) Tj (C) Tj") where a different
+    // occurrence of the word matched textually, blocking the old global fallback.
+    if !match_bboxes.is_empty() {
+        apply_per_bbox_spatial_fallback(&runs, &mut indices_to_remove, match_bboxes);
     }
 
     if indices_to_remove.is_empty() {
@@ -458,15 +517,9 @@ fn remove_text_ops_with_inline_images(
         }
     }
 
-    // Position-based fallback (same as in remove_text_ops_via_editor).
-    if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
-        for run in &runs {
-            if run_overlaps_any_bbox(run, match_bboxes) {
-                for idx in run.ops_range.clone() {
-                    indices_to_remove.push(idx);
-                }
-            }
-        }
+    // Per-bbox spatial fallback (same logic as in remove_text_ops_via_editor).
+    if !match_bboxes.is_empty() {
+        apply_per_bbox_spatial_fallback(&runs, &mut indices_to_remove, match_bboxes);
     }
 
     if indices_to_remove.is_empty() {
@@ -577,11 +630,18 @@ fn remove_text_ops_from_xobjects(
 }
 
 /// Remove matching text ops from annotation appearance streams on a page.
+///
+/// `match_bboxes` are passed to `remove_text_ops_from_stream` to enable the
+/// raw-byte fallback for AP streams whose ToUnicode CMap decodes to unexpected
+/// characters.  Spatial matching is still disabled for AP streams (their
+/// coordinate space is local, not page space), but raw-byte matching only
+/// requires the word to have been found somewhere on the page (non-empty bboxes).
 fn remove_text_ops_from_annotations(
     doc: &mut Document,
     page_num: u32,
     matcher: &TextMatcher,
     fonts: &pdf_manip::text_run::FontMap,
+    match_bboxes: &[[f64; 4]],
 ) -> Result<usize> {
     let pages = doc.get_pages();
     let &page_id = match pages.get(&page_num) {
@@ -597,9 +657,11 @@ fn remove_text_ops_from_annotations(
 
     let mut total_removed = 0;
     for stream_id in ap_stream_ids {
-        // Annotation appearance streams use their own local coordinate space, so
-        // page-space bboxes are not applicable — pass an empty slice.
-        total_removed += remove_text_ops_from_stream(doc, stream_id, matcher, fonts, &[])?;
+        // Pass match_bboxes to enable raw-byte fallback in remove_text_ops_from_stream.
+        // Spatial fallback is ineffective here (AP stream coords are local, not page space),
+        // but apply_per_bbox_spatial_fallback will skip bboxes if no runs overlap them.
+        total_removed +=
+            remove_text_ops_from_stream(doc, stream_id, matcher, fonts, match_bboxes)?;
     }
 
     Ok(total_removed)
@@ -612,10 +674,10 @@ fn remove_text_ops_from_annotations(
 /// that CMap decoding is correct for Form XObjects and AP streams that define
 /// their own font resources.
 ///
-/// `match_bboxes` are page-space bounding rectangles used as a spatial
-/// fallback when the font encoding makes text-string matching impossible.
-/// Pass `&[]` for annotation appearance streams whose coordinates are in a
-/// local (non-page) space.
+/// `match_bboxes` are page-space bounding rectangles from the pdf_extract pass.
+/// Used for the per-bbox spatial fallback (effective when XObject runs are in
+/// page space) and as a guard for the raw-byte fallback (fires when non-empty,
+/// confirming the word was found on this page).
 fn remove_text_ops_from_stream(
     doc: &mut Document,
     stream_id: ObjectId,
@@ -654,14 +716,25 @@ fn remove_text_ops_from_stream(
         }
     }
 
-    // Spatial fallback: when font encoding prevents text matching (e.g. a
-    // subset font whose ToUnicode CMap decodes to unexpected code points),
-    // fall back to removing every text-showing op whose CTM-transformed
-    // position overlaps a known match bbox. Fixes #466 bugs 5–6.
+    // Per-bbox spatial fallback: for each match bbox not covered by a
+    // text-matched run, remove every run that spatially overlaps it.
+    // Note: XObject run positions are in local space, not page space, so
+    // this fallback is most effective for XObjects without CTM transforms.
+    // Fixes #466 bugs 5–6.
+    if !match_bboxes.is_empty() {
+        apply_per_bbox_spatial_fallback(&runs, &mut indices_to_remove, match_bboxes);
+    }
+
+    // Raw-byte fallback: when both text-based and spatial matching failed,
+    // decode Tj operand bytes as Latin-1 (same as pdf_extract) and match.
+    // Handles XObjects/AP streams where a misleading ToUnicode CMap causes
+    // text_run to produce characters that don't match the search pattern,
+    // even though the raw bytes do. Fixes edge cases #463 (e.g. '270', '000').
     if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
-        for run in &runs {
-            if run_overlaps_any_bbox(run, match_bboxes) {
-                for idx in run.ops_range.clone() {
+        let ops = editor.operations();
+        for (idx, op) in ops.iter().enumerate() {
+            if let Some(raw_text) = raw_text_from_op(op) {
+                if !matcher.find_all(&raw_text).is_empty() {
                     indices_to_remove.push(idx);
                 }
             }
@@ -1133,5 +1206,49 @@ mod tests {
         } else {
             panic!("XObject is not a stream after redaction");
         }
+    }
+
+    /// When the target word is split across multiple Tj ops (e.g. "(LI) Tj (C) Tj")
+    /// and another occurrence of the word is text-matched first (making
+    /// `indices_to_remove` non-empty), the per-bbox spatial fallback must still
+    /// fire independently for each match_bbox that isn't covered.  Fixes #463
+    /// edge case 'LIC'.
+    #[test]
+    fn redact_split_token_per_bbox_spatial_fallback() {
+        // "ALICE" contains "LIC" → text-match succeeds for that occurrence.
+        // "(LI) Tj (C) Tj" is a split-token occurrence of "LIC" at a different
+        // position; the old global-empty guard would have skipped the spatial
+        // fallback because indices_to_remove was already non-empty from ALICE.
+        let content = b"BT /F1 12 Tf 0 700 Td (ALICE) Tj 200 0 Td (LI) Tj 30 0 Td (C) Tj ET";
+        let mut doc = make_doc_with_text(content);
+        let opts = RedactSearchOptions::default();
+        let report = search_and_redact(&mut doc, "LIC", &opts).unwrap();
+        assert!(report.matches_found >= 1);
+        assert!(report.areas_redacted >= 1);
+    }
+
+    /// A Form XObject whose font has a misleading ToUnicode CMap must still be
+    /// cleaned via the raw-byte fallback when CMap-decoded text doesn't match
+    /// but the literal bytes do.  Fixes #463 edge cases '270' / '000'.
+    ///
+    /// We reuse `make_doc_with_xobject_text` (text = "Classified") and pass
+    /// a non-empty `dummy_bboxes` so the raw-byte fallback is triggered even
+    /// when there are no runs with matching text.
+    #[test]
+    fn redact_xobject_raw_byte_fallback() {
+        let (mut doc, xobj_id) = make_doc_with_xobject_text();
+        let page_fonts = pdf_manip::text_run::FontMap::empty();
+        let matcher_opts = RedactSearchOptions::default();
+        let matcher = build_matcher("Classified", &matcher_opts).unwrap();
+        // Non-empty bboxes activate the raw-byte fallback path in
+        // `remove_text_ops_from_stream` when no spatial run was matched.
+        let dummy_bboxes = [[0.0_f64, 0.0, 300.0, 20.0]];
+        let removed =
+            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts, &dummy_bboxes)
+                .unwrap();
+        assert!(
+            removed > 0,
+            "Expected raw-byte fallback to remove ops from XObject stream"
+        );
     }
 }
