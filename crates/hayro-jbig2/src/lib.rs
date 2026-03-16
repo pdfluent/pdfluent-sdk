@@ -554,6 +554,146 @@ impl DecodeContext {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    /// A simple pixel sink that collects decoded pixels row by row.
+    struct PixelSink {
+        rows: Vec<Vec<bool>>,
+        current: Vec<bool>,
+    }
+
+    impl PixelSink {
+        fn new() -> Self {
+            Self {
+                rows: Vec::new(),
+                current: Vec::new(),
+            }
+        }
+    }
+
+    impl Decoder for PixelSink {
+        fn push_pixel(&mut self, black: bool) {
+            self.current.push(black);
+        }
+
+        fn push_pixel_chunk(&mut self, black: bool, chunk_count: u32) {
+            for _ in 0..chunk_count * 8 {
+                self.current.push(black);
+            }
+        }
+
+        fn next_line(&mut self) {
+            self.rows.push(core::mem::take(&mut self.current));
+        }
+    }
+
+    // Minimal valid sequential JBIG2 file: 4×4 all-white image using MMR encoding.
+    //
+    // Structure:
+    //   File header (sequential, 1 page)
+    //   Segment 0: PageInformation — 4×4, default pixel = white (0)
+    //   Segment 1: ImmediateGenericRegion — 4×4 MMR, all-white via V(0)×4 = 0xF0
+    //   Segment 2: EndOfPage
+    //   Segment 3: EndOfFile
+    //
+    // The MMR data encodes 4 all-white rows: each row is one V(0) bit (`1`),
+    // 4 bits total → 0xF0 (MSB-first). With `invert_black: true`, CCITT "white"
+    // maps to JBIG2 pixel value 0 (white).
+    #[rustfmt::skip]
+    const MINIMAL_JBIG2: &[u8] = &[
+        // File header
+        0x97, 0x4A, 0x42, 0x32, 0x0D, 0x0A, 0x1A, 0x0A, // magic
+        0x01,                                              // flags: sequential, page count known
+        0x00, 0x00, 0x00, 0x01,                            // 1 page
+
+        // Segment 0: PageInformation (type 48), data_length = 19 bytes
+        0x00, 0x00, 0x00, 0x00,  // segment_number = 0
+        0x30,                    // flags: type = 48, page_assoc 1-byte
+        0x00,                    // count_and_retention = 0 (0 referred segments)
+        0x01,                    // page_association = 1
+        0x00, 0x00, 0x00, 0x13,  // data_length = 19
+        // PageInformation data (19 bytes):
+        0x00, 0x00, 0x00, 0x04,  // width  = 4
+        0x00, 0x00, 0x00, 0x04,  // height = 4
+        0x00, 0x00, 0x00, 0x00,  // x_resolution = unknown
+        0x00, 0x00, 0x00, 0x00,  // y_resolution = unknown
+        0x00,                    // flags: default_pixel = 0 (white), operator = OR
+        0x00, 0x00,              // striping = 0
+
+        // Segment 1: ImmediateGenericRegion (type 38), data_length = 19 bytes
+        0x00, 0x00, 0x00, 0x01,  // segment_number = 1
+        0x26,                    // flags: type = 38, page_assoc 1-byte
+        0x00,                    // count_and_retention = 0
+        0x01,                    // page_association = 1
+        0x00, 0x00, 0x00, 0x13,  // data_length = 19
+        // RegionSegmentInfo (17 bytes):
+        0x00, 0x00, 0x00, 0x04,  // width       = 4
+        0x00, 0x00, 0x00, 0x04,  // height      = 4
+        0x00, 0x00, 0x00, 0x00,  // x_location  = 0
+        0x00, 0x00, 0x00, 0x00,  // y_location  = 0
+        0x04,                    // region_flags: CombinationOperator::Replace (4)
+        // GenericRegion data (2 bytes):
+        0x01,                    // generic_region_flags: mmr = 1
+        0xF0,                    // MMR data: 4 × V(0) = `1111` → 0xF0 (4 all-white rows)
+
+        // Segment 2: EndOfPage (type 49)
+        0x00, 0x00, 0x00, 0x02,  // segment_number = 2
+        0x31,                    // flags: type = 49
+        0x00,                    // count_and_retention = 0
+        0x01,                    // page_association = 1
+        0x00, 0x00, 0x00, 0x00,  // data_length = 0
+
+        // Segment 3: EndOfFile (type 51)
+        0x00, 0x00, 0x00, 0x03,  // segment_number = 3
+        0x33,                    // flags: type = 51
+        0x00,                    // count_and_retention = 0
+        0x00,                    // page_association = 0 (not page-specific)
+        0x00, 0x00, 0x00, 0x00,  // data_length = 0
+    ];
+
+    #[test]
+    fn decode_minimal_jbig2_succeeds() {
+        assert!(decode(MINIMAL_JBIG2).is_ok());
+    }
+
+    #[test]
+    fn decode_minimal_jbig2_dimensions() {
+        let image = decode(MINIMAL_JBIG2).expect("JBIG2 should decode");
+        assert_eq!(image.width, 4);
+        assert_eq!(image.height, 4);
+    }
+
+    #[test]
+    fn decode_minimal_jbig2_all_white() {
+        let image = decode(MINIMAL_JBIG2).expect("JBIG2 should decode");
+        let mut sink = PixelSink::new();
+        image.decode(&mut sink);
+        assert_eq!(sink.rows.len(), 4);
+        for row in &sink.rows {
+            assert_eq!(row.len(), 4);
+            for &black in row {
+                assert!(!black, "expected white (non-black) pixel");
+            }
+        }
+    }
+
+    #[test]
+    fn decode_empty_data_returns_error() {
+        assert!(decode(&[]).is_err());
+    }
+
+    #[test]
+    fn decode_embedded_no_globals() {
+        // Embedded JBIG2 is the same bytes but without the file header;
+        // MINIMAL_JBIG2 starts with the file header, so test embedded
+        // with a truncated single-segment stream produces an error gracefully.
+        assert!(decode_embedded(&[], None).is_err());
+    }
+}
+
 /// Create a decode context from page information segment data.
 ///
 /// This parses the page information and creates the initial page bitmap

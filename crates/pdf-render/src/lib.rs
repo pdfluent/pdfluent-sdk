@@ -179,6 +179,103 @@ pub fn render_pdf(
     Some(rendered)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pdf_interpret::InterpreterSettings;
+    use pdf_syntax::Pdf;
+
+    /// Build a minimal one-page PDF (72×72 pt empty page) using lopdf.
+    fn minimal_pdf_bytes() -> Vec<u8> {
+        use lopdf::{Document, Object, Stream, dictionary};
+
+        let mut doc = Document::with_version("1.4");
+
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+
+        // Empty content stream so the page has a valid structure.
+        let content = Stream::new(dictionary! {}, b"".to_vec());
+        let content_id = doc.add_object(content);
+
+        doc.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type"      => Object::Name(b"Page".to_vec()),
+                "Parent"    => Object::Reference(pages_id),
+                "MediaBox"  => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(72), Object::Integer(72),
+                ]),
+                "Contents"  => Object::Reference(content_id),
+            }),
+        );
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+
+        let catalog_id = doc.new_object_id();
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Catalog".to_vec()),
+                "Pages" => Object::Reference(pages_id),
+            }),
+        );
+
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("lopdf save should succeed");
+        bytes
+    }
+
+    #[test]
+    fn render_pdf_returns_one_pixmap() {
+        let bytes = minimal_pdf_bytes();
+        let pdf = Pdf::new(bytes).expect("PDF should load");
+        let pixmaps = render_pdf(&pdf, 1.0, InterpreterSettings::default(), None);
+        assert!(pixmaps.is_some());
+        assert_eq!(pixmaps.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn render_pdf_pixmap_matches_mediabox() {
+        let bytes = minimal_pdf_bytes();
+        let pdf = Pdf::new(bytes).expect("PDF should load");
+        let pixmaps = render_pdf(&pdf, 1.0, InterpreterSettings::default(), None).unwrap();
+        let pixmap = &pixmaps[0];
+        // MediaBox is [0 0 72 72] → 72×72 pixels at scale 1.0.
+        assert_eq!(pixmap.width(), 72);
+        assert_eq!(pixmap.height(), 72);
+    }
+
+    #[test]
+    fn render_pdf_with_scale_2_doubles_dimensions() {
+        let bytes = minimal_pdf_bytes();
+        let pdf = Pdf::new(bytes).expect("PDF should load");
+        let pixmaps = render_pdf(&pdf, 2.0, InterpreterSettings::default(), None).unwrap();
+        let pixmap = &pixmaps[0];
+        assert_eq!(pixmap.width(), 144);
+        assert_eq!(pixmap.height(), 144);
+    }
+
+    #[test]
+    fn render_pdf_page_range_selects_single_page() {
+        let bytes = minimal_pdf_bytes();
+        let pdf = Pdf::new(bytes).expect("PDF should load");
+        // Range 0..=0 selects only the first (and only) page.
+        let pixmaps = render_pdf(&pdf, 1.0, InterpreterSettings::default(), Some(0..=0)).unwrap();
+        assert_eq!(pixmaps.len(), 1);
+    }
+}
+
 pub(crate) fn derive_settings(settings: &vello_cpu::RenderSettings) -> vello_cpu::RenderSettings {
     vello_cpu::RenderSettings {
         num_threads: 0,

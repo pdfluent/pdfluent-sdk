@@ -687,6 +687,94 @@ fn cielab_to_rgb<S: Simd>(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Minimal valid JPEG 2000 raw codestream (J2C) for a 2×2 greyscale image.
+    //
+    // Layout:
+    //   SOC  (FF 4F)
+    //   SIZ  (FF 51): Lsiz=41, Rsiz=0, Xsiz=2, Ysiz=2, XO/YO=0, XT/YT=2, XTO/YTO=0, Csiz=1, comp0=(prec=8, XR=1, YR=1)
+    //   COD  (FF 52): Lcod=12, Scod=0 (no precincts), LRCP, 1 layer, MCT=0, num_decomp=0, cb=2×2, style=0, transform=1 (5/3)
+    //   QCD  (FF 5C): Lqcd=4, Sqcd=0 (NoQuantization), 1 step-size byte (0x80)
+    //   SOT  (FF 90): codestream tail starts here; not parsed by Image::new()
+    //
+    // After parsing the header, Image::new() stores the tail (&[0xFF, 0x90]) as
+    // codestream data. Only Image::new() is tested here, not Image::decode().
+    #[rustfmt::skip]
+    const MINIMAL_J2C: &[u8] = &[
+        // SOC
+        0xFF, 0x4F,
+
+        // SIZ marker (FF 51) — Lsiz = 41 (includes itself, excludes marker)
+        0xFF, 0x51,
+        0x00, 0x29,              // Lsiz = 41
+        0x00, 0x00,              // Rsiz = 0 (no profile)
+        0x00, 0x00, 0x00, 0x02,  // Xsiz = 2
+        0x00, 0x00, 0x00, 0x02,  // Ysiz = 2
+        0x00, 0x00, 0x00, 0x00,  // XOsiz = 0
+        0x00, 0x00, 0x00, 0x00,  // YOsiz = 0
+        0x00, 0x00, 0x00, 0x02,  // XTsiz = 2 (tile covers whole image)
+        0x00, 0x00, 0x00, 0x02,  // YTsiz = 2
+        0x00, 0x00, 0x00, 0x00,  // XTOsiz = 0
+        0x00, 0x00, 0x00, 0x00,  // YTOsiz = 0
+        0x00, 0x01,              // Csiz = 1 component
+        0x07, 0x01, 0x01,        // Component 0: Ssiz=7 (8-bit unsigned), XRsiz=1, YRsiz=1
+
+        // COD marker (FF 52) — Lcod = 12
+        0xFF, 0x52,
+        0x00, 0x0C,              // Lcod = 12
+        0x00,                    // Scod = 0 (no precincts)
+        0x00,                    // progression order = 0 (LRCP)
+        0x00, 0x01,              // num_layers = 1
+        0x00,                    // MCT = 0 (no multi-component transform)
+        0x00,                    // num_decomposition_levels = 0
+        0x00,                    // code_block_width = 0 (+2 = 2)
+        0x00,                    // code_block_height = 0 (+2 = 2)
+        0x00,                    // code_block_style = 0
+        0x01,                    // transformation = 1 (reversible 5/3 wavelet)
+
+        // QCD marker (FF 5C) — Lqcd = 4
+        0xFF, 0x5C,
+        0x00, 0x04,              // Lqcd = 4 (includes itself + Sqcd + 1 step-size byte)
+        0x00,                    // Sqcd = 0 (NoQuantization, guard_bits=0)
+        0x80,                    // step-size[0]: exponent = 0x80 >> 3 = 16
+
+        // SOT (Start Of Tile) — reader.tail() returns from here
+        0xFF, 0x90,
+    ];
+
+    #[test]
+    fn new_minimal_j2c_succeeds() {
+        assert!(Image::new(MINIMAL_J2C, &DecodeSettings::default()).is_ok());
+    }
+
+    #[test]
+    fn new_minimal_j2c_dimensions() {
+        let image = Image::new(MINIMAL_J2C, &DecodeSettings::default()).expect("J2C should parse");
+        assert_eq!(image.width(), 2);
+        assert_eq!(image.height(), 2);
+    }
+
+    #[test]
+    fn new_minimal_j2c_is_greyscale() {
+        let image = Image::new(MINIMAL_J2C, &DecodeSettings::default()).expect("J2C should parse");
+        assert_eq!(image.color_space().num_channels(), 1);
+    }
+
+    #[test]
+    fn new_minimal_j2c_no_alpha() {
+        let image = Image::new(MINIMAL_J2C, &DecodeSettings::default()).expect("J2C should parse");
+        assert!(!image.has_alpha());
+    }
+
+    #[test]
+    fn new_invalid_signature_returns_error() {
+        assert!(Image::new(b"\x00\x00\x00\x00", &DecodeSettings::default()).is_err());
+    }
+}
+
 #[inline(always)]
 fn sycc_to_rgb<S: Simd>(simd: S, components: &mut [ComponentData], bit_depth: u8) -> Result<()> {
     let offset = (1_u32 << (bit_depth as u32 - 1)) as f32;
