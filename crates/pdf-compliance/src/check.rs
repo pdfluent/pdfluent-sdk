@@ -3347,8 +3347,11 @@ pub fn check_page_dimensions_with_cache(
         }
     }
 
-    // Name objects must not exceed 127 bytes
+    // Name objects must not exceed 127 bytes.
+    // Use both approaches: cache (for top-level objects) and raw scan
+    // (for inline dicts/nested name tokens not in the xref). (#467)
     check_name_lengths_cached(cache, rule, report);
+    check_name_lengths_raw(pdf, rule, report);
 
     // String objects must not exceed 65535 bytes
     check_string_lengths_cached(cache, rule, report);
@@ -3401,6 +3404,56 @@ fn check_name_lengths_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut C
                 );
                 return;
             }
+        }
+    }
+}
+
+/// Scan raw PDF bytes for name tokens longer than 127 bytes.
+///
+/// The ObjectCache only covers top-level xref objects; inline dicts (e.g. page
+/// Resources/ColorSpace) are not iterated. A raw byte scan catches all names
+/// regardless of nesting depth. (#467)
+pub fn check_name_lengths_raw(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+    let len = data.len();
+    let mut pos = 0;
+    while pos < len {
+        if data[pos] == b'/' {
+            // Scan the name token: valid name chars are anything except delimiters
+            // and whitespace. Stop at whitespace, '/', '(', ')', '[', ']',
+            // '{', '}', '<', '>', '%', null.
+            let name_start = pos + 1;
+            let mut name_end = name_start;
+            while name_end < len {
+                let b = data[name_end];
+                if b <= 0x20
+                    || b == b'/'
+                    || b == b'('
+                    || b == b')'
+                    || b == b'['
+                    || b == b']'
+                    || b == b'{'
+                    || b == b'}'
+                    || b == b'<'
+                    || b == b'>'
+                    || b == b'%'
+                {
+                    break;
+                }
+                name_end += 1;
+            }
+            let name_len = name_end - name_start;
+            if name_len > 127 {
+                error(
+                    report,
+                    rule,
+                    format!("PDF name token exceeds 127 bytes ({name_len} bytes)"),
+                );
+                return; // Report once
+            }
+            pos = name_end;
+        } else {
+            pos += 1;
         }
     }
 }
