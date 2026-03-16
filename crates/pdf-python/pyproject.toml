@@ -3,14 +3,21 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "pdfengine"
+name = "xfa-pdf"
 version = "0.1.0"
-description = "High-performance PDF engine — rendering, text extraction, forms, signatures."
+description = "Enterprise PDF SDK — render, extract, annotate, sign, and validate PDFs. Pure Rust, zero system dependencies."
 readme = "README.md"
 license = { text = "MIT" }
+authors = [
+    { name = "XFA SDK", email = "sdk@xfa-pdf.dev" },
+]
 requires-python = ">=3.8"
+keywords = ["pdf", "render", "text-extraction", "forms", "pdf-a", "annotations", "redaction", "rust"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: 3",
@@ -20,10 +27,15 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Multimedia :: Graphics",
+    "Topic :: Office/Business",
+    "Topic :: Text Processing",
 ]
-keywords = ["pdf", "render", "forms", "signatures", "rust"]
+
+[project.urls]
+Repository = "https://github.com/xfa-sdk/xfa-pdf"
+"Bug Tracker" = "https://github.com/xfa-sdk/xfa-pdf/issues"
 
 [project.optional-dependencies]
 pillow = ["Pillow"]
@@ -36,4 +48,4 @@ testpaths = ["tests"]
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
-module-name = "pdfengine._native"
+module-name = "xfa_pdf._native"
