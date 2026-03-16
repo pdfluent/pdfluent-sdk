@@ -1,25 +1,28 @@
 //! License key generation and validation CLI tool.
 //!
-//! Generate signed license tokens and validate existing ones.
+//! Generate Ed25519-signed license files and validate existing ones.
 //!
 //! # Usage
 //!
 //! ```sh
-//! # Generate a license key
+//! # Generate an Ed25519 keypair
+//! xfa-license-tool keygen --output xfa-license
+//!
+//! # Generate a license file
 //! xfa-license-tool generate --customer acme-corp --tier professional \
-//!     --days 365 --secret my-secret-key
+//!     --days 365 --private-key xfa-license.private
 //!
-//! # Validate a license key
-//! xfa-license-tool validate --token <token> --secret my-secret-key
+//! # Validate a license file
+//! xfa-license-tool validate --license acme.json --public-key xfa-license.public
 //!
-//! # Inspect a token (without signature verification)
-//! xfa-license-tool inspect --token <token>
+//! # Inspect a license file (no signature verification)
+//! xfa-license-tool inspect --license acme.json
 //! ```
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::time::{SystemTime, UNIX_EPOCH};
-use xfa_license::{token, LicenseClaims, LicenseGuard, Tier};
+use xfa_license::{token, LicenseGuard, LicensePayload, Tier};
 
 #[derive(Parser)]
 #[command(name = "xfa-license-tool", about = "XFA license key management")]
@@ -30,9 +33,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Generate a signed license token.
+    /// Generate a new Ed25519 keypair and write it to two files.
+    Keygen {
+        /// Output filename prefix. Writes <prefix>.private and <prefix>.public.
+        #[arg(long, default_value = "xfa-license")]
+        output: String,
+    },
+    /// Generate a signed license file.
     Generate {
-        /// Customer identifier.
+        /// Licensee / customer name.
         #[arg(long)]
         customer: String,
         /// License tier.
@@ -41,24 +50,33 @@ enum Command {
         /// License validity in days.
         #[arg(long, default_value = "365")]
         days: u64,
-        /// HMAC signing secret.
+        /// Path to the 32-byte Ed25519 private key file.
         #[arg(long)]
-        secret: String,
+        private_key: String,
+        /// Contact email address (optional).
+        #[arg(long, default_value = "")]
+        email: String,
+        /// Company name (optional).
+        #[arg(long, default_value = "")]
+        company: String,
+        /// Number of seats.
+        #[arg(long, default_value = "1")]
+        seats: u32,
     },
-    /// Validate a license token.
+    /// Validate a license file against a public key.
     Validate {
-        /// The license token string.
+        /// Path to the license JSON file.
         #[arg(long)]
-        token: String,
-        /// HMAC signing secret.
+        license: String,
+        /// Path to the 32-byte Ed25519 public key file.
         #[arg(long)]
-        secret: String,
+        public_key: String,
     },
-    /// Inspect a token payload (no signature check).
+    /// Inspect a license file payload without verifying the signature.
     Inspect {
-        /// The license token string.
+        /// Path to the license JSON file.
         #[arg(long)]
-        token: String,
+        license: String,
     },
 }
 
@@ -82,42 +100,86 @@ fn now_unix() -> u64 {
         .as_secs()
 }
 
+/// Read a 32-byte Ed25519 key from a file.
+fn read_key_file(path: &str) -> Result<[u8; 32]> {
+    let bytes = std::fs::read(path).with_context(|| format!("failed to read key file: {path}"))?;
+    bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("key file {path} must be exactly 32 bytes"))
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Keygen { output } => {
+            let (private_key, public_key) = token::generate_keypair();
+            let private_path = format!("{output}.private");
+            let public_path = format!("{output}.public");
+            std::fs::write(&private_path, private_key)
+                .with_context(|| format!("failed to write {private_path}"))?;
+            std::fs::write(&public_path, public_key)
+                .with_context(|| format!("failed to write {public_path}"))?;
+            println!("Keypair generated:");
+            println!("  Private key: {private_path}");
+            println!("  Public key:  {public_path}");
+        }
+
         Command::Generate {
             customer,
             tier,
             days,
-            secret,
+            private_key,
+            email,
+            company,
+            seats,
         } => {
+            let private_key_bytes = read_key_file(&private_key)?;
             let issued = now_unix();
-            let secs_per_day: u64 = 86400;
+            let secs_per_day: u64 = 86_400;
             let expires = issued
-                .checked_add(days.checked_mul(secs_per_day).expect("days overflow"))
-                .expect("expiry overflow");
-            let claims = LicenseClaims::new(&customer, tier, issued, expires);
-            let token_str =
-                token::sign(&claims, secret.as_bytes()).context("failed to sign token")?;
+                .checked_add(days.checked_mul(secs_per_day).context("days overflow")?)
+                .context("expiry overflow")?;
+
+            let payload = LicensePayload {
+                licensee: customer.clone(),
+                email,
+                company,
+                tier,
+                seats,
+                issued_at: issued,
+                expires_at: expires,
+                features: None,
+            };
+
+            let license_json = token::sign_license(&private_key_bytes, &payload)
+                .context("failed to sign license")?;
 
             println!("License generated:");
-            println!("  Customer:  {}", claims.customer_id);
-            println!("  Tier:      {:?}", claims.tier);
+            println!("  Licensee:  {customer}");
+            println!("  Tier:      {tier:?}");
             println!("  Issued:    {issued}");
             println!("  Expires:   {expires}");
-            println!("  Rate:      {} req/min", claims.rate_limit);
-            println!("  API quota: {} calls/period", claims.quotas.api_calls);
             println!();
-            println!("Token:");
-            println!("{token_str}");
+            println!("{license_json}");
         }
-        Command::Validate { token: tok, secret } => {
+
+        Command::Validate {
+            license,
+            public_key,
+        } => {
+            let public_key_bytes = read_key_file(&public_key)?;
+            let license_json = std::fs::read_to_string(&license)
+                .with_context(|| format!("failed to read license file: {license}"))?;
             let now = now_unix();
-            match LicenseGuard::from_token(&tok, secret.as_bytes(), now) {
+
+            // Fixes: from_token → from_license (Ed25519 public-key verification)
+            match LicenseGuard::from_license(&public_key_bytes, &license_json, now) {
                 Ok(guard) => {
                     println!("Valid license:");
-                    println!("  Customer:    {}", guard.customer_id());
+                    // Fixes: customer_id() → licensee()
+                    println!("  Licensee:    {}", guard.licensee());
+                    println!("  Company:     {}", guard.company());
                     println!("  Tier:        {:?}", guard.tier());
                     println!("  Watermark:   {}", guard.should_watermark());
                     println!("  Features:");
@@ -151,23 +213,16 @@ fn main() -> Result<()> {
                 }
             }
         }
-        Command::Inspect { token: tok } => {
-            let parts: Vec<&str> = tok.split('.').collect();
-            if parts.len() != 3 {
-                anyhow::bail!("malformed token: expected 3 dot-separated parts");
-            }
-            let payload = base64_decode(parts[1]).context("failed to decode payload")?;
-            let claims: LicenseClaims =
-                serde_json::from_slice(&payload).context("failed to parse claims JSON")?;
-            println!("{}", serde_json::to_string_pretty(&claims)?);
+
+        Command::Inspect { license } => {
+            let license_json = std::fs::read_to_string(&license)
+                .with_context(|| format!("failed to read license file: {license}"))?;
+            // Parse the payload without verifying the signature.
+            let license_file: xfa_license::LicenseFile =
+                serde_json::from_str(&license_json).context("failed to parse license JSON")?;
+            println!("{}", serde_json::to_string_pretty(&license_file)?);
         }
     }
 
     Ok(())
-}
-
-fn base64_decode(input: &str) -> Result<Vec<u8>> {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine;
-    Ok(URL_SAFE_NO_PAD.decode(input)?)
 }
