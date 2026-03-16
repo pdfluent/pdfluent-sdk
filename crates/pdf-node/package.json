@@ -1,7 +1,7 @@
 {
   "name": "@xfa-engine/pdf-node",
   "version": "0.1.0",
-  "description": "High-performance PDF engine for Node.js — rendering, text extraction, forms, and more.",
+  "description": "Enterprise PDF SDK for Node.js — rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",
   "files": [
@@ -36,13 +36,35 @@
     "xfa",
     "acroform",
     "text-extraction",
+    "pdf-a",
+    "compliance",
+    "annotations",
+    "redaction",
+    "encryption",
+    "signature",
     "rust",
-    "napi"
+    "napi",
+    "high-performance"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/jasperdew/xfa-native-rust"
+  },
+  "homepage": "https://github.com/jasperdew/xfa-native-rust#readme",
+  "bugs": {
+    "url": "https://github.com/jasperdew/xfa-native-rust/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "optionalDependencies": {
+    "@xfa-engine/pdf-node-darwin-x64": "0.1.0",
+    "@xfa-engine/pdf-node-darwin-arm64": "0.1.0",
+    "@xfa-engine/pdf-node-linux-x64-gnu": "0.1.0",
+    "@xfa-engine/pdf-node-linux-x64-musl": "0.1.0",
+    "@xfa-engine/pdf-node-linux-arm64-gnu": "0.1.0",
+    "@xfa-engine/pdf-node-win32-x64-msvc": "0.1.0"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0"

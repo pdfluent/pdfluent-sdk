@@ -261,7 +261,8 @@ impl PdfDocument {
     #[napi(factory)]
     pub fn open_with_password(data: Buffer, password: String) -> Result<PdfDocument> {
         let bytes: Vec<u8> = data.to_vec();
-        let doc = RustDocument::open_with_password(bytes.clone(), &password).map_err(to_napi_error)?;
+        let doc =
+            RustDocument::open_with_password(bytes.clone(), &password).map_err(to_napi_error)?;
         let form_engine = FormEngine::from_pdf(doc.pdf()).map(Arc::new);
         let lopdf_doc = LopdfDocument::load_mem_with_password(&bytes, &password)
             .ok()
@@ -534,7 +535,9 @@ impl PdfDocument {
         content: Option<String>,
     ) -> Result<()> {
         if rect.len() < 4 {
-            return Err(napi::Error::from_reason("rect must have 4 elements [x0,y0,x1,y1]"));
+            return Err(napi::Error::from_reason(
+                "rect must have 4 elements [x0,y0,x1,y1]",
+            ));
         }
         let ar = pdf_annot::builder::AnnotRect::new(rect[0], rect[1], rect[2], rect[3]);
         self.with_doc_mut(|doc| {

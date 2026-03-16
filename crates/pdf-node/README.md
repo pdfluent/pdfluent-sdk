@@ -1,139 +1,228 @@
 # @xfa-engine/pdf-node
 
-High-performance PDF engine for Node.js, built with Rust and [napi-rs](https://napi.rs).
-
-## Features
-
-- **Rendering** — PDF pages to RGBA pixel buffers at any DPI
-- **Text extraction** — Full text and structured text blocks
-- **Text search** — Parallel full-text search across all pages
-- **Thumbnails** — Quick thumbnail generation
-- **Metadata** — Title, author, subject, keywords, creator, producer
-- **Bookmarks** — Document outline / table of contents
-- **Page geometry** — Dimensions, rotation, boxes (MediaBox, CropBox, etc.)
-- **Async API** — Promise-based, runs on worker threads (no event loop blocking)
-- **Password support** — Open encrypted PDFs
+Enterprise PDF SDK for Node.js, powered by a native Rust engine via [napi-rs](https://napi.rs).
+Supports rendering, text extraction, forms, annotations, redaction, encryption, digital signatures,
+and PDF/A compliance validation.
 
 ## Installation
 
-```bash
+```sh
 npm install @xfa-engine/pdf-node
 ```
 
-Prebuilt binaries are provided for:
-- macOS (x64, arm64)
-- Linux (x64 glibc, x64 musl, arm64)
-- Windows (x64)
+Pre-built binaries are provided for:
 
-## Quick Start
+| Platform | Architecture |
+|---|---|
+| macOS | x64, arm64 |
+| Linux (glibc) | x64, arm64 |
+| Linux (musl) | x64 |
+| Windows | x64 |
 
-```javascript
+## Quick start
+
+```js
 const { PdfDocument } = require('@xfa-engine/pdf-node');
 const fs = require('fs');
 
-// Open a PDF
 const data = fs.readFileSync('document.pdf');
 const doc = PdfDocument.open(data);
 
 console.log(`Pages: ${doc.pageCount}`);
 console.log(`Title: ${doc.info().title}`);
 
-// Render page 0 at 150 DPI
-const result = doc.renderPage(0, { dpi: 150 });
-console.log(`Rendered: ${result.width}x${result.height} (${result.data.length} bytes)`);
-
-// Extract text
+// Extract text from page 0
 const text = doc.extractText(0);
 console.log(text);
+
+// Save after mutations
+doc.save('output.pdf');
 ```
 
-## Async API
+### Async (recommended for servers)
 
-All heavy operations have async variants that run on worker threads:
+```js
+const data = await fs.promises.readFile('document.pdf');
+const doc = await PdfDocument.openAsync(data);
 
-```javascript
-const { PdfDocument } = require('@xfa-engine/pdf-node');
-const fs = require('fs/promises');
-
-async function main() {
-  const data = await fs.readFile('document.pdf');
-  const doc = await PdfDocument.openAsync(data);
-
-  // Render without blocking the event loop
-  const result = await doc.renderPageAsync(0, { dpi: 300 });
-
-  // Extract text on worker thread
-  const text = await doc.extractTextAsync(0);
-
-  // Search across all pages (parallel)
-  const pages = doc.searchText('invoice');
-  console.log(`Found on pages: ${pages}`);
-}
-
-main();
+const text = await doc.extractTextAsync(0);
+const render = await doc.renderPageAsync(0, { dpi: 150 });
+// render.data — Buffer with RGBA pixels; render.width / render.height
 ```
 
-## Page API
+### Open from file path
 
-```javascript
+```js
+const { openPdf } = require('@xfa-engine/pdf-node');
+const doc = openPdf('/path/to/document.pdf');
+```
+
+## Features
+
+- **Rendering** — rasterise pages to RGBA pixels at any DPI, generate thumbnails
+- **Text extraction** — plain text per page or structured `TextBlockInfo[]` with coordinates
+- **Text search** — returns page indices containing the query string
+- **Forms (AcroForm)** — enumerate, read, and write field values
+- **Annotations** — read existing annotations, add highlight / freetext
+- **Redaction** — permanently remove text by search term
+- **Encryption** — encrypt with AES-256, decrypt password-protected PDFs
+- **Digital signatures** — validate existing signatures
+- **Bookmarks** — read the document outline
+- **PDF/A compliance** — validate against levels 1a/1b through 3a/3b/3u
+- **Async API** — Promise-based worker-thread execution; no event-loop blocking
+- **TypeScript** — full `.d.ts` declarations with JSDoc included
+
+## API reference
+
+### `PdfDocument`
+
+#### Factory methods
+
+| Method | Description |
+|---|---|
+| `PdfDocument.open(data: Buffer)` | Open synchronously from a Buffer |
+| `PdfDocument.openAsync(data: Buffer)` | Open on a worker thread |
+| `PdfDocument.openWithPassword(data, password)` | Open a password-protected PDF |
+| `openPdf(path: string)` | Convenience wrapper — open from file path |
+
+#### Metadata & structure
+
+```js
+const info = doc.info(); // { title, author, subject, keywords, creator, producer }
+const outline = doc.bookmarks(); // BookmarkItem[]
+const geo = doc.pageGeometry(0); // { width, height, rotation }
+```
+
+#### Rendering
+
+```js
+// Synchronous
+const result = doc.renderPage(0, { dpi: 150 });
+// result.data — Buffer (RGBA), result.width, result.height
+
+// Async (worker thread)
+const result = await doc.renderPageAsync(0, { dpi: 300 });
+
+// All pages in parallel
+const pages = await doc.renderAll({ dpi: 72 });
+
+// Thumbnail
+const thumb = await doc.thumbnail(0, 256); // max 256 px on longest side
+```
+
+`RenderOpts`: `{ dpi?, background?, width?, height? }`
+
+#### Text extraction
+
+```js
+const text = doc.extractText(0); // plain string
+const blocks = doc.extractTextBlocks(0); // TextBlockInfo[] with x/y/fontSize
+const hits = doc.searchText('invoice'); // number[] of page indices
+```
+
+#### Forms (AcroForm)
+
+```js
+const fields = doc.formFields(); // FormFieldInfo[]
+// fields[0] → { name, fieldType, value, readOnly }
+
+const value = doc.getFieldValue('Address.Street');
+doc.setFieldValue('Address.Street', '123 Main St');
+doc.save('filled.pdf');
+```
+
+#### Annotations
+
+```js
+const annots = doc.annotations(0); // AnnotationInfo[]
+
+doc.addAnnotation(
+  0,           // page index
+  'highlight', // type: highlight | freetext | note | underline | strikeout | squiggly
+  [100, 200, 300, 220], // rect [x0, y0, x1, y1] in PDF user-space points
+  'Important'  // optional content
+);
+doc.save('annotated.pdf');
+```
+
+#### Redaction
+
+```js
+const report = doc.redactText('John Doe'); // all pages
+// report → { matchesFound, areasRedacted, pagesAffected }
+doc.save('redacted.pdf');
+```
+
+#### Encryption
+
+```js
+// Encrypt — saved copy is AES-256 protected; in-memory doc is unchanged
+doc.encrypt('protected.pdf', 'secret');
+
+// Decrypt — works on a doc opened with openWithPassword
+doc.decrypt('plain.pdf');
+```
+
+#### Digital signatures
+
+```js
+const sigs = doc.validateSignatures();
+// sigs[0] → { status, fieldName, signer, timestamp, reason }
+```
+
+#### PDF/A compliance
+
+```js
+// Per-document
+const report = doc.validatePdfa('2b');
+// report → { compliant, errorCount, warningCount, issues[] }
+
+// Or as a module-level function (opens the file internally)
+const { validatePdfa } = require('@xfa-engine/pdf-node');
+const report = validatePdfa('document.pdf', '2b');
+```
+
+Valid levels: `"1a"`, `"1b"`, `"2a"`, `"2b"`, `"2u"`, `"3a"`, `"3b"`, `"3u"`.
+
+### `PdfPage`
+
+Obtain a page handle with `doc.page(index)`. Provides the same render/text methods scoped to a single page.
+
+```js
 const page = doc.page(0);
+console.log(`${page.width} x ${page.height} pts`);
 
-console.log(`Size: ${page.width} x ${page.height} points`);
-
-const { width, height, rotation } = page.geometry();
-
-// Render this specific page
-const pixels = await page.renderAsync({ dpi: 200 });
-
-// Generate thumbnail
-const thumb = await page.thumbnail(128);
+const pixels = await page.renderAsync({ dpi: 150 });
+const text = page.text();
+const blocks = page.textBlocks();
+const annots = page.annotations();
 ```
 
-## Integration with Sharp
+### Module-level functions
 
-```javascript
+```js
+const { openPdf, mergePdfs, validatePdfa } = require('@xfa-engine/pdf-node');
+
+// Open from path
+const doc = openPdf('/path/to/file.pdf');
+
+// Merge multiple PDFs
+mergePdfs(['a.pdf', 'b.pdf', 'c.pdf'], 'merged.pdf');
+
+// Validate compliance
+const report = validatePdfa('document.pdf', '2b');
+console.log(report.compliant, report.errorCount);
+```
+
+### Integration with Sharp
+
+```js
 const sharp = require('sharp');
-
 const result = doc.renderPage(0, { dpi: 150 });
 await sharp(result.data, {
   raw: { width: result.width, height: result.height, channels: 4 }
-})
-  .png()
-  .toFile('page.png');
+}).png().toFile('page.png');
 ```
-
-## Server-Side Rendering (Express)
-
-```javascript
-const express = require('express');
-const sharp = require('sharp');
-const { PdfDocument } = require('@xfa-engine/pdf-node');
-const fs = require('fs');
-
-const app = express();
-
-app.get('/preview/:page', async (req, res) => {
-  const data = fs.readFileSync('document.pdf');
-  const doc = PdfDocument.open(data);
-  const result = await doc.renderPageAsync(parseInt(req.params.page), { dpi: 150 });
-  const png = await sharp(result.data, {
-    raw: { width: result.width, height: result.height, channels: 4 }
-  }).png().toBuffer();
-  res.type('png').send(png);
-});
-
-app.listen(3000);
-```
-
-## Password-Protected PDFs
-
-```javascript
-const doc = PdfDocument.openWithPassword(data, 'secret');
-```
-
-## API Reference
-
-See [index.d.ts](./index.d.ts) for the complete TypeScript API.
 
 ## License
 
