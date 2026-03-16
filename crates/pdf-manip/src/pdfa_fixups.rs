@@ -1061,15 +1061,21 @@ fn propagate_missing_font_resources(doc: &mut Document) -> usize {
     // Step 2: For each Form XObject, find missing resources and add them.
     let mut count = 0;
     for id in &ids {
-        let (content, existing_by_cat, is_form) = {
+        let (content, existing_by_cat) = {
             let Some(Object::Stream(s)) = doc.objects.get(id) else {
                 continue;
             };
+            // Handle Form XObjects and tiling patterns (PatternType=1).
+            // Both are content streams that must declare their own Resources.
+            // Fixes #465: tiling patterns referencing Pattern resources not in
+            // their own Resources dict (6.2.2:2).
             let is_form = matches!(
                 s.dict.get(b"Subtype").ok(),
                 Some(Object::Name(ref n)) if n == b"Form"
             );
-            if !is_form {
+            let is_tiling_pattern =
+                matches!(s.dict.get(b"PatternType").ok(), Some(Object::Integer(1)));
+            if !is_form && !is_tiling_pattern {
                 continue;
             }
             let content = s.decompressed_content().ok().unwrap_or_else(|| {
@@ -1085,9 +1091,8 @@ fn propagate_missing_font_resources(doc: &mut Document) -> usize {
                     existing_by_cat[i] = rd.iter().map(|(k, _)| k.clone()).collect();
                 }
             }
-            (content, existing_by_cat, is_form)
+            (content, existing_by_cat)
         };
-        let _ = is_form;
 
         // Scan content for resource name references.
         // Operators and their name-operand offset from the operator token:
@@ -5296,24 +5301,22 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
         }
 
         // ── Operator: check validity ──────────────────────────────────────────
-        let is_valid = bx_depth > 0
-            || token.iter().all(|b| b.is_ascii()) // only strip tokens with all-ASCII bytes
-               && ISO32000_OPERATORS.contains(&token);
+        let is_valid = bx_depth > 0 || ISO32000_OPERATORS.contains(&token);
 
         if is_valid {
             out.extend_from_slice(&pending);
             pending.clear();
             out.extend_from_slice(token);
-        } else if token.iter().all(|b| b.is_ascii()) {
-            // Unknown ASCII operator: discard it and its pending operands.
+        } else {
+            // Unknown operator token: discard it and its pending operands.
+            // This covers both pure-ASCII unknown operators and tokens with
+            // embedded non-ASCII bytes (e.g. "ic\x80RGB" from corrupt streams).
+            // All ISO 32000 operators are pure ASCII, so non-ASCII tokens in
+            // operator position are always garbage. Fixes #465.
             modified = true;
             pending.clear();
             // Ensure token separation after the discard.
             out.push(b'\n');
-        } else {
-            // Contains non-ASCII bytes: likely binary garbage in content
-            // stream. Pass through unchanged to avoid corrupting binary data.
-            pending.extend_from_slice(token);
         }
     }
 
