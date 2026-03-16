@@ -1616,8 +1616,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
     for issue in &mut report.issues {
         let new_rule = match (part, issue.rule.as_str()) {
             // Device color space restrictions
-            // PDF/A-1: §6.2.3.3, PDF/A-2/3/4: §6.2.4.3
-            (1, "6.2.4.3") => Some("6.2.3.3"),
+            // veraPDF reports §6.2.4.3 for ALL PDF/A parts — no remap needed.
+            // (Previously (1, "6.2.4.3") => "6.2.3.3" was wrong and caused false negatives.)
 
             // TR/TR2 transfer function restrictions
             // PDF/A-1: §6.2.8, PDF/A-2/3: §6.2.10.5, PDF/A-4: §6.2.5

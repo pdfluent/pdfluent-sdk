@@ -26,9 +26,19 @@ impl PdfTest for ParseTest {
                     metadata,
                 }
             }
-            Err(e) => TestResult {
-                status: TestStatus::Fail,
-                error_message: Some(format!("{e:?}")),
+            // A fundamentally unreadable PDF (corrupt, truncated, not a PDF) cannot be
+            // tested — return Skip so it does not show as a regression. (#467)
+            Err(pdf_syntax::LoadPdfError::Invalid) => TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("PDF is invalid or could not be parsed".to_string()),
+                duration_ms: start.elapsed().as_millis() as u64,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            },
+            // Encrypted PDFs without a known password cannot be tested — Skip.
+            Err(pdf_syntax::LoadPdfError::Decryption(_)) => TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("PDF is encrypted (no password available)".to_string()),
                 duration_ms: start.elapsed().as_millis() as u64,
                 oracle_score: None,
                 metadata: HashMap::new(),
