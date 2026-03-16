@@ -21,6 +21,16 @@ pub struct ClusterRow {
     pub github_issue_number: Option<u64>,
 }
 
+pub struct MemoryLogRow {
+    pub pdf_path: String,
+    pub test_name: String,
+    pub worker_id: i64,
+    pub pdf_size_bytes: i64,
+    pub rss_before_kb: i64,
+    pub rss_after_kb: i64,
+    pub rss_delta_kb: i64,
+}
+
 impl Database {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
         let conn = Connection::open(path)?;
@@ -94,11 +104,23 @@ impl Database {
                 timestamp TEXT DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS memory_log (
+                pdf_path TEXT NOT NULL,
+                test_name TEXT NOT NULL,
+                worker_id INTEGER NOT NULL,
+                pdf_size_bytes INTEGER NOT NULL,
+                rss_before_kb INTEGER NOT NULL,
+                rss_after_kb INTEGER NOT NULL,
+                rss_delta_kb INTEGER NOT NULL,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_results_status ON test_results(status);
             CREATE INDEX IF NOT EXISTS idx_results_category ON test_results(error_category);
             CREATE INDEX IF NOT EXISTS idx_results_hash ON test_results(pdf_hash);
             CREATE INDEX IF NOT EXISTS idx_results_run ON test_results(run_id);
-            CREATE INDEX IF NOT EXISTS idx_crashes_run ON crashes(run_id);",
+            CREATE INDEX IF NOT EXISTS idx_crashes_run ON crashes(run_id);
+            CREATE INDEX IF NOT EXISTS idx_memlog_delta ON memory_log(rss_delta_kb);",
         )?;
         Ok(())
     }
@@ -166,6 +188,25 @@ impl Database {
                 result.oracle_score,
                 result.metadata_json,
                 chrono::Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_memory_log(&self, row: &MemoryLogRow) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO memory_log
+             (pdf_path, test_name, worker_id, pdf_size_bytes, rss_before_kb, rss_after_kb, rss_delta_kb)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                row.pdf_path,
+                row.test_name,
+                row.worker_id,
+                row.pdf_size_bytes,
+                row.rss_before_kb,
+                row.rss_after_kb,
+                row.rss_delta_kb,
             ],
         )?;
         Ok(())
