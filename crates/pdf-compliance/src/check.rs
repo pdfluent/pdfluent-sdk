@@ -3047,6 +3047,32 @@ pub fn check_cidfont_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
+/// Check CIDFont /W or /DW widths presence (§6.2.11.6).
+///
+/// Every CIDFont (Type0 descendant) must have either /W (widths array) or /DW
+/// (default width scalar). Missing widths cause text-extraction and rendering
+/// failures and are caught by veraPDF as rule 6.2.11.6.
+pub fn check_cidfont_w_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) else {
+            return;
+        };
+        for desc_font in descendants.iter::<Dict<'_>>() {
+            // /W or /DW must be present on the CIDFont dictionary
+            let has_w = desc_font.contains_key(keys::W);
+            let has_dw = desc_font.contains_key(keys::DW);
+            if !has_w && !has_dw {
+                error_at(
+                    report,
+                    "6.2.11.6",
+                    format!("CIDFont '{name}' has neither /W nor /DW widths array"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    });
+}
+
 // ─── §6.2.3.2 — OutputIntent ICC profile embedding ─────────────────────────
 
 /// Check OutputIntent has embedded ICC profile (§6.2.3.2).
@@ -3406,7 +3432,9 @@ fn check_single_filter(
     if filter_name == keys::JBIG2_DECODE {
         if let Some(params) = dict.get::<Dict<'_>>(keys::DECODE_PARMS) {
             if params.get::<Stream<'_>>(keys::JBIG2_GLOBALS).is_some() {
-                error(report, "6.1.8", "JBIG2Decode with global segments");
+                // PDF/A-1: §6.1.10 (forbidden filters), PDF/A-2/3: §6.1.8
+                let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.8" };
+                error(report, rule, "JBIG2Decode with global segments");
             }
         }
     }
@@ -6865,8 +6893,8 @@ fn check_resource_refs_in_stream(
 pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let data = pdf.data().as_ref();
 
-    if part == 1 {
-        // PDF/A-1: trailer must contain /ID
+    // PDF/A-1/2/3: trailer must contain /ID (§6.1.3)
+    if part <= 3 {
         let has_id = if let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") {
             let end = data.len().min(trailer_pos + 2000);
             let trailer_region = &data[trailer_pos..end];
@@ -6891,7 +6919,6 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
                 "Trailer dictionary missing required /ID key",
             );
         }
-        return;
     }
 
     if part == 4 {
@@ -7075,7 +7102,9 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
 /// - Generation number and "obj" separated by single white-space
 /// - "obj" followed by EOL marker
 /// - "endobj" preceded and followed by EOL marker
-pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
+pub fn check_object_syntax_spacing(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceReport) {
+    // PDF/A-1: §6.1.8 (object syntax); PDF/A-2/3/4: §6.1.9
+    let rule_id = if pdfa_part <= 1 { "6.1.8" } else { "6.1.9" };
     let data = pdf.data().as_ref();
     let len = data.len();
 
@@ -7123,7 +7152,7 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
         if ws1_count != 1 {
             error(
                 report,
-                "6.1.8",
+                rule_id,
                 format!(
                     "Extra spacing before 'obj' keyword ({ws1_count} whitespace chars, expected 1)"
                 ),
@@ -7153,7 +7182,7 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
         if ws2_count > 1 {
             error(
                 report,
-                "6.1.8",
+                rule_id,
                 format!("Extra spacing between object number and generation number ({ws2_count} whitespace chars, expected 1)"),
             );
             return;
@@ -7176,7 +7205,7 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
         if abs_obj_num_start > 0 {
             let before_obj = data[abs_obj_num_start - 1];
             if before_obj != b'\n' && before_obj != b'\r' {
-                error(report, "6.1.8", "Object number not preceded by EOL marker");
+                error(report, rule_id, "Object number not preceded by EOL marker");
                 return;
             }
         }
@@ -7188,7 +7217,7 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
             if c != b'\n' && c != b'\r' && c != b' ' && c != b'\t' {
                 error(
                     report,
-                    "6.1.8",
+                    rule_id,
                     "Keyword 'obj' not followed by proper whitespace/EOL",
                 );
                 return;
@@ -7213,7 +7242,7 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
             if before != b'\n' && before != b'\r' {
                 error(
                     report,
-                    "6.1.8",
+                    rule_id,
                     "Keyword 'endobj' not preceded by EOL marker",
                 );
                 return;
@@ -7227,7 +7256,7 @@ pub fn check_object_syntax_spacing(pdf: &Pdf, report: &mut ComplianceReport) {
             if c != b'\n' && c != b'\r' {
                 error(
                     report,
-                    "6.1.8",
+                    rule_id,
                     "Keyword 'endobj' not followed by EOL marker",
                 );
                 return;
@@ -7814,6 +7843,9 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
         "ID", "EI", "Do", "MP", "DP", "BMC", "BDC", "EMC", "BX", "EX",
     ];
 
+    // PDF/A-1: §6.2.2 (content streams); PDF/A-2/3/4: §6.2.7.1 (operators in content streams)
+    let undef_op_rule = if pdfa_part >= 2 { "6.2.7.1" } else { "6.2.2" };
+
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let loc = format!("page {}", page_idx + 1);
 
@@ -7824,7 +7856,7 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
                 if scan_for_undefined_ops(content, valid_ops) {
                     error_at(
                         report,
-                        "6.2.2",
+                        undef_op_rule,
                         "Content stream contains undefined operator",
                         loc.clone(),
                     );
@@ -7848,7 +7880,7 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
                             if scan_for_undefined_ops(&decoded, valid_ops) {
                                 error_at(
                                     report,
-                                    "6.2.2",
+                                    undef_op_rule,
                                     "Annotation appearance stream contains undefined operator",
                                     loc.clone(),
                                 );
@@ -7877,7 +7909,7 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
                     let xn = std::str::from_utf8(name.as_ref()).unwrap_or("?");
                     error_at(
                         report,
-                        "6.2.2",
+                        undef_op_rule,
                         format!("Form XObject {xn} contains undefined operator"),
                         loc.clone(),
                     );
