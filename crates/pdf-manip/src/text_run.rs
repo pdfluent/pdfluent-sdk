@@ -60,6 +60,17 @@ pub(crate) struct FontInfo {
     /// explicit Encoding/Differences we cannot determine the correct byte→char
     /// mapping, so Latin-1 fallback encoding is unsafe for these fonts.
     pub(crate) is_symbolic: bool,
+    /// Forward encoding from the font's Encoding/Differences dict: maps byte
+    /// code → Unicode char.  Built for ALL single-byte (Builtin) fonts that
+    /// have an Encoding entry, including symbolic fonts.  Used only for
+    /// decoding (bytes → text); the reverse map for text replacement still
+    /// skips symbolic fonts via the `is_symbolic` guard. Fixes #466.
+    pub(crate) forward_encoding: HashMap<u8, char>,
+    /// Inverse of the embedded TrueType cmap: maps glyph index → Unicode char.
+    /// Built from FontFile2 when ToUnicode is absent; empty otherwise.
+    /// Additional fallback after `forward_encoding` for TrueType fonts with
+    /// a cmap but no usable Encoding/Differences dict. Fixes #466.
+    pub(crate) cmap_inverse: HashMap<u32, char>,
 }
 
 /// Font encoding type.
@@ -190,6 +201,38 @@ impl FontMap {
 
         if let Some(ref cmap) = info.to_unicode {
             return decode_with_cmap(bytes, cmap, &info.encoding);
+        }
+
+        // Fallback 1: use the font's Encoding/Differences dict for decoding.
+        // Handles symbolic TrueType subsets with explicit glyph-name Differences
+        // (e.g. GIYRNY+Arial,Bold with [1 /C /e /r /t ...]) that have no
+        // ToUnicode CMap. Unlike `differences_encoding`, `forward_encoding` is
+        // populated for symbolic fonts too. Fixes #466.
+        if !info.forward_encoding.is_empty() {
+            return bytes
+                .iter()
+                .map(|&b| {
+                    info.forward_encoding
+                        .get(&b)
+                        .copied()
+                        .unwrap_or(b as char)
+                })
+                .collect();
+        }
+
+        // Fallback 2: use the inverse of the embedded TrueType cmap when ToUnicode
+        // is absent, no Encoding/Differences covers these codes, but the font
+        // program's cmap maps glyph indices back to Unicode. Fixes #466.
+        if !info.cmap_inverse.is_empty() {
+            return bytes
+                .iter()
+                .map(|&b| {
+                    info.cmap_inverse
+                        .get(&(b as u32))
+                        .copied()
+                        .unwrap_or(b as char)
+                })
+                .collect();
         }
 
         decode_pdf_string_fallback(bytes)
@@ -709,6 +752,8 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
                 differences_encoding: HashMap::new(),
                 is_subset: false,
                 is_symbolic: false,
+                forward_encoding: HashMap::new(),
+                cmap_inverse: HashMap::new(),
             }
         }
     };
@@ -763,6 +808,28 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
             HashMap::new()
         };
 
+    // Build inverse-cmap fallback for TrueType fonts that lack a complete
+    // ToUnicode CMap.  Reads glyph-index→Unicode from the embedded font
+    // program (FontFile2) so that glyph-indexed subsets (e.g. GIYRNY+Calibri)
+    // can still be searched and redacted. Fixes #466.
+    let cmap_inverse = if to_unicode.is_none() && matches!(encoding, FontEncoding::Builtin) {
+        build_truetype_cmap_inverse(doc, &font_dict)
+    } else {
+        HashMap::new()
+    };
+
+    // Build forward encoding from the font's Encoding/Differences dict for all
+    // single-byte fonts, including symbolic ones (unlike `differences_encoding`
+    // which skips symbolic fonts to protect the text-replacement reverse map).
+    // This lets decode_string correctly decode fonts like GIYRNY+Arial,Bold that
+    // use glyph-name Differences ([1 /C /e /r /t ...]) without a ToUnicode CMap.
+    // Fixes #466.
+    let forward_encoding = if to_unicode.is_none() && matches!(encoding, FontEncoding::Builtin) {
+        build_font_encoding(doc, &font_dict)
+    } else {
+        HashMap::new()
+    };
+
     FontInfo {
         to_unicode,
         encoding,
@@ -770,6 +837,8 @@ fn build_font_info(doc: &Document, font_id: &ObjectId) -> FontInfo {
         differences_encoding,
         is_subset,
         is_symbolic,
+        forward_encoding,
+        cmap_inverse,
     }
 }
 
@@ -796,6 +865,84 @@ fn extract_to_unicode(doc: &Document, font_dict: &lopdf::Dictionary) -> Option<C
     };
 
     CMap::parse(&stream_data, pdf_font::cmap::load_embedded)
+}
+
+/// Build a glyph-index→Unicode map from a TrueType font's embedded cmap table.
+///
+/// Called when a font has no ToUnicode CMap (or a minimal one) so that
+/// glyph-indexed subsets (ABCDEF+FontName) can be decoded for text search
+/// and redaction. Reads FontFile2 from the font's FontDescriptor, parses
+/// the TrueType font, and inverts the Unicode→glyph mapping. Fixes #466.
+fn build_truetype_cmap_inverse(
+    doc: &Document,
+    font_dict: &lopdf::Dictionary,
+) -> HashMap<u32, char> {
+    let font_data = match get_truetype_font_data(doc, font_dict) {
+        Some(d) => d,
+        None => return HashMap::new(),
+    };
+    let face = match ttf_parser::Face::parse(&font_data, 0) {
+        Ok(f) => f,
+        Err(_) => return HashMap::new(),
+    };
+    let cmap_table = match face.tables().cmap {
+        Some(c) => c,
+        None => return HashMap::new(),
+    };
+
+    let mut inverse: HashMap<u32, char> = HashMap::new();
+
+    // Try Windows Unicode (platform 3, encoding 1) first; fall back to any
+    // Unicode-flagged subtable.
+    let preferred = cmap_table
+        .subtables
+        .into_iter()
+        .find(|st| st.platform_id == ttf_parser::PlatformId::Windows && st.encoding_id == 1)
+        .or_else(|| {
+            cmap_table
+                .subtables
+                .into_iter()
+                .find(|st| st.is_unicode())
+        });
+
+    if let Some(subtable) = preferred {
+        subtable.codepoints(|cp| {
+            if let Some(c) = char::from_u32(cp) {
+                if let Some(glyph_id) = subtable.glyph_index(cp) {
+                    if glyph_id.0 != 0 {
+                        inverse.entry(glyph_id.0 as u32).or_insert(c);
+                    }
+                }
+            }
+        });
+    }
+
+    inverse
+}
+
+/// Extract raw TrueType font data (FontFile2) from a font's FontDescriptor.
+fn get_truetype_font_data(doc: &Document, font_dict: &lopdf::Dictionary) -> Option<Vec<u8>> {
+    let desc_ref = font_dict.get(b"FontDescriptor").ok()?;
+    let desc_dict = match desc_ref {
+        Object::Reference(id) => match doc.get_object(*id) {
+            Ok(Object::Dictionary(ref d)) => d.clone(),
+            _ => return None,
+        },
+        Object::Dictionary(ref d) => d.clone(),
+        _ => return None,
+    };
+    let ff2_ref = desc_dict.get(b"FontFile2").ok()?;
+    let stream_id = match ff2_ref {
+        Object::Reference(id) => *id,
+        _ => return None,
+    };
+    if let Ok(Object::Stream(ref s)) = doc.get_object(stream_id) {
+        let mut s2 = s.clone();
+        let _ = s2.decompress();
+        Some(s2.content)
+    } else {
+        None
+    }
 }
 
 /// Determine the encoding type of a font.
