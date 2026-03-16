@@ -62,7 +62,8 @@ impl HuffmanTable {
                 match existing {
                     Some(idx) => idx,
                     None => {
-                        let new_idx = NonZeroU32::new(nodes.len() as u32).unwrap();
+                        let new_idx = NonZeroU32::new(nodes.len() as u32)
+                            .expect("nodes always has at least a root element");
                         nodes.push(HuffmanNode::Intermediate {
                             zero: None,
                             one: None,

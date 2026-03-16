@@ -12,13 +12,19 @@ use std::path::Path;
 /// Encryption algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncryptionAlgorithm {
+    /// RC4 with a 40-bit key (PDF 1.1, legacy — avoid for new documents).
     Rc4_40,
+    /// RC4 with a 128-bit key (PDF 1.4, legacy).
     Rc4_128,
+    /// AES with a 128-bit key (PDF 1.6).
     Aes128,
+    /// AES with a 256-bit key (PDF 1.7 ext / PDF 2.0 — recommended).
     Aes256,
 }
 
 impl EncryptionAlgorithm {
+    /// PDF encryption version number (Table 20, ISO 32000-2).
+    #[allow(dead_code)]
     fn version(&self) -> i64 {
         match self {
             Self::Rc4_40 => 1,
@@ -27,6 +33,8 @@ impl EncryptionAlgorithm {
         }
     }
 
+    /// Standard security handler revision (Table 21, ISO 32000-2).
+    #[allow(dead_code)]
     fn revision(&self) -> i64 {
         match self {
             Self::Rc4_40 => 2,
@@ -36,6 +44,8 @@ impl EncryptionAlgorithm {
         }
     }
 
+    /// Key length in bits.
+    #[allow(dead_code)]
     fn key_length(&self) -> i64 {
         match self {
             Self::Rc4_40 => 40,
@@ -46,15 +56,26 @@ impl EncryptionAlgorithm {
 }
 
 /// PDF permission flags (ISO 32000-2 Table 22).
+///
+/// Controls what operations an encrypted PDF permits when opened with the
+/// user password. The owner password always grants full access.
 #[derive(Debug, Clone, Copy)]
 pub struct Permissions {
+    /// Allow printing (bit 3).
     pub print: bool,
+    /// Allow modifying content other than annotations and form fields (bit 4).
     pub modify_contents: bool,
+    /// Allow copying or extracting text and graphics (bit 5).
     pub extract_content: bool,
+    /// Allow adding or modifying annotations and form fields (bit 6).
     pub modify_annotations: bool,
+    /// Allow filling in form fields (bit 9).
     pub fill_forms: bool,
+    /// Allow text and graphics extraction for accessibility (bit 10).
     pub extract_for_accessibility: bool,
+    /// Allow inserting, rotating, or deleting pages (bit 11).
     pub assemble_document: bool,
+    /// Allow high-quality printing (bit 12).
     pub print_high_quality: bool,
 }
 
