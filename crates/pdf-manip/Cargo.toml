@@ -33,3 +33,4 @@ pdfa-convert = ["dep:xmp-writer"]
 tempfile = "3"
 pdf-syntax.workspace = true
 pdf-compliance.workspace = true
+pdf-engine = { path = "../pdf-engine" }
