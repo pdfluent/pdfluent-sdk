@@ -89,6 +89,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_halftone_and_transfer(pdf, &mut report);
     check_extgstate_restrictions(pdf, level, &mut report);
     check_cidfont_embedding(pdf, &mut report);
+    check_cidfont_w_arrays(pdf, &mut report);
     check_output_intent_profile(pdf, &mut report);
 
     // File structure, actions, streams (§6.1.x, §6.6.1)
@@ -171,7 +172,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // Info/XMP consistency, stream/syntax, XMP extension, image intent
     check_info_xmp(pdf, &mut report);
     check_stream_length_pdfa(pdf, &mut report);
-    check_object_syntax(pdf, &mut report);
+    check_object_syntax(pdf, level, &mut report);
     check_xmp_extension_schema_pdfa(pdf, &mut report);
     check_image_intent(pdf, &mut report);
     check_xref_syntax_pdfa(pdf, &mut report);
@@ -343,6 +344,10 @@ pub fn validate_with_progress(
     tracked!(
         "check_cidfont_embedding",
         check_cidfont_embedding(pdf, &mut report)
+    );
+    tracked!(
+        "check_cidfont_w_arrays",
+        check_cidfont_w_arrays(pdf, &mut report)
     );
     tracked!(
         "check_output_intent_profile",
@@ -530,7 +535,7 @@ pub fn validate_with_progress(
         "check_stream_length_pdfa",
         check_stream_length_pdfa(pdf, &mut report)
     );
-    tracked!("check_object_syntax", check_object_syntax(pdf, &mut report));
+    tracked!("check_object_syntax", check_object_syntax(pdf, level, &mut report));
     tracked!(
         "check_xmp_extension_schema",
         check_xmp_extension_schema_pdfa(pdf, &mut report)
@@ -896,7 +901,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         "check_stream_length_pdfa",
         check_stream_length_pdfa(pdf, &mut report)
     );
-    timed!("check_object_syntax", check_object_syntax(pdf, &mut report));
+    timed!("check_object_syntax", check_object_syntax(pdf, level, &mut report));
     timed!(
         "check_xmp_extension_schema",
         check_xmp_extension_schema_pdfa(pdf, &mut report)
@@ -1237,6 +1242,11 @@ fn check_cidfont_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_cidfont_embedding(pdf, report);
 }
 
+/// §6.2.11.6 — CIDFont must have /W (widths) or /DW (default width).
+fn check_cidfont_w_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_cidfont_w_arrays(pdf, report);
+}
+
 /// §6.2.3.2 — OutputIntent must have ICC profile.
 fn check_output_intent_profile(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_output_intent_profile(pdf, report);
@@ -1564,8 +1574,11 @@ fn check_stream_length_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// §6.1.8/6.1.9 — Object syntax spacing checks.
-fn check_object_syntax(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_object_syntax_spacing(pdf, report);
+///
+/// PDF/A-1 uses §6.1.8 for object syntax; PDF/A-2/3/4 uses §6.1.9.
+/// The check function emits the correct rule ID based on the part number.
+fn check_object_syntax(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_object_syntax_spacing(pdf, level.part(), report);
 }
 
 /// §6.7.8 — XMP extension schema validation.
@@ -1632,20 +1645,18 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.8.2") => Some("6.2.4"),
             (1, "6.2.8.3") => Some("6.2.4"),
 
-            // Object syntax spacing
-            // PDF/A-2/3/4: §6.1.9
-            (2..=4, "6.1.8") => Some("6.1.9"),
-
             // Implementation limits
             // PDF/A-1: §6.1.12, PDF/A-2/3/4: §6.1.13
             (1, "6.1.13") => Some("6.1.12"),
 
             // Stream checks: Length, EOL, empty keys, external refs
-            // PDF/A-1: §6.1.7, PDF/A-2/3: §6.1.7.1, PDF/A-4: §6.1.6.1
+            // PDF/A-1: §6.1.7, PDF/A-2/3: §6.1.7 (same), PDF/A-4: §6.1.6.1
+            // veraPDF uses "6.1.7" for stream-length violations in all parts 1-3;
+            // do NOT remap "6.1.7" to "6.1.7.1" for PDF/A-2/3 (was causing false
+            // negatives because veraPDF outputs the parent clause, not the sub-clause).
             (1, "6.1.7.1") => Some("6.1.7"),
             (4, "6.1.7.1") => Some("6.1.6.1"),
             (4, "6.1.7") => Some("6.1.6.1"),
-            (2..=3, "6.1.7") => Some("6.1.7.1"),
 
             // Widget annotation actions
             // PDF/A-1: §6.6.1, PDF/A-2/3: §6.4.1
