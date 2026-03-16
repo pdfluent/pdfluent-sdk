@@ -38,7 +38,7 @@ xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
 xfa-layout-engine.workspace = true
 pdfium-ffi-bridge.workspace = true
-xfa-license.workspace = true
+xfa-license = { workspace = true, features = ["signing"] }
 anyhow.workspace = true
 reqwest.workspace = true
 clap.workspace = true
