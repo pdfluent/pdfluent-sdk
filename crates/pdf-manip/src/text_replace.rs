@@ -29,7 +29,7 @@ pub fn replace_text(
     if !matches.is_empty() {
         let mut new_editor = editor;
         let mut offset: i64 = 0;
-        let count = matches.len();
+        let mut count = 0;
 
         for m in &matches {
             let run = &runs[m.run_index];
@@ -40,14 +40,42 @@ pub fn replace_text(
                 None => continue,
             };
 
-            let new_ops = build_replacement_ops(&op, search, replacement, &run.font_name, fonts)?;
+            // Try to encode the replacement in the matched font.  If that fails
+            // (e.g. subset font whose reverse map doesn't contain the replacement
+            // chars), attempt a font-fallback path. Fixes #466 bugs 1–4.
+            let new_ops =
+                match build_replacement_ops(&op, search, replacement, &run.font_name, fonts) {
+                    Ok(ops) => ops,
+                    Err(_) => {
+                        let fallback =
+                            find_or_inject_fallback_font(doc, page_num, &run.font_name, fonts);
+                        match fallback {
+                            Some(ref fb) => match build_replacement_ops_with_fallback(
+                                &op,
+                                search,
+                                replacement,
+                                &run.font_name,
+                                run.font_size,
+                                fb,
+                                fonts,
+                            ) {
+                                Some(ops) => ops,
+                                None => continue,
+                            },
+                            None => continue,
+                        }
+                    }
+                };
             let ops_count_diff = new_ops.len() as i64 - 1;
 
             new_editor.replace_operation(adjusted_start, new_ops);
             offset += ops_count_diff;
+            count += 1;
         }
 
-        write_editor_to_page(doc, page_num, &new_editor)?;
+        if count > 0 {
+            write_editor_to_page(doc, page_num, &new_editor)?;
+        }
         return Ok(count);
     }
 
@@ -58,13 +86,21 @@ pub fn replace_text(
     }
 
     let mut new_editor = editor;
-    let count = cross_matches.len();
+    let mut count = 0;
 
     for cm in &cross_matches {
-        apply_cross_run_replacement(&mut new_editor, &runs, cm, search, replacement, fonts)?;
+        // Silently skip cross-run replacements that fail encoding; the
+        // single-run fast path already handles the easy cases above.
+        if apply_cross_run_replacement(&mut new_editor, &runs, cm, search, replacement, fonts)
+            .is_ok()
+        {
+            count += 1;
+        }
     }
 
-    write_editor_to_page(doc, page_num, &new_editor)?;
+    if count > 0 {
+        write_editor_to_page(doc, page_num, &new_editor)?;
+    }
     Ok(count)
 }
 
@@ -523,6 +559,228 @@ fn encode_cid_text(font_name: &str, text: &str, fonts: &FontMap) -> Result<Vec<u
     Ok(bytes)
 }
 
+// ---------------------------------------------------------------------------
+// Font fallback for replacement encoding (Fixes #466 bugs 1–4)
+// ---------------------------------------------------------------------------
+
+/// Encode text as Latin-1 (ISO 8859-1) bytes.
+fn encode_latin1(text: &str) -> Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        let code = ch as u32;
+        if code <= 0xFF {
+            bytes.push(code as u8);
+        } else {
+            return Err(ManipError::Other(format!(
+                "character '{}' (U+{:04X}) cannot be encoded as Latin-1",
+                ch, code
+            )));
+        }
+    }
+    Ok(bytes)
+}
+
+/// Build replacement ops using a font fallback when the primary font cannot
+/// encode the replacement text (e.g. subset fonts whose ToUnicode reverse map
+/// doesn't contain the replacement characters).
+///
+/// Emits the unchanged prefix/suffix bytes in the original font and wraps the
+/// replacement string in `Tf` / `Tj` operators that switch to `fallback_name`.
+/// Returns `None` when the byte layout is too complex to split safely.
+fn build_replacement_ops_with_fallback(
+    original_op: &Operation,
+    search: &str,
+    replacement: &str,
+    font_name: &str,
+    font_size: f64,
+    fallback_name: &str,
+    fonts: &FontMap,
+) -> Option<Vec<Operation>> {
+    // Only handle single-byte Tj / ' operators; TJ arrays are too complex.
+    if fonts.is_cid_font(font_name) {
+        return None;
+    }
+    if !matches!(original_op.operator.as_str(), "Tj" | "'") {
+        return None;
+    }
+
+    let orig_bytes = match original_op.operands.first() {
+        Some(Object::String(ref b, _)) => b.clone(),
+        _ => return None,
+    };
+
+    let decoded = fonts.decode_string(font_name, &orig_bytes);
+    let search_byte_pos = decoded.find(search)?;
+
+    // Require a 1:1 byte-to-char mapping so splitting by char index is safe.
+    if orig_bytes.len() != decoded.chars().count() {
+        return None;
+    }
+
+    let replacement_bytes = encode_latin1(replacement).ok()?;
+
+    let prefix_char_count = decoded[..search_byte_pos].chars().count();
+    let suffix_byte_start = prefix_char_count + search.chars().count();
+
+    let prefix_bytes = orig_bytes[..prefix_char_count].to_vec();
+    let suffix_bytes = if suffix_byte_start <= orig_bytes.len() {
+        orig_bytes[suffix_byte_start..].to_vec()
+    } else {
+        vec![]
+    };
+
+    let mut ops: Vec<Operation> = Vec::new();
+
+    if !prefix_bytes.is_empty() {
+        ops.push(Operation::new(
+            "Tj",
+            vec![Object::String(prefix_bytes, lopdf::StringFormat::Literal)],
+        ));
+    }
+
+    // Switch to the fallback font for the replacement string.
+    ops.push(Operation::new(
+        "Tf",
+        vec![
+            Object::Name(fallback_name.as_bytes().to_vec()),
+            Object::Real(font_size as f32),
+        ],
+    ));
+    ops.push(Operation::new(
+        "Tj",
+        vec![Object::String(replacement_bytes, lopdf::StringFormat::Literal)],
+    ));
+
+    // Restore the original font so subsequent text is unaffected.
+    ops.push(Operation::new(
+        "Tf",
+        vec![
+            Object::Name(font_name.as_bytes().to_vec()),
+            Object::Real(font_size as f32),
+        ],
+    ));
+
+    if !suffix_bytes.is_empty() {
+        ops.push(Operation::new(
+            "Tj",
+            vec![Object::String(suffix_bytes, lopdf::StringFormat::Literal)],
+        ));
+    }
+
+    Some(ops)
+}
+
+/// Return a font resource name that can encode Latin-1 text.
+///
+/// Prefers an existing non-subset, non-symbolic, single-byte font on the page.
+/// Falls back to injecting a Helvetica/WinAnsiEncoding resource if none is
+/// available.
+fn find_or_inject_fallback_font(
+    doc: &mut Document,
+    page_num: u32,
+    original_font: &str,
+    fonts: &FontMap,
+) -> Option<String> {
+    for (name, info) in &fonts.fonts {
+        if name.as_str() != original_font
+            && !info.is_subset
+            && !info.is_symbolic
+            && matches!(info.encoding, crate::text_run::FontEncoding::Builtin)
+        {
+            return Some(name.clone());
+        }
+    }
+    inject_fallback_font(doc, page_num)
+}
+
+/// Inject a Helvetica/WinAnsiEncoding font resource named `"F__Helv"` into
+/// the page's Resources/Font dictionary, creating sub-dictionaries as needed.
+fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
+    const FALLBACK: &str = "F__Helv";
+
+    let pages = doc.get_pages();
+    let &page_id = pages.get(&page_num)?;
+
+    // Add the Helvetica font object first (no borrow of doc held after this).
+    let mut helv_dict = lopdf::Dictionary::new();
+    helv_dict.set("Type", Object::Name(b"Font".to_vec()));
+    helv_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
+    helv_dict.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+    helv_dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+    let helv_id = doc.add_object(Object::Dictionary(helv_dict));
+
+    // Read the current Resources entry before any mutation.
+    let resources_entry = doc.get_object(page_id).ok().and_then(|obj| {
+        if let Object::Dictionary(ref d) = obj {
+            d.get(b"Resources").ok().cloned()
+        } else {
+            None
+        }
+    });
+
+    match resources_entry {
+        Some(Object::Reference(res_id)) => {
+            let font_entry = doc.get_object(res_id).ok().and_then(|obj| {
+                if let Object::Dictionary(ref d) = obj {
+                    d.get(b"Font").ok().cloned()
+                } else {
+                    None
+                }
+            });
+            match font_entry {
+                Some(Object::Reference(fd_id)) => {
+                    if let Ok(Object::Dictionary(ref mut fd)) = doc.get_object_mut(fd_id) {
+                        fd.set(FALLBACK, Object::Reference(helv_id));
+                    }
+                }
+                font_val => {
+                    let mut new_font = match font_val {
+                        Some(Object::Dictionary(fd)) => fd,
+                        _ => lopdf::Dictionary::new(),
+                    };
+                    new_font.set(FALLBACK, Object::Reference(helv_id));
+                    if let Ok(Object::Dictionary(ref mut rd)) = doc.get_object_mut(res_id) {
+                        rd.set("Font", Object::Dictionary(new_font));
+                    }
+                }
+            }
+        }
+        Some(Object::Dictionary(res_dict)) => {
+            let font_entry = res_dict.get(b"Font").ok().cloned();
+            match font_entry {
+                Some(Object::Reference(fd_id)) => {
+                    if let Ok(Object::Dictionary(ref mut fd)) = doc.get_object_mut(fd_id) {
+                        fd.set(FALLBACK, Object::Reference(helv_id));
+                    }
+                }
+                font_val => {
+                    let mut new_font = match font_val {
+                        Some(Object::Dictionary(fd)) => fd,
+                        _ => lopdf::Dictionary::new(),
+                    };
+                    new_font.set(FALLBACK, Object::Reference(helv_id));
+                    let mut new_res = res_dict;
+                    new_res.set("Font", Object::Dictionary(new_font));
+                    if let Ok(Object::Dictionary(ref mut pd)) = doc.get_object_mut(page_id) {
+                        pd.set("Resources", Object::Dictionary(new_res));
+                    }
+                }
+            }
+        }
+        _ => {
+            let mut new_font = lopdf::Dictionary::new();
+            new_font.set(FALLBACK, Object::Reference(helv_id));
+            let mut new_res = lopdf::Dictionary::new();
+            new_res.set("Font", Object::Dictionary(new_font));
+            if let Ok(Object::Dictionary(ref mut pd)) = doc.get_object_mut(page_id) {
+                pd.set("Resources", Object::Dictionary(new_res));
+            }
+        }
+    }
+
+    Some(FALLBACK.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,9 +886,10 @@ mod tests {
     fn replace_error_on_unencodable_char() {
         let mut doc = make_doc_with_text(b"BT /F1 12 Tf 100 700 Td (Hello) Tj ET");
         let fonts = FontMap::from_page(&doc, 1).unwrap();
-        // Try to replace with a character outside Latin-1.
+        // Characters outside Latin-1 cannot be encoded by the original font or
+        // the Latin-1 fallback, so the replacement is silently skipped (Ok(0)).
         let result = replace_text(&mut doc, 1, "Hello", "\u{4e16}\u{754c}", &fonts);
-        assert!(result.is_err());
+        assert_eq!(result.unwrap(), 0);
     }
 
     #[test]
