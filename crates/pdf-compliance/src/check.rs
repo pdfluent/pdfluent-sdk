@@ -457,9 +457,9 @@ pub fn output_intent_profile_components(pdf: &Pdf) -> Option<u32> {
 /// Even with an OutputIntent, device colors may only be used if the profile's
 /// color space matches (e.g., DeviceCMYK only with CMYK OutputIntent).
 pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
-    let Some(profile_components) = output_intent_profile_components(pdf) else {
-        return; // No OutputIntent profile — handled by other checks
-    };
+    // 0 = no OutputIntent; device color spaces are forbidden without a matching profile.
+    // Using 0 here causes all device-CS checks below to fire (since 0 ≠ 1/3/4). (#467)
+    let profile_components = output_intent_profile_components(pdf).unwrap_or(0);
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let loc = format!("page {}", page_idx + 1);
@@ -571,10 +571,27 @@ fn scan_pattern_cs_vs_profile(
             }
         }
         if let Some(pat_stream) = pat_dict.get::<Stream<'_>>(name.as_ref()) {
+            let loc = format!("{base_loc} Pattern {pname}");
             if let Ok(decoded) = pat_stream.decoded() {
                 let ops = detect_device_color_ops(&decoded);
-                let loc = format!("{base_loc} Pattern {pname}");
                 report_color_vs_profile(&ops, profile_components, &loc, report);
+            }
+            // Also check the tiling pattern's own Resources/ColorSpace dict.
+            // Inline images inside the pattern can reference named color spaces
+            // (e.g., /CS0 cs where CS0 => DeviceRGB) defined here. (#467)
+            if let Some(pat_res) = pat_stream.dict().get::<Dict<'_>>(keys::RESOURCES) {
+                if let Some(cs_dict) = pat_res.get::<Dict<'_>>(keys::COLORSPACE) {
+                    for (csname, _) in cs_dict.entries() {
+                        if let Some(cs_val) = cs_dict.get::<Name>(csname.as_ref()) {
+                            report_cs_name_vs_profile(
+                                cs_val.as_ref(),
+                                profile_components,
+                                &loc,
+                                report,
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -2351,7 +2368,15 @@ pub fn check_icc_profile_version(pdf: &Pdf, part: u8, report: &mut ComplianceRep
             continue;
         };
         if profile_data.len() < 12 {
-            error(report, "6.2.3.3", "ICC profile too short to parse header");
+            // Internal rule id "6.2.3.3-iccver" is remapped to the correct
+            // per-part clause by remap_clause_numbers: "6.6.2.3.3" for PDF/A-1,
+            // "6.2.3.3" for PDF/A-2/3/4. Distinct from the device-color rule
+            // which also uses "6.2.3.3". (#467)
+            error(
+                report,
+                "6.2.3.3-iccver",
+                "ICC profile too short to parse header",
+            );
             continue;
         }
         let major = profile_data[8];
@@ -2359,7 +2384,7 @@ pub fn check_icc_profile_version(pdf: &Pdf, part: u8, report: &mut ComplianceRep
         if major > max_version {
             error(
                 report,
-                "6.2.3.3",
+                "6.2.3.3-iccver",
                 format!(
                     "ICC profile version {major}.x exceeds maximum v{max_version} for PDF/A-{part}"
                 ),

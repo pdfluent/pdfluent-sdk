@@ -1718,9 +1718,19 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.6.2.3.1, PDF/A-2/3/4: §6.2.3
             (1, "6.2.3") => Some("6.6.2.3.1"),
 
-            // OutputIntent ICC profile version check
+            // Device color vs OutputIntent: §6.2.3.3 is correct for ALL PDF/A parts.
+            // veraPDF emits "6.2.3.3" for PDF/A-1 too — no remap needed. (#467)
+            // (Removed wrong (1,"6.2.3.3")=>"6.6.2.3.3" mapping that hid FN.)
+
+            // OutputIntent ICC profile version check (internal rule "6.2.3.3-iccver")
             // PDF/A-1: §6.6.2.3.3, PDF/A-2/3/4: §6.2.3.3
-            (1, "6.2.3.3") => Some("6.6.2.3.3"),
+            (_, "6.2.3.3-iccver") => {
+                if part == 1 {
+                    Some("6.6.2.3.3")
+                } else {
+                    Some("6.2.3.3")
+                }
+            }
 
             // OutputIntent DestOutputProfile required
             // PDF/A-1: §6.6.2.3.2, PDF/A-2/3/4: §6.2.3.2
