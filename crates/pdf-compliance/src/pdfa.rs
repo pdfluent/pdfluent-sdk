@@ -100,10 +100,13 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_optional_content(pdf, level, &mut report);
     check_linearization(pdf, &mut report);
 
-    // Deeper 6.2.x fixes
+    // Deeper 6.2.x / 6.6.x fixes
     check_image_xobject_colorspaces(pdf, &mut report);
     check_output_intent_consistency(pdf, &mut report);
+    check::check_output_intent_consistency_pdfa(pdf, level.part(), &mut report);
     check_transparency_vs_output_intent(pdf, level, &mut report);
+    check::check_transparency_blending_vs_output_intent(pdf, level.part(), &mut report);
+    check::check_output_intent_icc_signature(pdf, &mut report);
 
     // Combined content stream checks: undefined operators + marked content +
     // inline image filters in a single page loop (avoids 2 redundant
@@ -379,8 +382,20 @@ pub fn validate_with_progress(
         check_output_intent_consistency(pdf, &mut report)
     );
     tracked!(
+        "check_output_intent_consistency_pdfa",
+        check::check_output_intent_consistency_pdfa(pdf, level.part(), &mut report)
+    );
+    tracked!(
         "check_transparency_vs_output_intent",
         check_transparency_vs_output_intent(pdf, level, &mut report)
+    );
+    tracked!(
+        "check_transparency_blending_vs_output_intent",
+        check::check_transparency_blending_vs_output_intent(pdf, level.part(), &mut report)
+    );
+    tracked!(
+        "check_output_intent_icc_signature",
+        check::check_output_intent_icc_signature(pdf, &mut report)
     );
     tracked!(
         "check_page_content_streams_cached",
@@ -730,8 +745,20 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check_output_intent_consistency(pdf, &mut report)
     );
     timed!(
+        "check_output_intent_consistency_pdfa",
+        check::check_output_intent_consistency_pdfa(pdf, level.part(), &mut report)
+    );
+    timed!(
         "check_transparency_vs_output_intent",
         check_transparency_vs_output_intent(pdf, level, &mut report)
+    );
+    timed!(
+        "check_transparency_blending_vs_output_intent",
+        check::check_transparency_blending_vs_output_intent(pdf, level.part(), &mut report)
+    );
+    timed!(
+        "check_output_intent_icc_signature",
+        check::check_output_intent_icc_signature(pdf, &mut report)
     );
     timed!(
         "check_page_content_streams_cached",
@@ -982,11 +1009,13 @@ fn check_forbidden_actions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceR
 }
 
 /// OutputIntents must include a GTS_PDFA1 entry with DestOutputProfile (§6.2.2).
-fn check_output_intent(pdf: &Pdf, _level: PdfALevel, report: &mut ComplianceReport) {
+fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // §6.6.2 in PDF/A-1 (ISO 19005-1), §6.2.2 in PDF/A-2/3/4
+    let rule = if level.part() == 1 { "6.6.2" } else { "6.2.2" };
     if !check::has_output_intent(pdf) {
         check::error(
             report,
-            "6.2.2",
+            rule,
             "No OutputIntents with GTS_PDFA1 subtype found",
         );
         return;
@@ -995,7 +1024,7 @@ fn check_output_intent(pdf: &Pdf, _level: PdfALevel, report: &mut ComplianceRepo
     if check::output_intent_profile_components(pdf).is_none() {
         check::error(
             report,
-            "6.2.2",
+            rule,
             "GTS_PDFA1 OutputIntent has no valid DestOutputProfile",
         );
     }
@@ -1662,6 +1691,18 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-4: §6.3.4 → §6.2.10.4.1 (different numbering in ISO 19005-4)
             (4, "6.3.4") => Some("6.2.10.4.1"),
             (4, "6.3.3") => Some("6.2.10.4.1"),
+
+            // OutputIntent ICC profile class (prtr/mntr) check
+            // PDF/A-1: §6.6.2.3.1, PDF/A-2/3/4: §6.2.3
+            (1, "6.2.3") => Some("6.6.2.3.1"),
+
+            // OutputIntent ICC profile version check
+            // PDF/A-1: §6.6.2.3.3, PDF/A-2/3/4: §6.2.3.3
+            (1, "6.2.3.3") => Some("6.6.2.3.3"),
+
+            // OutputIntent DestOutputProfile required
+            // PDF/A-1: §6.6.2.3.2, PDF/A-2/3/4: §6.2.3.2
+            (1, "6.2.3.2") => Some("6.6.2.3.2"),
 
             _ => None,
         };

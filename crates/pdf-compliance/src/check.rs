@@ -3576,6 +3576,173 @@ pub fn check_output_intent_profile_class(pdf: &Pdf, report: &mut ComplianceRepor
     }
 }
 
+/// Check OutputIntent ICC profile color space signature is valid (§6.6.2.3.1 for PDF/A-1).
+///
+/// The ICC profile header bytes 16–19 encode the data color space of the profile.
+/// For a DestOutputProfile the color space must be one of the known ICC color
+/// space signatures.  An unknown signature indicates a malformed or non-ICC
+/// stream being used as a color profile.
+pub fn check_output_intent_icc_signature(pdf: &Pdf, report: &mut ComplianceReport) {
+    // Known valid ICC color space signatures (ICC.1:2004, Table 18)
+    const VALID_SIGNATURES: &[&[u8]] = &[
+        b"RGB ", b"CMYK", b"GRAY", b"Lab ", b"XYZ ", b"Luv ", b"YCbr", b"Yxy ",
+        b"HSV ", b"HLS ", b"CMY ", b"2CLR", b"3CLR", b"4CLR", b"5CLR", b"6CLR",
+        b"7CLR", b"8CLR", b"9CLR", b"ACLR", b"BCLR", b"CCLR", b"DCLR", b"ECLR",
+        b"FCLR", b"ncl ", // n-channel, colour not known
+    ];
+
+    let Some(cat) = catalog(pdf) else { return };
+    let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) else {
+        return;
+    };
+    for dict in intents.iter::<Dict<'_>>() {
+        let Some(stream) = dict.get::<Stream<'_>>(keys::DEST_OUTPUT_PROFILE) else {
+            continue;
+        };
+        let Ok(data) = stream.decoded() else {
+            continue;
+        };
+        if data.len() < 20 {
+            error(
+                report,
+                "6.6.2.3.1",
+                "OutputIntent ICC profile too short to contain a valid header (< 20 bytes)",
+            );
+            continue;
+        }
+        // Bytes 4–7: declared profile size (big-endian u32) — §6.6.2.3.3
+        let declared_size = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        if declared_size != data.len() {
+            error(
+                report,
+                "6.6.2.3.3",
+                format!(
+                    "OutputIntent ICC profile declared size {} does not match actual size {}",
+                    declared_size, data.len()
+                ),
+            );
+        }
+        // Bytes 16–19: color space signature — §6.6.2.3.1
+        let cs_sig = &data[16..20];
+        if !VALID_SIGNATURES.contains(&cs_sig) {
+            let sig_str = std::str::from_utf8(cs_sig).unwrap_or("????");
+            error(
+                report,
+                "6.6.2.3.1",
+                format!(
+                    "OutputIntent ICC profile has unknown color space signature '{}' at bytes 16–19",
+                    sig_str
+                ),
+            );
+        }
+    }
+}
+
+/// Check transparency blending color space is consistent with OutputIntent (§6.6.4).
+///
+/// When an OutputIntent with a DestOutputProfile exists, any transparency
+/// group on a page must use a blending color space that is consistent with
+/// the OutputIntent's color space (same number of components).
+/// Applies only when an OutputIntent is present; the no-OutputIntent case
+/// is already handled by `check_transparency_vs_output_intent`.
+pub fn check_transparency_blending_vs_output_intent(
+    pdf: &Pdf,
+    part: u8,
+    report: &mut ComplianceReport,
+) {
+    let Some(profile_components) = output_intent_profile_components(pdf) else {
+        return; // No OutputIntent profile — other checks handle this
+    };
+    if profile_components == 0 {
+        return; // Unknown color space in profile — caught by icc_signature check
+    }
+
+    // §6.6.4 is PDF/A-1 clause; PDF/A-2/3 uses §6.2.10 for blending CS
+    let rule = if part == 1 { "6.6.4" } else { "6.2.10" };
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) else {
+            continue;
+        };
+        let is_transparency = group
+            .get::<Name>(keys::S)
+            .is_some_and(|s| s.as_ref() == b"Transparency");
+        if !is_transparency {
+            continue;
+        }
+        // Check /CS entry for explicit device color space
+        if let Some(cs) = group.get::<Name>(keys::CS) {
+            let cs_bytes = cs.as_ref();
+            let group_components: Option<u32> = match cs_bytes {
+                b"DeviceRGB" => Some(3),
+                b"DeviceCMYK" => Some(4),
+                b"DeviceGray" => Some(1),
+                _ => None,
+            };
+            if let Some(n) = group_components {
+                if n != profile_components {
+                    error_at(
+                        report,
+                        rule,
+                        format!(
+                            "Transparency blending CS '{}' ({} components) is inconsistent \
+                             with OutputIntent profile ({} components)",
+                            std::str::from_utf8(cs_bytes).unwrap_or("?"),
+                            n,
+                            profile_components
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Check multiple OutputIntents have identical profiles (§6.6.1 for PDF/A-1, §6.2.2 for PDF/A-2/3).
+///
+/// When multiple OutputIntents each carry a DestOutputProfile the profiles
+/// must be identical (same ICC data).  Uses a byte-level prefix comparison
+/// of the first 64 bytes to avoid decompressing full profiles twice.
+pub fn check_output_intent_consistency_pdfa(
+    pdf: &Pdf,
+    part: u8,
+    report: &mut ComplianceReport,
+) {
+    let Some(cat) = catalog(pdf) else { return };
+    let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) else {
+        return;
+    };
+
+    // Collect (length, first-64-bytes) for each profile
+    let mut fingerprints: Vec<(usize, Vec<u8>)> = Vec::new();
+    for intent in intents.iter::<Dict<'_>>() {
+        if let Some(profile_stream) = intent.get::<Stream<'_>>(keys::DEST_OUTPUT_PROFILE) {
+            if let Ok(data) = profile_stream.decoded() {
+                let prefix = data[..data.len().min(64)].to_vec();
+                fingerprints.push((data.len(), prefix));
+            }
+        }
+    }
+
+    if fingerprints.len() > 1 {
+        let (len0, ref pfx0) = fingerprints[0];
+        if fingerprints
+            .iter()
+            .any(|(len, pfx)| *len != len0 || pfx != pfx0)
+        {
+            // §6.6.1 in PDF/A-1, §6.2.2 in PDF/A-2/3
+            let rule = if part == 1 { "6.6.1" } else { "6.2.2" };
+            error(
+                report,
+                rule,
+                "Multiple OutputIntents have different DestOutputProfile ICC profiles",
+            );
+        }
+    }
+}
+
 /// Check embedded file streams have /Type /EmbeddedFile (§6.1.7, §6.1.7.1).
 pub fn check_embedded_file_streams(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else {
