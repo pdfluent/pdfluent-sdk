@@ -981,12 +981,18 @@ pub fn add_annotation_to_page(
 
             if !appended {
                 // Fallback: indirect array not accessible (e.g. lives in a
-                // compressed ObjStm that was skipped or not yet decompressed).
-                // Replace /Annots with a new inline array.  Existing annots
-                // referenced from the unresolvable array are already
-                // inaccessible, so we only lose what was already broken.
+                // compressed ObjStm). Try a read-only access first — lopdf can
+                // often decompress ObjStm objects for reading even when it
+                // cannot hand out a mutable reference.  This preserves existing
+                // annotations instead of silently dropping them. Fixes #466 bug 7.
+                let existing: Vec<Object> = match doc.get_object(annots_ref) {
+                    Ok(Object::Array(ref arr)) => arr.clone(),
+                    _ => Vec::new(),
+                };
+                let mut new_annots = existing;
+                new_annots.push(Object::Reference(annot_id));
                 if let Ok(page_dict) = doc.get_dictionary_mut(page_id) {
-                    page_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
+                    page_dict.set("Annots", Object::Array(new_annots));
                 }
             }
         }
