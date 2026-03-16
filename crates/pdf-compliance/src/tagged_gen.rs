@@ -291,7 +291,13 @@ fn build_struct_elem(
     };
 
     if k_entries.len() == 1 {
-        elem_dict.set("K", k_entries.into_iter().next().unwrap());
+        elem_dict.set(
+            "K",
+            k_entries
+                .into_iter()
+                .next()
+                .expect("k_entries.len() == 1 checked above"),
+        );
     } else if !k_entries.is_empty() {
         elem_dict.set("K", Object::Array(k_entries));
     }

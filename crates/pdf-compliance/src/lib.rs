@@ -1,7 +1,45 @@
-//! PDF compliance checking (PDF/A, PDF/UA, PDF/X).
+//! PDF compliance checking: PDF/A, PDF/UA, and PDF/X.
 //!
-//! Validates PDF documents against conformance profiles
-//! (ISO 19005 for PDF/A, ISO 14289 for PDF/UA, ISO 15930 for PDF/X).
+//! Validates PDF documents against conformance profiles defined by:
+//! - **ISO 19005** — PDF/A archival format (parts 1–4)
+//! - **ISO 14289** — PDF/UA accessibility
+//! - **ISO 15930** — PDF/X prepress exchange
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use std::sync::Arc;
+//! use pdf_syntax::Pdf;
+//! use pdf_compliance::{detect_pdfa_level, validate_pdfa, PdfALevel, Severity};
+//!
+//! let data = Arc::new(std::fs::read("document.pdf").unwrap());
+//! let pdf = Pdf::new(data).unwrap();
+//!
+//! // Auto-detect the declared level, fall back to PDF/A-2B.
+//! let level = detect_pdfa_level(&pdf).unwrap_or(PdfALevel::A2b);
+//! let report = validate_pdfa(&pdf, level);
+//!
+//! if report.is_compliant() {
+//!     println!("PDF/A-{}{} compliant", level.part(), level.conformance());
+//! } else {
+//!     println!("{} error(s), {} warning(s)", report.error_count(), report.warning_count());
+//!     for issue in &report.issues {
+//!         if issue.severity == Severity::Error {
+//!             println!("  [{}] {:?}: {}", issue.rule, issue.severity, issue.message);
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! # Key Types
+//!
+//! | Type | Description |
+//! |---|---|
+//! | [`PdfALevel`] | PDF/A conformance level: `A1b`, `A2b`, `A2u`, `A3b`, `A4`, … |
+//! | [`PdfXLevel`] | PDF/X level: `X1a2003`, `X32003`, `X4` |
+//! | [`ComplianceReport`] | Validation outcome with issue list and pass/fail flag |
+//! | [`ComplianceIssue`] | Rule ID, severity, message, and optional location |
+//! | [`Severity`] | `Error`, `Warning`, `Info` |
 
 pub mod pdfa;
 pub mod pdfua;

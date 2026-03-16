@@ -1,4 +1,47 @@
-//! PDF content extraction: images, text with positions, and full-text search.
+//! PDF content extraction: text with positions, images, and full-text search.
+//!
+//! Works directly on [`lopdf::Document`] objects, which can be loaded from a
+//! file with `Document::load`. Three extraction targets are available:
+//!
+//! - **Text** — plain strings or [`TextBlock`] records with page, font, bbox
+//! - **Positioned characters** — per-character [`PositionedChar`] with bounding boxes
+//! - **Images** — [`ExtractedImage`] with raw pixel data and format metadata
+//! - **Search** — substring search with [`SearchResult`] entries (page + bboxes)
+//!
+//! # Quick Start
+//!
+//! ```no_run
+//! use lopdf::Document;
+//! use pdf_extract::{extract_text, extract_page_text, search_text, SearchOptions};
+//!
+//! let doc = Document::load("document.pdf").unwrap();
+//!
+//! // All text blocks from every page.
+//! for block in extract_text(&doc) {
+//!     println!("[page {}] {} (font: {}, size: {:.1}pt)",
+//!         block.page, block.text, block.font_name, block.font_size);
+//! }
+//!
+//! // Plain text from one page (1-based page number).
+//! let text = extract_page_text(&doc, 1).unwrap();
+//!
+//! // Full-text search with bounding boxes.
+//! let opts = SearchOptions { case_insensitive: true, ..Default::default() };
+//! for result in search_text(&doc, "invoice", &opts) {
+//!     println!("Page {}: {:?} ({} bboxes)",
+//!         result.page, result.text, result.bounding_boxes.len());
+//! }
+//! ```
+//!
+//! # Key Types
+//!
+//! | Type | Description |
+//! |---|---|
+//! | [`TextBlock`] | Text run with page number, bounding box, font name/size |
+//! | [`PositionedChar`] | Single character with per-character bounding box |
+//! | [`ExtractedImage`] | Raw image data extracted from a page |
+//! | [`SearchResult`] | Match with page, text, character bounding boxes, offset |
+//! | [`SearchOptions`] | Case sensitivity, page filter, max results, bbox toggle |
 
 pub mod error;
 pub mod images;
