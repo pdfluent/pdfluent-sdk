@@ -1,7 +1,7 @@
 # XFA-Native-Rust — Technical Architecture
 
 > Complete technical reference for the XFA PDF SDK.
-> Last updated: 2026-03-14
+> Last updated: 2026-03-16
 
 ---
 
@@ -114,9 +114,11 @@ The SDK uses two PDF parsing stacks for different purposes:
 | Stack | Crate | Purpose | Mutability |
 |-------|-------|---------|------------|
 | **hayro fork** | `pdf-syntax` | Read-only parsing, rendering, compliance checking | Immutable |
-| **lopdf** | `lopdf` (v0.39) | PDF mutation, form filling, manipulation | Mutable |
+| **lopdf** | `lopdf` (v0.39) | PDF mutation, form filling, manipulation, AES-256 encryption | Mutable |
 
-This dual-stack design allows read-only operations (rendering, text extraction, compliance) to use the zero-copy `pdf-syntax` parser, while write operations (form fill, redact, sign) go through `lopdf` which supports full PDF serialization.
+This dual-stack design allows read-only operations (rendering, text extraction, compliance) to use the zero-copy `pdf-syntax` parser, while write operations (form fill, redact, sign, encrypt) go through `lopdf` which supports full PDF serialization.
+
+lopdf exposes `aes256_encryption_state()` (see `crates/lopdf/src/encryption.rs`) — a convenience wrapper that generates a random 32-byte file key and returns an `EncryptionState` ready for `doc.encrypt(&state)`. This implements PDF 2.0 §7.6.4.3 (V=5, R=6, /CFM /AESV3). Decision: D008.
 
 ---
 
@@ -953,7 +955,10 @@ pdf-extract (text/images) → pdf-redact (GDPR)
 
 | Crate | Purpose |
 |-------|---------|
-| `sha2`, `sha1` | Hash computation |
+| `aes` (0.8) | AES-256 block cipher (used by lopdf for PDF encryption) |
+| `cbc` (0.1) | CBC mode for AES streams |
+| `sha2`, `sha1` | Hash computation (SHA-256 for AES-256 key derivation; SHA-1 for legacy RC4) |
+| `rand` (0.9) | Cryptographically random key/IV generation |
 | `rsa` | RSA signatures |
 | `p256`, `p384`, `ecdsa` | Elliptic curve signatures |
 | `spki`, `der` | X.509 certificate parsing |
@@ -1025,10 +1030,16 @@ pdf-extract (text/images) → pdf-redact (GDPR)
 
 ### Encryption Support
 
-- RC4 (40-bit, 128-bit)
-- AES-128, AES-256
-- Password-protected PDF detection and handling
-- User/owner password distinction
+**Write (encrypt):**
+- AES-256 (PDF 2.0, V=5, R=6, /CFM /AESV3) — primary, all bindings (Python, Node.js, Java)
+- RC4-128 (V=2, R=3) — legacy, available via `EncryptionVersion::V2`
+- RC4-40 (V=1, R=2) — legacy, available via `EncryptionVersion::V1`
+
+**Read (decrypt):**
+- AES-256, AES-128, RC4-128, RC4-40 — all handled by lopdf's `Document::decrypt()`
+- `pdf-syntax` supports RC4 revisions 2–4 only; AES-256-encrypted PDFs must be opened via lopdf
+
+**Implementation:** `lopdf::aes256_encryption_state(owner_pw, user_pw, perms)` → `doc.encrypt(&state)` → `doc.save()`. Each encrypted stream uses a fresh random IV (AES-256-CBC). Decision: D008.
 
 ### GDPR Compliance
 
