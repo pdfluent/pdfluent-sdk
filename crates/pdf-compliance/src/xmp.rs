@@ -1025,6 +1025,29 @@ fn check_xmp_rdf_structure(xmp: &str, report: &mut ComplianceReport) {
 /// A mismatch means the document either claims a different PDF/A version
 /// than it actually conforms to, or the identification properties are wrong.
 fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
+    // §6.7.11 test 1: XMP must use the correct pdfaid namespace URI.
+    // The canonical URI is "http://www.aiim.org/pdfa/ns/id/" (trailing slash).
+    // A wrong URI (e.g. with .html suffix) means the identification schema is
+    // not recognised by conforming processors. (#467)
+    let has_correct_pdfaid_ns = xmp.contains("http://www.aiim.org/pdfa/ns/id/");
+    let has_pdfaid_part = xmp.contains("pdfaid:part");
+    if has_pdfaid_part && !has_correct_pdfaid_ns {
+        error(
+            report,
+            "6.7.11",
+            "XMP pdfaid namespace URI is wrong or missing (must be 'http://www.aiim.org/pdfa/ns/id/')",
+        );
+        return;
+    }
+    if !has_pdfaid_part {
+        error(
+            report,
+            "6.7.11",
+            "XMP does not contain pdfaid:part (PDF/A Identification Schema is absent)",
+        );
+        return;
+    }
+
     // Extract pdfaid:part — element form <pdfaid:part>N</pdfaid:part>
     // or attribute form pdfaid:part="N"
     let declared_part = extract_nested_value(xmp, "pdfaid:part").or_else(|| {
@@ -1067,19 +1090,23 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
 
         if let Some(ref conf_str) = declared_conformance {
             let expected_conf = level.conformance();
-            if !expected_conf.is_empty()
-                && conf_str.trim().to_uppercase() != expected_conf.to_uppercase()
-            {
-                error(
-                    report,
-                    "6.7.11",
-                    format!(
-                        "XMP pdfaid:conformance is '{}' but document is being validated as PDF/A-{}{}",
-                        conf_str.trim(),
-                        level.part(),
-                        level.conformance()
-                    ),
-                );
+            let actual = conf_str.trim();
+            if !expected_conf.is_empty() {
+                // Case-sensitive comparison: spec requires uppercase letter (e.g. "A", "B", "U").
+                // A lowercase value (e.g. "a") is a §6.7.11 violation. (#467)
+                if actual != expected_conf {
+                    error(
+                        report,
+                        "6.7.11",
+                        format!(
+                            "XMP pdfaid:conformance is '{}' but expected '{}' (PDF/A-{}{})",
+                            actual,
+                            expected_conf,
+                            level.part(),
+                            level.conformance()
+                        ),
+                    );
+                }
             }
         }
     }

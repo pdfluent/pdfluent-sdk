@@ -7675,22 +7675,28 @@ pub fn check_embedded_file_spec_keys(pdf: &Pdf, part: u8, report: &mut Complianc
     };
 
     if let Some(names_arr) = ef_tree.get::<Array<'_>>(keys::NAMES) {
-        // Names array is [name1 spec1 name2 spec2 ...]
-        // Iterate through the file spec dicts
-        for spec in names_arr.iter::<Dict<'_>>() {
+        // Names array is [name1 spec1 name2 spec2 ...].
+        // iter::<Dict>() stops on the first string, so collect as Object and
+        // take every second item (the spec dict). Fixes #467.
+        let items: Vec<Object<'_>> = names_arr.iter::<Object<'_>>().collect();
+        for chunk in items.chunks(2) {
+            let spec = match chunk.get(1) {
+                Some(Object::Dict(d)) => d,
+                _ => continue,
+            };
             let has_ef = spec.contains_key(keys::EF);
             if !has_ef {
                 continue;
             }
             let rule = if part == 4 { "6.9" } else { "6.8" };
             // F/UF must be present AND non-null (veraPDF t2: F=null counts as missing)
-            if !is_present_nonnull(&spec, keys::F) {
+            if !is_present_nonnull(spec, keys::F) {
                 error(report, rule, "File specification missing /F key");
             }
-            if !is_present_nonnull(&spec, b"UF" as &[u8]) {
+            if !is_present_nonnull(spec, b"UF" as &[u8]) {
                 error(report, rule, "File specification missing /UF key");
             }
-            if part >= 3 && !is_present_nonnull(&spec, b"AFRelationship" as &[u8]) {
+            if part >= 3 && !is_present_nonnull(spec, b"AFRelationship" as &[u8]) {
                 error(
                     report,
                     rule,
