@@ -56,6 +56,13 @@ pub struct Document {
     /// The encryption state stores the parameters that were used to decrypt this document if the
     /// document has been decrypted.
     pub encryption_state: Option<EncryptionState>,
+
+    /// ObjStm container object IDs that have not yet been decompressed.
+    ///
+    /// Populated only when `LoadOptions::lazy_objstm` is set during loading.
+    /// Call `Document::resolve_pending_object_streams` to extract the objects
+    /// contained in these streams before accessing them.
+    pub pending_obj_streams: Vec<ObjectId>,
 }
 
 impl Document {
@@ -73,6 +80,7 @@ impl Document {
             bookmark_table: HashMap::new(),
             xref_start: 0,
             encryption_state: None,
+            pending_obj_streams: Vec::new(),
         }
     }
 
@@ -92,6 +100,7 @@ impl Document {
             bookmark_table: HashMap::new(),
             xref_start: 0,
             encryption_state: None,
+            pending_obj_streams: Vec::new(),
         }
     }
 
@@ -183,6 +192,41 @@ impl Document {
         let (ref_id, _obj) = self.dereference(object)?;
 
         Ok(self.objects.get_mut(&ref_id.unwrap_or(id)).unwrap())
+    }
+
+    /// Decompress and extract all ObjStm streams deferred by `LoadOptions::lazy_objstm`.
+    ///
+    /// Must be called before accessing any object that resides inside an ObjStm
+    /// container when the document was loaded with `lazy_objstm: true`.  Safe to
+    /// call on documents loaded without the lazy flag (it is a no-op then).
+    ///
+    /// After this call `pending_obj_streams` is empty and every contained object
+    /// is accessible via `get_object`.
+    pub fn resolve_pending_object_streams(&mut self) -> Result<()> {
+        // Drain the pending list so we can iterate while mutating self.objects.
+        let ids: Vec<ObjectId> = self.pending_obj_streams.drain(..).collect();
+        for container_id in ids {
+            let mut stream = self
+                .objects
+                .get(&container_id)
+                .ok_or(Error::ObjStmDecompress {
+                    container_id: container_id.0,
+                })?
+                .as_stream()?
+                .clone();
+            let obj_stream = ObjectStream::new(&mut stream).map_err(|_| {
+                Error::ObjStmDecompress {
+                    container_id: container_id.0,
+                }
+            })?;
+            // Only insert if not already present (matches load_objects_raw behaviour).
+            for (id, object) in obj_stream.objects {
+                self.objects.entry(id).or_insert(object);
+            }
+            // The container is no longer needed; drop it to free memory.
+            self.objects.remove(&container_id);
+        }
+        Ok(())
     }
 
     /// Get the object ID of the page that contains `id`.

@@ -26,6 +26,7 @@ mod processor;
 mod toc;
 mod writer;
 
+mod load_options;
 mod object_stream;
 mod parser;
 mod parser_aux;
@@ -44,6 +45,7 @@ pub use encodings::{Encoding, encode_utf8, encode_utf16_be};
 pub use encryption::{EncryptionState, EncryptionVersion, Permissions, aes256_encryption_state};
 pub use error::{Error, Result};
 pub use incremental_document::IncrementalDocument;
+pub use load_options::{DEFAULT_MAX_FILE_BYTES, LoadOptions};
 pub use object_stream::{ObjectStream, ObjectStreamBuilder, ObjectStreamConfig};
 pub use outlines::Outline;
 pub use reader::{PdfMetadata, Reader};
