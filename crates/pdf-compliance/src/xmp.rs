@@ -146,6 +146,12 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_pdfa_version_match(xmp_text, level, report);
     check_dc_title_consistency(pdf, xmp_text, report);
     check_deprecated_types(xmp_text, report);
+    // §6.6.2.3.1 test=2 / §6.7.9 test=3 — predefined property value types
+    check_predefined_property_types(xmp_text, level, report);
+    // §6.7.9 test=3 / §6.6.2.3.1 test=3 — non-standard properties in pdf: namespace
+    check_pdf_namespace_properties(xmp_text, level, report);
+    // §6.7.11 test=4/5 — pdfaid namespace must use 'pdfaid' prefix
+    check_pdfaid_prefix(xmp_text, report);
 }
 
 /// §6.6.2.1 — XMP must have a correct packet header.
@@ -464,6 +470,7 @@ fn is_valid_value_type(vtype: &str, custom_types: &HashSet<String>) -> bool {
     // Custom declared type
     custom_types.contains(vtype)
 }
+
 
 /// §6.7.9 / §6.6.2.3.1 / §6.5.2 — Validate all XMP properties use known or declared namespaces.
 ///
@@ -1130,6 +1137,733 @@ fn check_dc_title_consistency(pdf: &Pdf, xmp: &str, report: &mut ComplianceRepor
                 "Info dict has /Title but XMP is missing dc:title (required by §6.7.8)",
             );
         }
+    }
+}
+
+/// Category of a predefined XMP property's value type, used to validate
+/// how the property is serialised in RDF/XML (§6.6.2.3.1 test=2, §6.7.9 test=3).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PropValueKind {
+    /// Scalar: Text, Integer, Real, Boolean, URI, Date, … — must NOT be
+    /// wrapped in rdf:Seq / rdf:Bag / rdf:Alt.
+    Scalar,
+    /// Lang Alt — must use <rdf:Alt><rdf:li xml:lang="…">
+    LangAlt,
+    /// Ordered array — must use <rdf:Seq>
+    Seq,
+    /// Unordered array — must use <rdf:Bag>
+    Bag,
+    /// Scalar Integer — like Scalar but additionally the value must not
+    /// contain a decimal point or exponent (veraPDF 6.6.2.3.1 test=2).
+    Integer,
+    /// Structure — must use rdf:parseType="Resource" or contain child elements.
+    /// Plain text is invalid for struct types (e.g. xmpDM:startTimecode = Timecode struct).
+    Struct,
+}
+
+/// Look up the expected value kind for a well-known predefined XMP property.
+///
+/// Returns `None` for properties not in our table (we don't flag those).
+/// The table is built from the XMP specification part 2 (predefined schemas)
+/// and covers the properties actually tested by veraPDF's 6.6.2.3.1 / 6.7.9
+/// test suite.
+fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
+    use PropValueKind::*;
+    match qualified_name {
+        // ── dc: (Dublin Core) ────────────────────────────────────────────────
+        "dc:contributor" => Some(Bag),
+        "dc:coverage" => Some(Scalar),
+        "dc:creator" => Some(Seq),
+        "dc:date" => Some(Seq),
+        "dc:description" => Some(LangAlt),
+        "dc:format" => Some(Scalar),
+        "dc:identifier" => Some(Scalar),
+        "dc:language" => Some(Bag),
+        "dc:publisher" => Some(Bag),
+        "dc:relation" => Some(Bag),
+        "dc:rights" => Some(LangAlt),
+        "dc:source" => Some(Scalar),
+        "dc:subject" => Some(Bag),
+        "dc:title" => Some(LangAlt),
+        "dc:type" => Some(Bag),
+
+        // ── xmp: (XMP Basic) ─────────────────────────────────────────────────
+        "xmp:Advisory" => Some(Bag),
+        "xmp:BaseURL" => Some(Scalar),
+        "xmp:CreateDate" => Some(Scalar),
+        "xmp:CreatorTool" => Some(Scalar),
+        "xmp:Identifier" => Some(Bag),
+        "xmp:Label" => Some(Scalar),
+        "xmp:MetadataDate" => Some(Scalar),
+        "xmp:ModifyDate" => Some(Scalar),
+        "xmp:Nickname" => Some(Scalar),
+        "xmp:Rating" => Some(Scalar),
+        "xmp:Thumbnails" => Some(Bag),
+
+        // ── xmpRights: ───────────────────────────────────────────────────────
+        "xmpRights:Certificate" => Some(Scalar),
+        "xmpRights:Marked" => Some(Scalar),
+        "xmpRights:Owner" => Some(Bag),
+        "xmpRights:UsageTerms" => Some(LangAlt),
+        "xmpRights:WebStatement" => Some(Scalar),
+
+        // ── xmpMM: (Media Management) ────────────────────────────────────────
+        "xmpMM:DerivedFrom" => Some(Scalar),
+        "xmpMM:DocumentID" => Some(Scalar),
+        "xmpMM:History" => Some(Seq),
+        "xmpMM:Ingredients" => Some(Bag),
+        "xmpMM:InstanceID" => Some(Scalar),
+        "xmpMM:ManagedFrom" => Some(Scalar),
+        "xmpMM:Manager" => Some(Scalar),
+        "xmpMM:ManageTo" => Some(Scalar),
+        "xmpMM:ManageUI" => Some(Scalar),
+        "xmpMM:ManagerVariant" => Some(Scalar),
+        "xmpMM:OriginalDocumentID" => Some(Scalar),
+        "xmpMM:Pantry" => Some(Bag),
+        "xmpMM:RenditionClass" => Some(Scalar),
+        "xmpMM:RenditionParams" => Some(Scalar),
+        "xmpMM:VersionID" => Some(Scalar),
+        "xmpMM:Versions" => Some(Seq),
+
+        // ── xmpTPg: (Paged-text) ─────────────────────────────────────────────
+        "xmpTPg:Colorants" => Some(Seq),
+        "xmpTPg:Fonts" => Some(Bag),
+        "xmpTPg:MaxPageSize" => Some(Scalar),
+        "xmpTPg:NPages" => Some(Integer),
+        "xmpTPg:PlateNames" => Some(Seq),
+        "xmpTPg:SwatchGroups" => Some(Seq),
+
+        // ── xmpDM: (Dynamic Media) ───────────────────────────────────────────
+        "xmpDM:artist" => Some(Scalar),
+        "xmpDM:album" => Some(Scalar),
+        "xmpDM:altTapeName" => Some(Scalar),
+        "xmpDM:audioChannelType" => Some(Scalar),
+        "xmpDM:audioCompressor" => Some(Scalar),
+        "xmpDM:audioSampleRate" => Some(Integer),
+        "xmpDM:audioSampleType" => Some(Scalar),
+        "xmpDM:cameraAngle" => Some(Scalar),
+        "xmpDM:cameraLabel" => Some(Scalar),
+        "xmpDM:cameraModel" => Some(Scalar),
+        "xmpDM:cameraMove" => Some(Scalar),
+        "xmpDM:client" => Some(Scalar),
+        "xmpDM:comment" => Some(Scalar),
+        "xmpDM:composer" => Some(Scalar),
+        "xmpDM:contributedMedia" => Some(Bag),
+        "xmpDM:copyright" => Some(Scalar),
+        "xmpDM:director" => Some(Scalar),
+        "xmpDM:directorPhotography" => Some(Scalar),
+        "xmpDM:discNumber" => Some(Scalar),
+        "xmpDM:duration" => Some(Struct),
+        "xmpDM:engineer" => Some(Scalar),
+        "xmpDM:fileDataRate" => Some(Scalar),
+        "xmpDM:genre" => Some(Scalar),
+        "xmpDM:good" => Some(Scalar),
+        "xmpDM:instrument" => Some(Scalar),
+        "xmpDM:introTime" => Some(Scalar),
+        "xmpDM:key" => Some(Scalar),
+        "xmpDM:logComment" => Some(Scalar),
+        "xmpDM:loop" => Some(Scalar),
+        "xmpDM:markers" => Some(Seq),
+        "xmpDM:metadataModDate" => Some(Scalar),
+        "xmpDM:numberOfBeats" => Some(Scalar),
+        "xmpDM:outCue" => Some(Struct),
+        "xmpDM:partOfCompilation" => Some(Scalar),
+        "xmpDM:pick" => Some(Scalar),
+        "xmpDM:projectName" => Some(Scalar),
+        "xmpDM:projectRef" => Some(Scalar),
+        "xmpDM:pullDown" => Some(Scalar),
+        "xmpDM:relativePeakAudio" => Some(Scalar),
+        "xmpDM:relativeTapeOffset" => Some(Scalar),
+        "xmpDM:releaseDate" => Some(Scalar),
+        "xmpDM:resizeType" => Some(Scalar),
+        "xmpDM:scaleType" => Some(Scalar),
+        "xmpDM:scene" => Some(Scalar),
+        "xmpDM:shotDate" => Some(Scalar),
+        "xmpDM:shotDay" => Some(Scalar),
+        "xmpDM:shotLocation" => Some(Scalar),
+        "xmpDM:shotName" => Some(Scalar),
+        "xmpDM:shotNumber" => Some(Scalar),
+        "xmpDM:shotSize" => Some(Scalar),
+        "xmpDM:speakerPlacement" => Some(Scalar),
+        "xmpDM:startTimecode" => Some(Struct),
+        "xmpDM:stretch" => Some(Scalar),
+        "xmpDM:takeNumber" => Some(Integer),
+        "xmpDM:tapeName" => Some(Scalar),
+        "xmpDM:tempo" => Some(Scalar),
+        "xmpDM:timeScaleParams" => Some(Scalar),
+        "xmpDM:timeSignature" => Some(Scalar),
+        "xmpDM:trackNumber" => Some(Integer),
+        "xmpDM:Tracks" => Some(Bag),
+        "xmpDM:videoAlphaMode" => Some(Scalar),
+        "xmpDM:videoAlphaPremultipleColor" => Some(Scalar),
+        "xmpDM:videoAlphaUnityIsTransparent" => Some(Scalar),
+        "xmpDM:videoColorSpace" => Some(Scalar),
+        "xmpDM:videoCompressor" => Some(Scalar),
+        "xmpDM:videoFieldOrder" => Some(Scalar),
+        "xmpDM:videoFrameRate" => Some(Scalar),
+        "xmpDM:videoFrameSize" => Some(Scalar),
+        "xmpDM:videoModDate" => Some(Scalar),
+        "xmpDM:videoPixelAspectRatio" => Some(Scalar),
+        "xmpDM:videoPixelDepth" => Some(Scalar),
+
+        // ── photoshop: ───────────────────────────────────────────────────────
+        "photoshop:AncestorID" => Some(Scalar),
+        "photoshop:AuthorsPosition" => Some(Scalar),
+        "photoshop:CaptionWriter" => Some(Scalar),
+        "photoshop:Category" => Some(Scalar),
+        "photoshop:City" => Some(Scalar),
+        "photoshop:ColorMode" => Some(Integer),
+        "photoshop:ColorProfile" => Some(Scalar),
+        "photoshop:Country" => Some(Scalar),
+        "photoshop:Credit" => Some(Scalar),
+        "photoshop:DateCreated" => Some(Scalar),
+        "photoshop:DocumentAncestors" => Some(Bag),
+        "photoshop:Headline" => Some(Scalar),
+        "photoshop:History" => Some(Scalar),
+        "photoshop:ICCProfile" => Some(Scalar),
+        "photoshop:Instructions" => Some(Scalar),
+        "photoshop:LegacyIPTCDigest" => Some(Scalar),
+        "photoshop:SidecarForExtension" => Some(Scalar),
+        "photoshop:Source" => Some(Scalar),
+        "photoshop:State" => Some(Scalar),
+        "photoshop:SupplementalCategories" => Some(Bag),
+        "photoshop:TextLayers" => Some(Seq),
+        "photoshop:TransmissionReference" => Some(Scalar),
+        "photoshop:Urgency" => Some(Integer),
+
+        // ── tiff: (EXIF/TIFF) ────────────────────────────────────────────────
+        "tiff:Artist" => Some(Scalar),
+        "tiff:BitsPerSample" => Some(Seq),
+        "tiff:CellLength" => Some(Integer),
+        "tiff:CellWidth" => Some(Integer),
+        "tiff:ColorMap" => Some(Seq),
+        "tiff:Compression" => Some(Integer),
+        "tiff:Copyright" => Some(LangAlt),
+        "tiff:DateTime" => Some(Scalar),
+        "tiff:DocumentName" => Some(Scalar),
+        "tiff:ExifIFD" => Some(Scalar),
+        "tiff:ExtraSamples" => Some(Seq),
+        "tiff:FillOrder" => Some(Integer),
+        "tiff:FreeByteCounts" => Some(Integer),
+        "tiff:FreeOffsets" => Some(Integer),
+        "tiff:GrayResponseCurve" => Some(Seq),
+        "tiff:GrayResponseUnit" => Some(Integer),
+        "tiff:HostComputer" => Some(Scalar),
+        "tiff:ImageDescription" => Some(LangAlt),
+        "tiff:ImageLength" => Some(Integer),
+        "tiff:ImageWidth" => Some(Integer),
+        "tiff:InkNames" => Some(Scalar),
+        "tiff:InkSet" => Some(Integer),
+        "tiff:JPEGInterchangeFormat" => Some(Integer),
+        "tiff:JPEGInterchangeFormatLength" => Some(Integer),
+        "tiff:JPEGProc" => Some(Integer),
+        "tiff:Make" => Some(Scalar),
+        "tiff:MaxSampleValue" => Some(Seq),
+        "tiff:MinSampleValue" => Some(Seq),
+        "tiff:Model" => Some(Scalar),
+        "tiff:NewSubfileType" => Some(Integer),
+        "tiff:Orientation" => Some(Integer),
+        "tiff:PhotometricInterpretation" => Some(Integer),
+        "tiff:PlanarConfiguration" => Some(Integer),
+        "tiff:PrimaryChromaticities" => Some(Seq),
+        "tiff:ReferenceBlackWhite" => Some(Seq),
+        "tiff:ResolutionUnit" => Some(Integer),
+        "tiff:RowsPerStrip" => Some(Integer),
+        "tiff:SamplesPerPixel" => Some(Integer),
+        "tiff:SampleFormat" => Some(Seq),
+        "tiff:Software" => Some(Scalar),
+        "tiff:StripByteCounts" => Some(Seq),
+        "tiff:StripOffsets" => Some(Seq),
+        "tiff:SubfileType" => Some(Integer),
+        "tiff:TransferFunction" => Some(Seq),
+        "tiff:TransferRange" => Some(Scalar),
+        "tiff:WhitePoint" => Some(Seq),
+        "tiff:XResolution" => Some(Scalar),
+        "tiff:YCbCrCoefficients" => Some(Seq),
+        "tiff:YCbCrPositioning" => Some(Integer),
+        "tiff:YCbCrSubSampling" => Some(Seq),
+        "tiff:YResolution" => Some(Scalar),
+
+        // ── exif: (EXIF) ─────────────────────────────────────────────────────
+        "exif:ApertureValue" => Some(Scalar),
+        "exif:BrightnessValue" => Some(Scalar),
+        "exif:CFAPattern" => Some(Scalar),
+        "exif:ColorSpace" => Some(Integer),
+        "exif:ComponentsConfiguration" => Some(Seq),
+        "exif:CompressedBitsPerPixel" => Some(Scalar),
+        "exif:Contrast" => Some(Integer),
+        "exif:CustomRendered" => Some(Integer),
+        "exif:DateTimeDigitized" => Some(Scalar),
+        "exif:DateTimeOriginal" => Some(Scalar),
+        "exif:DeviceSettingDescription" => Some(Scalar),
+        "exif:DigitalZoomRatio" => Some(Scalar),
+        "exif:ExifVersion" => Some(Scalar),
+        "exif:ExposureBiasValue" => Some(Scalar),
+        "exif:ExposureIndex" => Some(Scalar),
+        "exif:ExposureMode" => Some(Integer),
+        "exif:ExposureProgram" => Some(Integer),
+        "exif:ExposureTime" => Some(Scalar),
+        "exif:FileSource" => Some(Integer),
+        "exif:Flash" => Some(Scalar),
+        "exif:FlashEnergy" => Some(Scalar),
+        "exif:FlashpixVersion" => Some(Scalar),
+        "exif:FNumber" => Some(Scalar),
+        "exif:FocalLength" => Some(Scalar),
+        "exif:FocalLengthIn35mmFilm" => Some(Integer),
+        "exif:FocalPlaneResolutionUnit" => Some(Integer),
+        "exif:FocalPlaneXResolution" => Some(Scalar),
+        "exif:FocalPlaneYResolution" => Some(Scalar),
+        "exif:GainControl" => Some(Integer),
+        "exif:GPSAltitude" => Some(Scalar),
+        "exif:GPSAltitudeRef" => Some(Integer),
+        "exif:GPSAreaInformation" => Some(Scalar),
+        "exif:GPSDestBearing" => Some(Scalar),
+        "exif:GPSDestBearingRef" => Some(Scalar),
+        "exif:GPSDestDistance" => Some(Scalar),
+        "exif:GPSDestDistanceRef" => Some(Scalar),
+        "exif:GPSDestLatitude" => Some(Scalar),
+        "exif:GPSDestLongitude" => Some(Scalar),
+        "exif:GPSDifferential" => Some(Integer),
+        "exif:GPSDOP" => Some(Scalar),
+        "exif:GPSImgDirection" => Some(Scalar),
+        "exif:GPSImgDirectionRef" => Some(Scalar),
+        "exif:GPSLatitude" => Some(Scalar),
+        "exif:GPSLongitude" => Some(Scalar),
+        "exif:GPSMapDatum" => Some(Scalar),
+        "exif:GPSMeasureMode" => Some(Scalar),
+        "exif:GPSProcessingMethod" => Some(Scalar),
+        "exif:GPSSatellites" => Some(Scalar),
+        "exif:GPSSpeed" => Some(Scalar),
+        "exif:GPSSpeedRef" => Some(Scalar),
+        "exif:GPSStatus" => Some(Scalar),
+        "exif:GPSTimeStamp" => Some(Scalar),
+        "exif:GPSTrack" => Some(Scalar),
+        "exif:GPSTrackRef" => Some(Scalar),
+        "exif:GPSVersionID" => Some(Scalar),
+        "exif:ImageUniqueID" => Some(Scalar),
+        "exif:ISOSpeedRatings" => Some(Seq),
+        "exif:InteroperabilityIndex" => Some(Scalar),
+        "exif:LightSource" => Some(Integer),
+        "exif:MakerNote" => Some(Scalar),
+        "exif:MaxApertureValue" => Some(Scalar),
+        "exif:MeteringMode" => Some(Integer),
+        "exif:OECF" => Some(Scalar),
+        "exif:PixelXDimension" => Some(Integer),
+        "exif:PixelYDimension" => Some(Integer),
+        "exif:RelatedSoundFile" => Some(Scalar),
+        "exif:Saturation" => Some(Integer),
+        "exif:SceneCaptureType" => Some(Integer),
+        "exif:SceneType" => Some(Integer),
+        "exif:SensingMethod" => Some(Integer),
+        "exif:Sharpness" => Some(Integer),
+        "exif:ShutterSpeedValue" => Some(Scalar),
+        "exif:SpatialFrequencyResponse" => Some(Scalar),
+        "exif:SpectralSensitivity" => Some(Scalar),
+        "exif:SubjectArea" => Some(Seq),
+        "exif:SubjectDistance" => Some(Scalar),
+        "exif:SubjectDistanceRange" => Some(Integer),
+        "exif:SubjectLocation" => Some(Seq),
+        "exif:UserComment" => Some(LangAlt),
+        "exif:WhiteBalance" => Some(Integer),
+
+        // ── crs: (Camera Raw Settings) ───────────────────────────────────────
+        "crs:AutoBrightness" => Some(Scalar),
+        "crs:AutoContrast" => Some(Scalar),
+        "crs:AutoExposure" => Some(Scalar),
+        "crs:AutoShadows" => Some(Scalar),
+        "crs:BlueHue" => Some(Integer),
+        "crs:BlueSaturation" => Some(Integer),
+        "crs:Brightness" => Some(Integer),
+        "crs:CameraProfile" => Some(Scalar),
+        "crs:ChromaticAberrationB" => Some(Integer),
+        "crs:ChromaticAberrationR" => Some(Integer),
+        "crs:ColorNoiseReduction" => Some(Integer),
+        "crs:Contrast" => Some(Integer),
+        "crs:CropTop" => Some(Scalar),
+        "crs:CropLeft" => Some(Scalar),
+        "crs:CropBottom" => Some(Scalar),
+        "crs:CropRight" => Some(Scalar),
+        "crs:CropAngle" => Some(Scalar),
+        "crs:CropWidth" => Some(Scalar),
+        "crs:CropHeight" => Some(Scalar),
+        "crs:CropUnits" => Some(Integer),
+        "crs:Exposure" => Some(Scalar),
+        "crs:GreenHue" => Some(Integer),
+        "crs:GreenSaturation" => Some(Integer),
+        "crs:HasCrop" => Some(Scalar),
+        "crs:HasSettings" => Some(Scalar),
+        "crs:LuminanceSmoothing" => Some(Integer),
+        "crs:RawFileName" => Some(Scalar),
+        "crs:RedHue" => Some(Integer),
+        "crs:RedSaturation" => Some(Integer),
+        "crs:Saturation" => Some(Integer),
+        "crs:Shadows" => Some(Integer),
+        "crs:ShadowTint" => Some(Integer),
+        "crs:Sharpness" => Some(Integer),
+        "crs:Temperature" => Some(Integer),
+        "crs:Tint" => Some(Integer),
+        "crs:ToneCurve" => Some(Seq),
+        "crs:ToneCurveName" => Some(Scalar),
+        "crs:Version" => Some(Scalar),
+        "crs:Vignetting" => Some(Integer),
+        "crs:VignettingMidpoint" => Some(Integer),
+        "crs:WhiteBalance" => Some(Scalar),
+
+        // ── pdf: ─────────────────────────────────────────────────────────────
+        "pdf:Keywords" => Some(Scalar),
+        "pdf:PDFVersion" => Some(Scalar),
+        "pdf:Producer" => Some(Scalar),
+        "pdf:Trapped" => Some(Scalar),
+
+        _ => None,
+    }
+}
+
+/// Valid property names in the `pdf:` XMP namespace (ISO 16684 / XMP Specification Part 2,
+/// Section 8.4).  Any `pdf:X` property not in this set is non-standard.
+const VALID_PDF_PROPERTIES: &[&str] = &[
+    "pdf:Keywords",
+    "pdf:PDFVersion",
+    "pdf:Producer",
+    "pdf:Trapped",
+];
+
+/// §6.7.9 test=3 / §6.6.2.3.1 test=3 — Non-standard property in restricted XMP namespace.
+///
+/// The `pdf:` namespace is a "closed" namespace with exactly four defined properties.
+/// Any other `pdf:X` property is not in the predefined schemas and triggers §6.7.9. (#467)
+fn check_pdf_namespace_properties(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
+    let rule = match level.part() {
+        1 => "6.7.9",
+        4 => "6.5.2",
+        _ => "6.6.2.3.1",
+    };
+
+    // Scan for <pdf:Name or pdf:Name= patterns
+    let bytes = xmp.as_bytes();
+    let mut pos = 0;
+    let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    while pos + 4 < bytes.len() {
+        // Look for 'pdf:' preceded by '<' or whitespace
+        if &bytes[pos..pos + 4] == b"pdf:" {
+            // Check what precedes: must be '<' (element start) or whitespace (attribute)
+            let preceded_by_tag_start = pos == 0
+                || bytes[pos - 1] == b'<'
+                || bytes[pos - 1] == b' '
+                || bytes[pos - 1] == b'\t'
+                || bytes[pos - 1] == b'\n';
+            if preceded_by_tag_start {
+                // Extract property name
+                let name_start = pos;
+                let name_end = xmp[pos..]
+                    .find(['>', '/', ' ', '\t', '\n', '=', '\r'])
+                    .map(|i| pos + i)
+                    .unwrap_or(xmp.len());
+                let prop_name = &xmp[name_start..name_end];
+
+                // Skip closing tags, xmlns: declarations, and rdf:container
+                if !prop_name.starts_with('/') && !prop_name.is_empty() && !reported.contains(prop_name) {
+                    // Check if this is a known pdf: property
+                    if !VALID_PDF_PROPERTIES.contains(&prop_name) {
+                        error(
+                            report,
+                            rule,
+                            format!(
+                                "XMP property '{}' is not defined in the predefined pdf: schema",
+                                prop_name
+                            ),
+                        );
+                        reported.insert(prop_name.to_string());
+                    }
+                }
+            }
+            pos += 4;
+        } else {
+            pos += 1;
+        }
+    }
+}
+
+/// §6.6.2.3.1 test=2 / §6.7.9 test=3 — Validate value types of predefined XMP properties.
+///
+/// For every well-known predefined XMP property found in the XMP stream,
+/// verify that its value is serialised in the correct RDF/XML form:
+/// - Scalar properties (Text, Integer, Real, URI, …) must NOT contain an
+///   rdf:Seq / rdf:Bag / rdf:Alt container.
+/// - Lang Alt properties (e.g. dc:title, xmpRights:UsageTerms) must use
+///   rdf:Alt, and each rdf:li must carry an xml:lang attribute.
+/// - Seq / Bag properties must use the correct container type.
+/// - Integer properties must additionally have an integer value (no decimal
+///   point and no exponent notation).
+///
+/// This check covers the veraPDF test suite 6-6-2-3-1-tXX-fail cases and
+/// the isartor-6-7-2-tXX-fail cases. (#467)
+fn check_predefined_property_types(
+    xmp: &str,
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
+    let rule = match level.part() {
+        1 => "6.7.9",
+        4 => "6.5.2",
+        _ => "6.6.2.3.1",
+    };
+
+    // We need to find all occurrences of known properties and inspect their content.
+    // Strategy: scan for "<prefix:name" patterns, extract the element body, then
+    // check whether it contains an rdf:container or a plain value.
+
+    // Build a lookup set of all properties we care about.  This avoids a full
+    // XMP parse — we do a targeted scan matching "qualified-name>" or
+    // "qualified-name " followed by an attribute.
+    let mut reported: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+    // Look for element-form properties: <prefix:name>...</prefix:name>
+    // We scan for "<" + known-property-name, then extract the element body.
+    // To avoid false matches inside attribute values we only look at positions
+    // where bytes[pos-1] == b'<' or is whitespace (start of element).
+    let bytes = xmp.as_bytes();
+    let mut pos = 0;
+
+    while pos < bytes.len().saturating_sub(5) {
+        // Fast-path: only start checking at '<'
+        if bytes[pos] != b'<' {
+            pos += 1;
+            continue;
+        }
+        // Skip '</' closing tags
+        if pos + 1 < bytes.len() && bytes[pos + 1] == b'/' {
+            pos += 1;
+            continue;
+        }
+        // Extract the tag name (up to '>', '/' or space)
+        let name_start = pos + 1;
+        let name_end = xmp[name_start..]
+            .find(['>', '/', ' ', '\t', '\n', '\r'])
+            .map(|i| name_start + i)
+            .unwrap_or(xmp.len());
+        let tag_name = &xmp[name_start..name_end];
+
+        // Only process known predefined properties
+        if let Some(kind) = predefined_prop_kind(tag_name) {
+            if !reported.contains(tag_name) {
+                // Find the element body between '>' and '</tag_name>'
+                let close_start = match xmp[name_end..].find('>') {
+                    Some(i) => name_end + i + 1,
+                    None => { pos = name_end; continue; }
+                };
+                let close_tag = format!("</{}>", tag_name);
+                let body_end = match xmp[close_start..].find(&close_tag) {
+                    Some(i) => close_start + i,
+                    None => { pos = close_start; continue; }
+                };
+                let body = &xmp[close_start..body_end];
+
+                // Check for container violations
+                let has_seq = body.contains("<rdf:Seq") || body.contains("<rdf:seq");
+                let has_bag = body.contains("<rdf:Bag") || body.contains("<rdf:bag");
+                let has_alt = body.contains("<rdf:Alt") || body.contains("<rdf:alt");
+                let has_container = has_seq || has_bag || has_alt;
+
+                let violation = match kind {
+                    PropValueKind::Scalar | PropValueKind::Integer => {
+                        if has_container {
+                            Some(format!(
+                                "XMP property '{}' is a scalar type but is wrapped in an rdf container",
+                                tag_name
+                            ))
+                        } else if kind == PropValueKind::Integer {
+                            // Integer value must not have decimal point or exponent
+                            let val = body.trim();
+                            // Accept empty (missing) value without flagging; the
+                            // scalar container check above covers the container case.
+                            // Only flag non-empty values that look like reals.
+                            if !val.is_empty() && !val.starts_with('<') && is_non_integer_value(val) {
+                                Some(format!(
+                                    "XMP property '{}' requires an Integer value but got '{}'",
+                                    tag_name,
+                                    &val[..val.len().min(40)]
+                                ))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    PropValueKind::LangAlt => {
+                        if !has_alt {
+                            // Lang Alt must use rdf:Alt
+                            if has_seq || has_bag {
+                                Some(format!(
+                                    "XMP property '{}' requires 'Lang Alt' (rdf:Alt) but uses wrong container",
+                                    tag_name
+                                ))
+                            } else if !body.trim().is_empty() && !body.trim().starts_with('<') {
+                                // Plain text where Lang Alt required
+                                Some(format!(
+                                    "XMP property '{}' requires 'Lang Alt' (rdf:Alt) but is plain text",
+                                    tag_name
+                                ))
+                            } else {
+                                None
+                            }
+                        } else {
+                            // Has rdf:Alt — check that rdf:li elements have xml:lang
+                            // Find first rdf:li without xml:lang
+                            if has_rdf_li_without_lang(body) {
+                                Some(format!(
+                                    "XMP property '{}' has rdf:Alt but rdf:li is missing required xml:lang attribute",
+                                    tag_name
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                    PropValueKind::Seq => {
+                        if has_bag || has_alt {
+                            Some(format!(
+                                "XMP property '{}' requires 'seq' (rdf:Seq) but uses rdf:Bag or rdf:Alt",
+                                tag_name
+                            ))
+                        } else if !has_seq && !body.trim().is_empty() && !body.trim().starts_with('<') {
+                            // Plain text where Seq required (e.g. dc:creator "text", exif:ComponentsConfiguration "1.0 2.0")
+                            Some(format!(
+                                "XMP property '{}' requires 'seq' (rdf:Seq) but is plain text",
+                                tag_name
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    PropValueKind::Bag => {
+                        if has_seq || has_alt {
+                            Some(format!(
+                                "XMP property '{}' requires 'bag' (rdf:Bag) but uses rdf:Seq or rdf:Alt",
+                                tag_name
+                            ))
+                        } else if !has_bag && !body.trim().is_empty() && !body.trim().starts_with('<') {
+                            // Plain text where Bag required (e.g. xmpRights:Owner "Some owner")
+                            Some(format!(
+                                "XMP property '{}' requires 'bag' (rdf:Bag) but is plain text",
+                                tag_name
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    PropValueKind::Struct => {
+                        // Struct types must be serialised as an RDF resource (with sub-elements),
+                        // not as a plain text value.  A valid struct uses either
+                        // rdf:parseType="Resource" on the property element or contains child
+                        // namespace-prefixed elements.
+                        let trimmed = body.trim();
+                        let is_plain_text = !trimmed.is_empty()
+                            && !trimmed.starts_with('<')
+                            && !body.contains("rdf:parseType");
+                        if is_plain_text {
+                            Some(format!(
+                                "XMP property '{}' is a structure type but contains plain text value",
+                                tag_name
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                };
+
+                if let Some(msg) = violation {
+                    error(report, rule, msg);
+                    reported.insert(tag_name);
+                }
+            }
+        }
+
+        pos = name_end.max(pos + 1);
+    }
+}
+
+/// Check whether a text value is a non-integer (decimal / rational / scientific).
+///
+/// Returns `true` when the value contains a decimal point, a slash (rational),
+/// or an exponent, indicating it is NOT a valid XMP Integer.
+fn is_non_integer_value(val: &str) -> bool {
+    // Ignore leading/trailing whitespace
+    let val = val.trim();
+    // Must consist only of digits (and optional leading sign)
+    if val.is_empty() {
+        return false;
+    }
+    val.contains('.') || val.contains('/') || val.to_ascii_lowercase().contains('e')
+}
+
+/// Check whether a body containing rdf:Alt has at least one rdf:li without xml:lang.
+fn has_rdf_li_without_lang(body: &str) -> bool {
+    let mut search = 0;
+    while let Some(li_pos) = body[search..].find("<rdf:li") {
+        let abs = search + li_pos;
+        // Find end of the opening tag
+        let tag_end = match body[abs..].find('>') {
+            Some(i) => abs + i,
+            None => break,
+        };
+        let open_tag = &body[abs..=tag_end];
+        if !open_tag.contains("xml:lang") {
+            return true;
+        }
+        search = tag_end + 1;
+    }
+    false
+}
+
+/// §6.7.11 — pdfaid identification properties must use the 'pdfaid' prefix.
+///
+/// veraPDF tests 4 and 5: if the PDF/A Identification Schema namespace
+/// (http://www.aiim.org/pdfa/ns/id/) is bound to any prefix other than
+/// 'pdfaid', the part and conformance properties are not accessible and
+/// the document is non-conformant. (#467)
+fn check_pdfaid_prefix(xmp: &str, report: &mut ComplianceReport) {
+    const PDFAID_NS: &str = "http://www.aiim.org/pdfa/ns/id/";
+
+    // Find xmlns: declarations that bind the pdfaid namespace to a prefix
+    let mut search = 0;
+    while let Some(pos) = xmp[search..].find("xmlns:") {
+        let abs = search + pos + 6; // skip "xmlns:"
+        if let Some(eq) = xmp[abs..].find('=') {
+            if eq < 40 {
+                let prefix_name = &xmp[abs..abs + eq];
+                if prefix_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                {
+                    // Extract the namespace URI value
+                    let after_eq = &xmp[abs + eq + 1..];
+                    let uri = if let Some(s) = after_eq.strip_prefix('"') {
+                        s.split('"').next()
+                    } else if let Some(s) = after_eq.strip_prefix('\'') {
+                        s.split('\'').next()
+                    } else {
+                        None
+                    };
+                    if let Some(uri) = uri {
+                        if uri == PDFAID_NS && prefix_name != "pdfaid" {
+                            error(
+                                report,
+                                "6.7.11",
+                                format!(
+                                    "PDF/A Identification Schema bound to prefix '{}' instead of required 'pdfaid'",
+                                    prefix_name
+                                ),
+                            );
+                            return; // report once
+                        }
+                    }
+                }
+            }
+        }
+        search = abs;
     }
 }
 

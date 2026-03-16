@@ -689,18 +689,16 @@ fn build_replacement_ops_with_fallback(
 fn find_or_inject_fallback_font(
     doc: &mut Document,
     page_num: u32,
-    original_font: &str,
-    fonts: &FontMap,
+    _original_font: &str,
+    _fonts: &FontMap,
 ) -> Option<String> {
-    for (name, info) in &fonts.fonts {
-        if name.as_str() != original_font
-            && !info.is_subset
-            && !info.is_symbolic
-            && matches!(info.encoding, crate::text_run::FontEncoding::Builtin)
-        {
-            return Some(name.clone());
-        }
-    }
+    // Always inject a known-safe Helvetica/WinAnsiEncoding font rather than
+    // reusing an existing page font.  Existing "non-symbolic Builtin" fonts
+    // may still have custom or Symbol-like encodings that map standard ASCII
+    // bytes to non-ASCII characters, causing garbled replacement text when
+    // the output is re-read by pdf-engine.  Helvetica + WinAnsiEncoding is
+    // guaranteed to decode bytes 0x20–0x7E as the matching ASCII characters.
+    // Fixes #466: Symbol-encoded fallback produced __ΞΦΑ_ΡΕΠΛΑΧΕ∆__.
     inject_fallback_font(doc, page_num)
 }
 
