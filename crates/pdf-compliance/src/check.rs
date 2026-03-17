@@ -6593,6 +6593,26 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
             return;
         }
 
+        // Check raw Type1 (FontFile) embeddings (#467, §6.3.6 for PDF/A-1).
+        if let Some(ff) = desc.get::<Stream<'_>>(keys::FONT_FILE) {
+            if let Ok(font_data) = ff.decoded() {
+                let pdf_widths: Vec<i32> = widths_arr.iter::<i32>().collect();
+                let missing_width = desc.get::<i32>(keys::MISSING_WIDTH);
+                check_type1_simple_widths(
+                    &font_data,
+                    font_dict,
+                    name,
+                    first_char,
+                    last_char,
+                    &pdf_widths,
+                    missing_width,
+                    page_idx,
+                    report,
+                );
+            }
+            return;
+        }
+
         // Only check FontFile3 (CFF) embeddings — Type1 charstring parsing is
         // done separately and is unreliable for non-subset fonts (see memory).
         let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3) else {
@@ -10330,4 +10350,1018 @@ pub fn check_truetype_cmap_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
     });
+}
+
+// ─── Type 1 raw font program (FontFile) width checker ────────────────────────
+//
+// These helpers are duplicated from pdf-manip/src/pdfa_fonts.rs because
+// pdf-compliance cannot depend on pdf-manip (circular dependency). (#467)
+// They are intentionally private and minimal — only what check_type1_simple_widths
+// needs for §6.3.6 / §6.3.5-fw width consistency checks.
+
+/// §6.3.5-fw — Check raw Type1 font (FontFile) /Widths against charstring widths.
+///
+/// Parses the PostScript Type1 program embedded via /FontFile, extracts the
+/// per-glyph advance widths from the eexec-encrypted charstrings, and compares
+/// them against the /Widths array declared in the PDF font dictionary.
+/// Emits rule "6.3.5-fw" which pdfa.rs remaps to §6.3.6 for PDF/A-1. (#467)
+#[allow(clippy::too_many_arguments)]
+fn check_type1_simple_widths(
+    font_data: &[u8],
+    font_dict: &Dict<'_>,
+    name: &str,
+    first_char: i32,
+    last_char: i32,
+    pdf_widths: &[i32],
+    missing_width: Option<i32>,
+    page_idx: usize,
+    report: &mut ComplianceReport,
+) {
+    let Some(parsed) = t1_parse_program(font_data) else {
+        return;
+    };
+
+    let first = first_char as usize;
+    let last = last_char as usize;
+    if last < first || pdf_widths.len() < last - first + 1 {
+        return;
+    }
+
+    // Determine PDF-level encoding once (for glyph name lookup).
+    let pdf_enc = font_dict
+        .get::<Name>(keys::ENCODING)
+        .map(|n| n.as_ref().to_vec())
+        .unwrap_or_default();
+
+    let loc = format!("page {}", page_idx + 1);
+
+    for code in first..=last {
+        let idx = code - first;
+        let pdf_w = pdf_widths[idx];
+        if pdf_w == 0 {
+            continue; // 0 means unused/absent
+        }
+
+        // Look up glyph name via:
+        // 1. Internal Type1 encoding (dup…put entries in the font program).
+        // 2. PDF /Encoding name if it is StandardEncoding or absent (Type1 default).
+        // 3. WinAnsiEncoding: map code → glyph name using the WinAnsi→AGL table.
+        let glyph_name: Option<String> =
+            parsed.encoding.get(&(code as u8)).cloned().or_else(|| {
+                if pdf_enc.is_empty() || pdf_enc == b"StandardEncoding" {
+                    // Absent /Encoding or StandardEncoding: use standard encoding table.
+                    t1_standard_encoding_name(code as u8).map(str::to_string)
+                } else if pdf_enc == b"WinAnsiEncoding" {
+                    t1_winansi_glyph_name(code as u8).map(str::to_string)
+                } else {
+                    None
+                }
+            });
+
+        let Some(glyph_name) = glyph_name else {
+            continue;
+        };
+        if glyph_name.is_empty() || glyph_name == ".notdef" {
+            continue;
+        }
+
+        if let Some(&cs_width) = parsed.charstring_widths.get(glyph_name.as_str()) {
+            // Glyph is in the font: compare charstring advance width with /Widths.
+            // Scale charstring units → PDF text units (×FontMatrix_sx×1000).
+            let font_w = (cs_width as f64 * parsed.font_matrix_sx * 1000.0).round() as i32;
+            if (font_w - pdf_w).abs() > 1 {
+                error_at(
+                    report,
+                    "6.3.5-fw",
+                    format!(
+                        "Font {name} code {code} ({glyph_name}): \
+                         Type1 charstring width {font_w} != PDF /Widths[{idx}] {pdf_w}"
+                    ),
+                    loc.clone(),
+                );
+                return; // First mismatch per font only
+            }
+        } else if let Some(mw) = missing_width {
+            // Glyph is absent from the font program: the effective advance width is
+            // MissingWidth, not pdf_w.  If they differ, the /Widths entry is
+            // inconsistent with what the font would actually render. (#467, §6.3.6)
+            if (mw - pdf_w).abs() > 1 {
+                error_at(
+                    report,
+                    "6.3.5-fw",
+                    format!(
+                        "Font {name} code {code} ({glyph_name}): \
+                         glyph absent from font program, MissingWidth {mw} \
+                         != PDF /Widths[{idx}] {pdf_w}"
+                    ),
+                    loc.clone(),
+                );
+                return; // First mismatch per font only
+            }
+        }
+    }
+}
+
+/// Parsed data extracted from a Type 1 font program.
+struct T1Parsed {
+    font_matrix_sx: f64,
+    encoding: std::collections::HashMap<u8, String>,
+    charstring_widths: std::collections::HashMap<String, i32>,
+}
+
+/// Parse a Type 1 font program (PFB/PFA) to extract FontMatrix, Encoding, and
+/// per-glyph advance widths from the eexec-encrypted charstrings.
+fn t1_parse_program(data: &[u8]) -> Option<T1Parsed> {
+    let (cleartext, eexec_data) = t1_split_sections(data)?;
+    let font_matrix_sx = t1_parse_font_matrix(cleartext).unwrap_or(0.001);
+    let mut encoding = t1_parse_encoding(cleartext);
+    let decrypted = t1_eexec_decrypt(eexec_data);
+    let len_iv_cleartext = t1_parse_len_iv(cleartext);
+    let len_iv_bytes = t1_parse_len_iv_bytes(&decrypted);
+    let len_iv = len_iv_cleartext.or(len_iv_bytes).unwrap_or(4) as usize;
+    encoding.extend(t1_parse_encoding_bytes(&decrypted));
+    let seac_subrs = t1_parse_seac_subrs(&decrypted, len_iv);
+    let charstring_widths = t1_parse_charstrings(&decrypted, len_iv, &seac_subrs);
+    Some(T1Parsed {
+        font_matrix_sx,
+        encoding,
+        charstring_widths,
+    })
+}
+
+/// Split a Type 1 font into (cleartext, eexec-data) slices.
+fn t1_split_sections(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    if data.first() == Some(&0x80) {
+        return t1_split_pfb(data);
+    }
+    // PFA: find "eexec" keyword.
+    let eexec_pos = t1_find_bytes(data, b"eexec")?;
+    let cleartext = &data[..eexec_pos];
+    let mut pos = eexec_pos + 5;
+    while pos < data.len() && matches!(data[pos], b' ' | b'\r' | b'\n' | b'\t') {
+        pos += 1;
+    }
+    if pos >= data.len() {
+        return None;
+    }
+    Some((cleartext, &data[pos..]))
+}
+
+/// Split a PFB (binary) Type1 font into (cleartext, eexec-data) slices.
+fn t1_split_pfb(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    let mut pos = 0;
+    let mut cleartext_end = 0;
+    while pos + 6 <= data.len() {
+        if data[pos] != 0x80 {
+            break;
+        }
+        let seg_type = data[pos + 1];
+        let seg_len =
+            u32::from_le_bytes([data[pos + 2], data[pos + 3], data[pos + 4], data[pos + 5]])
+                as usize;
+        let seg_data_start = pos + 6;
+        match seg_type {
+            1 => {
+                cleartext_end = seg_data_start + seg_len;
+            }
+            2 => {
+                let eexec_end = seg_data_start + seg_len;
+                return Some((&data[6..cleartext_end], &data[seg_data_start..eexec_end]));
+            }
+            3 => break,
+            _ => break,
+        }
+        pos = seg_data_start + seg_len;
+    }
+    // Fallback: keyword search.
+    let eexec_pos = t1_find_bytes(&data[6..], b"eexec")?;
+    let cleartext = &data[6..6 + eexec_pos];
+    let mut skip = 6 + eexec_pos + 5;
+    while skip < data.len() && matches!(data[skip], b' ' | b'\r' | b'\n' | b'\t') {
+        skip += 1;
+    }
+    Some((cleartext, &data[skip..]))
+}
+
+fn t1_find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Decrypt eexec-encrypted data (R=55665, c1=52845, c2=22719).
+fn t1_eexec_decrypt(data: &[u8]) -> Vec<u8> {
+    let is_hex = data
+        .iter()
+        .take(20)
+        .all(|b| b.is_ascii_hexdigit() || matches!(b, b'\r' | b'\n' | b' '));
+    let binary_data: Vec<u8>;
+    let input: &[u8] = if is_hex {
+        let hex_chars: Vec<u8> = data
+            .iter()
+            .copied()
+            .filter(|b| b.is_ascii_hexdigit())
+            .collect();
+        binary_data = hex_chars
+            .chunks(2)
+            .filter_map(|pair| {
+                if pair.len() == 2 {
+                    Some((t1_hex_val(pair[0]) << 4) | t1_hex_val(pair[1]))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        &binary_data
+    } else {
+        data
+    };
+    let mut r: u16 = 55665;
+    let c1: u16 = 52845;
+    let c2: u16 = 22719;
+    let mut result = Vec::with_capacity(input.len());
+    for &cipher in input {
+        let plain = cipher ^ (r >> 8) as u8;
+        r = (cipher as u16)
+            .wrapping_add(r)
+            .wrapping_mul(c1)
+            .wrapping_add(c2);
+        result.push(plain);
+    }
+    if result.len() > 4 {
+        result.drain(..4);
+    }
+    result
+}
+
+fn t1_hex_val(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'A'..=b'F' => b - b'A' + 10,
+        b'a'..=b'f' => b - b'a' + 10,
+        _ => 0,
+    }
+}
+
+/// Parse FontMatrix sx (index 0) from Type1 cleartext.
+fn t1_parse_font_matrix(cleartext: &[u8]) -> Option<f64> {
+    let text = std::str::from_utf8(cleartext).ok()?;
+    let fm_pos = text.find("/FontMatrix")?;
+    let after = &text[fm_pos..];
+    let start = after.find('[')? + 1;
+    let end = after.find(']')?;
+    let values: Vec<f64> = after[start..end]
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    values.into_iter().next()
+}
+
+/// Parse Encoding `dup CODE /name put` entries from Type1 cleartext.
+fn t1_parse_encoding(cleartext: &[u8]) -> std::collections::HashMap<u8, String> {
+    let mut enc = std::collections::HashMap::new();
+    let Ok(text) = std::str::from_utf8(cleartext) else {
+        return enc;
+    };
+    for line in text.lines() {
+        let t = line.trim();
+        if !t.starts_with("dup ") || !t.ends_with(" put") {
+            continue;
+        }
+        let parts: Vec<&str> = t.split_whitespace().collect();
+        if parts.len() >= 4 && parts[0] == "dup" && parts[3] == "put" {
+            if let Ok(code) = parts[1].parse::<u8>() {
+                if let Some(gname) = parts[2].strip_prefix('/') {
+                    if gname != ".notdef" {
+                        enc.insert(code, gname.to_string());
+                    }
+                }
+            }
+        }
+    }
+    enc
+}
+
+/// Parse Encoding from decrypted eexec bytes (before /CharStrings).
+fn t1_parse_encoding_bytes(data: &[u8]) -> std::collections::HashMap<u8, String> {
+    let end = t1_find_bytes(data, b"/CharStrings").unwrap_or(data.len());
+    t1_parse_encoding(&data[..end])
+}
+
+/// Parse lenIV from cleartext.
+fn t1_parse_len_iv(cleartext: &[u8]) -> Option<u32> {
+    let text = std::str::from_utf8(cleartext).ok()?;
+    let pos = text.find("/lenIV")?;
+    text[pos + 6..].split_whitespace().next()?.parse().ok()
+}
+
+/// Parse lenIV from raw bytes (searches before /CharStrings).
+fn t1_parse_len_iv_bytes(data: &[u8]) -> Option<u32> {
+    let search_end = t1_find_bytes(data, b"/CharStrings").unwrap_or(data.len());
+    let search_data = &data[..search_end];
+    let pos = t1_find_bytes(search_data, b"/lenIV")?;
+    let after = &search_data[pos + 6..];
+    let start = after.iter().position(|b| !b.is_ascii_whitespace())?;
+    let end = after[start..]
+        .iter()
+        .position(|b| b.is_ascii_whitespace() || *b == b'/')
+        .unwrap_or(after.len() - start);
+    std::str::from_utf8(&after[start..start + end])
+        .ok()?
+        .parse()
+        .ok()
+}
+
+/// Return the set of Subrs indices that contain a seac instruction.
+fn t1_parse_seac_subrs(decrypted: &[u8], len_iv: usize) -> std::collections::HashSet<u32> {
+    let mut seac_subrs = std::collections::HashSet::new();
+    let Some(subrs_pos) = t1_find_bytes(decrypted, b"/Subrs") else {
+        return seac_subrs;
+    };
+    let data = &decrypted[subrs_pos + 6..];
+    let mut pos = 0;
+    while pos < data.len() {
+        let Some(dup_off) = t1_find_bytes(&data[pos..], b"dup") else {
+            break;
+        };
+        pos += dup_off + 3;
+        while pos < data.len() && data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let idx_start = pos;
+        while pos < data.len() && data[pos].is_ascii_digit() {
+            pos += 1;
+        }
+        let Ok(subr_idx) = std::str::from_utf8(&data[idx_start..pos])
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or(())
+        else {
+            continue;
+        };
+        while pos < data.len() && data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let len_start = pos;
+        while pos < data.len() && data[pos].is_ascii_digit() {
+            pos += 1;
+        }
+        let Ok(cs_len) = std::str::from_utf8(&data[len_start..pos])
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .ok_or(())
+        else {
+            continue;
+        };
+        while pos < data.len() && data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        if pos + 2 > data.len() {
+            break;
+        }
+        let marker = &data[pos..pos + 2];
+        if marker != b"RD" && marker != b"-|" {
+            continue;
+        }
+        pos += 2;
+        if pos < data.len() && matches!(data[pos], b' ' | b'\t') {
+            pos += 1;
+        }
+        if pos + cs_len > data.len() {
+            break;
+        }
+        if t1_charstring_contains_seac(&data[pos..pos + cs_len], len_iv) {
+            seac_subrs.insert(subr_idx);
+        }
+        pos += cs_len;
+    }
+    seac_subrs
+}
+
+/// Decrypt a charstring and check for inline seac (12 6).
+fn t1_charstring_contains_seac(data: &[u8], len_iv: usize) -> bool {
+    if data.len() <= len_iv {
+        return false;
+    }
+    let mut r: u16 = 4330;
+    let c1: u16 = 52845;
+    let c2: u16 = 22719;
+    let mut dec = Vec::with_capacity(data.len());
+    for &cipher in data {
+        let plain = cipher ^ (r >> 8) as u8;
+        r = (cipher as u16)
+            .wrapping_add(r)
+            .wrapping_mul(c1)
+            .wrapping_add(c2);
+        dec.push(plain);
+    }
+    let cs = &dec[len_iv..];
+    for i in 0..cs.len().saturating_sub(1) {
+        if cs[i] == 12 && cs[i + 1] == 6 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Parse all CharString advance widths from decrypted eexec data.
+fn t1_parse_charstrings(
+    decrypted: &[u8],
+    len_iv: usize,
+    seac_subrs: &std::collections::HashSet<u32>,
+) -> std::collections::HashMap<String, i32> {
+    let mut widths = std::collections::HashMap::new();
+    let Some(cs_pos) = t1_find_bytes(decrypted, b"/CharStrings") else {
+        return widths;
+    };
+    let mut pos = cs_pos;
+    while pos < decrypted.len() {
+        let Some(slash_off) = decrypted[pos..].iter().position(|&b| b == b'/') else {
+            break;
+        };
+        let slash_pos = pos + slash_off;
+        let check_start = slash_pos.saturating_sub(20).max(pos);
+        if t1_find_bytes(&decrypted[check_start..slash_pos], b"end").is_some()
+            && !decrypted[slash_pos..].starts_with(b"/CharStrings")
+        {
+            break;
+        }
+        let name_start = slash_pos + 1;
+        if name_start >= decrypted.len() {
+            break;
+        }
+        let name_end = decrypted[name_start..]
+            .iter()
+            .position(|b| b.is_ascii_whitespace())
+            .map(|p| name_start + p)
+            .unwrap_or(decrypted.len());
+        let glyph_name = std::str::from_utf8(&decrypted[name_start..name_end])
+            .unwrap_or("")
+            .to_string();
+        if glyph_name.is_empty() {
+            pos = name_end + 1;
+            continue;
+        }
+        let mut p = name_end;
+        while p < decrypted.len() && decrypted[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        let num_start = p;
+        while p < decrypted.len() && decrypted[p].is_ascii_digit() {
+            p += 1;
+        }
+        let Ok(cs_len) = std::str::from_utf8(&decrypted[num_start..p])
+            .unwrap_or("")
+            .parse::<usize>()
+        else {
+            pos = p.max(name_end + 1);
+            continue;
+        };
+        while p < decrypted.len() && decrypted[p].is_ascii_whitespace() {
+            p += 1;
+        }
+        let marker_ok = p + 2 <= decrypted.len()
+            && (decrypted[p..p + 2] == *b"RD" || decrypted[p..p + 2] == *b"-|");
+        if !marker_ok {
+            pos = p.max(name_end + 1);
+            continue;
+        }
+        p += 2;
+        if p < decrypted.len() && matches!(decrypted[p], b' ' | b'\t') {
+            p += 1;
+        }
+        if p + cs_len > decrypted.len() {
+            break;
+        }
+        if let Some(w) = t1_decrypt_charstring_width(&decrypted[p..p + cs_len], len_iv, seac_subrs)
+        {
+            widths.insert(glyph_name, w);
+        }
+        pos = p + cs_len;
+    }
+    widths
+}
+
+/// Decrypt a Type1 charstring and return the hsbw/sbw advance width.
+fn t1_decrypt_charstring_width(
+    data: &[u8],
+    len_iv: usize,
+    seac_subrs: &std::collections::HashSet<u32>,
+) -> Option<i32> {
+    if data.len() <= len_iv {
+        return None;
+    }
+    let mut r: u16 = 4330;
+    let c1: u16 = 52845;
+    let c2: u16 = 22719;
+    let mut decrypted = Vec::with_capacity(data.len());
+    for &cipher in data {
+        let plain = cipher ^ (r >> 8) as u8;
+        r = (cipher as u16)
+            .wrapping_add(r)
+            .wrapping_mul(c1)
+            .wrapping_add(c2);
+        decrypted.push(plain);
+    }
+    let cs = &decrypted[len_iv..];
+    let mut pos = 0;
+    let mut values: Vec<i32> = Vec::new();
+    let mut found_width_op = false;
+    let mut is_sbw = false;
+    while pos < cs.len() && values.len() < 8 {
+        let b = cs[pos];
+        if b == 13 {
+            // hsbw
+            found_width_op = true;
+            break;
+        }
+        if b == 12 {
+            if pos + 1 < cs.len() && cs[pos + 1] == 12 {
+                // div
+                pos += 2;
+                if values.len() >= 2 {
+                    let divisor = values.pop().unwrap();
+                    let dividend = values.pop().unwrap();
+                    values.push(if divisor != 0 {
+                        dividend / divisor
+                    } else {
+                        dividend
+                    });
+                }
+                continue;
+            }
+            if pos + 1 < cs.len() && cs[pos + 1] == 7 {
+                // sbw
+                is_sbw = true;
+                found_width_op = true;
+            }
+            break;
+        }
+        if (32..=246).contains(&b) {
+            values.push(b as i32 - 139);
+            pos += 1;
+        } else if (247..=250).contains(&b) {
+            if pos + 1 >= cs.len() {
+                break;
+            }
+            values.push((b as i32 - 247) * 256 + cs[pos + 1] as i32 + 108);
+            pos += 2;
+        } else if (251..=254).contains(&b) {
+            if pos + 1 >= cs.len() {
+                break;
+            }
+            values.push(-(b as i32 - 251) * 256 - cs[pos + 1] as i32 - 108);
+            pos += 2;
+        } else if b == 255 {
+            if pos + 4 >= cs.len() {
+                break;
+            }
+            values.push(i32::from_be_bytes([
+                cs[pos + 1],
+                cs[pos + 2],
+                cs[pos + 3],
+                cs[pos + 4],
+            ]));
+            pos += 5;
+        } else {
+            break;
+        }
+    }
+    if !found_width_op {
+        return None;
+    }
+    let width = if is_sbw { values.get(2) } else { values.get(1) }.copied()?;
+    // Check remainder of charstring for seac (inline or via callsubr).
+    pos += if is_sbw { 2 } else { 1 };
+    let mut stack: Vec<i32> = Vec::with_capacity(8);
+    while pos < cs.len() {
+        let b = cs[pos];
+        if b == 12 {
+            if pos + 1 < cs.len() && cs[pos + 1] == 6 {
+                return None; // seac — width unreliable
+            }
+            pos += 2;
+            stack.clear();
+        } else if b == 10 {
+            // callsubr
+            if let Some(&idx) = stack.last() {
+                if idx >= 0 && seac_subrs.contains(&(idx as u32)) {
+                    return None;
+                }
+            }
+            pos += 1;
+            stack.clear();
+        } else if (32..=246).contains(&b) {
+            stack.push(b as i32 - 139);
+            pos += 1;
+        } else if (247..=250).contains(&b) {
+            if pos + 1 < cs.len() {
+                stack.push((b as i32 - 247) * 256 + cs[pos + 1] as i32 + 108);
+            }
+            pos += 2;
+        } else if (251..=254).contains(&b) {
+            if pos + 1 < cs.len() {
+                stack.push(-((b as i32 - 251) * 256) - cs[pos + 1] as i32 - 108);
+            }
+            pos += 2;
+        } else if b == 255 {
+            if pos + 4 < cs.len() {
+                stack.push(i32::from_be_bytes([
+                    cs[pos + 1],
+                    cs[pos + 2],
+                    cs[pos + 3],
+                    cs[pos + 4],
+                ]));
+            }
+            pos += 5;
+        } else {
+            pos += 1;
+            stack.clear();
+        }
+    }
+    Some(width)
+}
+
+/// Map a WinAnsiEncoding (Windows-1252) byte code to an AGL glyph name.
+///
+/// Source: PDF Reference Annex D.2 + Adobe Glyph List.
+fn t1_winansi_glyph_name(code: u8) -> Option<&'static str> {
+    match code {
+        32 => Some("space"),
+        33 => Some("exclam"),
+        34 => Some("quotedbl"),
+        35 => Some("numbersign"),
+        36 => Some("dollar"),
+        37 => Some("percent"),
+        38 => Some("ampersand"),
+        39 => Some("quotesingle"),
+        40 => Some("parenleft"),
+        41 => Some("parenright"),
+        42 => Some("asterisk"),
+        43 => Some("plus"),
+        44 => Some("comma"),
+        45 => Some("hyphen"),
+        46 => Some("period"),
+        47 => Some("slash"),
+        48 => Some("zero"),
+        49 => Some("one"),
+        50 => Some("two"),
+        51 => Some("three"),
+        52 => Some("four"),
+        53 => Some("five"),
+        54 => Some("six"),
+        55 => Some("seven"),
+        56 => Some("eight"),
+        57 => Some("nine"),
+        58 => Some("colon"),
+        59 => Some("semicolon"),
+        60 => Some("less"),
+        61 => Some("equal"),
+        62 => Some("greater"),
+        63 => Some("question"),
+        64 => Some("at"),
+        65 => Some("A"),
+        66 => Some("B"),
+        67 => Some("C"),
+        68 => Some("D"),
+        69 => Some("E"),
+        70 => Some("F"),
+        71 => Some("G"),
+        72 => Some("H"),
+        73 => Some("I"),
+        74 => Some("J"),
+        75 => Some("K"),
+        76 => Some("L"),
+        77 => Some("M"),
+        78 => Some("N"),
+        79 => Some("O"),
+        80 => Some("P"),
+        81 => Some("Q"),
+        82 => Some("R"),
+        83 => Some("S"),
+        84 => Some("T"),
+        85 => Some("U"),
+        86 => Some("V"),
+        87 => Some("W"),
+        88 => Some("X"),
+        89 => Some("Y"),
+        90 => Some("Z"),
+        91 => Some("bracketleft"),
+        92 => Some("backslash"),
+        93 => Some("bracketright"),
+        94 => Some("asciicircum"),
+        95 => Some("underscore"),
+        96 => Some("grave"),
+        97 => Some("a"),
+        98 => Some("b"),
+        99 => Some("c"),
+        100 => Some("d"),
+        101 => Some("e"),
+        102 => Some("f"),
+        103 => Some("g"),
+        104 => Some("h"),
+        105 => Some("i"),
+        106 => Some("j"),
+        107 => Some("k"),
+        108 => Some("l"),
+        109 => Some("m"),
+        110 => Some("n"),
+        111 => Some("o"),
+        112 => Some("p"),
+        113 => Some("q"),
+        114 => Some("r"),
+        115 => Some("s"),
+        116 => Some("t"),
+        117 => Some("u"),
+        118 => Some("v"),
+        119 => Some("w"),
+        120 => Some("x"),
+        121 => Some("y"),
+        122 => Some("z"),
+        123 => Some("braceleft"),
+        124 => Some("bar"),
+        125 => Some("braceright"),
+        126 => Some("asciitilde"),
+        128 => Some("Euro"),
+        130 => Some("quotesinglbase"),
+        131 => Some("florin"),
+        132 => Some("quotedblbase"),
+        133 => Some("ellipsis"),
+        134 => Some("dagger"),
+        135 => Some("daggerdbl"),
+        136 => Some("circumflex"),
+        137 => Some("perthousand"),
+        138 => Some("Scaron"),
+        139 => Some("guilsinglleft"),
+        140 => Some("OE"),
+        142 => Some("Zcaron"),
+        145 => Some("quoteleft"),
+        146 => Some("quoteright"),
+        147 => Some("quotedblleft"),
+        148 => Some("quotedblright"),
+        149 => Some("bullet"),
+        150 => Some("endash"),
+        151 => Some("emdash"),
+        152 => Some("tilde"),
+        153 => Some("trademark"),
+        154 => Some("scaron"),
+        155 => Some("guilsinglright"),
+        156 => Some("oe"),
+        158 => Some("zcaron"),
+        159 => Some("Ydieresis"),
+        160 => Some("space"),
+        161 => Some("exclamdown"),
+        162 => Some("cent"),
+        163 => Some("sterling"),
+        164 => Some("currency"),
+        165 => Some("yen"),
+        166 => Some("brokenbar"),
+        167 => Some("section"),
+        168 => Some("dieresis"),
+        169 => Some("copyright"),
+        170 => Some("ordfeminine"),
+        171 => Some("guillemotleft"),
+        172 => Some("logicalnot"),
+        173 => Some("hyphen"),
+        174 => Some("registered"),
+        175 => Some("macron"),
+        176 => Some("degree"),
+        177 => Some("plusminus"),
+        178 => Some("twosuperior"),
+        179 => Some("threesuperior"),
+        180 => Some("acute"),
+        181 => Some("mu"),
+        182 => Some("paragraph"),
+        183 => Some("periodcentered"),
+        184 => Some("cedilla"),
+        185 => Some("onesuperior"),
+        186 => Some("ordmasculine"),
+        187 => Some("guillemotright"),
+        188 => Some("onequarter"),
+        189 => Some("onehalf"),
+        190 => Some("threequarters"),
+        191 => Some("questiondown"),
+        192 => Some("Agrave"),
+        193 => Some("Aacute"),
+        194 => Some("Acircumflex"),
+        195 => Some("Atilde"),
+        196 => Some("Adieresis"),
+        197 => Some("Aring"),
+        198 => Some("AE"),
+        199 => Some("Ccedilla"),
+        200 => Some("Egrave"),
+        201 => Some("Eacute"),
+        202 => Some("Ecircumflex"),
+        203 => Some("Edieresis"),
+        204 => Some("Igrave"),
+        205 => Some("Iacute"),
+        206 => Some("Icircumflex"),
+        207 => Some("Idieresis"),
+        208 => Some("Eth"),
+        209 => Some("Ntilde"),
+        210 => Some("Ograve"),
+        211 => Some("Oacute"),
+        212 => Some("Ocircumflex"),
+        213 => Some("Otilde"),
+        214 => Some("Odieresis"),
+        215 => Some("multiply"),
+        216 => Some("Oslash"),
+        217 => Some("Ugrave"),
+        218 => Some("Uacute"),
+        219 => Some("Ucircumflex"),
+        220 => Some("Udieresis"),
+        221 => Some("Yacute"),
+        222 => Some("Thorn"),
+        223 => Some("germandbls"),
+        224 => Some("agrave"),
+        225 => Some("aacute"),
+        226 => Some("acircumflex"),
+        227 => Some("atilde"),
+        228 => Some("adieresis"),
+        229 => Some("aring"),
+        230 => Some("ae"),
+        231 => Some("ccedilla"),
+        232 => Some("egrave"),
+        233 => Some("eacute"),
+        234 => Some("ecircumflex"),
+        235 => Some("edieresis"),
+        236 => Some("igrave"),
+        237 => Some("iacute"),
+        238 => Some("icircumflex"),
+        239 => Some("idieresis"),
+        240 => Some("eth"),
+        241 => Some("ntilde"),
+        242 => Some("ograve"),
+        243 => Some("oacute"),
+        244 => Some("ocircumflex"),
+        245 => Some("otilde"),
+        246 => Some("odieresis"),
+        247 => Some("divide"),
+        248 => Some("oslash"),
+        249 => Some("ugrave"),
+        250 => Some("uacute"),
+        251 => Some("ucircumflex"),
+        252 => Some("udieresis"),
+        253 => Some("yacute"),
+        254 => Some("thorn"),
+        255 => Some("ydieresis"),
+        _ => None,
+    }
+}
+
+/// Look up a glyph name in Adobe StandardEncoding for the given byte code.
+///
+/// Returns the AGL name or None for codes that are undefined in StandardEncoding.
+fn t1_standard_encoding_name(code: u8) -> Option<&'static str> {
+    // Source: Adobe Standard Encoding (ISO 19005-1 Annex A, Adobe Tech Note #5001).
+    match code {
+        32 => Some("space"),
+        33 => Some("exclam"),
+        34 => Some("quotedbl"),
+        35 => Some("numbersign"),
+        36 => Some("dollar"),
+        37 => Some("percent"),
+        38 => Some("ampersand"),
+        39 => Some("quoteright"),
+        40 => Some("parenleft"),
+        41 => Some("parenright"),
+        42 => Some("asterisk"),
+        43 => Some("plus"),
+        44 => Some("comma"),
+        45 => Some("hyphen"),
+        46 => Some("period"),
+        47 => Some("slash"),
+        48 => Some("zero"),
+        49 => Some("one"),
+        50 => Some("two"),
+        51 => Some("three"),
+        52 => Some("four"),
+        53 => Some("five"),
+        54 => Some("six"),
+        55 => Some("seven"),
+        56 => Some("eight"),
+        57 => Some("nine"),
+        58 => Some("colon"),
+        59 => Some("semicolon"),
+        60 => Some("less"),
+        61 => Some("equal"),
+        62 => Some("greater"),
+        63 => Some("question"),
+        64 => Some("at"),
+        65 => Some("A"),
+        66 => Some("B"),
+        67 => Some("C"),
+        68 => Some("D"),
+        69 => Some("E"),
+        70 => Some("F"),
+        71 => Some("G"),
+        72 => Some("H"),
+        73 => Some("I"),
+        74 => Some("J"),
+        75 => Some("K"),
+        76 => Some("L"),
+        77 => Some("M"),
+        78 => Some("N"),
+        79 => Some("O"),
+        80 => Some("P"),
+        81 => Some("Q"),
+        82 => Some("R"),
+        83 => Some("S"),
+        84 => Some("T"),
+        85 => Some("U"),
+        86 => Some("V"),
+        87 => Some("W"),
+        88 => Some("X"),
+        89 => Some("Y"),
+        90 => Some("Z"),
+        91 => Some("bracketleft"),
+        92 => Some("backslash"),
+        93 => Some("bracketright"),
+        94 => Some("asciicircum"),
+        95 => Some("underscore"),
+        96 => Some("quoteleft"),
+        97 => Some("a"),
+        98 => Some("b"),
+        99 => Some("c"),
+        100 => Some("d"),
+        101 => Some("e"),
+        102 => Some("f"),
+        103 => Some("g"),
+        104 => Some("h"),
+        105 => Some("i"),
+        106 => Some("j"),
+        107 => Some("k"),
+        108 => Some("l"),
+        109 => Some("m"),
+        110 => Some("n"),
+        111 => Some("o"),
+        112 => Some("p"),
+        113 => Some("q"),
+        114 => Some("r"),
+        115 => Some("s"),
+        116 => Some("t"),
+        117 => Some("u"),
+        118 => Some("v"),
+        119 => Some("w"),
+        120 => Some("x"),
+        121 => Some("y"),
+        122 => Some("z"),
+        123 => Some("braceleft"),
+        124 => Some("bar"),
+        125 => Some("braceright"),
+        126 => Some("asciitilde"),
+        161 => Some("exclamdown"),
+        162 => Some("cent"),
+        163 => Some("sterling"),
+        164 => Some("fraction"),
+        165 => Some("yen"),
+        166 => Some("florin"),
+        167 => Some("section"),
+        168 => Some("currency"),
+        169 => Some("quotesingle"),
+        170 => Some("quotedblleft"),
+        171 => Some("guillemotleft"),
+        172 => Some("guilsinglleft"),
+        173 => Some("guilsinglright"),
+        174 => Some("fi"),
+        175 => Some("fl"),
+        177 => Some("endash"),
+        178 => Some("dagger"),
+        179 => Some("daggerdbl"),
+        180 => Some("periodcentered"),
+        182 => Some("paragraph"),
+        183 => Some("bullet"),
+        184 => Some("quotesinglbase"),
+        185 => Some("quotedblbase"),
+        186 => Some("quotedblright"),
+        187 => Some("guillemotright"),
+        188 => Some("ellipsis"),
+        189 => Some("perthousand"),
+        191 => Some("questiondown"),
+        193 => Some("grave"),
+        194 => Some("acute"),
+        195 => Some("circumflex"),
+        196 => Some("tilde"),
+        197 => Some("macron"),
+        198 => Some("breve"),
+        199 => Some("dotaccent"),
+        200 => Some("dieresis"),
+        202 => Some("ring"),
+        203 => Some("cedilla"),
+        205 => Some("hungarumlaut"),
+        206 => Some("ogonek"),
+        207 => Some("caron"),
+        208 => Some("emdash"),
+        225 => Some("AE"),
+        227 => Some("ordfeminine"),
+        232 => Some("Lslash"),
+        233 => Some("Oslash"),
+        234 => Some("OE"),
+        235 => Some("ordmasculine"),
+        241 => Some("ae"),
+        245 => Some("dotlessi"),
+        248 => Some("lslash"),
+        249 => Some("oslash"),
+        250 => Some("oe"),
+        251 => Some("germandbls"),
+        _ => None,
+    }
 }
