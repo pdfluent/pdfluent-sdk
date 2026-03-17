@@ -5968,14 +5968,51 @@ fn check_cidfont_descriptor_deep(
     if let Some(ff) = ff_stream {
         if let Ok(data) = ff.decoded() {
             if is_font_program_corrupt(&data, has_ff2) {
-                // PDF/A-1 §6.3.2: glyphs must be present; corrupt font = absent
+                // PDF/A-1 §6.3.4: glyphs must be present; corrupt font = absent
                 // PDF/A-2/3/4 §6.3.4: font embedding violation
+                // veraPDF maps this to §6.3.4 for all PDF/A parts. (#467)
                 let rule = if part == 1 { "6.3.2-null" } else { "6.3.4" };
                 error_at(
                     report,
                     rule,
                     format!(
                         "CIDFont {cid_name} has corrupt/null font program (invalid or empty stream)"
+                    ),
+                    format!("page {}", page_idx + 1),
+                );
+                // A corrupt font program means glyph metrics cannot be verified — §6.3.5. (#467)
+                error_at(
+                    report,
+                    "6.3.5",
+                    format!(
+                        "CIDFont {cid_name}: glyph metrics unverifiable (corrupt font program)"
+                    ),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
+
+    // Check for all-zero CIDToGIDMap stream: all GIDs map to 0 (.notdef) = glyphs absent.
+    // veraPDF reports §6.3.4 (embedding) and §6.3.5 (metrics) for this corruption. (#467)
+    if let Some(ctg) = cid_font.get::<Stream<'_>>(keys::CID_TO_GID_MAP) {
+        if let Ok(data) = ctg.decoded() {
+            let non_zero = data.iter().filter(|&&b| b != 0).count();
+            // More than 256 bytes with fewer than 10 non-zero bytes = effectively all .notdef.
+            if data.len() > 256 && non_zero < 10 {
+                error_at(
+                    report,
+                    "6.3.4",
+                    format!(
+                        "CIDFont {cid_name} has all-zero CIDToGIDMap (all GIDs map to .notdef)"
+                    ),
+                    format!("page {}", page_idx + 1),
+                );
+                error_at(
+                    report,
+                    "6.3.5",
+                    format!(
+                        "CIDFont {cid_name}: glyph metrics unverifiable (all-zero CIDToGIDMap)"
                     ),
                     format!("page {}", page_idx + 1),
                 );
