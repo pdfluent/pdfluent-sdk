@@ -1998,11 +1998,43 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(xmp_data) = get_xmp_metadata(pdf) else {
         return;
     };
+
+    let metadata = pdf.metadata();
+    let has_info_meta = metadata.title.is_some()
+        || metadata.author.is_some()
+        || metadata.creator.is_some()
+        || metadata.producer.is_some()
+        || metadata.subject.is_some()
+        || metadata.keywords.is_some();
+
     let Ok(xmp_text) = std::str::from_utf8(&xmp_data) else {
+        // Non-UTF-8 XMP: consistency cannot be verified. veraPDF still reports
+        // §6.7.3 for any Info dict metadata that cannot be cross-checked. (#467)
+        if has_info_meta {
+            error(
+                report,
+                "6.7.3",
+                "Info dict metadata cannot be verified: XMP stream is not valid UTF-8",
+            );
+        }
         return;
     };
 
-    let metadata = pdf.metadata();
+    // If XMP is structurally malformed (detected as §6.7.11 / §6.7.9.1 violation),
+    // veraPDF still reports §6.7.3 when Info dict has metadata that cannot be
+    // reliably extracted from the broken XMP. Fixes #467 (isartor-6-7-9-t01).
+    let xmp_structurally_invalid = report
+        .issues
+        .iter()
+        .any(|i| i.rule == "6.7.11" || i.rule.starts_with("6.7.9"));
+    if xmp_structurally_invalid && has_info_meta {
+        error(
+            report,
+            "6.7.3",
+            "Info dict metadata cannot be reliably verified against malformed XMP",
+        );
+        return;
+    }
 
     // Check Creator (/Info Creator vs xmp:CreatorTool) — §6.7.3.6
     if metadata.creator.is_some() {
@@ -4344,9 +4376,10 @@ pub fn check_output_intent_icc_signature(pdf: &Pdf, report: &mut ComplianceRepor
             );
             continue;
         }
-        // Bytes 4–7: declared profile size (big-endian u32). A mismatch means the
+        // Bytes 0–3: declared profile size (big-endian u32). A mismatch means the
         // ICC profile data is corrupt; veraPDF reports this under §6.2.3.2. (#467)
-        let declared_size = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        // Per ICC.1:2004 §6.1, bytes 0–3 are the profile size; bytes 4–7 are CMM type.
+        let declared_size = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
         if declared_size != data.len() {
             error(
                 report,
