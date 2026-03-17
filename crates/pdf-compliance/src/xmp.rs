@@ -1024,28 +1024,25 @@ fn check_xmp_rdf_structure(xmp: &str, level: PdfALevel, report: &mut ComplianceR
                 // Check it's not "rdf:about=" pattern — look back for "rdf:"
                 let prefix_start = i.saturating_sub(4);
                 if &bytes[prefix_start..i] != b"rdf:" {
-                    // veraPDF uses §6.7.9.1 for PDF/A-1 (malformed XMP), §6.7.3 for others.
-                    // §6.7.9.1 = "The metadata stream shall conform to XMP Specification
-                    // and well formed PDFAExtension Schema for all extensions". (#467)
-                    let rule = if level.part() == 1 {
-                        "6.7.9.1"
-                    } else {
-                        "6.7.3"
+                    // veraPDF uses §6.7.9.1 for all PDF/A versions when XMP is malformed
+                    // (unqualified bare `about` attribute is invalid per RDF/XML spec,
+                    // which is part of the XMP specification). (#467)
+                    let rule = match level.part() {
+                        4 => "6.5.2", // PDF/A-4 normalized equivalent
+                        _ => "6.7.9.1",
                     };
                     error(
                         report,
                         rule,
                         "rdf:Description uses unqualified 'about' attribute instead of 'rdf:about'",
                     );
-                    // §6.7.11.1 cascade: malformed XMP means pdfaid cannot be verified.
-                    // veraPDF always flags 6.7.11.1 when 6.7.9.1 is present. (#467)
-                    if level.part() == 1 {
-                        error(
-                            report,
-                            "6.7.11",
-                            "XMP is malformed (6.7.9.1 violation) — PDF/A identification cannot be verified",
-                        );
-                    }
+                    // §6.7.11 cascade: malformed XMP means pdfaid cannot be verified.
+                    // veraPDF always flags 6.7.11 when 6.7.9.1 is present. (#467)
+                    error(
+                        report,
+                        "6.7.11",
+                        "XMP is malformed (6.7.9.1 violation) — PDF/A identification cannot be verified",
+                    );
                     break;
                 }
             }

@@ -5694,6 +5694,33 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                     ),
                     format!("page {}", page_idx + 1),
                 );
+            } else {
+                // Font file key exists — check the content is not all-zeros/empty.
+                // An all-null FontFile2 stream means the font program is corrupt/absent,
+                // so glyphs are effectively not present. (#467)
+                // veraPDF emits §6.3.2 (PDF/A-1) or §6.3.4 (PDF/A-2/3/4) for this.
+                let ff_stream: Option<Stream<'_>> = desc
+                    .get::<Stream<'_>>(keys::FONT_FILE)
+                    .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE2))
+                    .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE3));
+                if let Some(ff) = ff_stream {
+                    if let Ok(data) = ff.decoded() {
+                        let is_empty_or_null = data.is_empty() || data.iter().all(|&b| b == 0);
+                        if is_empty_or_null {
+                            // PDF/A-1 §6.3.2: glyphs must be present; corrupt font = absent
+                            // PDF/A-2/3/4 §6.3.4: font embedding violation
+                            let rule = if part == 1 { "6.3.2-null" } else { "6.3.4" };
+                            error_at(
+                                report,
+                                rule,
+                                format!(
+                                    "Font {font_name} has corrupt/null font program (all-zero stream)"
+                                ),
+                                format!("page {}", page_idx + 1),
+                            );
+                        }
+                    }
+                }
             }
             check_fontfile_subtype_match(&desc, font_name, page_idx, report);
             if is_subset_font(font_name) {
