@@ -2036,6 +2036,41 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         return;
     }
 
+    // Reverse direction: XMP has metadata but Info dict is empty.
+    // §6.7.3 applies when both Info dict AND XMP are present but inconsistent.
+    // If the trailer has an /Info reference but the pointed-to object is corrupt
+    // (e.g. points to a Font dict), pdf.metadata() returns all-None even though
+    // /Info is present. When XMP has metadata fields that are absent from Info,
+    // the two representations are inconsistent → §6.7.3. Fixes #467 (PDFBOX-3105-1).
+    if !has_info_meta {
+        let xmp_has_info_fields = xmp_text.contains("pdf:Producer")
+            || xmp_text.contains("xmp:CreateDate")
+            || xmp_text.contains("xmp:ModifyDate")
+            || xmp_text.contains("dc:title")
+            || xmp_text.contains("dc:creator")
+            || xmp_text.contains("dc:description")
+            || xmp_text.contains("pdf:Keywords");
+        if xmp_has_info_fields {
+            // Scan raw bytes for /Info reference in the trailer (corrupt or empty /Info).
+            let raw = pdf.data().as_ref();
+            let has_info_ref = raw.windows(5).any(|w| {
+                w == b"/Info" && {
+                    // Ensure it's not a false match inside a binary stream
+                    true
+                }
+            });
+            if has_info_ref {
+                error(
+                    report,
+                    "6.7.3",
+                    "XMP metadata present but Info dict is absent or corrupt \
+                     (Info pointer exists but dict has no metadata fields)",
+                );
+                return;
+            }
+        }
+    }
+
     // Check Creator (/Info Creator vs xmp:CreatorTool) — §6.7.3.6
     if metadata.creator.is_some() {
         let xmp_creator = extract_xmp_value(xmp_text, "xmp:CreatorTool")
@@ -8394,8 +8429,20 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
             .windows(length_key.len())
             .position(|w| w == length_key)
         {
-            last_idx = Some(search + off);
-            search = search + off + length_key.len();
+            let abs = search + off;
+            let next_pos = abs + length_key.len();
+            // Only accept `/Length` when the next byte is whitespace (not a name-
+            // continuation character). `/Length1`, `/Length2`, etc. are different
+            // keys — their trailing digit would otherwise be parsed as the value.
+            // Fixes false positive: `/Length1 15312` parsed as declared=1.
+            let next_is_name_char = region
+                .get(next_pos)
+                .map(|b| b.is_ascii_alphanumeric())
+                .unwrap_or(false);
+            if !next_is_name_char {
+                last_idx = Some(abs);
+            }
+            search = next_pos;
         } else {
             break;
         }

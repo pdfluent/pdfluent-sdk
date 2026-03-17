@@ -1795,6 +1795,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.2.5, PDF/A-2/3/4: §6.2.9
             (1, "6.2.9") => Some("6.2.5"),
 
+            // XMP property type / namespace violations.
+            // PDF/A-1: §6.7.2 covers predefined property type violations AND
+            // non-standard pdf: namespace properties. veraPDF groups these under
+            // §6.7.11 for PDF/A-1 (the "XMP metadata schema" clause). Fixes #467.
+            (1, "6.7.2") => Some("6.7.11"),
+
             // Lang tag validation
             // Our canonical: 6.8.4, PDF/A-2/3: 6.7.4 (PDF/A-1 uses 6.8.4 natively)
             (2..=3, "6.8.4") => Some("6.7.4"),
