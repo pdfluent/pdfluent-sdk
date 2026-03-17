@@ -1755,16 +1755,13 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
 
             // Widget annotation actions / NeedAppearances
             // PDF/A-1: internal §6.4.1 → §6.6.1 (ISO 19005-1 numbering)
-            // PDF/A-4: veraPDF emits §6.4.1 (ISO 19005-4) → normalize_pdfa4_clause("6.4.1")="6.6.1"
-            //          So for PDF/A-4 our "6.4.1" must be remapped to "6.6.1". Fixes #467.
+            // PDF/A-4: veraPDF emits §6.4.1 directly (ISO 19005-4) — no remap needed. Fixes #467.
             // PDF/A-2/3: §6.4.1 used directly.
             (1, "6.4.1") => Some("6.6.1"),
-            (4, "6.4.1") => Some("6.6.1"),
 
             // XFA key forbidden in AcroForm (PDF/A-4 §6.4.2).
-            // veraPDF emits §6.4.2 (ISO 19005-4) → normalize_pdfa4_clause("6.4.2")="6.6.2".
-            // PDF/A-1/2/3: §6.4.2 is soft-mask structure, no remap needed. (#467)
-            (4, "6.4.2") => Some("6.6.2"),
+            // veraPDF emits §6.4.2 directly (ISO 19005-4) — no remap needed. Fixes #467.
+            // PDF/A-1/2/3: §6.4.2 is soft-mask structure, no remap needed.
 
             // Annotation types (forbidden subtypes like Sound, Movie, 3D)
             // PDF/A-4: §6.3.1 (ISO 19005-4) → normalize_pdfa4_clause("6.3.1")="6.5.1".
@@ -1861,9 +1858,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.6.2.3.3") => Some("6.2.2"),
 
             // OutputIntent DestOutputProfile required
-            // PDF/A-1: §6.6.2.3.2, PDF/A-2/3/4: §6.2.3.2
-            (1, "6.2.3.2") => Some("6.6.2.3.2"),
-
+            // veraPDF uses §6.2.3.2 for ALL PDF/A parts — no remap needed. Fixes #467.
+            // (Removed wrong (1,"6.2.3.2")=>"6.6.2.3.2" mapping that hid FN.)
             _ => None,
         };
         if let Some(r) = new_rule {

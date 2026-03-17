@@ -2464,7 +2464,7 @@ pub fn check_icc_profile_version(pdf: &Pdf, part: u8, report: &mut ComplianceRep
 /// Check ICCBased color spaces have consistent Alternate CS (§6.2.4.2).
 ///
 /// Also checks that the required /N key is present in each ICCBased stream
-/// dict (§6.2.3.2 / §6.6.2.3.2 in PDF/A-1). Fixes #467.
+/// dict (§6.2.3.2 for all PDF/A parts). Fixes #467.
 pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
@@ -2495,9 +2495,8 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
             let icc_dict = icc_stream.dict();
             let cs_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
 
-            // §6.2.3.2 (PDF/A-2/3) / §6.6.2.3.2 (PDF/A-1): /N is required.
-            // veraPDF emits clause "6.2.3.2" for PDF/A-2/3, remapped to "6.6.2.3.2" for PDF/A-1.
-            // Our remap handles (1,"6.2.3.2") → "6.6.2.3.2". (#467)
+            // §6.2.3.2: /N is required in ICCBased streams.
+            // veraPDF emits "6.2.3.2" for ALL PDF/A parts — no remap needed. (#467)
             if !icc_dict.contains_key(keys::N) {
                 error_at(
                     report,
@@ -6426,6 +6425,16 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
                             report,
                             "6.5.3",
                             format!("{subtype_name} annotation /AP missing /N (normal appearance)"),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                    // PDF/A-1 §6.5.3: AP dict shall only contain the N entry.
+                    // /R (rollover) and /D (down) appearances are forbidden. Fixes #467.
+                    if ap.contains_key(b"R" as &[u8]) || ap.contains_key(b"D" as &[u8]) {
+                        error_at(
+                            report,
+                            "6.5.3",
+                            format!("{subtype_name} annotation /AP has entries other than /N (rollover/down appearances not allowed)"),
                             format!("page {}", page_idx + 1),
                         );
                     }
