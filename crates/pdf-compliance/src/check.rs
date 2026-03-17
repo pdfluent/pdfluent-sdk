@@ -5144,8 +5144,9 @@ pub fn check_output_intent_consistency(pdf: &Pdf, report: &mut ComplianceReport)
 /// Operators not defined in PDF Reference are forbidden even if
 /// bracketed by BX/EX compatibility markers.
 pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
-    // All valid PDF content stream operators
-    let valid_ops: &[&str] = &[
+    // All valid PDF content stream operators — built as HashSet once before the
+    // page loop so scan_for_undefined_ops can do O(1) lookups. (#perf)
+    let valid_ops: std::collections::HashSet<&'static str> = [
         // General graphics state
         "w", "J", "j", "M", "d", "ri", "i", "gs", // Special graphics state
         "q", "Q", "cm", // Path construction
@@ -5163,7 +5164,10 @@ pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
         "Do", // Marked content
         "MP", "DP", "BMC", "BDC", "EMC", // Compatibility
         "BX", "EX",
-    ];
+    ]
+    .iter()
+    .copied()
+    .collect();
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let loc = format!("page {}", page_idx + 1);
@@ -5171,7 +5175,7 @@ pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
             if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE {
                 continue;
             }
-            if scan_for_undefined_ops(content, valid_ops) {
+            if scan_for_undefined_ops(content, &valid_ops) {
                 error_at(
                     report,
                     "6.2.2",
@@ -5187,7 +5191,7 @@ pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
                 if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
                     if let Some(n_stream) = ap.get::<Stream<'_>>(keys::N) {
                         if let Ok(decoded) = n_stream.decoded() {
-                            if scan_for_undefined_ops(&decoded, valid_ops) {
+                            if scan_for_undefined_ops(&decoded, &valid_ops) {
                                 error_at(
                                     report,
                                     "6.2.2",
@@ -5214,7 +5218,7 @@ pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
                 continue;
             }
             if let Ok(decoded) = stream.decoded() {
-                if scan_for_undefined_ops(&decoded, valid_ops) {
+                if scan_for_undefined_ops(&decoded, &valid_ops) {
                     let xn = std::str::from_utf8(name.as_ref()).unwrap_or("?");
                     error_at(
                         report,
@@ -5228,7 +5232,17 @@ pub fn check_undefined_operators(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-fn scan_for_undefined_ops(content: &[u8], valid_ops: &[&str]) -> bool {
+/// Scan a content stream for undefined operators.
+///
+/// `valid_ops` is a `HashSet` for O(1) lookup per token — using a slice here
+/// was O(V × T) per content stream where V≈60 and T can be thousands of
+/// tokens on a dense page.  Callers build the HashSet once before the page
+/// loop and pass a reference in, so the set is constructed at most once per
+/// compliance check. (#perf)
+fn scan_for_undefined_ops(
+    content: &[u8],
+    valid_ops: &std::collections::HashSet<&'static str>,
+) -> bool {
     let text = String::from_utf8_lossy(content);
     let mut in_inline_image = false;
     for token in text.split_ascii_whitespace() {
@@ -5264,12 +5278,12 @@ fn scan_for_undefined_ops(content: &[u8], valid_ops: &[&str]) -> bool {
         {
             continue;
         }
-        // Check if it's a valid operator
+        // Check if it's a valid operator — O(1) HashSet lookup
         if !token.is_empty()
             && token
                 .bytes()
                 .all(|b| b.is_ascii_alphabetic() || b == b'*' || b == b'\'' || b == b'"')
-            && !valid_ops.contains(&token)
+            && !valid_ops.contains(token)
         {
             return true;
         }
@@ -5695,18 +5709,19 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                     format!("page {}", page_idx + 1),
                 );
             } else {
-                // Font file key exists — check the content is not all-zeros/empty.
-                // An all-null FontFile2 stream means the font program is corrupt/absent,
-                // so glyphs are effectively not present. (#467)
+                // Font file key exists — check the content is not corrupt/empty.
+                // An invalid font program stream (all-zero or missing magic bytes) means
+                // glyphs are effectively not present. (#467)
                 // veraPDF emits §6.3.2 (PDF/A-1) or §6.3.4 (PDF/A-2/3/4) for this.
+                let has_ff2 = desc.get::<Stream<'_>>(keys::FONT_FILE2).is_some();
                 let ff_stream: Option<Stream<'_>> = desc
                     .get::<Stream<'_>>(keys::FONT_FILE)
                     .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE2))
                     .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE3));
                 if let Some(ff) = ff_stream {
                     if let Ok(data) = ff.decoded() {
-                        let is_empty_or_null = data.is_empty() || data.iter().all(|&b| b == 0);
-                        if is_empty_or_null {
+                        let is_corrupt = is_font_program_corrupt(&data, has_ff2);
+                        if is_corrupt {
                             // PDF/A-1 §6.3.2: glyphs must be present; corrupt font = absent
                             // PDF/A-2/3/4 §6.3.4: font embedding violation
                             let rule = if part == 1 { "6.3.2-null" } else { "6.3.4" };
@@ -5714,7 +5729,7 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                                 report,
                                 rule,
                                 format!(
-                                    "Font {font_name} has corrupt/null font program (all-zero stream)"
+                                    "Font {font_name} has corrupt/null font program (invalid or empty stream)"
                                 ),
                                 format!("page {}", page_idx + 1),
                             );
@@ -5761,7 +5776,7 @@ fn check_cidfont_descriptor_deep(
     cid_font: &Dict<'_>,
     name: &str,
     page_idx: usize,
-    _part: u8,
+    part: u8,
     report: &mut ComplianceReport,
 ) {
     let Some(desc) = cid_font.get::<Dict<'_>>(keys::FONT_DESC) else {
@@ -5772,6 +5787,32 @@ fn check_cidfont_descriptor_deep(
         .get::<Name>(keys::BASE_FONT)
         .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or(name).to_string());
     let cid_name = cid_base.as_deref().unwrap_or(name);
+
+    // Check for corrupt/empty font program in CIDFont descriptor. (#467)
+    // The main font_has_embedding check only verifies the key exists, not content validity.
+    // CIDFontType2 uses FontFile2 (TrueType); check that the stream is a valid program.
+    let has_ff2 = desc.get::<Stream<'_>>(keys::FONT_FILE2).is_some();
+    let ff_stream: Option<Stream<'_>> = desc
+        .get::<Stream<'_>>(keys::FONT_FILE)
+        .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE2))
+        .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE3));
+    if let Some(ff) = ff_stream {
+        if let Ok(data) = ff.decoded() {
+            if is_font_program_corrupt(&data, has_ff2) {
+                // PDF/A-1 §6.3.2: glyphs must be present; corrupt font = absent
+                // PDF/A-2/3/4 §6.3.4: font embedding violation
+                let rule = if part == 1 { "6.3.2-null" } else { "6.3.4" };
+                error_at(
+                    report,
+                    rule,
+                    format!(
+                        "CIDFont {cid_name} has corrupt/null font program (invalid or empty stream)"
+                    ),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    }
 
     check_fontfile_subtype_match(&desc, cid_name, page_idx, report);
 
@@ -5824,6 +5865,36 @@ fn check_fontfile_subtype_match(
 fn is_subset_font(name: &str) -> bool {
     let bytes = name.as_bytes();
     bytes.len() > 7 && bytes[6] == b'+' && bytes[..6].iter().all(|&b| b.is_ascii_uppercase())
+}
+
+/// Returns true if a font program stream is corrupt or empty.
+///
+/// For FontFile2 (TrueType): checks that the stream starts with a valid sfVersion
+/// magic (0x00010000 or 'true'). A stream of all zeros or one that starts with
+/// null bytes instead of the magic is considered corrupt — veraPDF flags §6.3.2
+/// (PDF/A-1) or §6.3.4 (PDF/A-2/3/4) for this. (#467)
+///
+/// For FontFile / FontFile3: only checks for empty or all-zero streams since
+/// Type1 and CFF formats are more variable in their headers.
+fn is_font_program_corrupt(data: &[u8], is_truetype: bool) -> bool {
+    if data.is_empty() || data.iter().all(|&b| b == 0) {
+        return true;
+    }
+    if is_truetype && data.len() >= 4 {
+        // Valid TrueType/OpenType sfVersion magic values:
+        // 0x00010000 — standard TrueType/OpenType with TT outlines
+        // 0x74727565 — 'true' (Apple TrueType)
+        // 0x4F54544F — 'OTTO' (OpenType with CFF outlines — unusual for FontFile2 but allowed)
+        let magic = &data[..4];
+        let valid = magic == b"\x00\x01\x00\x00"
+            || magic == b"true"
+            || magic == b"OTTO"
+            || magic == b"typ1"; // legacy Mac Type 1 in sfnt wrapper
+        if !valid {
+            return true;
+        }
+    }
+    false
 }
 
 /// Check ToUnicode CMap presence for non-symbolic fonts (§6.3.4 / §6.2.11.7.2).
@@ -8938,14 +9009,17 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
 /// `check_undefined_operators`, `check_marked_content_sequences`, and
 /// `check_inline_image_filters`.
 pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceReport) {
-    // ── valid operators list (same as check_undefined_operators) ──
-    let valid_ops: &[&str] = &[
+    // ── valid operators set — HashSet for O(1) lookup in scan_for_undefined_ops. (#perf) ──
+    let valid_ops: std::collections::HashSet<&'static str> = [
         "w", "J", "j", "M", "d", "ri", "i", "gs", "q", "Q", "cm", "m", "l", "c", "v", "y", "h",
         "re", "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n", "W", "W*", "BT", "ET", "Tc",
         "Tw", "Tz", "TL", "Tf", "Tr", "Ts", "Td", "TD", "Tm", "T*", "Tj", "TJ", "'", "\"", "d0",
         "d1", "CS", "cs", "SC", "SCN", "sc", "scn", "G", "g", "RG", "rg", "K", "k", "sh", "BI",
         "ID", "EI", "Do", "MP", "DP", "BMC", "BDC", "EMC", "BX", "EX",
-    ];
+    ]
+    .iter()
+    .copied()
+    .collect();
 
     // PDF/A-1: §6.2.2 (content streams); PDF/A-2/3/4: §6.2.7.1 (operators in content streams)
     let undef_op_rule = if pdfa_part >= 2 { "6.2.7.1" } else { "6.2.2" };
@@ -8957,7 +9031,7 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
         if let Some(content) = page.page_stream() {
             if content.len() <= MAX_CONTENT_STREAM_SCAN_SIZE {
                 // 1. Undefined operators
-                if scan_for_undefined_ops(content, valid_ops) {
+                if scan_for_undefined_ops(content, &valid_ops) {
                     error_at(
                         report,
                         undef_op_rule,
@@ -8981,7 +9055,7 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
                 if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
                     if let Some(n_stream) = ap.get::<Stream<'_>>(keys::N) {
                         if let Ok(decoded) = n_stream.decoded() {
-                            if scan_for_undefined_ops(&decoded, valid_ops) {
+                            if scan_for_undefined_ops(&decoded, &valid_ops) {
                                 error_at(
                                     report,
                                     undef_op_rule,
@@ -9009,7 +9083,7 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
                 continue;
             }
             if let Ok(decoded) = stream.decoded() {
-                if scan_for_undefined_ops(&decoded, valid_ops) {
+                if scan_for_undefined_ops(&decoded, &valid_ops) {
                     let xn = std::str::from_utf8(name.as_ref()).unwrap_or("?");
                     error_at(
                         report,
