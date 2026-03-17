@@ -768,30 +768,36 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
 
     // /Subject ↔ dc:description (§6.7.3.4)
     if let Some(ref subject) = metadata.subject {
-        let dc_desc = extract_rdf_alt_value(xmp, "dc:description")
-            .or_else(|| extract_nested_value(xmp, "dc:description"));
-        match dc_desc {
-            None => {
-                error(
-                    report,
-                    "6.7.3.4",
-                    "/Info has Subject but XMP is missing dc:description",
-                );
-            }
-            Some(ref xmp_val) => {
-                let info_str = decode_pdf_string(subject);
-                if !values_match(&info_str, xmp_val) {
+        // Empty /Subject is trivially consistent with no dc:description.
+        // veraPDF does not flag 6.7.3.4 for /Subject () with no dc:description.
+        let info_str = decode_pdf_string(subject);
+        if info_str.trim().is_empty() {
+            // nothing to check
+        } else {
+            let dc_desc = extract_rdf_alt_value(xmp, "dc:description")
+                .or_else(|| extract_nested_value(xmp, "dc:description"));
+            match dc_desc {
+                None => {
                     error(
                         report,
                         "6.7.3.4",
-                        format!(
-                            "Info /Subject '{}' does not match XMP dc:description '{}'",
-                            info_str, xmp_val
-                        ),
+                        "/Info has Subject but XMP is missing dc:description",
                     );
                 }
+                Some(ref xmp_val) => {
+                    if !values_match(&info_str, xmp_val) {
+                        error(
+                            report,
+                            "6.7.3.4",
+                            format!(
+                                "Info /Subject '{}' does not match XMP dc:description '{}'",
+                                info_str, xmp_val
+                            ),
+                        );
+                    }
+                }
             }
-        }
+        } // end non-empty subject check
     }
 
     // /Creator ↔ xmp:CreatorTool (§6.7.3.6)
