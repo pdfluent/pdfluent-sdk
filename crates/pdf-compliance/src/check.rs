@@ -9200,3 +9200,174 @@ fn check_inline_images_in_content(
         pos = abs_bi + id_pos;
     }
 }
+
+// ─── §6.2.10.4.1 — TrueType simple-font cmap requirements (PDF/A-4) ─────────
+
+/// Check that TrueType simple fonts (non-CID) do not have invalid Mac Roman
+/// cmap entries in their embedded font programs (§6.2.10.4.1 PDF/A-4).
+///
+/// ISO 19005-4 §6.2.10.4.1 requires that if a Platform 1 (Mac Roman) cmap
+/// subtable is present, all non-zero entries must use character codes defined
+/// in the Mac Roman encoding.  Codes 0x80-0x9F are undefined in Mac Roman
+/// (they are defined in Windows-1252 but not in Mac OS Roman), so a non-zero
+/// glyph mapping at those positions is a violation.
+///
+/// We emit rule `"6.2.10.4.1-tt"` which `remap_clause_numbers` in pdfa.rs
+/// translates to `"6.2.10.4.1"` for PDF/A-4. (#467)
+pub fn check_truetype_cmap_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        // Only simple (non-CID, non-Type0) TrueType fonts
+        let subtype = font_dict.get::<Name>(keys::SUBTYPE);
+        let is_truetype = matches!(
+            subtype.as_ref().map(|s| s.as_ref()),
+            Some(b"TrueType") | Some(b"Type1")
+        );
+        if !is_truetype {
+            return;
+        }
+
+        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) else {
+            return;
+        };
+        let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2) else {
+            return;
+        };
+        let Ok(font_data) = ff2.decoded() else {
+            return;
+        };
+        if font_data.len() < 12 {
+            return;
+        }
+
+        // Parse TrueType offset table and find cmap
+        let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
+        let mut cmap_offset: Option<usize> = None;
+        for i in 0..num_tables {
+            let t = 12 + i * 16;
+            if t + 16 > font_data.len() {
+                break;
+            }
+            if &font_data[t..t + 4] == b"cmap" {
+                let off = u32::from_be_bytes([
+                    font_data[t + 8],
+                    font_data[t + 9],
+                    font_data[t + 10],
+                    font_data[t + 11],
+                ]) as usize;
+                cmap_offset = Some(off);
+                break;
+            }
+        }
+
+        let Some(cmap_off) = cmap_offset else {
+            return;
+        };
+        if cmap_off + 4 > font_data.len() {
+            return;
+        }
+
+        let num_subtables =
+            u16::from_be_bytes([font_data[cmap_off + 2], font_data[cmap_off + 3]]) as usize;
+
+        for j in 0..num_subtables {
+            let st = cmap_off + 4 + j * 8;
+            if st + 8 > font_data.len() {
+                break;
+            }
+            let platform_id = u16::from_be_bytes([font_data[st], font_data[st + 1]]);
+            let encoding_id = u16::from_be_bytes([font_data[st + 2], font_data[st + 3]]);
+            let sub_off = u32::from_be_bytes([
+                font_data[st + 4],
+                font_data[st + 5],
+                font_data[st + 6],
+                font_data[st + 7],
+            ]) as usize;
+
+            // Only check Platform 1 (Mac), Encoding 0 (Mac Roman)
+            if platform_id != 1 || encoding_id != 0 {
+                continue;
+            }
+
+            let abs_off = cmap_off + sub_off;
+            if abs_off + 2 > font_data.len() {
+                continue;
+            }
+            let fmt = u16::from_be_bytes([font_data[abs_off], font_data[abs_off + 1]]);
+
+            // Format 4 (segmented): iterate segments
+            if fmt == 4 {
+                if abs_off + 14 > font_data.len() {
+                    continue;
+                }
+                let seg_count = u16::from_be_bytes([font_data[abs_off + 6], font_data[abs_off + 7]])
+                    as usize
+                    / 2;
+                let end_codes_off = abs_off + 14;
+                let start_codes_off = end_codes_off + seg_count * 2 + 2; // skip reservedPad
+                if start_codes_off + seg_count * 2 > font_data.len() {
+                    continue;
+                }
+                for s in 0..seg_count {
+                    let end_code = u16::from_be_bytes([
+                        font_data[end_codes_off + s * 2],
+                        font_data[end_codes_off + s * 2 + 1],
+                    ]);
+                    let start_code = u16::from_be_bytes([
+                        font_data[start_codes_off + s * 2],
+                        font_data[start_codes_off + s * 2 + 1],
+                    ]);
+                    // Check if this segment covers 0x80-0x9F
+                    if start_code <= 0x9F && end_code >= 0x80 {
+                        error_at(
+                            report,
+                            "6.2.10.4.1-tt",
+                            format!(
+                                "TrueType font {name} Platform 1 cmap covers codes 0x{:02X}-0x{:02X} \
+                                 which are undefined in Mac Roman encoding",
+                                start_code.max(0x80),
+                                end_code.min(0x9F)
+                            ),
+                            format!("page {}", page_idx + 1),
+                        );
+                        return;
+                    }
+                }
+            }
+
+            // Format 6 (trimmed table): first_code + entry_count glyph IDs
+            if fmt == 6 {
+                if abs_off + 10 > font_data.len() {
+                    continue;
+                }
+                let first_code =
+                    u16::from_be_bytes([font_data[abs_off + 6], font_data[abs_off + 7]]) as usize;
+                let entry_count =
+                    u16::from_be_bytes([font_data[abs_off + 8], font_data[abs_off + 9]]) as usize;
+                // Check if any code in 0x80-0x9F has a non-zero glyph ID
+                for k in 0..entry_count {
+                    let code = first_code + k;
+                    if !(0x80..=0x9F).contains(&code) {
+                        continue;
+                    }
+                    let glyph_off = abs_off + 10 + k * 2;
+                    if glyph_off + 2 > font_data.len() {
+                        break;
+                    }
+                    let gid = u16::from_be_bytes([font_data[glyph_off], font_data[glyph_off + 1]]);
+                    if gid != 0 {
+                        error_at(
+                            report,
+                            "6.2.10.4.1-tt",
+                            format!(
+                                "TrueType font {name} Platform 1 cmap: code 0x{code:02X} maps to \
+                                 glyph {gid} but 0x{code:02X} is undefined in Mac Roman encoding"
+                            ),
+                            format!("page {}", page_idx + 1),
+                        );
+                        return; // One violation per font is enough
+                    }
+                }
+            }
+        }
+    });
+}
