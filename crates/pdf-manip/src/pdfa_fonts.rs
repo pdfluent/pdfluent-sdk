@@ -9386,6 +9386,180 @@ pub fn fix_truetype_unicode_cmap(doc: &mut Document) -> usize {
     fixed
 }
 
+// ---------------------------------------------------------------------------
+// 6.2.11.7.2 — Add /ToUnicode CMap to Type1 fonts with standard encoding
+// ---------------------------------------------------------------------------
+
+/// Build a PDF ToUnicode CMap stream for a set of single-byte code→Unicode mappings.
+fn build_type1_tounicode_cmap(mappings: &[(u8, u16)]) -> Vec<u8> {
+    let mut s = String::new();
+    s.push_str("/CIDInit /ProcSet findresource begin\n");
+    s.push_str("12 dict begin\n");
+    s.push_str("begincmap\n");
+    s.push_str("/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n");
+    s.push_str("/CMapName /Adobe-Identity-UCS def\n");
+    s.push_str("/CMapType 2 def\n");
+    s.push_str("1 begincodespacerange\n");
+    s.push_str("<00> <FF>\n");
+    s.push_str("endcodespacerange\n");
+    // CMap spec allows at most 100 entries per beginbfchar/endbfchar block.
+    for chunk in mappings.chunks(100) {
+        s.push_str(&format!("{} beginbfchar\n", chunk.len()));
+        for (code, unicode) in chunk {
+            s.push_str(&format!("<{:02X}> <{:04X}>\n", code, unicode));
+        }
+        s.push_str("endbfchar\n");
+    }
+    s.push_str("endcmap\n");
+    s.push_str("CMapName currentdict /CMap defineresource pop\n");
+    s.push_str("end\n");
+    s.push_str("end\n");
+    s.into_bytes()
+}
+
+/// Extract base encoding name and Differences list from an Encoding dictionary.
+fn type1_enc_from_dict(enc_dict: &lopdf::Dictionary) -> (String, Vec<(u8, String)>) {
+    let base_enc = match enc_dict.get(b"BaseEncoding").ok() {
+        Some(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
+        _ => "StandardEncoding".to_string(),
+    };
+    let mut differences: Vec<(u8, String)> = Vec::new();
+    if let Ok(Object::Array(diffs)) = enc_dict.get(b"Differences") {
+        let mut code: u8 = 0;
+        for item in diffs {
+            match item {
+                Object::Integer(n) => code = (*n).clamp(0, 255) as u8,
+                Object::Name(glyph) => {
+                    differences.push((code, String::from_utf8_lossy(glyph).to_string()));
+                    code = code.wrapping_add(1);
+                }
+                _ => {}
+            }
+        }
+    }
+    (base_enc, differences)
+}
+
+/// Add /ToUnicode CMap streams to Type1 fonts that lack them but have a
+/// standard encoding (WinAnsiEncoding / MacRomanEncoding) or a
+/// Differences-based Encoding dictionary.
+///
+/// ISO 19005-2 §6.2.11.7.2 requires every non-CID font in PDF/A-2/3 to
+/// carry a /ToUnicode CMap. Fixes #483.
+pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
+    use crate::encoding_utils::glyph_name_to_char;
+
+    // First pass (immutable): collect fonts that need a ToUnicode CMap.
+    // Each entry is (font_id, base_encoding_name, differences).
+    type FontEncEntry = (ObjectId, String, Vec<(u8, String)>);
+    let mut to_process: Vec<FontEncEntry> = Vec::new();
+
+    for (&font_id, obj) in &doc.objects {
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        // Only simple (non-CID) Type1 fonts.
+        match get_name(dict, b"Subtype").as_deref() {
+            Some("Type1") | Some("MMType1") => {}
+            _ => continue,
+        }
+        // Skip fonts that already have a ToUnicode entry.
+        if dict.get(b"ToUnicode").is_ok() {
+            continue;
+        }
+        let enc_info: Option<(String, Vec<(u8, String)>)> = match dict.get(b"Encoding").ok() {
+            Some(Object::Name(n)) => {
+                let name = String::from_utf8_lossy(n).to_string();
+                Some((name, vec![]))
+            }
+            Some(Object::Reference(enc_ref)) => {
+                let enc_ref = *enc_ref;
+                match doc.objects.get(&enc_ref) {
+                    Some(Object::Dictionary(enc_dict)) => Some(type1_enc_from_dict(enc_dict)),
+                    _ => None,
+                }
+            }
+            Some(Object::Dictionary(enc_dict)) => Some(type1_enc_from_dict(enc_dict)),
+            _ => None,
+        };
+        if let Some((base_enc, diffs)) = enc_info {
+            to_process.push((font_id, base_enc, diffs));
+        }
+    }
+
+    // Second pass (mutable): build and attach ToUnicode streams.
+    let mut fixed = 0;
+    for (font_id, base_enc, differences) in to_process {
+        let enc_known = matches!(
+            base_enc.as_str(),
+            "WinAnsiEncoding" | "MacRomanEncoding" | "StandardEncoding"
+        );
+        if !enc_known && differences.is_empty() {
+            continue;
+        }
+
+        // Build code→unicode table from the base encoding.
+        let mut code_to_unicode: [Option<u16>; 256] = [None; 256];
+        match base_enc.as_str() {
+            "WinAnsiEncoding" | "MacRomanEncoding" => {
+                for code in 32u32..=255 {
+                    let ch = encoding_to_char(code, &base_enc);
+                    let cp = ch as u32;
+                    if cp > 0 && cp <= 0xFFFF && cp != 0xFFFD {
+                        code_to_unicode[code as usize] = Some(cp as u16);
+                    }
+                }
+            }
+            "StandardEncoding" => {
+                // Standard encoding is US-ASCII for codes 32-126.
+                for code in 32u8..=126 {
+                    code_to_unicode[code as usize] = Some(code as u16);
+                }
+            }
+            _ => {} // Differences-only encoding: table starts empty.
+        }
+
+        // Apply Differences overrides.
+        for (code, glyph_name) in &differences {
+            match glyph_name_to_char(glyph_name) {
+                Some(ch) => {
+                    let cp = ch as u32;
+                    if cp > 0 && cp <= 0xFFFF {
+                        code_to_unicode[*code as usize] = Some(cp as u16);
+                    } else {
+                        code_to_unicode[*code as usize] = None;
+                    }
+                }
+                None => {
+                    code_to_unicode[*code as usize] = None;
+                }
+            }
+        }
+
+        let mappings: Vec<(u8, u16)> = code_to_unicode
+            .iter()
+            .enumerate()
+            .filter_map(|(code, &unicode)| unicode.map(|u| (code as u8, u)))
+            .collect();
+        if mappings.is_empty() {
+            continue;
+        }
+
+        let cmap_data = build_type1_tounicode_cmap(&mappings);
+        let len = cmap_data.len() as i64;
+        let stream_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! { "Length" => len },
+            cmap_data,
+        )));
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
+            dict.set("ToUnicode", Object::Reference(stream_id));
+            fixed += 1;
+        }
+    }
+
+    fixed
+}
+
 /// Check if a TrueType font has a (3,1) Unicode BMP cmap.
 fn tt_has_unicode_cmap(data: &[u8]) -> bool {
     let Some(cmap_data) = tt_find_table(data, b"cmap") else {
