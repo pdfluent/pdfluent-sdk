@@ -195,19 +195,37 @@ impl VeraPdfOracle {
 ///
 /// For PDF/A-4 files, veraPDF uses ISO 19005-4 clause numbering while our
 /// engine uses ISO 19005-2/3 numbering internally. This function normalizes
-/// veraPDF's clause numbers to our system before comparing.
+/// *both* veraPDF's and our clause numbers to a common form before comparing.
+///
+/// Sub-rule matching: veraPDF sometimes reports a parent rule ("6.7.9") while
+/// our checker emits specific sub-rules ("6.7.9.1", "6.7.9.2", …).  A veraPDF
+/// rule is considered *matched* when we have an exact hit OR any sub-rule
+/// (i.e. a rule that starts with `<verapdf_rule>.`). Fixes §6.7.9 false
+/// negatives.  Fixes §6.5.1 PDF/A-4 annotation false negatives.
 pub fn compare_compliance(
     our_report: &pdf_compliance::ComplianceReport,
     verapdf_result: &VeraPdfResult,
 ) -> ComplianceComparison {
     let is_pdfa4 = verapdf_result.profile_name.contains("PDF/A-4");
 
-    let our_rules: std::collections::HashSet<&str> = our_report
+    // Normalize our rules for PDF/A-4: our annotation checks emit native
+    // ISO 19005-4 numbers (e.g. "6.3.1") that must be normalised the same way
+    // as veraPDF clauses so both sides compare in the same numbering space.
+    // Example: our "6.3.1" → "6.5.1", veraPDF "6.3.1" → "6.5.1". Fixes §6.5.1.
+    let our_rules_owned: Vec<String> = our_report
         .issues
         .iter()
         .filter(|i| i.severity == pdf_compliance::Severity::Error)
-        .map(|i| i.rule.as_str())
+        .map(|i| {
+            if is_pdfa4 {
+                normalize_pdfa4_clause(&i.rule)
+            } else {
+                i.rule.clone()
+            }
+        })
         .collect();
+    let our_rules: std::collections::HashSet<&str> =
+        our_rules_owned.iter().map(String::as_str).collect();
 
     // Normalize veraPDF clause numbers (for PDF/A-4, translate to our system)
     let verapdf_clauses: Vec<String> = verapdf_result
@@ -225,17 +243,34 @@ pub fn compare_compliance(
     let verapdf_rules: std::collections::HashSet<&str> =
         verapdf_clauses.iter().map(|s| s.as_str()).collect();
 
-    // False negatives: veraPDF says FAIL but we don't flag it
+    // Return true when `candidate` is a sub-rule of `parent`:
+    //   "6.7.9.1".is_subrule_of("6.7.9") == true
+    //   "6.7.9".is_subrule_of("6.7.9")   == false (exact, not sub)
+    let is_subrule = |candidate: &str, parent: &str| -> bool {
+        candidate.len() > parent.len()
+            && candidate.as_bytes().get(parent.len()) == Some(&b'.')
+            && candidate.starts_with(parent)
+    };
+
+    // False negatives: veraPDF says FAIL but we don't flag it.
+    // A veraPDF rule is covered if we have an exact match OR any sub-rule.
     let false_negatives: Vec<String> = verapdf_rules
         .iter()
-        .filter(|r| !our_rules.contains(*r))
+        .filter(|r| {
+            !our_rules.contains(*r)
+                && !our_rules.iter().any(|ours| is_subrule(ours, r))
+        })
         .map(|r| r.to_string())
         .collect();
 
-    // False positives: we say FAIL but veraPDF doesn't flag it
+    // False positives: we say FAIL but veraPDF doesn't flag it.
+    // A sub-rule we emit is not a false positive when veraPDF has the parent rule.
     let false_positives: Vec<String> = our_rules
         .iter()
-        .filter(|r| !verapdf_rules.contains(*r))
+        .filter(|r| {
+            !verapdf_rules.contains(*r)
+                && !verapdf_rules.iter().any(|vr| is_subrule(r, vr))
+        })
         .map(|r| r.to_string())
         .collect();
 
