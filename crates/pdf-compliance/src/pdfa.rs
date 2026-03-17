@@ -123,6 +123,9 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check::check_tounicode_values(pdf, &mut report);
     check_font_widths(pdf, &mut report);
     check_font_program_widths(pdf, &mut report);
+    if level.part() == 4 {
+        check_truetype_cmap_pdfa4(pdf, &mut report);
+    }
     check_symbolic_truetype_encoding(pdf, &mut report);
     check_cidtogidmap_identity(pdf, &mut report);
     check_cmap_embedding(pdf, &mut report);
@@ -436,6 +439,12 @@ pub fn validate_with_progress(
         "check_font_program_widths",
         check_font_program_widths(pdf, &mut report)
     );
+    if level.part() == 4 {
+        tracked!(
+            "check_truetype_cmap_pdfa4",
+            check_truetype_cmap_pdfa4(pdf, &mut report)
+        );
+    }
     tracked!(
         "check_symbolic_truetype_encoding",
         check_symbolic_truetype_encoding(pdf, &mut report)
@@ -820,6 +829,12 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         "check_font_program_widths",
         check_font_program_widths(pdf, &mut report)
     );
+    if level.part() == 4 {
+        timed!(
+            "check_truetype_cmap_pdfa4",
+            check_truetype_cmap_pdfa4(pdf, &mut report)
+        );
+    }
     timed!(
         "check_symbolic_truetype_encoding",
         check_symbolic_truetype_encoding(pdf, &mut report)
@@ -1463,6 +1478,11 @@ fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_font_program_widths(pdf, report);
 }
 
+/// §6.2.10.4.1 — TrueType simple-font Mac Roman cmap validity (PDF/A-4 only).
+fn check_truetype_cmap_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_truetype_cmap_pdfa4(pdf, report);
+}
+
 /// §6.3.6 — Symbolic TrueType encoding.
 fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_symbolic_truetype_encoding(pdf, report);
@@ -1696,6 +1716,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-4: §6.2.5
             (4, "6.2.10") => Some("6.2.5"),
             (4, "6.2.10.4.1") => Some("6.2.5"),
+
+            // TrueType simple-font Mac Roman cmap requirements (internal rule "6.2.10.4.1-tt")
+            // PDF/A-4: §6.2.10.4.1 (TrueType font cmap — Platform 1 codes must be valid Mac Roman)
+            // check.rs emits "6.2.10.4.1-tt"; remap to exact veraPDF clause. (#467)
+            (4, "6.2.10.4.1-tt") => Some("6.2.10.4.1"),
 
             // Rendering intents
             // PDF/A-1: §6.2.9, PDF/A-2/3/4: §6.2.5
