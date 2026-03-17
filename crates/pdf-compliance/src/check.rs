@@ -2184,13 +2184,21 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     );
 }
 
-/// Check annotation dictionaries have required /F key and correct flags (§6.3.2).
+/// Check annotation dictionaries have required /F key and correct flags.
 ///
 /// All annotations (except Popup) must have /F key. When present, Print flag
 /// must be set, Hidden/Invisible/ToggleNoView/NoView flags must be clear.
+///
+/// Clause numbering by part:
+/// - PDF/A-1: §6.5.3 (ISO 19005-1)
+/// - PDF/A-2/3: §6.3.2 (ISO 19005-2/3)
+/// - PDF/A-4: §6.3.2 (ISO 19005-4) → normalize_pdfa4_clause("6.3.2")="6.5.2"
+///
+/// Fixes #467.
 pub fn check_annotation_flags(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
-    // PDF/A-4: 6.3.2 → normalized 6.5.2; parts 1/2/3: 6.5.3
-    let rule = if part == 4 { "6.5.2" } else { "6.5.3" };
+    // PDF/A-1: §6.5.3; PDF/A-2/3/4: §6.3.2 (veraPDF uses this directly for parts 2/3;
+    // normalize_pdfa4_clause("6.3.2")="6.5.2" handles PDF/A-4). Fixes #467.
+    let rule = if part == 1 { "6.5.3" } else { "6.3.2" };
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
@@ -2454,6 +2462,9 @@ pub fn check_icc_profile_version(pdf: &Pdf, part: u8, report: &mut ComplianceRep
 // ─── §6.2.4.2 — ICCBased Alternate CS consistency ──────────────────────────
 
 /// Check ICCBased color spaces have consistent Alternate CS (§6.2.4.2).
+///
+/// Also checks that the required /N key is present in each ICCBased stream
+/// dict (§6.2.3.2 / §6.6.2.3.2 in PDF/A-1). Fixes #467.
 pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
@@ -2482,6 +2493,19 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
                 continue;
             };
             let icc_dict = icc_stream.dict();
+            let cs_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+
+            // §6.2.3.2 (PDF/A-2/3) / §6.6.2.3.2 (PDF/A-1): /N is required.
+            // veraPDF emits clause "6.2.3.2" for PDF/A-2/3, remapped to "6.6.2.3.2" for PDF/A-1.
+            // Our remap handles (1,"6.2.3.2") → "6.6.2.3.2". (#467)
+            if !icc_dict.contains_key(keys::N) {
+                error_at(
+                    report,
+                    "6.2.3.2",
+                    format!("ICCBased CS '{cs_name}' missing required /N key"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
             let n_components: Option<i32> = icc_dict.get(keys::N);
 
             if let Some(alt_name) = icc_dict.get::<Name>(keys::ALTERNATE) {
@@ -2497,7 +2521,6 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
                         continue;
                     };
                     if n != expected {
-                        let cs_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
                         let alt_str = std::str::from_utf8(alt).unwrap_or("?");
                         error_at(
                             report,
@@ -6407,12 +6430,12 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
     }
 }
 
-/// Deep annotation flag validation per PDF/A part (§6.5.1/§6.5.2/§6.3.2).
+/// Deep annotation flag validation per PDF/A part (§6.3.2 / §6.5.3).
 ///
-/// PDF/A-4 uses clause §6.3.2; parts 2/3 use §6.5.1. Fixes #467.
+/// PDF/A-1: §6.5.3; PDF/A-2/3/4: §6.3.2. Fixes #467.
 pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
-    // PDF/A-4: §6.3.2 (veraPDF uses this directly); parts 2/3: §6.5.1
-    let rule = if part == 4 { "6.3.2" } else { "6.5.1" };
+    // PDF/A-1: §6.5.3; PDF/A-2/3/4: §6.3.2 (same as check_annotation_flags). Fixes #467.
+    let rule = if part == 1 { "6.5.3" } else { "6.3.2" };
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
