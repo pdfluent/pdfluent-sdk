@@ -12,6 +12,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let tt_encoding_diffs_fixed = fix_truetype_encoding_differences(doc);
     let devicen_colorants_fixed = fix_devicen_colorants(doc);
     let forbidden_annots_removed = fix_forbidden_annotations_extra(doc);
+    let annotation_opacity_fixed = fix_annotation_opacity(doc);
     let crypt_filters_removed = fix_crypt_filters(doc);
     let file_spec_ef_stripped = fix_file_spec_ef_extra(doc);
     let content_resources_added = fix_content_stream_resources_extra(doc);
@@ -51,6 +52,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         tt_encoding_diffs_fixed,
         devicen_colorants_fixed,
         forbidden_annots_removed,
+        annotation_opacity_fixed,
         crypt_filters_removed,
         file_spec_ef_stripped,
         content_resources_added,
@@ -84,6 +86,7 @@ pub struct FixupReport {
     pub tt_encoding_diffs_fixed: usize,
     pub devicen_colorants_fixed: usize,
     pub forbidden_annots_removed: usize,
+    pub annotation_opacity_fixed: usize,
     pub crypt_filters_removed: usize,
     pub file_spec_ef_stripped: usize,
     pub content_resources_added: usize,
@@ -699,6 +702,45 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
         }
     }
 
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.5.3 — Annotation opacity (CA must be 1.0)
+// ---------------------------------------------------------------------------
+//
+// PDF/A-2 §6.5.3 requires annotation /CA to be 1.0 (fully opaque).
+// Annotations with CA < 1.0 violate this rule. Remove the /CA key
+// (default value is 1.0 per PDF spec) to satisfy veraPDF. Fixes #482.
+
+fn fix_annotation_opacity(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let has_type_annot = matches!(
+                dict.get(b"Type").ok(),
+                Some(Object::Name(ref n)) if n == b"Annot"
+            );
+            if !has_type_annot {
+                continue;
+            }
+            match dict.get(b"CA").ok() {
+                Some(Object::Real(ca)) => (*ca - 1.0_f32).abs() > f32::EPSILON,
+                Some(Object::Integer(ca)) => *ca != 1,
+                _ => false,
+            }
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"CA");
+                count += 1;
+            }
+        }
+    }
     count
 }
 

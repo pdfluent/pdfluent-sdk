@@ -142,8 +142,13 @@ fn generate_xmp(meta: &PdfMetadata, conformance: PdfAConformance) -> Vec<u8> {
     // Dublin Core — dc:title is required by 6.6.2.3.1:1.
     let title_str = meta.title.as_deref().unwrap_or("Untitled");
     writer.title([(None::<LangId>, title_str)]);
+    // Only write dc:description if non-empty — an empty Subject from Info dict
+    // maps to an empty dc:description, which veraPDF considers as "missing" and
+    // emits 6.7.3.4. Skip empty values to keep the XMP consistent with Info.
     if let Some(ref description) = meta.description {
-        writer.description([(None::<LangId>, description.as_str())]);
+        if !description.trim().is_empty() {
+            writer.description([(None::<LangId>, description.as_str())]);
+        }
     }
     if let Some(ref creator) = meta.creator {
         writer.creator([creator.as_str()]);

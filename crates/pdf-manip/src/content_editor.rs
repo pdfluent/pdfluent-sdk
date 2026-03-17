@@ -455,11 +455,34 @@ pub fn editor_for_page(doc: &Document, page_num: u32) -> Result<ContentEditor> {
         total as usize,
     ))?;
 
-    let content_bytes = doc
-        .get_page_content(page_id)
-        .map_err(|e| ManipError::Other(format!("get page content: {e}")))?;
+    // Concatenate content streams with '\n' separators instead of using
+    // doc.get_page_content() which joins streams without whitespace.
+    // Without separators, a stream ending in e.g. "TD" concatenated with one
+    // starting in "TJ" produces the unknown compound operator "TDTJ", which
+    // corrupts text-matrix tracking in extract_text_runs. Fixes #474.
+    let content_bytes = get_page_content_with_separators(doc, page_id);
 
     ContentEditor::from_stream(&content_bytes)
+}
+
+/// Concatenate all content streams for a page with '\n' separators.
+fn get_page_content_with_separators(doc: &Document, page_id: ObjectId) -> Vec<u8> {
+    let ids = get_content_stream_ids(doc, page_id);
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let mut combined = Vec::new();
+    for &id in &ids {
+        if let Ok(Object::Stream(ref s)) = doc.get_object(id) {
+            let mut stream = s.clone();
+            let _ = stream.decompress();
+            if !combined.is_empty() {
+                combined.push(b'\n');
+            }
+            combined.extend_from_slice(&stream.content);
+        }
+    }
+    combined
 }
 
 /// Write modified content back to a page's content stream(s).
