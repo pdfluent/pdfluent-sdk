@@ -5,6 +5,36 @@ use pdf_redact::search_redact::{search_and_redact, RedactSearchOptions};
 
 use super::{PdfTest, TestResult, TestStatus};
 
+/// Extract text from page 1 using pdf-engine (for initial word selection).
+fn extract_page1_text(pdf_data: &[u8]) -> Option<String> {
+    let doc = pdf_engine::PdfDocument::open(pdf_data.to_vec()).ok()?;
+    let text = doc.extract_text(0).ok()?;
+    Some(text)
+}
+
+/// Verify whether a word is still present in the page 1 content stream after
+/// redaction.  Uses extract_positioned_chars (the same method search_and_redact
+/// uses to locate text) rather than pdf_engine::extract_text.
+///
+/// pdf_engine also extracts text from non-content locations such as document
+/// outlines/bookmarks and URI-action strings; those are NOT redacted by
+/// search_and_redact and would produce false FAILs if used for verification.
+/// Fixes #466: MOZILLA-666767-3.pdf "Mozilla" survived in the outline title
+/// "Mozilla Privacy Policy" and URI actions even after all content occurrences
+/// were successfully redacted.
+fn page1_still_contains_word(saved: &[u8], word: &str) -> bool {
+    let doc = match lopdf::Document::load_mem(saved) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+    let chars = match pdf_extract::extract_positioned_chars(&doc, 1) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let text: String = chars.iter().map(|c| c.ch).collect();
+    text.contains(word)
+}
+
 /// Corpus test: redact first word on page 1, verify it is absent after roundtrip.
 pub struct RedactTest;
 
@@ -151,32 +181,17 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
         };
     }
 
-    // 4. Reopen and verify the word is gone.
-    let new_text = match extract_page1_text(&saved) {
-        Some(t) => t,
-        None => {
-            // If text extraction fails entirely after redaction, that's OK
-            // (redaction may have removed all content streams).
-            return TestResult {
-                status: TestStatus::Pass,
-                error_message: None,
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata: HashMap::new(),
-            };
-        }
-    };
-
+    // 4. Verify the word is gone from the page 1 content stream.
     let mut metadata = HashMap::new();
     metadata.insert("search_word".into(), search_word.clone());
     metadata.insert("areas_redacted".into(), report.areas_redacted.to_string());
     metadata.insert("ops_removed".into(), report.operations_removed.to_string());
 
-    if new_text.contains(&search_word) {
+    if page1_still_contains_word(&saved, &search_word) {
         TestResult {
             status: TestStatus::Fail,
             error_message: Some(format!(
-                "redacted word '{}' still present in output",
+                "redacted word '{}' still present in content stream",
                 search_word
             )),
             duration_ms: elapsed(),
@@ -202,11 +217,4 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
             },
         }
     }
-}
-
-/// Extract text from page 1 using pdf-engine.
-fn extract_page1_text(pdf_data: &[u8]) -> Option<String> {
-    let doc = pdf_engine::PdfDocument::open(pdf_data.to_vec()).ok()?;
-    let text = doc.extract_text(0).ok()?;
-    Some(text)
 }
