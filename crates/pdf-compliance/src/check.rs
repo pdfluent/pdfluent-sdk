@@ -2518,25 +2518,50 @@ fn icc_based_profile_ref(cs_arr: &Array<'_>) -> Option<ObjRef> {
     raw.next()?.as_obj_ref()
 }
 
+/// Compute a fast non-cryptographic checksum of bytes for identity comparison.
+fn bytes_checksum(data: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    data.hash(&mut h);
+    h.finish()
+}
+
 /// Check that no ICCBased CMYK colorspace uses the same ICC profile object
 /// as the OutputIntent's DestOutputProfile or any transparency group's CS
 /// (§6.2.4.2 — identical profile check).
 ///
-/// Only the object-reference identity case is checked here (same indirect
-/// object number).  The MD5-based identity case (different objects, same
-/// data) requires hashing the decoded ICC data and is not checked.
+/// Checks both object-reference identity (same indirect object number) and
+/// content identity (same decoded bytes — the MD5 case in the veraPDF rule).
 pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut ComplianceReport) {
     let xref = pdf.xref();
 
-    // ── 1. Collect forbidden ICC profile object references ──────────────────
-    let mut forbidden: std::collections::HashSet<ObjRef> = std::collections::HashSet::new();
+    // ── 1. Collect forbidden ICC profile object references and checksums ─────
+    let mut forbidden_refs: std::collections::HashSet<ObjRef> = std::collections::HashSet::new();
+    let mut forbidden_checksums: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
+    /// Helper: record a forbidden ICC profile stream (by ref and by decoded bytes)
+    fn record_forbidden_stream(
+        r: ObjRef,
+        xref: &pdf_syntax::xref::XRef,
+        refs: &mut std::collections::HashSet<ObjRef>,
+        checksums: &mut std::collections::HashSet<u64>,
+    ) {
+        refs.insert(r);
+        if let Some(s) = xref.get::<Stream<'_>>(r.into()) {
+            if let Ok(data) = s.decoded() {
+                if !data.is_empty() {
+                    checksums.insert(bytes_checksum(&data));
+                }
+            }
+        }
+    }
 
     // (a) OutputIntent DestOutputProfile
     if let Some(cat) = catalog(pdf) {
         if let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) {
             for intent in intents.iter::<Dict<'_>>() {
                 if let Some(r) = intent.get_ref(keys::DEST_OUTPUT_PROFILE) {
-                    forbidden.insert(r);
+                    record_forbidden_stream(r, xref, &mut forbidden_refs, &mut forbidden_checksums);
                 }
             }
         }
@@ -2557,12 +2582,12 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
         let Some(group_dict) = group else { continue };
         if let Some(cs_arr) = group_dict.get::<Array<'_>>(keys::CS) {
             if let Some(r) = icc_based_profile_ref(&cs_arr) {
-                forbidden.insert(r);
+                record_forbidden_stream(r, xref, &mut forbidden_refs, &mut forbidden_checksums);
             }
         }
     }
 
-    if forbidden.is_empty() {
+    if forbidden_refs.is_empty() && forbidden_checksums.is_empty() {
         return; // nothing to compare against
     }
 
@@ -2606,22 +2631,34 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
             if cs_type.as_ref() != keys::ICC_BASED {
                 continue;
             }
-            // Check N=4 (CMYK) from the ICC stream dict
-            let n_components: Option<i32> = items
-                .next()
-                .and_then(|o| match o {
-                    Object::Stream(s) => Some(s),
-                    _ => None,
-                })
-                .and_then(|s| s.dict().get::<i32>(keys::N));
+            // Check N=4 (CMYK) from the ICC stream dict (auto-resolved)
+            let icc_stream: Option<Stream<'_>> = items.next().and_then(|o| match o {
+                Object::Stream(s) => Some(s),
+                _ => None,
+            });
+            let n_components: Option<i32> = icc_stream.as_ref().and_then(|s| s.dict().get(keys::N));
             if n_components != Some(4) {
                 continue; // only flag CMYK (N=4)
             }
-            // Get the profile object reference
+            // Get the profile object reference (for ref-identity check)
             let Some(prof_ref) = icc_based_profile_ref(&cs_arr) else {
                 continue;
             };
-            if forbidden.contains(&prof_ref) {
+            // Check 1: same object reference
+            let ref_match = forbidden_refs.contains(&prof_ref);
+            // Check 2: same decoded bytes (MD5-equivalent)
+            let checksum_match = if !forbidden_checksums.is_empty() {
+                icc_stream
+                    .as_ref()
+                    .and_then(|s| s.decoded().ok())
+                    .map(|data| {
+                        !data.is_empty() && forbidden_checksums.contains(&bytes_checksum(&data))
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if ref_match || checksum_match {
                 let name_str = std::str::from_utf8(cs_name.as_ref()).unwrap_or("?");
                 error(
                     report,
