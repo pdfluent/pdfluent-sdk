@@ -1147,10 +1147,15 @@ fn check_font_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             } else {
                 // No FontDescriptor and no DescendantFonts — font metadata entirely absent.
-                // PDF/A-2/3 §6.2.11.4.2 covers missing FontDescriptor (distinct from
-                // §6.2.11.4.1 which covers FontDescriptor present but no font program).
-                // Use internal rule "6.3.3-nd" so the remap can target the right clause.
-                // Fixes #467 (ZTESTZUGFERD §6.2.11.4.2 false negative).
+                // A font with no FontDescriptor is implicitly not embedded (§6.2.11.4.1 in
+                // PDF/A-2/3, §6.3.4 in PDF/A-1). The missing descriptor itself also violates
+                // §6.2.11.4.2. veraPDF emits both rules for this case. Fixes #467/#474.
+                check::error_at(
+                    report,
+                    "6.3.3",
+                    format!("Font {name} is not embedded (no FontDescriptor)"),
+                    format!("page {}", page_idx + 1),
+                );
                 check::error_at(
                     report,
                     "6.3.3-nd",
@@ -1590,6 +1595,8 @@ fn check_need_appearances_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.10 — Digital signature restrictions.
 fn check_signature_restrictions_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_signature_restrictions(pdf, report);
+    // §6.4.3 (PDF/A-2/3): ByteRange must cover entire file. Fixes #475.
+    check::check_sig_byterange_coverage(pdf, report);
     // §6.1.12 (PDF/A-2/3/4): DocMDP signature reference restrictions
     check::check_docmdp_signature_restriction(pdf, report);
 }
@@ -1688,8 +1695,10 @@ fn check_trailer_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complian
 // ─── Batch 7: Stream/syntax validation, XMP extension, image intent ─────────
 
 /// §6.7.3 — Info dict / XMP metadata consistency.
+/// §6.7.9.3 — Lang Alt type requirement for dc:description, dc:rights, xmpRights:UsageTerms.
 fn check_info_xmp(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_info_xmp_consistency(pdf, report);
+    check::check_xmp_lang_alt_properties(pdf, report);
 }
 
 /// §6.1.7 — Stream Length verification.
@@ -1906,12 +1915,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.3.3-iccver") => Some("6.2.2"),
             (_, "6.2.3.3-iccver") => Some("6.2.3.3"),
 
-            // OutputIntent ICC profile header checks now emit "6.2.3.2" directly
-            // (check_output_intent_icc_signature changed in #467). These remaps remain
-            // as guards for any legacy "6.6.2.3.1"/"6.6.2.3.3" XMP-path emissions in
-            // PDF/A-1 (check_output_intent_icc_signature no longer emits them).
-            (1, "6.6.2.3.1") => Some("6.2.2"),
-            (1, "6.6.2.3.3") => Some("6.2.2"),
+            // XMP extension schema checks emit "6.6.2.3.1"/"6.6.2.3.3" (PDF/A-2/3 clauses).
+            // In PDF/A-1 these map to §6.7.8 (ISO 19005-1 XMP extension schemas). Fixes #476.
+            (1, "6.6.2.3.1") => Some("6.7.8"),
+            (1, "6.6.2.3.3") => Some("6.7.8"),
 
             // OutputIntent DestOutputProfile required
             // veraPDF uses §6.2.3.2 for ALL PDF/A parts — no remap needed. Fixes #467.
