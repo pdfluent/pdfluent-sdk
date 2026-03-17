@@ -1022,6 +1022,24 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
 
     let Some(xmp) = check::get_xmp_metadata(pdf) else {
         check::error(report, rule, "No XMP metadata stream in catalog");
+        // If the catalog has a /Metadata key but the pointed-to object is not a stream
+        // (e.g., points to a Font dict — as in PDFBOX-3105-1), and the trailer also has
+        // an /Info reference, then metadata synchronization (§6.7.3) is broken.
+        // This check must run in Phase 1 because Phase 2 is skipped when XMP is absent.
+        // Fixes #467 (PDFBOX-3105-1).
+        if let Some(cat) = check::catalog(pdf) {
+            use pdf_syntax::object::dict::keys;
+            if cat.contains_key(keys::METADATA) {
+                let raw = pdf.data().as_ref();
+                if raw.windows(5).any(|w| w == b"/Info") {
+                    check::error(
+                        report,
+                        "6.7.3",
+                        "XMP Metadata stream pointer is corrupt (does not resolve to a stream)",
+                    );
+                }
+            }
+        }
         return;
     };
 
@@ -1042,10 +1060,10 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     }
 
     let expected_conf = level.conformance();
-    // PDF/A-4 base level has no conformance letter — empty is valid
-    if !(conformance.eq_ignore_ascii_case(expected_conf)
-        || (expected_conf.is_empty() && conformance.is_empty()))
-    {
+    // PDF/A-4 base level has no conformance letter — empty is valid.
+    // Case-SENSITIVE check: 'u' vs 'U' is a violation (veraPDF reports §6.6.4 for PDF/A-2/3).
+    // Previously used eq_ignore_ascii_case which missed case-only errors. Fixes #467 (ZTESTZUGFERD).
+    if !(conformance == expected_conf || (expected_conf.is_empty() && conformance.is_empty())) {
         check::error(
             report,
             rule,
@@ -1118,10 +1136,14 @@ fn check_font_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
                     }
                 }
             } else {
-                // No FontDescriptor and no DescendantFonts — cannot verify embedding
+                // No FontDescriptor and no DescendantFonts — font metadata entirely absent.
+                // PDF/A-2/3 §6.2.11.4.2 covers missing FontDescriptor (distinct from
+                // §6.2.11.4.1 which covers FontDescriptor present but no font program).
+                // Use internal rule "6.3.3-nd" so the remap can target the right clause.
+                // Fixes #467 (ZTESTZUGFERD §6.2.11.4.2 false negative).
                 check::error_at(
                     report,
-                    "6.3.3",
+                    "6.3.3-nd",
                     format!("Font {name} has no FontDescriptor; cannot verify embedding"),
                     format!("page {}", page_idx + 1),
                 );
@@ -1768,10 +1790,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // veraPDF emits §6.4.2 directly (ISO 19005-4) — no remap needed. Fixes #467.
             // PDF/A-1/2/3: §6.4.2 is soft-mask structure, no remap needed.
 
-            // Annotation types (forbidden subtypes like Sound, Movie, 3D)
-            // PDF/A-4: §6.3.1 (ISO 19005-4) → normalize_pdfa4_clause("6.3.1")="6.5.1".
-            // PDF/A-2/3: §6.3.1 used directly. PDF/A-1: §6.5.2. Fixes #467.
-            (4, "6.3.1") => Some("6.5.1"),
+            // Annotation types (forbidden subtypes like Sound, Movie, 3D, RichMedia)
+            // §6.3.1 is used by veraPDF for ALL PDF/A parts (1-4) for annotation type
+            // violations. PDF/A-1 uses §6.5.2 (check_annotation_types emits "6.5.2"),
+            // but PDF/A-2/3/4 all use "6.3.1" directly. No remap needed for PDF/A-4.
+            // Fixes #467 (veraPDF test suite 6-3-1-t01-fail-e is PDF/A-4).
 
             // Annotation flags (/F key, Print=1 etc.)
             // PDF/A-4: §6.3.2 (ISO 19005-4) → normalize_pdfa4_clause("6.3.2")="6.5.2".
@@ -1838,14 +1861,19 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Font embedding
             // PDF/A-1: §6.3.3 → §6.3.4 (veraPDF uses 6.3.4 for font embedding in PDF/A-1)
             (1, "6.3.3") => Some("6.3.4"),
+            (1, "6.3.3-nd") => Some("6.3.4"), // no-FontDescriptor case, same clause in PDF/A-1
             // PDF/A-1: corrupt/null font file — glyphs effectively absent → §6.3.2 (#467)
             (1, "6.3.2-null") => Some("6.3.2"),
-            // PDF/A-2/3: §6.3.4 → §6.2.11.4.1
+            // PDF/A-2/3: §6.3.4 → §6.2.11.4.1 (font program not embedded)
             (2..=3, "6.3.4") => Some("6.2.11.4.1"),
             (2..=3, "6.3.3") => Some("6.2.11.4.1"),
+            // PDF/A-2/3: no-FontDescriptor case → §6.2.11.4.2 (distinct from §6.2.11.4.1).
+            // veraPDF uses §6.2.11.4.2 when FontDescriptor is entirely absent. Fixes #467.
+            (2..=3, "6.3.3-nd") => Some("6.2.11.4.2"),
             // PDF/A-4: §6.3.4 → §6.2.10.4.1 (different numbering in ISO 19005-4)
             (4, "6.3.4") => Some("6.2.10.4.1"),
             (4, "6.3.3") => Some("6.2.10.4.1"),
+            (4, "6.3.3-nd") => Some("6.2.10.4.1"),
 
             // OutputIntent ICC profile class (prtr/mntr) check
             // PDF/A-1: veraPDF uses §6.2.2 for all OutputIntent/ICC violations.

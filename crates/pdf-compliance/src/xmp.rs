@@ -130,6 +130,13 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     let Ok(xmp_text) = std::str::from_utf8(&xmp_data) else {
         // §6.7.3 — XMP metadata stream must be UTF-8 encoded
         error(report, "6.7.3", "XMP metadata stream is not valid UTF-8");
+        // §6.7.9 — XMP namespace prefixes cannot be validated when XMP is not valid UTF-8.
+        // veraPDF reports §6.7.9 for non-UTF-8 XMP in addition to §6.7.3. Fixes #467 (PDFBOX-1760-11).
+        error(
+            report,
+            "6.7.9",
+            "XMP namespace prefixes cannot be validated: stream is not valid UTF-8",
+        );
         return;
     };
 

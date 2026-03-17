@@ -2098,9 +2098,9 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 
     // Check CreationDate (/Info CreationDate vs xmp:CreateDate) — §6.7.3.1
+    let xmp_create_date = extract_xmp_value(xmp_text, "xmp:CreateDate")
+        .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreateDate"));
     if metadata.creation_date.is_some() {
-        let xmp_create_date = extract_xmp_value(xmp_text, "xmp:CreateDate")
-            .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreateDate"));
         if xmp_create_date.is_none() {
             error(
                 report,
@@ -2108,12 +2108,20 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                 "/Info has CreationDate but XMP is missing xmp:CreateDate",
             );
         }
+    } else if xmp_create_date.is_some() {
+        // Reverse direction: XMP has xmp:CreateDate but /Info has no /CreationDate.
+        // §6.7.3 requires consistent metadata in both representations. Fixes #467 (PDFBOX-3105-1).
+        error(
+            report,
+            "6.7.3.1",
+            "XMP has xmp:CreateDate but /Info dict has no /CreationDate",
+        );
     }
 
     // Check ModDate (/Info ModDate vs xmp:ModifyDate) — §6.7.3.8
+    let xmp_mod_date = extract_xmp_value(xmp_text, "xmp:ModifyDate")
+        .or_else(|| extract_xmp_attr(xmp_text, "xmp:ModifyDate"));
     if metadata.modification_date.is_some() {
-        let xmp_mod_date = extract_xmp_value(xmp_text, "xmp:ModifyDate")
-            .or_else(|| extract_xmp_attr(xmp_text, "xmp:ModifyDate"));
         if xmp_mod_date.is_none() {
             error(
                 report,
@@ -2121,6 +2129,14 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                 "/Info has ModDate but XMP is missing xmp:ModifyDate",
             );
         }
+    } else if xmp_mod_date.is_some() {
+        // Reverse direction: XMP has xmp:ModifyDate but /Info has no /ModDate.
+        // §6.7.3 requires consistent metadata in both representations. Fixes #467.
+        error(
+            report,
+            "6.7.3.8",
+            "XMP has xmp:ModifyDate but /Info dict has no /ModDate",
+        );
     }
 
     // Check Title (/Info Title vs dc:title) — §6.7.3.2
