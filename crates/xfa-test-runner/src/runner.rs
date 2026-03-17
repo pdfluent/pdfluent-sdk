@@ -215,11 +215,33 @@ impl Runner {
                 let rss_before_pdf_kb =
                     current_rss_bytes().map(|b| b as i64 / 1024).unwrap_or(-1);
 
+                // If a single test causes a RSS spike > 2 GB, skip remaining
+                // tests for this PDF: the zombie thread is holding that memory
+                // and running more tests would compound the pressure. (#OOM)
+                let mut skip_remaining_reason: Option<String> = None;
+
                 for test in &self.tests {
                     if let Some(filter) = &self.config.test_filter {
                         if !filter.iter().any(|f| f == test.name()) {
                             continue;
                         }
+                    }
+
+                    // Per-test RSS spike guard: insert Skip and continue.
+                    if let Some(ref reason) = skip_remaining_reason {
+                        let row = TestResultRow::from_test_result(
+                            &self.config.run_id,
+                            &path_str,
+                            &pdf_hash,
+                            pdf_size,
+                            test.name(),
+                            &TestStatus::Skip,
+                            Some(reason),
+                            None,
+                            0,
+                        );
+                        let _ = self.db.insert_result(&row);
+                        continue;
                     }
 
                     // Incremental: skip if a passing result exists for same hash + code version
@@ -243,6 +265,30 @@ impl Runner {
                     }
 
                     let result = self.run_single_test(Arc::clone(test), &pdf_data, pdf_path);
+
+                    // If this test caused a >2 GB RSS spike, skip all remaining
+                    // tests for this PDF: the zombie thread is still holding that
+                    // memory and running more tests would compound OOM pressure. (#OOM)
+                    if skip_remaining_reason.is_none() {
+                        let rss_delta_kb: i64 = result
+                            .metadata
+                            .get("rss_delta_kb")
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        if rss_delta_kb > 2_000_000 {
+                            eprintln!(
+                                "SKIP remaining tests for {} ({} caused +{} MB RSS spike)",
+                                path_str,
+                                test.name(),
+                                rss_delta_kb / 1024
+                            );
+                            skip_remaining_reason = Some(format!(
+                                "skipped: {} caused +{} MB RSS spike",
+                                test.name(),
+                                rss_delta_kb / 1024
+                            ));
+                        }
+                    }
 
                     match result.status {
                         TestStatus::Pass => {
