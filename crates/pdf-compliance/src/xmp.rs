@@ -493,16 +493,35 @@ fn is_valid_value_type(vtype: &str, custom_types: &HashSet<String>) -> bool {
 ///
 /// Also checks that each used namespace prefix has a corresponding `xmlns:prefix`
 /// declaration in the XMP document (per XML namespace spec, required by PDF/A).
+/// Deprecated XMP namespace prefixes that were renamed in XMP Spec Part 1 (2012 ed.).
+///
+/// When one of these prefixes is used, veraPDF flags §6.7.9.2 (deprecated alias)
+/// rather than §6.7.9.1 (completely unknown/undeclared namespace). (#467)
+const DEPRECATED_XMP_PREFIXES: &[&str] = &[
+    "xap:",       // renamed → xmp:
+    "xapMM:",     // renamed → xmpMM:
+    "xapBJ:",     // renamed → xmpBJ:
+    "xapTPg:",    // renamed → xmpTPg:
+    "xapDM:",     // renamed → xmpDM:
+    "xapRights:", // renamed → xmpRights:
+    "xapidq:",    // renamed → xmpidq:
+];
+
 fn check_property_namespaces(
     xmp: &str,
     schemas: &[ExtensionSchema],
     level: PdfALevel,
     report: &mut ComplianceReport,
 ) {
-    let rule = match level.part() {
-        1 => "6.7.9",
-        4 => "6.5.2",
-        _ => "6.6.2.3.1",
+    // Use veraPDF subclause numbers for PDF/A-1 to eliminate false negatives. (#467)
+    // §6.7.9.1 = malformed XMP / undeclared namespace
+    // §6.7.9.2 = deprecated namespace alias
+    // §6.7.9.3 = predefined property value type violation
+    // For PDF/A-2/3: §6.6.2.3.1; PDF/A-4: §6.5.2
+    let (rule_undeclared, rule_deprecated) = match level.part() {
+        1 => ("6.7.9.1", "6.7.9.2"),
+        4 => ("6.5.2", "6.5.2"),
+        _ => ("6.6.2.3.1", "6.6.2.3.1"),
     };
 
     // Build set of valid prefixes: predefined + declared extensions
@@ -588,9 +607,17 @@ fn check_property_namespaces(
                                     prefix != "xml:" && !declared_prefixes.contains(prefix);
 
                                 if unknown_prefix || undeclared {
+                                    // Deprecated aliases (xap:, xapMM:, etc.) get §6.7.9.2;
+                                    // completely unknown/undeclared prefixes get §6.7.9.1. (#467)
+                                    let is_deprecated = DEPRECATED_XMP_PREFIXES.contains(&prefix);
+                                    let violation_rule = if is_deprecated {
+                                        rule_deprecated
+                                    } else {
+                                        rule_undeclared
+                                    };
                                     error(
                                         report,
-                                        rule,
+                                        violation_rule,
                                         format!(
                                             "XMP property '{}' uses undeclared namespace prefix '{}'",
                                             full_prop,
@@ -612,24 +639,26 @@ fn check_property_namespaces(
 /// §6.7.3 — Deep Info dict / XMP consistency check.
 ///
 /// Validates all mappings from Info dict to XMP, checking both presence and value:
-/// - /Title ↔ dc:title
-/// - /Author ↔ dc:creator
-/// - /Subject ↔ dc:description
-/// - /Creator ↔ xmp:CreatorTool
-/// - /Producer ↔ pdf:Producer
-/// - /CreationDate ↔ xmp:CreateDate
-/// - /ModDate ↔ xmp:ModifyDate
+/// - /Title ↔ dc:title         (§6.7.3.2)
+/// - /Author ↔ dc:creator      (§6.7.3.3)
+/// - /Subject ↔ dc:description (§6.7.3.4)
+/// - /Keywords ↔ pdf:Keywords  (§6.7.3.5 — covered by check_info_xmp_consistency)
+/// - /Creator ↔ xmp:CreatorTool (§6.7.3.6)
+/// - /Producer ↔ pdf:Producer  (§6.7.3.7)
+/// - /ModDate ↔ xmp:ModifyDate (§6.7.3.8)
+///
+/// Uses veraPDF subclause numbers so the comparison matches exactly. (#467)
 fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     let metadata = pdf.metadata();
 
-    // /Title ↔ dc:title (§6.7.8)
+    // /Title ↔ dc:title (§6.7.3.2)
     if let Some(ref title) = metadata.title {
         let dc_title = extract_rdf_alt_value(xmp, "dc:title");
         match dc_title {
             None => {
                 error(
                     report,
-                    "6.7.3",
+                    "6.7.3.2",
                     "/Info has Title but XMP is missing dc:title",
                 );
             }
@@ -638,7 +667,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
                 if !values_match(&info_str, xmp_val) {
                     error(
                         report,
-                        "6.7.3",
+                        "6.7.3.2",
                         format!(
                             "Info /Title '{}' does not match XMP dc:title '{}'",
                             info_str, xmp_val
@@ -649,7 +678,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         }
     }
 
-    // /Author ↔ dc:creator
+    // /Author ↔ dc:creator (§6.7.3.3)
     if let Some(ref author) = metadata.author {
         let dc_creator = extract_rdf_seq_value(xmp, "dc:creator")
             .or_else(|| extract_nested_value(xmp, "dc:creator"));
@@ -657,7 +686,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
             None => {
                 error(
                     report,
-                    "6.7.3",
+                    "6.7.3.3",
                     "/Info has Author but XMP is missing dc:creator",
                 );
             }
@@ -666,7 +695,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
                 if !values_match(&info_str, xmp_val) {
                     error(
                         report,
-                        "6.7.3",
+                        "6.7.3.3",
                         format!(
                             "Info /Author '{}' does not match XMP dc:creator '{}'",
                             info_str, xmp_val
@@ -677,7 +706,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         }
     }
 
-    // /Subject ↔ dc:description
+    // /Subject ↔ dc:description (§6.7.3.4)
     if let Some(ref subject) = metadata.subject {
         let dc_desc = extract_rdf_alt_value(xmp, "dc:description")
             .or_else(|| extract_nested_value(xmp, "dc:description"));
@@ -685,7 +714,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
             None => {
                 error(
                     report,
-                    "6.7.3",
+                    "6.7.3.4",
                     "/Info has Subject but XMP is missing dc:description",
                 );
             }
@@ -694,7 +723,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
                 if !values_match(&info_str, xmp_val) {
                     error(
                         report,
-                        "6.7.3",
+                        "6.7.3.4",
                         format!(
                             "Info /Subject '{}' does not match XMP dc:description '{}'",
                             info_str, xmp_val
@@ -705,14 +734,14 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         }
     }
 
-    // /Creator ↔ xmp:CreatorTool
+    // /Creator ↔ xmp:CreatorTool (§6.7.3.6)
     if let Some(ref creator) = metadata.creator {
         let xmp_creator = extract_nested_value(xmp, "xmp:CreatorTool");
         match xmp_creator {
             None => {
                 error(
                     report,
-                    "6.7.3",
+                    "6.7.3.6",
                     "/Info has Creator but XMP is missing xmp:CreatorTool",
                 );
             }
@@ -721,7 +750,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
                 if !values_match(&info_str, xmp_val) {
                     error(
                         report,
-                        "6.7.3",
+                        "6.7.3.6",
                         format!(
                             "Info /Creator '{}' does not match XMP xmp:CreatorTool '{}'",
                             info_str, xmp_val
@@ -732,14 +761,14 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         }
     }
 
-    // /Producer ↔ pdf:Producer
+    // /Producer ↔ pdf:Producer (§6.7.3.7)
     if let Some(ref producer) = metadata.producer {
         let xmp_producer = extract_nested_value(xmp, "pdf:Producer");
         match xmp_producer {
             None => {
                 error(
                     report,
-                    "6.7.3",
+                    "6.7.3.7",
                     "/Info has Producer but XMP is missing pdf:Producer",
                 );
             }
@@ -748,7 +777,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
                 if !values_match(&info_str, xmp_val) {
                     error(
                         report,
-                        "6.7.3",
+                        "6.7.3.7",
                         format!(
                             "Info /Producer '{}' does not match XMP pdf:Producer '{}'",
                             info_str, xmp_val
@@ -759,25 +788,25 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         }
     }
 
-    // /CreationDate ↔ xmp:CreateDate
+    // /CreationDate ↔ xmp:CreateDate (§6.7.3.1)
     if metadata.creation_date.is_some() {
         let xmp_create_date = extract_nested_value(xmp, "xmp:CreateDate");
         if xmp_create_date.is_none() {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.1",
                 "/Info has CreationDate but XMP is missing xmp:CreateDate",
             );
         }
     }
 
-    // /ModDate ↔ xmp:ModifyDate
+    // /ModDate ↔ xmp:ModifyDate (§6.7.3.8)
     if metadata.modification_date.is_some() {
         let xmp_mod_date = extract_nested_value(xmp, "xmp:ModifyDate");
         if xmp_mod_date.is_none() {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.8",
                 "/Info has ModDate but XMP is missing xmp:ModifyDate",
             );
         }
@@ -995,13 +1024,28 @@ fn check_xmp_rdf_structure(xmp: &str, level: PdfALevel, report: &mut ComplianceR
                 // Check it's not "rdf:about=" pattern — look back for "rdf:"
                 let prefix_start = i.saturating_sub(4);
                 if &bytes[prefix_start..i] != b"rdf:" {
-                    // veraPDF uses §6.7.9 for PDF/A-1 (malformed XMP), §6.7.3 for others
-                    let rule = if level.part() == 1 { "6.7.9" } else { "6.7.3" };
+                    // veraPDF uses §6.7.9.1 for PDF/A-1 (malformed XMP), §6.7.3 for others.
+                    // §6.7.9.1 = "The metadata stream shall conform to XMP Specification
+                    // and well formed PDFAExtension Schema for all extensions". (#467)
+                    let rule = if level.part() == 1 {
+                        "6.7.9.1"
+                    } else {
+                        "6.7.3"
+                    };
                     error(
                         report,
                         rule,
                         "rdf:Description uses unqualified 'about' attribute instead of 'rdf:about'",
                     );
+                    // §6.7.11.1 cascade: malformed XMP means pdfaid cannot be verified.
+                    // veraPDF always flags 6.7.11.1 when 6.7.9.1 is present. (#467)
+                    if level.part() == 1 {
+                        error(
+                            report,
+                            "6.7.11",
+                            "XMP is malformed (6.7.9.1 violation) — PDF/A identification cannot be verified",
+                        );
+                    }
                     break;
                 }
             }
