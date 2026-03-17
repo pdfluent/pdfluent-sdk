@@ -5276,13 +5276,30 @@ fn check_cidfont_descriptor_deep(
 
     check_fontfile_subtype_match(&desc, cid_name, page_idx, report);
 
-    if is_subset_font(cid_name) && desc.get::<Stream<'_>>(keys::CID_SET).is_none() {
-        error_at(
-            report,
-            "6.3.5",
-            format!("Subset CIDFont {cid_name} missing required /CIDSet"),
-            format!("page {}", page_idx + 1),
-        );
+    if is_subset_font(cid_name) {
+        match desc.get::<Stream<'_>>(keys::CID_SET) {
+            None => {
+                error_at(
+                    report,
+                    "6.3.5",
+                    format!("Subset CIDFont {cid_name} missing required /CIDSet"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+            Some(cidset_stream) => {
+                // §6.3.5: CIDSet must not be an empty stream. (#467)
+                // An empty CIDSet stream is equivalent to no CIDSet.
+                let raw = cidset_stream.raw_data();
+                if raw.is_empty() || raw.iter().all(|&b| b == 0) {
+                    error_at(
+                        report,
+                        "6.3.5",
+                        format!("Subset CIDFont {cid_name} has empty /CIDSet stream"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
     }
 }
 
