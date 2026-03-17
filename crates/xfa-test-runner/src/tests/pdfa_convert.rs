@@ -326,6 +326,13 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc)
         }));
 
+        // 3a2a2. Add /ToUnicode CMap to Type1 fonts with WinAnsi/MacRoman/standard encoding.
+        // ISO 19005-2 §6.2.11.7.2 requires ToUnicode on all non-CID fonts. Fixes #483.
+        set_progress("type1_tounicode");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc)
+        }));
+
         // 3a2b. Fix .notdef glyph references (6.2.11.8:1).
         set_progress("notdef_refs");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
