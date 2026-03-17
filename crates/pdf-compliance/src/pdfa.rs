@@ -118,7 +118,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // Font & Annotation deep validation (§6.3.x, §6.5.x)
     check_font_type_key(pdf, &mut report);
     check_font_embedding_deep(pdf, level, &mut report);
-    check_tounicode_cmap(pdf, &mut report);
+    check_tounicode_cmap(pdf, level, &mut report);
     check::check_tounicode_values(pdf, &mut report);
     check_font_widths(pdf, &mut report);
     check_symbolic_truetype_encoding(pdf, &mut report);
@@ -418,7 +418,7 @@ pub fn validate_with_progress(
     );
     tracked!(
         "check_tounicode_cmap",
-        check_tounicode_cmap(pdf, &mut report)
+        check_tounicode_cmap(pdf, level, &mut report)
     );
     tracked!(
         "check_tounicode_values",
@@ -790,7 +790,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     );
     timed!(
         "check_tounicode_cmap",
-        check_tounicode_cmap(pdf, &mut report)
+        check_tounicode_cmap(pdf, level, &mut report)
     );
     timed!(
         "check_tounicode_values",
@@ -1409,8 +1409,8 @@ fn check_font_embedding_deep(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
 }
 
 /// §6.3.4 — ToUnicode CMap presence.
-fn check_tounicode_cmap(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_tounicode_cmap(pdf, report);
+fn check_tounicode_cmap(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_tounicode_cmap(pdf, level.part(), report);
 }
 
 /// §6.3.5 — Font /Widths array.
@@ -1712,6 +1712,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // CIDSystemInfo compatibility
             // PDF/A-2/3: §6.2.11.3.1
             (2..=3, "6.3.3.1") => Some("6.2.11.3.1"),
+
+            // CIDToGIDMap must be /Identity or a stream
+            // PDF/A-4: §6.2.10.3.2 (non-Identity Name value)
+            (4, "6.3.7") => Some("6.2.10.3.2"),
 
             // Name UTF-8 validation — always maps to 6.1.7 for all PDF/A parts
             (_, "6.1.7-names") => Some("6.1.7"),
