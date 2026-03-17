@@ -139,6 +139,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_blending_modes_pdfa(pdf, level, &mut report);
     check_soft_mask(pdf, &mut report);
     check_need_appearances_pdfa(pdf, &mut report);
+    check::check_acroform_no_xfa(pdf, level.part(), &mut report);
     check_signature_restrictions_pdfa(pdf, &mut report);
     check_document_structure_pdfa(pdf, &mut report);
     check::check_stream_empty_keys_cached(&obj_cache, &mut report);
@@ -476,6 +477,10 @@ pub fn validate_with_progress(
     tracked!(
         "check_need_appearances_pdfa",
         check_need_appearances_pdfa(pdf, &mut report)
+    );
+    tracked!(
+        "check_acroform_no_xfa",
+        check::check_acroform_no_xfa(pdf, level.part(), &mut report)
     );
     tracked!(
         "check_signature_restrictions_pdfa",
@@ -855,6 +860,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     timed!(
         "check_need_appearances_pdfa",
         check_need_appearances_pdfa(pdf, &mut report)
+    );
+    timed!(
+        "check_acroform_no_xfa",
+        check::check_acroform_no_xfa(pdf, level.part(), &mut report)
     );
     timed!(
         "check_signature_restrictions_pdfa",
@@ -1695,13 +1704,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.1.7") => Some("6.1.6.1"),
 
             // Widget annotation actions / NeedAppearances
-            // PDF/A-1: §6.6.1, PDF/A-2/3: §6.4.1
-            // PDF/A-4: veraPDF uses §6.4.x which normalizes to §6.6.x in comparison.
-            // Remap our internal §6.4.x to §6.6.x for PDF/A-4 output. (#467)
+            // PDF/A-1: internal §6.4.1 → §6.6.1 (ISO 19005-1 numbering)
+            // PDF/A-2/3/4: §6.4.1 used directly (ISO 19005-2/3/4 numbering). Fixes #467.
             (1, "6.4.1") => Some("6.6.1"),
-            (4, "6.4.1") => Some("6.6.1"),
-            (4, "6.4.2") => Some("6.6.2"),
-            (4, "6.4.3") => Some("6.6.3"),
 
             // Transparency (SMask) restrictions
             // PDF/A-1: §6.4, PDF/A-2/3/4: §6.2.10.7
