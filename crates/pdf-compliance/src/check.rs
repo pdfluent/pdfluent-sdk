@@ -5955,14 +5955,26 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Deep annotation subtype validation (§6.5.2).
+/// Deep annotation subtype validation (§6.5.2 / §6.3.2 / §6.3.1).
+///
+/// Clause numbering differs by PDF/A part:
+/// - PDF/A-1: §6.5.2 (ISO 19005-1)
+/// - PDF/A-2/3: §6.3.2 (ISO 19005-2/3)
+/// - PDF/A-4: §6.3.1 (ISO 19005-4)
 pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    // Annotations forbidden in ALL PDF/A parts
     let forbidden_all: &[&[u8]] = &[b"Sound", b"Movie", b"3D"];
-    // PDF/A-4 (ISO 19005-4 §6.3.1) also forbids Screen, RichMedia, FileAttachment
-    let forbidden_pdfa4: &[&[u8]] = &[b"Screen", b"RichMedia", b"FileAttachment"];
+    // Annotations also forbidden in PDF/A-2/3/4 (added in ISO 19005-2)
+    let forbidden_pdfa2plus: &[&[u8]] = &[b"Screen", b"Redact"];
+    // PDF/A-4 (ISO 19005-4 §6.3.1) additionally forbids RichMedia, FileAttachment
+    let forbidden_pdfa4: &[&[u8]] = &[b"RichMedia", b"FileAttachment"];
 
-    // PDF/A-4 uses 6.3.1 (normalized to 6.5.1); other parts use 6.5.2
-    let rule = if part == 4 { "6.5.1" } else { "6.5.2" };
+    // Rule number differs by part. Fixes #467.
+    let rule = match part {
+        4 => "6.3.1",
+        2 | 3 => "6.3.2",
+        _ => "6.5.2", // PDF/A-1
+    };
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
@@ -5976,6 +5988,16 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
             let st = subtype.as_ref();
 
             if forbidden_all.contains(&st) {
+                let name = std::str::from_utf8(st).unwrap_or("?");
+                error_at(
+                    report,
+                    rule,
+                    format!("Annotation type {name} forbidden in PDF/A-{part}"),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+
+            if part >= 2 && forbidden_pdfa2plus.contains(&st) {
                 let name = std::str::from_utf8(st).unwrap_or("?");
                 error_at(
                     report,
@@ -6007,12 +6029,12 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
     }
 }
 
-/// Deep annotation flag validation per PDF/A part (§6.5.1/§6.5.2).
+/// Deep annotation flag validation per PDF/A part (§6.5.1/§6.5.2/§6.3.2).
 ///
-/// PDF/A-4 uses clause 6.3.2 (normalized to 6.5.2); parts 2/3 use 6.5.1.
+/// PDF/A-4 uses clause §6.3.2; parts 2/3 use §6.5.1. Fixes #467.
 pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
-    // PDF/A-4: 6.3.2 → normalized 6.5.2; parts 2/3: 6.5.1
-    let rule = if part == 4 { "6.5.2" } else { "6.5.1" };
+    // PDF/A-4: §6.3.2 (veraPDF uses this directly); parts 2/3: §6.5.1
+    let rule = if part == 4 { "6.3.2" } else { "6.5.1" };
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
@@ -6490,6 +6512,30 @@ pub fn check_need_appearances(pdf: &Pdf, report: &mut ComplianceReport) {
     // All form fields must have /AP (appearance) entry
     if let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) {
         check_field_appearances(&fields, report, 0);
+    }
+}
+
+/// Check that AcroForm does not contain /XFA key in PDF/A-4 (§6.4.2).
+///
+/// ISO 19005-4 §6.4.2: the interactive form dictionary shall not contain
+/// the XFA key. For PDF/A-2/3, §6.4.2 is about soft-mask structure; XFA is
+/// only prohibited explicitly in PDF/A-4. (#467)
+pub fn check_acroform_no_xfa(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    if part != 4 {
+        return;
+    }
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(acroform) = cat.get::<Dict<'_>>(keys::ACRO_FORM) else {
+        return;
+    };
+    if acroform.contains_key(keys::XFA) {
+        error(
+            report,
+            "6.4.2",
+            "AcroForm dictionary contains /XFA key, which is prohibited in PDF/A-4 (§6.4.2)",
+        );
     }
 }
 
