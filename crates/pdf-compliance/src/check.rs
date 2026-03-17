@@ -377,6 +377,10 @@ fn parse_xmp_datetime(s: &str) -> Option<(u16, u8, u8, u8, u8, u8)> {
 }
 
 /// Check date value equivalence between Info dict and XMP.
+///
+/// Uses specific §6.7.3.X subclauses matching veraPDF numbering:
+/// - §6.7.3.1 = CreationDate / xmp:CreateDate
+/// - §6.7.3.8 = ModDate / xmp:ModifyDate
 fn check_date_equivalence(
     pdf_date: &Option<pdf_syntax::object::DateTime>,
     info_key: &str,
@@ -389,6 +393,13 @@ fn check_date_equivalence(
         extract_xmp_value(xmp_text, xmp_key).or_else(|| extract_xmp_attr(xmp_text, xmp_key));
     let Some(xmp_str) = xmp_val else { return };
 
+    // Map info_key to the appropriate §6.7.3.X subclause (#467)
+    let rule = if info_key.contains("Mod") || xmp_key.contains("Modify") {
+        "6.7.3.8"
+    } else {
+        "6.7.3.1"
+    };
+
     if let Some((y, mo, d, _h, _mi, _s)) = parse_xmp_datetime(&xmp_str) {
         // Compare only the date portion (year/month/day).
         // Timezone differences between /Info and XMP can cause hour/minute mismatches
@@ -397,7 +408,7 @@ fn check_date_equivalence(
         if dt.year != y || dt.month != mo || dt.day != d {
             error(
                 report,
-                "6.7.3",
+                rule,
                 format!(
                     "{info_key} date mismatch: Info={:04}-{:02}-{:02} vs XMP={xmp_str}",
                     dt.year, dt.month, dt.day,
@@ -1982,6 +1993,7 @@ fn decode_pdf_info_string(bytes: &[u8]) -> Option<String> {
 /// Check Info dict / XMP metadata consistency (§6.7.3).
 ///
 /// Properties in /Info dict must have matching values in XMP metadata.
+/// Uses veraPDF subclause numbers for exact match with the oracle. (#467)
 pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(xmp_data) = get_xmp_metadata(pdf) else {
         return;
@@ -1992,64 +2004,64 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
 
     let metadata = pdf.metadata();
 
-    // Check Creator (/Info Creator vs xmp:CreatorTool)
+    // Check Creator (/Info Creator vs xmp:CreatorTool) — §6.7.3.6
     if metadata.creator.is_some() {
         let xmp_creator = extract_xmp_value(xmp_text, "xmp:CreatorTool")
             .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreatorTool"));
         if xmp_creator.is_none() {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.6",
                 "/Info has Creator but XMP is missing xmp:CreatorTool",
             );
         }
     }
 
-    // Check Producer (/Info Producer vs pdf:Producer)
+    // Check Producer (/Info Producer vs pdf:Producer) — §6.7.3.7
     if metadata.producer.is_some() {
         let xmp_producer = extract_xmp_value(xmp_text, "pdf:Producer")
             .or_else(|| extract_xmp_attr(xmp_text, "pdf:Producer"));
         if xmp_producer.is_none() {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.7",
                 "/Info has Producer but XMP is missing pdf:Producer",
             );
         }
     }
 
-    // Check CreationDate (/Info CreationDate vs xmp:CreateDate)
+    // Check CreationDate (/Info CreationDate vs xmp:CreateDate) — §6.7.3.1
     if metadata.creation_date.is_some() {
         let xmp_create_date = extract_xmp_value(xmp_text, "xmp:CreateDate")
             .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreateDate"));
         if xmp_create_date.is_none() {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.1",
                 "/Info has CreationDate but XMP is missing xmp:CreateDate",
             );
         }
     }
 
-    // Check ModDate (/Info ModDate vs xmp:ModifyDate)
+    // Check ModDate (/Info ModDate vs xmp:ModifyDate) — §6.7.3.8
     if metadata.modification_date.is_some() {
         let xmp_mod_date = extract_xmp_value(xmp_text, "xmp:ModifyDate")
             .or_else(|| extract_xmp_attr(xmp_text, "xmp:ModifyDate"));
         if xmp_mod_date.is_none() {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.8",
                 "/Info has ModDate but XMP is missing xmp:ModifyDate",
             );
         }
     }
 
-    // Check Title (/Info Title vs dc:title)
+    // Check Title (/Info Title vs dc:title) — §6.7.3.2
     if let Some(title) = &metadata.title {
         if !xmp_text.contains("dc:title") {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.2",
                 "/Info has Title but XMP is missing dc:title",
             );
         } else {
@@ -2060,7 +2072,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                     if info_decoded.trim() != xmp_val.trim() {
                         error(
                             report,
-                            "6.7.3",
+                            "6.7.3.2",
                             format!(
                                 "Title mismatch: Info='{}' vs XMP='{}'",
                                 info_decoded.chars().take(50).collect::<String>(),
@@ -2072,7 +2084,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
             }
             // veraPDF requires rdf:Alt/rdf:li to have xml:lang="x-default".
             // If dc:title exists but lacks an x-default language entry,
-            // veraPDF treats the title as null → §6.7.3 mismatch. (#467)
+            // veraPDF treats the title as null → §6.7.3.2 mismatch. (#467)
             let dc_title_region = xmp_text
                 .find("<dc:title>")
                 .or_else(|| xmp_text.find("<dc:title "));
@@ -2085,7 +2097,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                     // Title value exists but lacks x-default lang tag
                     error(
                         report,
-                        "6.7.3",
+                        "6.7.3.2",
                         "dc:title in XMP lacks xml:lang=\"x-default\" — value not accessible as x-default",
                     );
                 }
@@ -2093,7 +2105,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         }
     }
 
-    // Check Author (/Info Author vs dc:creator)
+    // Check Author (/Info Author vs dc:creator) — §6.7.3.3
     if let Some(author) = &metadata.author {
         if xmp_text.contains("dc:creator") {
             let (xmp_vals, _) = extract_rdf_seq_values(xmp_text, "dc:creator");
@@ -2103,7 +2115,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                     if info_decoded.as_str() != xmp_val.as_str() {
                         error(
                             report,
-                            "6.7.3",
+                            "6.7.3.3",
                             format!(
                                 "Author mismatch: Info='{}' vs XMP='{}'",
                                 info_decoded.chars().take(50).collect::<String>(),
@@ -2116,16 +2128,16 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         }
     }
 
-    // Check Keywords (/Info Keywords vs pdf:Keywords)
+    // Check Keywords (/Info Keywords vs pdf:Keywords) — §6.7.3.5
     if let Some(keywords) = &metadata.keywords {
         // Detect wrong-case variant: pdf:keywords (lowercase) is not a valid XMP property.
-        // veraPDF flags this as §6.7.9 (XMP schema conformance), not §6.7.3. (#467)
+        // veraPDF flags this as §6.7.9.3 (predefined property type violation). (#467)
         let has_lowercase_keywords =
             xmp_text.contains("<pdf:keywords>") || xmp_text.contains("pdf:keywords=");
         if has_lowercase_keywords {
             error(
                 report,
-                "6.7.9",
+                "6.7.9.3",
                 "XMP contains 'pdf:keywords' (lowercase) — correct property name is 'pdf:Keywords'",
             );
         }
@@ -2136,7 +2148,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                 if info_decoded.as_str() != xmp_val.as_str() {
                     error(
                         report,
-                        "6.7.3",
+                        "6.7.3.5",
                         format!(
                             "Keywords mismatch: Info='{}' vs XMP='{}'",
                             info_decoded.chars().take(50).collect::<String>(),
@@ -2146,12 +2158,10 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
         } else {
-            // pdf:Keywords (correct case) is absent. veraPDF emits §6.7.3 regardless
-            // of whether pdf:keywords (lowercase) exists — the correct property is
-            // missing. Emit §6.7.3 unconditionally here. (#467)
+            // pdf:Keywords (correct case) is absent. veraPDF emits §6.7.3.5 (#467)
             error(
                 report,
-                "6.7.3",
+                "6.7.3.5",
                 "/Info has Keywords but XMP is missing pdf:Keywords (correct-case property)",
             );
         }
@@ -6320,12 +6330,15 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Deep annotation subtype validation (§6.5.2 / §6.3.2 / §6.3.1).
+/// Deep annotation subtype validation (§6.5.2 / §6.3.1 / §6.3.1).
 ///
 /// Clause numbering differs by PDF/A part:
-/// - PDF/A-1: §6.5.2 (ISO 19005-1)
-/// - PDF/A-2/3: §6.3.2 (ISO 19005-2/3)
-/// - PDF/A-4: §6.3.1 (ISO 19005-4)
+/// - PDF/A-1: §6.5.2 (ISO 19005-1 — annotation type restrictions)
+/// - PDF/A-2/3: §6.3.1 (ISO 19005-2/3 — allowed annotation types)
+/// - PDF/A-4: §6.3.1 (ISO 19005-4 — allowed annotation types)
+///
+/// Note: §6.3.2 is annotation *flags* (the /F key), not annotation types.
+/// Fixes #467.
 pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     // Annotations forbidden in ALL PDF/A parts
     let forbidden_all: &[&[u8]] = &[b"Sound", b"Movie", b"3D"];
@@ -6334,10 +6347,10 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
     // PDF/A-4 (ISO 19005-4 §6.3.1) additionally forbids RichMedia, FileAttachment
     let forbidden_pdfa4: &[&[u8]] = &[b"RichMedia", b"FileAttachment"];
 
-    // Rule number differs by part. Fixes #467.
+    // §6.3.1 = allowed annotation types in PDF/A-2/3/4.
+    // §6.5.2 = same concept in PDF/A-1 (different numbering). Fixes #467.
     let rule = match part {
-        4 => "6.3.1",
-        2 | 3 => "6.3.2",
+        2..=4 => "6.3.1",
         _ => "6.5.2", // PDF/A-1
     };
 
@@ -6572,12 +6585,41 @@ pub fn check_blending_modes(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
 }
 
 /// Check soft mask dictionaries have valid structure (§6.4.2).
+///
+/// §6.4.2 has two requirements:
+/// 1. XObject dictionaries shall not contain the SMask key (ISO 19005-1 §6.4.2).
+/// 2. If an ExtGState has an SMask, the SMask dictionary must have /S (Alpha or
+///    Luminosity) and /G (group XObject).
+///
+/// Fixes #467.
 pub fn check_soft_mask_structure(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
             continue;
         };
+
+        // §6.4.2: XObject dictionaries shall not contain the SMask key. (#467)
+        // Applies to both Image XObjects and Form XObjects.
+        if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
+            for (xname, _) in xobj_dict.entries() {
+                let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
+                    continue;
+                };
+                let dict = stream.dict();
+                if dict.contains_key(keys::SMASK) {
+                    let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.4.2",
+                        format!("XObject '{xname_str}' contains forbidden /SMask key"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+
+        // §6.4.2: ExtGState SMask dict must have valid /S and /G entries.
         let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
             continue;
         };
