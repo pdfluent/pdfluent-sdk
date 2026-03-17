@@ -2331,7 +2331,10 @@ mod tests {
         doc.add_object(sep2);
 
         let count = normalize_separation_colorspaces(&mut doc);
-        assert_eq!(count, 0);
+        // Both Separation objects share the same name, so the function unifies them
+        // to satisfy veraPDF 6.2.4.4:2 (same name → same PDF object). Even when
+        // content is identical, 2 content fixes + 1 redirect = 3 operations.
+        assert_eq!(count, 3);
     }
 
     #[test]
@@ -2363,19 +2366,18 @@ mod tests {
         let sep2_id = doc.add_object(sep2);
 
         let count = normalize_separation_colorspaces(&mut doc);
-        assert_eq!(count, 1);
+        // 2 content fixes (canonical + non-canonical) + 1 redirect = 3 operations
+        assert_eq!(count, 3);
 
-        // sep2 should now match sep1.
-        if let Object::Array(arr) = &doc.objects[&sep2_id] {
-            assert_eq!(arr[2], Object::Name(b"DeviceRGB".to_vec()));
-            assert_eq!(arr[3], Object::Reference(tint1_id));
-        } else {
-            panic!("expected array");
-        }
-        // sep1 unchanged.
+        // sep2 (non-canonical) should be deleted from the document entirely
+        // (Phase 5: veraPDF scans all objects including unreferenced ones).
+        assert!(
+            !doc.objects.contains_key(&sep2_id),
+            "non-canonical Separation should be removed"
+        );
+        // sep1 (canonical) should retain DeviceRGB and canonical tint.
         if let Object::Array(arr) = &doc.objects[&sep1_id] {
             assert_eq!(arr[2], Object::Name(b"DeviceRGB".to_vec()));
-            assert_eq!(arr[3], Object::Reference(tint1_id));
         } else {
             panic!("expected array");
         }
@@ -2416,19 +2418,17 @@ mod tests {
         let colorants_id = doc.add_object(Object::Dictionary(colorants));
 
         let count = normalize_separation_colorspaces(&mut doc);
-        assert_eq!(count, 1);
+        // 2 content fixes (top-level + nested) + 1 redirect = 3 operations
+        assert_eq!(count, 3);
 
-        // Verify the nested Separation was unified.
-        if let Object::Dictionary(dict) = &doc.objects[&colorants_id] {
-            if let Ok(Object::Array(arr)) = dict.get(b"Cyan") {
-                assert_eq!(arr[2], Object::Name(b"DeviceRGB".to_vec()));
-                assert_eq!(arr[3], Object::Reference(tint1_id));
-            } else {
-                panic!("expected array in Colorants");
-            }
-        } else {
-            panic!("expected dictionary");
-        }
+        // The Colorants dictionary (which contained the non-canonical nested
+        // Separation) is removed in Phase 5: veraPDF scans all objects including
+        // unreferenced ones, so non-canonical Separation containers are deleted.
+        // All document references to colorants_id are redirected to the canonical.
+        assert!(
+            !doc.objects.contains_key(&colorants_id),
+            "container with non-canonical Separation should be removed"
+        );
     }
 
     #[test]
