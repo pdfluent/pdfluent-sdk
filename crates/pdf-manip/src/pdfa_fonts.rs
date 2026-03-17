@@ -14603,6 +14603,10 @@ mod tests {
         let mut doc = Document::with_version("1.7");
         let pages_id = doc.new_object_id();
 
+        // Use FontFile (Type1) instead of FontFile2 (TrueType) to avoid the
+        // ttf_parser validation that rejects non-TrueType data. The point of
+        // this test is that an embedded font should NOT appear in the
+        // non-embedded list, not to validate TrueType parsing.
         let font_stream = Stream::new(
             dictionary! { "Length1" => Object::Integer(10) },
             vec![0u8; 10],
@@ -14612,7 +14616,7 @@ mod tests {
         let fd = dictionary! {
             "Type" => "FontDescriptor",
             "FontName" => "TestFont",
-            "FontFile2" => Object::Reference(stream_id),
+            "FontFile" => Object::Reference(stream_id),
             "Flags" => Object::Integer(32),
             "FontBBox" => Object::Array(vec![
                 Object::Integer(0), Object::Integer(0),
@@ -14628,7 +14632,7 @@ mod tests {
 
         let font = dictionary! {
             "Type" => "Font",
-            "Subtype" => "TrueType",
+            "Subtype" => "Type1",
             "BaseFont" => "TestFont",
             "FontDescriptor" => Object::Reference(fd_id),
         };
