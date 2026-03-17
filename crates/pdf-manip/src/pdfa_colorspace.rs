@@ -1506,8 +1506,7 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
     // Collect all Process reference IDs from attributes dicts.
     // Use HashSet for deduplication to avoid O(n²) Vec::contains over all objects. (#perf)
     let ids3: Vec<ObjectId> = doc.objects.keys().copied().collect();
-    let mut process_ref_ids: std::collections::HashSet<ObjectId> =
-        std::collections::HashSet::new();
+    let mut process_ref_ids: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
     for id in &ids3 {
         if let Some(Object::Dictionary(dict)) = doc.objects.get(id) {
             if let Ok(Object::Reference(process_id)) = dict.get(b"Process") {

@@ -214,11 +214,10 @@ impl Document {
                 })?
                 .as_stream()?
                 .clone();
-            let obj_stream = ObjectStream::new(&mut stream).map_err(|_| {
-                Error::ObjStmDecompress {
+            let obj_stream =
+                ObjectStream::new(&mut stream).map_err(|_| Error::ObjStmDecompress {
                     container_id: container_id.0,
-                }
-            })?;
+                })?;
             // Only insert if not already present (matches load_objects_raw behaviour).
             for (id, object) in obj_stream.objects {
                 self.objects.entry(id).or_insert(object);

@@ -1669,10 +1669,15 @@ fn load_mem_with_options_lazy_objstm_no_objects_lost() {
         .resolve_pending_object_streams()
         .expect("resolve_pending_object_streams should not fail on valid data");
 
-    assert_eq!(lazy_doc.objects.len(), eager_doc.objects.len(),
-        "after resolve, lazy doc must have same object count as eager doc");
-    assert!(lazy_doc.pending_obj_streams.is_empty(),
-        "pending_obj_streams must be empty after resolve");
+    assert_eq!(
+        lazy_doc.objects.len(),
+        eager_doc.objects.len(),
+        "after resolve, lazy doc must have same object count as eager doc"
+    );
+    assert!(
+        lazy_doc.pending_obj_streams.is_empty(),
+        "pending_obj_streams must be empty after resolve"
+    );
 }
 
 #[test]
@@ -1687,6 +1692,9 @@ fn load_options_builder() {
     assert_eq!(no_limit.max_file_bytes, None);
 
     let default = LoadOptions::default();
-    assert_eq!(default.max_file_bytes, Some(crate::load_options::DEFAULT_MAX_FILE_BYTES));
+    assert_eq!(
+        default.max_file_bytes,
+        Some(crate::load_options::DEFAULT_MAX_FILE_BYTES)
+    );
     assert!(!default.lazy_objstm);
 }

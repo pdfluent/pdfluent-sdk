@@ -212,8 +212,7 @@ impl Runner {
                 }
 
                 // Measure RSS before all tests for this PDF (per-PDF memory baseline).
-                let rss_before_pdf_kb =
-                    current_rss_bytes().map(|b| b as i64 / 1024).unwrap_or(-1);
+                let rss_before_pdf_kb = current_rss_bytes().map(|b| b as i64 / 1024).unwrap_or(-1);
 
                 // If a single test causes a RSS spike > 2 GB, skip remaining
                 // tests for this PDF: the zombie thread is holding that memory
@@ -345,8 +344,7 @@ impl Runner {
                 }
 
                 // Measure RSS after all tests for this PDF and log the delta.
-                let rss_after_pdf_kb =
-                    current_rss_bytes().map(|b| b as i64 / 1024).unwrap_or(-1);
+                let rss_after_pdf_kb = current_rss_bytes().map(|b| b as i64 / 1024).unwrap_or(-1);
                 let rss_delta_kb = rss_after_pdf_kb - rss_before_pdf_kb;
                 let worker_id = rayon::current_thread_index().unwrap_or(0) as i64;
                 if rss_delta_kb > 500_000 {

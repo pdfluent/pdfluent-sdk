@@ -256,10 +256,7 @@ pub fn compare_compliance(
     // A veraPDF rule is covered if we have an exact match OR any sub-rule.
     let false_negatives: Vec<String> = verapdf_rules
         .iter()
-        .filter(|r| {
-            !our_rules.contains(*r)
-                && !our_rules.iter().any(|ours| is_subrule(ours, r))
-        })
+        .filter(|r| !our_rules.contains(*r) && !our_rules.iter().any(|ours| is_subrule(ours, r)))
         .map(|r| r.to_string())
         .collect();
 
@@ -268,8 +265,7 @@ pub fn compare_compliance(
     let false_positives: Vec<String> = our_rules
         .iter()
         .filter(|r| {
-            !verapdf_rules.contains(*r)
-                && !verapdf_rules.iter().any(|vr| is_subrule(r, vr))
+            !verapdf_rules.contains(*r) && !verapdf_rules.iter().any(|vr| is_subrule(r, vr))
         })
         .map(|r| r.to_string())
         .collect();

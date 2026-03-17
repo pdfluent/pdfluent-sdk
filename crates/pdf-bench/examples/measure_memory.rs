@@ -103,7 +103,10 @@ fn main() {
         let avg_ratio: f64 = results.iter().map(|r| r.3).sum::<f64>() / results.len() as f64;
         println!("{}", "-".repeat(80));
         println!("Average ratio: {avg_ratio:.2}×");
-        let max = results.iter().max_by(|a, b| a.3.partial_cmp(&b.3).unwrap()).unwrap();
+        let max = results
+            .iter()
+            .max_by(|a, b| a.3.partial_cmp(&b.3).unwrap())
+            .unwrap();
         println!("Worst case:    {} ({:.2}×)", max.0, max.3);
     }
 }
