@@ -7746,8 +7746,13 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
 /// - "obj" followed by EOL marker
 /// - "endobj" preceded and followed by EOL marker
 pub fn check_object_syntax_spacing(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceReport) {
-    // PDF/A-1: §6.1.8 (object syntax); PDF/A-2/3/4: §6.1.9
-    let rule_id = if pdfa_part <= 1 { "6.1.8" } else { "6.1.9" };
+    // §6.1.8 in PDF/A-1 and PDF/A-4; §6.1.9 in PDF/A-2 and PDF/A-3
+    // (clause numbering shifted: PDF/A-4 renumbered inline-image filter clause to 6.1.9
+    // and reused 6.1.8 for object syntax, matching PDF/A-1)
+    let rule_id = match pdfa_part {
+        1 | 4 => "6.1.8",
+        _ => "6.1.9",
+    };
     let data = pdf.data().as_ref();
     let len = data.len();
 
