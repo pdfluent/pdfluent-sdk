@@ -1240,14 +1240,22 @@ fn check_icc_profile_version(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
     check::check_icc_profile_version(pdf, level.part(), report);
 }
 
-/// §6.2.4.2 — ICCBased Alternate CS must be consistent with profile.
+/// §6.2.4.2 — ICCBased Alternate CS must be consistent with profile, and
+/// ICCBased CMYK must not be identical to the OutputIntent or transparency CS.
 fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_iccbased_alternate(pdf, report);
+    // §6.2.4.2 test 3: ICCBased CMYK profile must not be identical (by indirect
+    // object reference) to the OutputIntent DestOutputProfile or current
+    // transparency blending colorspace. Fixes #467.
+    check::check_iccbased_cmyk_not_identical_to_outputintent(pdf, report);
 }
 
 /// §6.2.4.4 — DeviceN/Separation alternate CS restrictions.
 fn check_devicen_separation_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_devicen_separation_alternate(pdf, report);
+    // §6.2.4.4: all Separation arrays with the same colorant name must have the
+    // same alternateSpace (cross-document consistency check). Fixes #467.
+    check::check_separation_consistency(pdf, report);
 }
 
 /// §6.2.5 — Rendering intents must be valid.

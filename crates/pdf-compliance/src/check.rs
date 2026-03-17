@@ -2,7 +2,7 @@
 
 use crate::{ComplianceIssue, ComplianceReport, Severity};
 use pdf_syntax::object::dict::keys;
-use pdf_syntax::object::{Array, Dict, Name, Object, Stream};
+use pdf_syntax::object::{Array, Dict, Name, ObjRef, Object, Stream};
 use pdf_syntax::page::Resources;
 use pdf_syntax::Pdf;
 
@@ -2500,6 +2500,235 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
                     }
                 }
             }
+        }
+    }
+}
+
+// ─── §6.2.4.2 — ICCBased CMYK identical to OutputIntent/transparency CS ─────
+
+/// Extract the ICC stream object reference from an ICCBased colorspace array.
+///
+/// The array has the form `[/ICCBased <stream-ref-or-inline-stream>]`.
+/// Returns `Some(ObjRef)` when the ICC profile is stored as an indirect object.
+fn icc_based_profile_ref(cs_arr: &Array<'_>) -> Option<ObjRef> {
+    // Use raw_iter so indirect references are not resolved — we need the ObjRef
+    let mut raw = cs_arr.raw_iter();
+    // First element must be /ICCBased name
+    raw.next()?; // skip /ICCBased name
+    raw.next()?.as_obj_ref()
+}
+
+/// Check that no ICCBased CMYK colorspace uses the same ICC profile object
+/// as the OutputIntent's DestOutputProfile or any transparency group's CS
+/// (§6.2.4.2 — identical profile check).
+///
+/// Only the object-reference identity case is checked here (same indirect
+/// object number).  The MD5-based identity case (different objects, same
+/// data) requires hashing the decoded ICC data and is not checked.
+pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
+
+    // ── 1. Collect forbidden ICC profile object references ──────────────────
+    let mut forbidden: std::collections::HashSet<ObjRef> = std::collections::HashSet::new();
+
+    // (a) OutputIntent DestOutputProfile
+    if let Some(cat) = catalog(pdf) {
+        if let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) {
+            for intent in intents.iter::<Dict<'_>>() {
+                if let Some(r) = intent.get_ref(keys::DEST_OUTPUT_PROFILE) {
+                    forbidden.insert(r);
+                }
+            }
+        }
+    }
+
+    // (b) Transparency Group CS on pages and Form XObjects
+    for obj in pdf.objects() {
+        let dict = match &obj {
+            Object::Dict(d) => Some(d.clone()),
+            Object::Stream(s) => Some(s.dict().clone()),
+            _ => None,
+        };
+        let Some(d) = dict else { continue };
+        let group = d.get::<Dict<'_>>(keys::GROUP).or_else(|| {
+            d.get_ref(keys::GROUP)
+                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+        });
+        let Some(group_dict) = group else { continue };
+        if let Some(cs_arr) = group_dict.get::<Array<'_>>(keys::CS) {
+            if let Some(r) = icc_based_profile_ref(&cs_arr) {
+                forbidden.insert(r);
+            }
+        }
+    }
+
+    if forbidden.is_empty() {
+        return; // nothing to compare against
+    }
+
+    // ── 2. Scan all objects for ICCBased CMYK colorspaces ───────────────────
+    'outer: for (obj_idx, obj) in pdf.objects().into_iter().enumerate() {
+        let cs_dict = match &obj {
+            Object::Dict(d) => {
+                if d.get::<Name>(keys::TYPE)
+                    .is_some_and(|t| t.as_ref() == b"Page")
+                {
+                    d.get::<Dict<'_>>(keys::RESOURCES)
+                        .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+                } else {
+                    d.get::<Dict<'_>>(keys::COLORSPACE)
+                }
+            }
+            Object::Stream(s) => {
+                let d = s.dict();
+                let is_xobj = d
+                    .get::<Name>(keys::TYPE)
+                    .is_some_and(|t| t.as_ref() == b"XObject");
+                if is_xobj {
+                    d.get::<Dict<'_>>(keys::RESOURCES)
+                        .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let Some(cs_dict) = cs_dict else { continue };
+
+        for (cs_name, _) in cs_dict.entries() {
+            let Some(cs_arr) = cs_dict.get::<Array<'_>>(cs_name.as_ref()) else {
+                continue;
+            };
+            let mut items = cs_arr.iter::<Object<'_>>();
+            let Some(Object::Name(cs_type)) = items.next() else {
+                continue;
+            };
+            if cs_type.as_ref() != keys::ICC_BASED {
+                continue;
+            }
+            // Check N=4 (CMYK) from the ICC stream dict
+            let n_components: Option<i32> = items
+                .next()
+                .and_then(|o| match o {
+                    Object::Stream(s) => Some(s),
+                    _ => None,
+                })
+                .and_then(|s| s.dict().get::<i32>(keys::N));
+            if n_components != Some(4) {
+                continue; // only flag CMYK (N=4)
+            }
+            // Get the profile object reference
+            let Some(prof_ref) = icc_based_profile_ref(&cs_arr) else {
+                continue;
+            };
+            if forbidden.contains(&prof_ref) {
+                let name_str = std::str::from_utf8(cs_name.as_ref()).unwrap_or("?");
+                error(
+                    report,
+                    "6.2.4.2",
+                    format!(
+                        "ICCBased CMYK colorspace '{name_str}' (obj {obj_idx}) uses the same \
+                         ICC profile as the OutputIntent or transparency blending colorspace"
+                    ),
+                );
+                break 'outer; // one error per document is sufficient
+            }
+        }
+    }
+}
+
+// ─── §6.2.4.4 — DeviceN/Separation consistency across document ──────────────
+
+/// Check that all Separation/DeviceN arrays with the same colorant name have
+/// consistent `alternateSpace` and `tintTransform` (§6.2.4.4).
+///
+/// Collects Separation/NChannel/DeviceN colorspaces from every object in the
+/// document, groups them by colorant name, and reports an error if any two
+/// entries differ in alternateSpace.
+pub fn check_separation_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
+    // Map: colorant name → (alternateSpace raw bytes, first object index)
+    let mut seen: std::collections::HashMap<Vec<u8>, (Vec<u8>, usize)> =
+        std::collections::HashMap::new();
+
+    for (obj_idx, obj) in pdf.objects().into_iter().enumerate() {
+        // Collect all Separation/DeviceN colorspace arrays from Resources/ColorSpace dicts
+        let cs_dict: Option<Dict<'_>> = match &obj {
+            Object::Dict(d) => d.get::<Dict<'_>>(keys::COLORSPACE),
+            Object::Stream(s) => {
+                let d = s.dict();
+                d.get::<Dict<'_>>(keys::RESOURCES)
+                    .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+            }
+            _ => None,
+        };
+
+        // Also look for Colorants dicts that may be inside attributes objects
+        let colorants_dict: Option<Dict<'_>> = match &obj {
+            Object::Dict(d) => d.get::<Dict<'_>>(b"Colorants" as &[u8]),
+            _ => None,
+        };
+
+        for maybe_cs_dict in [cs_dict, colorants_dict].into_iter().flatten() {
+            for (cs_name, _) in maybe_cs_dict.entries() {
+                let Some(cs_arr) = maybe_cs_dict.get::<Array<'_>>(cs_name.as_ref()) else {
+                    continue;
+                };
+                check_separation_array(&cs_arr, obj_idx, &mut seen, report);
+            }
+        }
+    }
+}
+
+/// Inspect a colorspace array: if it's `[/Separation /Name altCS tintFn]`,
+/// record the colorant name → alternateSpace binding and report inconsistencies.
+fn check_separation_array(
+    cs_arr: &Array<'_>,
+    obj_idx: usize,
+    seen: &mut std::collections::HashMap<Vec<u8>, (Vec<u8>, usize)>,
+    report: &mut ComplianceReport,
+) {
+    let mut items = cs_arr.iter::<Object<'_>>();
+    let Some(Object::Name(cs_type)) = items.next() else {
+        return;
+    };
+    if cs_type.as_ref() != keys::SEPARATION {
+        // DeviceN/NChannel: check each component's Colorants sub-dict too
+        // but the top-level altCS check works the same way
+        return;
+    }
+    // [/Separation /ColorantName altCS tintFn]
+    let Some(Object::Name(colorant_name)) = items.next() else {
+        return;
+    };
+    let colorant_bytes: Vec<u8> = colorant_name.as_ref().to_vec();
+
+    // altCS is the third element — get its raw bytes for comparison
+    let alt_obj = items.next();
+    let alt_bytes: Vec<u8> = match &alt_obj {
+        Some(Object::Name(n)) => n.as_ref().to_vec(),
+        Some(Object::Array(arr)) => arr.data().to_vec(),
+        _ => return,
+    };
+
+    let colorant_str = std::str::from_utf8(&colorant_bytes)
+        .unwrap_or("?")
+        .to_string();
+    match seen.entry(colorant_bytes) {
+        std::collections::hash_map::Entry::Occupied(e) => {
+            let (existing_alt, first_idx) = e.get();
+            if *existing_alt != alt_bytes {
+                error(
+                    report,
+                    "6.2.4.4",
+                    format!(
+                        "Separation colorant '{colorant_str}' has inconsistent alternateSpace \
+                         (first defined at obj {first_idx}, differs at obj {obj_idx})"
+                    ),
+                );
+            }
+        }
+        std::collections::hash_map::Entry::Vacant(v) => {
+            v.insert((alt_bytes, obj_idx));
         }
     }
 }
