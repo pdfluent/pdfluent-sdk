@@ -3251,6 +3251,88 @@ pub fn check_cidfont_w_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
+// ─── §6.2.10.3 — CIDSystemInfo Registry/Ordering consistency ───────────────
+
+/// Check that CIDFont and its CMap have matching CIDSystemInfo Registry and
+/// Ordering values (§6.2.10.3.1).
+///
+/// For each Type0 font, the /Encoding CMap stream's /CIDSystemInfo must have
+/// the same /Registry and /Ordering as the /CIDSystemInfo of the CIDFont
+/// in /DescendantFonts (case-sensitive comparison per PDF spec).
+pub fn check_cidsystem_info_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        // Only Type0 fonts have DescendantFonts + Encoding CMap
+        let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
+            return;
+        };
+        if subtype.as_ref() != b"Type0" {
+            return;
+        }
+
+        let loc = format!("page {}", page_idx + 1);
+
+        // Get the CMap stream's CIDSystemInfo
+        let cmap_stream = font_dict.get::<Stream<'_>>(keys::ENCODING);
+        let cmap_csi = cmap_stream
+            .as_ref()
+            .and_then(|s| s.dict().get::<Dict<'_>>(keys::CIDSYSTEMINFO));
+
+        let Some(cmap_csi) = cmap_csi else {
+            // Encoding is a name (predefined CMap) — no embedded CIDSystemInfo to compare
+            return;
+        };
+
+        let cmap_registry = cmap_csi.get::<pdf_syntax::object::String>(keys::REGISTRY);
+        let cmap_ordering = cmap_csi.get::<pdf_syntax::object::String>(keys::ORDERING);
+
+        // Get the CIDFont's CIDSystemInfo
+        let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) else {
+            return;
+        };
+        for cid_font in descendants.iter::<Dict<'_>>() {
+            // CIDFont's CIDSystemInfo may be inline or indirect
+            let cid_csi_opt: Option<Dict<'_>> =
+                cid_font.get::<Dict<'_>>(keys::CIDSYSTEMINFO).or_else(|| {
+                    cid_font
+                        .get_ref(keys::CIDSYSTEMINFO)
+                        .and_then(|r| pdf.xref().get::<Dict<'_>>(r.into()))
+                });
+            let Some(cid_csi) = cid_csi_opt else {
+                continue;
+            };
+
+            let cid_registry = cid_csi.get::<pdf_syntax::object::String>(keys::REGISTRY);
+            let cid_ordering = cid_csi.get::<pdf_syntax::object::String>(keys::ORDERING);
+
+            if let (Some(cr), Some(mr)) = (&cid_registry, &cmap_registry) {
+                if cr.as_bytes() != mr.as_bytes() {
+                    let cr_s = std::str::from_utf8(cr.as_bytes()).unwrap_or("?");
+                    let mr_s = std::str::from_utf8(mr.as_bytes()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.2.10.3.1",
+                        format!("Font {name}: CIDFont Registry ({cr_s}) != CMap Registry ({mr_s})"),
+                        loc.clone(),
+                    );
+                }
+            }
+
+            if let (Some(co), Some(mo)) = (&cid_ordering, &cmap_ordering) {
+                if co.as_bytes() != mo.as_bytes() {
+                    let co_s = std::str::from_utf8(co.as_bytes()).unwrap_or("?");
+                    let mo_s = std::str::from_utf8(mo.as_bytes()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.2.10.3.1",
+                        format!("Font {name}: CIDFont Ordering ({co_s}) != CMap Ordering ({mo_s})"),
+                        loc.clone(),
+                    );
+                }
+            }
+        }
+    });
+}
+
 // ─── §6.2.3.2 — OutputIntent ICC profile embedding ─────────────────────────
 
 /// Check OutputIntent has embedded ICC profile (§6.2.3.2).
@@ -6155,6 +6237,53 @@ fn check_struct_element(
                 }
             }
             _ => {}
+        }
+    }
+
+    // §6.2.10.8 — ActualText must not contain PUA (Private Use Area) codepoints.
+    // PUA range: U+E000–U+F8FF (BMP PUA), U+F0000–U+FFFFF, U+100000–U+10FFFF.
+    // The ActualText value is a PDF string: either UTF-16BE (starts with FEFF BOM)
+    // or PDFDocEncoding.  We only check UTF-16BE (most common for actual Unicode text). (#467)
+    if let Some(actual_text) = elem.get::<pdf_syntax::object::String>(b"ActualText" as &[u8]) {
+        let bytes = actual_text.as_bytes();
+        // UTF-16BE strings start with BOM 0xFE 0xFF
+        if bytes.len() >= 4 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+            let mut i = 2; // skip BOM
+            while i + 1 < bytes.len() {
+                let hi = bytes[i] as u32;
+                let lo = bytes[i + 1] as u32;
+                let cp = (hi << 8) | lo;
+                // BMP PUA: E000–F8FF
+                if (0xE000..=0xF8FF).contains(&cp) {
+                    error(
+                        report,
+                        "6.2.10.8",
+                        format!(
+                            "ActualText in structure element contains PUA codepoint U+{cp:04X}"
+                        ),
+                    );
+                    break;
+                }
+                // Surrogate pair: D800-DFFF encodes supplementary PUA F0000-10FFFF
+                if (0xD800..=0xDBFF).contains(&cp) && i + 3 < bytes.len() {
+                    let lo2 = (bytes[i + 2] as u32) << 8 | bytes[i + 3] as u32;
+                    if (0xDC00..=0xDFFF).contains(&lo2) {
+                        let full = 0x10000 + ((cp - 0xD800) << 10) + (lo2 - 0xDC00);
+                        if full >= 0xF0000 {
+                            error(
+                                report,
+                                "6.2.10.8",
+                                format!(
+                                    "ActualText contains supplementary PUA codepoint U+{full:X}"
+                                ),
+                            );
+                            break;
+                        }
+                        i += 2; // consumed surrogate pair
+                    }
+                }
+                i += 2;
+            }
         }
     }
 
