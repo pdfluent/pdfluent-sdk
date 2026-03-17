@@ -201,11 +201,16 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 
 /// Check if the report contains critical structural failures that make further
 /// content analysis pointless.  These are issues that guarantee non-compliance
-/// regardless of content: missing XMP metadata, encrypted, or invalid header.
+/// regardless of content: *missing* XMP metadata, encrypted, or invalid header.
+///
+/// Note: "XMP metadata stream is not valid UTF-8" is NOT critical — veraPDF
+/// still reports Phase 2 violations for such files, so we must continue. Only
+/// completely absent XMP triggers early exit. Fixes #467 (PDFBOX-1760-11).
 fn has_critical_structural_failure(report: &ComplianceReport) -> bool {
     report.issues.iter().any(|issue| {
         issue.severity == crate::Severity::Error
-            && (issue.message.contains("XMP metadata")
+            && (issue.message.contains("No XMP metadata")
+                || issue.message.contains("missing XMP metadata stream")
                 || issue.message.contains("encrypted")
                 || issue.message.contains("Encrypt")
                 || issue.message.contains("file header"))
@@ -1851,9 +1856,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.3.3-iccver") => Some("6.2.2"),
             (_, "6.2.3.3-iccver") => Some("6.2.3.3"),
 
-            // OutputIntent ICC profile header checks (size, signature)
-            // PDF/A-1: veraPDF groups these under §6.2.2 (OutputIntent validity).
-            // PDF/A-2+: §6.6.2.3.1 / §6.6.2.3.3 (kept as-is — already matched by test runner)
+            // OutputIntent ICC profile header checks now emit "6.2.3.2" directly
+            // (check_output_intent_icc_signature changed in #467). These remaps remain
+            // as guards for any legacy "6.6.2.3.1"/"6.6.2.3.3" XMP-path emissions in
+            // PDF/A-1 (check_output_intent_icc_signature no longer emits them).
             (1, "6.6.2.3.1") => Some("6.2.2"),
             (1, "6.6.2.3.3") => Some("6.2.2"),
 

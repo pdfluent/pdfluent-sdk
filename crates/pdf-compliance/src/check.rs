@@ -4308,12 +4308,15 @@ pub fn check_output_intent_profile_class(pdf: &Pdf, report: &mut ComplianceRepor
     }
 }
 
-/// Check OutputIntent ICC profile color space signature is valid (§6.6.2.3.1 for PDF/A-1).
+/// Check OutputIntent ICC profile color space signature is valid.
 ///
 /// The ICC profile header bytes 16–19 encode the data color space of the profile.
 /// For a DestOutputProfile the color space must be one of the known ICC color
 /// space signatures.  An unknown signature indicates a malformed or non-ICC
 /// stream being used as a color profile.
+///
+/// veraPDF reports all ICC profile validity issues under §6.2.3.2 for all
+/// PDF/A parts (remap_clause_numbers leaves §6.2.3.2 unchanged). Fixes #467.
 pub fn check_output_intent_icc_signature(pdf: &Pdf, report: &mut ComplianceReport) {
     // Known valid ICC color space signatures (ICC.1:2004, Table 18)
     const VALID_SIGNATURES: &[&[u8]] = &[
@@ -4336,17 +4339,18 @@ pub fn check_output_intent_icc_signature(pdf: &Pdf, report: &mut ComplianceRepor
         if data.len() < 20 {
             error(
                 report,
-                "6.6.2.3.1",
+                "6.2.3.2",
                 "OutputIntent ICC profile too short to contain a valid header (< 20 bytes)",
             );
             continue;
         }
-        // Bytes 4–7: declared profile size (big-endian u32) — §6.6.2.3.3
+        // Bytes 4–7: declared profile size (big-endian u32). A mismatch means the
+        // ICC profile data is corrupt; veraPDF reports this under §6.2.3.2. (#467)
         let declared_size = u32::from_be_bytes([data[4], data[5], data[6], data[7]]) as usize;
         if declared_size != data.len() {
             error(
                 report,
-                "6.6.2.3.3",
+                "6.2.3.2",
                 format!(
                     "OutputIntent ICC profile declared size {} does not match actual size {}",
                     declared_size,
@@ -4354,13 +4358,13 @@ pub fn check_output_intent_icc_signature(pdf: &Pdf, report: &mut ComplianceRepor
                 ),
             );
         }
-        // Bytes 16–19: color space signature — §6.6.2.3.1
+        // Bytes 16–19: color space signature.
         let cs_sig = &data[16..20];
         if !VALID_SIGNATURES.contains(&cs_sig) {
             let sig_str = std::str::from_utf8(cs_sig).unwrap_or("????");
             error(
                 report,
-                "6.6.2.3.1",
+                "6.2.3.2",
                 format!(
                     "OutputIntent ICC profile has unknown color space signature '{}' at bytes 16–19",
                     sig_str
