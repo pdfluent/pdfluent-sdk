@@ -3791,15 +3791,49 @@ pub fn check_page_dimensions_with_cache(
             );
         }
 
-        // Scan content stream numeric operands
+        // Scan content stream numeric operands (both overflow and subnormal).
         if let Some(content) = page.page_stream() {
             if scan_content_stream_reals(content, MAX_REAL) {
                 error_at(
                     report,
                     rule,
-                    "Content stream contains real value exceeding 32767",
+                    "Content stream contains real value exceeding 32767 or subnormal float",
                     format!("page {}", page_idx + 1),
                 );
+            }
+        }
+
+        // Also scan Form XObject content streams — they may contain subnormal
+        // floats in color operators etc. Fixes TWG A018 §6.1.13 FN. (#467)
+        let page_dict = page.raw();
+        if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
+            if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xname, _) in xobj_dict.entries() {
+                    let Some(stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
+                        continue;
+                    };
+                    let is_form = stream
+                        .dict()
+                        .get::<Name>(keys::SUBTYPE)
+                        .is_some_and(|s| s.as_ref() == b"Form");
+                    if !is_form {
+                        continue;
+                    }
+                    if let Ok(decoded) = stream.decoded() {
+                        if scan_content_stream_reals(&decoded, MAX_REAL) {
+                            let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+                            error_at(
+                                report,
+                                rule,
+                                format!(
+                                    "Form XObject {xname_str} contains real value \
+                                     exceeding 32767 or subnormal float"
+                                ),
+                                format!("page {}", page_idx + 1),
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -5004,7 +5038,15 @@ fn check_gs_nesting_depth(
     }
 }
 
-/// Scan content stream for numeric tokens exceeding max (§6.1.12).
+/// Minimum positive normalized float (IEEE 754 single-precision).
+///
+/// PDF/A §6.1.12/§6.1.13 prohibits non-zero values with absolute value below
+/// this threshold (subnormal / denormal floats). Value ≈ 1.175494e-38.
+const MIN_POSITIVE_REAL: f64 = 1.175_494e-38;
+
+/// Scan content stream for numeric tokens exceeding max or below min positive (§6.1.12).
+///
+/// Detects both overflow (> 32767) and subnormal floats (0 < |v| < 1.175e-38).
 fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
     let text = std::string::String::from_utf8_lossy(content);
     for token in text.split_ascii_whitespace() {
@@ -5015,6 +5057,10 @@ fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
         }
         if let Ok(val) = token.parse::<f64>() {
             if val.abs() > max {
+                return true;
+            }
+            // Subnormal: non-zero value below the minimum normalized positive float
+            if val != 0.0 && val.abs() < MIN_POSITIVE_REAL {
                 return true;
             }
         }
@@ -7683,6 +7729,19 @@ fn check_near_zero_obj(obj: &Object<'_>, min: f64) -> bool {
         }
         Object::Array(arr) => {
             for val in arr.raw_iter() {
+                if let MaybeRef::NotRef(Object::Number(n)) = val {
+                    let v = n.as_f64();
+                    if v != 0.0 && v.abs() < min {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        // Stream dict entries (e.g. Pattern /XStep, /YStep) may contain subnormal
+        // floats — check them too. Fixes TWG A018 §6.1.13 false negative. (#467)
+        Object::Stream(s) => {
+            for (_, val) in s.dict().entries() {
                 if let MaybeRef::NotRef(Object::Number(n)) = val {
                     let v = n.as_f64();
                     if v != 0.0 && v.abs() < min {
