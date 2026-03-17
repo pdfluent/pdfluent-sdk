@@ -14,4 +14,9 @@ pub enum AnnotBuildError {
     /// The annotation rectangle is invalid (zero area).
     #[error("invalid annotation rectangle: width or height is zero")]
     InvalidRect,
+
+    /// Failed to write the annotation to the page dictionary (e.g. ObjStm page
+    /// that lopdf cannot mutate in-place).  Fixes #470.
+    #[error("failed to write annotation to page dictionary")]
+    PageMutationFailed,
 }

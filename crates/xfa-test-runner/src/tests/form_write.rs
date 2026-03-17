@@ -45,16 +45,23 @@ impl PdfTest for FormWriteTest {
         use pdf_forms::FormAccess;
         let names = tree.field_names();
 
-        // Find first text field that is writable.
+        let test_value = "__xfa_roundtrip_test__";
+
+        // Find first text field that is writable and can hold the test value.
         // Use effective_field_type (walks up ancestor chain) so that fields
         // where /FT /Tx lives only on a parent node are correctly identified.
         // Fixes #459: MaxLen inheritance PDFs have no /FT on the widget itself.
+        // Skip fields whose effective MaxLen is smaller than the test value to
+        // avoid a silent write rejection.  Fixes #471.
         let text_field = names.iter().find(|name| {
             if let Some(id) = tree.find_by_name(name) {
                 matches!(
                     tree.effective_field_type(id),
                     Some(pdf_forms::FieldType::Text)
                 ) && !tree.get(id).flags.read_only()
+                    && tree
+                        .effective_max_len(id)
+                        .is_none_or(|ml| ml as usize >= test_value.len())
             } else {
                 false
             }
@@ -86,8 +93,6 @@ impl PdfTest for FormWriteTest {
                 };
             }
         };
-
-        let test_value = "__xfa_roundtrip_test__";
 
         let set_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             set_field_value_lopdf(&mut doc, &field_name, test_value)
