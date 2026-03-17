@@ -964,8 +964,14 @@ pub fn add_annotation_to_page(
 
     match annots_action {
         AnnotsAction::SetArray(arr) => {
+            // Propagate failure: if the page dict cannot be mutated (e.g. the
+            // page was extracted from a fully-compressed ObjStm and lopdf has
+            // trouble writing it back), return an explicit error instead of
+            // silently dropping the annotation.  Fixes #470.
             if let Ok(page_dict) = doc.get_dictionary_mut(page_id) {
                 page_dict.set("Annots", Object::Array(arr));
+            } else {
+                return Err(AnnotBuildError::PageMutationFailed);
             }
         }
         AnnotsAction::AppendIndirect(annots_ref) => {
@@ -993,6 +999,8 @@ pub fn add_annotation_to_page(
                 new_annots.push(Object::Reference(annot_id));
                 if let Ok(page_dict) = doc.get_dictionary_mut(page_id) {
                     page_dict.set("Annots", Object::Array(new_annots));
+                } else {
+                    return Err(AnnotBuildError::PageMutationFailed);
                 }
             }
         }

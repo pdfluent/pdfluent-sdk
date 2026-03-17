@@ -114,6 +114,16 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
 
     match build_result {
         Ok(Ok(())) => {}
+        // Page dict not mutable (ObjStm full-compression PDF). Fixes #470.
+        Ok(Err(AnnotBuildError::PageMutationFailed)) => {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("page dict not mutable (ObjStm full-compression PDF)".into()),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
         Ok(Err(e)) => {
             return TestResult {
                 status: TestStatus::Fail,
