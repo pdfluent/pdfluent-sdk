@@ -1715,6 +1715,10 @@ fn check_xref_syntax_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 fn check_embedded_file_spec(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_embedded_file_spec_keys(pdf, level.part(), report);
     check::check_embedded_file_af_association(pdf, level.part(), report);
+    // §6.9: non-embedded file specs (no /EF) violate PDF/A-2 requirements. (#467)
+    check::check_filespec_without_ef(pdf, level.part(), report);
+    // §6.9/§6.8: embedded files must be in /Names/EmbeddedFiles (PDF/A-3/4). (#467)
+    check::check_embedded_files_in_names_tree(pdf, level.part(), report);
 }
 
 /// §6.2.9/6.2.10 — PostScript XObjects are forbidden.

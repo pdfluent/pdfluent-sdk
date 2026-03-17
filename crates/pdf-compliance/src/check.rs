@@ -9549,6 +9549,87 @@ pub fn check_embedded_file_af_association(pdf: &Pdf, part: u8, report: &mut Comp
     }
 }
 
+/// Check for non-embedded file specifications in PDF/A-2 (§6.9).
+///
+/// PDF/A-2 §6.9 requires all file references to be embedded (/EF present).
+/// A /Type /Filespec dict without /EF is an external file reference, which
+/// violates §6.9 for PDF/A-2. (#467)
+pub fn check_filespec_without_ef(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    if part != 2 {
+        return;
+    }
+    for obj in pdf.objects() {
+        let dict = match &obj {
+            Object::Dict(d) => d,
+            _ => continue,
+        };
+        // Check /Type = /Filespec (PDF uses lowercase 's')
+        let is_filespec = match dict.get::<Name>(keys::TYPE) {
+            Some(t) => t.as_ref().eq_ignore_ascii_case(b"Filespec"),
+            None => false,
+        };
+        if !is_filespec {
+            continue;
+        }
+        // If the FileSpec has no /EF key it references an external file.
+        // External file references are forbidden in PDF/A-2 (§6.9). (#467)
+        if !dict.contains_key(keys::EF) {
+            error(
+                report,
+                "6.9",
+                "File specification has no /EF key (external file reference not allowed in PDF/A)",
+            );
+            return; // report once per document
+        }
+    }
+}
+
+/// Check that embedded file streams are accessible via /Names/EmbeddedFiles (§6.9/§6.8). (#467)
+///
+/// PDF/A-3+ requires that any embedded file (FileSpec with /EF) be registered
+/// in the document catalog's /Names/EmbeddedFiles name tree. Files embedded
+/// inside RichMedia or other annotations but absent from this tree violate
+/// §6.9 (PDF/A-4) or §6.8 (PDF/A-3).
+pub fn check_embedded_files_in_names_tree(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    if part < 3 {
+        return;
+    }
+
+    // Check if any FileSpec with /EF exists in the document.
+    let mut has_ef_filespec = false;
+    for obj in pdf.objects() {
+        let dict = match &obj {
+            Object::Dict(d) => d,
+            _ => continue,
+        };
+        let is_filespec = dict
+            .get::<Name>(keys::TYPE)
+            .is_some_and(|t| t.as_ref().eq_ignore_ascii_case(b"Filespec"));
+        if is_filespec && dict.contains_key(keys::EF) {
+            has_ef_filespec = true;
+            break;
+        }
+    }
+    if !has_ef_filespec {
+        return;
+    }
+
+    // Check that /Names/EmbeddedFiles exists in the document catalog.
+    let has_names_ef_tree = catalog(pdf)
+        .and_then(|cat| cat.get::<Dict<'_>>(keys::NAMES))
+        .and_then(|names| names.get::<Object<'_>>(keys::EMBEDDED_FILES))
+        .is_some();
+
+    if !has_names_ef_tree {
+        let rule = if part >= 4 { "6.9" } else { "6.8" };
+        error(
+            report,
+            rule,
+            "Document has embedded file streams not registered in /Names/EmbeddedFiles",
+        );
+    }
+}
+
 // ─── §6.1.6 — Hex string validation ──────────────────────────────────────────
 
 /// Check hex strings for validity (§6.1.6).
