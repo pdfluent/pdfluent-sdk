@@ -154,7 +154,23 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     }
     let schemas = parse_extension_schemas(xmp_text);
     check_extension_schema_structure(xmp_text, &schemas, report);
+    let ns_violations_before = report.issues.len();
     check_property_namespaces(xmp_text, &schemas, level, report);
+    // PDF/A-1 §6.7.11: undeclared namespace prefix violations (§6.7.9.1/§6.7.9.2) in the
+    // XMP also trigger §6.7.11 because the identification schema cannot be reliably parsed
+    // when prefixes are missing. veraPDF reports BOTH §6.7.9 AND §6.7.11 in these cases.
+    // Fixes #467 (poppler-106863-0.pdf).
+    if level.part() == 1
+        && report.issues[ns_violations_before..]
+            .iter()
+            .any(|i| i.rule.starts_with("6.7.9"))
+    {
+        error(
+            report,
+            "6.7.11",
+            "XMP namespace violations affect PDF/A identification schema reliability",
+        );
+    }
     check_info_xmp_deep(pdf, xmp_text, report);
     check_date_formats(xmp_text, report);
     check_pdfa_id_properties(xmp_text, level, report);
@@ -167,6 +183,41 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_predefined_property_types(xmp_text, level, report);
     // §6.7.9 test=3 / §6.6.2.3.1 test=3 — non-standard properties in pdf: namespace
     check_pdf_namespace_properties(xmp_text, level, report);
+    // PDF/A-1 §6.7.9: rdf:li with bare 'lang=' attribute (not 'xml:lang=') uses a
+    // property from an unregistered namespace. veraPDF reports §6.7.9 in addition to
+    // the §6.7.11 type violation. Fixes #467 (PDFBOX-3017-0.pdf).
+    if level.part() == 1 && xmp_text.contains("<rdf:li") {
+        let has_bare_lang = xmp_text
+            .find("<rdf:li")
+            .map(|start| {
+                // Check all rdf:li opening tags for bare lang= (not xml:lang=)
+                let mut pos = start;
+                let mut found = false;
+                while let Some(li) = xmp_text[pos..].find("<rdf:li") {
+                    let abs = pos + li;
+                    let tag_end = xmp_text[abs..].find('>').map(|e| abs + e).unwrap_or(abs);
+                    let tag = &xmp_text[abs..=tag_end];
+                    // bare lang= without xml:lang=
+                    if !tag.contains("xml:lang") {
+                        let after_li = &tag[7..]; // skip "<rdf:li"
+                        if after_li.contains(" lang=") || after_li.contains("\tlang=") {
+                            found = true;
+                            break;
+                        }
+                    }
+                    pos = tag_end + 1;
+                }
+                found
+            })
+            .unwrap_or(false);
+        if has_bare_lang {
+            error(
+                report,
+                "6.7.9",
+                "rdf:li uses bare 'lang' attribute instead of 'xml:lang' (unregistered attribute namespace)",
+            );
+        }
+    }
     // §6.7.11 test=4/5 — pdfaid namespace must use 'pdfaid' prefix
     check_pdfaid_prefix(xmp_text, report);
 }
