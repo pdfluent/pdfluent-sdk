@@ -159,7 +159,9 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_date_formats(xmp_text, report);
     check_pdfa_id_properties(xmp_text, level, report);
     check_pdfa_version_match(xmp_text, level, report);
-    check_dc_title_consistency(pdf, xmp_text, report);
+    // Note: dc:title consistency is covered by check_info_xmp_deep (§6.7.3.2).
+    // The separate check_dc_title_consistency was removed to avoid emitting
+    // the wrong clause "6.7.8" for a case where veraPDF uses "6.7.3.2". (#467)
     check_deprecated_types(xmp_text, report);
     // §6.6.2.3.1 test=2 / §6.7.9 test=3 — predefined property value types
     check_predefined_property_types(xmp_text, level, report);
@@ -1206,22 +1208,6 @@ fn check_pdfa_id_properties(xmp: &str, level: PdfALevel, report: &mut Compliance
                 report,
                 "6.7.3",
                 format!("pdfaid:rev value '{}' is not a valid four-digit year", rev),
-            );
-        }
-    }
-}
-
-/// §6.7.8 — dc:title must be present if /Title exists in Info dict.
-fn check_dc_title_consistency(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
-    let metadata = pdf.metadata();
-    if metadata.title.is_some() {
-        let dc_title = extract_rdf_alt_value(xmp, "dc:title")
-            .or_else(|| extract_nested_value(xmp, "dc:title"));
-        if dc_title.is_none() {
-            error(
-                report,
-                "6.7.8",
-                "Info dict has /Title but XMP is missing dc:title (required by §6.7.8)",
             );
         }
     }
