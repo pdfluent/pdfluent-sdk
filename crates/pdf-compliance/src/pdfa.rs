@@ -1791,8 +1791,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.3.5") => Some("6.2.10.5"),
 
             // Font program width consistency (internal rule "6.3.5-fw")
-            // PDF/A-1: stays as §6.3.5 (no remap needed)
-            (1, "6.3.5-fw") => Some("6.3.5"),
+            // PDF/A-1: §6.3.6 (ISO 19005-1 — veraPDF uses §6.3.6 for width consistency)
+            // Previously wrongly remapped to §6.3.5; fixed in #467.
+            (1, "6.3.5-fw") => Some("6.3.6"),
             // PDF/A-2/3: §6.2.11.5
             (2..=3, "6.3.5-fw") => Some("6.2.11.5"),
             // PDF/A-4: §6.2.10.5
