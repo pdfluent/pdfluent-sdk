@@ -211,12 +211,7 @@ impl FontMap {
         if !info.forward_encoding.is_empty() {
             return bytes
                 .iter()
-                .map(|&b| {
-                    info.forward_encoding
-                        .get(&b)
-                        .copied()
-                        .unwrap_or(b as char)
-                })
+                .map(|&b| info.forward_encoding.get(&b).copied().unwrap_or(b as char))
                 .collect();
         }
 
@@ -898,12 +893,7 @@ fn build_truetype_cmap_inverse(
         .subtables
         .into_iter()
         .find(|st| st.platform_id == ttf_parser::PlatformId::Windows && st.encoding_id == 1)
-        .or_else(|| {
-            cmap_table
-                .subtables
-                .into_iter()
-                .find(|st| st.is_unicode())
-        });
+        .or_else(|| cmap_table.subtables.into_iter().find(|st| st.is_unicode()));
 
     if let Some(subtable) = preferred {
         subtable.codepoints(|cp| {

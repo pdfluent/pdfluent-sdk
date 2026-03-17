@@ -316,7 +316,11 @@ fn raw_text_from_op(op: &lopdf::content::Operation) -> Option<String> {
                         _ => None,
                     })
                     .collect();
-                if s.is_empty() { None } else { Some(s) }
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
             } else {
                 None
             }
@@ -436,29 +440,27 @@ fn remove_text_ops_for_page(
     // Also process Form XObjects referenced in the page's Resources.
     // Pass match_bboxes so that XObjects whose font encoding prevents text
     // matching can still be cleaned via the spatial fallback. Fixes #466 bugs 5–6.
-    let removed =
-        removed
-            + remove_text_ops_from_xobjects(
-                doc,
-                page_num,
-                &matcher,
-                &fonts,
-                match_bboxes,
-                &mut visited,
-            )?;
+    let removed = removed
+        + remove_text_ops_from_xobjects(
+            doc,
+            page_num,
+            &matcher,
+            &fonts,
+            match_bboxes,
+            &mut visited,
+        )?;
 
     // Also process annotation appearance streams.  Pass match_bboxes so the
     // raw-byte fallback can fire for AP streams with misleading ToUnicode CMaps.
-    let removed =
-        removed
-            + remove_text_ops_from_annotations(
-                doc,
-                page_num,
-                &matcher,
-                &fonts,
-                match_bboxes,
-                &mut visited,
-            )?;
+    let removed = removed
+        + remove_text_ops_from_annotations(
+            doc,
+            page_num,
+            &matcher,
+            &fonts,
+            match_bboxes,
+            &mut visited,
+        )?;
 
     Ok(removed)
 }
@@ -1226,8 +1228,15 @@ mod tests {
 
         // Call the private helper via remove_text_ops_from_stream.
         // We test it indirectly: verify the XObject stream bytes change.
-        let removed =
-            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts, &[], &mut HashSet::new()).unwrap();
+        let removed = remove_text_ops_from_stream(
+            &mut doc,
+            xobj_id,
+            &matcher,
+            &page_fonts,
+            &[],
+            &mut HashSet::new(),
+        )
+        .unwrap();
 
         assert!(
             removed > 0,
@@ -1281,9 +1290,15 @@ mod tests {
         // Non-empty bboxes activate the raw-byte fallback path in
         // `remove_text_ops_from_stream` when no spatial run was matched.
         let dummy_bboxes = [[0.0_f64, 0.0, 300.0, 20.0]];
-        let removed =
-            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts, &dummy_bboxes, &mut HashSet::new())
-                .unwrap();
+        let removed = remove_text_ops_from_stream(
+            &mut doc,
+            xobj_id,
+            &matcher,
+            &page_fonts,
+            &dummy_bboxes,
+            &mut HashSet::new(),
+        )
+        .unwrap();
         assert!(
             removed > 0,
             "Expected raw-byte fallback to remove ops from XObject stream"

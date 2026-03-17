@@ -2,7 +2,11 @@ use pdf_redact::search_redact::{search_and_redact, RedactSearchOptions};
 
 fn main() {
     // Regression: existing tests
-    test_redact("/tmp/MOZILLA-711366-1.pdf", "Certificate", "MOZILLA-711366-1.pdf");
+    test_redact(
+        "/tmp/MOZILLA-711366-1.pdf",
+        "Certificate",
+        "MOZILLA-711366-1.pdf",
+    );
 
     // Fix #466 open issue: MOZILLA-666767-3 — "Mozilla" survives page 1 after redaction.
     // Hypothesis: extract_positioned_chars misses one occurrence that pdf_engine finds.
@@ -124,7 +128,10 @@ fn diag_mozilla_666767() {
         let chars = pdf_extract::extract_positioned_chars(&doc, page_num).unwrap_or_default();
         let t: String = chars.iter().map(|c| c.ch).collect();
         let count = t.to_lowercase().matches(&word.to_lowercase()).count();
-        println!("  page {page_num}: {count} occurrences, {} chars total", chars.len());
+        println!(
+            "  page {page_num}: {count} occurrences, {} chars total",
+            chars.len()
+        );
     }
 
     // Step 4: Now redact and check.

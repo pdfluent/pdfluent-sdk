@@ -97,14 +97,11 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     // Pick the first word ≥ 3 chars with at least one letter.
     // Purely numeric tokens (e.g. "000") match too broadly in charts/barcodes
     // and cannot be reliably redacted across all rendering paths.
-    let search_word = match text
-        .split_whitespace()
-        .find(|w| {
-            w.len() >= 3
-                && w.chars().all(|c| c.is_alphanumeric())
-                && w.chars().any(|c| c.is_alphabetic())
-        })
-    {
+    let search_word = match text.split_whitespace().find(|w| {
+        w.len() >= 3
+            && w.chars().all(|c| c.is_alphanumeric())
+            && w.chars().any(|c| c.is_alphabetic())
+    }) {
         Some(w) => w.to_string(),
         None => {
             return TestResult {

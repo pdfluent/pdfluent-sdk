@@ -1816,13 +1816,38 @@ fn ensure_placeholder_page_tree(doc: &mut lopdf::Document) -> bool {
         return false;
     }
 
-    let pages_id = match doc
-        .catalog()
-        .and_then(|cat| cat.get(b"Pages"))
-        .and_then(lopdf::Object::as_reference)
-    {
-        Ok(id) => id,
-        Err(_) => return false,
+    // Get or create the Pages reference in the Catalog.
+    // Some extremely corrupt PDFs have /Pages as a Name value (e.g. `/Pages /Pages`)
+    // instead of a Reference. When detected, create a new Pages node and update
+    // the Catalog. Fixes: GHOSTSCRIPT-698804-0.pdf.
+    let catalog_id = match doc.trailer.get(b"Root").ok() {
+        Some(lopdf::Object::Reference(id)) => *id,
+        _ => return false,
+    };
+    let pages_value = doc
+        .objects
+        .get(&catalog_id)
+        .and_then(|o| o.as_dict().ok())
+        .and_then(|d| d.get(b"Pages").ok())
+        .cloned();
+    let pages_id = match pages_value {
+        Some(lopdf::Object::Reference(id)) => id,
+        Some(lopdf::Object::Name(_)) => {
+            // /Pages is a Name — create a new Pages node and point the Catalog at it.
+            let new_pages_id = doc.new_object_id();
+            doc.objects.insert(
+                new_pages_id,
+                lopdf::Object::Dictionary(lopdf::Dictionary::new()),
+            );
+            if let Some(lopdf::Object::Dictionary(cat)) = doc.objects.get_mut(&catalog_id) {
+                cat.set("Pages", lopdf::Object::Reference(new_pages_id));
+                // These keys belong in the Pages node, not the Catalog.
+                cat.remove(b"Kids");
+                cat.remove(b"Count");
+            }
+            new_pages_id
+        }
+        _ => return false,
     };
 
     let content_id = doc.new_object_id();
@@ -1849,6 +1874,14 @@ fn ensure_placeholder_page_tree(doc: &mut lopdf::Document) -> bool {
     );
     page.set("Contents", lopdf::Object::Reference(content_id));
     doc.objects.insert(page_id, lopdf::Object::Dictionary(page));
+
+    // If the Pages node doesn't exist yet (e.g. the encrypted/compressed xref
+    // section was never loaded), insert a fresh empty dict so we can set it up.
+    // Without this, get_dictionary_mut returns Err and the placeholder is never
+    // created, leaving the Catalog pointing to a non-existent 62 0 R.
+    doc.objects
+        .entry(pages_id)
+        .or_insert_with(|| lopdf::Object::Dictionary(lopdf::Dictionary::new()));
 
     if let Ok(pages) = doc.get_dictionary_mut(pages_id) {
         pages.set("Type", lopdf::Object::Name(b"Pages".to_vec()));

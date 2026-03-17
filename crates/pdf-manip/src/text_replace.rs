@@ -659,7 +659,10 @@ fn build_replacement_ops_with_fallback(
     ));
     ops.push(Operation::new(
         "Tj",
-        vec![Object::String(replacement_bytes, lopdf::StringFormat::Literal)],
+        vec![Object::String(
+            replacement_bytes,
+            lopdf::StringFormat::Literal,
+        )],
     ));
 
     // Restore the original font so subsequent text is unaffected.
