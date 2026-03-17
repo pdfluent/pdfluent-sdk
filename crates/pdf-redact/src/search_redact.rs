@@ -7,6 +7,7 @@ use crate::error::{RedactError, Result};
 use crate::redact::{RedactionArea, Redactor};
 use lopdf::{Document, Object, ObjectId};
 use regex::Regex;
+use std::collections::HashSet;
 
 /// Options for search-and-redact operations.
 #[derive(Debug, Clone)]
@@ -340,20 +341,33 @@ fn apply_per_bbox_spatial_fallback(
     indices_to_remove: &mut Vec<usize>,
     bboxes: &[[f64; 4]],
 ) {
+    // Snapshot the text-matched indices for O(1) "covered" checks.
+    // Spatial indices added in this pass must not retroactively cover other
+    // bboxes, so we only consult the original text-matched set.
+    // Using a HashSet avoids the O(n) Vec::contains hot-path that makes this
+    // function O(B × M × K × n) on PDFs with many matches (#OOM-002874).
+    let text_matched: HashSet<usize> = indices_to_remove.iter().copied().collect();
+    let mut to_add: HashSet<usize> = HashSet::new();
+
     for &bbox in bboxes {
-        // Skip this bbox if a text-matched run already covers it.
         let covered = runs.iter().any(|run| {
-            let was_matched = run.ops_range.clone().any(|i| indices_to_remove.contains(&i));
-            was_matched && run_overlaps_single_bbox(run, bbox)
+            run_overlaps_single_bbox(run, bbox)
+                && run.ops_range.clone().any(|i| text_matched.contains(&i))
         });
         if !covered {
             for run in runs {
                 if run_overlaps_single_bbox(run, bbox) {
                     for idx in run.ops_range.clone() {
-                        indices_to_remove.push(idx);
+                        to_add.insert(idx);
                     }
                 }
             }
+        }
+    }
+
+    for idx in to_add {
+        if !text_matched.contains(&idx) {
+            indices_to_remove.push(idx);
         }
     }
 }
@@ -403,6 +417,10 @@ fn remove_text_ops_for_page(
 
     let matcher = build_matcher(pattern, options)?;
 
+    // Shared visited set: prevents re-processing the same stream object across
+    // XObjects and annotation AP streams (avoids diamond-DAG / cycle blowup).
+    let mut visited: HashSet<ObjectId> = HashSet::new();
+
     // Try normal ContentEditor path first.  Falls back to inline-image-aware
     // path when the content stream contains BI…EI binary image data that
     // lopdf's decoder cannot handle.
@@ -419,12 +437,28 @@ fn remove_text_ops_for_page(
     // Pass match_bboxes so that XObjects whose font encoding prevents text
     // matching can still be cleaned via the spatial fallback. Fixes #466 bugs 5–6.
     let removed =
-        removed + remove_text_ops_from_xobjects(doc, page_num, &matcher, &fonts, match_bboxes)?;
+        removed
+            + remove_text_ops_from_xobjects(
+                doc,
+                page_num,
+                &matcher,
+                &fonts,
+                match_bboxes,
+                &mut visited,
+            )?;
 
     // Also process annotation appearance streams.  Pass match_bboxes so the
     // raw-byte fallback can fire for AP streams with misleading ToUnicode CMaps.
     let removed =
-        removed + remove_text_ops_from_annotations(doc, page_num, &matcher, &fonts, match_bboxes)?;
+        removed
+            + remove_text_ops_from_annotations(
+                doc,
+                page_num,
+                &matcher,
+                &fonts,
+                match_bboxes,
+                &mut visited,
+            )?;
 
     Ok(removed)
 }
@@ -607,6 +641,7 @@ fn remove_text_ops_from_xobjects(
     matcher: &TextMatcher,
     fonts: &pdf_manip::text_run::FontMap,
     match_bboxes: &[[f64; 4]],
+    visited: &mut HashSet<ObjectId>,
 ) -> Result<usize> {
     let pages = doc.get_pages();
     let &page_id = match pages.get(&page_num) {
@@ -621,10 +656,8 @@ fn remove_text_ops_from_xobjects(
 
     let mut total_removed = 0;
     for xobj_id in xobject_ids {
-        // remove_text_ops_from_stream builds its own per-stream FontMap and
-        // recurses into nested Form XObjects automatically.
         total_removed +=
-            remove_text_ops_from_stream(doc, xobj_id, matcher, fonts, match_bboxes)?;
+            remove_text_ops_from_stream(doc, xobj_id, matcher, fonts, match_bboxes, visited)?;
     }
     Ok(total_removed)
 }
@@ -642,6 +675,7 @@ fn remove_text_ops_from_annotations(
     matcher: &TextMatcher,
     fonts: &pdf_manip::text_run::FontMap,
     match_bboxes: &[[f64; 4]],
+    visited: &mut HashSet<ObjectId>,
 ) -> Result<usize> {
     let pages = doc.get_pages();
     let &page_id = match pages.get(&page_num) {
@@ -657,11 +691,8 @@ fn remove_text_ops_from_annotations(
 
     let mut total_removed = 0;
     for stream_id in ap_stream_ids {
-        // Pass match_bboxes to enable raw-byte fallback in remove_text_ops_from_stream.
-        // Spatial fallback is ineffective here (AP stream coords are local, not page space),
-        // but apply_per_bbox_spatial_fallback will skip bboxes if no runs overlap them.
         total_removed +=
-            remove_text_ops_from_stream(doc, stream_id, matcher, fonts, match_bboxes)?;
+            remove_text_ops_from_stream(doc, stream_id, matcher, fonts, match_bboxes, visited)?;
     }
 
     Ok(total_removed)
@@ -684,7 +715,14 @@ fn remove_text_ops_from_stream(
     matcher: &TextMatcher,
     page_fonts: &pdf_manip::text_run::FontMap,
     match_bboxes: &[[f64; 4]],
+    visited: &mut HashSet<ObjectId>,
 ) -> Result<usize> {
+    // Guard against cycles and diamond-DAG re-processing: if we have already
+    // visited this stream in the current page pass, skip it (#OOM-002874).
+    if !visited.insert(stream_id) {
+        return Ok(0);
+    }
+
     let content_bytes = match doc.get_object(stream_id) {
         Ok(Object::Stream(ref s)) => {
             let mut stream = s.clone();
@@ -747,7 +785,7 @@ fn remove_text_ops_from_stream(
         let mut nested_removed = 0;
         for nested_id in nested_ids {
             nested_removed +=
-                remove_text_ops_from_stream(doc, nested_id, matcher, fonts, match_bboxes)?;
+                remove_text_ops_from_stream(doc, nested_id, matcher, fonts, match_bboxes, visited)?;
         }
         return Ok(nested_removed);
     }
@@ -778,7 +816,7 @@ fn remove_text_ops_from_stream(
     let mut nested_removed = removed;
     for nested_id in nested_ids {
         nested_removed +=
-            remove_text_ops_from_stream(doc, nested_id, matcher, fonts, match_bboxes)?;
+            remove_text_ops_from_stream(doc, nested_id, matcher, fonts, match_bboxes, visited)?;
     }
 
     Ok(nested_removed)
@@ -1189,7 +1227,7 @@ mod tests {
         // Call the private helper via remove_text_ops_from_stream.
         // We test it indirectly: verify the XObject stream bytes change.
         let removed =
-            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts, &[]).unwrap();
+            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts, &[], &mut HashSet::new()).unwrap();
 
         assert!(
             removed > 0,
@@ -1244,7 +1282,7 @@ mod tests {
         // `remove_text_ops_from_stream` when no spatial run was matched.
         let dummy_bboxes = [[0.0_f64, 0.0, 300.0, 20.0]];
         let removed =
-            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts, &dummy_bboxes)
+            remove_text_ops_from_stream(&mut doc, xobj_id, &matcher, &page_fonts, &dummy_bboxes, &mut HashSet::new())
                 .unwrap();
         assert!(
             removed > 0,
