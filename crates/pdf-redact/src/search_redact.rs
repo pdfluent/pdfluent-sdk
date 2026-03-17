@@ -281,24 +281,30 @@ fn build_matcher(pattern: &str, options: &RedactSearchOptions) -> Result<TextMat
 
 /// Returns true if a text run's position overlaps a single bounding rectangle.
 fn run_overlaps_single_bbox(run: &pdf_manip::text_run::TextRun, bbox: [f64; 4]) -> bool {
-    run_overlaps_single_bbox_tol(run, bbox, 4.0)
-}
-
-/// Same as `run_overlaps_single_bbox` but with a configurable tolerance.
-///
-/// Used with a tight Y tolerance (0.1 pt) for the "covered" check in
-/// `apply_per_bbox_spatial_fallback` so that a text-matched run on an
-/// adjacent line (y difference < 1.2 pt in dense text) does not
-/// incorrectly mark a split-word occurrence as already handled. Fixes #473.
-fn run_overlaps_single_bbox_tol(
-    run: &pdf_manip::text_run::TextRun,
-    bbox: [f64; 4],
-    tol: f64,
-) -> bool {
     let run_x1 = run.x + run.width.max(1.0);
+    let tol = 4.0_f64;
     let x_overlap = run.x < bbox[2] + tol && run_x1 > bbox[0] - tol;
     let y_overlap = run.y <= bbox[3] + tol && run.y >= bbox[1] - tol;
     x_overlap && y_overlap
+}
+
+/// Check if a text run is on the same baseline as a match bbox and X-overlaps.
+///
+/// Used for the "covered" check in `apply_per_bbox_spatial_fallback` to decide
+/// whether a match bbox is already handled by a text-matched run on the same line.
+///
+/// `bbox[1]` is the text rendering y (baseline) of the matched chars — the same
+/// coordinate that `extract_text_runs` stores in `run.y`.  `bbox[3]` equals
+/// `bbox[1] + font_size` (see `extract_positioned_chars`), so using the full
+/// bbox interval `[bbox[1], bbox[3]]` for the Y check permits runs on adjacent
+/// lines (y ≈ bbox[1] + line_height) to be falsely considered "covering" the bbox.
+/// Using a direct `|run.y - bbox[1]| ≤ 0.5` comparison restricts coverage to
+/// runs on the same text line.  Fixes #474.
+fn run_on_same_baseline(run: &pdf_manip::text_run::TextRun, bbox: [f64; 4]) -> bool {
+    let same_y = (run.y - bbox[1]).abs() <= 0.5;
+    let run_x1 = run.x + run.width.max(1.0);
+    let x_overlap = run.x < bbox[2] + 4.0 && run_x1 > bbox[0] - 4.0;
+    same_y && x_overlap
 }
 
 /// Extract the Latin-1–decoded text from a text-showing content operation.
@@ -366,13 +372,13 @@ fn apply_per_bbox_spatial_fallback(
     let mut to_add: HashSet<usize> = HashSet::new();
 
     for &bbox in bboxes {
-        // Use a tight Y tolerance for the "covered" check: only a run on the
-        // same line (y within 0.1 pt) counts as covering this bbox.  The
-        // wider TOL=4.0 would allow a text-matched run on the adjacent line
-        // to mark a split-word bbox (e.g. "Mo" + "zilla" split across two
-        // ops) as covered, leaving the occurrence unredacted.  Fixes #473.
+        // Only a text-matched run on the SAME baseline line covers this bbox.
+        // `run_on_same_baseline` compares run.y against bbox[1] (the text
+        // rendering y), not against the full bbox height bbox[3] = bbox[1] +
+        // font_size, which would incorrectly admit runs from adjacent lines.
+        // Fixes #474.
         let covered = runs.iter().any(|run| {
-            run_overlaps_single_bbox_tol(run, bbox, 0.1)
+            run_on_same_baseline(run, bbox)
                 && run.ops_range.clone().any(|i| text_matched.contains(&i))
         });
         if !covered {
