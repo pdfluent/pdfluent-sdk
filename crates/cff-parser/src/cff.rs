@@ -332,6 +332,33 @@ fn parse_font_dict(data: &[u8]) -> Option<Range<usize>> {
     None
 }
 
+/// Parse a CID Font DICT for the per-FD FontMatrix (op 12 7).
+///
+/// CID-keyed CFF fonts can define a different FontMatrix for each FD entry in
+/// the FDArray. If absent, the top-level (Table) matrix applies instead.
+/// Returns `None` if the FD dict has no explicit FontMatrix.
+fn parse_font_dict_matrix(data: &[u8]) -> Option<Matrix> {
+    let mut operands_buffer = [0.0; MAX_OPERANDS_LEN];
+    let mut dict_parser = DictionaryParser::new(data, &mut operands_buffer);
+    while let Some(operator) = dict_parser.parse_next() {
+        if operator.get() == top_dict_operator::FONT_MATRIX {
+            dict_parser.parse_operands()?;
+            let operands = dict_parser.operands();
+            if operands.len() == 6 {
+                return Some(Matrix {
+                    sx: operands[0] as f32,
+                    ky: operands[1] as f32,
+                    kx: operands[2] as f32,
+                    sy: operands[3] as f32,
+                    tx: operands[4] as f32,
+                    ty: operands[5] as f32,
+                });
+            }
+        }
+    }
+    None
+}
+
 /// In CID fonts, to get local subroutines we have to:
 ///   1. Find Font DICT index via FDSelect by GID.
 ///   2. Get Font DICT data from FDArray using this index.
@@ -986,6 +1013,28 @@ impl<'a> Table<'a> {
     /// Returns a font transformation matrix.
     #[inline]
     pub fn matrix(&self) -> Matrix {
+        self.matrix
+    }
+
+    /// Returns the FontMatrix for the FD that owns `glyph_id`.
+    ///
+    /// CID-keyed CFF fonts can define a per-FD FontMatrix in each entry of
+    /// the FDArray (op 12 7). If the FD has one it overrides the top-level
+    /// matrix. For SID fonts (no FDArray) or when the FD has no explicit
+    /// matrix, falls back to the top-level matrix.
+    ///
+    /// Use this instead of `matrix()` when converting CFF charstring advances
+    /// to PDF text-space widths for CIDFontType0 width repair (6.2.11.5:1).
+    pub fn glyph_fd_matrix(&self, glyph_id: GlyphId) -> Matrix {
+        if let FontKind::CID(ref cid) = self.kind {
+            if let Some(fd_index) = cid.fd_select.font_dict_index(glyph_id) {
+                if let Some(fd_data) = cid.fd_array.get(u32::from(fd_index)) {
+                    if let Some(fd_matrix) = parse_font_dict_matrix(fd_data) {
+                        return fd_matrix;
+                    }
+                }
+            }
+        }
         self.matrix
     }
 
