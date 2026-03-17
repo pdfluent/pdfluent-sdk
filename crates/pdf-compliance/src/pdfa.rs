@@ -90,6 +90,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_extgstate_restrictions(pdf, level, &mut report);
     check_cidfont_embedding(pdf, &mut report);
     check_cidfont_w_arrays(pdf, &mut report);
+    check_cidsystem_info_consistency(pdf, &mut report);
     check_output_intent_profile(pdf, &mut report);
 
     // File structure, actions, streams (§6.1.x, §6.6.1)
@@ -348,6 +349,10 @@ pub fn validate_with_progress(
     tracked!(
         "check_cidfont_w_arrays",
         check_cidfont_w_arrays(pdf, &mut report)
+    );
+    tracked!(
+        "check_cidsystem_info_consistency",
+        check_cidsystem_info_consistency(pdf, &mut report)
     );
     tracked!(
         "check_output_intent_profile",
@@ -705,6 +710,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     timed!(
         "check_cidfont_embedding",
         check_cidfont_embedding(pdf, &mut report)
+    );
+    timed!(
+        "check_cidsystem_info_consistency",
+        check_cidsystem_info_consistency(pdf, &mut report)
     );
     timed!(
         "check_output_intent_profile",
@@ -1251,6 +1260,11 @@ fn check_cidfont_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.2.11.6 — CIDFont must have /W (widths) or /DW (default width).
 fn check_cidfont_w_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_cidfont_w_arrays(pdf, report);
+}
+
+/// §6.2.10.3.1 — CIDFont and CMap CIDSystemInfo Registry/Ordering must match.
+fn check_cidsystem_info_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_cidsystem_info_consistency(pdf, report);
 }
 
 /// §6.2.3.2 — OutputIntent must have ICC profile.
