@@ -6029,6 +6029,98 @@ pub fn check_font_widths(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
+/// Check that per-glyph advance widths in an embedded CFF/Type1C font program
+/// are consistent with the /Widths array declared in the font dict (§6.2.11.5 /
+/// §6.2.10.5 in PDF/A-4).
+///
+/// veraPDF emits this clause whenever the rounded width from the charstring
+/// differs by more than 1 unit from the corresponding /Widths entry.
+/// We emit rule "6.3.5-fw" which is remapped to §6.2.11.5 (parts 2/3) or
+/// §6.2.10.5 (part 4) in pdfa.rs. (#467)
+pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        // Only simple (non-Type0) fonts with FontFile3 (CFF/Type1C) are checked here.
+        let subtype = font_dict.get::<Name>(keys::SUBTYPE);
+        let is_type0 = subtype.as_ref().map(|s| s.as_ref()) == Some(b"Type0");
+        if is_type0 {
+            return;
+        }
+
+        let Some(first_char) = font_dict.get::<i32>(keys::FIRST_CHAR) else {
+            return;
+        };
+        let Some(last_char) = font_dict.get::<i32>(keys::LAST_CHAR) else {
+            return;
+        };
+        let Some(widths_arr) = font_dict.get::<Array<'_>>(keys::WIDTHS) else {
+            return;
+        };
+        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) else {
+            return;
+        };
+        // Only check FontFile3 (CFF) embeddings — Type1 charstring parsing is
+        // done separately and is unreliable for non-subset fonts (see memory).
+        let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3) else {
+            return;
+        };
+        let Ok(cff_data) = ff3.decoded() else {
+            return;
+        };
+        // Parse the CFF table.
+        let Some(table) = cff_parser::Table::parse(&cff_data) else {
+            return;
+        };
+
+        // Collect Widths entries.
+        let pdf_widths: Vec<i32> = widths_arr.iter::<i32>().collect();
+
+        let first = first_char as usize;
+        let last = last_char as usize;
+        if last < first || pdf_widths.len() < last - first + 1 {
+            return;
+        }
+
+        let loc = format!("page {}", page_idx + 1);
+
+        // For each character code in [FirstChar..LastChar], compare the CFF
+        // charstring advance width with the PDF /Widths entry.
+        for code in first..=last {
+            let idx = code - first;
+            let pdf_w = pdf_widths[idx];
+            if pdf_w == 0 {
+                // Width 0 often means "glyph not present/used" — skip.
+                continue;
+            }
+
+            // Map code to GID via the CFF encoding.
+            let gid = match table.glyph_index(code as u8) {
+                Some(g) => g,
+                None => continue,
+            };
+            let Some(cff_w) = table.glyph_width(gid) else {
+                continue;
+            };
+            let cff_w_i32 = cff_w as i32;
+
+            // Tolerance: 1 unit (veraPDF uses strict equality but we allow ±1
+            // to avoid fp rounding FPs).
+            if (cff_w_i32 - pdf_w).abs() > 1 {
+                error_at(
+                    report,
+                    "6.3.5-fw",
+                    format!(
+                        "Font {name} glyph at code {code}: \
+                         CFF width {cff_w} != PDF /Widths[{idx}] {pdf_w}"
+                    ),
+                    loc.clone(),
+                );
+                // Report only the first mismatch per font to avoid flooding.
+                return;
+            }
+        }
+    });
+}
+
 /// Validate symbolic TrueType font encoding (§6.3.7).
 ///
 /// Symbolic fonts (bit 2 of Flags set) shall not specify a character encoding.

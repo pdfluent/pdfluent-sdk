@@ -122,6 +122,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_tounicode_cmap(pdf, level, &mut report);
     check::check_tounicode_values(pdf, &mut report);
     check_font_widths(pdf, &mut report);
+    check_font_program_widths(pdf, &mut report);
     check_symbolic_truetype_encoding(pdf, &mut report);
     check_cidtogidmap_identity(pdf, &mut report);
     check_cmap_embedding(pdf, &mut report);
@@ -431,6 +432,10 @@ pub fn validate_with_progress(
         check::check_tounicode_values(pdf, &mut report)
     );
     tracked!("check_font_widths", check_font_widths(pdf, &mut report));
+    tracked!(
+        "check_font_program_widths",
+        check_font_program_widths(pdf, &mut report)
+    );
     tracked!(
         "check_symbolic_truetype_encoding",
         check_symbolic_truetype_encoding(pdf, &mut report)
@@ -811,6 +816,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check::check_tounicode_values(pdf, &mut report)
     );
     timed!("check_font_widths", check_font_widths(pdf, &mut report));
+    timed!(
+        "check_font_program_widths",
+        check_font_program_widths(pdf, &mut report)
+    );
     timed!(
         "check_symbolic_truetype_encoding",
         check_symbolic_truetype_encoding(pdf, &mut report)
@@ -1449,6 +1458,11 @@ fn check_font_widths(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_font_widths(pdf, report);
 }
 
+/// §6.2.11.5 / §6.2.10.5 — Font program widths consistent with /Widths dict.
+fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
+    check::check_font_program_widths(pdf, report);
+}
+
 /// §6.3.6 — Symbolic TrueType encoding.
 fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_symbolic_truetype_encoding(pdf, report);
@@ -1750,9 +1764,20 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Name UTF-8 validation — always maps to 6.1.7 for all PDF/A parts
             (_, "6.1.7-names") => Some("6.1.7"),
 
-            // CIDSet for subset CID fonts
+            // CIDSet / CharSet for subset fonts
             // PDF/A-1: §6.3.5, PDF/A-2/3: §6.2.11.5
             (2..=3, "6.3.5") => Some("6.2.11.5"),
+            // PDF/A-4: §6.3.5 → §6.2.10.5 (font program width consistency
+            //   and CIDSet requirements share the same clause in ISO 19005-4)
+            (4, "6.3.5") => Some("6.2.10.5"),
+
+            // Font program width consistency (internal rule "6.3.5-fw")
+            // PDF/A-1: stays as §6.3.5 (no remap needed)
+            (1, "6.3.5-fw") => Some("6.3.5"),
+            // PDF/A-2/3: §6.2.11.5
+            (2..=3, "6.3.5-fw") => Some("6.2.11.5"),
+            // PDF/A-4: §6.2.10.5
+            (4, "6.3.5-fw") => Some("6.2.10.5"),
 
             // Font embedding
             // PDF/A-1: §6.3.3 → §6.3.4 (veraPDF uses 6.3.4 for font embedding in PDF/A-1)

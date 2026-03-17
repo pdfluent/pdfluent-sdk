@@ -4046,6 +4046,7 @@ dependencies = [
 name = "pdf-compliance"
 version = "0.1.0"
 dependencies = [
+ "cff-parser",
  "log",
  "lopdf",
  "pdf-syntax",
