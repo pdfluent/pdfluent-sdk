@@ -4404,6 +4404,36 @@ pub fn check_output_intent_icc_signature(pdf: &Pdf, report: &mut ComplianceRepor
                 ),
             );
         }
+
+        // §6.2.3.2: /N in the ICC-based stream dict shall equal the actual number
+        // of components in the profile. A mismatch means the OutputIntent is malformed.
+        // Fixes #467 (MOZILLA-869065-0 has /N 4 but ICC is RGB = 3 components).
+        let icc_components: Option<u32> = match cs_sig {
+            b"GRAY" => Some(1),
+            b"RGB " | b"Lab " | b"XYZ " | b"Luv " | b"Yxy " | b"YCbr" | b"HSV " | b"HLS "
+            | b"3CLR" => Some(3),
+            b"CMYK" | b"4CLR" => Some(4),
+            b"2CLR" => Some(2),
+            b"5CLR" => Some(5),
+            b"6CLR" | b"CMY " => Some(6),
+            b"7CLR" => Some(7),
+            b"8CLR" => Some(8),
+            b"9CLR" => Some(9),
+            b"ACLR" => Some(10),
+            _ => None,
+        };
+        if let (Some(icc_n), Some(dict_n)) = (icc_components, stream.dict().get::<i32>(keys::N)) {
+            if dict_n as u32 != icc_n {
+                error(
+                    report,
+                    "6.2.3.2",
+                    format!(
+                        "OutputIntent DestOutputProfile /N {dict_n} does not match \
+                         ICC profile color space component count {icc_n}"
+                    ),
+                );
+            }
+        }
     }
 }
 
@@ -4688,7 +4718,13 @@ fn validate_xref_section(data: &[u8]) -> Option<std::string::String> {
         while pos < data.len() && (data[pos] == b'\n' || data[pos] == b'\r') {
             pos += 1;
         }
-        while pos < data.len() && data[pos].is_ascii_digit() {
+        // An xref entry starts with exactly 10 digits followed by a space.
+        // A subsection header (e.g. "4 2\n") starts with fewer digits before
+        // a space, so pos+10 would not be a space — exit inner loop.
+        while pos + 18 <= data.len()
+            && data[pos..pos + 10].iter().all(|b| b.is_ascii_digit())
+            && data[pos + 10] == b' '
+        {
             if pos + 17 >= data.len() {
                 return Some("Cross-reference entry truncated".into());
             }
@@ -8272,6 +8308,27 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
             break;
         };
         let abs_endstream = search_from + endstream_off;
+
+        // §6.1.7: endstream shall be preceded by \r\n or lone \n (lone \r is
+        // forbidden for PDF/A). Check the byte(s) immediately before the keyword.
+        // Fixes #467.
+        let eol_before_endstream = if abs_endstream >= 2
+            && data[abs_endstream - 2] == b'\r'
+            && data[abs_endstream - 1] == b'\n'
+        {
+            true // \r\n — valid
+        } else {
+            abs_endstream >= 1 && data[abs_endstream - 1] == b'\n'
+            // lone \n — valid; lone \r or no EOL → false
+        };
+        if !eol_before_endstream {
+            error(
+                report,
+                "6.1.7",
+                "endstream keyword not preceded by required end-of-line marker",
+            );
+            return; // one violation is enough
+        }
 
         // Actual length is bytes between data_start and endstream
         // endstream may be preceded by EOL (\r\n or \n or \r)
