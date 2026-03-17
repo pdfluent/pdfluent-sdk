@@ -191,14 +191,13 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     let pages_scanned = count_pages(doc);
 
     let device_names: Vec<String> = device_cs.into_iter().map(|(_, name)| name).collect();
+    // Deduplicate with a HashSet to avoid O(n²) Vec::contains. (#perf)
     let unique_names: Vec<String> = {
-        let mut seen = Vec::new();
-        for n in &device_names {
-            if !seen.contains(n) {
-                seen.push(n.clone());
-            }
-        }
-        seen
+        let mut seen = std::collections::HashSet::new();
+        device_names
+            .into_iter()
+            .filter(|n| seen.insert(n.clone()))
+            .collect()
     };
 
     // Also scan for DeviceCMYK usage in content streams and image XObjects.
@@ -1505,14 +1504,14 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
     // Pass 3: Fix Process dicts referenced by ID from attributes dicts.
     // Pattern: attributes dict has /Process <ref> -> Process dict has /ColorSpace /DeviceCMYK.
     // Collect all Process reference IDs from attributes dicts.
+    // Use HashSet for deduplication to avoid O(n²) Vec::contains over all objects. (#perf)
     let ids3: Vec<ObjectId> = doc.objects.keys().copied().collect();
-    let mut process_ref_ids: Vec<ObjectId> = Vec::new();
+    let mut process_ref_ids: std::collections::HashSet<ObjectId> =
+        std::collections::HashSet::new();
     for id in &ids3 {
         if let Some(Object::Dictionary(dict)) = doc.objects.get(id) {
             if let Ok(Object::Reference(process_id)) = dict.get(b"Process") {
-                if !process_ref_ids.contains(process_id) {
-                    process_ref_ids.push(*process_id);
-                }
+                process_ref_ids.insert(*process_id);
             }
         }
     }

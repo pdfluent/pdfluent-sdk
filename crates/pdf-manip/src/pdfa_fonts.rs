@@ -104,7 +104,9 @@ pub fn find_non_embedded_fonts(doc: &Document) -> Vec<(ObjectId, String)> {
 fn find_non_embedded_fonts_detailed(doc: &Document) -> Vec<NonEmbeddedFont> {
     let mut result = Vec::new();
     // Track CIDFont IDs that are descendants of Type0 fonts to avoid double-counting.
-    let mut descendant_ids: Vec<ObjectId> = Vec::new();
+    // Use HashSet for O(1) lookup — Vec::contains here was O(N×D) over all PDF objects. (#perf)
+    let mut descendant_ids: std::collections::HashSet<ObjectId> =
+        std::collections::HashSet::new();
 
     // First pass: collect all CIDFont descendant IDs from Type0 fonts.
     for obj in doc.objects.values() {
@@ -119,7 +121,7 @@ fn find_non_embedded_fonts_detailed(doc: &Document) -> Vec<NonEmbeddedFont> {
             if let Ok(Object::Array(arr)) = dict.get(b"DescendantFonts") {
                 for item in arr {
                     if let Object::Reference(id) = item {
-                        descendant_ids.push(*id);
+                        descendant_ids.insert(*id);
                     }
                 }
             }

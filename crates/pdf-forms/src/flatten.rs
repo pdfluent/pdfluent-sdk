@@ -45,12 +45,17 @@ pub fn flatten_form(
         skipped: vec![],
     };
 
+    // Pre-build a HashSet from config.field_names to avoid O(F×N) Vec::contains
+    // inside the filter — with large forms (many fields) and many target names
+    // the slice contains() is O(N) per field. (#perf)
     let fields_to_flatten: Vec<FieldId> = if config.field_names.is_empty() {
         tree.terminal_fields()
     } else {
+        let name_set: std::collections::HashSet<&str> =
+            config.field_names.iter().map(String::as_str).collect();
         tree.terminal_fields()
             .into_iter()
-            .filter(|&id| config.field_names.contains(&tree.fully_qualified_name(id)))
+            .filter(|&id| name_set.contains(tree.fully_qualified_name(id).as_str()))
             .collect()
     };
 
