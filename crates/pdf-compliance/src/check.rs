@@ -467,6 +467,11 @@ pub fn output_intent_profile_components(pdf: &Pdf) -> Option<u32> {
 ///
 /// Even with an OutputIntent, device colors may only be used if the profile's
 /// color space matches (e.g., DeviceCMYK only with CMYK OutputIntent).
+/// Exception: if a Default* colour space is defined in the page's Resources
+/// (DefaultCMYK/DefaultRGB/DefaultGray), the corresponding device colour space
+/// may be used in content streams regardless of the OutputIntent's component
+/// count (PDF/A-2 §6.2.3.3, PDF Reference §4.5.4).
+/// Note: Default* does NOT apply to Image XObject /ColorSpace entries.
 pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
     // 0 = no OutputIntent; device color spaces are forbidden without a matching profile.
     // Using 0 here causes all device-CS checks below to fire (since 0 ≠ 1/3/4). (#467)
@@ -475,15 +480,31 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let loc = format!("page {}", page_idx + 1);
 
+        let page_dict = page.raw();
+        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
+
+        // Determine which device CS are covered by Default* resources on this page.
+        // When DefaultCMYK/DefaultRGB/DefaultGray is present, the corresponding
+        // device CS operators in content streams are always valid (the Default* ICC
+        // profile provides the rendering intent regardless of OutputIntent components).
+        let (default_cmyk, default_rgb, default_gray) = res_dict
+            .as_ref()
+            .map(|rd| page_default_color_spaces(rd))
+            .unwrap_or((false, false, false));
+
+        // Effective profile components, adjusted for Default* resources:
+        // treat each covered device CS as if the profile matches exactly.
+        let eff_cmyk = if default_cmyk { 4 } else { profile_components };
+        let eff_rgb = if default_rgb { 3 } else { profile_components };
+        let eff_gray = if default_gray { 1 } else { profile_components };
+
         // Scan page content stream
         if let Some(content) = page.page_stream() {
             let ops = detect_device_color_ops(content);
-            report_color_vs_profile(&ops, profile_components, &loc, report);
+            report_color_vs_profile_eff(&ops, eff_cmyk, eff_rgb, eff_gray, &loc, report);
         }
 
         // Scan Form XObject content streams
-        let page_dict = page.raw();
-        let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
         if let Some(ref rd) = res_dict {
             if let Some(xobj_dict) = rd.get::<Dict<'_>>(keys::XOBJECT) {
                 for (xname, _) in xobj_dict.entries() {
@@ -501,7 +522,9 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
                         let xname_str = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
                         let xloc = format!("{loc} XObject {xname_str}");
                         let ops = detect_device_color_ops(&decoded);
-                        report_color_vs_profile(&ops, profile_components, &xloc, report);
+                        report_color_vs_profile_eff(
+                            &ops, eff_cmyk, eff_rgb, eff_gray, &xloc, report,
+                        );
                     }
                 }
             }
@@ -517,7 +540,9 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
                                 let ops = detect_device_color_ops(&decoded);
                                 let kloc =
                                     format!("{loc} AP/{}", std::str::from_utf8(key).unwrap_or("?"));
-                                report_color_vs_profile(&ops, profile_components, &kloc, report);
+                                report_color_vs_profile_eff(
+                                    &ops, eff_cmyk, eff_rgb, eff_gray, &kloc, report,
+                                );
                             }
                         }
                     }
@@ -525,15 +550,29 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
             }
         }
 
-        // Scan Shading/Pattern resources for device CS vs profile mismatch
+        // Scan Shading/Pattern resources for device CS vs profile mismatch.
+        // Image XObjects use profile_components directly (Default* does not apply
+        // to image XObject /ColorSpace entries per PDF spec §4.5.4).
         if let Some(ref rd) = res_dict {
             scan_shading_cs_vs_profile(rd, profile_components, &loc, report);
             scan_pattern_cs_vs_profile(rd, profile_components, &loc, report);
             scan_image_cs_vs_profile(rd, profile_components, &loc, report);
-            scan_type3_charprocs_vs_profile(rd, profile_components, &loc, report);
+            scan_type3_charprocs_vs_profile(rd, eff_cmyk, eff_rgb, eff_gray, &loc, report);
             scan_smask_cs_vs_profile(rd, profile_components, &loc, report);
         }
     }
+}
+
+/// Detect which Default* colour spaces are defined in a Resources dictionary.
+/// Returns (has_default_cmyk, has_default_rgb, has_default_gray).
+fn page_default_color_spaces(res_dict: &Dict<'_>) -> (bool, bool, bool) {
+    let Some(cs_dict) = res_dict.get::<Dict<'_>>(keys::COLORSPACE) else {
+        return (false, false, false);
+    };
+    let has_cmyk = cs_dict.contains_key(b"DefaultCMYK" as &[u8]);
+    let has_rgb = cs_dict.contains_key(b"DefaultRGB" as &[u8]);
+    let has_gray = cs_dict.contains_key(b"DefaultGray" as &[u8]);
+    (has_cmyk, has_rgb, has_gray)
 }
 
 /// Scan Shading resources for device CS vs OutputIntent profile (§6.2.3.3).
@@ -640,7 +679,9 @@ fn scan_image_cs_vs_profile(
 /// Scan Type 3 font CharProcs for device color vs OutputIntent profile (§6.2.3.3).
 fn scan_type3_charprocs_vs_profile(
     res_dict: &Dict<'_>,
-    profile_components: u32,
+    eff_cmyk: u32,
+    eff_rgb: u32,
+    eff_gray: u32,
     base_loc: &str,
     report: &mut ComplianceReport,
 ) {
@@ -667,7 +708,7 @@ fn scan_type3_charprocs_vs_profile(
                     let cstr = std::str::from_utf8(cname.as_ref()).unwrap_or("?");
                     let ops = detect_device_color_ops(&decoded);
                     let loc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
-                    report_color_vs_profile(&ops, profile_components, &loc, report);
+                    report_color_vs_profile_eff(&ops, eff_cmyk, eff_rgb, eff_gray, &loc, report);
                 }
             }
         }
@@ -745,7 +786,27 @@ fn report_color_vs_profile(
     location: &str,
     report: &mut ComplianceReport,
 ) {
-    if ops.has_rgb && profile_components != 3 {
+    report_color_vs_profile_eff(
+        ops,
+        profile_components,
+        profile_components,
+        profile_components,
+        location,
+        report,
+    );
+}
+
+/// Like `report_color_vs_profile` but with per-device-CS effective component
+/// counts that already account for Default* colour space substitutions.
+fn report_color_vs_profile_eff(
+    ops: &DeviceColorOps,
+    eff_cmyk: u32,
+    eff_rgb: u32,
+    eff_gray: u32,
+    location: &str,
+    report: &mut ComplianceReport,
+) {
+    if ops.has_rgb && eff_rgb != 3 {
         error_at(
             report,
             "6.2.3.3",
@@ -753,7 +814,7 @@ fn report_color_vs_profile(
             location.to_string(),
         );
     }
-    if ops.has_cmyk && profile_components != 4 {
+    if ops.has_cmyk && eff_cmyk != 4 {
         error_at(
             report,
             "6.2.3.3",
@@ -761,8 +822,7 @@ fn report_color_vs_profile(
             location.to_string(),
         );
     }
-    if ops.has_gray && profile_components != 1 && profile_components != 3 && profile_components != 4
-    {
+    if ops.has_gray && eff_gray != 1 && eff_gray != 3 && eff_gray != 4 {
         // DeviceGray is implicitly compatible with RGB and CMYK profiles
         error_at(
             report,
