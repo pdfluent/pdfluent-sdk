@@ -1911,20 +1911,24 @@ fn fix_cid_widths_from_cff(
         return false;
     }
 
-    // Read the font matrix to determine scaling.
-    // CFF uses a 1/1000 scale by default (FontMatrix = [0.001 0 0 0.001 0 0]).
-    let matrix = cff.matrix();
-    let scale = if matrix.sx.abs() > f32::EPSILON {
-        matrix.sx * 1000.0
-    } else {
-        1.0
-    };
-
     // Collect widths for all glyphs from the CFF program, grouped by CID.
+    //
+    // For CID-keyed CFF fonts, each FD in the FDArray may define its own
+    // FontMatrix (op 12 7). The correct text-space width is:
+    //   advance × FD_matrix.sx × 1000
+    // Using the top-level matrix for all glyphs is wrong when a per-FD matrix
+    // differs (e.g. CopperplateGothic with FD matrix 0.000686 instead of 0.001),
+    // causing inflated widths and persistent 6.2.11.5:1 failures. (#OOM)
     let mut by_cid: std::collections::HashMap<u16, Vec<i64>> = std::collections::HashMap::new();
     for gid in 0..num_glyphs {
         let glyph_id = cff_parser::GlyphId(gid);
         if let Some(w) = cff.glyph_width(glyph_id) {
+            let fd_matrix = cff.glyph_fd_matrix(glyph_id);
+            let scale = if fd_matrix.sx.abs() > f32::EPSILON {
+                fd_matrix.sx * 1000.0
+            } else {
+                1.0_f32
+            };
             let scaled = (w as f64 * scale as f64).round() as i64;
             let cid = cff.glyph_cid(glyph_id).unwrap_or(gid);
             by_cid.entry(cid).or_default().push(scaled);
@@ -1945,9 +1949,19 @@ fn fix_cid_widths_from_cff(
     // may resolve such collisions to .notdef width; choosing an arbitrary
     // duplicate width causes persistent 6.2.11.5:1 mismatches. Prefer .notdef
     // width when a CID has conflicting widths.
-    let notdef_dw = cff
-        .glyph_width(cff_parser::GlyphId(0))
-        .map(|w| (w as f64 * scale as f64).round() as i64);
+    // (notdef_dw is recomputed after the by_cid loop using per-FD matrix)
+    let notdef_dw_for_dedup: Option<i64> = {
+        let g0 = cff_parser::GlyphId(0);
+        cff.glyph_width(g0).map(|w| {
+            let fd_matrix = cff.glyph_fd_matrix(g0);
+            let scale = if fd_matrix.sx.abs() > f32::EPSILON {
+                fd_matrix.sx * 1000.0
+            } else {
+                1.0_f32
+            };
+            (w as f64 * scale as f64).round() as i64
+        })
+    };
 
     let mut widths: Vec<(u16, i64)> = by_cid
         .into_iter()
@@ -1960,7 +1974,7 @@ fn fix_cid_widths_from_cff(
                 for v in &vals {
                     *freq.entry(*v).or_default() += 1;
                 }
-                notdef_dw.unwrap_or_else(|| {
+                notdef_dw_for_dedup.unwrap_or_else(|| {
                     freq.into_iter()
                         .max_by_key(|(_, c)| *c)
                         .map(|(w, _)| w)
@@ -1974,7 +1988,20 @@ fn fix_cid_widths_from_cff(
 
     // Determine DW (default width).
     //
+    // Use GID 0 (.notdef) with its correct per-FD matrix for the default width.
     // Mode fallback for fonts where .notdef width is unavailable.
+    let notdef_dw = {
+        let g0 = cff_parser::GlyphId(0);
+        cff.glyph_width(g0).map(|w| {
+            let fd_matrix = cff.glyph_fd_matrix(g0);
+            let scale = if fd_matrix.sx.abs() > f32::EPSILON {
+                fd_matrix.sx * 1000.0
+            } else {
+                1.0_f32
+            };
+            (w as f64 * scale as f64).round() as i64
+        })
+    };
     let mut freq: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     for (_, w) in &widths {
         *freq.entry(*w).or_default() += 1;
@@ -4646,47 +4673,10 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let mut fixed = 0;
 
-    // Pre-scan: multiple CIDFontType2 objects may share the same FontDescriptor
-    // but have different CIDToGIDMaps. The CIDSet in the shared FD must cover
-    // the MAXIMUM map size across all CIDFonts using that FD. Without this,
-    // the last-processed font wins, potentially generating a CIDSet that's too
-    // small for earlier fonts — triggering 6.2.11.4.2:2. (#465)
-    let fd_nonidentity_max_map: std::collections::HashMap<ObjectId, usize> = {
-        let mut map: std::collections::HashMap<ObjectId, usize> =
-            std::collections::HashMap::new();
-        for &fid in &font_ids {
-            let dict = match doc.objects.get(&fid) {
-                Some(Object::Dictionary(d)) => d,
-                _ => continue,
-            };
-            if get_name(dict, b"Subtype").unwrap_or_default() != "CIDFontType2" {
-                continue;
-            }
-            let fd_id = match dict.get(b"FontDescriptor").ok() {
-                Some(Object::Reference(id)) => *id,
-                _ => continue,
-            };
-            // Only track subset fonts (XXXXXX+ prefix) since non-subset are removed.
-            let bf = get_name(dict, b"BaseFont").unwrap_or_default();
-            let bf = bf.as_bytes();
-            if !(bf.len() >= 7 && bf[6] == b'+' && bf[..6].iter().all(|x| x.is_ascii_uppercase()))
-            {
-                continue;
-            }
-            if let Ok(Object::Reference(map_id)) = dict.get(b"CIDToGIDMap") {
-                if let Some(Object::Stream(s)) = doc.objects.get(map_id) {
-                    let mut s2 = s.clone();
-                    let _ = s2.decompress();
-                    let map_size = s2.content.len() / 2;
-                    let entry = map.entry(fd_id).or_insert(0);
-                    if map_size > *entry {
-                        *entry = map_size;
-                    }
-                }
-            }
-        }
-        map
-    };
+    // Note: the pre-scan for non-identity CIDToGIDMap max sizes was removed
+    // because non-identity CIDToGIDMap fonts now have their CIDSet removed
+    // rather than regenerated (see below). This is always safe since
+    // containsCIDSet==false satisfies rule 6.2.11.4.2:2.
 
     for font_id in font_ids {
         let (subtype, base_font, fd_id) = {
@@ -4796,27 +4786,14 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
                 // Compute the CIDSet bit coverage based on CIDToGIDMap type.
                 // Use the maximum map_size across all CIDFonts sharing this FD
                 // (pre-scanned above) to handle shared FontDescriptors correctly. (#465)
-                let cidset_bytes: Option<Vec<u8>> = if let Some(map_id) = cid_to_gid_map_id {
-                    // Non-identity CIDToGIDMap stream: coverage = bits 1..N-1
-                    // where N = max(decompressed stream length / 2) across all sharers.
-                    let this_map_size = if let Some(Object::Stream(s)) =
-                        doc.objects.get(&map_id)
-                    {
-                        let mut s2 = s.clone();
-                        let _ = s2.decompress();
-                        s2.content.len() / 2
-                    } else {
-                        0
-                    };
-                    let max_map_size = fd_nonidentity_max_map
-                        .get(&fd_id)
-                        .copied()
-                        .unwrap_or(this_map_size);
-                    if max_map_size > 0 {
-                        Some(cidset_bitstream_nonidentity(max_map_size))
-                    } else {
-                        None
-                    }
+                let cidset_bytes: Option<Vec<u8>> = if cid_to_gid_map_id.is_some() {
+                    // Non-identity CIDToGIDMap stream: CIDSet must identify exactly
+                    // those CIDs whose GID mapping is non-zero in the font program.
+                    // Computing that correctly requires reading the GID entries and
+                    // cross-referencing maxp — error-prone and often wrong in practice.
+                    // Removing CIDSet is always safe: containsCIDSet==false satisfies
+                    // rule 6.2.11.4.2:2. Fixes persistent 6.2.11.4.2 failures (#OOM).
+                    None
                 } else {
                     // Identity or absent CIDToGIDMap.
                     // veraPDF uses widths.length (= hhea.numberOfHMetrics) for
@@ -4861,28 +4838,6 @@ pub fn fix_cidset(doc: &mut Document) -> usize {
         fixed += 1;
     }
     fixed
-}
-
-/// Build a CIDSet bitstream for a CIDFontType2 with a non-Identity CIDToGIDMap
-/// stream. veraPDF's containsCID(i) returns true for 1 <= i < map_size
-/// (regardless of GID value), so we must cover exactly bits 1..map_size-1.
-fn cidset_bitstream_nonidentity(map_size: usize) -> Vec<u8> {
-    if map_size <= 1 {
-        // No valid CIDs (only CID 0 which is excluded): all-zero bitstream.
-        return vec![0u8];
-    }
-    // We need bits 1..map_size-1 set. Total bit positions: 0..map_size-1.
-    let num_bytes = map_size.div_ceil(8);
-    let mut bits = vec![0xFFu8; num_bytes];
-    // Clear bit 0 (CID 0 must NOT be set per veraPDF logic).
-    bits[0] &= 0x7F;
-    // Clear trailing bits beyond map_size-1.
-    let remainder = map_size % 8;
-    if remainder != 0 {
-        bits[num_bytes - 1] =
-            (0xFFu8 << (8 - remainder)) & if num_bytes == 1 { 0x7F } else { 0xFF };
-    }
-    bits
 }
 
 /// Extract a table offset from a TrueType font's directory.
