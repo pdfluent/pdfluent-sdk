@@ -2267,6 +2267,67 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     );
 }
 
+/// Check predefined XMP properties with Lang Alt type are properly structured (§6.7.9.3).
+///
+/// Properties dc:description, dc:rights, and xmpRights:UsageTerms must be Lang Alt
+/// type (rdf:Alt with xml:lang-tagged rdf:li entries), not plain strings or attribute
+/// values. veraPDF flags this as §6.7.9.3 (isValueTypeCorrect == true).
+///
+/// XMP Specification Part 1, §8.2.2: dc:description and dc:rights are "Lang Alt" type.
+/// XMP Rights Management Schema: xmpRights:UsageTerms is "Lang Alt" type.
+pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(xmp_data) = get_xmp_metadata(pdf) else {
+        return;
+    };
+    let Ok(xmp_text) = std::str::from_utf8(&xmp_data) else {
+        return;
+    };
+
+    // Properties that must be Lang Alt (rdf:Alt), not plain strings.
+    let lang_alt_props = ["dc:description", "dc:rights", "xmpRights:UsageTerms"];
+
+    for prop in lang_alt_props {
+        let open_tag = format!("<{prop}>");
+        let open_tag_space = format!("<{prop} ");
+        let close_tag = format!("</{prop}>");
+
+        let element_start = xmp_text
+            .find(&open_tag)
+            .or_else(|| xmp_text.find(&open_tag_space));
+
+        if let Some(start) = element_start {
+            let region_end = xmp_text[start..]
+                .find(&close_tag)
+                .map(|i| start + i)
+                .unwrap_or(xmp_text.len());
+            let region = &xmp_text[start..region_end];
+            // If the element content doesn't contain rdf:Alt it's a plain string — violation.
+            if !region.contains("<rdf:Alt") {
+                error(
+                    report,
+                    "6.7.9.3",
+                    format!(
+                        "XMP property '{prop}' must be Lang Alt (rdf:Alt) type, not a plain string"
+                    ),
+                );
+                return;
+            }
+        } else if xmp_text.contains(&format!("{prop}=\""))
+            || xmp_text.contains(&format!("{prop}='"))
+        {
+            // Attribute form is always a plain scalar, never rdf:Alt — violation.
+            error(
+                report,
+                "6.7.9.3",
+                format!(
+                    "XMP property '{prop}' must be Lang Alt (rdf:Alt) type, not an attribute value"
+                ),
+            );
+            return;
+        }
+    }
+}
+
 /// Check annotation dictionaries have required /F key and correct flags.
 ///
 /// All annotations (except Popup) must have /F key. When present, Print flag
@@ -8059,6 +8120,76 @@ fn check_sig_ref_digest_keys(fields: &Array<'_>, report: &mut ComplianceReport, 
     }
 }
 
+/// Check that every signature /ByteRange covers the entire file (§6.4.3).
+///
+/// ByteRange must be `[0, l1, b2, l2]` with `b2 + l2 == file_length`. A range
+/// that stops short of the end of file means the signature does not cover the
+/// file content after the signature bytes, violating PDF/A-3 §6.4.3.
+pub fn check_sig_byterange_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
+    let file_size = pdf.data().as_ref().len() as i64;
+
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(acroform) = cat.get::<Dict<'_>>(keys::ACRO_FORM) else {
+        return;
+    };
+    let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) else {
+        return;
+    };
+    check_sig_byterange_fields(&fields, file_size, report, 0);
+}
+
+fn check_sig_byterange_fields(
+    fields: &Array<'_>,
+    file_size: i64,
+    report: &mut ComplianceReport,
+    depth: usize,
+) {
+    if depth > 50 {
+        return;
+    }
+    for field in fields.iter::<Dict<'_>>() {
+        if let Some(ft) = field.get::<Name>(b"FT" as &[u8]) {
+            if ft.as_ref() == b"Sig" {
+                if let Some(v) = field.get::<Dict<'_>>(keys::V) {
+                    if let Some(br) = v.get::<Array<'_>>(b"ByteRange" as &[u8]) {
+                        let parts: Vec<i64> = br.iter::<i64>().collect();
+                        if parts.len() == 4 {
+                            let (b1, _l1, b2, l2) = (parts[0], parts[1], parts[2], parts[3]);
+                            // First range must start at byte 0.
+                            if b1 != 0 {
+                                error(
+                                    report,
+                                    "6.4.3",
+                                    format!(
+                                        "Signature ByteRange does not start at 0 (starts at {b1})"
+                                    ),
+                                );
+                            }
+                            // Second range must extend to the end of the file. (#475)
+                            if b2 + l2 != file_size {
+                                error(
+                                    report,
+                                    "6.4.3",
+                                    format!(
+                                        "Signature ByteRange does not cover entire file: \
+                                         b2+l2={} but file_size={file_size}",
+                                        b2 + l2
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
+            check_sig_byterange_fields(&kids, file_size, report, depth + 1);
+        }
+    }
+}
+
 // ─── §6.11 — Document structure ─────────────────────────────────────────────
 
 /// Check document structure requirements (§6.11).
@@ -9405,9 +9536,11 @@ fn check_xmp_extension_schema_text(xmp: &str, report: &mut ComplianceReport) {
                 if !elem_name.starts_with(&correct_prefix) && elem_name.contains(':') {
                     let prefix = elem_name.split(':').next().unwrap_or("?");
                     if prefix.starts_with("pdfa") && prefix != "pdfaSchema" {
+                        // §6.6.2.3.3 (PDF/A-2/3): schema definition fields must use
+                        // "pdfaSchema" prefix. Remapped to §6.7.8 for PDF/A-1. (#476)
                         error(
                             report,
-                            "6.7.8",
+                            "6.6.2.3.3",
                             format!(
                                 "Extension schema field '{field}' uses wrong prefix '{prefix}' (expected 'pdfaSchema')"
                             ),
