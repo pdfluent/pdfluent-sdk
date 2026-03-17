@@ -779,11 +779,19 @@ pub fn font_has_tounicode(font_dict: &Dict<'_>) -> bool {
 /// Uses `page.resources().fonts` which handles inherited /Resources
 /// from parent Pages nodes, rather than only checking the page's own dict.
 pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>, usize)) {
+    let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let fonts = &page.resources().fonts;
         for (name, _) in fonts.entries() {
             let name_str = std::str::from_utf8(name.as_ref()).unwrap_or("<invalid>");
-            if let Some(font_dict) = fonts.get::<Dict<'_>>(name.as_ref()) {
+            // Font entries may be inline dicts or indirect references
+            let font_dict_opt: Option<Dict<'a>> =
+                fonts.get::<Dict<'_>>(name.as_ref()).or_else(|| {
+                    fonts
+                        .get_ref(name.as_ref())
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            if let Some(font_dict) = font_dict_opt {
                 callback(name_str, &font_dict, page_idx);
             }
         }
@@ -5434,8 +5442,13 @@ fn is_subset_font(name: &str) -> bool {
     bytes.len() > 7 && bytes[6] == b'+' && bytes[..6].iter().all(|&b| b.is_ascii_uppercase())
 }
 
-/// Check ToUnicode CMap presence for non-symbolic fonts (§6.3.4).
-pub fn check_tounicode_cmap(pdf: &Pdf, report: &mut ComplianceReport) {
+/// Check ToUnicode CMap presence for non-symbolic fonts (§6.3.4 / §6.2.11.7.2).
+///
+/// For PDF/A-2/3/4, missing ToUnicode on Type1 fonts is a violation of
+/// §6.2.11.7.2 (emitted as an error).  For PDF/A-1 the check is a warning
+/// under §6.3.4.  For other non-symbolic, non-Type0 fonts the check is a
+/// warning (severity is relaxed because veraPDF is inconsistent here). (#467)
+pub fn check_tounicode_cmap(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     for_each_font(pdf, |name, font_dict, _page_idx| {
         if let Some(enc) = font_dict.get::<Name>(keys::ENCODING) {
             if enc.as_ref() == keys::IDENTITY_H || enc.as_ref() == keys::IDENTITY_V {
@@ -5443,26 +5456,46 @@ pub fn check_tounicode_cmap(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
 
-        if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
-            if let Some(flags) = desc.get::<i32>(keys::FLAGS) {
-                if flags & 0x04 != 0 {
-                    return;
-                }
-            }
-        }
-
-        if let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) {
-            if subtype.as_ref() == b"Type0" {
+        let subtype = font_dict.get::<Name>(keys::SUBTYPE);
+        if let Some(ref st) = subtype {
+            if st.as_ref() == b"Type0" {
                 return;
             }
         }
 
+        let is_type1 = subtype
+            .as_ref()
+            .is_some_and(|s| s.as_ref() == b"Type1" || s.as_ref() == b"MMType1");
+
+        // §6.2.11.7.2 applies to ALL Type1 fonts in PDF/A-2/3/4 regardless of
+        // symbolic flag — the standard requires ToUnicode for every Type1 font.
+        // The symbolic-flag exemption only applies to the weaker §6.3.4 rule
+        // (PDF/A-1 and non-Type1 fonts). Fixes #467.
+        if !is_type1 || part < 2 {
+            if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
+                if let Some(flags) = desc.get::<i32>(keys::FLAGS) {
+                    if flags & 0x04 != 0 {
+                        return;
+                    }
+                }
+            }
+        }
+
         if !font_has_tounicode(font_dict) {
-            warning(
-                report,
-                "6.3.4",
-                format!("Non-symbolic font {name} missing /ToUnicode CMap"),
-            );
+            if part >= 2 && is_type1 {
+                // §6.2.11.7.2: Type1 font without ToUnicode in PDF/A-2/3/4
+                error(
+                    report,
+                    "6.2.11.7.2",
+                    format!("Type1 font {name} missing /ToUnicode CMap (§6.2.11.7.2)"),
+                );
+            } else {
+                warning(
+                    report,
+                    "6.3.4",
+                    format!("Non-symbolic font {name} missing /ToUnicode CMap"),
+                );
+            }
         }
     });
 }
