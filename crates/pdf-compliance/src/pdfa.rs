@@ -125,6 +125,8 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_font_program_widths(pdf, &mut report);
     if level.part() == 4 {
         check_truetype_cmap_pdfa4(pdf, &mut report);
+        // §6.2.10.7/§6.2.10.9: ToUnicode CMap must cover all glyphs. (#467)
+        check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report);
     }
     check_symbolic_truetype_encoding(pdf, &mut report);
     check_cidtogidmap_identity(pdf, &mut report);
@@ -448,6 +450,10 @@ pub fn validate_with_progress(
         tracked!(
             "check_truetype_cmap_pdfa4",
             check_truetype_cmap_pdfa4(pdf, &mut report)
+        );
+        tracked!(
+            "check_tounicode_glyph_coverage",
+            check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report)
         );
     }
     tracked!(
@@ -838,6 +844,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         timed!(
             "check_truetype_cmap_pdfa4",
             check_truetype_cmap_pdfa4(pdf, &mut report)
+        );
+        timed!(
+            "check_tounicode_glyph_coverage",
+            check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report)
         );
     }
     timed!(

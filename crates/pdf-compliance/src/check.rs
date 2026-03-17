@@ -6314,6 +6314,183 @@ fn check_cmap_streams_for_ffff(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Check that all glyphs in a TrueType simple font have ToUnicode mappings (§6.2.10.7/9).
+///
+/// PDF/A-4 §6.2.10.7 requires that character codes with valid glyphs have Unicode
+/// mappings via ToUnicode. §6.2.10.9 requires the character set to be fully covered.
+/// A subset TrueType with a ToUnicode CMap that omits some glyphs violates both. (#467)
+pub fn check_tounicode_glyph_coverage(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    if part != 4 {
+        return;
+    }
+
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        if !matches!(
+            font_dict
+                .get::<Name>(keys::SUBTYPE)
+                .as_ref()
+                .map(|s| s.as_ref()),
+            Some(b"TrueType")
+        ) {
+            return;
+        }
+
+        let Some(first_char) = font_dict.get::<i32>(keys::FIRST_CHAR) else {
+            return;
+        };
+        let Some(last_char) = font_dict.get::<i32>(keys::LAST_CHAR) else {
+            return;
+        };
+
+        // ToUnicode CMap must be present for this check to apply.
+        let Some(cmap_stream) = font_dict.get::<Stream<'_>>(keys::TO_UNICODE) else {
+            return;
+        };
+        let Ok(cmap_data) = cmap_stream.decoded() else {
+            return;
+        };
+        let Ok(cmap_text) = std::str::from_utf8(&cmap_data) else {
+            return;
+        };
+
+        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) else {
+            return;
+        };
+        let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2) else {
+            return;
+        };
+        let Ok(font_data) = ff2.decoded() else {
+            return;
+        };
+        let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+            return;
+        };
+        let upem = face.units_per_em() as f64;
+        if upem <= 0.0 {
+            return;
+        }
+
+        // Only handle named standard encodings.
+        let enc_bytes: Vec<u8> = font_dict
+            .get::<Name>(keys::ENCODING)
+            .map(|n| n.as_ref().to_vec())
+            .unwrap_or_default();
+        let use_winansi = enc_bytes == b"WinAnsiEncoding";
+        let use_macroman = enc_bytes == b"MacRomanEncoding";
+        if !use_winansi && !use_macroman {
+            return;
+        }
+
+        let mapped = parse_tounicode_source_codes(cmap_text);
+        let first = first_char as usize;
+        let last = last_char as usize;
+        let loc = format!("page {}", page_idx + 1);
+
+        for code in first..=last {
+            let ch = if use_winansi {
+                winansi_code_to_char(code as u8)
+            } else {
+                macroman_code_to_char(code as u8)
+            };
+            let Some(ch) = ch else {
+                continue;
+            };
+            let Some(gid) = face.glyph_index(ch) else {
+                continue;
+            };
+            if gid.0 == 0 {
+                continue; // .notdef
+            }
+            let Some(advance) = face.glyph_hor_advance(gid) else {
+                continue;
+            };
+            if advance == 0 {
+                continue;
+            }
+
+            if !mapped.contains(&(code as u32)) {
+                // §6.2.10.7: code with valid glyph has no ToUnicode mapping (#467)
+                error_at(
+                    report,
+                    "6.2.10.7",
+                    format!(
+                        "Font {name} code {code} (U+{:04X}) has valid glyph but \
+                         no ToUnicode CMap mapping",
+                        ch as u32
+                    ),
+                    loc.clone(),
+                );
+                // §6.2.10.9: character not covered by font's character repertoire (#467)
+                error_at(
+                    report,
+                    "6.2.10.9",
+                    format!(
+                        "Font {name} code {code} (U+{:04X}) not covered by ToUnicode CMap",
+                        ch as u32
+                    ),
+                    loc.clone(),
+                );
+                return; // one error per font
+            }
+        }
+    });
+}
+
+/// Extract source codes from a ToUnicode CMap (beginbfchar and beginbfrange sections).
+fn parse_tounicode_source_codes(cmap: &str) -> std::collections::HashSet<u32> {
+    let mut codes = std::collections::HashSet::new();
+    let mut mode: u8 = 0; // 0=none, 1=bfchar, 2=bfrange
+
+    for line in cmap.lines() {
+        let t = line.trim();
+        if t.ends_with("beginbfchar") {
+            mode = 1;
+            continue;
+        }
+        if t.ends_with("beginbfrange") {
+            mode = 2;
+            continue;
+        }
+        if t == "endbfchar" || t == "endbfrange" {
+            mode = 0;
+            continue;
+        }
+        match mode {
+            1 => {
+                // <srccode> <dstcode>
+                if let Some(code) = extract_cmap_hex(t, 0) {
+                    codes.insert(code);
+                }
+            }
+            2 => {
+                // <srclo> <srchi> <dst>
+                if let (Some(lo), Some(hi)) = (extract_cmap_hex(t, 0), extract_cmap_hex(t, 1)) {
+                    for c in lo..=hi {
+                        codes.insert(c);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    codes
+}
+
+/// Extract the N-th hex value (0-based) from a CMap line like `<0020> <0048>`.
+fn extract_cmap_hex(s: &str, nth: usize) -> Option<u32> {
+    let mut found = 0;
+    let mut pos = 0;
+    loop {
+        let start = s[pos..].find('<')? + pos + 1;
+        let end = s[start..].find('>')? + start;
+        if found == nth {
+            return u32::from_str_radix(s[start..end].trim(), 16).ok();
+        }
+        found += 1;
+        pos = end + 1;
+    }
+}
+
 const STANDARD_14: &[&str] = &[
     "Courier",
     "Courier-Bold",
