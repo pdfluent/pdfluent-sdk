@@ -1862,8 +1862,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.3.3 → §6.3.4 (veraPDF uses 6.3.4 for font embedding in PDF/A-1)
             (1, "6.3.3") => Some("6.3.4"),
             (1, "6.3.3-nd") => Some("6.3.4"), // no-FontDescriptor case, same clause in PDF/A-1
-            // PDF/A-1: corrupt/null font file — glyphs effectively absent → §6.3.2 (#467)
-            (1, "6.3.2-null") => Some("6.3.2"),
+            // PDF/A-1: corrupt/null font file — veraPDF maps this to §6.3.4 (same as
+            // missing embedding), not §6.3.2. §6.3.2 is for glyph-presence in the
+            // content (annotation/XObject level), not the font program itself. (#467)
+            (1, "6.3.2-null") => Some("6.3.4"),
             // PDF/A-2/3: §6.3.4 → §6.2.11.4.1 (font program not embedded)
             (2..=3, "6.3.4") => Some("6.2.11.4.1"),
             (2..=3, "6.3.3") => Some("6.2.11.4.1"),
