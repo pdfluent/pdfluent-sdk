@@ -281,11 +281,23 @@ fn build_matcher(pattern: &str, options: &RedactSearchOptions) -> Result<TextMat
 
 /// Returns true if a text run's position overlaps a single bounding rectangle.
 fn run_overlaps_single_bbox(run: &pdf_manip::text_run::TextRun, bbox: [f64; 4]) -> bool {
-    // Small tolerance to accommodate sub-pixel alignment differences.
-    const TOL: f64 = 4.0;
+    run_overlaps_single_bbox_tol(run, bbox, 4.0)
+}
+
+/// Same as `run_overlaps_single_bbox` but with a configurable tolerance.
+///
+/// Used with a tight Y tolerance (0.1 pt) for the "covered" check in
+/// `apply_per_bbox_spatial_fallback` so that a text-matched run on an
+/// adjacent line (y difference < 1.2 pt in dense text) does not
+/// incorrectly mark a split-word occurrence as already handled. Fixes #473.
+fn run_overlaps_single_bbox_tol(
+    run: &pdf_manip::text_run::TextRun,
+    bbox: [f64; 4],
+    tol: f64,
+) -> bool {
     let run_x1 = run.x + run.width.max(1.0);
-    let x_overlap = run.x < bbox[2] + TOL && run_x1 > bbox[0] - TOL;
-    let y_overlap = run.y <= bbox[3] + TOL && run.y >= bbox[1] - TOL;
+    let x_overlap = run.x < bbox[2] + tol && run_x1 > bbox[0] - tol;
+    let y_overlap = run.y <= bbox[3] + tol && run.y >= bbox[1] - tol;
     x_overlap && y_overlap
 }
 
@@ -354,8 +366,13 @@ fn apply_per_bbox_spatial_fallback(
     let mut to_add: HashSet<usize> = HashSet::new();
 
     for &bbox in bboxes {
+        // Use a tight Y tolerance for the "covered" check: only a run on the
+        // same line (y within 0.1 pt) counts as covering this bbox.  The
+        // wider TOL=4.0 would allow a text-matched run on the adjacent line
+        // to mark a split-word bbox (e.g. "Mo" + "zilla" split across two
+        // ops) as covered, leaving the occurrence unredacted.  Fixes #473.
         let covered = runs.iter().any(|run| {
-            run_overlaps_single_bbox(run, bbox)
+            run_overlaps_single_bbox_tol(run, bbox, 0.1)
                 && run.ops_range.clone().any(|i| text_matched.contains(&i))
         });
         if !covered {

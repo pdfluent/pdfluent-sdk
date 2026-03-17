@@ -2301,8 +2301,8 @@ pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
                 .map(|i| start + i)
                 .unwrap_or(xmp_text.len());
             let region = &xmp_text[start..region_end];
-            // If the element content doesn't contain rdf:Alt it's a plain string — violation.
             if !region.contains("<rdf:Alt") {
+                // No rdf:Alt container — plain string, not a valid Lang Alt.
                 error(
                     report,
                     "6.7.9.3",
@@ -2311,6 +2311,23 @@ pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
                     ),
                 );
                 return;
+            }
+            // Has rdf:Alt — check every rdf:li carries xml:lang (required for Lang Alt).
+            let mut search = 0;
+            while let Some(li_pos) = region[search..].find("<rdf:li") {
+                let abs = search + li_pos;
+                let tag_end = region[abs..].find('>').map(|e| abs + e).unwrap_or(abs);
+                if !region[abs..=tag_end].contains("xml:lang") {
+                    error(
+                        report,
+                        "6.7.9.3",
+                        format!(
+                            "XMP property '{prop}' has rdf:Alt but rdf:li is missing xml:lang attribute"
+                        ),
+                    );
+                    return;
+                }
+                search = tag_end + 1;
             }
         } else if xmp_text.contains(&format!("{prop}=\""))
             || xmp_text.contains(&format!("{prop}='"))
