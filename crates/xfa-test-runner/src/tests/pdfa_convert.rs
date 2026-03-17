@@ -122,6 +122,7 @@ impl PdfTest for PdfAConvertTest {
         // Fix wrong Root reference (corrupt trailer may point to non-Catalog object).
         fix_wrong_root(&mut doc);
         let _ = normalize_page_tree_types(&mut doc);
+        strip_null_page_kids(&mut doc);
 
         if doc.get_pages().is_empty() {
             // Fallback: try adding missing /Type /Page entries to page-like objects.
@@ -132,6 +133,7 @@ impl PdfTest for PdfAConvertTest {
                 if let Some(mut rebuilt) = try_rebuild_xref_from_objects(pdf_data) {
                     fix_wrong_root(&mut rebuilt);
                     let _ = normalize_page_tree_types(&mut rebuilt);
+                    strip_null_page_kids(&mut rebuilt);
                     let _ = try_fix_missing_page_types(&mut rebuilt);
                     doc = rebuilt;
                 }
@@ -213,12 +215,14 @@ impl PdfTest for PdfAConvertTest {
 
         // After cleanup (which removes encryption), retry page detection.
         let _ = normalize_page_tree_types(&mut doc);
+        strip_null_page_kids(&mut doc);
         if doc.get_pages().is_empty() {
             try_fix_missing_page_types(&mut doc);
             if doc.get_pages().is_empty() {
                 if let Some(mut rebuilt) = try_rebuild_xref_from_objects(pdf_data) {
                     fix_wrong_root(&mut rebuilt);
                     let _ = normalize_page_tree_types(&mut rebuilt);
+                    strip_null_page_kids(&mut rebuilt);
                     let _ = try_fix_missing_page_types(&mut rebuilt);
                     doc = rebuilt;
                 }
@@ -1747,6 +1751,61 @@ fn normalize_page_tree_types(doc: &mut lopdf::Document) -> usize {
     }
 
     fixed
+}
+
+/// Remove invalid `0 0 R` (free-object) references from page-tree Kids arrays.
+///
+/// Linearized or severely corrupt PDFs repaired by lopdf sometimes end up with
+/// null-object references in Kids arrays. veraPDF crashes with "unknown type of
+/// page tree node" when it encounters these. Stripping them prevents the crash.
+/// (#poppler-22493)
+fn strip_null_page_kids(doc: &mut lopdf::Document) {
+    // Collect IDs of Pages nodes whose Kids contain 0 0 R entries.
+    let pages_ids: Vec<lopdf::ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let lopdf::Object::Dictionary(dict) = obj else {
+                return None;
+            };
+            let Ok(lopdf::Object::Array(kids)) = dict.get(b"Kids") else {
+                return None;
+            };
+            let has_null = kids
+                .iter()
+                .any(|k| matches!(k, lopdf::Object::Reference(id) if id.0 == 0));
+            if has_null {
+                Some(*id)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for id in pages_ids {
+        // Clone Kids, filter out 0 0 R, then write back.
+        let filtered: Vec<lopdf::Object> = {
+            let dict = match doc.objects.get(&id) {
+                Some(lopdf::Object::Dictionary(d)) => d,
+                _ => continue,
+            };
+            let Ok(lopdf::Object::Array(kids)) = dict.get(b"Kids") else {
+                continue;
+            };
+            kids.iter()
+                .filter(|k| !matches!(k, lopdf::Object::Reference(r) if r.0 == 0))
+                .cloned()
+                .collect()
+        };
+        if let Some(lopdf::Object::Dictionary(dict)) = doc.objects.get_mut(&id) {
+            let count = filtered.len() as i64;
+            dict.set("Kids", lopdf::Object::Array(filtered));
+            // Update Count to match the number of remaining immediate Kids.
+            // (A fully accurate recursive count is expensive; a conservative
+            // Kids.len() count is better than a stale inflated value.)
+            dict.set("Count", lopdf::Object::Integer(count));
+        }
+    }
 }
 
 /// Create a minimal valid page tree when all page recovery attempts failed.
