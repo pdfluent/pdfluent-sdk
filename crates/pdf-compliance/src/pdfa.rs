@@ -1620,7 +1620,8 @@ fn check_stream_length_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 
 /// §6.1.8/6.1.9 — Object syntax spacing checks.
 ///
-/// PDF/A-1 uses §6.1.8 for object syntax; PDF/A-2/3/4 uses §6.1.9.
+/// PDF/A-1 and PDF/A-4 use §6.1.8 for object syntax; PDF/A-2/3 use §6.1.9
+/// (clause numbers shifted between PDF/A-2/3 and PDF/A-4).
 /// The check function emits the correct rule ID based on the part number.
 fn check_object_syntax(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_object_syntax_spacing(pdf, level.part(), report);
