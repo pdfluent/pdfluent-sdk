@@ -3259,6 +3259,57 @@ pub fn check_cidfont_w_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
+// ─── §6.2.11.6 — Font encoding BaseEncoding constraint ─────────────────────
+
+/// Check that font Encoding dicts use only allowed BaseEncoding values (§6.2.11.6).
+///
+/// When a simple font has an Encoding dict with a /BaseEncoding entry, the
+/// value must be /WinAnsiEncoding or /MacRomanEncoding.  Any other name
+/// (e.g. /Custom, /StandardEncoding) is a §6.2.11.6 violation.
+///
+/// The Encoding may be an indirect reference — resolved via xref. (#467)
+pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        // Only applies to simple fonts (not Type0 CIDFont wrappers)
+        let subtype = font_dict.get::<Name>(keys::SUBTYPE);
+        let is_type0 = subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type0");
+        if is_type0 {
+            return;
+        }
+
+        // Resolve /Encoding: may be a Name (standard encoding) or a Dict
+        // (explicit encoding, possibly with /BaseEncoding), or an indirect ref
+        let enc_dict_opt: Option<Dict<'_>> =
+            font_dict.get::<Dict<'_>>(keys::ENCODING).or_else(|| {
+                font_dict
+                    .get_ref(keys::ENCODING)
+                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+            });
+
+        let Some(enc_dict) = enc_dict_opt else {
+            return;
+        };
+
+        // If BaseEncoding is present, it must be WinAnsiEncoding or MacRomanEncoding
+        if let Some(base_enc) = enc_dict.get::<Name>(keys::BASE_ENCODING) {
+            let allowed = matches!(base_enc.as_ref(), b"WinAnsiEncoding" | b"MacRomanEncoding");
+            if !allowed {
+                let base_str = std::str::from_utf8(base_enc.as_ref()).unwrap_or("?");
+                error_at(
+                    report,
+                    "6.2.11.6",
+                    format!(
+                        "Font '{name}' Encoding has invalid BaseEncoding '/{base_str}'; \
+                         only /WinAnsiEncoding or /MacRomanEncoding are allowed"
+                    ),
+                    format!("page {}", page_idx + 1),
+                );
+            }
+        }
+    });
+}
+
 // ─── §6.2.10.3 — CIDSystemInfo Registry/Ordering consistency ───────────────
 
 /// Check that CIDFont and its CMap have matching CIDSystemInfo Registry and
