@@ -1315,6 +1315,20 @@ fn fix_device_colorspaces_in_deep_structures(
                         continue;
                     }
                 }
+
+                // Image XObject streams with a device ColorSpace name.
+                // Default* resources only substitute device CS in content-stream operators
+                // (k/K/rg/RG etc.), not in XObject stream dict /ColorSpace entries.
+                // Replace directly so veraPDF 6.2.3.3 is satisfied. Fixes #481.
+                let is_image = get_name(dict, b"Subtype").as_deref() == Some("Image");
+                if is_image {
+                    if let Some(repl) = get_name(dict, b"ColorSpace").and_then(|n| replacement(&n))
+                    {
+                        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                            s.dict.set("ColorSpace", Object::Reference(repl));
+                        }
+                    }
+                }
             }
             _ => {}
         }
