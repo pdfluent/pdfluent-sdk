@@ -91,6 +91,19 @@ impl PdfTest for ComplianceTest {
                             "false_positives".to_string(),
                             comparison.false_positives.len().to_string(),
                         );
+                        // Store actual rule IDs for direct SQL querying
+                        if !comparison.false_negatives.is_empty() {
+                            metadata.insert(
+                                "fn_rules".to_string(),
+                                comparison.false_negatives.join(","),
+                            );
+                        }
+                        if !comparison.false_positives.is_empty() {
+                            metadata.insert(
+                                "fp_rules".to_string(),
+                                comparison.false_positives.join(","),
+                            );
+                        }
                         metadata.insert(
                             "verapdf_duration_ms".to_string(),
                             verapdf_result.duration_ms.to_string(),
