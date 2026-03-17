@@ -846,11 +846,28 @@ pub fn has_embedded_files_cached(pdf: &Pdf, cache: &ObjectCache<'_>) -> bool {
     false
 }
 
+/// Resolve the /Group dict from a page dict, handling indirect references.
+///
+/// Some PDF generators write `/Group 10 0 R` (indirect) rather than an inline
+/// dict.  A plain `dict.get::<Dict<'_>>(keys::GROUP)` call only succeeds for
+/// inline dicts; this helper also tries `get_ref` + xref lookup. (#467)
+fn resolve_page_group_dict<'a>(
+    page_dict: &Dict<'a>,
+    xref: &'a pdf_syntax::xref::XRef,
+) -> Option<Dict<'a>> {
+    page_dict.get::<Dict<'_>>(keys::GROUP).or_else(|| {
+        page_dict
+            .get_ref(keys::GROUP)
+            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+    })
+}
+
 /// Check if any page has transparency (Group with /S /Transparency).
 pub fn has_transparency(pdf: &Pdf) -> bool {
+    let xref = pdf.xref();
     for page in pdf.pages().iter() {
         let page_dict = page.raw();
-        if let Some(group) = page_dict.get::<Dict<'_>>(keys::GROUP) {
+        if let Some(group) = resolve_page_group_dict(page_dict, xref) {
             if let Some(s) = group.get::<Name>(keys::S) {
                 if s.as_ref() == keys::TRANSPARENCY {
                     return true;
@@ -4617,10 +4634,11 @@ pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport)
 pub fn check_page_group_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
     let profile = output_intent_profile_components(pdf);
     let has_intent = profile.is_some();
+    let xref = pdf.xref();
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
-        let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) else {
+        let Some(group) = resolve_page_group_dict(page_dict, xref) else {
             continue;
         };
         let cs_res = &page.resources().color_spaces;
@@ -4831,19 +4849,25 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut Com
     // PDF/A-4 merges transparency checks into 6.2.9; parts 2/3 use 6.2.10
     let page_group_rule = if part == 4 { "6.2.9" } else { "6.2.10" };
 
+    let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
-        let has_page_group = page_dict
-            .get::<Dict<'_>>(b"Group" as &[u8])
+
+        // Resolve /Group dict, handling both inline dicts and indirect references.
+        let group_dict: Option<Dict<'_>> = resolve_page_group_dict(page_dict, xref);
+
+        let has_page_group = group_dict
+            .as_ref()
             .and_then(|g| g.get::<Name>(keys::S))
             .is_some_and(|s| s.as_ref() == b"Transparency");
 
         if !has_oi {
             // Check 1: existing transparency group must not use device CS
-            if let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+            if let Some(group) = group_dict.as_ref() {
                 if let Some(s) = group.get::<Name>(keys::S) {
                     if s.as_ref() == b"Transparency" {
                         if let Some(cs) = group.get::<Name>(keys::CS) {
+                            // CS present as a Name (device CS) — check it's not a device CS
                             let cs_bytes = cs.as_ref();
                             if cs_bytes == keys::DEVICE_RGB
                                 || cs_bytes == b"DeviceCMYK"
@@ -4859,7 +4883,8 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut Com
                                     format!("page {}", page_idx + 1),
                                 );
                             }
-                        } else {
+                        } else if group.get::<Array<'_>>(keys::CS).is_none() {
+                            // /CS is truly absent (not a Name and not an Array like [/ICCBased …])
                             error_at(
                                 report,
                                 page_group_rule,
@@ -4887,7 +4912,7 @@ pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut Com
 
         // Check 3: Group exists with S=Transparency but no CS entry
         if has_page_group && !has_oi {
-            if let Some(group) = page_dict.get::<Dict<'_>>(b"Group" as &[u8]) {
+            if let Some(group) = group_dict.as_ref() {
                 if group.get::<Name>(keys::CS).is_none()
                     && group.get::<Array<'_>>(keys::CS).is_none()
                 {
