@@ -1800,6 +1800,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // CIDSystemInfo compatibility
             // PDF/A-2/3: §6.2.11.3.1
             (2..=3, "6.3.3.1") => Some("6.2.11.3.1"),
+            // PDF/A-4: §6.2.10.3.1 (same requirement, different clause numbering)
+            // Merges with the emission from check_cidsystem_info_consistency (#467)
+            (4, "6.3.3.1") => Some("6.2.10.3.1"),
 
             // CIDToGIDMap must be /Identity or a stream
             // PDF/A-4: §6.2.10.3.2 (non-Identity Name value)
