@@ -134,7 +134,7 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     };
 
     // §6.7.3 — XMP stream must contain valid RDF structure
-    check_xmp_rdf_structure(xmp_text, report);
+    check_xmp_rdf_structure(xmp_text, level, report);
 
     check_xmp_packet_header(xmp_text, report);
     // §6.7.2.1 — forbidden 'bytes' attribute in the <?xpacket?> PI. (#467)
@@ -972,7 +972,7 @@ fn is_valid_iso8601(date: &str) -> bool {
 /// (`http://www.w3.org/1999/02/22-rdf-syntax-ns#`).  A non-canonical
 /// URI (e.g. with `1999/2` instead of `1999/02`) makes the XMP
 /// non-conformant.
-fn check_xmp_rdf_structure(xmp: &str, report: &mut ComplianceReport) {
+fn check_xmp_rdf_structure(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     if !xmp.contains("<rdf:RDF") {
         error(
             report,
@@ -983,7 +983,8 @@ fn check_xmp_rdf_structure(xmp: &str, report: &mut ComplianceReport) {
 
     // Check that rdf:Description elements use rdf:about (qualified), not unqualified about=.
     // Per RDF/XML spec, the about attribute must be namespace-qualified as rdf:about.
-    // Using bare `about=""` is invalid RDF/XML and triggers §6.7.3. (#467)
+    // Using bare `about=""` is invalid RDF/XML — veraPDF maps this to §6.7.9 for PDF/A-1
+    // (isartor-6-7-9-t01-fail-a) as "malformed XMP metadata". (#467)
     if xmp.contains(" about=\"") || xmp.contains(" about='") {
         // Make sure this isn't just rdf:about (which is correct)
         // Look for about= that is NOT preceded by rdf:
@@ -994,9 +995,11 @@ fn check_xmp_rdf_structure(xmp: &str, report: &mut ComplianceReport) {
                 // Check it's not "rdf:about=" pattern — look back for "rdf:"
                 let prefix_start = i.saturating_sub(4);
                 if &bytes[prefix_start..i] != b"rdf:" {
+                    // veraPDF uses §6.7.9 for PDF/A-1 (malformed XMP), §6.7.3 for others
+                    let rule = if level.part() == 1 { "6.7.9" } else { "6.7.3" };
                     error(
                         report,
-                        "6.7.3",
+                        rule,
                         "rdf:Description uses unqualified 'about' attribute instead of 'rdf:about'",
                     );
                     break;
