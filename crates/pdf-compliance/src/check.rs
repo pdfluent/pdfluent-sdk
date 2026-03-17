@@ -5303,8 +5303,15 @@ fn page_fonts_use_transparency(res: &Resources<'_>) -> bool {
 /// veraPDF uses "6.2.9" for all PDF/A parts. The remap converts "6.2.9" to
 /// "6.2.5" for PDF/A-1 where needed. Previously used "6.2.10" for non-PDF/A-4
 /// which was wrong. (#467)
-pub fn check_postscript_xobjects(pdf: &Pdf, _part: u8, report: &mut ComplianceReport) {
-    let rule = "6.2.9";
+pub fn check_postscript_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    // PDF/A-1: §6.2.9 (Form XObject restrictions group)
+    // PDF/A-2/3: §6.2.9.3 (PostScript XObjects specifically)
+    // PDF/A-4: §6.2.9 (veraPDF uses §6.2.9 for the PS XObject check)
+    let rule = if part == 2 || part == 3 {
+        "6.2.9.3"
+    } else {
+        "6.2.9"
+    };
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let xobjects = &page.resources().x_objects;
         for (name, _) in xobjects.entries() {
@@ -7282,19 +7289,42 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
         let has_own_resources = page_dict.contains_key(keys::RESOURCES);
 
         // If page has content stream but no own Resources, check if it
-        // would need to inherit them
+        // would need to inherit them.
+        //
+        // Note: page.resources() returns a Resources where the page's own dict
+        // entries are empty (since the page has no /Resources). Inherited entries
+        // live in res.parent(). We must check the parent chain for any resource
+        // that would be inherited. Fixes #467.
         if !has_own_resources && page.page_stream().is_some() {
-            // page.resources() returns resolved (possibly inherited) resources
-            // If the resolved resources have entries, they must be inherited
             let res = page.resources();
-            let has_any_resource = res.fonts.entries().next().is_some()
+            // Check own (page-level) resources first
+            let has_own_res = res.fonts.entries().next().is_some()
                 || res.x_objects.entries().next().is_some()
                 || res.ext_g_states.entries().next().is_some()
                 || res.color_spaces.entries().next().is_some()
                 || res.patterns.entries().next().is_some()
                 || res.shadings.entries().next().is_some();
+            // Check inherited resources from Pages parent nodes
+            let has_inherited_res = {
+                let mut p = res.parent();
+                let mut found = false;
+                while let Some(parent) = p {
+                    if parent.fonts.entries().next().is_some()
+                        || parent.x_objects.entries().next().is_some()
+                        || parent.ext_g_states.entries().next().is_some()
+                        || parent.color_spaces.entries().next().is_some()
+                        || parent.patterns.entries().next().is_some()
+                        || parent.shadings.entries().next().is_some()
+                    {
+                        found = true;
+                        break;
+                    }
+                    p = parent.parent();
+                }
+                found
+            };
 
-            if has_any_resource {
+            if has_own_res || has_inherited_res {
                 error_at(
                     report,
                     "6.2.2",
@@ -7343,8 +7373,14 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
 /// Check that resource names referenced in content streams exist in the
 /// Resources dictionary (§6.2.2 test 2).
 ///
-/// Maps operators to their resource sub-dictionary:
-/// - Tf → Font, Do → XObject, gs → ExtGState, cs/CS → ColorSpace, sh → Shading
+/// Only checks `Do` (XObject) and `Tf` (Font) operators — these are the most
+/// unambiguous cases. Colorspace/ExtGState/Shading/Pattern operators are
+/// intentionally skipped because they have more edge cases (inherited resources
+/// in complex page trees, inline image keywords, Separation alternates, etc.)
+/// that lead to false positives.
+///
+/// Uses the parent-chain-aware `get_x_object` / `get_font` accessors so that
+/// resources inherited from ancestor Pages nodes are not incorrectly flagged.
 pub fn check_resource_names_exist(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let Some(content) = page.page_stream() else {
@@ -7352,29 +7388,16 @@ pub fn check_resource_names_exist(pdf: &Pdf, report: &mut ComplianceReport) {
         };
         let res = page.resources();
         let loc = format!("page {}", page_idx + 1);
-        check_resource_refs_in_stream(
-            content,
-            &res.fonts,
-            &res.x_objects,
-            &res.ext_g_states,
-            &res.color_spaces,
-            &res.shadings,
-            &res.patterns,
-            &loc,
-            report,
-        );
+        check_do_tf_refs_in_stream(content, res, &loc, report);
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn check_resource_refs_in_stream(
+/// Check only `Do` (XObject invocation) and `Tf` (font selection) operators in
+/// a content stream.  Uses parent-chain-aware lookups so inherited resources
+/// from ancestor Pages nodes are not incorrectly flagged as missing.
+fn check_do_tf_refs_in_stream(
     content: &[u8],
-    fonts: &Dict<'_>,
-    xobjects: &Dict<'_>,
-    extgstates: &Dict<'_>,
-    colorspaces: &Dict<'_>,
-    shadings: &Dict<'_>,
-    patterns: &Dict<'_>,
+    res: &Resources<'_>,
     location: &str,
     report: &mut ComplianceReport,
 ) {
@@ -7384,6 +7407,7 @@ fn check_resource_refs_in_stream(
     let mut in_inline = false;
     while i < tokens.len() {
         let tok = tokens[i];
+        // Skip inline image data between ID and EI
         if tok == "ID" {
             in_inline = true;
             i += 1;
@@ -7399,77 +7423,33 @@ fn check_resource_refs_in_stream(
             continue;
         }
 
-        // Match operator and check the preceding name operand
         match tok {
+            "Do" => {
+                // /Name Do — XObject invocation; name is 1 token before
+                if i >= 1 {
+                    if let Some(name) = tokens[i - 1].strip_prefix('/') {
+                        // Use the parent-chain-aware accessor (traverses inherited Resources)
+                        if res.get_x_object(Name::new(name.as_bytes())).is_none() {
+                            error_at(
+                                report,
+                                "6.2.2",
+                                format!("/{name} referenced by Do but not in Resources/XObject"),
+                                location.to_string(),
+                            );
+                        }
+                    }
+                }
+            }
             "Tf" => {
-                // /Name size Tf — name is 2 tokens before
+                // /Name size Tf — font selection; name is 2 tokens before
                 if i >= 2 {
                     if let Some(name) = tokens[i - 2].strip_prefix('/') {
-                        if !fonts.contains_key(name.as_bytes()) {
+                        // Use the parent-chain-aware accessor (traverses inherited Resources)
+                        if res.get_font(Name::new(name.as_bytes())).is_none() {
                             error_at(
                                 report,
                                 "6.2.2",
-                                format!("Font /{name} referenced but not in Resources/Font"),
-                                location.to_string(),
-                            );
-                        }
-                    }
-                }
-            }
-            "Do" | "gs" | "sh" => {
-                // /Name op — name is 1 token before
-                if i >= 1 {
-                    if let Some(name) = tokens[i - 1].strip_prefix('/') {
-                        let (dict, cat) = match tok {
-                            "Do" => (xobjects, "XObject"),
-                            "gs" => (extgstates, "ExtGState"),
-                            "sh" => (shadings, "Shading"),
-                            _ => unreachable!(),
-                        };
-                        if !dict.contains_key(name.as_bytes()) {
-                            error_at(
-                                report,
-                                "6.2.2",
-                                format!("/{name} referenced by {tok} but not in Resources/{cat}"),
-                                location.to_string(),
-                            );
-                        }
-                    }
-                }
-            }
-            "cs" | "CS" => {
-                // /Name cs|CS — name is 1 token before
-                if i >= 1 {
-                    if let Some(name) = tokens[i - 1].strip_prefix('/') {
-                        // Built-in color spaces don't need Resources entry
-                        let builtin =
-                            matches!(name, "DeviceGray" | "DeviceRGB" | "DeviceCMYK" | "Pattern");
-                        if !builtin && !colorspaces.contains_key(name.as_bytes()) {
-                            error_at(
-                                report,
-                                "6.2.2",
-                                format!(
-                                    "ColorSpace /{name} referenced but not in Resources/ColorSpace"
-                                ),
-                                location.to_string(),
-                            );
-                        }
-                    }
-                }
-            }
-            "scn" | "SCN" => {
-                // For pattern color space: /Name scn|SCN — name is 1 token before
-                // Only check if the operand is a name (starts with /), not a number
-                if i >= 1 {
-                    if let Some(name) = tokens[i - 1].strip_prefix('/') {
-                        // This is a pattern name reference
-                        if !patterns.contains_key(name.as_bytes())
-                            && !colorspaces.contains_key(name.as_bytes())
-                        {
-                            error_at(
-                                report,
-                                "6.2.2",
-                                format!("/{name} referenced by {tok} but not in Resources"),
+                                format!("Font /{name} referenced by Tf but not in Resources/Font"),
                                 location.to_string(),
                             );
                         }

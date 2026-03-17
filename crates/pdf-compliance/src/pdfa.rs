@@ -1595,8 +1595,10 @@ fn check_font_file_format_cached(
 /// §6.2.2 — Explicit Resources.
 fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_explicit_resources(pdf, report);
-    // TODO: check_resource_names_exist produces too many FPs — needs refinement
-    // check::check_resource_names_exist(pdf, report);
+    // Check that resource names used via Do/Tf in content streams exist in Resources (§6.2.2).
+    // Only Do and Tf operators are checked — they have fewest false positives.
+    // Uses parent-chain-aware lookups to handle inherited resources correctly.
+    check::check_resource_names_exist(pdf, report);
 }
 
 /// §6.1.3 — Trailer requirements.
