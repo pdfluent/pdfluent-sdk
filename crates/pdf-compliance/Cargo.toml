@@ -10,3 +10,4 @@ pdf-syntax = { path = "../pdf-syntax" }
 lopdf.workspace = true
 thiserror = "2"
 log = "0.4"
+cff-parser.workspace = true
