@@ -3683,15 +3683,34 @@ fn collect_content_stream_ids(doc: &Document) -> std::collections::HashSet<Objec
         if let Object::Dictionary(dict) = obj {
             if let Ok(Object::Name(t)) = dict.get(b"Type") {
                 if t == b"Page" {
-                    if let Ok(Object::Reference(cid)) = dict.get(b"Contents") {
-                        ids.insert(*cid);
-                    }
-                    if let Ok(Object::Array(arr)) = dict.get(b"Contents") {
-                        for item in arr {
-                            if let Object::Reference(cid) = item {
-                                ids.insert(*cid);
+                    match dict.get(b"Contents").ok() {
+                        Some(Object::Reference(cid)) => {
+                            // Contents may be a reference to a stream or to an Array
+                            // of stream references. Dereference one level to handle
+                            // the indirect-array case (e.g. Contents: 7 0 R where
+                            // obj 7 is an array). Without this, streams inside the
+                            // array are silently skipped by all fixups. Fixes #479.
+                            match doc.objects.get(cid) {
+                                Some(Object::Array(arr)) => {
+                                    for item in arr {
+                                        if let Object::Reference(sid) = item {
+                                            ids.insert(*sid);
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    ids.insert(*cid);
+                                }
                             }
                         }
+                        Some(Object::Array(arr)) => {
+                            for item in arr {
+                                if let Object::Reference(cid) = item {
+                                    ids.insert(*cid);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

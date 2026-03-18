@@ -1106,7 +1106,13 @@ fn check_forbidden_actions(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceR
 
 /// OutputIntents must include a GTS_PDFA1 entry with DestOutputProfile (§6.2.2).
 fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    // §6.6.2 in PDF/A-1 (ISO 19005-1), §6.2.2 in PDF/A-2/3/4
+    // PDF/A-4 does not require a GTS_PDFA1 OutputIntent subtype.
+    // ISO 19005-4 §6.2.3 only requires that OutputIntent entries are valid ICC profiles
+    // (checked separately); emitting "6.2.2" here for PDF/A-4 is a false positive.
+    if level.part() == 4 {
+        return;
+    }
+    // §6.6.2 in PDF/A-1 (ISO 19005-1), §6.2.2 in PDF/A-2/3
     let rule = if level.part() == 1 { "6.6.2" } else { "6.2.2" };
     if !check::has_output_intent(pdf) {
         check::error(
@@ -1888,6 +1894,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.8.2") => Some("6.2.4"),
             (1, "6.2.8.3") => Some("6.2.4"),
             // PDF/A-4: OPI/Alternates/Interpolate checks use §6.2.7.x
+            // ISO 19005-4 renumbered: §6.2.8.1 (Interpolate) → §6.2.7.1 (#FN-6.2.7.1)
+            (4, "6.2.8.1") => Some("6.2.7.1"), // Interpolate=true forbidden
             (4, "6.2.8.3") => Some("6.2.7.1"), // OPI key forbidden (#467)
 
             // Implementation limits
@@ -1953,11 +1961,16 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Safe: stream keyword checks emit "6.1.7.1" (not "6.1.6.1") before remap.
             (4, "6.1.6.1") => Some("6.6.3"),
 
-            // Transparency (SMask) restrictions
-            // PDF/A-1: §6.4, PDF/A-2/3/4: §6.2.10.7
-            (1, "6.2.10.7") => Some("6.4"),
-            // PDF/A-1: transparency /Group checks also emit "6.2.10"; remap to §6.4
-            (1, "6.2.10") => Some("6.4"),
+            // Transparency restrictions
+            // veraPDF uses §6.2.10 for ALL transparency violations in PDF/A-1
+            // (SMask, blend mode, CA/ca, transparency groups). ISO 19005-1 §6.4
+            // is the spec clause but veraPDF outputs the PDF/A-2/3 equivalent "6.2.10".
+            // check_transparency_a1() emits "6.4" directly → remap to "6.2.10".
+            // check_extgstate_restrictions() emits "6.2.10.7" (SMask) and
+            // "6.2.10.6" (blend mode) → also remap to parent "6.2.10". (#FN-6.2.10)
+            (1, "6.4") => Some("6.2.10"),
+            (1, "6.2.10.7") => Some("6.2.10"),
+            (1, "6.2.10.6") => Some("6.2.10"),
 
             // Alternate CS consistency (ICCBased)
             // PDF/A-1: §6.2.3.2, PDF/A-2/3/4: §6.2.4.2
