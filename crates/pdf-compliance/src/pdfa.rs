@@ -2035,14 +2035,21 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Transparency restrictions — PDF/A-1
             // veraPDF uses §6.4 for ALL transparency violations in PDF/A-1.
             // Our checks use PDF/A-2/3 sub-clauses internally:
-            //   check_transparency_vs_output_intent → "6.2.10" (page_group_rule for part 1-3)
+            //   check_transparency_vs_output_intent → "6.2.10-tgroup" (distinct from halftone "6.2.10")
             //   check_extgstate_restrictions → "6.2.10.6" (BM) / "6.2.10.7" (SMask in ExtGState)
             //   check_soft_mask_structure → "6.4.2" (SMask in XObject)
             // All map to veraPDF's "6.4" for PDF/A-1. (#FN-6.4)
-            (1, "6.2.10") => Some("6.4"),
+            // NOTE: "6.2.10" (halftone type) is intentionally NOT remapped for PDF/A-1,
+            // because veraPDF reports §6.2.10 for halftone violations even in PDF/A-1. (#FN-6.2.10)
+            (1, "6.2.10-tgroup") => Some("6.4"),
             (1, "6.2.10.6") => Some("6.4"),
             (1, "6.2.10.7") => Some("6.4"),
             (1, "6.4.2") => Some("6.4"),
+
+            // Transparency page group violations — PDF/A-2/3
+            // veraPDF uses §6.2.10 for transparency page group issues in PDF/A-2/3.
+            // Our internal tag "6.2.10-tgroup" maps to veraPDF's "6.2.10". (#FN-6.2.10)
+            (2..=3, "6.2.10-tgroup") => Some("6.2.10"),
 
             // Alternate CS consistency (ICCBased)
             // PDF/A-1: §6.2.3.2, PDF/A-2/3/4: §6.2.4.2
