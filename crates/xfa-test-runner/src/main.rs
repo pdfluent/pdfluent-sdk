@@ -15,6 +15,7 @@ mod db;
 #[allow(dead_code)]
 mod github_issues;
 mod oracles;
+mod pool;
 mod runner;
 mod tests;
 
@@ -268,6 +269,52 @@ enum Command {
         /// Path to veraPDF binary
         #[arg(long, default_value = "/usr/local/bin/verapdf")]
         verapdf_path: PathBuf,
+    },
+
+    /// Run corpus using a pool of N child processes (one process per PDF).
+    ///
+    /// Each child gets RLIMIT_AS=4 GB (Linux) and a hard 120 s kill timeout.
+    /// Crashed / OOM / timed-out children are recorded as `skip` rows.
+    Pool {
+        /// Directory containing PDF files (recursive, mutually exclusive with --pdf-list)
+        #[arg(long, group = "input")]
+        corpus: Option<PathBuf>,
+
+        /// File with one PDF path per line (mutually exclusive with --corpus)
+        #[arg(long, group = "input")]
+        pdf_list: Option<PathBuf>,
+
+        /// SQLite database path for results
+        #[arg(short, long, default_value = "results.sqlite")]
+        db: PathBuf,
+
+        /// Number of parallel child processes
+        #[arg(short = 'j', long, default_value_t = 6)]
+        workers: usize,
+
+        /// Per-test timeout passed to each child (seconds)
+        #[arg(short, long, default_value_t = 30)]
+        timeout: u64,
+
+        /// Only run specific tests (comma-separated)
+        #[arg(long)]
+        tests: Option<String>,
+
+        /// Test tier: fast, standard, full, oracle
+        #[arg(long, default_value = "full")]
+        tier: String,
+
+        /// Disable veraPDF oracle
+        #[arg(long)]
+        no_verapdf: bool,
+
+        /// Path to veraPDF binary
+        #[arg(long, default_value = "/usr/local/bin/verapdf")]
+        verapdf_path: PathBuf,
+
+        /// Run ID (auto-generated if not provided)
+        #[arg(long)]
+        run_id: Option<String>,
     },
 
     /// Check for regression between two runs (exit code 1 = regression)
@@ -732,6 +779,99 @@ fn main() {
                     std::process::exit(2);
                 }
             }
+        }
+
+        Command::Pool {
+            corpus,
+            pdf_list,
+            db,
+            workers,
+            timeout,
+            tests: test_filter,
+            tier,
+            no_verapdf,
+            verapdf_path,
+            run_id,
+        } => {
+            // Collect PDF list.
+            let pdfs = match (corpus, pdf_list) {
+                (Some(dir), None) => pool::collect_pdfs_from_dir(&dir),
+                (None, Some(list)) => {
+                    pool::collect_pdfs_from_list(&list).expect("failed to read --pdf-list file")
+                }
+                _ => {
+                    eprintln!("error: provide exactly one of --corpus or --pdf-list");
+                    std::process::exit(1);
+                }
+            };
+            if pdfs.is_empty() {
+                eprintln!("No PDF files found.");
+                std::process::exit(0);
+            }
+
+            let run_id = run_id
+                .unwrap_or_else(|| format!("pool-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S")));
+
+            // Build the test name list (same logic as SinglePdf / Run).
+            // No veraPDF oracle in the orchestrator — the child handles that.
+            let test_config = tests::TestConfig {
+                verapdf_oracle: None,
+                #[cfg(feature = "pdfium-oracle")]
+                diff_dir: std::env::var("XFA_DIFF_DIR").ok().map(PathBuf::from),
+            };
+            let mut available_tests = tests::all_tests(test_config);
+            let tier_parsed: TestTier = tier.parse().unwrap_or(TestTier::Full);
+            available_tests.retain(|t| tier_parsed.includes(t.name()));
+            if let Some(filter) = &test_filter {
+                let names: Vec<&str> = filter.split(',').map(str::trim).collect();
+                available_tests.retain(|t| names.iter().any(|f| *f == t.name()));
+            }
+            let test_names: Vec<String> = available_tests
+                .iter()
+                .map(|t| t.name().to_string())
+                .collect();
+
+            let database = Arc::new(Database::open(&db).expect("Failed to open database"));
+            database
+                .start_run(&run_id, "process-pool", pdfs.len())
+                .expect("Failed to start run in database");
+
+            // Build extra args to pass verbatim to every child.
+            let mut extra: Vec<String> = vec![
+                "--timeout".to_string(),
+                timeout.to_string(),
+                "--tier".to_string(),
+                tier,
+            ];
+            if let Some(filter) = test_filter {
+                extra.push("--tests".to_string());
+                extra.push(filter);
+            }
+            if no_verapdf {
+                extra.push("--no-verapdf".to_string());
+            } else {
+                extra.push("--verapdf-path".to_string());
+                extra.push(verapdf_path.to_string_lossy().to_string());
+            }
+
+            // Path to this binary (used to spawn children).
+            let exe = std::env::current_exe().expect("cannot determine own executable path");
+
+            pool::run_pool(
+                &exe,
+                pdfs,
+                database.clone(),
+                &run_id,
+                workers,
+                test_names,
+                extra,
+            );
+            database.finish_run(&run_id).expect("Failed to finish run");
+
+            // Print summary.
+            let summary = database.summary(&run_id);
+            eprintln!("Run: {run_id}");
+            eprintln!("{summary}");
         }
 
         Command::CheckRegression { db, run_a, run_b } => {

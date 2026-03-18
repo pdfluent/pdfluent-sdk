@@ -17,7 +17,7 @@ use crate::tests::{PdfTest, TestResult, TestStatus};
 // ─── single-pdf mode ────────────────────────────────────────────────────────
 
 /// One test result for single-pdf JSON output.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SinglePdfResult {
     pub test_name: String,
     pub status: String,
@@ -27,7 +27,8 @@ pub struct SinglePdfResult {
 }
 
 /// Top-level single-pdf JSON output written to stdout.
-#[derive(serde::Serialize)]
+/// Deserialize is needed by the process-pool orchestrator which parses the child's stdout.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct SinglePdfOutput {
     pub pdf_path: String,
     pub pdf_size: u64,
