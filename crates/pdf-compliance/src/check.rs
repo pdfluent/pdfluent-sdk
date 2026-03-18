@@ -6288,6 +6288,14 @@ pub fn check_tounicode_cmap(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
                     "6.2.11.7.2",
                     format!("Type1 font {name} missing /ToUnicode CMap (§6.2.11.7.2)"),
                 );
+            } else if part == 1 {
+                // §6.3.8: ToUnicode CMap required for all fonts used in text rendering. (#483)
+                // veraPDF fires §6.3.8 (not §6.3.4) for missing ToUnicode in PDF/A-1.
+                error(
+                    report,
+                    "6.3.8",
+                    format!("Font {name} missing /ToUnicode CMap (§6.3.8)"),
+                );
             } else {
                 warning(
                     report,
@@ -7256,11 +7264,13 @@ pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport
         let symbolic = flags & 0x04 != 0;
 
         if symbolic {
-            // Symbolic TrueType must not have ANY /Encoding entry (§6.3.7)
+            // Symbolic TrueType must not have ANY /Encoding entry.
+            // Use internal rule "6.3.7-se" so it can be remapped per PDF/A part:
+            // PDF/A-1 §6.3.7; PDF/A-2/3 §6.2.11.6 (TrueType encoding). (#483)
             if font_dict.get::<Object<'_>>(keys::ENCODING).is_some() {
                 error_at(
                     report,
-                    "6.3.7",
+                    "6.3.7-se",
                     format!("Symbolic TrueType font {name} shall not specify /Encoding"),
                     format!("page {}", page_idx + 1),
                 );
