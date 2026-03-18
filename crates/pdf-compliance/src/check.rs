@@ -3791,11 +3791,15 @@ pub fn check_cidfont_w_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
 
 // ─── §6.2.11.6 — Font encoding BaseEncoding constraint ─────────────────────
 
-/// Check that font Encoding dicts use only allowed BaseEncoding values (§6.2.11.6).
+/// Check that non-symbolic TrueType fonts have valid Encoding and all fonts have
+/// valid BaseEncoding values (§6.2.11.6 / §6.2.10.6 for PDF/A-4).
 ///
-/// When a simple font has an Encoding dict with a /BaseEncoding entry, the
-/// value must be /WinAnsiEncoding or /MacRomanEncoding.  Any other name
-/// (e.g. /Custom, /StandardEncoding) is a §6.2.11.6 violation.
+/// Non-symbolic TrueType fonts must have Encoding = /MacRomanEncoding or
+/// /WinAnsiEncoding (as a Name) or an Encoding dict with one of those as BaseEncoding.
+/// A missing Encoding entry is also a violation. Fixes FN t02.
+///
+/// For any simple font with an Encoding dict, the /BaseEncoding entry (if present)
+/// must be /WinAnsiEncoding or /MacRomanEncoding.
 ///
 /// The Encoding may be an indirect reference — resolved via xref. (#467)
 pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
@@ -3803,13 +3807,86 @@ pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
     for_each_font(pdf, |name, font_dict, page_idx| {
         // Only applies to simple fonts (not Type0 CIDFont wrappers)
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
+        let is_truetype = subtype.as_ref().is_some_and(|s| s.as_ref() == b"TrueType");
         let is_type0 = subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type0");
         if is_type0 {
             return;
         }
 
-        // Resolve /Encoding: may be a Name (standard encoding) or a Dict
-        // (explicit encoding, possibly with /BaseEncoding), or an indirect ref
+        // For non-symbolic TrueType fonts: Encoding must be a valid standard
+        // encoding (as Name) or have a valid BaseEncoding in an Encoding dict.
+        // A missing Encoding is also a violation. (#FN-6.2.11.6-t02)
+        if is_truetype {
+            let desc = font_dict.get::<Dict<'_>>(keys::FONT_DESC);
+            let flags = desc.as_ref().and_then(|d| d.get::<i32>(keys::FLAGS));
+            let symbolic = flags.map_or(false, |f| f & 0x04 != 0);
+            if !symbolic {
+                // Check if Encoding is a valid standard Name
+                if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
+                    let allowed =
+                        matches!(enc_name.as_ref(), b"WinAnsiEncoding" | b"MacRomanEncoding");
+                    if !allowed {
+                        let enc_str = std::str::from_utf8(enc_name.as_ref()).unwrap_or("?");
+                        error_at(
+                            report,
+                            "6.2.11.6",
+                            format!(
+                                "Non-symbolic TrueType font '{name}' has invalid Encoding \
+                                 '/{enc_str}'; only /WinAnsiEncoding or /MacRomanEncoding allowed"
+                            ),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                    return; // Encoding is a Name; BaseEncoding in dict doesn't apply
+                }
+                // Encoding is absent, a dict, or an indirect ref — check for dict
+                let enc_dict_opt: Option<Dict<'_>> =
+                    font_dict.get::<Dict<'_>>(keys::ENCODING).or_else(|| {
+                        font_dict
+                            .get_ref(keys::ENCODING)
+                            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                    });
+                match enc_dict_opt {
+                    None => {
+                        // Missing Encoding for non-symbolic TrueType is a violation.
+                        error_at(
+                            report,
+                            "6.2.11.6",
+                            format!(
+                                "Non-symbolic TrueType font '{name}' missing required /Encoding \
+                                 (/WinAnsiEncoding or /MacRomanEncoding)"
+                            ),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                    Some(enc_dict) => {
+                        // BaseEncoding in dict must be WinAnsiEncoding or MacRomanEncoding
+                        let base_enc = enc_dict.get::<Name>(keys::BASE_ENCODING);
+                        let allowed = base_enc.as_ref().is_some_and(|b| {
+                            matches!(b.as_ref(), b"WinAnsiEncoding" | b"MacRomanEncoding")
+                        });
+                        if !allowed {
+                            let base_str = base_enc
+                                .as_ref()
+                                .and_then(|b| std::str::from_utf8(b.as_ref()).ok())
+                                .unwrap_or("(none)");
+                            error_at(
+                                report,
+                                "6.2.11.6",
+                                format!(
+                                    "Font '{name}' Encoding has invalid BaseEncoding '/{base_str}'; \
+                                     only /WinAnsiEncoding or /MacRomanEncoding are allowed"
+                                ),
+                                format!("page {}", page_idx + 1),
+                            );
+                        }
+                    }
+                }
+                return;
+            }
+        }
+
+        // For non-TrueType simple fonts: only check if an Encoding dict has invalid BaseEncoding.
         let enc_dict_opt: Option<Dict<'_>> =
             font_dict.get::<Dict<'_>>(keys::ENCODING).or_else(|| {
                 font_dict
