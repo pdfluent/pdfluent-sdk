@@ -1404,7 +1404,10 @@ fn check_xref_format(pdf: &Pdf, report: &mut ComplianceReport) {
 fn check_actions_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     let rule = match level.part() {
         1 => "6.6.1",
-        4 => "6.4",
+        // PDF/A-4: ISO 19005-4 §6.6.1 covers forbidden actions. normalize_pdfa4_clause
+        // maps "6.6.1" → "6.8.1" which matches veraPDF's clause "6.6.1" normalized.
+        // Previously emitted "6.4" which mapped to "6.6" — wrong. Fixes #482.
+        4 => "6.6.1",
         _ => "6.5.1",
     };
     check::check_actions_deep(pdf, level.part(), rule, report);
@@ -1439,9 +1442,12 @@ fn check_transparency_a1(pdf: &Pdf, report: &mut ComplianceReport) {
 /// Tagged PDF requirements (§6.8 / §6.8.1).
 ///
 /// Required for PDF/A-1a, PDF/A-2a, PDF/A-3a (level 'a'), and all PDF/A-4.
-/// PDF/A-4 uses clause 6.8.1 (mapped from ISO 19005-4 §6.6.1); parts 1-3 use 6.8.
+/// PDF/A-4 uses ISO 19005-4 clause 6.6.1 (tagged PDF structure); normalize_pdfa4_clause
+/// maps "6.6.1" → "6.8.1" so both sides of the comparison agree. Fixes #482.
 fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    let rule = if level.part() == 4 { "6.8.1" } else { "6.8" };
+    // PDF/A-4: ISO 19005-4 §6.6.1 covers tagged PDF. normalize_pdfa4_clause("6.6.1")="6.8.1".
+    // PDF/A-1/2/3: §6.8 (parts 1-3 use their own numbering). Fixes #482.
+    let rule = if level.part() == 4 { "6.6.1" } else { "6.8" };
     if !check::is_marked(pdf) {
         check::error(
             report,
@@ -1820,10 +1826,23 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Fixes #467 (veraPDF test suite 6-3-1-t01-fail-e is PDF/A-4).
 
             // Annotation flags (/F key, Print=1 etc.)
-            // PDF/A-4: §6.3.2 (ISO 19005-4) → normalize_pdfa4_clause("6.3.2")="6.5.2".
-            // PDF/A-1: §6.5.3 (handled by check_annotation_flags: part==1 → "6.5.3")
-            // PDF/A-2/3: §6.3.2 used directly (no remap needed). Fixes #467.
-            (4, "6.3.2") => Some("6.5.2"),
+            // PDF/A-4: our checker emits "6.3.2" (ISO 19005-4 clause). In compare_compliance
+            // normalize_pdfa4_clause("6.3.2")="6.5.2" — BOTH our rule and veraPDF's rule
+            // go through the same normalization, so no remap is needed here. Removing the
+            // old (4,"6.3.2")=>"6.5.2" remap which incorrectly converted "6.3.2" to "6.5.2"
+            // causing normalization to produce "6.7.2" instead of "6.5.2". Fixes #482.
+
+            // Annotation appearance (AP dict, /N entry, /CA, Btn subdictionary) — §6.5.3.
+            // For PDF/A-4: our checker always emits "6.5.3". normalize_pdfa4_clause("6.5.3")
+            // would produce "6.7.3" (metadata), but veraPDF uses ISO 19005-4 clause "6.3.3"
+            // which normalizes to "6.5.3". Remap our "6.5.3" → "6.3.3" so normalization
+            // matches. Note: "6.3.3" from font embedding hits a separate arm below. Fixes #482.
+            (4, "6.5.3") => Some("6.3.3"),
+
+            // Page-level /AA entry (§6.5.2 test 2 in ISO 19005-2/3).
+            // check_actions_deep hardcodes "6.1.6.1" for page-level /AA; veraPDF reports
+            // "6.5.2" for this violation in PDF/A-2/3. Remap to match. Fixes #482.
+            (2..=3, "6.1.6.1") => Some("6.5.2"),
 
             // Transparency (SMask) restrictions
             // PDF/A-1: §6.4, PDF/A-2/3/4: §6.2.10.7
