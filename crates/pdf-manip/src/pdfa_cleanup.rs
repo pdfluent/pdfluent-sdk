@@ -1154,13 +1154,19 @@ fn is_forbidden_named_action(dict: &lopdf::Dictionary) -> bool {
 
 /// Check if an action dict has a forbidden type.
 fn is_action_forbidden(dict: &lopdf::Dictionary) -> bool {
-    if let Ok(Object::Name(s)) = dict.get(b"S") {
-        if is_forbidden_action(s) {
-            return true;
+    match dict.get(b"S").ok() {
+        Some(Object::Name(s)) => {
+            if is_forbidden_action(s) {
+                return true;
+            }
+            if s == b"Named" && is_forbidden_named_action(dict) {
+                return true;
+            }
         }
-        if s == b"Named" && is_forbidden_named_action(dict) {
-            return true;
-        }
+        // /S present but not a Name (e.g. string " " or integer) — invalid
+        // action type. veraPDF reports this as "Action type null". Fixes #479.
+        Some(_) => return true,
+        None => {}
     }
     false
 }
