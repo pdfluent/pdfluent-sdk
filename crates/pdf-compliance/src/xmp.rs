@@ -179,7 +179,7 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
         );
     }
     check_info_xmp_deep(pdf, xmp_text, report);
-    check_date_formats(xmp_text, report);
+    check_date_formats(xmp_text, level, report);
     check_pdfa_id_properties(xmp_text, level, report);
     check_pdfa_version_match(xmp_text, level, report);
     // Note: dc:title consistency is covered by check_info_xmp_deep (§6.7.3.2).
@@ -953,7 +953,7 @@ fn extract_rdf_seq_value(xmp: &str, property: &str) -> Option<String> {
 }
 
 /// §6.7.9 — All XMP date/time values must be valid ISO 8601 format.
-fn check_date_formats(xmp: &str, report: &mut ComplianceReport) {
+fn check_date_formats(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     // All date-type XMP properties that must conform to ISO 8601
     let date_properties = [
         "xmp:CreateDate",
@@ -966,12 +966,21 @@ fn check_date_formats(xmp: &str, report: &mut ComplianceReport) {
         "xmpMM:CreateDate",
     ];
 
+    // For PDF/A-2/3/4 veraPDF reports invalid date values under §6.6.2.3.1
+    // ("property not used in accordance with definition"), not §6.7.9.
+    // PDF/A-1 uses §6.7.9 (XMP property namespace violations). Fixes #477.
+    let rule = match level.part() {
+        1 => "6.7.9",
+        4 => "6.5.2",
+        _ => "6.6.2.3.1",
+    };
+
     for prop in &date_properties {
         if let Some(date) = extract_nested_value(xmp, prop) {
             if !is_valid_iso8601(&date) {
                 error(
                     report,
-                    "6.7.9",
+                    rule,
                     format!(
                         "XMP date property '{}' value '{}' is not valid ISO 8601 format",
                         prop, date
