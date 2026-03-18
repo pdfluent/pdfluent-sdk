@@ -7,10 +7,12 @@
 //! - Additional XMP property rules (6.7.4, 6.7.5, 6.7.8, 6.7.11)
 //! - XMP stream and packet validation (6.6.2, 6.6.2.1)
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::check::{self, error, warning};
 use crate::{ComplianceReport, PdfALevel};
+use pdf_syntax::object::dict::keys;
+use pdf_syntax::object::{Array, Dict, Name, Object, ObjRef};
 use pdf_syntax::Pdf;
 
 /// Well-known XMP value types (XMP Specification Part 1, Table 8).
@@ -124,6 +126,24 @@ struct ExtensionProperty {
 
 /// Run all deep XMP validation checks.
 pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // --- Structural checks that run regardless of XMP presence ---
+    // §6.9 (PDF/A-2/3) / §6.10 (PDF/A-4): OCProperties/D must not have /AS.
+    // §6.10 (PDF/A-2/3): OCG Order must contain all referenced OCGs.
+    check_oc_d_as_restriction(pdf, level, report);
+    check_ocg_order_completeness(pdf, level, report);
+    // §6.11 (PDF/A-2/3/4): Names/AlternatePresentations is forbidden.
+    check_alternate_presentations_absent(pdf, level, report);
+    // §6.12 (PDF/A-2/3/4): /Requirements key in catalog is forbidden.
+    check_requirements_absent(pdf, level, report);
+    // §6.6.2 (PDF/A-2/3): Widget annotations must not have /AA entry.
+    check_widget_aa_pdfa23(pdf, level, report);
+    // §6.7.2.2 (PDF/A-2/3): MarkInfo/Marked required for tagged conformance.
+    check_mark_info_required(pdf, level, report);
+    // §6.7.3.3 (PDF/A-2/3/4): StructTreeRoot required for tagged conformance.
+    check_struct_tree_root_required(pdf, level, report);
+    // §6.7.3.4: RoleMap must not contain cycles.
+    check_role_map_no_cycles(pdf, report);
+
     let Some(xmp_data) = check::get_xmp_metadata(pdf) else {
         return; // Missing XMP is caught by check_xmp_metadata
     };
@@ -156,6 +176,21 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
                 report,
                 "6.7.2.1",
                 "XMP packet header contains forbidden 'bytes' attribute (§6.7.2.1)",
+            );
+        }
+        // §6.6.2.1 (PDF/A-2/3), §6.7.2.1 (PDF/A-4), §6.7.2 (PDF/A-1):
+        // The 'encoding' attribute is forbidden in the xpacket PI for all PDF/A parts.
+        // veraPDF uses the part-specific clause for this violation. Fixes #FN-6.6.2.1.
+        if xp_header.contains("encoding=") {
+            let enc_rule = match level.part() {
+                1 => "6.7.2",
+                4 => "6.7.2.1",
+                _ => "6.6.2.1", // PDF/A-2/3
+            };
+            error(
+                report,
+                enc_rule,
+                "XMP packet header contains forbidden 'encoding' attribute",
             );
         }
     }
@@ -1242,6 +1277,22 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
                     );
                 }
             }
+        } else {
+            // §6.7.11: pdfaid:conformance is required for PDF/A-1/2/3.
+            // Its absence (when pdfaid:part is present) is a violation. Fixes #FN-6.7.11.
+            let expected_conf = level.conformance();
+            if !expected_conf.is_empty() {
+                error(
+                    report,
+                    "6.7.11",
+                    format!(
+                        "XMP pdfaid:conformance is absent (expected '{}' for PDF/A-{}{})",
+                        expected_conf,
+                        level.part(),
+                        level.conformance()
+                    ),
+                );
+            }
         }
     }
 }
@@ -2074,6 +2125,303 @@ fn check_deprecated_types(xmp: &str, report: &mut ComplianceReport) {
                 "6.7.11",
                 format!("Deprecated XMP property '{}' found. {}", prop, hint),
             );
+        }
+    }
+}
+
+// ============================================================================
+// Structural checks (PDF catalog / document structure, not XMP content)
+// ============================================================================
+
+/// §6.9 (PDF/A-2/3) / §6.10 (PDF/A-4): OCProperties/D must not have /AS.
+///
+/// The default OCG configuration dict (/D in OCProperties) must not contain
+/// an /AS key in PDF/A-2/3. veraPDF reports this as §6.9. Fixes #FN-6.9.
+fn check_oc_d_as_restriction(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    if level.part() < 2 {
+        return;
+    }
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    let Some(ocprops) = cat.get::<Dict<'_>>(keys::OCPROPERTIES) else {
+        return;
+    };
+    let Some(d_dict) = ocprops.get::<Dict<'_>>(b"D" as &[u8]) else {
+        return;
+    };
+    if d_dict.contains_key(b"AS" as &[u8]) {
+        let rule = if level.part() == 4 { "6.10" } else { "6.9" };
+        error(
+            report,
+            rule,
+            "OCProperties default config (/D) must not have /AS entry (§6.9)",
+        );
+    }
+}
+
+/// §6.10 (PDF/A-2/3) / §6.10 (PDF/A-4): OCG Order array must include all OCGs.
+///
+/// If OCProperties/D/Order is present, every OCG must be referenced in it.
+/// veraPDF reports missing OCGs in Order as §6.10 for PDF/A-2/3. Fixes #FN-6.10.
+fn check_ocg_order_completeness(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    if level.part() < 2 {
+        return;
+    }
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    let Some(ocprops) = cat.get::<Dict<'_>>(keys::OCPROPERTIES) else {
+        return;
+    };
+    let Some(d_dict) = ocprops.get::<Dict<'_>>(b"D" as &[u8]) else {
+        return;
+    };
+    let Some(order_arr) = d_dict.get::<Array<'_>>(b"Order" as &[u8]) else {
+        return; // No Order array — not a violation by itself
+    };
+
+    // Collect all OCG object IDs declared in OCProperties/OCGs.
+    let mut all_ocgs: HashSet<ObjRef> = HashSet::new();
+    if let Some(ocgs_arr) = ocprops.get::<Array<'_>>(b"OCGs" as &[u8]) {
+        for item in ocgs_arr.raw_iter() {
+            if let Some(r) = item.as_obj_ref() {
+                all_ocgs.insert(r);
+            }
+        }
+    }
+    if all_ocgs.is_empty() {
+        return;
+    }
+
+    // Collect all OCG refs referenced in Order (recursively, Order may contain arrays).
+    let mut order_ocgs: HashSet<ObjRef> = HashSet::new();
+    collect_order_refs(&order_arr, &mut order_ocgs);
+
+    let rule = if level.part() == 4 { "6.10" } else { "6.6.4" };
+    for ocg_ref in &all_ocgs {
+        if !order_ocgs.contains(ocg_ref) {
+            error(
+                report,
+                rule,
+                format!(
+                    "OCG {} not referenced in OCProperties/D/Order",
+                    ocg_ref.obj_number
+                ),
+            );
+        }
+    }
+}
+
+/// Recursively collect ObjRef entries from a potentially nested Order array.
+fn collect_order_refs(arr: &Array<'_>, out: &mut HashSet<ObjRef>) {
+    for item in arr.raw_iter() {
+        if let Some(r) = item.as_obj_ref() {
+            out.insert(r);
+        } else if let pdf_syntax::object::MaybeRef::NotRef(Object::Array(nested)) = item {
+            collect_order_refs(&nested, out);
+        }
+    }
+}
+
+/// §6.11 (PDF/A-2/3/4): Names/AlternatePresentations is forbidden.
+///
+/// The document Names dictionary must not contain an AlternatePresentations
+/// entry. Fixes #FN-6.11.
+fn check_alternate_presentations_absent(
+    pdf: &Pdf,
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
+    if level.part() < 2 {
+        return;
+    }
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) else {
+        return;
+    };
+    if names.contains_key(b"AlternatePresentations" as &[u8]) {
+        error(
+            report,
+            "6.11",
+            "Names dictionary must not contain AlternatePresentations (§6.11)",
+        );
+    }
+}
+
+/// §6.12 (PDF/A-2/3/4): /Requirements key in catalog is forbidden.
+///
+/// The document catalog must not have a /Requirements entry. Fixes #FN-6.12.
+fn check_requirements_absent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    if level.part() < 2 {
+        return;
+    }
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    if cat.contains_key(b"Requirements" as &[u8]) {
+        error(
+            report,
+            "6.12",
+            "Document catalog must not contain /Requirements entry (§6.12)",
+        );
+    }
+}
+
+/// §6.6.2 (PDF/A-2/3): Widget annotations and AcroForm fields must not have /AA.
+///
+/// check.rs emits "6.4.1" for Widget /AA which veraPDF uses for PDF/A-1.
+/// For PDF/A-2/3 veraPDF uses "6.6.2". Fixes #FN-6.6.2.
+fn check_widget_aa_pdfa23(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // Only for PDF/A-2/3: part 1 uses 6.4.1 (handled elsewhere), part 4 uses different rule.
+    if level.part() != 2 && level.part() != 3 {
+        return;
+    }
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
+            continue;
+        };
+        for annot in annots.iter::<Dict<'_>>() {
+            let subtype = annot.get::<Name>(keys::SUBTYPE);
+            let is_widget = subtype.as_ref().is_some_and(|s| s.as_ref() == b"Widget");
+            if !is_widget {
+                continue;
+            }
+            if annot.contains_key(b"AA" as &[u8]) {
+                error(
+                    report,
+                    "6.6.2",
+                    format!(
+                        "Widget annotation on page {} has forbidden /AA entry (§6.6.2)",
+                        page_idx + 1
+                    ),
+                );
+            }
+        }
+    }
+    // Also check AcroForm field tree for /AA on field nodes.
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    let Some(acroform) = cat.get::<Dict<'_>>(keys::ACRO_FORM) else {
+        return;
+    };
+    let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) else {
+        return;
+    };
+    check_field_aa_recursive(&fields, report);
+}
+
+/// Recursively check AcroForm field nodes for forbidden /AA entries (§6.6.2).
+fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport) {
+    for field in fields.iter::<Dict<'_>>() {
+        if field.contains_key(b"AA" as &[u8]) {
+            // Only report on field nodes (those with /FT or /T), not widget-only annots.
+            let has_ft = field.contains_key(b"FT" as &[u8]);
+            let has_t = field.contains_key(b"T" as &[u8]);
+            if has_ft || has_t {
+                error(
+                    report,
+                    "6.6.2",
+                    "AcroForm field node has forbidden /AA entry (§6.6.2)",
+                );
+            }
+        }
+        if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
+            check_field_aa_recursive(&kids, report);
+        }
+    }
+}
+
+/// §6.7.2.2 (PDF/A-2/3): MarkInfo/Marked must be true for conformance level A.
+///
+/// check_tagged_requirements in pdfa.rs emits "6.8" but veraPDF uses "6.7.2.2".
+/// Fixes #FN-6.7.2.2.
+fn check_mark_info_required(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // Only applies for tagged (conformance A) PDF/A-2/3.
+    if !level.requires_tagged() || (level.part() != 2 && level.part() != 3) {
+        return;
+    }
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    let mark_info = cat.get::<Dict<'_>>(keys::MARK_INFO);
+    let marked = mark_info
+        .as_ref()
+        .and_then(|d| d.get::<bool>(b"Marked" as &[u8]))
+        .unwrap_or(false);
+    if !marked {
+        error(
+            report,
+            "6.7.2.2",
+            "MarkInfo/Marked must be true for PDF/A tagged conformance (§6.7.2.2)",
+        );
+    }
+}
+
+/// §6.7.3.3 (PDF/A-2/3/4-A): StructTreeRoot is required for tagged conformance.
+///
+/// check_tagged_requirements emits "6.8" but veraPDF uses "6.7.3.3".
+/// Fixes #FN-6.7.3.3.
+fn check_struct_tree_root_required(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    if !level.requires_tagged() {
+        return;
+    }
+    if check::struct_tree_root(pdf).is_none() {
+        error(
+            report,
+            "6.7.3.3",
+            "StructTreeRoot is required for PDF/A tagged conformance (§6.7.3.3)",
+        );
+    }
+}
+
+/// §6.7.3.4: RoleMap must not contain circular mappings.
+///
+/// Cycles in the RoleMap prevent role resolution and are a §6.7.3.4 violation.
+/// Fixes #FN-6.7.3.4.
+fn check_role_map_no_cycles(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    let Some(str_root) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) else {
+        return;
+    };
+    let Some(role_map) = str_root.get::<Dict<'_>>(keys::ROLE_MAP) else {
+        return;
+    };
+
+    // Build a name→name mapping from the RoleMap.
+    let mut map: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
+    for (key, val_ref) in role_map.entries() {
+        if let pdf_syntax::object::MaybeRef::NotRef(Object::Name(target)) = val_ref {
+            map.insert(key.as_ref().to_vec(), target.as_ref().to_vec());
+        }
+    }
+
+    // DFS cycle detection: for each key, walk the chain and check for repetition.
+    for start in map.keys() {
+        let mut visited: HashSet<Vec<u8>> = HashSet::new();
+        let mut current = start.clone();
+        loop {
+            if !visited.insert(current.clone()) {
+                error(
+                    report,
+                    "6.7.3.4",
+                    format!(
+                        "RoleMap contains a cycle involving role '{}'",
+                        String::from_utf8_lossy(&current)
+                    ),
+                );
+                break;
+            }
+            match map.get(&current) {
+                Some(next) => current = next.clone(),
+                None => break,
+            }
         }
     }
 }
