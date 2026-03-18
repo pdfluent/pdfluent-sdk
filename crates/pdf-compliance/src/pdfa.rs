@@ -127,6 +127,8 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check_truetype_cmap_pdfa4(pdf, &mut report);
         // §6.2.10.7/§6.2.10.9: ToUnicode CMap must cover all glyphs. (#467)
         check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report);
+        // §6.2.10.9: no .notdef glyph (CID 0x0000) in text operators. (#496)
+        check::check_notdef_glyph_usage(pdf, &mut report);
     }
     check_symbolic_truetype_encoding(pdf, &mut report);
     check_cidtogidmap_identity(pdf, &mut report);
@@ -455,6 +457,11 @@ pub fn validate_with_progress(
         tracked!(
             "check_tounicode_glyph_coverage",
             check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report)
+        );
+        // §6.2.10.9: no .notdef glyph (CID 0x0000) in text operators. (#496)
+        tracked!(
+            "check_notdef_glyph_usage",
+            check::check_notdef_glyph_usage(pdf, &mut report)
         );
     }
     tracked!(
@@ -849,6 +856,11 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         timed!(
             "check_tounicode_glyph_coverage",
             check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report)
+        );
+        // §6.2.10.9: no .notdef glyph (CID 0x0000) in text operators. (#496)
+        timed!(
+            "check_notdef_glyph_usage",
+            check::check_notdef_glyph_usage(pdf, &mut report)
         );
     }
     timed!(
@@ -2240,6 +2252,21 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Undefined operators: veraPDF uses §6.2.10 for PDF/A-1.
             // Our check_page_content_streams emits "6.2.7.1"; remap for PDF/A-1.
             (1, "6.2.7.1") => Some("6.2.10"),
+
+            // TrueType encoding requirements.
+            // PDF/A-1: check.rs emits "6.2.11.6" (PDF/A-2/3 clause numbering); remap to
+            // ISO 19005-1 §6.3.7 which veraPDF uses for TrueType encoding violations. (#496)
+            (1, "6.2.11.6") => Some("6.3.7"),
+
+            // Role mapping check.
+            // PDF/A-2/3: check.rs emits "6.12" (our canonical numbering); veraPDF uses
+            // ISO 19005-2/3 §6.11 for role-mapping violations. (#496)
+            (2..=3, "6.12") => Some("6.11"),
+
+            // Annotation appearance stream required.
+            // PDF/A-1: our checker emits "6.5.3" (annotation AP); veraPDF uses ISO 19005-1
+            // §6.6.2 for annotation appearance requirements. (#496)
+            (1, "6.5.3") => Some("6.6.2"),
 
             _ => None,
         };
