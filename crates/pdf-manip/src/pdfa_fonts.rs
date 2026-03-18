@@ -6099,8 +6099,9 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 // allow corrections that bring the dict width to .notdef width.
                 // veraPDF uses .notdef width for codes absent from the font program,
                 // so these corrections are definitively correct. (#479)
-                let notdef_w_rounded: Option<i64> =
-                    ttf_parser::Face::parse(&font_data, 0).ok().and_then(|face| {
+                let notdef_w_rounded: Option<i64> = ttf_parser::Face::parse(&font_data, 0)
+                    .ok()
+                    .and_then(|face| {
                         let upem = face.units_per_em() as f64;
                         if upem > 0.0 {
                             let scale = 1000.0 / upem;
@@ -8325,9 +8326,9 @@ fn cff_width_for_code(
                 let ch = encoding_to_char(code, enc_name);
                 if let Some(agl_name) = unicode_to_agl_name(ch) {
                     if agl_name != glyph_name {
-                        if let Some(w) =
-                            find_cff_glyph_width_by_name_fractional(cff, font_data, &agl_name, scale)
-                        {
+                        if let Some(w) = find_cff_glyph_width_by_name_fractional(
+                            cff, font_data, &agl_name, scale,
+                        ) {
                             return Some(w);
                         }
                     }

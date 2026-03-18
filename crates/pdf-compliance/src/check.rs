@@ -6508,9 +6508,7 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                     error_at(
                         report,
                         "6.2.11.7.3",
-                        format!(
-                            "Font {name} ToUnicode CMap maps to PUA codepoint U+{val:04X}"
-                        ),
+                        format!("Font {name} ToUnicode CMap maps to PUA codepoint U+{val:04X}"),
                         format!("page {}", page_idx + 1),
                     );
                     return; // one error per font is enough
@@ -6999,12 +6997,17 @@ fn check_cidfont_type2_widths(
             continue;
         }
 
-        // Only check fonts using /Identity CIDToGIDMap (CID == GID).
-        // Non-identity maps are complex and rare.
+        // Per PDF spec, absent CIDToGIDMap defaults to /Identity (CID == GID).
+        // Stream CIDToGIDMap entries are custom non-Identity mappings — skip those.
+        // Fixes §6.3.6 FNs where veraPDF detects width violations we missed because
+        // many PDFs don't include an explicit /CIDToGIDMap /Identity entry. (#FN-6.3.6)
+        if cid_font.get::<Stream<'_>>(keys::CID_TO_GID_MAP).is_some() {
+            continue; // Custom CID→GID stream — CID ≠ GID in general; skip
+        }
         let cidtogid_is_identity = cid_font
             .get::<Name>(keys::CID_TO_GID_MAP)
             .map(|n| n.as_ref() == keys::IDENTITY)
-            .unwrap_or(false);
+            .unwrap_or(true); // absent = default /Identity per PDF spec
         if !cidtogid_is_identity {
             continue;
         }

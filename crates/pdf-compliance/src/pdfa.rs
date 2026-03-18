@@ -1338,7 +1338,9 @@ fn check_boundary_sizes_raw(pdf: &Pdf, report: &mut ComplianceReport) {
             }
             // Skip whitespace after key, find '['
             let mut j = i + key.len();
-            while j < data.len() && (data[j] == b' ' || data[j] == b'\n' || data[j] == b'\r' || data[j] == b'\t') {
+            while j < data.len()
+                && (data[j] == b' ' || data[j] == b'\n' || data[j] == b'\r' || data[j] == b'\t')
+            {
                 j += 1;
             }
             if j >= data.len() || data[j] != b'[' {
@@ -1363,13 +1365,19 @@ fn check_boundary_sizes_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                     let w = (nums[2] - nums[0]).abs();
                     let h = (nums[3] - nums[1]).abs();
                     if w < 3.0 || h < 3.0 {
-                        check::error(report, "6.1.13",
-                            format!("/{key_str} {w:.1}x{h:.1} less than minimum 3 units"));
+                        check::error(
+                            report,
+                            "6.1.13",
+                            format!("/{key_str} {w:.1}x{h:.1} less than minimum 3 units"),
+                        );
                         return;
                     }
                     if w > 14400.0 || h > 14400.0 {
-                        check::error(report, "6.1.13",
-                            format!("/{key_str} {w:.1}x{h:.1} exceeds maximum 14400 units"));
+                        check::error(
+                            report,
+                            "6.1.13",
+                            format!("/{key_str} {w:.1}x{h:.1} exceeds maximum 14400 units"),
+                        );
                         return;
                     }
                 }
@@ -1489,10 +1497,16 @@ fn check_file_header(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport)
             );
         }
         // veraPDF §6.1.2 t2: binary comment must immediately follow header EOL.
-        if let Some(eol_pos) = data[5..data.len().min(20)].iter().position(|&b| b == b'\n' || b == b'\r') {
+        if let Some(eol_pos) = data[5..data.len().min(20)]
+            .iter()
+            .position(|&b| b == b'\n' || b == b'\r')
+        {
             let mut after_eol = 5 + eol_pos + 1;
             // Skip CRLF pair
-            if after_eol < data.len() && data[5 + eol_pos] == b'\r' && data.get(after_eol) == Some(&b'\n') {
+            if after_eol < data.len()
+                && data[5 + eol_pos] == b'\r'
+                && data.get(after_eol) == Some(&b'\n')
+            {
                 after_eol += 1;
             }
             // The byte immediately after the header line's EOL must be '%'
@@ -1528,7 +1542,10 @@ fn check_actions_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     // veraPDF §6.6.3 (PDF/A-4) / §6.5.2 (PDF/A-2/3) flags /AA on non-widget annots.
     // Emit "6.1.6.1" which gets remapped per part by remap_clause_numbers.
     for page in pdf.pages().iter() {
-        if let Some(annots) = page.raw().get::<pdf_syntax::object::Array<'_>>(keys::ANNOTS) {
+        if let Some(annots) = page
+            .raw()
+            .get::<pdf_syntax::object::Array<'_>>(keys::ANNOTS)
+        {
             for annot in annots.iter::<Dict<'_>>() {
                 let is_widget = annot
                     .get::<Name>(keys::SUBTYPE)
@@ -1583,7 +1600,11 @@ fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
     let mark_rule = if level.part() == 4 { "6.6.1" } else { "6.8" };
     // veraPDF uses §6.8.3.3 specifically for missing StructTreeRoot in PDF/A-1/2/3.
     // PDF/A-4: still §6.6.1 (single clause for all tagged requirements).
-    let struct_rule = if level.part() == 4 { "6.6.1" } else { "6.8.3.3" };
+    let struct_rule = if level.part() == 4 {
+        "6.6.1"
+    } else {
+        "6.8.3.3"
+    };
     if !check::is_marked(pdf) {
         check::error(
             report,
@@ -1959,9 +1980,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             //   PDF/A-2/3 §6.1.7 (streams) → PDF/A-4 §6.1.6
             //   PDF/A-2/3 §6.1.8 (stream filters) → PDF/A-4 §6.1.6.2
             //   PDF/A-2/3 §6.1.13 (impl limits) → PDF/A-4 §6.1.13 (same, no remap)
-            (4, "6.1.6") => Some("6.1.5"),       // hex strings
-            (4, "6.1.8") => Some("6.1.6.2"),     // stream filters (LZWDecode etc.)
-            (4, "6.1.10") => Some("6.1.6.2"),    // PDF/A-1 filter rule → PDF/A-4
+            (4, "6.1.6") => Some("6.1.5"),    // hex strings
+            (4, "6.1.8") => Some("6.1.6.2"),  // stream filters (LZWDecode etc.)
+            (4, "6.1.10") => Some("6.1.6.2"), // PDF/A-1 filter rule → PDF/A-4
 
             // Stream checks: Length, EOL, empty keys, external refs
             // PDF/A-1: §6.1.7, PDF/A-2/3: §6.1.7 (same), PDF/A-4: §6.1.6.1
