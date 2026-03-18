@@ -6016,11 +6016,13 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             );
         } else if has_ff3 && (subtype == "Type1" || subtype == "MMType1") {
             // Type1/CFF font with FontFile3 — use CFF glyph names.
+            let is_subset_font = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
             corrections = compute_cff_type1_width_corrections(
                 &font_data,
                 first_char,
                 &existing_widths,
                 &enc_info,
+                is_subset_font,
             );
         } else if has_ff2 && (subtype == "Type1" || subtype == "MMType1") {
             // Type1 font re-encoded as TrueType (after embedding fallback font).
@@ -6083,8 +6085,46 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             };
             if !allow_full_cff_corrections {
                 let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
-                corrections.retain(|(idx, _)| {
+                // For non-subset fonts with no BaseEncoding, the CFF internal encoding
+                // is authoritative. Pre-compute the CFF encoding map so the filter can
+                // allow corrections where the CFF maps the code to a valid (non-.notdef)
+                // GID — those corrections are definitively correct. (#479)
+                let cff_enc_for_filter: Option<std::collections::HashMap<u8, u16>> =
+                    if !is_subset && enc_info.0.is_empty() {
+                        Some(parse_cff_encoding_map(&font_data))
+                    } else {
+                        None
+                    };
+                // Compute .notdef (GID 0) advance for this font so the filter can
+                // allow corrections that bring the dict width to .notdef width.
+                // veraPDF uses .notdef width for codes absent from the font program,
+                // so these corrections are definitively correct. (#479)
+                let notdef_w_rounded: Option<i64> =
+                    ttf_parser::Face::parse(&font_data, 0).ok().and_then(|face| {
+                        let upem = face.units_per_em() as f64;
+                        if upem > 0.0 {
+                            let scale = 1000.0 / upem;
+                            face.glyph_hor_advance(ttf_parser::GlyphId(0))
+                                .map(|w| (w as f64 * scale).round() as i64)
+                        } else {
+                            None
+                        }
+                    })
+                    // Fallback for bare CFF (Type1C) fonts where ttf_parser fails.
+                    .or_else(|| {
+                        cff_parser::Table::parse(&font_data).and_then(|cff| {
+                            let scale = cff_matrix_scale(cff.matrix().sx);
+                            cff.glyph_width(cff_parser::GlyphId(0))
+                                .map(|w| (w as f64 * scale).round() as i64)
+                        })
+                    });
+                corrections.retain(|(idx, new_w)| {
                     let code = first_char + *idx as u32;
+                    // Always allow corrections that set the width to .notdef —
+                    // those come from the .notdef fallback path and are correct.
+                    if matches!(notdef_w_rounded, Some(nw) if nw == *new_w) {
+                        return true;
+                    }
                     if is_subset {
                         // High-byte subset remaps are often validated through
                         // CFF internal encoding. Keep low-byte edits, explicit
@@ -6101,7 +6141,11 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                     } else {
                         // Explicit Differences entries are deterministic mappings, so
                         // high-byte corrections remain safe on non-subset fonts.
-                        code <= 127 || enc_info.1.contains_key(&code)
+                        // Also allow when the CFF encoding maps the code to a valid GID:
+                        // for fonts with no BaseEncoding, CFF encoding is authoritative. (#479)
+                        code <= 127
+                            || enc_info.1.contains_key(&code)
+                            || matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0)
                     }
                 });
             }
@@ -6524,6 +6568,15 @@ fn get_truetype_glyph_width_fractional(
         if let Some(gid) = lookup_mac_cmap(face, code) {
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
         }
+    }
+
+    // High-byte code not found in any cmap — veraPDF uses .notdef (GID 0)
+    // width for such codes. Return it so we can correct stale Widths entries
+    // that differ from the actual .notdef advance by more than 1 unit. (#479)
+    if (128..=255).contains(&code) {
+        return face
+            .glyph_hor_advance(ttf_parser::GlyphId(0))
+            .map(|w| w as f64 * scale);
     }
 
     None
@@ -7869,6 +7922,7 @@ fn compute_cff_type1_width_corrections(
     first_char: u32,
     existing_widths: &[Object],
     enc_info: &(String, std::collections::HashMap<u32, String>),
+    is_subset: bool,
 ) -> Vec<(usize, i64)> {
     let (enc_name, differences) = enc_info;
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
@@ -7887,6 +7941,7 @@ fn compute_cff_type1_width_corrections(
                 differences,
                 has_pdf_encoding,
                 scale,
+                is_subset,
             );
         }
     }
@@ -7914,12 +7969,28 @@ fn compute_cff_type1_width_corrections(
         // encoding fallback (e.g. StandardEncoding maps code 173 → "hyphen").
         let frac_w = cff_width_for_code(&cff, font_data, code, enc_name, differences, scale);
 
+        // High-byte codes not found in the font map to .notdef (GID 0).
+        // veraPDF validates the Widths entry against GID 0's advance in that case.
+        // Restrict to codes 128-255 where absent glyphs are expected. (#479)
+        let frac_w = frac_w.or_else(|| {
+            if (128..=255).contains(&code) {
+                cff.glyph_width(cff_parser::GlyphId(0))
+                    .map(|w| w as f64 * scale)
+            } else {
+                None
+            }
+        });
+
         let Some(frac_w) = frac_w else { continue };
 
-        // Use >= 1.0 threshold because cff_parser returns integer widths (u16),
-        // losing fractional precision. A 1-unit integer diff may hide a >1 fractional
-        // diff that veraPDF catches (e.g. 479.89 rounds to 480 vs dict 481).
-        if (pdf_w - frac_w).abs() >= 1.0 {
+        // Use >= 0.95 threshold (slightly below 1.0) to account for two sources
+        // of imprecision in the raw CFF path:
+        // 1. cff_parser returns integer widths (u16) — a 1-unit diff in the integer
+        //    may correspond to a >1 fractional diff that veraPDF catches.
+        // 2. The FontMatrix scale is stored as f32 in cff_parser; f32→f64 widening
+        //    can underestimate the true scale, making our computed width slightly
+        //    lower than veraPDF's (e.g. 414.97 vs 415.03 for Georgia0150). (#479)
+        if (pdf_w - frac_w).abs() >= 0.95 {
             corrections.push((i, frac_w.round() as i64));
         }
     }
@@ -7944,6 +8015,7 @@ fn compute_otf_cff_corrections(
     differences: &std::collections::HashMap<u32, String>,
     has_pdf_encoding: bool,
     scale: f64,
+    _is_subset: bool,
 ) -> Vec<(usize, i64)> {
     // If no PDF encoding, try to extract CFF table for its internal encoding.
     let cff_table = if !has_pdf_encoding {
@@ -8027,6 +8099,19 @@ fn compute_otf_cff_corrections(
             continue;
         };
 
+        // Codes not found in the font program map to .notdef (GID 0).
+        // veraPDF validates the Widths entry against GID 0's advance for such
+        // codes, so we correct the dict width to match. Restrict to high-byte
+        // codes (128-255) where absent glyphs are expected in subsets or
+        // encoding gaps; low-byte absences are suspicious. (#479)
+        let frac_w = frac_w.or_else(|| {
+            if (128..=255).contains(&code) {
+                face.glyph_hor_advance(ttf_parser::GlyphId(0))
+                    .map(|w| w as f64 * scale)
+            } else {
+                None
+            }
+        });
         let Some(frac_w) = frac_w else { continue };
 
         // Use >= 1.0: CFF glyph_width returns integer u16, so a 1-unit diff
@@ -8232,13 +8317,19 @@ fn cff_width_for_code(
             {
                 return Some(w);
             }
-            if glyph_name.starts_with("uni") {
+            // Try AGL canonical name: unicode_to_glyph_name returns raw chars
+            // for ASCII printable (e.g. "0" for digit '0'), but CFF charset
+            // uses AGL names (e.g. "zero"). Also covers "uni00XX" → "Agrave".
+            // Only applies when the name comes from encoding lookup, not Differences. (#479)
+            if !differences.contains_key(&code) {
                 let ch = encoding_to_char(code, enc_name);
                 if let Some(agl_name) = unicode_to_agl_name(ch) {
-                    if let Some(w) =
-                        find_cff_glyph_width_by_name_fractional(cff, font_data, &agl_name, scale)
-                    {
-                        return Some(w);
+                    if agl_name != glyph_name {
+                        if let Some(w) =
+                            find_cff_glyph_width_by_name_fractional(cff, font_data, &agl_name, scale)
+                        {
+                            return Some(w);
+                        }
                     }
                 }
             }
@@ -8636,12 +8727,14 @@ fn subset_standard_cff_code_is_safe(
     enc_name: &str,
     differences: &std::collections::HashMap<u32, String>,
 ) -> bool {
-    if !matches!(enc_name, "WinAnsiEncoding" | "MacRomanEncoding") {
-        return false;
-    }
-
+    // Explicit Differences entries are deterministic mappings regardless of
+    // BaseEncoding. If the CFF has the named glyph, the correction is safe. (#479)
     if let Some(name) = differences.get(&code) {
         return name != "space" && cff_font_has_named_glyph(font_data, name);
+    }
+
+    if !matches!(enc_name, "WinAnsiEncoding" | "MacRomanEncoding") {
+        return false;
     }
 
     let ch = encoding_to_char(code, enc_name);
@@ -8652,6 +8745,16 @@ fn subset_standard_cff_code_is_safe(
     }
     if let Some(name) = unicode_to_glyph_name(ch) {
         if cff_font_has_named_glyph(font_data, &name) {
+            return true;
+        }
+    }
+
+    // Subset CFF fonts may use GID-based glyph names (e.g. "G80") that don't
+    // match AGL or PostScript names, but the glyph IS accessible via the font's
+    // Unicode cmap. If ttf-parser can resolve the character to a non-notdef
+    // GID, the width correction is safe to apply. (#479)
+    if let Ok(face) = ttf_parser::Face::parse(font_data, 0) {
+        if face.glyph_index(ch).map(|g| g.0).unwrap_or(0) > 0 {
             return true;
         }
     }
@@ -10619,6 +10722,7 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
                     first_char,
                     &existing_widths,
                     &enc_info,
+                    is_subset,
                 )
             }
         };
