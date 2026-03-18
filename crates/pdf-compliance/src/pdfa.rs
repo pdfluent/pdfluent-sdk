@@ -2097,6 +2097,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.3.3.3") => Some("6.2.11.3.3"),
             (4, "6.3.3.3") => Some("6.2.10.3.3"),
 
+            // Optional content violations: check_optional_content emits "6.6.4" for PDF/A-2/3.
+            // veraPDF uses "6.9" for PDF/A-2/3 OC violations. Fixes #FN-6.9.
+            (2..=3, "6.6.4") => Some("6.9"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
