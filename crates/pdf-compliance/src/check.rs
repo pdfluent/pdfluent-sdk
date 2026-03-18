@@ -2957,9 +2957,14 @@ pub fn check_separation_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         std::collections::HashMap::new();
 
     for (obj_idx, obj) in pdf.objects().into_iter().enumerate() {
-        // Collect all Separation/DeviceN colorspace arrays from Resources/ColorSpace dicts
+        // Collect all Separation/DeviceN colorspace arrays from Resources/ColorSpace dicts.
+        // Page dicts are Object::Dict with /Resources/ColorSpace nested — check both paths.
+        // Fixes §6.2.4.4 FNs where Separation arrays in page Resources were not found. (#496)
         let cs_dict: Option<Dict<'_>> = match &obj {
-            Object::Dict(d) => d.get::<Dict<'_>>(keys::COLORSPACE),
+            Object::Dict(d) => d.get::<Dict<'_>>(keys::COLORSPACE).or_else(|| {
+                d.get::<Dict<'_>>(keys::RESOURCES)
+                    .and_then(|r| r.get::<Dict<'_>>(keys::COLORSPACE))
+            }),
             Object::Stream(s) => {
                 let d = s.dict();
                 d.get::<Dict<'_>>(keys::RESOURCES)
@@ -6292,6 +6297,36 @@ fn check_cidfont_descriptor_deep(
                         format!("page {}", page_idx + 1),
                     );
                 }
+                // §6.2.11.4.2: if a CIDSet is present, it must identify ALL CIDs that are
+                // present in the font program.  Use the /W array as the authoritative set of
+                // CIDs that the font declares; every CID listed in /W must have its bit set
+                // in the CIDSet bitstream (bit 7 of byte 0 = CID 0, MSB-first). Fixes #496.
+                let cidset_bits = cidset_stream
+                    .decoded()
+                    .unwrap_or_else(|_| raw.to_vec());
+                if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
+                    let w_cids = parse_cidfont_w_array(&w_arr);
+                    for &cid in w_cids.keys() {
+                        let byte_idx = (cid / 8) as usize;
+                        let bit_pos = 7 - (cid % 8);
+                        let is_set = cidset_bits
+                            .get(byte_idx)
+                            .map(|&b| (b >> bit_pos) & 1 == 1)
+                            .unwrap_or(false);
+                        if !is_set {
+                            error_at(
+                                report,
+                                "6.2.11.4.2",
+                                format!(
+                                    "CIDFont {cid_name}: CIDSet missing CID {cid} \
+                                     (present in /W array)"
+                                ),
+                                format!("page {}", page_idx + 1),
+                            );
+                            break; // one error per font is sufficient
+                        }
+                    }
+                }
             }
         }
     }
@@ -6753,6 +6788,260 @@ pub fn check_tounicode_glyph_coverage(pdf: &Pdf, part: u8, report: &mut Complian
             }
         }
     });
+}
+
+/// Check that no text operator references the .notdef glyph (§6.2.10.9).
+///
+/// For CID (Type0) fonts, CID 0 maps to .notdef. Content streams that emit
+/// `<0000>Tj` or `[...<0000>...] TJ` while a Type0 font is active violate
+/// the prohibition on rendering .notdef glyphs. Fixes #496.
+pub fn check_notdef_glyph_usage(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        // Collect Type0 (CID) font resource names for this page.
+        let mut type0_fonts: std::collections::HashSet<Vec<u8>> =
+            std::collections::HashSet::new();
+        let fonts = &page.resources().fonts;
+        for (name, _) in fonts.entries() {
+            let font_dict_opt: Option<Dict<'_>> =
+                fonts.get::<Dict<'_>>(name.as_ref()).or_else(|| {
+                    fonts
+                        .get_ref(name.as_ref())
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            if let Some(font_dict) = font_dict_opt {
+                if font_dict
+                    .get::<Name>(keys::SUBTYPE)
+                    .is_some_and(|s| s.as_ref() == b"Type0")
+                {
+                    type0_fonts.insert(name.as_ref().to_vec());
+                }
+            }
+        }
+        if type0_fonts.is_empty() {
+            continue;
+        }
+
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE {
+            continue;
+        }
+
+        let tokens = tokenize_pdf_content(content);
+        let loc = format!("page {}", page_idx + 1);
+        let mut current_font_is_type0 = false;
+        let n = tokens.len();
+
+        'page: for i in 0..n {
+            let tok = tokens[i].as_slice();
+
+            // Track active font: /FontName size Tf
+            if tok == b"Tf" && i >= 2 {
+                let font_name = tokens[i - 2].as_slice();
+                if let Some(name_bytes) = font_name.strip_prefix(b"/") {
+                    current_font_is_type0 = type0_fonts.contains(name_bytes);
+                }
+            }
+
+            if !current_font_is_type0 {
+                continue;
+            }
+
+            // Tj / ' / ": string argument is the immediately preceding token.
+            if matches!(tok, b"Tj" | b"'" | b"\"")
+                && i >= 1
+                && cid_hex_has_notdef(tokens[i - 1].as_slice())
+            {
+                error_at(
+                    report,
+                    "6.2.10.9",
+                    "Text operator references .notdef glyph (CID 0x0000)",
+                    loc.clone(),
+                );
+                break 'page;
+            }
+
+            // TJ: scan backward through array tokens until '['.
+            if tok == b"TJ" && i >= 1 {
+                let mut j = i as isize - 1;
+                while j >= 0 {
+                    let t = tokens[j as usize].as_slice();
+                    if t == b"[" {
+                        break;
+                    }
+                    if cid_hex_has_notdef(t) {
+                        error_at(
+                            report,
+                            "6.2.10.9",
+                            "Text operator references .notdef glyph (CID 0x0000)",
+                            loc.clone(),
+                        );
+                        break 'page;
+                    }
+                    j -= 1;
+                }
+            }
+        }
+    }
+}
+
+/// Tokenize a PDF content stream respecting PDF delimiter characters.
+///
+/// Unlike `split_ascii_whitespace`, this splits at PDF delimiter boundaries
+/// (`< > ( ) [ ] / %`) so `<0000>Tj` yields two tokens: `<0000>` and `Tj`.
+fn tokenize_pdf_content(content: &[u8]) -> Vec<Vec<u8>> {
+    let mut tokens: Vec<Vec<u8>> = Vec::new();
+    let mut i = 0;
+    let len = content.len();
+
+    while i < len {
+        let b = content[i];
+
+        // Whitespace — skip.
+        if b.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        // Comment — skip to end of line.
+        if b == b'%' {
+            while i < len && content[i] != b'\n' && content[i] != b'\r' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // `<<` dict-open or `<hex>` hex string.
+        if b == b'<' {
+            if i + 1 < len && content[i + 1] == b'<' {
+                tokens.push(b"<<".to_vec());
+                i += 2;
+                continue;
+            }
+            let start = i;
+            i += 1;
+            while i < len && content[i] != b'>' {
+                i += 1;
+            }
+            if i < len {
+                i += 1; // consume '>'
+            }
+            tokens.push(content[start..i].to_vec());
+            continue;
+        }
+
+        // `>>` dict-close.
+        if b == b'>' {
+            if i + 1 < len && content[i + 1] == b'>' {
+                tokens.push(b">>".to_vec());
+                i += 2;
+            } else {
+                tokens.push(vec![b]);
+                i += 1;
+            }
+            continue;
+        }
+
+        // Literal string `(...)` with balanced parentheses.
+        if b == b'(' {
+            let start = i;
+            i += 1;
+            let mut depth = 1i32;
+            while i < len && depth > 0 {
+                match content[i] {
+                    b'\\' => {
+                        i += 1;
+                        if i < len {
+                            i += 1;
+                        }
+                    }
+                    b'(' => {
+                        depth += 1;
+                        i += 1;
+                    }
+                    b')' => {
+                        depth -= 1;
+                        i += 1;
+                    }
+                    _ => {
+                        i += 1;
+                    }
+                }
+            }
+            tokens.push(content[start..i].to_vec());
+            continue;
+        }
+
+        // Single-char array delimiters.
+        if b == b'[' || b == b']' {
+            tokens.push(vec![b]);
+            i += 1;
+            continue;
+        }
+
+        // Name: `/name`.
+        if b == b'/' {
+            let start = i;
+            i += 1;
+            while i < len && !content[i].is_ascii_whitespace() && !is_pdf_delim(content[i]) {
+                i += 1;
+            }
+            tokens.push(content[start..i].to_vec());
+            continue;
+        }
+
+        // Regular token: operator or number.
+        let start = i;
+        while i < len && !content[i].is_ascii_whitespace() && !is_pdf_delim(content[i]) {
+            i += 1;
+        }
+        if i > start {
+            tokens.push(content[start..i].to_vec());
+        }
+    }
+    tokens
+}
+
+/// Return `true` if `tok` is a `<hex>` token containing CID 0x0000 (.notdef).
+///
+/// CID text strings encode each character as a 2-byte big-endian code point.
+/// CID 0 = .notdef in all CID-keyed fonts: `<0000>` = one .notdef character.
+/// Whitespace embedded in the hex string (allowed by PDF spec) is ignored.
+fn cid_hex_has_notdef(tok: &[u8]) -> bool {
+    if !tok.starts_with(b"<") || !tok.ends_with(b">") {
+        return false;
+    }
+    let hex = &tok[1..tok.len() - 1];
+    // Collect only hex-digit bytes, ignoring embedded whitespace.
+    let digits: Vec<u8> = hex
+        .iter()
+        .copied()
+        .filter(|b| b.is_ascii_hexdigit())
+        .collect();
+    // Each 2-byte CID is 4 hex digits.  Scan groups of 4 for "0000".
+    let mut ci = 0;
+    while ci + 4 <= digits.len() {
+        if digits[ci] == b'0'
+            && digits[ci + 1] == b'0'
+            && digits[ci + 2] == b'0'
+            && digits[ci + 3] == b'0'
+        {
+            return true;
+        }
+        ci += 4;
+    }
+    false
+}
+
+/// True if `b` is a PDF delimiter character that terminates a regular token.
+#[inline]
+fn is_pdf_delim(b: u8) -> bool {
+    matches!(
+        b,
+        b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+    )
 }
 
 /// Extract source codes from a ToUnicode CMap (beginbfchar and beginbfrange sections).
