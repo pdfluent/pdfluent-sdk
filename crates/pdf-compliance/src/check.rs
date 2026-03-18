@@ -6241,12 +6241,11 @@ fn is_font_program_corrupt(data: &[u8], is_truetype: bool) -> bool {
     false
 }
 
-/// Check ToUnicode CMap presence for non-symbolic fonts (§6.3.4 / §6.2.11.7.2).
+/// Check ToUnicode CMap presence for non-symbolic fonts.
 ///
-/// For PDF/A-2/3/4, missing ToUnicode on Type1 fonts is a violation of
-/// §6.2.11.7.2 (emitted as an error).  For PDF/A-1 the check is a warning
-/// under §6.3.4.  For other non-symbolic, non-Type0 fonts the check is a
-/// warning (severity is relaxed because veraPDF is inconsistent here). (#467)
+/// PDF/A-1: §6.3.8 (all renderable fonts require ToUnicode).
+/// PDF/A-2/3: §6.2.11.7.2 (Type1 and all non-symbolic non-Type0 fonts). (#483)
+/// PDF/A-4: §6.2.10.7 (ToUnicode required for fonts that can encode characters).
 pub fn check_tounicode_cmap(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     for_each_font(pdf, |name, font_dict, _page_idx| {
         if let Some(enc) = font_dict.get::<Name>(keys::ENCODING) {
@@ -6266,10 +6265,8 @@ pub fn check_tounicode_cmap(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
             .as_ref()
             .is_some_and(|s| s.as_ref() == b"Type1" || s.as_ref() == b"MMType1");
 
-        // §6.2.11.7.2 applies to ALL Type1 fonts in PDF/A-2/3/4 regardless of
-        // symbolic flag — the standard requires ToUnicode for every Type1 font.
-        // The symbolic-flag exemption only applies to the weaker §6.3.4 rule
-        // (PDF/A-1 and non-Type1 fonts). Fixes #467.
+        // For PDF/A-2/3/4, §6.2.11.7.2 applies to ALL Type1 fonts regardless of
+        // symbolic flag. For non-Type1 fonts (and PDF/A-1), skip symbolic fonts.
         if !is_type1 || part < 2 {
             if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
                 if let Some(flags) = desc.get::<i32>(keys::FLAGS) {
@@ -6281,26 +6278,31 @@ pub fn check_tounicode_cmap(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
         }
 
         if !font_has_tounicode(font_dict) {
-            if part >= 2 && is_type1 {
-                // §6.2.11.7.2: Type1 font without ToUnicode in PDF/A-2/3/4
+            if part == 4 {
+                // §6.2.10.7: ToUnicode required for all fonts in PDF/A-4. (#483)
+                error(
+                    report,
+                    "6.2.10.7",
+                    format!("Font {name} missing /ToUnicode CMap (§6.2.10.7)"),
+                );
+            } else if part >= 2 {
+                // §6.2.11.7.2: applies to Type1 and all non-symbolic non-Type0 fonts
+                // in PDF/A-2/3. Previously only Type1 was checked — extended to cover
+                // all non-symbolic fonts because veraPDF fires §6.2.11.7.2 for them too.
+                // (#483)
                 error(
                     report,
                     "6.2.11.7.2",
-                    format!("Type1 font {name} missing /ToUnicode CMap (§6.2.11.7.2)"),
+                    format!("Font {name} missing /ToUnicode CMap (§6.2.11.7.2)"),
                 );
-            } else if part == 1 {
-                // §6.3.8: ToUnicode CMap required for all fonts used in text rendering. (#483)
-                // veraPDF fires §6.3.8 (not §6.3.4) for missing ToUnicode in PDF/A-1.
+            } else {
+                // PDF/A-1 §6.3.8: ToUnicode CMap required for all fonts used in text
+                // rendering. veraPDF fires §6.3.8 (not §6.3.4) for missing ToUnicode.
+                // (#483)
                 error(
                     report,
                     "6.3.8",
                     format!("Font {name} missing /ToUnicode CMap (§6.3.8)"),
-                );
-            } else {
-                warning(
-                    report,
-                    "6.3.4",
-                    format!("Non-symbolic font {name} missing /ToUnicode CMap"),
                 );
             }
         }
@@ -6390,6 +6392,19 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                     return; // one error per font is enough
                 }
+                // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF) in ToUnicode require
+                // ActualText in content. Flag any PUA mapping as a violation. (#483)
+                if (0xE000..=0xF8FF).contains(&val) {
+                    error_at(
+                        report,
+                        "6.2.11.7.3",
+                        format!(
+                            "Font {name} ToUnicode CMap maps to PUA codepoint U+{val:04X}"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                    return; // one error per font is enough
+                }
             }
         }
     });
@@ -6452,6 +6467,17 @@ fn check_cmap_streams_for_ffff(pdf: &Pdf, report: &mut ComplianceReport) {
                         report,
                         "6.2.11.7.3",
                         "ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+FFFF",
+                    );
+                    return; // one error per document is enough
+                }
+                // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF) require ActualText. (#483)
+                if (0xE000..=0xF8FF).contains(&val) {
+                    error(
+                        report,
+                        "6.2.11.7.3",
+                        format!(
+                            "ToUnicode CMap (via UseCMap chain) maps to PUA codepoint U+{val:04X}"
+                        ),
                     );
                     return; // one error per document is enough
                 }
@@ -7308,7 +7334,10 @@ pub fn check_cidtogidmap_identity(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
-/// Validate CMap embedding for Type0 fonts (§6.3.8).
+/// Validate CMap embedding for Type0 fonts (§6.3.3.3 / §6.2.11.3.3).
+///
+/// PDF/A-1: §6.3.3.3; PDF/A-2/3: §6.2.11.3.3; PDF/A-4: §6.2.10.3.3.
+/// Internal rule "6.3.3.3" is remapped per-part in remap_clause_numbers. (#483)
 pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
     for_each_font(pdf, |name, font_dict, _page_idx| {
         let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
@@ -7336,10 +7365,13 @@ pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
             }
 
             let enc_str = std::str::from_utf8(enc).unwrap_or("?");
-            warning(
+            // Non-standard CMap must be embedded as a stream object.
+            // §6.3.3.3 (PDF/A-1) / §6.2.11.3.3 (PDF/A-2/3) / §6.2.10.3.3 (PDF/A-4).
+            // Internal rule "6.3.3.3" is remapped per-part in remap_clause_numbers. (#483)
+            error(
                 report,
-                "6.3.8",
-                format!("Type0 font {name} uses CMap {enc_str}; verify it is embedded"),
+                "6.3.3.3",
+                format!("Type0 font {name} uses non-standard CMap {enc_str} that must be embedded"),
             );
         }
     });

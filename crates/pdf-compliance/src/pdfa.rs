@@ -2079,6 +2079,24 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-2/3: §6.2.8. (#483)
             (2..=3, "6.2.8.1") => Some("6.2.8"),
 
+            // Device color space vs OutputIntent (check_color_in_content emits "6.2.3.3").
+            // PDF/A-1: veraPDF reports §6.2.2 for all device-CS vs OutputIntent violations.
+            // PDF/A-2/3/4: §6.2.3.3 is already the correct clause. (#483)
+            (1, "6.2.3.3") => Some("6.2.2"),
+
+            // Symbolic TrueType /Encoding for PDF/A-4: §6.2.10.6. (#483)
+            (4, "6.3.7-se") => Some("6.2.10.6"),
+
+            // PUA codepoints in ToUnicode require ActualText.
+            // PDF/A-4: §6.2.10.9 (same requirement as §6.2.11.7.3 in PDF/A-2/3). (#483)
+            (4, "6.2.11.7.3") => Some("6.2.10.9"),
+
+            // CMap embedding for Type0 fonts (internal rule "6.3.3.3").
+            // PDF/A-1: §6.3.3.3 (already correct); PDF/A-2/3: §6.2.11.3.3;
+            // PDF/A-4: §6.2.10.3.3. (#483)
+            (2..=3, "6.3.3.3") => Some("6.2.11.3.3"),
+            (4, "6.3.3.3") => Some("6.2.10.3.3"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
