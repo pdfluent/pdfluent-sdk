@@ -161,6 +161,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check_figure_alt(pdf, &mut report);
         check_role_mapping_pdfa(pdf, &mut report);
         check::check_mark_info(pdf, &mut report);
+        check_lang_presence(pdf, &mut report);
     }
 
     match level.part() {
@@ -1299,6 +1300,35 @@ fn check_form_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.1.13 — Page boundaries must be 3-14400 units.
 fn check_page_boundary_sizes(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_page_boundary_sizes(pdf, report);
+    // Supplementary: check ALL page boundaries (CropBox, TrimBox, BleedBox, ArtBox),
+    // not just MediaBox. veraPDF §6.1.13 t11 checks all boundary types ≥ 3 units.
+    // check.rs only checks MediaBox via page.media_box().
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let raw = page.raw();
+        for key in [b"CropBox".as_ref(), b"TrimBox", b"BleedBox", b"ArtBox"] {
+            if let Some(arr) = raw.get::<pdf_syntax::object::Array<'_>>(key) {
+                let vals: Vec<f64> = arr
+                    .iter::<pdf_syntax::object::Number>()
+                    .map(|n| n.as_f64())
+                    .collect();
+                if vals.len() == 4 {
+                    let w = (vals[2] - vals[0]).abs();
+                    let h = (vals[3] - vals[1]).abs();
+                    if w < 3.0 || h < 3.0 {
+                        let key_str = std::str::from_utf8(key).unwrap_or("?");
+                        check::error(
+                            report,
+                            "6.1.13",
+                            format!(
+                                "Page {} /{} {:.1}x{:.1} is less than minimum 3 units",
+                                page_idx + 1, key_str, w, h
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// §6.2.3.3 — ICC profile version must match PDF/A part.
@@ -1393,6 +1423,33 @@ fn check_embedded_file_streams(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.1.2 — File header binary comment and version format.
 fn check_file_header(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_file_header(pdf, level.part(), report);
+    // Supplementary check: binary comment must immediately follow the header line's EOL.
+    // veraPDF §6.1.2 t2: "The aforementioned EOL marker shall be immediately followed by
+    // a % character followed by at least four bytes, each > 127."
+    // check.rs scans the first 512 bytes for any binary comment, but doesn't verify
+    // it's on the second line. This catches the case where there's an extra blank line
+    // between the header and the binary comment.
+    let data = pdf.data().as_ref();
+    if data.starts_with(b"%PDF-") {
+        // Find end of first line (CR, LF, or CRLF after %PDF-M.N)
+        if let Some(eol_pos) = data[5..data.len().min(20)].iter().position(|&b| b == b'\n' || b == b'\r') {
+            let after_eol = 5 + eol_pos + 1;
+            // Skip CRLF pair
+            let after_eol = if after_eol < data.len() && data.get(5 + eol_pos) == Some(&b'\r') && data.get(after_eol) == Some(&b'\n') {
+                after_eol + 1
+            } else {
+                after_eol
+            };
+            // The byte immediately after the header line's EOL must be '%'
+            if after_eol < data.len() && data[after_eol] != b'%' {
+                check::error(
+                    report,
+                    "6.1.2",
+                    "Binary comment not immediately after header line EOL (extra bytes between header and binary marker)",
+                );
+            }
+        }
+    }
 }
 
 /// §6.1.3 — Cross-reference table format.
@@ -1446,18 +1503,21 @@ fn check_transparency_a1(pdf: &Pdf, report: &mut ComplianceReport) {
 /// maps "6.6.1" → "6.8.1" so both sides of the comparison agree. Fixes #482.
 fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     // PDF/A-4: ISO 19005-4 §6.6.1 covers tagged PDF. normalize_pdfa4_clause("6.6.1")="6.8.1".
-    // PDF/A-1/2/3: §6.8 (parts 1-3 use their own numbering). Fixes #482.
-    let rule = if level.part() == 4 { "6.6.1" } else { "6.8" };
+    // PDF/A-1/2/3: §6.8 for MarkInfo, §6.8.3.3 for StructTreeRoot. Fixes #482.
+    let mark_rule = if level.part() == 4 { "6.6.1" } else { "6.8" };
+    // veraPDF uses §6.8.3.3 specifically for missing StructTreeRoot in PDF/A-1/2/3.
+    // PDF/A-4: still §6.6.1 (single clause for all tagged requirements).
+    let struct_rule = if level.part() == 4 { "6.6.1" } else { "6.8.3.3" };
     if !check::is_marked(pdf) {
         check::error(
             report,
-            rule,
+            mark_rule,
             "Document is not marked (MarkInfo/Marked missing or false)",
         );
     }
 
     if check::struct_tree_root(pdf).is_none() {
-        check::error(report, rule, "No StructTreeRoot found");
+        check::error(report, struct_rule, "No StructTreeRoot found");
     }
 }
 
@@ -1591,6 +1651,20 @@ fn check_figure_alt(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.8.4 — Lang values must be valid BCP-47 language tags.
 fn check_lang(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_lang_values(pdf, report);
+}
+
+/// Check that tagged PDFs have a /Lang entry in the catalog.
+/// veraPDF §6.8.4 requires this for conformance levels that mandate tagging.
+fn check_lang_presence(pdf: &Pdf, report: &mut ComplianceReport) {
+    if let Some(cat) = check::catalog(pdf) {
+        if cat.get::<pdf_syntax::object::String>(keys::LANG).is_none() {
+            check::error(
+                report,
+                "6.8.4",
+                "Catalog does not have a /Lang entry (required for tagged PDF)",
+            );
+        }
+    }
 }
 
 /// §6.9 — NeedAppearances and field appearances.
