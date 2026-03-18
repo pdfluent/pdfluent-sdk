@@ -2088,6 +2088,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.3.3") => Some("6.2.10.4.1"),
             (4, "6.3.3-nd") => Some("6.2.10.4.1"),
 
+            // OutputIntent requirements (missing GTS_PDFA1, multiple GTS_PDFA1 entries).
+            // check_output_intent emits "6.6.2" for PDF/A-1 OutputIntent violations.
+            // veraPDF uses §6.2.2 for ALL PDF/A-1 OutputIntent violations (confirmed
+            // by isartor 6-2-2-t03 FN where multiple GTS_PDFA1 entries → "6.2.2"). (#FN-6.2.2)
+            (1, "6.6.2") => Some("6.2.2"),
+
             // OutputIntent ICC profile class (prtr/mntr) check
             // PDF/A-1: veraPDF uses §6.2.2 for all OutputIntent/ICC violations.
             // PDF/A-2/3/4: §6.2.3 → no remap needed (direct internal clause).
