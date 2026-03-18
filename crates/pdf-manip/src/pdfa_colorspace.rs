@@ -1277,12 +1277,7 @@ fn fix_device_colorspaces_in_deep_structures(
                 // whose /ColorSpace is a device colour space. The inline shading
                 // is not a top-level object, so it isn't reached by the
                 // ShadingType check above. Fixes #479 (gen-188: 125 failures).
-                if dict
-                    .get(b"PatternType")
-                    .ok()
-                    .and_then(|o| o.as_i64().ok())
-                    == Some(2)
-                {
+                if dict.get(b"PatternType").ok().and_then(|o| o.as_i64().ok()) == Some(2) {
                     let inline_repl = match dict.get(b"Shading").ok() {
                         Some(Object::Dictionary(shading)) => {
                             resolve_device_cs(shading, b"ColorSpace", doc)
@@ -1292,9 +1287,7 @@ fn fix_device_colorspaces_in_deep_structures(
                     };
                     if let Some(repl) = inline_repl {
                         if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
-                            if let Ok(Object::Dictionary(ref mut shading)) =
-                                d.get_mut(b"Shading")
-                            {
+                            if let Ok(Object::Dictionary(ref mut shading)) = d.get_mut(b"Shading") {
                                 shading.set("ColorSpace", Object::Reference(repl));
                             }
                         }

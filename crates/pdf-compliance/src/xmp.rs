@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::check::{self, error, warning};
 use crate::{ComplianceReport, PdfALevel};
 use pdf_syntax::object::dict::keys;
-use pdf_syntax::object::{Array, Dict, Name, Object, ObjRef};
+use pdf_syntax::object::{Array, Dict, Name, ObjRef, Object};
 use pdf_syntax::Pdf;
 
 /// Well-known XMP value types (XMP Specification Part 1, Table 8).
@@ -1487,8 +1487,8 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:logComment" => Some(Scalar),
         "xmpDM:loop" => Some(Scalar),
         "xmpDM:markers" => Some(Seq),
-        "xmpDM:audioModDate" => Some(Date),     // Date type; missing from table → FN t02
-        "xmpDM:metadataModDate" => Some(Date),  // Date type, was Scalar
+        "xmpDM:audioModDate" => Some(Date), // Date type; missing from table → FN t02
+        "xmpDM:metadataModDate" => Some(Date), // Date type, was Scalar
         "xmpDM:numberOfBeats" => Some(Scalar),
         "xmpDM:outCue" => Some(Struct),
         "xmpDM:partOfCompilation" => Some(Scalar),
@@ -1499,7 +1499,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:relativePeakAudio" => Some(Scalar),
         "xmpDM:relativePeakAudioFilePath" => Some(Scalar), // URI (scalar); wrong container → violation. (#FN-6.6.2.3.1-t02)
         "xmpDM:relativeTapeOffset" => Some(Scalar),
-        "xmpDM:releaseDate" => Some(Date),      // Date type, was Scalar
+        "xmpDM:releaseDate" => Some(Date), // Date type, was Scalar
         "xmpDM:resampleParams" => Some(Struct), // ResampleParams structure (#477)
         "xmpDM:resizeType" => Some(Scalar),
         "xmpDM:scaleType" => Some(Scalar),
@@ -1528,7 +1528,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:videoFieldOrder" => Some(Scalar),
         "xmpDM:videoFrameRate" => Some(Scalar),
         "xmpDM:videoFrameSize" => Some(Scalar),
-        "xmpDM:videoModDate" => Some(Date),     // Date type, was Scalar
+        "xmpDM:videoModDate" => Some(Date), // Date type, was Scalar
         "xmpDM:videoPixelAspectRatio" => Some(Scalar),
         "xmpDM:videoPixelDepth" => Some(Scalar),
 
@@ -1697,9 +1697,9 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
 
         // ── crs: (Camera Raw Settings) ───────────────────────────────────────
         "crs:AutoBrightness" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
-        "crs:AutoContrast" => Some(CapBoolean),   // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
-        "crs:AutoExposure" => Some(CapBoolean),   // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
-        "crs:AutoShadows" => Some(CapBoolean),    // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
+        "crs:AutoContrast" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
+        "crs:AutoExposure" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
+        "crs:AutoShadows" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
         "crs:BlueHue" => Some(Integer),
         "crs:BlueSaturation" => Some(Integer),
         "crs:Brightness" => Some(Integer),
@@ -1720,7 +1720,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "crs:Exposure" => Some(Real),
         "crs:GreenHue" => Some(Integer),
         "crs:GreenSaturation" => Some(Integer),
-        "crs:HasCrop" => Some(CapBoolean),     // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
+        "crs:HasCrop" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
         "crs:HasSettings" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
         "crs:LuminanceSmoothing" => Some(Integer),
         "crs:RawFileName" => Some(Scalar),
