@@ -2992,6 +2992,17 @@ fn check_separation_array(
     };
     let colorant_bytes: Vec<u8> = colorant_name.as_ref().to_vec();
 
+    // §6.2.6: Separation colorant name shall not be /None.
+    // veraPDF fires "6.2.6" when a Separation colorspace uses the reserved name /None. (#483)
+    if colorant_bytes == b"None" {
+        error(
+            report,
+            "6.2.6",
+            "Separation colorspace uses forbidden colorant name /None",
+        );
+        return;
+    }
+
     // altCS is the third element — get its raw bytes for comparison
     let alt_obj = items.next();
     let alt_bytes: Vec<u8> = match &alt_obj {
