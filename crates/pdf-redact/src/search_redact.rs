@@ -516,6 +516,25 @@ fn remove_text_ops_via_editor(
         apply_per_bbox_spatial_fallback(&runs, &mut indices_to_remove, match_bboxes);
     }
 
+    // Raw-byte fallback: when both text-based and spatial matching found nothing
+    // but the word IS confirmed to be on the page (non-empty match_bboxes), try
+    // decoding each Tj/TJ operand as raw Latin-1 bytes — the same strategy used
+    // by extract_positioned_chars for fonts without a ToUnicode CMap.
+    // This handles cases where extract_text_runs decodes a font differently from
+    // extract_positioned_chars, causing the word to be found during bbox
+    // computation but missed by both text-matching and spatial matching on the
+    // content stream.  Fixes #476.
+    if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
+        let ops = editor.operations();
+        for (idx, op) in ops.iter().enumerate() {
+            if let Some(raw_text) = raw_text_from_op(op) {
+                if !matcher.find_all(&raw_text).is_empty() {
+                    indices_to_remove.push(idx);
+                }
+            }
+        }
+    }
+
     if indices_to_remove.is_empty() {
         return Ok(0);
     }
