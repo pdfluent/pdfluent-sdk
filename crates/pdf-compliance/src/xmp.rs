@@ -229,6 +229,8 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_predefined_property_types(xmp_text, level, report);
     // §6.7.9 test=3 / §6.6.2.3.1 test=3 — non-standard properties in pdf: namespace
     check_pdf_namespace_properties(xmp_text, level, report);
+    // §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 — unknown properties in the closed xmp: schema
+    check_xmp_closed_schema_properties(xmp_text, level, report);
     // PDF/A-1 §6.7.9: rdf:li with bare 'lang=' attribute (not 'xml:lang=') uses a
     // property from an unregistered namespace. veraPDF reports §6.7.9 in addition to
     // the §6.7.11 type violation. Fixes #467 (PDFBOX-3017-0.pdf).
@@ -1429,7 +1431,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpMM:History" => Some(Seq),
         "xmpMM:Ingredients" => Some(Bag),
         "xmpMM:InstanceID" => Some(Scalar),
-        "xmpMM:ManagedFrom" => Some(Scalar),
+        "xmpMM:ManagedFrom" => Some(Struct), // ResourceRef structure, not scalar. (#FN-6.7.9-t09)
         "xmpMM:Manager" => Some(Scalar),
         "xmpMM:ManageTo" => Some(Scalar),
         "xmpMM:ManageUI" => Some(Scalar),
@@ -1613,14 +1615,14 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         // ── exif: (EXIF) ─────────────────────────────────────────────────────
         "exif:ApertureValue" => Some(Scalar),
         "exif:BrightnessValue" => Some(Scalar),
-        "exif:CFAPattern" => Some(Scalar),
+        "exif:CFAPattern" => Some(Struct), // OECF/SFR structure, not scalar. (#FN-6.7.9-t16)
         "exif:ColorSpace" => Some(Integer),
         "exif:ComponentsConfiguration" => Some(Seq),
         "exif:CompressedBitsPerPixel" => Some(Scalar),
         "exif:Contrast" => Some(Integer),
         "exif:CustomRendered" => Some(Integer),
         "exif:DateTimeDigitized" => Some(Scalar),
-        "exif:DateTimeOriginal" => Some(Scalar),
+        "exif:DateTimeOriginal" => Some(Date), // ISO 8601 Date per XMP spec. (#FN-6.7.9-t15)
         "exif:DeviceSettingDescription" => Some(Struct), // DeviceSettings struct, not scalar. (#FN-6.6.2.3.1-t17)
         "exif:DigitalZoomRatio" => Some(Scalar),
         "exif:ExifVersion" => Some(Scalar),
@@ -1630,7 +1632,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "exif:ExposureProgram" => Some(Integer),
         "exif:ExposureTime" => Some(Scalar),
         "exif:FileSource" => Some(Integer),
-        "exif:Flash" => Some(Scalar),
+        "exif:Flash" => Some(Struct), // Flash structure (Fired/Return/Mode/etc.), not scalar. (#FN-6.7.9-t17)
         "exif:FlashEnergy" => Some(Scalar),
         "exif:FlashpixVersion" => Some(Scalar),
         "exif:FNumber" => Some(Scalar),
@@ -1662,7 +1664,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "exif:GPSSpeed" => Some(Scalar),
         "exif:GPSSpeedRef" => Some(Scalar),
         "exif:GPSStatus" => Some(Scalar),
-        "exif:GPSTimeStamp" => Some(Scalar),
+        "exif:GPSTimeStamp" => Some(Date), // ISO 8601 Date per XMP spec. (#FN-6.7.9-t15)
         "exif:GPSTrack" => Some(Scalar),
         "exif:GPSTrackRef" => Some(Scalar),
         "exif:GPSVersionID" => Some(Scalar),
@@ -1818,6 +1820,79 @@ fn check_pdf_namespace_properties(xmp: &str, level: PdfALevel, report: &mut Comp
         } else {
             pos += 1;
         }
+    }
+}
+
+/// §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 (PDF/A-2/3/4) — Unknown property in the closed `xmp:` schema.
+///
+/// The XMP Basic (`xmp:`) namespace is a closed schema with exactly 11 defined properties.
+/// Any `xmp:X` property not in that set (e.g. `xmp:Author`, `xmp:Title`) is not defined
+/// in the XMP 2004 specification and triggers §6.7.9.2 for PDF/A-1 and §6.6.2.3.1 for PDF/A-2+.
+///
+/// Both element-form (`<xmp:Author>…</xmp:Author>`) and attribute-form
+/// (`xmp:Author="SomeAuthor"`) are scanned.  (#FN-6.7.9-t03)
+fn check_xmp_closed_schema_properties(
+    xmp: &str,
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
+    let rule = match level.part() {
+        1 => "6.7.9.2",
+        4 => "6.5.2",
+        _ => "6.6.2.3.1",
+    };
+
+    let bytes = xmp.as_bytes();
+    let mut pos = 0;
+    let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    while pos + 4 < bytes.len() {
+        // Scan positions preceded by '<' (element start) or space/tab/newline (attribute).
+        if bytes[pos] == b'<'
+            || bytes[pos] == b' '
+            || bytes[pos] == b'\t'
+            || bytes[pos] == b'\n'
+        {
+            let start = pos + 1;
+            if start + 4 < bytes.len() && &bytes[start..start + 4] == b"xmp:" {
+                // Skip closing tags: </xmp:...
+                if pos < bytes.len() && bytes[pos] == b'<' && start < bytes.len() && bytes[start] == b'/' {
+                    pos += 1;
+                    continue;
+                }
+                // Extract property name (xmp:PropName)
+                let name_end = xmp[start..]
+                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-' && c != ':')
+                    .map(|i| start + i)
+                    .unwrap_or(xmp.len());
+                let prop_name = &xmp[start..name_end];
+
+                // Skip xmlns: and closing-tag markers
+                if prop_name == "xmp:" || prop_name.contains("xmlns") {
+                    pos = name_end;
+                    continue;
+                }
+
+                if prop_name.starts_with("xmp:")
+                    && prop_name.len() > 4
+                    && !reported.contains(prop_name)
+                    && predefined_prop_kind(prop_name).is_none()
+                {
+                    error(
+                        report,
+                        rule,
+                        format!(
+                            "XMP property '{}' is not defined in the predefined xmp: schema",
+                            prop_name
+                        ),
+                    );
+                    reported.insert(prop_name.to_string());
+                }
+                pos = name_end;
+                continue;
+            }
+        }
+        pos += 1;
     }
 }
 
@@ -2093,9 +2168,9 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
                     }
                     PropValueKind::Struct => {
                         // Struct types must be serialised as an RDF resource (with sub-elements),
-                        // not as a plain text value.  A valid struct uses either
-                        // rdf:parseType="Resource" on the property element or contains child
-                        // namespace-prefixed elements.
+                        // not as a plain text value or wrapped in an rdf:Seq/Bag/Alt container.
+                        // A valid struct uses rdf:parseType="Resource" or contains child
+                        // namespace-prefixed elements. (#FN-6.7.9-t09/t16/t17)
                         let trimmed = body.trim();
                         let is_plain_text = !trimmed.is_empty()
                             && !trimmed.starts_with('<')
@@ -2103,6 +2178,11 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
                         if is_plain_text {
                             Some(format!(
                                 "XMP property '{}' is a structure type but contains plain text value",
+                                tag_name
+                            ))
+                        } else if has_container {
+                            Some(format!(
+                                "XMP property '{}' is a structure type but is wrapped in an rdf container",
                                 tag_name
                             ))
                         } else {
