@@ -3819,7 +3819,7 @@ pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
         if is_truetype {
             let desc = font_dict.get::<Dict<'_>>(keys::FONT_DESC);
             let flags = desc.as_ref().and_then(|d| d.get::<i32>(keys::FLAGS));
-            let symbolic = flags.map_or(false, |f| f & 0x04 != 0);
+            let symbolic = flags.is_some_and(|f| f & 0x04 != 0);
             if !symbolic {
                 // Check if Encoding is a valid standard Name
                 if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
@@ -6134,15 +6134,20 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
             }
             check_fontfile_subtype_match(&desc, font_name, page_idx, report);
             if is_subset_font(font_name) {
-                // §6.3.5 t2: Type1 font subsets must have /CharSet
+                // §6.3.5 t2: Type1 font subsets must have a non-empty /CharSet
                 let is_type1 = subtype_bytes == Some(b"Type1");
-                if is_type1 && desc.get::<Object<'_>>(keys::CHAR_SET).is_none() {
-                    error_at(
-                        report,
-                        "6.3.5",
-                        format!("Type1 font subset {font_name} missing /CharSet in descriptor"),
-                        format!("page {}", page_idx + 1),
-                    );
+                if is_type1 {
+                    let charset_ok = desc
+                        .get::<pdf_syntax::object::String>(keys::CHAR_SET)
+                        .is_some_and(|s| !s.as_bytes().is_empty());
+                    if !charset_ok {
+                        error_at(
+                            report,
+                            "6.3.5",
+                            format!("Type1 font subset {font_name} missing or empty /CharSet in descriptor"),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
                 }
             }
         }
@@ -6353,9 +6358,10 @@ pub fn check_tounicode_cmap(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
             .as_ref()
             .is_some_and(|s| s.as_ref() == b"Type1" || s.as_ref() == b"MMType1");
 
-        // For PDF/A-2/3/4, §6.2.11.7.2 applies to ALL Type1 fonts regardless of
-        // symbolic flag. For non-Type1 fonts (and PDF/A-1), skip symbolic fonts.
-        if !is_type1 || part < 2 {
+        // Symbolic font exemption: only for non-Type1 fonts. Type1 fonts
+        // (including symbolic subsets) need ToUnicode in all PDF/A parts.
+        // veraPDF §6.3.8 (PDF/A-1) and §6.2.11.7.2 (PDF/A-2+) enforce this.
+        if !is_type1 {
             if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
                 if let Some(flags) = desc.get::<i32>(keys::FLAGS) {
                     if flags & 0x04 != 0 {
@@ -7527,11 +7533,13 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
 
-            // Widget/Btn: /AP /N must be a subdictionary, not a stream (§6.5.3 test 5)
+            // §6.5.3 / ISO 19005-1 Cor.2:2011: Widget+Btn → /AP/N must be a subdictionary;
+            // all other annotations → /AP/N must be a stream. Uses Object enum to correctly
+            // distinguish stream from dict regardless of whether N is inline or indirect. (#483)
             let is_widget = annot
                 .get::<Name>(keys::SUBTYPE)
                 .is_some_and(|s| s.as_ref() == b"Widget");
-            // FT might be in the annotation or inherited from /Parent field
+            // FT may be in the annotation itself or inherited from /Parent field dict.
             let is_btn = annot
                 .get::<Name>(keys::FT)
                 .is_some_and(|s| s.as_ref() == b"Btn")
@@ -7539,32 +7547,34 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
                     .get::<Dict<'_>>(keys::PARENT)
                     .and_then(|p| p.get::<Name>(keys::FT))
                     .is_some_and(|s| s.as_ref() == b"Btn");
-            // PDF spec Table 227: Ff bit 17 (value 0x10000) = Pushbutton.
-            // Push buttons use /AP /N as a single stream; radio buttons and
-            // check boxes use /AP /N as a sub-dict with state names as keys.
-            // Flagging push buttons as violations causes false positives. Fixes #454.
-            let ff_val = annot
-                .get::<i32>(keys::FF)
-                .or_else(|| {
-                    annot
-                        .get::<Dict<'_>>(keys::PARENT)
-                        .and_then(|p| p.get::<i32>(keys::FF))
-                })
-                .unwrap_or(0);
-            let is_pushbutton = ff_val & (1 << 16) != 0;
-            if is_widget && is_btn && !is_pushbutton {
-                if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
-                    // /N should be a dict (with state names as keys → streams)
-                    // NOT a single stream
-                    if ap.get::<Stream<'_>>(keys::N).is_some()
-                        && ap.get::<Dict<'_>>(keys::N).is_none()
-                    {
-                        error_at(
-                            report,
-                            "6.5.3",
-                            "Widget/Btn annotation /AP /N must be a subdictionary, not a stream",
-                            format!("page {}", page_idx + 1),
-                        );
+            if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+                if let Some(n_obj) = ap.get::<Object<'_>>(keys::N) {
+                    let n_is_stream = matches!(n_obj, Object::Stream(_));
+                    let n_is_dict = matches!(n_obj, Object::Dict(_));
+                    if is_widget && is_btn {
+                        // All Btn widgets (including pushbuttons): /AP/N must be a subdictionary.
+                        // ISO 19005-1 Cor.2:2011 §6.5.3. Fixes #483.
+                        if n_is_stream {
+                            error_at(
+                                report,
+                                "6.5.3",
+                                "Widget/Btn annotation /AP /N must be a subdictionary, not a stream",
+                                format!("page {}", page_idx + 1),
+                            );
+                        }
+                    } else {
+                        // Non-Btn annotations: /AP/N must be a stream, not a subdictionary.
+                        // ISO 19005-1 Cor.2:2011 §6.5.3. Fixes #483.
+                        if n_is_dict {
+                            error_at(
+                                report,
+                                "6.5.3",
+                                format!(
+                                    "{subtype_name} annotation /AP /N must be a stream, not a subdictionary"
+                                ),
+                                format!("page {}", page_idx + 1),
+                            );
+                        }
                     }
                 }
             }
