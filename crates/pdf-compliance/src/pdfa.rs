@@ -1861,8 +1861,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
     for issue in &mut report.issues {
         let new_rule = match (part, issue.rule.as_str()) {
             // Device color space restrictions
-            // veraPDF reports §6.2.4.3 for ALL PDF/A parts — no remap needed.
-            // (Previously (1, "6.2.4.3") => "6.2.3.3" was wrong and caused false negatives.)
+            // veraPDF reports §6.2.4.3 for PDF/A-2/3/4; for PDF/A-1 it uses §6.2.3.3
+            // (ISO 19005-1 §6.2.3.3 covers all device-dependent CS, not split like -2/3).
+            // Remap is below near other PDF/A-1 mappings.
 
             // TR/TR2 transfer function restrictions
             // PDF/A-1: §6.2.8, PDF/A-2/3: §6.2.10.5, PDF/A-4: §6.2.5
@@ -2093,10 +2094,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-2/3: §6.2.8. (#483)
             (2..=3, "6.2.8.1") => Some("6.2.8"),
 
-            // Device color space vs OutputIntent (check_color_in_content emits "6.2.3.3").
-            // PDF/A-1: veraPDF reports §6.2.2 for all device-CS vs OutputIntent violations.
-            // PDF/A-2/3/4: §6.2.3.3 is already the correct clause. (#483)
-            (1, "6.2.3.3") => Some("6.2.2"),
+            // Device color space vs OutputIntent: §6.2.3.3 is correct for ALL PDF/A parts.
+            // The isartor test suite (6-2-3-3-t03) confirms veraPDF emits "6.2.3.3" for
+            // PDF/A-1 DeviceCMYK inline image violations — NOT "6.2.2". No remap needed.
 
             // Symbolic TrueType /Encoding for PDF/A-4: §6.2.10.6. (#483)
             (4, "6.3.7-se") => Some("6.2.10.6"),
@@ -2125,9 +2125,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.2.11.7.2") => Some("6.2.10.8"),
 
             // Device colour without DefaultRGB/DefaultCMYK/DefaultGray or OutputIntent.
-            // PDF/A-1: veraPDF reports all device-colour violations under §6.2.2.
-            // PDF/A-2/3/4: §6.2.4.3 is already the correct clause. (#483)
-            (1, "6.2.4.3") => Some("6.2.2"),
+            // PDF/A-1: veraPDF reports all device-colour violations under §6.2.3.3
+            // (ISO 19005-1 §6.2.3.3 covers all device-dependent CS restrictions).
+            // PDF/A-2/3/4: §6.2.4.3 is already the correct clause.
+            // Fixes 6 FNs from round16 where isartor t03 showed veraPDF emits "6.2.3.3".
+            (1, "6.2.4.3") => Some("6.2.3.3"),
 
             // XMP property type/value violations.
             // check.rs emits "6.7.9.3" (wrong scalar container) and xmp.rs emits
