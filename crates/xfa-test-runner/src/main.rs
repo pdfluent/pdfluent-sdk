@@ -317,6 +317,25 @@ enum Command {
         run_id: Option<String>,
     },
 
+    /// Render one page of a PDF to a PNG file (for render comparison scripts)
+    RenderPage {
+        /// Input PDF path
+        #[arg(value_name = "PDF")]
+        pdf: PathBuf,
+
+        /// Page number to render (1-based)
+        #[arg(long, default_value_t = 1)]
+        page: u32,
+
+        /// Output PNG path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Resolution in DPI
+        #[arg(long, default_value_t = 150.0_f64)]
+        dpi: f64,
+    },
+
     /// Check for regression between two runs (exit code 1 = regression)
     CheckRegression {
         /// SQLite database path
@@ -872,6 +891,53 @@ fn main() {
             let summary = database.summary(&run_id);
             eprintln!("Run: {run_id}");
             eprintln!("{summary}");
+        }
+
+        Command::RenderPage { pdf, page, output, dpi } => {
+            let data = match std::fs::read(&pdf) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("render-page: cannot read {}: {e}", pdf.display());
+                    std::process::exit(1);
+                }
+            };
+            let doc = match pdf_engine::PdfDocument::open(data) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("render-page: cannot parse {}: {e:?}", pdf.display());
+                    std::process::exit(1);
+                }
+            };
+            let page_idx = page.saturating_sub(1) as usize; // convert 1-based to 0-based
+            if page_idx >= doc.page_count() {
+                eprintln!(
+                    "render-page: page {page} out of range (document has {} pages)",
+                    doc.page_count()
+                );
+                std::process::exit(1);
+            }
+            let opts = pdf_engine::RenderOptions {
+                dpi,
+                ..Default::default()
+            };
+            let rendered = match doc.render_page(page_idx, &opts) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("render-page: render failed for page {page}: {e:?}");
+                    std::process::exit(1);
+                }
+            };
+            let img = image::RgbaImage::from_raw(rendered.width, rendered.height, rendered.pixels)
+                .expect("invalid pixel dimensions");
+            if let Some(parent) = output.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent).ok();
+                }
+            }
+            if let Err(e) = img.save(&output) {
+                eprintln!("render-page: cannot save {}: {e}", output.display());
+                std::process::exit(1);
+            }
         }
 
         Command::CheckRegression { db, run_a, run_b } => {
