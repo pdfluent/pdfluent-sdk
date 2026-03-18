@@ -1356,6 +1356,13 @@ enum PropValueKind {
     /// Scalar Integer — like Scalar but additionally the value must not
     /// contain a decimal point or exponent (veraPDF 6.6.2.3.1 test=2).
     Integer,
+    /// Scalar Date — like Scalar (no rdf container) and additionally the value
+    /// must be a valid ISO 8601 date string. Fixes §6.6.2.3.1 t01: properties
+    /// like xmpDM:shotDate with values like "Date: 2016-..." are invalid. (#FN-6.6.2.3.1-t01)
+    Date,
+    /// Scalar Boolean — must be exactly "true" or "false" (XMP spec: case-sensitive).
+    /// "TRUE", "False", "1" etc. are invalid XMP Boolean values. (#FN-6.6.2.3.1-t08)
+    Boolean,
     /// Structure — must use rdf:parseType="Resource" or contain child elements.
     /// Plain text is invalid for struct types (e.g. xmpDM:startTimecode = Timecode struct).
     Struct,
@@ -1390,19 +1397,19 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         // ── xmp: (XMP Basic) ─────────────────────────────────────────────────
         "xmp:Advisory" => Some(Bag),
         "xmp:BaseURL" => Some(Scalar),
-        "xmp:CreateDate" => Some(Scalar),
+        "xmp:CreateDate" => Some(Date),
         "xmp:CreatorTool" => Some(Scalar),
         "xmp:Identifier" => Some(Bag),
         "xmp:Label" => Some(Scalar),
-        "xmp:MetadataDate" => Some(Scalar),
-        "xmp:ModifyDate" => Some(Scalar),
+        "xmp:MetadataDate" => Some(Date),
+        "xmp:ModifyDate" => Some(Date),
         "xmp:Nickname" => Some(Scalar),
         "xmp:Rating" => Some(Scalar),
         "xmp:Thumbnails" => Some(Bag),
 
         // ── xmpRights: ───────────────────────────────────────────────────────
         "xmpRights:Certificate" => Some(Scalar),
-        "xmpRights:Marked" => Some(Scalar),
+        "xmpRights:Marked" => Some(Boolean),
         "xmpRights:Owner" => Some(Bag),
         "xmpRights:UsageTerms" => Some(LangAlt),
         "xmpRights:WebStatement" => Some(Scalar),
@@ -1424,6 +1431,9 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpMM:RenditionParams" => Some(Scalar),
         "xmpMM:VersionID" => Some(Scalar),
         "xmpMM:Versions" => Some(Seq),
+        // LastURL is deprecated but veraPDF still validates it as Scalar.
+        // Using it wrapped in rdf:Seq is a §6.6.2.3.1 violation. (#FN-6.6.2.3.1-t09)
+        "xmpMM:LastURL" => Some(Scalar),
 
         // ── xmpTPg: (Paged-text) ─────────────────────────────────────────────
         "xmpTPg:Colorants" => Some(Seq),
@@ -1464,7 +1474,8 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:logComment" => Some(Scalar),
         "xmpDM:loop" => Some(Scalar),
         "xmpDM:markers" => Some(Seq),
-        "xmpDM:metadataModDate" => Some(Scalar),
+        "xmpDM:audioModDate" => Some(Date),     // Date type; missing from table → FN t02
+        "xmpDM:metadataModDate" => Some(Date),  // Date type, was Scalar
         "xmpDM:numberOfBeats" => Some(Scalar),
         "xmpDM:outCue" => Some(Struct),
         "xmpDM:partOfCompilation" => Some(Scalar),
@@ -1474,12 +1485,12 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:pullDown" => Some(Scalar),
         "xmpDM:relativePeakAudio" => Some(Scalar),
         "xmpDM:relativeTapeOffset" => Some(Scalar),
-        "xmpDM:releaseDate" => Some(Scalar),
+        "xmpDM:releaseDate" => Some(Date),      // Date type, was Scalar
         "xmpDM:resampleParams" => Some(Struct), // ResampleParams structure (#477)
         "xmpDM:resizeType" => Some(Scalar),
         "xmpDM:scaleType" => Some(Scalar),
         "xmpDM:scene" => Some(Scalar),
-        "xmpDM:shotDate" => Some(Scalar),
+        "xmpDM:shotDate" => Some(Date),
         "xmpDM:shotDay" => Some(Scalar),
         "xmpDM:shotLocation" => Some(Scalar),
         "xmpDM:shotName" => Some(Scalar),
@@ -1503,7 +1514,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:videoFieldOrder" => Some(Scalar),
         "xmpDM:videoFrameRate" => Some(Scalar),
         "xmpDM:videoFrameSize" => Some(Scalar),
-        "xmpDM:videoModDate" => Some(Scalar),
+        "xmpDM:videoModDate" => Some(Date),     // Date type, was Scalar
         "xmpDM:videoPixelAspectRatio" => Some(Scalar),
         "xmpDM:videoPixelDepth" => Some(Scalar),
 
@@ -1985,6 +1996,56 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
                             ))
                         } else {
                             None
+                        }
+                    }
+                    PropValueKind::Date => {
+                        // Date properties must not be wrapped in an rdf container and
+                        // the plain-text value must be a valid ISO 8601 date string.
+                        // Catches values like "Date: 2016-02-01T13:19:21+01:00" that have
+                        // an invalid prefix. (#FN-6.6.2.3.1-t01)
+                        if has_container {
+                            Some(format!(
+                                "XMP property '{}' is a scalar date type but is wrapped in an rdf container",
+                                tag_name
+                            ))
+                        } else {
+                            let val = body.trim();
+                            if !val.is_empty() && !val.starts_with('<') && !is_valid_iso8601(val) {
+                                Some(format!(
+                                    "XMP property '{}' value '{}' is not valid ISO 8601 format",
+                                    tag_name,
+                                    &val[..val.len().min(60)]
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                    PropValueKind::Boolean => {
+                        // Boolean properties must not be wrapped in an rdf container and
+                        // the value must be exactly "true" or "false" (XMP spec §8.2.1,
+                        // case-sensitive). "TRUE", "False", "1", "0" etc. are invalid.
+                        // (#FN-6.6.2.3.1-t08)
+                        if has_container {
+                            Some(format!(
+                                "XMP property '{}' is a boolean type but is wrapped in an rdf container",
+                                tag_name
+                            ))
+                        } else {
+                            let val = body.trim();
+                            if !val.is_empty()
+                                && !val.starts_with('<')
+                                && val != "true"
+                                && val != "false"
+                            {
+                                Some(format!(
+                                    "XMP property '{}' has invalid Boolean value '{}' (must be 'true' or 'false')",
+                                    tag_name,
+                                    &val[..val.len().min(40)]
+                                ))
+                            } else {
+                                None
+                            }
                         }
                     }
                     PropValueKind::Struct => {
