@@ -2107,6 +2107,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // only the forbidden-values case from check_tounicode_values maps here.
             (4, "6.2.11.7.2") => Some("6.2.10.8"),
 
+            // Device colour without DefaultRGB/DefaultCMYK/DefaultGray or OutputIntent.
+            // PDF/A-1: veraPDF reports all device-colour violations under §6.2.2.
+            // PDF/A-2/3/4: §6.2.4.3 is already the correct clause. (#483)
+            (1, "6.2.4.3") => Some("6.2.2"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
