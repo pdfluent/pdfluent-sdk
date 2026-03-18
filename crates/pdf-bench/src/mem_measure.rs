@@ -1,6 +1,6 @@
 /// Memory measurement helper — macOS only (uses task_info via sysctl workaround).
 /// Falls back to getrusage ru_maxrss on other platforms.
-
+///
 /// Returns current physical memory footprint in bytes for this process.
 #[cfg(target_os = "macos")]
 pub fn physical_footprint() -> u64 {
