@@ -164,18 +164,22 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_xmp_rdf_structure(xmp_text, level, report);
 
     check_xmp_packet_header(xmp_text, report);
-    // §6.7.2.1 — forbidden 'bytes' attribute in the <?xpacket?> PI. (#467)
-    // The bytes= attribute is not permitted in any PDF/A version. veraPDF reports
-    // this as §6.7.2.1 regardless of the PDF/A part (confirmed by veraPDF test suite
-    // 6-7-2-1-t01-fail-b.pdf which is PDF/A-4 but veraPDF emits §6.7.2.1).
+    // §6.6.2.1 (PDF/A-2/3), §6.7.2.1 (PDF/A-4), §6.7.2 (PDF/A-1):
+    // The 'bytes' attribute is forbidden in the xpacket PI for all PDF/A parts.
+    // veraPDF uses the part-specific clause. Fixes #FN-6.6.2.1.
     if let Some(xp_start) = xmp_text.find("<?xpacket") {
         let xp_end = xmp_text[xp_start..].find("?>").unwrap_or(0);
         let xp_header = &xmp_text[xp_start..xp_start + xp_end + 2];
         if xp_header.contains("bytes=") {
+            let bytes_rule = match level.part() {
+                1 => "6.7.2",
+                4 => "6.7.2.1",
+                _ => "6.6.2.1", // PDF/A-2/3
+            };
             error(
                 report,
-                "6.7.2.1",
-                "XMP packet header contains forbidden 'bytes' attribute (§6.7.2.1)",
+                bytes_rule,
+                "XMP packet header contains forbidden 'bytes' attribute",
             );
         }
         // §6.6.2.1 (PDF/A-2/3), §6.7.2.1 (PDF/A-4), §6.7.2 (PDF/A-1):
