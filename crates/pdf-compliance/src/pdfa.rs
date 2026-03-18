@@ -1468,6 +1468,27 @@ fn check_actions_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
         _ => "6.5.1",
     };
     check::check_actions_deep(pdf, level.part(), rule, report);
+    // Supplementary: /AA on non-widget annotations is forbidden in PDF/A.
+    // check.rs only checks action TYPES within /AA, not the mere presence.
+    // veraPDF §6.6.3 (PDF/A-4) / §6.5.2 (PDF/A-2/3) flags /AA on non-widget annots.
+    // Emit "6.1.6.1" which gets remapped per part by remap_clause_numbers.
+    for page in pdf.pages().iter() {
+        if let Some(annots) = page.raw().get::<pdf_syntax::object::Array<'_>>(keys::ANNOTS) {
+            for annot in annots.iter::<Dict<'_>>() {
+                let is_widget = annot
+                    .get::<Name>(keys::SUBTYPE)
+                    .is_some_and(|s| s.as_ref() == b"Widget");
+                if !is_widget && annot.get::<Dict<'_>>(keys::AA).is_some() {
+                    check::error(
+                        report,
+                        "6.1.6.1",
+                        "Non-widget annotation has /AA entry (forbidden in PDF/A)",
+                    );
+                    return; // Report once
+                }
+            }
+        }
+    }
 }
 
 /// §6.1.10 — Form XObject BBox validation.
