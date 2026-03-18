@@ -2253,6 +2253,13 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Our check_page_content_streams emits "6.2.7.1"; remap for PDF/A-1.
             (1, "6.2.7.1") => Some("6.2.10"),
 
+            // Stream keyword / object syntax spacing.
+            // PDF/A-1 already handled above: (1, "6.1.7.1") => Some("6.1.7").
+            // PDF/A-2/3: check_object_syntax_spacing emits "6.1.7.1" but veraPDF uses
+            // the parent clause "6.1.7" for ALL stream-structure violations in parts 1-3.
+            // Remap to parent so sub-rule matching succeeds. (#496)
+            (2..=3, "6.1.7.1") => Some("6.1.7"),
+
             // TrueType encoding requirements.
             // PDF/A-1: check.rs emits "6.2.11.6" (PDF/A-2/3 clause numbering); remap to
             // ISO 19005-1 §6.3.7 which veraPDF uses for TrueType encoding violations. (#496)
