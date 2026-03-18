@@ -1363,6 +1363,11 @@ enum PropValueKind {
     /// Scalar Boolean — must be exactly "true" or "false" (XMP spec: case-sensitive).
     /// "TRUE", "False", "1" etc. are invalid XMP Boolean values. (#FN-6.6.2.3.1-t08)
     Boolean,
+    /// Scalar Capitalized Boolean — must be exactly "True" or "False".
+    /// Used by the Adobe CRS (Camera Raw Settings) schema, which follows Adobe's own
+    /// convention rather than the XMP Boolean type. "true"/"false" (lowercase) are invalid.
+    /// (#FN-6.6.2.3.1-t04)
+    CapBoolean,
     /// Structure — must use rdf:parseType="Resource" or contain child elements.
     /// Plain text is invalid for struct types (e.g. xmpDM:startTimecode = Timecode struct).
     Struct,
@@ -1415,7 +1420,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpRights:WebStatement" => Some(Scalar),
 
         // ── xmpMM: (Media Management) ────────────────────────────────────────
-        "xmpMM:DerivedFrom" => Some(Scalar),
+        "xmpMM:DerivedFrom" => Some(Struct), // ResourceRef struct type, not scalar. (#FN-6.6.2.3.1-t09)
         "xmpMM:DocumentID" => Some(Scalar),
         "xmpMM:History" => Some(Seq),
         "xmpMM:Ingredients" => Some(Bag),
@@ -1438,10 +1443,13 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         // ── xmpTPg: (Paged-text) ─────────────────────────────────────────────
         "xmpTPg:Colorants" => Some(Seq),
         "xmpTPg:Fonts" => Some(Bag),
-        "xmpTPg:MaxPageSize" => Some(Scalar),
+        "xmpTPg:MaxPageSize" => Some(Struct), // Dimensions struct, not scalar. (#FN-6.6.2.3.1-t11)
         "xmpTPg:NPages" => Some(Integer),
         "xmpTPg:PlateNames" => Some(Seq),
         "xmpTPg:SwatchGroups" => Some(Seq),
+
+        // ── xmpBJ: (Basic Job Ticket) ────────────────────────────────────────
+        "xmpBJ:JobRef" => Some(Bag), // Bag of Job structs. (#FN-6.6.2.3.1-t10)
 
         // ── xmpDM: (Dynamic Media) ───────────────────────────────────────────
         "xmpDM:artist" => Some(Scalar),
@@ -1607,7 +1615,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "exif:CustomRendered" => Some(Integer),
         "exif:DateTimeDigitized" => Some(Scalar),
         "exif:DateTimeOriginal" => Some(Scalar),
-        "exif:DeviceSettingDescription" => Some(Scalar),
+        "exif:DeviceSettingDescription" => Some(Struct), // DeviceSettings struct, not scalar. (#FN-6.6.2.3.1-t17)
         "exif:DigitalZoomRatio" => Some(Scalar),
         "exif:ExifVersion" => Some(Scalar),
         "exif:ExposureBiasValue" => Some(Scalar),
@@ -1678,11 +1686,14 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "exif:UserComment" => Some(LangAlt),
         "exif:WhiteBalance" => Some(Integer),
 
+        // ── aux: (Auxiliary EXIF) ────────────────────────────────────────────
+        "aux:Lens" => Some(Scalar), // Text type. (#FN-6.6.2.3.1-t19)
+
         // ── crs: (Camera Raw Settings) ───────────────────────────────────────
-        "crs:AutoBrightness" => Some(Scalar),
-        "crs:AutoContrast" => Some(Scalar),
-        "crs:AutoExposure" => Some(Scalar),
-        "crs:AutoShadows" => Some(Scalar),
+        "crs:AutoBrightness" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
+        "crs:AutoContrast" => Some(CapBoolean),   // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
+        "crs:AutoExposure" => Some(CapBoolean),   // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
+        "crs:AutoShadows" => Some(CapBoolean),    // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
         "crs:BlueHue" => Some(Integer),
         "crs:BlueSaturation" => Some(Integer),
         "crs:Brightness" => Some(Integer),
@@ -1703,8 +1714,8 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "crs:Exposure" => Some(Real),
         "crs:GreenHue" => Some(Integer),
         "crs:GreenSaturation" => Some(Integer),
-        "crs:HasCrop" => Some(Scalar),
-        "crs:HasSettings" => Some(Scalar),
+        "crs:HasCrop" => Some(CapBoolean),     // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
+        "crs:HasSettings" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
         "crs:LuminanceSmoothing" => Some(Integer),
         "crs:RawFileName" => Some(Scalar),
         "crs:RedHue" => Some(Integer),
@@ -2040,6 +2051,32 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
                             {
                                 Some(format!(
                                     "XMP property '{}' has invalid Boolean value '{}' (must be 'true' or 'false')",
+                                    tag_name,
+                                    &val[..val.len().min(40)]
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                    PropValueKind::CapBoolean => {
+                        // Capitalized Boolean — Adobe CRS schema uses "True"/"False" (capital first
+                        // letter) rather than the XMP spec's "true"/"false". Lowercase values are
+                        // invalid for CRS boolean properties. (#FN-6.6.2.3.1-t04)
+                        if has_container {
+                            Some(format!(
+                                "XMP property '{}' is a boolean type but is wrapped in an rdf container",
+                                tag_name
+                            ))
+                        } else {
+                            let val = body.trim();
+                            if !val.is_empty()
+                                && !val.starts_with('<')
+                                && val != "True"
+                                && val != "False"
+                            {
+                                Some(format!(
+                                    "XMP property '{}' has invalid Boolean value '{}' (must be 'True' or 'False')",
                                     tag_name,
                                     &val[..val.len().min(40)]
                                 ))
