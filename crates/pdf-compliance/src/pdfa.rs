@@ -1783,9 +1783,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.5") => Some("6.2.9"),
 
             // Optional content restrictions
-            // PDF/A-1: OCProperties forbidden → §6.1.13 (in PDF/A-1 numbering)
-            //          check.rs emits "6.1.11", remap to "6.1.13" for PDF/A-1
-            (1, "6.1.11") => Some("6.1.13"),
+            // PDF/A-1: veraPDF uses §6.1.11 for OCProperties violations.
+            // check.rs emits "6.1.11" — no remap needed (matches veraPDF).
             // PDF/A-2/3 OC checks emit "6.6.4"; no remap needed (correct already)
 
             // Image XObject restrictions (OPI, Alternates, Interpolate)
@@ -1799,6 +1798,17 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Implementation limits
             // PDF/A-1: §6.1.12, PDF/A-2/3/4: §6.1.13
             (1, "6.1.13") => Some("6.1.12"),
+
+            // ── PDF/A-4 6.1.x clause renumbering ──
+            // ISO 19005-4 renumbered file structure sub-clauses:
+            //   PDF/A-2/3 §6.1.5 (hex/name) → PDF/A-4 §6.1.4 (implementation limits)
+            //   PDF/A-2/3 §6.1.6 (hex strings) → PDF/A-4 §6.1.5
+            //   PDF/A-2/3 §6.1.7 (streams) → PDF/A-4 §6.1.6
+            //   PDF/A-2/3 §6.1.8 (stream filters) → PDF/A-4 §6.1.6.2
+            //   PDF/A-2/3 §6.1.13 (impl limits) → PDF/A-4 §6.1.13 (same, no remap)
+            (4, "6.1.6") => Some("6.1.5"),       // hex strings
+            (4, "6.1.8") => Some("6.1.6.2"),     // stream filters (LZWDecode etc.)
+            (4, "6.1.10") => Some("6.1.6.2"),    // PDF/A-1 filter rule → PDF/A-4
 
             // Stream checks: Length, EOL, empty keys, external refs
             // PDF/A-1: §6.1.7, PDF/A-2/3: §6.1.7 (same), PDF/A-4: §6.1.6.1
@@ -1843,10 +1853,16 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // check_actions_deep hardcodes "6.1.6.1" for page-level /AA; veraPDF reports
             // "6.5.2" for this violation in PDF/A-2/3. Remap to match. Fixes #482.
             (2..=3, "6.1.6.1") => Some("6.5.2"),
+            // PDF/A-4: page/annotation /AA → §6.6.3 (ISO 19005-4 actions on non-widget).
+            // normalize_pdfa4_clause("6.6.3") = "6.8.3" — matches veraPDF's "6.6.3" normalized.
+            // Safe: stream keyword checks emit "6.1.7.1" (not "6.1.6.1") before remap.
+            (4, "6.1.6.1") => Some("6.6.3"),
 
             // Transparency (SMask) restrictions
             // PDF/A-1: §6.4, PDF/A-2/3/4: §6.2.10.7
             (1, "6.2.10.7") => Some("6.4"),
+            // PDF/A-1: transparency /Group checks also emit "6.2.10"; remap to §6.4
+            (1, "6.2.10") => Some("6.4"),
 
             // Alternate CS consistency (ICCBased)
             // PDF/A-1: §6.2.3.2, PDF/A-2/3/4: §6.2.4.2
@@ -1889,8 +1905,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.3.6 (ISO 19005-1 — veraPDF uses §6.3.6 for width consistency)
             // Previously wrongly remapped to §6.3.5; fixed in #467.
             (1, "6.3.5-fw") => Some("6.3.6"),
-            // PDF/A-2/3: §6.2.11.5
-            (2..=3, "6.3.5-fw") => Some("6.2.11.5"),
+            // PDF/A-2/3: §6.2.11.8 (glyph width consistency, not CIDSet). (#483)
+            (2..=3, "6.3.5-fw") => Some("6.2.11.8"),
             // PDF/A-4: §6.2.10.5
             (4, "6.3.5-fw") => Some("6.2.10.5"),
 
@@ -1936,6 +1952,38 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // OutputIntent DestOutputProfile required
             // veraPDF uses §6.2.3.2 for ALL PDF/A parts — no remap needed. Fixes #467.
             // (Removed wrong (1,"6.2.3.2")=>"6.6.2.3.2" mapping that hid FN.)
+
+            // Symbolic TrueType /Encoding must not be present (internal rule "6.3.7-se").
+            // PDF/A-1: §6.3.7; PDF/A-2/3: §6.2.11.6 (TrueType encoding). (#483)
+            (1, "6.3.7-se") => Some("6.3.7"),
+            (2..=3, "6.3.7-se") => Some("6.2.11.6"),
+
+            // CIDToGIDMap must be /Identity or a stream (internal rule "6.3.7").
+            // PDF/A-1: §6.3.3.2; PDF/A-2/3: §6.2.11.3.2.
+            // (PDF/A-4 already handled above as §6.2.10.3.2.) (#483)
+            (1, "6.3.7") => Some("6.3.3.2"),
+            (2..=3, "6.3.7") => Some("6.2.11.3.2"),
+
+            // CIDSystemInfo mismatch (check_cidsystem_info_consistency emits "6.2.10.3.1").
+            // PDF/A-2/3: §6.2.11.3.1. (#483)
+            (2..=3, "6.2.10.3.1") => Some("6.2.11.3.1"),
+
+            // Annotation appearance stream required.
+            // PDF/A-2/3: §6.3.3. (#483)
+            (2..=3, "6.5.3") => Some("6.3.3"),
+
+            // Undefined content-stream operators.
+            // PDF/A-2/3: veraPDF uses §6.2.10. (#483)
+            (2..=3, "6.2.7.1") => Some("6.2.10"),
+
+            // Image Alternates key prohibited.
+            // PDF/A-2/3: §6.2.7.1. (#483)
+            (2..=3, "6.2.8.2") => Some("6.2.7.1"),
+
+            // Image Interpolate=true prohibited.
+            // PDF/A-2/3: §6.2.8. (#483)
+            (2..=3, "6.2.8.1") => Some("6.2.8"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
