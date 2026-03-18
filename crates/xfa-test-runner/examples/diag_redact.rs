@@ -40,10 +40,7 @@ fn diag_mozilla_666767() {
                     let ctx: String = chars[ctx_start..ctx_end].iter().map(|c| c.ch).collect();
                     println!(
                         "  #{count} x={:.1} y={:.1} bbox={:.1?} ctx={:?}",
-                        chars[i].bbox[0],
-                        chars[i].bbox[1],
-                        bbox,
-                        ctx
+                        chars[i].bbox[0], chars[i].bbox[1], bbox, ctx
                     );
                     count += 1;
                 }
@@ -79,9 +76,7 @@ fn diag_mozilla_666767() {
                     let ctx: String = chars[ctx_start..ctx_end].iter().map(|c| c.ch).collect();
                     println!(
                         "  SURVIVING #{surviving} x={:.1} y={:.1} ctx={:?}",
-                        chars[i].bbox[0],
-                        chars[i].bbox[1],
-                        ctx
+                        chars[i].bbox[0], chars[i].bbox[1], ctx
                     );
                     for j in 0..7 {
                         println!(

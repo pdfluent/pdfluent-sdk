@@ -276,16 +276,12 @@ fn find_and_set_field(
         }
 
         if name_parts.len() == 1 {
-            // Terminal field — set value.
-            let obj = doc
-                .get_object_mut(field_id)
-                .map_err(|e| format!("get_mut: {e}"))?;
-            if let Object::Dictionary(d) = obj {
-                d.set(
-                    b"V".to_vec(),
-                    Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-                );
-            }
+            // Terminal field — set /V on this object and propagate to all unnamed
+            // descendants (no /T key).  Unmerged fields store the displayable value
+            // on the widget child, not the parent field node; unnamed fields store it
+            // on a child without its own partial name.  Writing only to the matched
+            // parent node leaves the child /V stale on readback.  Fixes #478.
+            set_value_deep(doc, field_id, value)?;
             return Ok(());
         }
 
@@ -297,4 +293,60 @@ fn find_and_set_field(
     }
 
     Err(format!("field '{}' not found", name_parts.join(".")))
+}
+
+/// Write /V to `field_id` and recursively to all unnamed descendants (no /T key).
+/// Unmerged widgets and unnamed intermediate nodes store the displayable /V on a
+/// child that has no partial name, so we must propagate the value down the subtree.
+/// Fixes #478.
+fn set_value_deep(
+    doc: &mut lopdf::Document,
+    field_id: lopdf::ObjectId,
+    value: &str,
+) -> Result<(), String> {
+    use lopdf::Object;
+
+    // Write /V on this node.
+    {
+        let obj = doc
+            .get_object_mut(field_id)
+            .map_err(|e| format!("get_mut {field_id:?}: {e}"))?;
+        if let Object::Dictionary(d) = obj {
+            d.set(
+                b"V".to_vec(),
+                Object::String(value.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+            );
+        }
+    }
+
+    // Collect kid references from a fresh immutable borrow.
+    let kids: Vec<lopdf::ObjectId> = match doc.get_object(field_id) {
+        Ok(Object::Dictionary(d)) => match d.get(b"Kids") {
+            Ok(Object::Array(arr)) => arr
+                .iter()
+                .filter_map(|o| match o {
+                    Object::Reference(id) => Some(*id),
+                    _ => None,
+                })
+                .collect(),
+            _ => vec![],
+        },
+        _ => vec![],
+    };
+
+    // Recurse into unnamed kids only (kids with /T are named fields — they have
+    // their own identity in the form hierarchy and must not be overwritten here).
+    for kid_id in kids {
+        let has_name: bool = match doc.get_object(kid_id) {
+            Ok(Object::Dictionary(d)) => {
+                matches!(d.get(b"T"), Ok(Object::String(s, _)) if !s.is_empty())
+            }
+            _ => false,
+        };
+        if !has_name {
+            set_value_deep(doc, kid_id, value)?;
+        }
+    }
+
+    Ok(())
 }
