@@ -2101,6 +2101,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // veraPDF uses "6.9" for PDF/A-2/3 OC violations. Fixes #FN-6.9.
             (2..=3, "6.6.4") => Some("6.9"),
 
+            // Forbidden ToUnicode values (U+0000, U+FEFF, U+FFFE) use "6.2.11.7.2".
+            // PDF/A-4 §6.2.10.8 is the equivalent requirement. (#483)
+            // Note: PDF/A-4 missing-ToUnicode uses "6.2.10.7" (emitted directly) —
+            // only the forbidden-values case from check_tounicode_values maps here.
+            (4, "6.2.11.7.2") => Some("6.2.10.8"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
