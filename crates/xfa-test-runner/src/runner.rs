@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
@@ -12,7 +12,173 @@ use walkdir::WalkDir;
 use crate::classifier::{classify_error, ErrorCategory};
 use crate::config::Config;
 use crate::db::{Database, MemoryLogRow, RunSummary, TestResultRow};
-use crate::tests::{PdfTest, TestStatus};
+use crate::tests::{PdfTest, TestResult, TestStatus};
+
+// ─── single-pdf mode ────────────────────────────────────────────────────────
+
+/// One test result for single-pdf JSON output.
+#[derive(serde::Serialize)]
+pub struct SinglePdfResult {
+    pub test_name: String,
+    pub status: String,
+    pub error_message: Option<String>,
+    pub duration_ms: u64,
+    pub metadata_json: Option<String>,
+}
+
+/// Top-level single-pdf JSON output written to stdout.
+#[derive(serde::Serialize)]
+pub struct SinglePdfOutput {
+    pub pdf_path: String,
+    pub pdf_size: u64,
+    pub results: Vec<SinglePdfResult>,
+}
+
+/// Per-test timeout that mirrors `Config::timeout_for_test` without needing a Config.
+fn single_pdf_timeout(test_name: &str, base_secs: u64) -> Duration {
+    let secs = match test_name {
+        "parse" | "metadata" | "geometry" => (base_secs / 5).max(2),
+        "bookmarks" | "annotations" | "form_fields" | "signatures" | "sign_verify" => {
+            (base_secs / 3).max(5)
+        }
+        "ocr" => base_secs * 2,
+        "pdfa_convert" => base_secs * 3,
+        _ => base_secs,
+    };
+    Duration::from_secs(secs)
+}
+
+/// Run a single test in a dedicated thread with panic catching and timeout.
+/// No backpressure — for single-pdf mode only (one test at a time).
+fn run_test_with_timeout(
+    test: Arc<dyn PdfTest>,
+    pdf_data: Arc<Vec<u8>>,
+    path: PathBuf,
+    timeout: Duration,
+) -> TestResult {
+    let progress = test.progress_tracker();
+    let test_name = test.name().to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(move || {
+            let start = Instant::now();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                test.run(&pdf_data, &path)
+            }));
+            let elapsed = start.elapsed();
+            let test_result = match result {
+                Ok(r) => r,
+                Err(panic_info) => {
+                    let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unknown panic".to_string()
+                    };
+                    TestResult {
+                        status: TestStatus::Crash,
+                        error_message: Some(msg),
+                        duration_ms: elapsed.as_millis() as u64,
+                        oracle_score: None,
+                        metadata: Default::default(),
+                    }
+                }
+            };
+            let _ = tx.send(test_result);
+        })
+        .expect("failed to spawn test thread");
+
+    match rx.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(_) => {
+            let last_check = progress
+                .as_ref()
+                .and_then(|p| p.lock().ok())
+                .map(|s| s.clone())
+                .filter(|s| !s.is_empty());
+            let msg = match &last_check {
+                Some(check) => format!(
+                    "Test '{test_name}' exceeded timeout of {timeout:?} (last check: {check})"
+                ),
+                None => format!("Test '{test_name}' exceeded timeout of {timeout:?}"),
+            };
+            let mut metadata = HashMap::new();
+            if let Some(check) = last_check {
+                metadata.insert("last_check".to_string(), check);
+            }
+            TestResult {
+                status: TestStatus::Timeout,
+                error_message: Some(msg),
+                duration_ms: timeout.as_millis() as u64,
+                oracle_score: None,
+                metadata,
+            }
+        }
+    }
+}
+
+/// Process a single PDF, run all tests, and return structured results.
+///
+/// Called by `Command::SinglePdf`. No SQLite writes — the orchestrator handles
+/// persistence. Output is serialized as JSON to stdout by the caller.
+///
+/// Returns `Err` only for unrecoverable pre-flight errors (I/O, non-PDF).
+/// Test-level failures are reported in `SinglePdfOutput.results` with status "fail".
+pub fn run_single_pdf(
+    tests: Vec<Box<dyn PdfTest>>,
+    pdf_path: &Path,
+    timeout_secs: u64,
+) -> Result<SinglePdfOutput, String> {
+    let path_str = pdf_path.to_string_lossy().to_string();
+
+    let pdf_data = std::fs::read(pdf_path).map_err(|e| format!("IO error: {e}"))?;
+    let pdf_size = pdf_data.len() as u64;
+
+    // Quick header check so the orchestrator gets a clean error code 2.
+    let header_search_len = 4096.min(pdf_data.len());
+    let has_pdf_header = pdf_data
+        .get(..header_search_len)
+        .is_some_and(|w| w.windows(4).any(|b| b == b"%PDF"));
+    if !has_pdf_header {
+        return Err("not a PDF file (missing %PDF header)".to_string());
+    }
+
+    // Share the PDF bytes across test threads via Arc to avoid N copies.
+    let pdf_data = Arc::new(pdf_data);
+    let tests: Vec<Arc<dyn PdfTest>> = tests.into_iter().map(Arc::from).collect();
+    let mut results = Vec::new();
+
+    for test in &tests {
+        let timeout = single_pdf_timeout(test.name(), timeout_secs);
+        let result = run_test_with_timeout(
+            Arc::clone(test),
+            Arc::clone(&pdf_data),
+            pdf_path.to_path_buf(),
+            timeout,
+        );
+        let metadata_json = if result.metadata.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&result.metadata).ok()
+        };
+        results.push(SinglePdfResult {
+            test_name: test.name().to_string(),
+            status: result.status.as_str().to_string(),
+            error_message: result.error_message,
+            duration_ms: result.duration_ms,
+            metadata_json,
+        });
+    }
+
+    Ok(SinglePdfOutput {
+        pdf_path: path_str,
+        pdf_size,
+        results,
+    })
+}
 
 /// Maximum number of test threads actively being awaited by a rayon worker.
 /// In practice this is bounded by `workers` (≤ 14), so this is a safety ceiling.
