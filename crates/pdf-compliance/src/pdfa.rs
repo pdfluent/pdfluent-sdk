@@ -2323,4 +2323,58 @@ mod tests {
           trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n109\n%%EOF"
             .to_vec()
     }
+
+    /// Verify that halftone "6.2.10" is NOT remapped to "6.4" for PDF/A-1.
+    /// Previously, the shared "6.2.10" tag caused halftone violations to be
+    /// remapped to §6.4 (transparency) instead of staying as §6.2.10.
+    /// Transparency page-group violations now use "6.2.10-tgroup" internally.
+    #[test]
+    fn halftone_rule_not_remapped_to_transparency_for_pdfa1() {
+        use crate::{ComplianceIssue, ComplianceReport, Severity};
+        let mut report = ComplianceReport {
+            pdfa_level: Some(PdfALevel::A1b),
+            ..Default::default()
+        };
+        // Halftone type violation (from check_halftone_in_extgstate)
+        report.issues.push(ComplianceIssue {
+            rule: "6.2.10".to_string(),
+            severity: Severity::Error,
+            message: "HalftoneType 3 not allowed".to_string(),
+            location: None,
+        });
+        // Transparency page-group violation (from check_transparency_vs_output_intent)
+        report.issues.push(ComplianceIssue {
+            rule: "6.2.10-tgroup".to_string(),
+            severity: Severity::Error,
+            message: "Transparency group without CS".to_string(),
+            location: None,
+        });
+        remap_clause_numbers(&mut report, PdfALevel::A1b);
+        let rules: Vec<&str> = report.issues.iter().map(|i| i.rule.as_str()).collect();
+        // Halftone violation must remain as "6.2.10" (veraPDF §6.2.10 for PDF/A-1)
+        assert!(rules.contains(&"6.2.10"), "halftone rule incorrectly remapped: {rules:?}");
+        // Transparency violation must map to "6.4" (veraPDF §6.4 for PDF/A-1)
+        assert!(rules.contains(&"6.4"), "transparency rule not remapped to 6.4: {rules:?}");
+        // Must NOT have "6.4" coming from halftone (i.e. only one "6.4" entry max)
+        assert_eq!(rules.iter().filter(|&&r| r == "6.4").count(), 1);
+    }
+
+    /// Verify that transparency "6.2.10-tgroup" maps to "6.2.10" for PDF/A-2/3.
+    #[test]
+    fn transparency_tgroup_remapped_to_6210_for_pdfa2() {
+        use crate::{ComplianceIssue, ComplianceReport, Severity};
+        let mut report = ComplianceReport {
+            pdfa_level: Some(PdfALevel::A2b),
+            ..Default::default()
+        };
+        report.issues.push(ComplianceIssue {
+            rule: "6.2.10-tgroup".to_string(),
+            severity: Severity::Error,
+            message: "Transparency group without CS and no OutputIntent".to_string(),
+            location: None,
+        });
+        remap_clause_numbers(&mut report, PdfALevel::A2b);
+        let rules: Vec<&str> = report.issues.iter().map(|i| i.rule.as_str()).collect();
+        assert_eq!(rules, vec!["6.2.10"], "transparency tgroup rule wrong for PDF/A-2: {rules:?}");
+    }
 }
