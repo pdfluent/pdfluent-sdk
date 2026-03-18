@@ -6468,50 +6468,71 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                 continue;
             }
 
-            // Collect all <XXXX> hex tokens on this line.
-            let tokens: Vec<u16> = t
+            // Collect all <XXXX> hex tokens on this line as u32 to support
+            // 4-byte extended form (e.g. <0000E000> for BMP PUA). (#FN-6.2.11.7.3)
+            let tokens: Vec<u32> = t
                 .split('<')
                 .skip(1) // first chunk is before the first '<'
                 .filter_map(|chunk| {
                     let end = chunk.find('>')?;
                     let hex = &chunk[..end];
-                    u16::from_str_radix(hex, 16).ok()
+                    u32::from_str_radix(hex, 16).ok()
                 })
                 .collect();
 
             // Destination is the 2nd token in bfchar, 3rd token in bfrange.
             let dst_idx = if in_bfchar { 1 } else { 2 };
-            if let Some(&val) = tokens.get(dst_idx) {
-                // §6.2.11.7.3: U+FFFF forbidden
-                if val == 0xFFFF {
-                    error_at(
-                        report,
-                        "6.2.11.7.3",
-                        format!("Font {name} ToUnicode CMap contains forbidden U+FFFF"),
-                        format!("page {}", page_idx + 1),
-                    );
-                    return; // one error per font is enough
-                }
-                // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE forbidden
-                if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
-                    error_at(
-                        report,
-                        "6.2.11.7.2",
-                        format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
-                        format!("page {}", page_idx + 1),
-                    );
-                    return; // one error per font is enough
-                }
-                // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF) in ToUnicode require
-                // ActualText in content. Flag any PUA mapping as a violation. (#483)
-                if (0xE000..=0xF8FF).contains(&val) {
-                    error_at(
-                        report,
-                        "6.2.11.7.3",
-                        format!("Font {name} ToUnicode CMap maps to PUA codepoint U+{val:04X}"),
-                        format!("page {}", page_idx + 1),
-                    );
-                    return; // one error per font is enough
+            if let Some(&dstlo) = tokens.get(dst_idx) {
+                // For bfrange, the range maps srclo..=srchi → dstlo..=dstlo+(srchi-srclo).
+                // We must check if EITHER end of the destination range is in PUA/forbidden,
+                // not just dstlo. (#FN-6.2.11.7.3)
+                let dsthi = if in_bfrange {
+                    tokens
+                        .get(1)
+                        .and_then(|&srchi| {
+                            tokens
+                                .first()
+                                .map(|&srclo| dstlo.saturating_add(srchi.saturating_sub(srclo)))
+                        })
+                        .unwrap_or(dstlo)
+                } else {
+                    dstlo
+                };
+
+                // Check both ends of the destination range for violations.
+                for val in [dstlo, dsthi] {
+                    // §6.2.11.7.3: U+FFFF forbidden
+                    if val == 0xFFFF {
+                        error_at(
+                            report,
+                            "6.2.11.7.3",
+                            format!("Font {name} ToUnicode CMap contains forbidden U+FFFF"),
+                            format!("page {}", page_idx + 1),
+                        );
+                        return; // one error per font is enough
+                    }
+                    // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE forbidden
+                    if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
+                        error_at(
+                            report,
+                            "6.2.11.7.2",
+                            format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
+                            format!("page {}", page_idx + 1),
+                        );
+                        return; // one error per font is enough
+                    }
+                    // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF, Supplementary PUA U+F0000+).
+                    // Ranges that START before PUA but END inside PUA are also violations. (#FN-6.2.11.7.3)
+                    let is_pua = (0xE000u32..=0xF8FFu32).contains(&val) || val >= 0xF_0000;
+                    if is_pua {
+                        error_at(
+                            report,
+                            "6.2.11.7.3",
+                            format!("Font {name} ToUnicode CMap maps to PUA codepoint U+{val:04X}"),
+                            format!("page {}", page_idx + 1),
+                        );
+                        return; // one error per font is enough
+                    }
                 }
             }
         }
@@ -6560,34 +6581,51 @@ fn check_cmap_streams_for_ffff(pdf: &Pdf, report: &mut ComplianceReport) {
             if !in_bfchar && !in_bfrange {
                 continue;
             }
-            let tokens: Vec<u16> = t
+            // Parse as u32 to handle 4-byte extended hex destinations. (#FN-6.2.11.7.3)
+            let tokens: Vec<u32> = t
                 .split('<')
                 .skip(1)
                 .filter_map(|chunk| {
                     let end = chunk.find('>')?;
-                    u16::from_str_radix(&chunk[..end], 16).ok()
+                    u32::from_str_radix(&chunk[..end], 16).ok()
                 })
                 .collect();
             let dst_idx = if in_bfchar { 1 } else { 2 };
-            if let Some(&val) = tokens.get(dst_idx) {
-                if val == 0xFFFF {
-                    error(
-                        report,
-                        "6.2.11.7.3",
-                        "ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+FFFF",
-                    );
-                    return; // one error per document is enough
-                }
-                // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF) require ActualText. (#483)
-                if (0xE000..=0xF8FF).contains(&val) {
-                    error(
-                        report,
-                        "6.2.11.7.3",
-                        format!(
-                            "ToUnicode CMap (via UseCMap chain) maps to PUA codepoint U+{val:04X}"
-                        ),
-                    );
-                    return; // one error per document is enough
+            if let Some(&dstlo) = tokens.get(dst_idx) {
+                // Check both start and end of bfrange destination. (#FN-6.2.11.7.3)
+                let dsthi = if in_bfrange {
+                    tokens
+                        .get(1)
+                        .and_then(|&srchi| {
+                            tokens
+                                .first()
+                                .map(|&srclo| dstlo.saturating_add(srchi.saturating_sub(srclo)))
+                        })
+                        .unwrap_or(dstlo)
+                } else {
+                    dstlo
+                };
+                for val in [dstlo, dsthi] {
+                    if val == 0xFFFF {
+                        error(
+                            report,
+                            "6.2.11.7.3",
+                            "ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+FFFF",
+                        );
+                        return; // one error per document is enough
+                    }
+                    // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF, Supplementary PUA). (#483)
+                    let is_pua = (0xE000u32..=0xF8FFu32).contains(&val) || val >= 0xF_0000;
+                    if is_pua {
+                        error(
+                            report,
+                            "6.2.11.7.3",
+                            format!(
+                                "ToUnicode CMap (via UseCMap chain) maps to PUA codepoint U+{val:04X}"
+                            ),
+                        );
+                        return; // one error per document is enough
+                    }
                 }
             }
         }
