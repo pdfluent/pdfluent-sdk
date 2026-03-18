@@ -1122,6 +1122,18 @@ fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
         );
         return;
     }
+    // ISO 19005-1 §6.2.2: at most one OutputIntent with S=GTS_PDFA1 is allowed.
+    // Having two GTS_PDFA1 entries is a violation even if they carry the same profile.
+    // veraPDF reports "6.2.2" for this (confirmed by isartor 6-2-2-t03). (#FN-6.2.2)
+    let gts_count = check::count_gts_pdfa1_intents(pdf);
+    if gts_count > 1 {
+        check::error(
+            report,
+            rule,
+            "OutputIntents array has more than one entry with S=GTS_PDFA1 (at most one allowed)",
+        );
+        return;
+    }
     // GTS_PDFA1 OutputIntent must have a DestOutputProfile
     if check::output_intent_profile_components(pdf).is_none() {
         check::error(
@@ -1307,29 +1319,58 @@ fn check_form_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
 fn check_page_boundary_sizes(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_page_boundary_sizes(pdf, report);
     // Supplementary: check ALL page boundaries (CropBox, TrimBox, BleedBox, ArtBox),
-    // not just MediaBox. veraPDF §6.1.13 t11 checks all boundary types ≥ 3 units.
-    // check.rs only checks MediaBox via page.media_box().
-    for (page_idx, page) in pdf.pages().iter().enumerate() {
-        let raw = page.raw();
-        for key in [b"CropBox".as_ref(), b"TrimBox", b"BleedBox", b"ArtBox"] {
-            if let Some(arr) = raw.get::<pdf_syntax::object::Array<'_>>(key) {
-                let vals: Vec<f64> = arr
-                    .iter::<pdf_syntax::object::Number>()
-                    .map(|n| n.as_f64())
+    // not just MediaBox. veraPDF §6.1.13 t11 checks all boundary types ≥ 3 / ≤ 14400.
+    // check.rs only checks MediaBox via page.media_box(). Also check inheritable
+    // boundaries on /Pages parent dicts via raw byte scan.
+    check_boundary_sizes_raw(pdf, report);
+}
+
+/// Scan raw PDF bytes for boundary rectangles that violate size limits.
+/// Catches boundaries on both /Page and /Pages (parent) dicts.
+fn check_boundary_sizes_raw(pdf: &Pdf, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+    for key in [b"/CropBox" as &[u8], b"/TrimBox", b"/BleedBox", b"/ArtBox"] {
+        let key_str = std::str::from_utf8(&key[1..]).unwrap_or("?");
+        // Scan for key in raw bytes
+        for i in 0..data.len().saturating_sub(key.len()) {
+            if &data[i..i + key.len()] != key {
+                continue;
+            }
+            // Skip whitespace after key, find '['
+            let mut j = i + key.len();
+            while j < data.len() && (data[j] == b' ' || data[j] == b'\n' || data[j] == b'\r' || data[j] == b'\t') {
+                j += 1;
+            }
+            if j >= data.len() || data[j] != b'[' {
+                continue;
+            }
+            j += 1;
+            // Find closing ']'
+            let start = j;
+            while j < data.len() && data[j] != b']' {
+                j += 1;
+            }
+            if j >= data.len() {
+                continue;
+            }
+            // Parse numbers from the array content
+            if let Ok(inner) = std::str::from_utf8(&data[start..j]) {
+                let nums: Vec<f64> = inner
+                    .split_whitespace()
+                    .filter_map(|s| s.parse::<f64>().ok())
                     .collect();
-                if vals.len() == 4 {
-                    let w = (vals[2] - vals[0]).abs();
-                    let h = (vals[3] - vals[1]).abs();
+                if nums.len() == 4 {
+                    let w = (nums[2] - nums[0]).abs();
+                    let h = (nums[3] - nums[1]).abs();
                     if w < 3.0 || h < 3.0 {
-                        let key_str = std::str::from_utf8(key).unwrap_or("?");
-                        check::error(
-                            report,
-                            "6.1.13",
-                            format!(
-                                "Page {} /{} {:.1}x{:.1} is less than minimum 3 units",
-                                page_idx + 1, key_str, w, h
-                            ),
-                        );
+                        check::error(report, "6.1.13",
+                            format!("/{key_str} {w:.1}x{h:.1} less than minimum 3 units"));
+                        return;
+                    }
+                    if w > 14400.0 || h > 14400.0 {
+                        check::error(report, "6.1.13",
+                            format!("/{key_str} {w:.1}x{h:.1} exceeds maximum 14400 units"));
+                        return;
                     }
                 }
             }
@@ -1436,22 +1477,30 @@ fn check_file_header(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport)
     // it's on the second line. This catches the case where there's an extra blank line
     // between the header and the binary comment.
     let data = pdf.data().as_ref();
-    if data.starts_with(b"%PDF-") {
-        // Find end of first line (CR, LF, or CRLF after %PDF-M.N)
+    if data.starts_with(b"%PDF-") && data.len() >= 9 {
+        // veraPDF §6.1.2 t1: header line must be exactly %PDF-M.N followed by EOL.
+        // Trailing spaces before EOL are a violation.
+        let ver_end = 8; // %PDF- = 5 bytes, M.N = 3 bytes → position 8
+        if ver_end < data.len() && data[ver_end] == b' ' {
+            check::error(
+                report,
+                "6.1.2",
+                "File header has trailing whitespace after %PDF-M.N version",
+            );
+        }
+        // veraPDF §6.1.2 t2: binary comment must immediately follow header EOL.
         if let Some(eol_pos) = data[5..data.len().min(20)].iter().position(|&b| b == b'\n' || b == b'\r') {
-            let after_eol = 5 + eol_pos + 1;
+            let mut after_eol = 5 + eol_pos + 1;
             // Skip CRLF pair
-            let after_eol = if after_eol < data.len() && data.get(5 + eol_pos) == Some(&b'\r') && data.get(after_eol) == Some(&b'\n') {
-                after_eol + 1
-            } else {
-                after_eol
-            };
+            if after_eol < data.len() && data[5 + eol_pos] == b'\r' && data.get(after_eol) == Some(&b'\n') {
+                after_eol += 1;
+            }
             // The byte immediately after the header line's EOL must be '%'
             if after_eol < data.len() && data[after_eol] != b'%' {
                 check::error(
                     report,
                     "6.1.2",
-                    "Binary comment not immediately after header line EOL (extra bytes between header and binary marker)",
+                    "Binary comment not immediately after header line EOL",
                 );
             }
         }
@@ -2069,10 +2118,14 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.3.7-se") => Some("6.2.11.6"),
 
             // CIDToGIDMap must be /Identity or a stream (internal rule "6.3.7").
-            // PDF/A-1: §6.3.3.2; PDF/A-2/3: §6.2.11.3.2.
+            // PDF/A-1: veraPDF uses §6.3.7 directly — no remap needed.
+            // PDF/A-2/3: §6.2.11.3.2.
             // (PDF/A-4 already handled above as §6.2.10.3.2.) (#483)
-            (1, "6.3.7") => Some("6.3.3.2"),
             (2..=3, "6.3.7") => Some("6.2.11.3.2"),
+
+            // CIDSystemInfo compatibility (internal rule "6.3.3.1").
+            // PDF/A-1: veraPDF uses §6.3.7 for CIDSystemInfo violations.
+            (1, "6.3.3.1") => Some("6.3.7"),
 
             // CIDSystemInfo mismatch (check_cidsystem_info_consistency emits "6.2.10.3.1").
             // PDF/A-2/3: §6.2.11.3.1. (#483)
