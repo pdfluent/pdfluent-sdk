@@ -1961,16 +1961,17 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Safe: stream keyword checks emit "6.1.7.1" (not "6.1.6.1") before remap.
             (4, "6.1.6.1") => Some("6.6.3"),
 
-            // Transparency restrictions
-            // veraPDF uses §6.2.10 for ALL transparency violations in PDF/A-1
-            // (SMask, blend mode, CA/ca, transparency groups). ISO 19005-1 §6.4
-            // is the spec clause but veraPDF outputs the PDF/A-2/3 equivalent "6.2.10".
-            // check_transparency_a1() emits "6.4" directly → remap to "6.2.10".
-            // check_extgstate_restrictions() emits "6.2.10.7" (SMask) and
-            // "6.2.10.6" (blend mode) → also remap to parent "6.2.10". (#FN-6.2.10)
-            (1, "6.4") => Some("6.2.10"),
-            (1, "6.2.10.7") => Some("6.2.10"),
-            (1, "6.2.10.6") => Some("6.2.10"),
+            // Transparency restrictions — PDF/A-1
+            // veraPDF uses §6.4 for ALL transparency violations in PDF/A-1.
+            // Our checks use PDF/A-2/3 sub-clauses internally:
+            //   check_transparency_vs_output_intent → "6.2.10" (page_group_rule for part 1-3)
+            //   check_extgstate_restrictions → "6.2.10.6" (BM) / "6.2.10.7" (SMask in ExtGState)
+            //   check_soft_mask_structure → "6.4.2" (SMask in XObject)
+            // All map to veraPDF's "6.4" for PDF/A-1. (#FN-6.4)
+            (1, "6.2.10") => Some("6.4"),
+            (1, "6.2.10.6") => Some("6.4"),
+            (1, "6.2.10.7") => Some("6.4"),
+            (1, "6.4.2") => Some("6.4"),
 
             // Alternate CS consistency (ICCBased)
             // PDF/A-1: §6.2.3.2, PDF/A-2/3/4: §6.2.4.2
@@ -2124,6 +2125,20 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: veraPDF reports all device-colour violations under §6.2.2.
             // PDF/A-2/3/4: §6.2.4.3 is already the correct clause. (#483)
             (1, "6.2.4.3") => Some("6.2.2"),
+
+            // XMP property type/value violations.
+            // check.rs emits "6.7.9.3" (wrong scalar container) and xmp.rs emits
+            // "6.7.9.1"/"6.7.9.2"/"6.7.9.3" for various property type violations.
+            // veraPDF always uses the parent clause "6.7.9" for ALL such violations
+            // in PDF/A-1 and "6.6.2.3.1" for PDF/A-2/3. Sub-clauses cause 237+ FNs.
+            (1, "6.7.9.1") => Some("6.7.9"),
+            (1, "6.7.9.2") => Some("6.7.9"),
+            (1, "6.7.9.3") => Some("6.7.9"),
+            // For PDF/A-2/3/4 the same checks emit "6.6.2.3.1" which is already correct.
+            // But if any sub-clause slips through for PDF/A-2/3, collapse to parent.
+            (2..=3, "6.7.9.1") => Some("6.6.2.3.1"),
+            (2..=3, "6.7.9.2") => Some("6.6.2.3.1"),
+            (2..=3, "6.7.9.3") => Some("6.6.2.3.1"),
 
             _ => None,
         };
