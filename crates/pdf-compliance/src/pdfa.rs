@@ -2206,10 +2206,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.6.4") => Some("6.9"),
 
             // Forbidden ToUnicode values (U+0000, U+FEFF, U+FFFE) use "6.2.11.7.2".
-            // PDF/A-4 §6.2.10.8 is the equivalent requirement. (#483)
-            // Note: PDF/A-4 missing-ToUnicode uses "6.2.10.7" (emitted directly) —
-            // only the forbidden-values case from check_tounicode_values maps here.
-            (4, "6.2.11.7.2") => Some("6.2.10.8"),
+            // PDF/A-4 §6.2.10.7 covers both missing-ToUnicode AND forbidden-values.
+            // veraPDF uses §6.2.10.7 for U+0000/FEFF/FFFE violations too.
+            (4, "6.2.11.7.2") => Some("6.2.10.7"),
 
             // Device colour without DefaultRGB/DefaultCMYK/DefaultGray or OutputIntent.
             // PDF/A-1: veraPDF reports all device-colour violations under §6.2.3.3
@@ -2231,6 +2230,16 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.7.9.1") => Some("6.6.2.3.1"),
             (2..=3, "6.7.9.2") => Some("6.6.2.3.1"),
             (2..=3, "6.7.9.3") => Some("6.6.2.3.1"),
+
+            // ── 6.2.x color/font rule remaps ──
+
+            // Device color vs OutputIntent: veraPDF uses §6.2.4.3 for PDF/A-4.
+            // Our checker emits "6.2.3.3" (PDF/A-2/3 numbering).
+            (4, "6.2.3.3") => Some("6.2.4.3"),
+
+            // Undefined operators: veraPDF uses §6.2.10 for PDF/A-1.
+            // Our check_page_content_streams emits "6.2.7.1"; remap for PDF/A-1.
+            (1, "6.2.7.1") => Some("6.2.10"),
 
             _ => None,
         };

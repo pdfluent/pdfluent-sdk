@@ -3019,33 +3019,29 @@ fn check_separation_array(
         return;
     }
 
-    // altCS is the third element — get its raw bytes for comparison
-    let alt_obj = items.next();
-    let alt_bytes: Vec<u8> = match &alt_obj {
-        Some(Object::Name(n)) => n.as_ref().to_vec(),
-        Some(Object::Array(arr)) => arr.data().to_vec(),
-        _ => return,
-    };
+    // Compare full Separation array (alternateSpace + tintTransform).
+    // veraPDF §6.2.4.4: same colorant name must have same alternateSpace AND tintTransform.
+    let full_sig = cs_arr.data().to_vec();
 
     let colorant_str = std::str::from_utf8(&colorant_bytes)
         .unwrap_or("?")
         .to_string();
     match seen.entry(colorant_bytes) {
         std::collections::hash_map::Entry::Occupied(e) => {
-            let (existing_alt, first_idx) = e.get();
-            if *existing_alt != alt_bytes {
+            let (existing_sig, first_idx) = e.get();
+            if *existing_sig != full_sig {
                 error(
                     report,
                     "6.2.4.4",
                     format!(
-                        "Separation colorant '{colorant_str}' has inconsistent alternateSpace \
-                         (first defined at obj {first_idx}, differs at obj {obj_idx})"
+                        "Separation colorant '{colorant_str}' has inconsistent definition \
+                         (first at obj {first_idx}, differs at obj {obj_idx})"
                     ),
                 );
             }
         }
         std::collections::hash_map::Entry::Vacant(v) => {
-            v.insert((alt_bytes, obj_idx));
+            v.insert((full_sig, obj_idx));
         }
     }
 }
@@ -10390,6 +10386,25 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                 }
             }
+
+            // §6.2.11.3.1 t1: CIDFont Supplement must be ≤ CMap Supplement
+            let cmap_supp = font_dict
+                .get::<Dict<'_>>(keys::ENCODING)
+                .and_then(|cmap| cmap.get::<Dict<'_>>(keys::CIDSYSTEMINFO))
+                .and_then(|csi| csi.get::<i32>(b"Supplement" as &[u8]));
+            let font_supp = cid_si.get::<i32>(b"Supplement" as &[u8]);
+            if let (Some(cs), Some(fs)) = (cmap_supp, font_supp) {
+                if fs > cs {
+                    error_at(
+                        report,
+                        "6.3.3.1",
+                        format!(
+                            "CIDFont Supplement ({fs}) > CMap Supplement ({cs}) for font {name}"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
         }
     });
 }
@@ -10413,8 +10428,9 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
     .copied()
     .collect();
 
-    // PDF/A-1: §6.2.2 (content streams); PDF/A-2/3/4: §6.2.7.1 (operators in content streams)
-    let undef_op_rule = if pdfa_part >= 2 { "6.2.7.1" } else { "6.2.2" };
+    // PDF/A-1: §6.2.10 (undefined operators); PDF/A-2/3/4: §6.2.7.1 (operators)
+    // veraPDF uses §6.2.10 for PDF/A-1, not §6.2.2 (which is OutputIntent related).
+    let undef_op_rule = if pdfa_part >= 2 { "6.2.7.1" } else { "6.2.10" };
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let loc = format!("page {}", page_idx + 1);

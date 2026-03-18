@@ -27,7 +27,7 @@ use std::sync::Arc;
 use config::{Config, TestTier};
 use db::Database;
 use oracles::verapdf::VeraPdfOracle;
-use runner::Runner;
+use runner::{run_single_pdf, Runner};
 
 /// Corpus test runner for XFA-Native-Rust SDK
 #[derive(Parser)]
@@ -241,6 +241,33 @@ enum Command {
         /// SQLite database path
         #[arg(short, long, default_value = "results.sqlite")]
         db: PathBuf,
+    },
+
+    /// Process a single PDF and write results as JSON to stdout (for process-per-PDF orchestration)
+    SinglePdf {
+        /// Path to the PDF file to process
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+
+        /// Timeout per test in seconds
+        #[arg(short, long, default_value_t = 30)]
+        timeout: u64,
+
+        /// Only run specific tests (comma-separated)
+        #[arg(long)]
+        tests: Option<String>,
+
+        /// Test tier: fast, standard, full, oracle
+        #[arg(long, default_value = "full")]
+        tier: String,
+
+        /// Disable veraPDF oracle
+        #[arg(long)]
+        no_verapdf: bool,
+
+        /// Path to veraPDF binary
+        #[arg(long, default_value = "/usr/local/bin/verapdf")]
+        verapdf_path: PathBuf,
     },
 
     /// Check for regression between two runs (exit code 1 = regression)
@@ -643,6 +670,67 @@ fn main() {
                     "{:<35} {:>9.1}% {:>10} {:>12}",
                     entry.run_id, entry.pass_rate, entry.total, oracle
                 );
+            }
+        }
+
+        Command::SinglePdf {
+            path,
+            timeout,
+            tests: test_filter,
+            tier,
+            no_verapdf,
+            verapdf_path,
+        } => {
+            // Set up veraPDF oracle (same as batch mode, but errors go to stderr).
+            let verapdf_oracle = if no_verapdf {
+                None
+            } else {
+                let oracle = VeraPdfOracle::new(verapdf_path);
+                if oracle.is_available() {
+                    Some(std::sync::Arc::new(oracle))
+                } else {
+                    None
+                }
+            };
+
+            let test_config = tests::TestConfig {
+                verapdf_oracle,
+                #[cfg(feature = "pdfium-oracle")]
+                diff_dir: std::env::var("XFA_DIFF_DIR").ok().map(PathBuf::from),
+            };
+            let mut available_tests = tests::all_tests(test_config);
+
+            // Apply tier filter.
+            let tier: TestTier = tier.parse().unwrap_or(TestTier::Full);
+            available_tests.retain(|t| tier.includes(t.name()));
+
+            // Apply explicit test filter on top.
+            if let Some(filter) = &test_filter {
+                let names: Vec<&str> = filter.split(',').map(str::trim).collect();
+                available_tests.retain(|t| names.iter().any(|f| *f == t.name()));
+            }
+
+            match run_single_pdf(available_tests, &path, timeout) {
+                Ok(output) => {
+                    // All tests ran — check if any failed.
+                    let json = serde_json::to_string(&output).expect("JSON serialization failed");
+                    println!("{json}");
+                    let any_failed = output
+                        .results
+                        .iter()
+                        .any(|r| matches!(r.status.as_str(), "fail" | "crash" | "timeout"));
+                    std::process::exit(if any_failed { 1 } else { 0 });
+                }
+                Err(e) => {
+                    // Pre-flight error (I/O, not a PDF).
+                    let output = serde_json::json!({
+                        "pdf_path": path.to_string_lossy(),
+                        "error": e,
+                        "results": []
+                    });
+                    println!("{output}");
+                    std::process::exit(2);
+                }
             }
         }
 
