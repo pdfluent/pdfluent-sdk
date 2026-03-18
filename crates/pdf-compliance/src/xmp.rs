@@ -1281,8 +1281,7 @@ fn check_pdfa_id_properties(xmp: &str, level: PdfALevel, report: &mut Compliance
 /// how the property is serialised in RDF/XML (§6.6.2.3.1 test=2, §6.7.9 test=3).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PropValueKind {
-    /// Scalar: Text, Integer, Real, Boolean, URI, Date, … — must NOT be
-    /// wrapped in rdf:Seq / rdf:Bag / rdf:Alt.
+    /// Scalar: Text, Boolean, URI, Date, … — must NOT be wrapped in rdf container.
     Scalar,
     /// Lang Alt — must use <rdf:Alt><rdf:li xml:lang="…">
     LangAlt,
@@ -1290,6 +1289,10 @@ enum PropValueKind {
     Seq,
     /// Unordered array — must use <rdf:Bag>
     Bag,
+    /// Scalar Real — like Scalar but additionally the value must not use rational
+    /// notation (slash-separated numerator/denominator). XMP Real is a floating-point
+    /// number; Rational is a separate XMP type. Fixes §6.6.2.3.1 t04. (#477)
+    Real,
     /// Scalar Integer — like Scalar but additionally the value must not
     /// contain a decimal point or exponent (veraPDF 6.6.2.3.1 test=2).
     Integer,
@@ -1412,6 +1415,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:relativePeakAudio" => Some(Scalar),
         "xmpDM:relativeTapeOffset" => Some(Scalar),
         "xmpDM:releaseDate" => Some(Scalar),
+        "xmpDM:resampleParams" => Some(Struct), // ResampleParams structure (#477)
         "xmpDM:resizeType" => Some(Scalar),
         "xmpDM:scaleType" => Some(Scalar),
         "xmpDM:scene" => Some(Scalar),
@@ -1616,15 +1620,16 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "crs:ChromaticAberrationR" => Some(Integer),
         "crs:ColorNoiseReduction" => Some(Integer),
         "crs:Contrast" => Some(Integer),
-        "crs:CropTop" => Some(Scalar),
-        "crs:CropLeft" => Some(Scalar),
-        "crs:CropBottom" => Some(Scalar),
-        "crs:CropRight" => Some(Scalar),
-        "crs:CropAngle" => Some(Scalar),
-        "crs:CropWidth" => Some(Scalar),
-        "crs:CropHeight" => Some(Scalar),
+        // Real (floating-point) type — reject Rational (slash) notation. (#477)
+        "crs:CropTop" => Some(Real),
+        "crs:CropLeft" => Some(Real),
+        "crs:CropBottom" => Some(Real),
+        "crs:CropRight" => Some(Real),
+        "crs:CropAngle" => Some(Real),
+        "crs:CropWidth" => Some(Real),
+        "crs:CropHeight" => Some(Real),
         "crs:CropUnits" => Some(Integer),
-        "crs:Exposure" => Some(Scalar),
+        "crs:Exposure" => Some(Real),
         "crs:GreenHue" => Some(Integer),
         "crs:GreenSaturation" => Some(Integer),
         "crs:HasCrop" => Some(Scalar),
@@ -1817,18 +1822,29 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
                 let has_container = has_seq || has_bag || has_alt;
 
                 let violation = match kind {
-                    PropValueKind::Scalar | PropValueKind::Integer => {
+                    PropValueKind::Scalar | PropValueKind::Real | PropValueKind::Integer => {
                         if has_container {
                             Some(format!(
                                 "XMP property '{}' is a scalar type but is wrapped in an rdf container",
                                 tag_name
                             ))
-                        } else if kind == PropValueKind::Integer {
-                            // Integer value must not have decimal point or exponent
+                        } else if kind == PropValueKind::Real {
+                            // Real value must not use rational (slash) notation. (#477)
                             let val = body.trim();
-                            // Accept empty (missing) value without flagging; the
-                            // scalar container check above covers the container case.
-                            // Only flag non-empty values that look like reals.
+                            if !val.is_empty() && !val.starts_with('<') && val.contains('/') {
+                                Some(format!(
+                                    "XMP property '{}' requires a Real value but got '{}' \
+                                     (Rational notation not allowed)",
+                                    tag_name,
+                                    &val[..val.len().min(40)]
+                                ))
+                            } else {
+                                None
+                            }
+                        } else if kind == PropValueKind::Integer {
+                            // Integer value must not have decimal point, exponent, or
+                            // non-digit characters. (#477)
+                            let val = body.trim();
                             if !val.is_empty() && !val.starts_with('<') && is_non_integer_value(val)
                             {
                                 Some(format!(
@@ -1942,18 +1958,24 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
     }
 }
 
-/// Check whether a text value is a non-integer (decimal / rational / scientific).
+/// Check whether a text value is a non-integer (decimal / rational / non-numeric).
 ///
-/// Returns `true` when the value contains a decimal point, a slash (rational),
-/// or an exponent, indicating it is NOT a valid XMP Integer.
+/// Returns `true` when the value is not a valid XMP Integer (optional sign
+/// followed by ASCII digits only). Catches decimal, rational, scientific and
+/// arbitrary non-numeric strings like "Pos - 1". Fixes §6.6.2.3.1 t14. (#477)
 fn is_non_integer_value(val: &str) -> bool {
-    // Ignore leading/trailing whitespace
     let val = val.trim();
-    // Must consist only of digits (and optional leading sign)
     if val.is_empty() {
         return false;
     }
-    val.contains('.') || val.contains('/') || val.to_ascii_lowercase().contains('e')
+    // Strip optional leading sign
+    let digits = if val.starts_with('+') || val.starts_with('-') {
+        &val[1..]
+    } else {
+        val
+    };
+    // A valid XMP Integer consists solely of ASCII digits after the sign
+    digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit())
 }
 
 /// Check whether a body containing rdf:Alt has at least one rdf:li without xml:lang.

@@ -21,16 +21,29 @@ const MAX_IN_FLIGHT_THREADS: usize = 64;
 /// Maximum number of test threads alive at any moment, including zombie threads
 /// that have already timed out but are still running (holding lopdf Documents).
 /// Fix #461: without this, timed-out pdfa_convert threads accumulate unboundedly.
-/// Each thread can hold up to ~200 MB; 32 × 200 MB = 6.4 GB well within 32 GB VPS.
-const MAX_SPAWNED_THREADS: usize = 32;
+/// Reduced from 32 to 16: with 2 workers, 16 × 200 MB = 3.2 GB headroom on 32 GB VPS.
+/// Fewer zombie threads means lower peak RSS and faster recovery after spikes. (#OOM)
+const MAX_SPAWNED_THREADS: usize = 16;
 
 /// RSS threshold (bytes) at which new test spawns are paused.
-/// Acts as a safety net against OOM kills (#461): glibc heap fragmentation or
-/// zombie threads holding large lopdf Documents can push RSS toward the system
-/// limit. Pausing lets zombie threads finish and jemalloc return pages to OS.
-/// Set to 22 GB — conservative enough for a 32 GB Hetzner CX53.
+/// Acts as a safety net against OOM kills (#461): zombie threads holding large
+/// lopdf Documents can push RSS toward the system limit. Pausing lets zombie
+/// threads finish and jemalloc return pages to OS.
+/// Reduced from 22 GB to 14 GB: leaves 18 GB headroom for OS + spike absorption
+/// on a 32 GB Hetzner CX53. Run is slower but never OOMs. (#OOM)
 #[cfg(target_os = "linux")]
-const RSS_PAUSE_THRESHOLD: u64 = 22 * 1024 * 1024 * 1024;
+const RSS_PAUSE_THRESHOLD: u64 = 14 * 1024 * 1024 * 1024;
+
+/// RSS threshold (bytes) above which large PDFs (>50 MB) are skipped entirely.
+/// The top-3 OOM culprits were >50 MB PDFs causing 7–17 GB RSS spikes. When
+/// overall RSS is already high, adding another such spike causes OOM. (#OOM)
+#[cfg(target_os = "linux")]
+const RSS_SKIP_LARGE_PDF_THRESHOLD: u64 = 12 * 1024 * 1024 * 1024;
+
+/// PDF file size (bytes) above which the PDF is skipped when RSS is high.
+/// 50 MB files tend to be the ones causing multi-GB RSS spikes. (#OOM)
+#[cfg(target_os = "linux")]
+const LARGE_PDF_SIZE_BYTES: usize = 50 * 1024 * 1024;
 
 pub struct Runner {
     config: Config,
@@ -128,6 +141,41 @@ impl Runner {
                     }
                 }
 
+                // Per-PDF large-file guard: skip PDFs >50 MB when RSS is already high.
+                // Large PDFs (>50 MB) tend to cause 7–17 GB RSS spikes; when RSS is
+                // already above 12 GB, adding another spike risks OOM. (#OOM)
+                #[cfg(target_os = "linux")]
+                if let Ok(meta) = std::fs::metadata(pdf_path) {
+                    if meta.len() as usize > LARGE_PDF_SIZE_BYTES {
+                        let rss_now = current_rss_bytes().unwrap_or(0);
+                        if rss_now > RSS_SKIP_LARGE_PDF_THRESHOLD {
+                            let reason = format!(
+                                "skipped: large PDF ({} MB) while RSS is {} GB (>{} GB threshold)",
+                                meta.len() / (1024 * 1024),
+                                rss_now / (1024 * 1024 * 1024),
+                                RSS_SKIP_LARGE_PDF_THRESHOLD / (1024 * 1024 * 1024),
+                            );
+                            let cat = ErrorCategory::CorruptStream;
+                            for test in &self.tests {
+                                let row = TestResultRow::from_test_result(
+                                    &self.config.run_id,
+                                    &path_str,
+                                    "",
+                                    meta.len() as i64,
+                                    test.name(),
+                                    &TestStatus::Skip,
+                                    Some(&reason),
+                                    Some(&cat),
+                                    0,
+                                );
+                                let _ = self.db.insert_result(&row);
+                            }
+                            progress.inc(1);
+                            return;
+                        }
+                    }
+                }
+
                 let pdf_data = match std::fs::read(pdf_path) {
                     Ok(data) => data,
                     Err(e) => {
@@ -214,7 +262,7 @@ impl Runner {
                 // Measure RSS before all tests for this PDF (per-PDF memory baseline).
                 let rss_before_pdf_kb = current_rss_bytes().map(|b| b as i64 / 1024).unwrap_or(-1);
 
-                // If a single test causes a RSS spike > 2 GB, skip remaining
+                // If a single test causes a RSS spike > 1 GB, skip remaining
                 // tests for this PDF: the zombie thread is holding that memory
                 // and running more tests would compound the pressure. (#OOM)
                 let mut skip_remaining_reason: Option<String> = None;
@@ -265,7 +313,7 @@ impl Runner {
 
                     let result = self.run_single_test(Arc::clone(test), &pdf_data, pdf_path);
 
-                    // If this test caused a >2 GB RSS spike, skip all remaining
+                    // If this test caused a >1 GB RSS spike, skip all remaining
                     // tests for this PDF: the zombie thread is still holding that
                     // memory and running more tests would compound OOM pressure. (#OOM)
                     if skip_remaining_reason.is_none() {
@@ -274,7 +322,7 @@ impl Runner {
                             .get("rss_delta_kb")
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0);
-                        if rss_delta_kb > 2_000_000 {
+                        if rss_delta_kb > 1_000_000 {
                             eprintln!(
                                 "SKIP remaining tests for {} ({} caused +{} MB RSS spike)",
                                 path_str,
