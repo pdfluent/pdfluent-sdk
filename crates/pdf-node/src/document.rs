@@ -10,10 +10,6 @@ use napi_derive::napi;
 use pdf_engine::{PdfDocument as RustDocument, RenderOptions, RenderedPage, ThumbnailOptions};
 use std::sync::{Arc, Mutex};
 
-fn lopdf_err(e: impl std::fmt::Display) -> napi::Error {
-    napi::Error::from_reason(format!("{e}"))
-}
-
 /// A PDF document handle.
 ///
 /// Open a document with `PdfDocument.open(buffer)` or
