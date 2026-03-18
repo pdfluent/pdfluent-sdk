@@ -1437,6 +1437,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpMM:OriginalDocumentID" => Some(Scalar),
         "xmpMM:Pantry" => Some(Bag),
         "xmpMM:RenditionClass" => Some(Scalar),
+        "xmpMM:RenditionOf" => Some(Struct), // ResourceRef struct type, not scalar. (#FN-6.6.2.3.1-t09)
         "xmpMM:RenditionParams" => Some(Scalar),
         "xmpMM:VersionID" => Some(Scalar),
         "xmpMM:Versions" => Some(Seq),
@@ -1481,7 +1482,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:genre" => Some(Scalar),
         "xmpDM:good" => Some(Scalar),
         "xmpDM:instrument" => Some(Scalar),
-        "xmpDM:introTime" => Some(Scalar),
+        "xmpDM:introTime" => Some(Struct), // Time struct type (timeValue, scale, etc.), not scalar. (#FN-6.6.2.3.1-t02)
         "xmpDM:key" => Some(Scalar),
         "xmpDM:logComment" => Some(Scalar),
         "xmpDM:loop" => Some(Scalar),
@@ -1496,6 +1497,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:projectRef" => Some(Scalar),
         "xmpDM:pullDown" => Some(Scalar),
         "xmpDM:relativePeakAudio" => Some(Scalar),
+        "xmpDM:relativePeakAudioFilePath" => Some(Scalar), // URI (scalar); wrong container → violation. (#FN-6.6.2.3.1-t02)
         "xmpDM:relativeTapeOffset" => Some(Scalar),
         "xmpDM:releaseDate" => Some(Date),      // Date type, was Scalar
         "xmpDM:resampleParams" => Some(Struct), // ResampleParams structure (#477)
@@ -1681,7 +1683,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "exif:SensingMethod" => Some(Integer),
         "exif:Sharpness" => Some(Integer),
         "exif:ShutterSpeedValue" => Some(Scalar),
-        "exif:SpatialFrequencyResponse" => Some(Scalar),
+        "exif:SpatialFrequencyResponse" => Some(Struct), // OECF/SFR struct type, not scalar. (#FN-6.6.2.3.1-t16)
         "exif:SpectralSensitivity" => Some(Scalar),
         "exif:SubjectArea" => Some(Seq),
         "exif:SubjectDistance" => Some(Scalar),
