@@ -5711,8 +5711,13 @@ fn scan_for_undefined_ops(
 ///    /Group entry when no OutputIntent is present.
 pub fn check_transparency_vs_output_intent(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let has_oi = has_output_intent(pdf);
-    // PDF/A-4 merges transparency checks into 6.2.9; parts 2/3 use 6.2.10
-    let page_group_rule = if part == 4 { "6.2.9" } else { "6.2.10" };
+    // PDF/A-4 merges transparency checks into 6.2.9; parts 1-3 use internal
+    // "6.2.10-tgroup" (remapped to §6.4 for PDF/A-1, §6.2.10 for PDF/A-2/3).
+    // Using a distinct tag avoids colliding with halftone "6.2.10" violations
+    // from check_halftone_in_extgstate, which veraPDF reports as §6.2.10 even
+    // in PDF/A-1. Fixes §6.2.10 FNs where halftone violations were incorrectly
+    // remapped to §6.4. (#FN-6.2.10)
+    let page_group_rule = if part == 4 { "6.2.9" } else { "6.2.10-tgroup" };
 
     let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
