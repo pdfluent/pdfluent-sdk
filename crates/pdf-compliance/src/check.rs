@@ -418,6 +418,22 @@ fn check_date_equivalence(
     }
 }
 
+/// Count the number of OutputIntent entries with S=GTS_PDFA1.
+/// ISO 19005-1 §6.2.2 allows at most one; more than one is a violation.
+pub fn count_gts_pdfa1_intents(pdf: &Pdf) -> usize {
+    let Some(cat) = catalog(pdf) else { return 0 };
+    let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) else {
+        return 0;
+    };
+    intents
+        .iter::<Dict<'_>>()
+        .filter(|d| {
+            d.get::<Name>(keys::S)
+                .is_some_and(|s| s.as_ref() == b"GTS_PDFA1")
+        })
+        .count()
+}
+
 /// Check if the catalog has an OutputIntents array with GTS_PDFA1 subtype.
 pub fn has_output_intent(pdf: &Pdf) -> bool {
     let Some(cat) = catalog(pdf) else {
