@@ -2100,6 +2100,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
 
             // Symbolic TrueType /Encoding for PDF/A-4: §6.2.10.6. (#483)
             (4, "6.3.7-se") => Some("6.2.10.6"),
+            // Non-symbolic TrueType BaseEncoding and CIDFont widths: in PDF/A-4
+            // §6.2.11.6 (PDF/A-2/3) is renumbered to §6.2.10.6. (#FN-6.2.10.6)
+            (4, "6.2.11.6") => Some("6.2.10.6"),
 
             // PUA codepoints in ToUnicode require ActualText.
             // PDF/A-4: §6.2.10.9 (same requirement as §6.2.11.7.3 in PDF/A-2/3). (#483)

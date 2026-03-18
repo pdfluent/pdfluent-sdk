@@ -44,6 +44,9 @@ fn parse_profile(s: &str) -> Result<Profile> {
         "pdfa3a" | "a3a" => Ok(Profile::PdfA(PdfALevel::A3a)),
         "pdfa3b" | "a3b" => Ok(Profile::PdfA(PdfALevel::A3b)),
         "pdfa3u" | "a3u" => Ok(Profile::PdfA(PdfALevel::A3u)),
+        "pdfa4" | "a4" => Ok(Profile::PdfA(PdfALevel::A4)),
+        "pdfa4f" | "a4f" => Ok(Profile::PdfA(PdfALevel::A4f)),
+        "pdfa4e" | "a4e" => Ok(Profile::PdfA(PdfALevel::A4e)),
         "pdfua" | "pdfua1" | "ua" | "ua1" => Ok(Profile::PdfUa),
         _ => anyhow::bail!(
             "unknown profile '{s}'. Supported: pdf-a1a, pdf-a1b, pdf-a2a, pdf-a2b, pdf-a2u, pdf-a3a, pdf-a3b, pdf-a3u, pdf-ua"
