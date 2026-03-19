@@ -6535,18 +6535,15 @@ pub fn check_notdef_glyph_reference(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Scan a content stream for Tj/TJ operators with hex-encoded code 0.
+/// Scan a content stream for Tj/TJ operators with hex-encoded .notdef references.
 ///
-/// Patterns detected:
-/// - `<00> Tj` — simple font, character code 0
-/// - `<0000> Tj` — CID font (Identity-H), CID 0
-/// - `[<00>] TJ` — array form of text showing
+/// Detects byte value 0x00 in hex strings used by text operators. For simple fonts
+/// (1-byte encoding), ANY 0x00 byte is character code 0 = .notdef. For CID fonts
+/// (2-byte Identity-H), 0x0000 = CID 0 = .notdef.
 fn scan_for_notdef_in_content(content: &[u8]) -> bool {
-    // Look for hex string patterns followed by Tj
     let mut i = 0;
-    while i + 5 < content.len() {
-        if content[i] == b'<' {
-            // Parse hex string
+    while i + 3 < content.len() {
+        if content[i] == b'<' && content.get(i + 1).is_some_and(|b| b.is_ascii_hexdigit()) {
             let start = i + 1;
             let mut end = start;
             while end < content.len() && content[end] != b'>' {
@@ -6554,19 +6551,38 @@ fn scan_for_notdef_in_content(content: &[u8]) -> bool {
             }
             if end < content.len() {
                 let hex = &content[start..end];
-                // Check if this is <00> or <0000> (all zeros)
-                let all_zero =
-                    !hex.is_empty() && hex.iter().all(|&b| b == b'0' || b.is_ascii_whitespace());
-                if all_zero {
-                    // Check if followed by Tj or within a TJ array
-                    let after = &content[end + 1..];
-                    let trimmed = after.iter().skip_while(|b| b.is_ascii_whitespace());
-                    let next_bytes: Vec<u8> = trimmed.take(3).copied().collect();
-                    if next_bytes.starts_with(b"Tj") {
+                // Decode hex pairs and check for any 0x00 byte
+                let has_null = hex_contains_null_byte(hex);
+                if has_null {
+                    // Check context: must be near a Tj or inside TJ array
+                    let after = &content[end + 1..content.len().min(end + 10)];
+                    let after_trimmed: Vec<u8> = after
+                        .iter()
+                        .copied()
+                        .skip_while(|b| b.is_ascii_whitespace())
+                        .take(3)
+                        .collect();
+                    if after_trimmed.starts_with(b"Tj") || after_trimmed.starts_with(b"TJ") {
                         return true;
                     }
-                    // Also check if we're inside a [...] TJ array
-                    // (the Tj check above is sufficient for most cases)
+                    // Also detect inside [...] TJ: look backward for '['
+                    let before_start = i.saturating_sub(200);
+                    let before = &content[before_start..i];
+                    if before.iter().rev().any(|&b| b == b'[') {
+                        // Inside an array — check if the array is followed by TJ
+                        if let Some(close) = content[end..].iter().position(|&b| b == b']') {
+                            let after_arr = &content[end + close + 1..content.len().min(end + close + 10)];
+                            let trimmed: Vec<u8> = after_arr
+                                .iter()
+                                .copied()
+                                .skip_while(|b| b.is_ascii_whitespace())
+                                .take(3)
+                                .collect();
+                            if trimmed.starts_with(b"TJ") {
+                                return true;
+                            }
+                        }
+                    }
                 }
             }
             i = end + 1;
@@ -6575,6 +6591,32 @@ fn scan_for_notdef_in_content(content: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// Check if a hex string (ASCII hex digits without '<''>') decodes to bytes containing 0x00.
+fn hex_contains_null_byte(hex: &[u8]) -> bool {
+    // Collect hex digit pairs, skipping whitespace
+    let digits: Vec<u8> = hex.iter().copied().filter(|b| b.is_ascii_hexdigit()).collect();
+    // Process pairs
+    let mut j = 0;
+    while j + 1 < digits.len() {
+        let hi = hex_val(digits[j]);
+        let lo = hex_val(digits[j + 1]);
+        if hi == 0 && lo == 0 {
+            return true;
+        }
+        j += 2;
+    }
+    false
+}
+
+fn hex_val(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'a'..=b'f' => b - b'a' + 10,
+        b'A'..=b'F' => b - b'A' + 10,
+        _ => 0,
+    }
 }
 
 // ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
