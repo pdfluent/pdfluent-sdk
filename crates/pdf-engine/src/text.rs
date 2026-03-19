@@ -97,6 +97,7 @@ impl TextExtractionDevice {
     }
 
     /// Consume the device and return raw spans.
+    #[allow(dead_code)]
     pub(crate) fn into_spans(self) -> Vec<TextSpan> {
         self.spans
     }
