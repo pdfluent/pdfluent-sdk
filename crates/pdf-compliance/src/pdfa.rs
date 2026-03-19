@@ -53,6 +53,9 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_trailer_requirements(pdf, level, &mut report);
     check::check_xmp_pdfa_identification(pdf, &mut report);
     check::check_no_data_after_eof(pdf, &mut report);
+    // Stream structure check runs before the early-exit so that stream-syntax
+    // violations (§6.1.7) are always reported even when XMP is missing. (#FN-6.1.7)
+    check_stream_length_pdfa(pdf, &mut report);
 
     // Early exit: if critical structural checks already failed, skip content analysis.
     // "Critical" = missing XMP, encrypted, or wrong file header — these guarantee
@@ -183,7 +186,6 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 
     // Info/XMP consistency, stream/syntax, XMP extension, image intent
     check_info_xmp(pdf, &mut report);
-    check_stream_length_pdfa(pdf, &mut report);
     check_object_syntax(pdf, level, &mut report);
     check_xmp_extension_schema_pdfa(pdf, &mut report);
     check_image_intent(pdf, &mut report);
@@ -300,6 +302,11 @@ pub fn validate_with_progress(
     tracked!(
         "check_no_data_after_eof",
         check::check_no_data_after_eof(pdf, &mut report)
+    );
+    // (#FN-6.1.7) Stream check before early-exit — same as validate().
+    tracked!(
+        "check_stream_length_pdfa",
+        check_stream_length_pdfa(pdf, &mut report)
     );
 
     if has_critical_structural_failure(&report) {
@@ -588,10 +595,6 @@ pub fn validate_with_progress(
         check::check_name_utf8_cached(&obj_cache, &mut report)
     );
     tracked!("check_info_xmp", check_info_xmp(pdf, &mut report));
-    tracked!(
-        "check_stream_length_pdfa",
-        check_stream_length_pdfa(pdf, &mut report)
-    );
     tracked!(
         "check_object_syntax",
         check_object_syntax(pdf, level, &mut report)

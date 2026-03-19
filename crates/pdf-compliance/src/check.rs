@@ -913,6 +913,25 @@ pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>,
                     }
                 }
             }
+            // Fonts in tiling Pattern resources (isartor-6-3-4-t01-fail-h: font
+            // only in Pattern, not in page /Font dict). Fixes §6.3.4 FN.
+            if let Some(patterns) = res.get::<Dict<'_>>(keys::PATTERN) {
+                for (pname, _) in patterns.entries() {
+                    let pstream: Option<Stream<'_>> =
+                        patterns.get::<Stream<'_>>(pname.as_ref()).or_else(|| {
+                            patterns
+                                .get_ref(pname.as_ref())
+                                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                        });
+                    if let Some(pstream) = pstream {
+                        if let Some(p_res) = pstream.dict().get::<Dict<'_>>(keys::RESOURCES) {
+                            if let Some(p_fonts) = p_res.get::<Dict<'_>>(keys::FONT) {
+                                visit_fonts(&p_fonts);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -2137,7 +2156,10 @@ fn raw_info_has_key(data: &[u8], key: &[u8]) -> bool {
 
     // Find "N M obj" in raw bytes and scan its dict for the key
     let marker = format!("{obj_num} {gen_num} obj");
-    let Some(obj_pos) = data.windows(marker.len()).position(|w| w == marker.as_bytes()) else {
+    let Some(obj_pos) = data
+        .windows(marker.len())
+        .position(|w| w == marker.as_bytes())
+    else {
         return false;
     };
     let region_end = data.len().min(obj_pos + 2000);
@@ -3750,30 +3772,71 @@ fn check_halftone_in_extgstate(
                     location,
                 );
             }
-            // §6.2.10.5: TransferFunction in halftone must be /Identity or absent
-            if let Some(tf) = ht_dict.get::<Object<'_>>(b"TransferFunction" as &[u8]) {
-                let is_identity = matches!(tf, Object::Name(n) if n.as_ref() == b"Identity");
-                if !is_identity {
+            // §6.2.10.5 / §6.2.5: TransferFunction is forbidden in standalone halftones
+            // (colorantName absent) and in Type 5 sub-halftones for primary CMYK colorants.
+            // Any value — including /Identity — is prohibited. (ISO 19005-2 §6.2.5, -4 §6.2.10.5)
+            let ht_type_val = ht_dict.get::<i32>(b"HalftoneType" as &[u8]).unwrap_or(0);
+            if ht_type_val != 5 {
+                // Standalone (not Type 5): TransferFunction must be absent entirely.
+                if ht_dict
+                    .get::<Object<'_>>(b"TransferFunction" as &[u8])
+                    .is_some()
+                {
                     error_at(
                         report,
                         "6.2.10.5",
-                        format!("ExtGState {gs_str} halftone has custom /TransferFunction"),
+                        format!("ExtGState {gs_str} halftone has forbidden /TransferFunction"),
                         location,
                     );
                 }
-            }
-            // For Type 5 halftones, check sub-halftones too
-            for (key, _) in ht_dict.entries() {
-                if let Some(sub_ht) = ht_dict.get::<Dict<'_>>(key.as_ref()) {
-                    if let Some(tf) = sub_ht.get::<Object<'_>>(b"TransferFunction" as &[u8]) {
-                        let is_identity =
-                            matches!(tf, Object::Name(n) if n.as_ref() == b"Identity");
-                        if !is_identity {
-                            let kstr = std::str::from_utf8(key.as_ref()).unwrap_or("?");
+            } else {
+                // Type 5: check sub-halftone entries.
+                // Primary CMYK colorants must NOT have TransferFunction.
+                // Spot colorants (any name except Default) must HAVE TransferFunction.
+                // Default colorant: no restriction.
+                const PRIMARY: &[&[u8]] = &[b"Cyan", b"Magenta", b"Yellow", b"Black"];
+                for (key, _) in ht_dict.entries() {
+                    let key_bytes = key.as_ref();
+                    // Skip well-known Type 5 dictionary keys (not sub-halftone entries).
+                    if matches!(
+                        key_bytes,
+                        b"HalftoneType" | b"Type" | b"HalftoneName" | b"Default"
+                    ) {
+                        continue;
+                    }
+                    // Resolve sub-halftone: direct dict or indirect reference.
+                    let sub_ht_opt: Option<Dict<'_>> =
+                        ht_dict.get::<Dict<'_>>(key_bytes).or_else(|| {
+                            ht_dict
+                                .get_ref(key_bytes)
+                                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                        });
+                    let Some(sub_ht) = sub_ht_opt else { continue };
+                    let kstr = std::str::from_utf8(key_bytes).unwrap_or("?");
+                    let has_tf = sub_ht
+                        .get::<Object<'_>>(b"TransferFunction" as &[u8])
+                        .is_some();
+                    if PRIMARY.contains(&key_bytes) {
+                        // Primary colorant: TransferFunction must be absent.
+                        if has_tf {
                             error_at(
                                 report,
                                 "6.2.10.5",
-                                format!("ExtGState {gs_str} halftone/{kstr} has custom /TransferFunction"),
+                                format!(
+                                    "ExtGState {gs_str} Type5/{kstr} has forbidden /TransferFunction"
+                                ),
+                                location,
+                            );
+                        }
+                    } else {
+                        // Spot colorant: TransferFunction must be present.
+                        if !has_tf {
+                            error_at(
+                                report,
+                                "6.2.10.5",
+                                format!(
+                                    "ExtGState {gs_str} Type5/{kstr} missing required /TransferFunction"
+                                ),
                                 location,
                             );
                         }
@@ -6546,9 +6609,12 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                         .get::<pdf_syntax::object::String>(keys::CHAR_SET)
                         .map(|s| s.as_bytes().to_vec());
                     if cs.as_ref().is_none_or(|v| v.is_empty()) {
-                        error_at(report, "6.3.5",
+                        error_at(
+                            report,
+                            "6.3.5",
                             format!("Type1 font subset {font_name} missing or empty /CharSet"),
-                            format!("page {}", page_idx + 1));
+                            format!("page {}", page_idx + 1),
+                        );
                     } else if let Some(cb) = &cs {
                         // §6.2.11.4.2: CharSet must list ALL glyphs with non-zero width
                         let ct = std::str::from_utf8(cb).unwrap_or("");
@@ -6556,7 +6622,8 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                             ct.split('/').filter(|s| !s.is_empty()).collect();
                         let fc = font_dict.get::<i32>(keys::FIRST_CHAR).unwrap_or(0);
                         if let Some(wa) = font_dict.get::<Array<'_>>(keys::WIDTHS) {
-                            let enc = font_dict.get::<Name>(keys::ENCODING)
+                            let enc = font_dict
+                                .get::<Name>(keys::ENCODING)
                                 .map(|n| n.as_ref().to_vec());
                             let winansi = enc.as_deref() == Some(b"WinAnsiEncoding");
                             for (i, w) in wa.iter::<pdf_syntax::object::Number>().enumerate() {
@@ -6564,7 +6631,9 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                                     let code = fc as usize + i;
                                     if let Some(gn) = if winansi {
                                         t1_winansi_glyph_name(code as u8)
-                                    } else { None } {
+                                    } else {
+                                        None
+                                    } {
                                         if !names.contains(gn) {
                                             error_at(report, "6.2.11.4.2",
                                                 format!("Type1 font {font_name}: /CharSet missing '/{gn}' (code {code})"),
@@ -6771,6 +6840,11 @@ fn is_subset_font(name: &str) -> bool {
 /// Type1 and CFF formats are more variable in their headers.
 fn is_font_program_corrupt(data: &[u8], is_truetype: bool) -> bool {
     if data.is_empty() || data.iter().all(|&b| b == 0) {
+        return true;
+    }
+    // All-whitespace stream has no valid font content (e.g. isartor-6-3-2-t01-fail-b
+    // uses a /FontFile stream filled entirely with spaces). Fixes §6.3.4 FN.
+    if data.iter().all(|&b| b.is_ascii_whitespace()) {
         return true;
     }
     if is_truetype && data.len() >= 4 {
@@ -9520,41 +9594,48 @@ pub fn check_name_utf8_cached(cache: &ObjectCache<'_>, report: &mut ComplianceRe
 
 fn check_name_utf8_obj(obj: &Object<'_>) -> bool {
     use pdf_syntax::object::MaybeRef;
+    fn is_bad_name(bytes: &[u8]) -> bool {
+        bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
+    }
+    /// Recursively scan a dict's direct (non-reference) entries.
+    /// Colorant names in Separation/DeviceN live in arrays that are nested
+    /// inside Resources/ColorSpace dicts, so we recurse into inline dicts and
+    /// scan one level into inline arrays. Depth-limited to avoid pathological
+    /// inputs. (#FN-6.1.7)
+    fn check_dict_entries(dict: &pdf_syntax::object::Dict<'_>, depth: u8) -> bool {
+        for (key, val) in dict.entries() {
+            if is_bad_name(key.as_ref()) {
+                return true;
+            }
+            match &val {
+                MaybeRef::NotRef(Object::Name(n)) => {
+                    if is_bad_name(n.as_ref()) {
+                        return true;
+                    }
+                }
+                MaybeRef::NotRef(Object::Array(arr)) => {
+                    for item in arr.raw_iter() {
+                        if let MaybeRef::NotRef(Object::Name(n)) = item {
+                            if is_bad_name(n.as_ref()) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                MaybeRef::NotRef(Object::Dict(d)) if depth < 4 => {
+                    if check_dict_entries(d, depth + 1) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
     match obj {
-        Object::Name(n) => {
-            let bytes = n.as_ref();
-            bytes.contains(&0) || std::str::from_utf8(bytes).is_err()
-        }
-        Object::Dict(dict) => {
-            for (key, val) in dict.entries() {
-                let kb = key.as_ref();
-                if kb.contains(&0) || std::str::from_utf8(kb).is_err() {
-                    return true;
-                }
-                if let MaybeRef::NotRef(Object::Name(n)) = val {
-                    let nb = n.as_ref();
-                    if nb.contains(&0) || std::str::from_utf8(nb).is_err() {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        Object::Stream(s) => {
-            for (key, val) in s.dict().entries() {
-                let kb = key.as_ref();
-                if kb.contains(&0) || std::str::from_utf8(kb).is_err() {
-                    return true;
-                }
-                if let MaybeRef::NotRef(Object::Name(n)) = val {
-                    let nb = n.as_ref();
-                    if nb.contains(&0) || std::str::from_utf8(nb).is_err() {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
+        Object::Name(n) => is_bad_name(n.as_ref()),
+        Object::Dict(dict) => check_dict_entries(dict, 0),
+        Object::Stream(s) => check_dict_entries(s.dict(), 0),
         _ => false,
     }
 }
@@ -10221,10 +10302,54 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
                 "Trailer /ID contains empty identifiers — both ID values must be non-empty",
             );
         }
+        // §6.1.3 t4: In linearized PDFs, /ID in all trailers must be identical.
+        check_linearized_id_mismatch(data, report);
     }
 
     if part == 4 {
         check_trailer_info_key(pdf, report);
+    }
+}
+
+/// §6.1.3 t4: If a linearized PDF has /ID in multiple trailers, all must match.
+fn check_linearized_id_mismatch(data: &[u8], report: &mut ComplianceReport) {
+    let text = String::from_utf8_lossy(data);
+    let mut id_values: Vec<String> = Vec::new();
+    let mut search = 0;
+    while let Some(rel) = text[search..].find("trailer") {
+        let abs = search + rel;
+        let next = text.as_bytes().get(abs + 7).copied().unwrap_or(0);
+        if next != b'\n' && next != b'\r' && next != b' ' && next != b'<' {
+            search = abs + 7;
+            continue;
+        }
+        let end = text.len().min(abs + 2000);
+        let region = &text[abs..end];
+        if !region.contains("<<") {
+            search = abs + 7;
+            continue;
+        }
+        // Extract first hex string from /ID [<hex1><hex2>]
+        if let Some(id_pos) = region.find("/ID") {
+            let after = &region[id_pos + 3..];
+            if let Some(open) = after.find('<') {
+                if let Some(close) = after[open + 1..].find('>') {
+                    let hex = &after[open + 1..open + 1 + close];
+                    id_values.push(hex.to_lowercase());
+                }
+            }
+        }
+        search = abs + 7;
+    }
+    if id_values.len() >= 2 {
+        let first = &id_values[0];
+        if id_values.iter().any(|v| v != first) {
+            error(
+                report,
+                "6.1.3",
+                "Linearized PDF has different /ID values across trailers",
+            );
+        }
     }
 }
 
