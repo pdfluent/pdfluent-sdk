@@ -1723,7 +1723,20 @@ fn check_form_xobject_geometry(pdf: &Pdf, report: &mut ComplianceReport) {
 
 /// §6.1.11 — Optional content restrictions.
 fn check_optional_content(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    let before = report.issues.len();
     check::check_optional_content(pdf, level.part(), report);
+    // PDF/A-2/3: base check emits "6.6.4" (remapped to "6.9"), but veraPDF also
+    // reports "6.1.11" as the parent OC clause. Emit it too. (#FN-6.1.11)
+    if matches!(level.part(), 2 | 3)
+        && report.issues.len() > before
+        && !report.issues.iter().any(|i| i.rule == "6.1.11")
+    {
+        check::error(
+            report,
+            "6.1.11",
+            "Optional content (OCG/OCMD) not permitted in PDF/A-2/3 (§6.1.11)",
+        );
+    }
 }
 
 /// §6.1.5 — Linearization hints.
@@ -2286,6 +2299,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.1.6") => Some("6.1.5"),    // hex strings
             (4, "6.1.8") => Some("6.1.6.2"),  // stream filters (LZWDecode etc.)
             (4, "6.1.10") => Some("6.1.6.2"), // PDF/A-1 filter rule → PDF/A-4
+            // PDF/A-2/3: check_stream_filters emits "6.1.8" for LZW/JBIG2 filter
+            // violations; veraPDF uses the sub-clause "6.1.6.2" (§6.1.6.2 of ISO
+            // 19005-2/3 covers stream filter restrictions). Remap to match. (#FN-6.1.6.2)
+            (2..=3, "6.1.8") => Some("6.1.6.2"),
             // Object-syntax spacing retagged to "6.1.8-obj" in check_object_syntax to
             // avoid collision with the LZW-filter remap above. veraPDF uses "6.1.8". (#496)
             (4, "6.1.8-obj") => Some("6.1.8"),
