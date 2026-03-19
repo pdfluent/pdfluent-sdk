@@ -1468,6 +1468,16 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
                     level.part()
                 ),
             );
+            // PDF/A-2/3: veraPDF fires §6.7.11 alongside §6.6.4 when pdfaid:part value
+            // mismatches. For PDF/A-1 and PDF/A-4, rule IS already "6.7.11"/"6.5.2".
+            // Fixes §6.7.11 FN on cs-veraPDF test suite 6-7-2-1-t01-fail-d.pdf.
+            if matches!(level.part(), 2 | 3) {
+                error(
+                    report,
+                    "6.7.11",
+                    "XMP pdfaid identification schema part value does not match PDF/A level",
+                );
+            }
             // If part already mismatches, conformance check is moot
             return;
         }
@@ -1502,6 +1512,14 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
                             level.conformance()
                         ),
                     );
+                    // PDF/A-2/3: veraPDF co-fires §6.7.11 for wrong conformance value.
+                    if matches!(level.part(), 2 | 3) {
+                        error(
+                            report,
+                            "6.7.11",
+                            "XMP pdfaid identification schema conformance value does not match PDF/A level",
+                        );
+                    }
                 }
             }
         } else {
@@ -1519,6 +1537,14 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
                         level.conformance()
                     ),
                 );
+                // PDF/A-2/3: veraPDF co-fires §6.7.11 for absent conformance.
+                if matches!(level.part(), 2 | 3) {
+                    error(
+                        report,
+                        "6.7.11",
+                        "XMP pdfaid identification schema conformance property is absent",
+                    );
+                }
             }
         }
     }
