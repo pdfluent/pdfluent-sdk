@@ -5,9 +5,9 @@ use std::time::Duration;
 pub enum TestTier {
     Fast,     // parse, metadata, geometry, bookmarks, signatures, form_fields, annotations (7)
     Standard, // Fast + render, text_extract, compliance, search (11)
-    Full,     // All 25 modules: Standard + text_oracle, metadata_oracle, manipulation, images,
-    // sign_verify, sign_roundtrip, form_write, annot_create, content_roundtrip,
-    // text_replace, redact, pdfa_convert, ocr, render_oracle (feature-gated)
+    Full,     // All 26 modules: Standard + text_oracle, metadata_oracle, manipulation, images,
+    // image_extract_verify, sign_verify, sign_roundtrip, form_write, annot_create,
+    // content_roundtrip, text_replace, redact, pdfa_convert, ocr, render_oracle (feature-gated)
     Oracle, // only text_oracle, metadata_oracle
 }
 
@@ -142,6 +142,7 @@ impl Config {
     /// | content_roundtrip| base   | single thread, 25s inner                 |
     /// | annot_create     | base   | single thread, 25s inner                 |
     /// | images           | base   | multi-thread: 30s load + 20s pages + 10s/page |
+    /// | image_extract_verify | base | multi-thread: 30s load + 20s pages + 10s/page |
     /// | ocr              | 2×base | single thread, 25s inner (OCR is heavy)  |
     /// | sign_roundtrip   | base   | two sequential threads, 12s each (shared 26s budget) |
     /// | pdfa_convert     | 3×base | progress-tracked, inner threads managed by test |
