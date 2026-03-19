@@ -6,7 +6,6 @@ use crate::object::Object;
 use crate::object::macros::object;
 use crate::reader::Reader;
 use crate::reader::{Readable, ReaderContext, ReaderExt, Skippable};
-use crate::trivia::is_white_space_character;
 use core::ops::Deref;
 use log::warn;
 use smallvec::SmallVec;
@@ -78,15 +77,16 @@ impl Readable<'_> for String {
 
 fn skip_hex(r: &mut Reader<'_>) -> Option<()> {
     r.forward_tag(b"<")?;
-    while let Some(b) = r.peek_byte() {
-        let is_hex = b.is_ascii_hexdigit();
-        let is_whitespace = is_white_space_character(b);
-
-        if !is_hex && !is_whitespace {
-            break;
+    // Consume all bytes until '>' — non-hex bytes are tolerated per Adobe Reader
+    // behaviour. Some PDFs embed binary data in /ID hex strings (e.g. bytes like
+    // 0xAE, 'I') which are technically invalid but must not break dict parsing.
+    loop {
+        match r.peek_byte()? {
+            b'>' => break,
+            _ => {
+                r.read_byte()?;
+            }
         }
-
-        r.read_byte()?;
     }
     r.forward_tag(b">")?;
 
@@ -100,7 +100,9 @@ fn read_hex(r: &mut Reader<'_>) -> Option<StringInner> {
 
     // Exclude outer brackets.
     let raw = r.range(start + 1..end - 1)?;
-    let decoded = ascii_hex::decode(raw)?;
+    // Non-hex bytes produce None from ascii_hex::decode; return empty string
+    // rather than failing so dict parsing stays intact (e.g. corrupt /ID arrays).
+    let decoded = ascii_hex::decode(raw).unwrap_or_default();
 
     Some(SmallVec::from_vec(decoded))
 }
