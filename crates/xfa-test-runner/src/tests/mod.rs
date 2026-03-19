@@ -6,6 +6,7 @@ pub mod content_roundtrip;
 pub mod form_fields;
 pub mod form_write;
 pub mod geometry;
+pub mod image_extract_verify;
 pub mod images;
 pub mod manipulation;
 pub mod metadata;
@@ -104,6 +105,7 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(bookmarks::BookmarksTest),
         Box::new(geometry::GeometryTest),
         Box::new(images::ImageExtractTest),
+        Box::new(image_extract_verify::ImageExtractVerifyTest),
         Box::new(search::SearchTest),
         Box::new(text_oracle::TextOracleTest),
         Box::new(metadata_oracle::MetadataOracleTest),
