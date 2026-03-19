@@ -2104,6 +2104,52 @@ fn stream_has_inherited_resource_refs(
     false
 }
 
+/// Returns true if the raw Info dict (located via the trailer) contains
+/// the given key (e.g. b"/Title"), even when its value is not a string.
+///
+/// Needed for §6.7.3.2: when /Title exists as an indirect reference (a PDF
+/// struct violation itself), pdf-syntax parses it as None, but veraPDF still
+/// flags the Info/XMP inconsistency. Fixes §6.7.3 FN on 6-1-5-t01-fail-j.
+fn raw_info_has_key(data: &[u8], key: &[u8]) -> bool {
+    // Find last trailer dict
+    let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") else {
+        return false;
+    };
+    let trailer_end = data.len().min(trailer_pos + 2000);
+    let trailer_region = &data[trailer_pos..trailer_end];
+
+    // Extract Info object number from "/Info N M R"
+    let Some(info_off) = trailer_region.windows(5).position(|w| w == b"/Info") else {
+        return false;
+    };
+    let after = &trailer_region[info_off + 5..];
+    let text = std::str::from_utf8(&after[..after.len().min(30)]).unwrap_or("");
+    let parts: Vec<&str> = text.split_whitespace().collect();
+    if parts.len() < 3 || parts[2] != "R" {
+        return false;
+    }
+    let Ok(obj_num) = parts[0].parse::<u32>() else {
+        return false;
+    };
+    let Ok(gen_num) = parts[1].parse::<u32>() else {
+        return false;
+    };
+
+    // Find "N M obj" in raw bytes and scan its dict for the key
+    let marker = format!("{obj_num} {gen_num} obj");
+    let Some(obj_pos) = data.windows(marker.len()).position(|w| w == marker.as_bytes()) else {
+        return false;
+    };
+    let region_end = data.len().min(obj_pos + 2000);
+    let region = &data[obj_pos..region_end];
+    // Stop at "stream" or "endobj" to avoid scanning stream content
+    let dict_end = region
+        .windows(6)
+        .position(|w| w == b"stream" || w == b"endobj")
+        .unwrap_or(region.len().min(1000));
+    region[..dict_end].windows(key.len()).any(|w| w == key)
+}
+
 /// Decode a PDF /Info string to a UTF-8 Rust string for comparison.
 ///
 /// PDF /Info strings are either PDFDocEncoding (raw bytes, ASCII-compatible) or
@@ -2274,14 +2320,37 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
         }
+    } else if xmp_text.contains("dc:title") {
+        // /Title key exists in Info dict but its value is not a string (e.g. an
+        // indirect reference to a stream). pdf-syntax can't parse it → metadata.title
+        // is None, but veraPDF still reports §6.7.3.2 because the key is present.
+        // Use raw byte scan to confirm /Title key actually exists in the Info dict.
+        if raw_info_has_key(pdf.data().as_ref(), b"/Title") {
+            error(
+                report,
+                "6.7.3.2",
+                "/Info /Title key exists but is not a string — cannot match XMP dc:title",
+            );
+        }
     }
 
     // Check Author (/Info Author vs dc:creator) — §6.7.3.3
     if let Some(author) = &metadata.author {
         if xmp_text.contains("dc:creator") {
             let (xmp_vals, _) = extract_rdf_seq_values(xmp_text, "dc:creator");
-            // Multiple dc:creator entries are valid (multi-author documents). Fixes #454.
-            if let Some(xmp_val) = xmp_vals.first() {
+            // §6.7.3.3: dc:creator SHALL contain exactly one entry (ISO 19005-1, clause 6.7.3.3).
+            // Multiple entries is a violation even if the first matches /Info /Author. (#454 was
+            // wrong to allow multiples — reverting that allowance.)
+            if xmp_vals.len() > 1 {
+                error(
+                    report,
+                    "6.7.3.3",
+                    format!(
+                        "dc:creator must contain exactly one entry; found {}",
+                        xmp_vals.len()
+                    ),
+                );
+            } else if let Some(xmp_val) = xmp_vals.first() {
                 if let Some(info_decoded) = decode_pdf_info_string(author) {
                     if info_decoded.as_str() != xmp_val.as_str() {
                         error(
@@ -6470,19 +6539,42 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
             }
             check_fontfile_subtype_match(&desc, font_name, page_idx, report);
             if is_subset_font(font_name) {
-                // §6.3.5 t2: Type1 font subsets must have a non-empty /CharSet
+                // §6.3.5 t2 + §6.2.11.4.2 t1: Type1 CharSet checks
                 let is_type1 = subtype_bytes == Some(b"Type1");
                 if is_type1 {
-                    let charset_ok = desc
+                    let cs = desc
                         .get::<pdf_syntax::object::String>(keys::CHAR_SET)
-                        .is_some_and(|s| !s.as_bytes().is_empty());
-                    if !charset_ok {
-                        error_at(
-                            report,
-                            "6.3.5",
-                            format!("Type1 font subset {font_name} missing or empty /CharSet in descriptor"),
-                            format!("page {}", page_idx + 1),
-                        );
+                        .map(|s| s.as_bytes().to_vec());
+                    if cs.as_ref().is_none_or(|v| v.is_empty()) {
+                        error_at(report, "6.3.5",
+                            format!("Type1 font subset {font_name} missing or empty /CharSet"),
+                            format!("page {}", page_idx + 1));
+                    } else if let Some(cb) = &cs {
+                        // §6.2.11.4.2: CharSet must list ALL glyphs with non-zero width
+                        let ct = std::str::from_utf8(cb).unwrap_or("");
+                        let names: std::collections::HashSet<&str> =
+                            ct.split('/').filter(|s| !s.is_empty()).collect();
+                        let fc = font_dict.get::<i32>(keys::FIRST_CHAR).unwrap_or(0);
+                        if let Some(wa) = font_dict.get::<Array<'_>>(keys::WIDTHS) {
+                            let enc = font_dict.get::<Name>(keys::ENCODING)
+                                .map(|n| n.as_ref().to_vec());
+                            let winansi = enc.as_deref() == Some(b"WinAnsiEncoding");
+                            for (i, w) in wa.iter::<pdf_syntax::object::Number>().enumerate() {
+                                if w.as_f64() > 0.0 {
+                                    let code = fc as usize + i;
+                                    if let Some(gn) = if winansi {
+                                        t1_winansi_glyph_name(code as u8)
+                                    } else { None } {
+                                        if !names.contains(gn) {
+                                            error_at(report, "6.2.11.4.2",
+                                                format!("Type1 font {font_name}: /CharSet missing '/{gn}' (code {code})"),
+                                                format!("page {}", page_idx + 1));
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -11213,7 +11305,9 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
 
-            // §6.2.11.3.1 t1: CIDFont Supplement must be ≤ CMap Supplement
+            // §6.3.3.3 / §6.2.11.3.3 / §6.2.10.3.3: CIDFont Supplement must be ≤ CMap
+            // Supplement. Internal rule "6.3.3.3" remaps to the correct per-part clause.
+            // (#FN-6.2.10.3.3)
             let cmap_supp = font_dict
                 .get::<Dict<'_>>(keys::ENCODING)
                 .and_then(|cmap| cmap.get::<Dict<'_>>(keys::CIDSYSTEMINFO))
@@ -11223,7 +11317,7 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                 if fs > cs {
                     error_at(
                         report,
-                        "6.3.3.1",
+                        "6.3.3.3",
                         format!(
                             "CIDFont Supplement ({fs}) > CMap Supplement ({cs}) for font {name}"
                         ),
