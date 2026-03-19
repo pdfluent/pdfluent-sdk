@@ -1041,8 +1041,11 @@ fn is_valid_lang_tag(tag: &str) -> bool {
     (primary.len() == 2 || primary.len() == 3) && primary.bytes().all(|b| b.is_ascii_alphabetic())
 }
 
-/// Check /Lang entries in catalog and structure elements are valid BCP-47 (§6.8.4).
-pub fn check_lang_values(pdf: &Pdf, report: &mut ComplianceReport) {
+/// Check /Lang entries in catalog and structure elements are valid BCP-47.
+///
+/// `rule` is the clause to emit: "6.7.4" for PDF/A-2/3 (veraPDF numbers it there),
+/// "6.8.4" for PDF/A-1/4.
+pub fn check_lang_values(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
     // Check catalog /Lang
     if let Some(cat) = catalog(pdf) {
         if let Some(lang_str) = cat.get::<pdf_syntax::object::String>(keys::LANG) {
@@ -1050,7 +1053,7 @@ pub fn check_lang_values(pdf: &Pdf, report: &mut ComplianceReport) {
                 if !is_valid_lang_tag(tag) {
                     error(
                         report,
-                        "6.8.4",
+                        rule,
                         format!("Catalog /Lang value '{tag}' is not a valid Language-Tag"),
                     );
                 }
@@ -1058,17 +1061,18 @@ pub fn check_lang_values(pdf: &Pdf, report: &mut ComplianceReport) {
         }
         // Check structure tree /Lang entries
         if let Some(struct_root) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) {
-            check_struct_elem_lang(&struct_root, report);
+            check_struct_elem_lang(&struct_root, rule, report);
         }
     }
 }
 
-fn check_struct_elem_lang(elem: &Dict<'_>, report: &mut ComplianceReport) {
-    check_struct_elem_lang_bounded(elem, report, 0, &mut 0);
+fn check_struct_elem_lang(elem: &Dict<'_>, rule: &str, report: &mut ComplianceReport) {
+    check_struct_elem_lang_bounded(elem, rule, report, 0, &mut 0);
 }
 
 fn check_struct_elem_lang_bounded(
     elem: &Dict<'_>,
+    rule: &str,
     report: &mut ComplianceReport,
     depth: usize,
     visited: &mut usize,
@@ -1086,7 +1090,7 @@ fn check_struct_elem_lang_bounded(
             if !is_valid_lang_tag(tag) {
                 error(
                     report,
-                    "6.8.4",
+                    rule,
                     format!("Structure element /Lang value '{tag}' is not a valid Language-Tag"),
                 );
             }
@@ -1094,7 +1098,7 @@ fn check_struct_elem_lang_bounded(
     }
     if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
         for kid in kids.iter::<Dict<'_>>() {
-            check_struct_elem_lang_bounded(&kid, report, depth + 1, visited);
+            check_struct_elem_lang_bounded(&kid, rule, report, depth + 1, visited);
             if *visited >= MAX_NODES {
                 return;
             }
@@ -5268,7 +5272,7 @@ pub fn check_actions_deep(pdf: &Pdf, part: u8, rule: &str, report: &mut Complian
         }
         if let Some(acroform) = cat.get::<Dict<'_>>(keys::ACRO_FORM) {
             if let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) {
-                check_form_fields_actions(&fields, &forbidden, report);
+                check_form_fields_actions(&fields, &forbidden, rule, report);
             }
         }
         // Check outline (bookmark) actions
@@ -5323,18 +5327,21 @@ fn check_aa_triggers(
 fn check_form_fields_actions(
     fields: &Array<'_>,
     forbidden: &[&[u8]],
+    rule: &str,
     report: &mut ComplianceReport,
 ) {
     for (idx, field) in fields.iter::<Dict<'_>>().enumerate() {
         let loc = format!("form field {}", idx + 1);
         if let Some(action) = field.get::<Dict<'_>>(keys::A) {
-            check_action_recursive(&action, forbidden, "6.1.6.2", &loc, report);
+            // Use the main forbidden-action rule (§6.5.1 for PDF/A-2/3, §6.6.1 for PDF/A-1/4).
+            // Previously hardcoded "6.1.6.2" (the /AA presence rule) which caused FNs.
+            check_action_recursive(&action, forbidden, rule, &loc, report);
         }
         if let Some(aa) = field.get::<Dict<'_>>(keys::AA) {
-            check_aa_triggers(&aa, forbidden, "6.1.6.2", &loc, report);
+            check_aa_triggers(&aa, forbidden, rule, &loc, report);
         }
         if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
-            check_form_fields_actions(&kids, forbidden, report);
+            check_form_fields_actions(&kids, forbidden, rule, report);
         }
     }
 }
