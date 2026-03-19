@@ -11788,6 +11788,16 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
 
                 // 3. Inline image filters
                 check_inline_images_in_content(content, page_idx, pdfa_part, report);
+
+                // 4. §6.2.10.8 — BDC property list /ActualText with PUA codepoints
+                if scan_bdc_actualtext_pua(content) {
+                    error_at(
+                        report,
+                        "6.2.10.8",
+                        "BDC marked content /ActualText contains PUA codepoint",
+                        loc.clone(),
+                    );
+                }
             }
         }
 
@@ -11870,6 +11880,95 @@ fn check_bmc_emc_nesting(content: &[u8], page_idx: usize, report: &mut Complianc
             format!("page {}", page_idx + 1),
         );
     }
+}
+
+/// §6.2.10.8 — scan a page content stream for BDC property-list /ActualText values
+/// that contain Unicode PUA codepoints.
+///
+/// Pattern: `/Name << /ActualText <hexstring> >> BDC`
+/// The hex string is typically UTF-16BE (starts with FEFF BOM).
+fn scan_bdc_actualtext_pua(content: &[u8]) -> bool {
+    let needle = b"/ActualText";
+    let mut i = 0;
+    while i + needle.len() <= content.len() {
+        if !content[i..].starts_with(needle) {
+            i += 1;
+            continue;
+        }
+        let mut j = i + needle.len();
+        // Skip whitespace after /ActualText
+        while j < content.len() && content[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j >= content.len() {
+            break;
+        }
+        // Hex string: <hexdigits> (not <<)
+        if content[j] == b'<' && content.get(j + 1).copied() != Some(b'<') {
+            let start = j + 1;
+            if let Some(rel) = content[start..].iter().position(|&b| b == b'>') {
+                let hex = &content[start..start + rel];
+                if contains_pua_in_utf16be_hex(hex) {
+                    return true;
+                }
+                i = start + rel + 1;
+                continue;
+            }
+        }
+        i = j + 1;
+    }
+    false
+}
+
+/// Decode a PDF hex string as UTF-16BE and return true if any codepoint is in the PUA.
+fn contains_pua_in_utf16be_hex(hex: &[u8]) -> bool {
+    // Collect hex nibbles (skip whitespace)
+    let nibbles: Vec<u8> = hex
+        .iter()
+        .filter(|&&b| !b.is_ascii_whitespace())
+        .cloned()
+        .collect();
+    if nibbles.len() < 4 {
+        return false;
+    }
+    // Decode pairs of nibbles into bytes
+    let mut bytes = Vec::with_capacity(nibbles.len() / 2);
+    let mut k = 0;
+    while k + 1 < nibbles.len() {
+        let hi = (nibbles[k] as char).to_digit(16);
+        let lo = (nibbles[k + 1] as char).to_digit(16);
+        if let (Some(h), Some(l)) = (hi, lo) {
+            bytes.push((h * 16 + l) as u8);
+        }
+        k += 2;
+    }
+    // Require UTF-16BE BOM (0xFE 0xFF)
+    if bytes.len() < 2 || bytes[0] != 0xFE || bytes[1] != 0xFF {
+        return false;
+    }
+    let mut i = 2; // skip BOM
+    while i + 1 < bytes.len() {
+        let hi = bytes[i] as u32;
+        let lo = bytes[i + 1] as u32;
+        let cp = (hi << 8) | lo;
+        // BMP PUA: U+E000–U+F8FF
+        if (0xE000..=0xF8FF).contains(&cp) {
+            return true;
+        }
+        // Surrogate pair: high surrogate D800-DBFF + low DC00-DFFF → supplementary PUA
+        if (0xD800..=0xDBFF).contains(&cp) && i + 3 < bytes.len() {
+            let lo2 = (bytes[i + 2] as u32) << 8 | bytes[i + 3] as u32;
+            if (0xDC00..=0xDFFF).contains(&lo2) {
+                let full = 0x10000 + ((cp - 0xD800) << 10) + (lo2 - 0xDC00);
+                if full >= 0xF0000 {
+                    return true;
+                }
+                i += 2; // consumed surrogate pair extra word
+            }
+        }
+        i += 2;
+    }
+    false
 }
 
 /// Check inline image filters for a single page content stream.
@@ -13129,18 +13228,3 @@ fn t1_standard_encoding_name(code: u8) -> Option<&'static str> {
     }
 }
 
-#[cfg(test)]
-mod debug_struct_test {
-    use super::*;
-    #[test]
-    #[ignore]
-    fn debug_pua_actualtext() {
-        let data = std::fs::read("/tmp/fn-6208/cs-veraPDF-6208-fail-a.pdf").unwrap();
-        let pdf = Pdf::new(data).unwrap();
-        let mut report = ComplianceReport::default();
-        check_table_structure(&pdf, &mut report);
-        let rules: Vec<_> = report.issues.iter().map(|i| i.rule.as_str()).collect();
-        eprintln!("Rules: {:?}", rules);
-        assert!(rules.contains(&"6.2.10.8"), "Expected 6.2.10.8, got {:?}", rules);
-    }
-}
