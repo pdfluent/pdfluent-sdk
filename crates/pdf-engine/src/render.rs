@@ -47,7 +47,7 @@ pub struct RenderedPage {
 }
 
 /// Render a single page to RGBA pixels.
-pub fn render_page(
+pub(crate) fn render_page(
     page: &Page<'_>,
     options: &RenderOptions,
     settings: &InterpreterSettings,
@@ -76,7 +76,7 @@ pub fn render_page(
 }
 
 /// Render a page as a thumbnail (fits within `max_dimension` on longest side).
-pub fn render_thumbnail(
+pub(crate) fn render_thumbnail(
     page: &Page<'_>,
     max_dimension: u32,
     settings: &InterpreterSettings,

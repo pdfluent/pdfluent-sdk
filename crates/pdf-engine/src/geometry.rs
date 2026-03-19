@@ -112,7 +112,7 @@ impl PageGeometry {
 }
 
 /// Extract full geometry from a pdf-syntax Page.
-pub fn extract_geometry(page: &Page<'_>) -> PageGeometry {
+pub(crate) fn extract_geometry(page: &Page<'_>) -> PageGeometry {
     let media_box = PageBox::from(page.media_box());
     let crop_box = PageBox::from(page.crop_box());
 

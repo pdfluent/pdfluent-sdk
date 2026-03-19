@@ -1,4 +1,10 @@
 //! Shared compliance checking helpers.
+//!
+//! This is an internal implementation module (`pub(crate)`). Many functions
+//! have non-cached convenience variants alongside the `_cached` variants that
+//! `pdfa.rs` actually calls. The non-cached variants are kept for completeness
+//! and potential future use in tests or tooling.
+#![allow(dead_code)]
 
 use crate::{ComplianceIssue, ComplianceReport, Severity};
 use pdf_syntax::object::dict::keys;
@@ -6549,8 +6555,8 @@ fn scan_for_notdef_in_content(content: &[u8]) -> bool {
             if end < content.len() {
                 let hex = &content[start..end];
                 // Check if this is <00> or <0000> (all zeros)
-                let all_zero = !hex.is_empty()
-                    && hex.iter().all(|&b| b == b'0' || b.is_ascii_whitespace());
+                let all_zero =
+                    !hex.is_empty() && hex.iter().all(|&b| b == b'0' || b.is_ascii_whitespace());
                 if all_zero {
                     // Check if followed by Tj or within a TJ array
                     let after = &content[end + 1..];
@@ -8548,9 +8554,8 @@ pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
         // §6.2.11.3.3 / §6.2.10.3.3: check /UseCMap within embedded CMap streams.
         // A CMap shall not reference any other CMap except standard predefined ones.
         // /Encoding may be a direct stream or an indirect reference (resolve both).
-        let enc_stream_opt: Option<Stream<'_>> = font_dict
-            .get::<Stream<'_>>(keys::ENCODING)
-            .or_else(|| {
+        let enc_stream_opt: Option<Stream<'_>> =
+            font_dict.get::<Stream<'_>>(keys::ENCODING).or_else(|| {
                 font_dict
                     .get_ref(keys::ENCODING)
                     .and_then(|r| xref.get::<Stream<'_>>(r.into()))
@@ -13236,4 +13241,3 @@ fn t1_standard_encoding_name(code: u8) -> Option<&'static str> {
         _ => None,
     }
 }
-

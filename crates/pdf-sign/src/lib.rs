@@ -48,6 +48,7 @@ use pdf_syntax::Pdf;
 /// Fixes #458: some corpus PDFs have `1167 0 R` in /Fields but the actual
 /// object is `1167 11 obj` (gen 11 ≠ 0); pdf_syntax stops iterating on the
 /// first unresolvable reference, never reaching our appended sig field.
+#[must_use]
 pub fn signature_fields<'a>(pdf: &'a Pdf) -> Vec<SignatureInfo<'a>> {
     let xref = pdf.xref();
     let root: Dict<'_> = match xref.get(xref.root_id()) {
@@ -162,6 +163,7 @@ pub struct SignatureInfo<'a> {
 /// Validate all signatures in a PDF document.
 ///
 /// Returns a `ValidationResult` for each signature field found.
+#[must_use]
 pub fn validate_signatures(pdf: &Pdf) -> Vec<ValidationResult> {
     let data = pdf.data().as_ref();
     let sigs = signature_fields(pdf);
