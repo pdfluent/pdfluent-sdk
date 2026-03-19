@@ -1268,13 +1268,12 @@ fn check_page_dimensions(
     // not exceed 32767 bytes (decoded). check.rs only enforces the 65535-byte
     // object-level limit via check_string_lengths_cached. (#496)
     if level.part() >= 2 {
-        let rule = if level.part() == 1 { "6.1.12" } else { "6.1.13" };
         for (page_idx, page) in pdf.pages().iter().enumerate() {
             if let Some(content) = page.page_stream() {
                 if content_stream_has_long_string(content) {
                     check::error_at(
                         report,
-                        rule,
+                        "6.1.13",
                         "Content stream contains string literal exceeding 32767 bytes",
                         format!("page {}", page_idx + 1),
                     );
@@ -1374,7 +1373,7 @@ fn content_stream_has_long_string(data: &[u8]) -> bool {
                     }
                     pos += 1;
                 }
-                if (hex_count + 1) / 2 > LIMIT {
+                if hex_count.div_ceil(2) > LIMIT {
                     return true;
                 }
                 if pos < len {
