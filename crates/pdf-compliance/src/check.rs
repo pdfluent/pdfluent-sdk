@@ -2078,6 +2078,32 @@ fn stream_references_resources(content: &[u8]) -> bool {
     false
 }
 
+/// Check if a content stream uses any named resource NOT present in `own_names`.
+///
+/// Returns `true` when the stream references a `/Name op` pattern where the name
+/// is absent from the caller's explicitly-defined resource names — meaning the
+/// resource would have to be inherited from a parent dictionary.  Used to detect
+/// §6.2.2 T2 violations in Form XObjects that have an explicit (but incomplete)
+/// Resources dict.
+fn stream_has_inherited_resource_refs(
+    content: &[u8],
+    own_names: &std::collections::HashSet<Vec<u8>>,
+) -> bool {
+    let text = String::from_utf8_lossy(content);
+    let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+    let resource_ops = ["Do", "cs", "CS", "gs", "sh"];
+    for (i, &tok) in tokens.iter().enumerate() {
+        if resource_ops.contains(&tok) && i > 0 {
+            if let Some(name) = tokens[i - 1].strip_prefix('/') {
+                if !own_names.contains(name.as_bytes()) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Decode a PDF /Info string to a UTF-8 Rust string for comparison.
 ///
 /// PDF /Info strings are either PDFDocEncoding (raw bytes, ASCII-compatible) or
@@ -9723,17 +9749,52 @@ pub fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
                     if !is_form {
                         continue;
                     }
-                    // Form XObjects should have their own Resources if they use any
-                    if !dict.contains_key(keys::RESOURCES) {
-                        if let Ok(decoded) = stream.decoded() {
-                            // Check for any resource-using operators
-                            let needs_resources = stream_references_resources(&decoded);
-                            if needs_resources {
-                                let xn = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+                    // Form XObjects must define all their resources explicitly.
+                    // §6.2.2 T2: `inheritedResourceNames == ''` — no resource
+                    // name used by the stream may be inherited from a parent dict.
+                    if let Ok(decoded) = stream.decoded() {
+                        let xn = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+                        if !dict.contains_key(keys::RESOURCES) {
+                            // No Resources dict at all but stream uses resource operators.
+                            if stream_references_resources(&decoded) {
                                 error_at(
                                     report,
                                     "6.2.2",
                                     format!("Form XObject {xn} references resources but has no explicit Resources dictionary"),
+                                    loc.clone(),
+                                );
+                            }
+                        } else {
+                            // Has Resources dict, but check it actually covers every
+                            // name the stream uses (empty or partial dicts still cause
+                            // inherited-resource violations). (#FN-6.2.2)
+                            let own_names: std::collections::HashSet<Vec<u8>> = dict
+                                .get::<Dict<'_>>(keys::RESOURCES)
+                                .map(|res| {
+                                    let mut names = std::collections::HashSet::new();
+                                    for sub_key in [
+                                        keys::COLORSPACE,
+                                        keys::FONT,
+                                        keys::XOBJECT,
+                                        keys::EXT_G_STATE,
+                                        keys::PATTERN,
+                                        keys::SHADING,
+                                        keys::PROPERTIES,
+                                    ] {
+                                        if let Some(sub) = res.get::<Dict<'_>>(sub_key) {
+                                            for (k, _) in sub.entries() {
+                                                names.insert(k.as_ref().to_vec());
+                                            }
+                                        }
+                                    }
+                                    names
+                                })
+                                .unwrap_or_default();
+                            if stream_has_inherited_resource_refs(&decoded, &own_names) {
+                                error_at(
+                                    report,
+                                    "6.2.2",
+                                    format!("Form XObject {xn} references resource names not in its own Resources dictionary (would be inherited)"),
                                     loc.clone(),
                                 );
                             }
