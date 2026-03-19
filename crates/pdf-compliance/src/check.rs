@@ -3404,7 +3404,8 @@ fn check_inline_image_interpolate(content: &[u8], location: &str, report: &mut C
     // /I is the abbreviation for /Interpolate in inline images.
     let mut pos = 0;
     while pos + 2 < content.len() {
-        if content[pos] == b'B' && content[pos + 1] == b'I'
+        if content[pos] == b'B'
+            && content[pos + 1] == b'I'
             && (pos == 0 || content[pos - 1].is_ascii_whitespace())
         {
             if let Some(id_off) = content[pos..].windows(2).position(|w| w == b"ID") {
