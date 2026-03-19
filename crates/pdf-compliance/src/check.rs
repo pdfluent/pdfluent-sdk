@@ -10602,30 +10602,39 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
 }
 
 /// §6.1.3 t4: If a linearized PDF has /ID in multiple trailers, all must match.
+///
+/// Operates on raw bytes (not str) to avoid char-boundary panics on non-UTF-8
+/// content (e.g. binary comment `%PDF-1.x%\xE2\xE3...`). Fixes crash on
+/// linearized PDFs with high-byte binary content. (#panic-6.1.3)
 fn check_linearized_id_mismatch(data: &[u8], report: &mut ComplianceReport) {
-    let text = String::from_utf8_lossy(data);
-    let mut id_values: Vec<String> = Vec::new();
+    let mut id_values: Vec<Vec<u8>> = Vec::new();
     let mut search = 0;
-    while let Some(rel) = text[search..].find("trailer") {
+    while let Some(rel) = data[search..].windows(7).position(|w| w == b"trailer") {
         let abs = search + rel;
-        let next = text.as_bytes().get(abs + 7).copied().unwrap_or(0);
+        let next = data.get(abs + 7).copied().unwrap_or(0);
         if next != b'\n' && next != b'\r' && next != b' ' && next != b'<' {
             search = abs + 7;
             continue;
         }
-        let end = text.len().min(abs + 2000);
-        let region = &text[abs..end];
-        if !region.contains("<<") {
+        let end = data.len().min(abs + 2000);
+        let region = &data[abs..end];
+        if !region.windows(2).any(|w| w == b"<<") {
             search = abs + 7;
             continue;
         }
         // Extract first hex string from /ID [<hex1><hex2>]
-        if let Some(id_pos) = region.find("/ID") {
+        if let Some(id_pos) = region.windows(3).position(|w| w == b"/ID") {
             let after = &region[id_pos + 3..];
-            if let Some(open) = after.find('<') {
-                if let Some(close) = after[open + 1..].find('>') {
-                    let hex = &after[open + 1..open + 1 + close];
-                    id_values.push(hex.to_lowercase());
+            if let Some(open) = after.iter().position(|&b| b == b'<') {
+                // Skip `<<` dict delimiters — we want the first `<hex>` scalar
+                if after.get(open + 1) != Some(&b'<') {
+                    if let Some(close) = after[open + 1..].iter().position(|&b| b == b'>') {
+                        let hex = after[open + 1..open + 1 + close]
+                            .iter()
+                            .map(|b| b.to_ascii_lowercase())
+                            .collect::<Vec<u8>>();
+                        id_values.push(hex);
+                    }
                 }
             }
         }
