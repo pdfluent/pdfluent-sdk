@@ -211,9 +211,12 @@ pub fn parse_xmp_pdfua(xmp: &[u8]) -> Option<u8> {
 }
 
 /// Check XMP metadata contains PDF/A Identification Schema (§6.7.11).
+///
+/// Note: "missing XMP stream" is §6.7.2 (PDF/A-1), fired by check_xmp_metadata in pdfa.rs.
+/// This function only fires §6.7.11 when XMP exists but is missing the pdfaid identification.
 pub fn check_xmp_pdfa_identification(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(xmp) = get_xmp_metadata(pdf) else {
-        error(report, "6.7.11", "Document missing XMP metadata stream");
+        // Missing XMP is handled by check_xmp_metadata with the correct per-part rule (§6.7.2 for PDF/A-1).
         return;
     };
     let text = String::from_utf8_lossy(&xmp);
