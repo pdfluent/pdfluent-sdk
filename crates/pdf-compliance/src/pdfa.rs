@@ -2446,6 +2446,31 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // ISO 19005-2/3 §6.11 for role-mapping violations. (#496)
             (2..=3, "6.12") => Some("6.11"),
 
+            // CIDSet coverage check emits "6.2.11.4.2" (PDF/A-2/3 numbering).
+            // PDF/A-1: veraPDF uses §6.3.5 for CIDSet/CharSet violations.
+            // PDF/A-4: §6.2.10.4.2.
+            (1, "6.2.11.4.2") => Some("6.3.5"),
+            (4, "6.2.11.4.2") => Some("6.2.10.4.2"),
+
+            // Rendering intent: check.rs emits "6.2.5" (our canonical numbering).
+            // PDF/A-1: veraPDF uses §6.2.9 (not §6.2.5).
+            // Actually our remap (1,"6.2.5")=>"6.2.9" already exists above for form XObjects.
+            // For PDF/A-4: rendering intent is §6.2.6.
+            (4, "6.2.5") => Some("6.2.6"),
+
+            // Halftone/TransferFunction: check.rs emits "6.2.10" or "6.2.10.5".
+            // PDF/A-2/3: veraPDF uses §6.2.5 for halftone+transfer restrictions.
+            // Our remap (1,"6.2.10.5")=>"6.2.8" already exists for PDF/A-1.
+            (2..=3, "6.2.10.5") => Some("6.2.5"),
+
+            // Font embedding: check.rs emits "6.3.4" for missing font programs.
+            // PDF/A-1: veraPDF uses §6.3.4 directly — no remap needed.
+            // But for CIDFonts, the embedding check emits "6.3.3" which is remapped above.
+
+            // CMap external reference: check.rs emits "6.3.3.3" for CMap references.
+            // PDF/A-1: §6.3.3.3 (already correct).
+            // PDF/A-4: already remapped to "6.2.10.3.3" above.
+
             _ => None,
         };
         if let Some(r) = new_rule {
