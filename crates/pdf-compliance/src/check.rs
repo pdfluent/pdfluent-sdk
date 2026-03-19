@@ -6025,6 +6025,128 @@ pub fn check_output_intent_consistency(pdf: &Pdf, report: &mut ComplianceReport)
     }
 }
 
+/// §6.2.2 T2 — Type3 CharProc streams must not inherit resources from the page.
+///
+/// PDF/A-2/3 §6.2.2 requires that every content stream (including Type3 CharProc
+/// streams) declares all named resources it uses in its own (or the owning font's)
+/// Resources dictionary. CharProcs that use `/Name cs`, `/Name Tf`, `/Name Do`,
+/// `/Name gs`, or `/Name sh` without those names being defined in the Type3 font
+/// dict's /Resources entry are relying on page-level resource inheritance — which
+/// ISO 19005-2/3 §6.2.2 T2 explicitly forbids. Fixes §6.2.2 FNs (#FN-6.2.2).
+pub fn check_type3_charproc_resources(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let loc = format!("page {}", page_idx + 1);
+        let fonts = &page.resources().fonts;
+        for (fname, _) in fonts.entries() {
+            let font_dict_opt: Option<Dict<'_>> =
+                fonts.get::<Dict<'_>>(fname.as_ref()).or_else(|| {
+                    fonts
+                        .get_ref(fname.as_ref())
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            let Some(font_dict) = font_dict_opt else {
+                continue;
+            };
+            if !font_dict
+                .get::<Name>(keys::SUBTYPE)
+                .is_some_and(|s| s.as_ref() == b"Type3")
+            {
+                continue;
+            }
+
+            // Collect resource names declared in the Type3 font's /Resources dict.
+            let font_res_names: std::collections::HashSet<Vec<u8>> = {
+                let mut names = std::collections::HashSet::new();
+                // Resolve /Resources — may be direct or indirect.
+                let res_dict_opt: Option<Dict<'_>> =
+                    font_dict.get::<Dict<'_>>(keys::RESOURCES).or_else(|| {
+                        font_dict
+                            .get_ref(keys::RESOURCES)
+                            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                    });
+                if let Some(res) = res_dict_opt {
+                    // Collect names from all sub-dicts (ColorSpace, Font, XObject, …).
+                    for sub_key in [
+                        keys::COLORSPACE,
+                        keys::FONT,
+                        keys::XOBJECT,
+                        keys::EXT_G_STATE,
+                        keys::SHADING,
+                        keys::PATTERN,
+                    ] {
+                        if let Some(sub) = res.get::<Dict<'_>>(sub_key) {
+                            for (n, _) in sub.entries() {
+                                names.insert(n.as_ref().to_vec());
+                            }
+                        }
+                    }
+                }
+                names
+            };
+
+            // /CharProcs may be a direct dict or an indirect reference.
+            let charprocs_opt: Option<Dict<'_>> = font_dict
+                .get::<Dict<'_>>(b"CharProcs" as &[u8])
+                .or_else(|| {
+                    font_dict
+                        .get_ref(b"CharProcs" as &[u8])
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            let Some(charprocs) = charprocs_opt else {
+                continue;
+            };
+            let fstr = std::str::from_utf8(fname.as_ref()).unwrap_or("?");
+
+            for (cname, _) in charprocs.entries() {
+                let cp_stream_opt: Option<Stream<'_>> =
+                    charprocs.get::<Stream<'_>>(cname.as_ref()).or_else(|| {
+                        charprocs
+                            .get_ref(cname.as_ref())
+                            .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                    });
+                let Some(cp_stream) = cp_stream_opt else {
+                    continue;
+                };
+                let Ok(content) = cp_stream.decoded() else {
+                    continue;
+                };
+
+                // Scan for /Name <resource-op> pairs where the name is not declared
+                // in the font's /Resources dict. These are inherited from the page
+                // and violate §6.2.2 T2.
+                let resource_ops: &[&str] = &["cs", "CS", "Tf", "Do", "gs", "sh"];
+                let text = String::from_utf8_lossy(&content);
+                let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+                let cstr = std::str::from_utf8(cname.as_ref()).unwrap_or("?");
+                for i in 1..tokens.len() {
+                    if !resource_ops.contains(&tokens[i]) {
+                        continue;
+                    }
+                    let Some(raw_name) = tokens[i - 1].strip_prefix('/') else {
+                        continue;
+                    };
+                    if !font_res_names.contains(raw_name.as_bytes()) {
+                        error_at(
+                            report,
+                            "6.2.2",
+                            format!(
+                                "Type3 font {fstr} CharProc {cstr}: \
+                                 resource /{raw_name} used via '{op}' not declared in \
+                                 font /Resources (inherited from page — §6.2.2 T2)",
+                                op = tokens[i]
+                            ),
+                            loc.clone(),
+                        );
+                        // Report each CharProc at most once.
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Check content stream operators are valid PDF operators (§6.2.10).
 ///
 /// Operators not defined in PDF Reference are forbidden even if
@@ -11748,18 +11870,25 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
             return;
         }
 
-        // Get the CMap's CIDSystemInfo
-        let cmap_ordering = font_dict
-            .get::<Dict<'_>>(keys::ENCODING)
-            .and_then(|cmap| cmap.get::<Dict<'_>>(keys::CIDSYSTEMINFO))
-            .and_then(|csi| csi.get::<pdf_syntax::object::String>(keys::ORDERING))
-            .map(|o| String::from_utf8_lossy(o.as_bytes()).to_string());
-
-        let cmap_registry = font_dict
-            .get::<Dict<'_>>(keys::ENCODING)
-            .and_then(|cmap| cmap.get::<Dict<'_>>(keys::CIDSYSTEMINFO))
-            .and_then(|csi| csi.get::<pdf_syntax::object::String>(keys::REGISTRY))
-            .map(|r| String::from_utf8_lossy(r.as_bytes()).to_string());
+        // Get the CMap's CIDSystemInfo — stream dict or predefined CMap name.
+        let (cmap_registry, cmap_ordering): (Option<String>, Option<String>) =
+            if let Some(enc_stream) = font_dict.get::<Stream<'_>>(keys::ENCODING) {
+                let d = enc_stream.dict();
+                if let Some(csi) = d.get::<Dict<'_>>(keys::CIDSYSTEMINFO) {
+                    let r = csi.get::<pdf_syntax::object::String>(keys::REGISTRY)
+                        .map(|v| String::from_utf8_lossy(v.as_bytes()).to_string());
+                    let o = csi.get::<pdf_syntax::object::String>(keys::ORDERING)
+                        .map(|v| String::from_utf8_lossy(v.as_bytes()).to_string());
+                    (r, o)
+                } else { (None, None) }
+            } else if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
+                // Predefined CMap: "Registry-Ordering-Supplement" e.g. "Adobe-Japan1-2"
+                let s = std::str::from_utf8(enc_name.as_ref()).unwrap_or("");
+                let parts: Vec<&str> = s.splitn(3, '-').collect();
+                if parts.len() >= 2 {
+                    (Some(parts[0].to_string()), Some(parts[1].to_string()))
+                } else { (None, None) }
+            } else { (None, None) };
 
         // Get CIDFont's CIDSystemInfo
         let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) else {
