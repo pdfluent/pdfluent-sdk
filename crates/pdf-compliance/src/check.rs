@@ -173,7 +173,10 @@ pub fn get_xmp_metadata(pdf: &Pdf) -> Option<Vec<u8>> {
         .position(|w| w == end_needle)
         .map(|off| {
             let rel = start + off + end_needle.len();
-            raw[rel..].windows(2).position(|w| w == b"?>").map_or(rel, |e| rel + e + 2)
+            raw[rel..]
+                .windows(2)
+                .position(|w| w == b"?>")
+                .map_or(rel, |e| rel + e + 2)
         })
         .unwrap_or(raw.len());
     Some(raw[start..end].to_vec())
@@ -799,7 +802,9 @@ fn scan_type3_charprocs_vs_profile(
                         let cstr = std::str::from_utf8(cname.as_ref()).unwrap_or("?");
                         let ops = detect_device_color_ops(&decoded);
                         let loc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
-                        report_color_vs_profile_eff(&ops, eff_cmyk, eff_rgb, eff_gray, &loc, report);
+                        report_color_vs_profile_eff(
+                            &ops, eff_cmyk, eff_rgb, eff_gray, &loc, report,
+                        );
                     }
                 }
             }
@@ -819,7 +824,12 @@ fn scan_type3_charprocs_vs_profile(
                             let xloc =
                                 format!("{base_loc} Type3Font {fstr} XObject {xstr} Group /CS");
                             report_device_cs_name(
-                                cs.as_ref(), rgb_ok, cmyk_ok, gray_ok, &xloc, report,
+                                cs.as_ref(),
+                                rgb_ok,
+                                cmyk_ok,
+                                gray_ok,
+                                &xloc,
+                                report,
                             );
                         }
                     }
@@ -2568,8 +2578,8 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
 
     // PDF/A-4 requires pdfaid:rev to be a 4-digit year (ISO 19005-4, §6.7.3).
     // This check runs regardless of Info dict presence. Fixes #468 (fail-e FN).
-    let is_pdfa4 = xmp_text.contains("pdfaid:part=\"4\"")
-        || xmp_text.contains("<pdfaid:part>4</pdfaid:part>");
+    let is_pdfa4 =
+        xmp_text.contains("pdfaid:part=\"4\"") || xmp_text.contains("<pdfaid:part>4</pdfaid:part>");
     if is_pdfa4 {
         let rev_val = extract_xmp_value(xmp_text, "pdfaid:rev")
             .or_else(|| extract_xmp_attr(xmp_text, "pdfaid:rev"));
@@ -4395,7 +4405,10 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
     if !name[0].is_ascii_alphabetic() && name[0] != b'.' {
         return false;
     }
-    if !name.iter().all(|&b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_') {
+    if !name
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_')
+    {
         return false;
     }
 
@@ -4419,77 +4432,349 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
 
     // AGLFN v1.7 + common full-AGL extras — sorted for binary search.
     const AGL_NAMES: &[&[u8]] = &[
-        b"A", b"AE", b"AEacute", b"AEsmall", b"Aacute", b"Abreve", b"Acircumflex",
-        b"Adieresis", b"Agrave", b"Amacron", b"Aogonek", b"Aring", b"Aringacute", b"Atilde",
-        b"B", b"C", b"Cacute", b"Ccaron", b"Ccedilla", b"D", b"Dcaron", b"Dcroat",
-        b"E", b"Eacute", b"Ebreve", b"Ecaron", b"Ecircumflex", b"Edieresis",
-        b"Edotaccent", b"Egrave", b"Emacron", b"Eogonek", b"Eth",
-        b"F", b"G", b"Gbreve", b"Gcommaaccent", b"H", b"I", b"IJ",
-        b"Iacute", b"Ibreve", b"Icircumflex", b"Idieresis", b"Idotaccent",
-        b"Igrave", b"Imacron", b"Iogonek",
-        b"J", b"K", b"Kcommaaccent",
-        b"L", b"Lacute", b"Lcaron", b"Lcommaaccent", b"Ldot", b"Lslash",
-        b"M", b"N", b"Nacute", b"Ncaron", b"Ncommaaccent", b"Ntilde",
-        b"O", b"OE", b"OEsmall", b"Oacute", b"Obreve", b"Ocircumflex", b"Odieresis",
-        b"Ograve", b"Ohungarumlaut", b"Omacron", b"Oslash", b"Oslashacute", b"Otilde",
-        b"P", b"Q",
-        b"R", b"Racute", b"Rcaron", b"Rcommaaccent",
-        b"S", b"Sacute", b"Scaron", b"Scedilla", b"Scommaaccent",
-        b"T", b"Tbar", b"Tcaron", b"Tcommaaccent", b"Thorn",
-        b"U", b"Uacute", b"Ubreve", b"Ucircumflex", b"Udieresis", b"Ugrave",
-        b"Uhungarumlaut", b"Umacron", b"Uogonek", b"Uring",
-        b"V", b"W", b"Wacute", b"Wcircumflex", b"Wdieresis", b"Wgrave",
-        b"X", b"Y", b"Yacute", b"Ycircumflex", b"Ydieresis",
-        b"Z", b"Zacute", b"Zcaron", b"Zdotaccent",
-        b"a", b"aacute", b"abreve", b"acircumflex", b"acute", b"adieresis",
-        b"ae", b"aeacute", b"agrave", b"amacron", b"ampersand", b"aogonek",
-        b"aring", b"aringacute", b"asciicircum", b"asciitilde", b"asterisk", b"at",
+        b"A",
+        b"AE",
+        b"AEacute",
+        b"AEsmall",
+        b"Aacute",
+        b"Abreve",
+        b"Acircumflex",
+        b"Adieresis",
+        b"Agrave",
+        b"Amacron",
+        b"Aogonek",
+        b"Aring",
+        b"Aringacute",
+        b"Atilde",
+        b"B",
+        b"C",
+        b"Cacute",
+        b"Ccaron",
+        b"Ccedilla",
+        b"D",
+        b"Dcaron",
+        b"Dcroat",
+        b"E",
+        b"Eacute",
+        b"Ebreve",
+        b"Ecaron",
+        b"Ecircumflex",
+        b"Edieresis",
+        b"Edotaccent",
+        b"Egrave",
+        b"Emacron",
+        b"Eogonek",
+        b"Eth",
+        b"F",
+        b"G",
+        b"Gbreve",
+        b"Gcommaaccent",
+        b"H",
+        b"I",
+        b"IJ",
+        b"Iacute",
+        b"Ibreve",
+        b"Icircumflex",
+        b"Idieresis",
+        b"Idotaccent",
+        b"Igrave",
+        b"Imacron",
+        b"Iogonek",
+        b"J",
+        b"K",
+        b"Kcommaaccent",
+        b"L",
+        b"Lacute",
+        b"Lcaron",
+        b"Lcommaaccent",
+        b"Ldot",
+        b"Lslash",
+        b"M",
+        b"N",
+        b"Nacute",
+        b"Ncaron",
+        b"Ncommaaccent",
+        b"Ntilde",
+        b"O",
+        b"OE",
+        b"OEsmall",
+        b"Oacute",
+        b"Obreve",
+        b"Ocircumflex",
+        b"Odieresis",
+        b"Ograve",
+        b"Ohungarumlaut",
+        b"Omacron",
+        b"Oslash",
+        b"Oslashacute",
+        b"Otilde",
+        b"P",
+        b"Q",
+        b"R",
+        b"Racute",
+        b"Rcaron",
+        b"Rcommaaccent",
+        b"S",
+        b"Sacute",
+        b"Scaron",
+        b"Scedilla",
+        b"Scommaaccent",
+        b"T",
+        b"Tbar",
+        b"Tcaron",
+        b"Tcommaaccent",
+        b"Thorn",
+        b"U",
+        b"Uacute",
+        b"Ubreve",
+        b"Ucircumflex",
+        b"Udieresis",
+        b"Ugrave",
+        b"Uhungarumlaut",
+        b"Umacron",
+        b"Uogonek",
+        b"Uring",
+        b"V",
+        b"W",
+        b"Wacute",
+        b"Wcircumflex",
+        b"Wdieresis",
+        b"Wgrave",
+        b"X",
+        b"Y",
+        b"Yacute",
+        b"Ycircumflex",
+        b"Ydieresis",
+        b"Z",
+        b"Zacute",
+        b"Zcaron",
+        b"Zdotaccent",
+        b"a",
+        b"aacute",
+        b"abreve",
+        b"acircumflex",
+        b"acute",
+        b"adieresis",
+        b"ae",
+        b"aeacute",
+        b"agrave",
+        b"amacron",
+        b"ampersand",
+        b"aogonek",
+        b"aring",
+        b"aringacute",
+        b"asciicircum",
+        b"asciitilde",
+        b"asterisk",
+        b"at",
         b"atilde",
-        b"b", b"backslash", b"bar", b"braceleft", b"braceright",
-        b"bracketleft", b"bracketright", b"breve", b"brokenbar", b"bullet",
-        b"c", b"cacute", b"caron", b"ccaron", b"ccedilla", b"cedilla", b"cent",
-        b"colon", b"comma", b"copyright", b"currency",
-        b"d", b"dagger", b"daggerdbl", b"dcaron", b"dcroat", b"degree",
-        b"dieresis", b"divide", b"dollar", b"dotaccent", b"dotlessi",
-        b"e", b"eacute", b"ebreve", b"ecaron", b"ecircumflex", b"edieresis",
-        b"edotaccent", b"egrave", b"eight", b"ellipsis", b"emacron", b"emdash",
-        b"endash", b"eogonek", b"equal", b"eth", b"exclam", b"exclamdown",
-        b"f", b"ff", b"ffi", b"ffl", b"fi", b"five", b"fl", b"florin", b"four",
+        b"b",
+        b"backslash",
+        b"bar",
+        b"braceleft",
+        b"braceright",
+        b"bracketleft",
+        b"bracketright",
+        b"breve",
+        b"brokenbar",
+        b"bullet",
+        b"c",
+        b"cacute",
+        b"caron",
+        b"ccaron",
+        b"ccedilla",
+        b"cedilla",
+        b"cent",
+        b"colon",
+        b"comma",
+        b"copyright",
+        b"currency",
+        b"d",
+        b"dagger",
+        b"daggerdbl",
+        b"dcaron",
+        b"dcroat",
+        b"degree",
+        b"dieresis",
+        b"divide",
+        b"dollar",
+        b"dotaccent",
+        b"dotlessi",
+        b"e",
+        b"eacute",
+        b"ebreve",
+        b"ecaron",
+        b"ecircumflex",
+        b"edieresis",
+        b"edotaccent",
+        b"egrave",
+        b"eight",
+        b"ellipsis",
+        b"emacron",
+        b"emdash",
+        b"endash",
+        b"eogonek",
+        b"equal",
+        b"eth",
+        b"exclam",
+        b"exclamdown",
+        b"f",
+        b"ff",
+        b"ffi",
+        b"ffl",
+        b"fi",
+        b"five",
+        b"fl",
+        b"florin",
+        b"four",
         b"fraction",
-        b"g", b"gbreve", b"gcommaaccent", b"germandbls", b"grave", b"greater",
-        b"guillemotleft", b"guillemotright", b"guilsinglleft", b"guilsinglright",
-        b"h", b"hungarumlaut", b"hyphen",
-        b"i", b"iacute", b"ibreve", b"icircumflex", b"idieresis", b"igrave",
-        b"ij", b"imacron", b"iogonek",
-        b"j", b"k", b"kcommaaccent",
-        b"l", b"lacute", b"lcaron", b"lcommaaccent", b"ldot", b"less",
-        b"logicalnot", b"lozenge", b"lslash",
-        b"m", b"macron", b"minus", b"mu", b"multiply",
-        b"n", b"nacute", b"ncaron", b"ncommaaccent", b"nine", b"notequal",
-        b"ntilde", b"numbersign",
-        b"o", b"oacute", b"obreve", b"ocircumflex", b"odieresis", b"oe",
-        b"ograve", b"ohungarumlaut", b"omacron", b"one", b"onehalf",
-        b"onequarter", b"onesuperior", b"ordfeminine", b"ordmasculine",
-        b"oslash", b"oslashacute", b"otilde",
-        b"p", b"paragraph", b"parenleft", b"parenright", b"partialdiff",
-        b"percent", b"period", b"periodcentered", b"perthousand", b"plus",
+        b"g",
+        b"gbreve",
+        b"gcommaaccent",
+        b"germandbls",
+        b"grave",
+        b"greater",
+        b"guillemotleft",
+        b"guillemotright",
+        b"guilsinglleft",
+        b"guilsinglright",
+        b"h",
+        b"hungarumlaut",
+        b"hyphen",
+        b"i",
+        b"iacute",
+        b"ibreve",
+        b"icircumflex",
+        b"idieresis",
+        b"igrave",
+        b"ij",
+        b"imacron",
+        b"iogonek",
+        b"j",
+        b"k",
+        b"kcommaaccent",
+        b"l",
+        b"lacute",
+        b"lcaron",
+        b"lcommaaccent",
+        b"ldot",
+        b"less",
+        b"logicalnot",
+        b"lozenge",
+        b"lslash",
+        b"m",
+        b"macron",
+        b"minus",
+        b"mu",
+        b"multiply",
+        b"n",
+        b"nacute",
+        b"ncaron",
+        b"ncommaaccent",
+        b"nine",
+        b"notequal",
+        b"ntilde",
+        b"numbersign",
+        b"o",
+        b"oacute",
+        b"obreve",
+        b"ocircumflex",
+        b"odieresis",
+        b"oe",
+        b"ograve",
+        b"ohungarumlaut",
+        b"omacron",
+        b"one",
+        b"onehalf",
+        b"onequarter",
+        b"onesuperior",
+        b"ordfeminine",
+        b"ordmasculine",
+        b"oslash",
+        b"oslashacute",
+        b"otilde",
+        b"p",
+        b"paragraph",
+        b"parenleft",
+        b"parenright",
+        b"partialdiff",
+        b"percent",
+        b"period",
+        b"periodcentered",
+        b"perthousand",
+        b"plus",
         b"plusminus",
-        b"q", b"question", b"questiondown", b"quotedbl", b"quotedblbase",
-        b"quotedblleft", b"quotedblright", b"quoteleft", b"quoteright",
-        b"quotesinglbase", b"quotesingle",
-        b"r", b"racute", b"radical", b"rcaron", b"rcommaaccent", b"registered",
+        b"q",
+        b"question",
+        b"questiondown",
+        b"quotedbl",
+        b"quotedblbase",
+        b"quotedblleft",
+        b"quotedblright",
+        b"quoteleft",
+        b"quoteright",
+        b"quotesinglbase",
+        b"quotesingle",
+        b"r",
+        b"racute",
+        b"radical",
+        b"rcaron",
+        b"rcommaaccent",
+        b"registered",
         b"ring",
-        b"s", b"sacute", b"scaron", b"scedilla", b"scommaaccent", b"section",
-        b"semicolon", b"seven", b"six", b"slash", b"space", b"sterling",
+        b"s",
+        b"sacute",
+        b"scaron",
+        b"scedilla",
+        b"scommaaccent",
+        b"section",
+        b"semicolon",
+        b"seven",
+        b"six",
+        b"slash",
+        b"space",
+        b"sterling",
         b"summation",
-        b"t", b"tbar", b"tcaron", b"tcommaaccent", b"thorn", b"three",
-        b"threequarters", b"threesuperior", b"tilde", b"trademark", b"two",
+        b"t",
+        b"tbar",
+        b"tcaron",
+        b"tcommaaccent",
+        b"thorn",
+        b"three",
+        b"threequarters",
+        b"threesuperior",
+        b"tilde",
+        b"trademark",
+        b"two",
         b"twosuperior",
-        b"u", b"uacute", b"ubreve", b"ucircumflex", b"udieresis", b"ugrave",
-        b"uhungarumlaut", b"umacron", b"underscore", b"uogonek", b"uring",
-        b"v", b"w", b"wacute", b"wcircumflex", b"wdieresis", b"wgrave",
-        b"x", b"y", b"yacute", b"ycircumflex", b"ydieresis", b"yen",
-        b"z", b"zacute", b"zcaron", b"zdotaccent", b"zero",
+        b"u",
+        b"uacute",
+        b"ubreve",
+        b"ucircumflex",
+        b"udieresis",
+        b"ugrave",
+        b"uhungarumlaut",
+        b"umacron",
+        b"underscore",
+        b"uogonek",
+        b"uring",
+        b"v",
+        b"w",
+        b"wacute",
+        b"wcircumflex",
+        b"wdieresis",
+        b"wgrave",
+        b"x",
+        b"y",
+        b"yacute",
+        b"ycircumflex",
+        b"ydieresis",
+        b"yen",
+        b"z",
+        b"zacute",
+        b"zcaron",
+        b"zdotaccent",
+        b"zero",
     ];
     AGL_NAMES.binary_search(&name).is_ok()
 }
@@ -7059,6 +7344,192 @@ fn hex_val(b: u8) -> u8 {
     }
 }
 
+/// §6.2.11.4.1 — Content stream renders a character whose glyph is not defined
+/// in the embedded Type1/CFF subset font program.
+///
+/// The font's /CharSet entry declares which glyphs are embedded. If the content
+/// stream renders a character code whose glyph name (via /Encoding) is NOT listed
+/// in /CharSet, the font program cannot supply the glyph → §6.2.11.4.1.
+///
+/// Strategy: for each page, build a map of font-resource-name → CharSet, then
+/// tokenize the page content stream, track the active simple font via /Tf, and
+/// for each text operator check that every byte's glyph name is in CharSet.
+pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        // Build resource-name → (charset_names, winansi) for Type1 subset fonts.
+        let mut type1_charsets: std::collections::HashMap<
+            Vec<u8>,
+            (std::collections::HashSet<String>, bool),
+        > = std::collections::HashMap::new();
+        let fonts = &page.resources().fonts;
+        for (rname, _) in fonts.entries() {
+            let font_dict_opt: Option<Dict<'_>> =
+                fonts.get::<Dict<'_>>(rname.as_ref()).or_else(|| {
+                    fonts
+                        .get_ref(rname.as_ref())
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            let Some(fd) = font_dict_opt else { continue };
+            let subtype = fd.get::<Name>(keys::SUBTYPE);
+            if !subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type1") {
+                continue;
+            }
+            let base = fd
+                .get::<Name>(keys::BASE_FONT)
+                .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or("").to_string())
+                .unwrap_or_default();
+            if !is_subset_font(&base) {
+                continue;
+            }
+            let Some(desc) = fd.get::<Dict<'_>>(keys::FONT_DESC) else { continue };
+            let cs_opt = desc
+                .get::<pdf_syntax::object::String>(keys::CHAR_SET)
+                .map(|s| s.as_bytes().to_vec());
+            let Some(cs_bytes) = cs_opt else { continue };
+            if cs_bytes.is_empty() { continue }
+            let ct = std::str::from_utf8(&cs_bytes).unwrap_or("");
+            let names: std::collections::HashSet<String> =
+                ct.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+            // WinAnsiEncoding or Encoding dict with WinAnsi base
+            let winansi = fd.get::<Name>(keys::ENCODING)
+                .is_some_and(|e| e.as_ref() == b"WinAnsiEncoding");
+            type1_charsets.insert(rname.as_ref().to_vec(), (names, winansi));
+        }
+        if type1_charsets.is_empty() {
+            continue;
+        }
+
+        let Some(content) = page.page_stream() else { continue };
+        if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE { continue }
+
+        let tokens = tokenize_pdf_content(content);
+        let n = tokens.len();
+        let loc = format!("page {}", page_idx + 1);
+        let mut active: Option<&(std::collections::HashSet<String>, bool)> = None;
+
+        'tokens: for i in 0..n {
+            let tok = tokens[i].as_slice();
+            // Track font switch: /FontName size Tf
+            if tok == b"Tf" && i >= 2 {
+                let rname = tokens[i - 2].as_slice();
+                if let Some(name_bytes) = rname.strip_prefix(b"/") {
+                    active = type1_charsets.get(name_bytes);
+                } else {
+                    active = None;
+                }
+            }
+            let Some((charset, winansi)) = active else { continue };
+            // Text show operators: preceding token is the string
+            let str_tok = if matches!(tok, b"Tj" | b"'" | b"\"") && i >= 1 {
+                Some(tokens[i - 1].as_slice())
+            } else if tok == b"TJ" {
+                None // handled below
+            } else {
+                continue;
+            };
+
+            // Check a single string token
+            let check_str = |s: &[u8]| -> Option<String> {
+                let codes = extract_simple_codes(s);
+                for code in codes {
+                    if code == 0 { continue } // .notdef handled elsewhere
+                    if let Some(gname) = if *winansi { t1_winansi_glyph_name(code) } else { None } {
+                        if !charset.contains(gname) {
+                            return Some(gname.to_string());
+                        }
+                    }
+                }
+                None
+            };
+
+            if let Some(s) = str_tok {
+                if let Some(gname) = check_str(s) {
+                    error_at(
+                        report,
+                        "6.2.11.4.1",
+                        format!(
+                            "Content renders '/{gname}' which is not defined in the \
+                             embedded Type1 subset font (not in /CharSet)"
+                        ),
+                        loc.clone(),
+                    );
+                    break 'tokens;
+                }
+            } else if tok == b"TJ" {
+                // Scan backward through array tokens until '['
+                let mut j = i as isize - 1;
+                while j >= 0 {
+                    let t = tokens[j as usize].as_slice();
+                    if t == b"[" { break }
+                    if let Some(gname) = check_str(t) {
+                        error_at(
+                            report,
+                            "6.2.11.4.1",
+                            format!(
+                                "Content renders '/{gname}' which is not defined in the \
+                                 embedded Type1 subset font (not in /CharSet)"
+                            ),
+                            loc.clone(),
+                        );
+                        break 'tokens;
+                    }
+                    j -= 1;
+                }
+            }
+        }
+    }
+}
+
+/// Extract 1-byte character codes from a PDF string token (hex or literal).
+fn extract_simple_codes(tok: &[u8]) -> Vec<u8> {
+    if let Some(inner) = tok.strip_prefix(b"<").and_then(|t| t.strip_suffix(b">")) {
+        // Hex string: pairs of hex digits
+        let digits: Vec<u8> = inner.iter().copied().filter(|b| b.is_ascii_hexdigit()).collect();
+        digits.chunks(2).map(|c| {
+            let hi = hex_val(c[0]);
+            let lo = if c.len() > 1 { hex_val(c[1]) } else { 0 };
+            (hi << 4) | lo
+        }).collect()
+    } else if let Some(inner) = tok.strip_prefix(b"(").and_then(|t| t.strip_suffix(b")")) {
+        // Literal string: bytes with backslash escapes
+        let mut codes = Vec::new();
+        let mut i = 0;
+        while i < inner.len() {
+            if inner[i] == b'\\' {
+                i += 1;
+                if i >= inner.len() { break }
+                match inner[i] {
+                    b'n' => { codes.push(b'\n'); i += 1; }
+                    b'r' => { codes.push(b'\r'); i += 1; }
+                    b't' => { codes.push(b'\t'); i += 1; }
+                    b'(' | b')' | b'\\' => { codes.push(inner[i]); i += 1; }
+                    b'0'..=b'7' => {
+                        // Octal: up to 3 digits
+                        let start = i;
+                        let end = (start + 3).min(inner.len());
+                        let mut val = 0u32;
+                        let mut k = start;
+                        while k < end && inner[k] >= b'0' && inner[k] <= b'7' {
+                            val = val * 8 + (inner[k] - b'0') as u32;
+                            k += 1;
+                        }
+                        codes.push(val as u8);
+                        i = k;
+                    }
+                    _ => { codes.push(inner[i]); i += 1; }
+                }
+            } else {
+                codes.push(inner[i]);
+                i += 1;
+            }
+        }
+        codes
+    } else {
+        vec![]
+    }
+}
+
 // ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
 
 /// Check every font has a /Type key set to /Font (§6.3.1).
@@ -7210,9 +7681,7 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                                         if let Some(gname) =
                                             cff.glyph_name(cff_parser::GlyphId(gid))
                                         {
-                                            if gname != ".notdef"
-                                                && !names.contains(gname)
-                                            {
+                                            if gname != ".notdef" && !names.contains(gname) {
                                                 error_at(
                                                     report,
                                                     "6.3.5",
@@ -8022,9 +8491,7 @@ pub fn check_tounicode_c0_forbidden(pdf: &Pdf, report: &mut ComplianceReport) {
                     error_at(
                         report,
                         "6.2.10.9",
-                        format!(
-                            "Font {name} ToUnicode maps to forbidden C0 codepoint U+{val:04X}"
-                        ),
+                        format!("Font {name} ToUnicode maps to forbidden C0 codepoint U+{val:04X}"),
                         format!("page {}", page_idx + 1),
                     );
                     return;
@@ -8042,10 +8509,8 @@ pub fn check_type0_cid_tounicode_coverage(pdf: &Pdf, report: &mut ComplianceRepo
     let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         // Build font name → covered CID set for all Type0 fonts that have ToUnicode.
-        let mut font_covered: std::collections::HashMap<
-            Vec<u8>,
-            std::collections::HashSet<u32>,
-        > = std::collections::HashMap::new();
+        let mut font_covered: std::collections::HashMap<Vec<u8>, std::collections::HashSet<u32>> =
+            std::collections::HashMap::new();
 
         let fonts = &page.resources().fonts;
         for (name, _) in fonts.entries() {
@@ -8066,8 +8531,12 @@ pub fn check_type0_cid_tounicode_coverage(pdf: &Pdf, report: &mut ComplianceRepo
             let Some(cmap_stream) = fd.get::<Stream<'_>>(keys::TO_UNICODE) else {
                 continue;
             };
-            let Ok(data) = cmap_stream.decoded() else { continue };
-            let Ok(text) = std::str::from_utf8(&data) else { continue };
+            let Ok(data) = cmap_stream.decoded() else {
+                continue;
+            };
+            let Ok(text) = std::str::from_utf8(&data) else {
+                continue;
+            };
             let covered = parse_tounicode_source_codes(text);
             font_covered.insert(name.as_ref().to_vec(), covered);
         }
@@ -8149,10 +8618,7 @@ pub fn check_type0_cid_tounicode_coverage(pdf: &Pdf, report: &mut ComplianceRepo
 /// - Hex token `<XXYYZZ…>`: each 4 nibbles encode one 2-byte CID.
 /// - Literal token `(...)`: bytes are paired as 2-byte CIDs (Identity-H style).
 ///   An odd final byte is treated as CID `0x00XX`.
-fn first_cid_not_in_tounicode(
-    tok: &[u8],
-    covered: &std::collections::HashSet<u32>,
-) -> Option<u32> {
+fn first_cid_not_in_tounicode(tok: &[u8], covered: &std::collections::HashSet<u32>) -> Option<u32> {
     if let Some(inner) = tok.strip_prefix(b"<").and_then(|t| t.strip_suffix(b">")) {
         if inner.is_empty() {
             return None;
@@ -13177,8 +13643,7 @@ fn check_type1_simple_widths(
     // /Differences from the encoding dict: maps specific codes to glyph names.
     // These take highest priority and override both BaseEncoding and the font's
     // internal encoding for the codes they cover. Fixes §6.3.6 FN (cs-isartor-fail-c).
-    let mut differences: std::collections::HashMap<u8, String> =
-        std::collections::HashMap::new();
+    let mut differences: std::collections::HashMap<u8, String> = std::collections::HashMap::new();
     if let Some(enc_dict) = enc_dict_opt.as_ref() {
         if let Some(diffs) = enc_dict.get::<Array<'_>>(b"Differences" as &[u8]) {
             let mut current_code = 0u8;
