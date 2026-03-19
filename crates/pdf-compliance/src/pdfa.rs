@@ -2192,10 +2192,11 @@ fn check_object_syntax(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
     // Scan for the gap only if no object-syntax issue was already emitted.
     // Pattern: "<digit> obj<space/tab>" — require digit before the single
     // whitespace preceding "obj" to avoid false matches in binary streams.
-    // (#496 = PDF/A-4; #FN-6.1.9 = PDF/A-2/3)
+    // (#496 = PDF/A-4; #FN-6.1.9 = PDF/A-2/3; #FN-6.1.8 = PDF/A-1)
     let rule = match level.part() {
         4 => "6.1.8-obj",
         2 | 3 => "6.1.9",
+        1 => "6.1.8", // PDF/A-1 also requires EOL after 'obj' keyword
         _ => return,
     };
     let already_emitted = report.issues[before..].iter().any(|i| i.rule == rule);
@@ -2477,7 +2478,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-4: §6.2.10.3.2 (non-Identity Name value)
             (4, "6.3.7") => Some("6.2.10.3.2"),
 
-            // Name UTF-8 validation — always maps to 6.1.7 for all PDF/A parts
+            // Name UTF-8 validation.
+            // PDF/A-2/3: veraPDF uses §6.1.8 (isValidUtf8). (#FN-6.1.8)
+            // PDF/A-1/4: §6.1.7.
+            (2..=3, "6.1.7-names") => Some("6.1.8"),
             (_, "6.1.7-names") => Some("6.1.7"),
 
             // CIDSet / CharSet for subset fonts
