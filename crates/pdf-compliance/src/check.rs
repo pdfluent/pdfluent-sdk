@@ -3409,7 +3409,7 @@ fn check_ri_in_content(
             if !valid_intents.iter().any(|v| v == &name.as_bytes()) {
                 error_at(
                     report,
-                    "6.2.5",
+                    "6.2.6",
                     format!("Invalid rendering intent '{name}'"),
                     location,
                 );
@@ -3441,7 +3441,7 @@ fn check_ri_in_content(
                             let ns = std::str::from_utf8(name).unwrap_or("?");
                             error_at(
                                 report,
-                                "6.2.5",
+                                "6.2.6",
                                 format!("Inline image has invalid /Intent /{ns}"),
                                 location,
                             );
@@ -3478,7 +3478,7 @@ fn check_ri_in_extgstate(
                 let ri_str = std::str::from_utf8(ri.as_ref()).unwrap_or("?");
                 error_at(
                     report,
-                    "6.2.5",
+                    "6.2.6",
                     format!("Invalid rendering intent '{ri_str}' in ExtGState"),
                     location,
                 );

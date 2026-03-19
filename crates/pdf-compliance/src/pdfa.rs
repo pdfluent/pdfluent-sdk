@@ -2392,9 +2392,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // check.rs emits "6.2.10.4.1-tt"; remap to exact veraPDF clause. (#467)
             (4, "6.2.10.4.1-tt") => Some("6.2.10.4.1"),
 
-            // Rendering intents
-            // PDF/A-1: §6.2.9, PDF/A-2/3/4: §6.2.5
-            (1, "6.2.5") => Some("6.2.9"),
+            // Rendering intents: check.rs emits "6.2.6" (ISO 19005-2 §6.2.6).
+            // PDF/A-1: veraPDF uses §6.2.9 for rendering intent violations.
+            (1, "6.2.6") => Some("6.2.9"),
 
             // Optional content restrictions
             // PDF/A-1: veraPDF uses §6.1.11 for OCProperties violations.
