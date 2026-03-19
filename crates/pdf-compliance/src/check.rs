@@ -8393,6 +8393,7 @@ fn macroman_code_to_char(code: u8) -> Option<char> {
 /// Note: this was previously labelled §6.3.6 but veraPDF (and ISO 19005-1 §6.3.7)
 /// reports this as §6.3.7. §6.3.6 is the Differences array restriction. (#467)
 pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, page_idx| {
         let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
             return;
@@ -8421,8 +8422,67 @@ pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport
                     format!("page {}", page_idx + 1),
                 );
             }
+
+            // §6.3.7 t03: symbolic TrueType must have exactly one cmap subtable.
+            // Fixes FN where font (e.g. Wingdings) has 2 subtables (Mac + Win). (#467)
+            let ff2_data = desc
+                .get::<Stream<'_>>(keys::FONT_FILE2)
+                .and_then(|s| s.decoded().ok())
+                .or_else(|| {
+                    desc.get_ref(keys::FONT_FILE2)
+                        .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                        .and_then(|s| s.decoded().ok())
+                });
+            if let Some(data) = ff2_data {
+                if let Some(n) = count_truetype_cmap_subtables(&data) {
+                    if n != 1 {
+                        error_at(
+                            report,
+                            "6.3.7-se",
+                            format!(
+                                "Symbolic TrueType font {name} has {n} cmap subtables; exactly 1 required"
+                            ),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
+            }
         }
     });
+}
+
+/// Count the number of cmap subtables in a TrueType/OpenType font.
+///
+/// The cmap table header contains: version (u16) + numTables (u16).
+/// Returns None if the font data is malformed or has no cmap table.
+fn count_truetype_cmap_subtables(font_data: &[u8]) -> Option<u16> {
+    if font_data.len() < 12 {
+        return None;
+    }
+    let num_tables = u16::from_be_bytes([font_data[4], font_data[5]]) as usize;
+    for i in 0..num_tables {
+        let entry_off = 12 + i * 16;
+        if entry_off + 16 > font_data.len() {
+            break;
+        }
+        if &font_data[entry_off..entry_off + 4] == b"cmap" {
+            let tbl_off = u32::from_be_bytes([
+                font_data[entry_off + 8],
+                font_data[entry_off + 9],
+                font_data[entry_off + 10],
+                font_data[entry_off + 11],
+            ]) as usize;
+            if tbl_off + 4 > font_data.len() {
+                return None;
+            }
+            // cmap table: version(2) + numTables(2)
+            return Some(u16::from_be_bytes([
+                font_data[tbl_off + 2],
+                font_data[tbl_off + 3],
+            ]));
+        }
+    }
+    None
 }
 
 /// Validate CIDToGIDMap is /Identity for CIDFont Type2 (§6.3.7).
@@ -13066,5 +13126,21 @@ fn t1_standard_encoding_name(code: u8) -> Option<&'static str> {
         250 => Some("oe"),
         251 => Some("germandbls"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod debug_struct_test {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn debug_pua_actualtext() {
+        let data = std::fs::read("/tmp/fn-6208/cs-veraPDF-6208-fail-a.pdf").unwrap();
+        let pdf = Pdf::new(data).unwrap();
+        let mut report = ComplianceReport::default();
+        check_table_structure(&pdf, &mut report);
+        let rules: Vec<_> = report.issues.iter().map(|i| i.rule.as_str()).collect();
+        eprintln!("Rules: {:?}", rules);
+        assert!(rules.contains(&"6.2.10.8"), "Expected 6.2.10.8, got {:?}", rules);
     }
 }
