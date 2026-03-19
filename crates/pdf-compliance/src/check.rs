@@ -2959,7 +2959,8 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
                     .as_ref()
                     .and_then(|s| s.decoded().ok())
                     .map(|data| {
-                        !data.is_empty() && forbidden_checksums.contains(&icc_profile_checksum(&data))
+                        !data.is_empty()
+                            && forbidden_checksums.contains(&icc_profile_checksum(&data))
                     })
                     .unwrap_or(false)
             } else {
