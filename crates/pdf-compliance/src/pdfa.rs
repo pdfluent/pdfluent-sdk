@@ -100,6 +100,8 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_font_base_encoding(pdf, &mut report);
     check_output_intent_profile(pdf, &mut report);
     check::check_notdef_glyph_reference(pdf, &mut report);
+    // §6.2.11.4.1: content stream renders glyph not defined in Type1 subset font.
+    check::check_type1_charset_coverage(pdf, &mut report);
 
     // File structure, actions, streams (§6.1.x, §6.6.1)
     check_all_page_boundaries(pdf, &mut report);
@@ -414,6 +416,10 @@ pub fn validate_with_progress(
     tracked!(
         "check_output_intent_profile",
         check_output_intent_profile(pdf, &mut report)
+    );
+    tracked!(
+        "check_type1_charset_coverage",
+        check::check_type1_charset_coverage(pdf, &mut report)
     );
     tracked!(
         "check_all_page_boundaries",
@@ -824,6 +830,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     timed!(
         "check_output_intent_profile",
         check_output_intent_profile(pdf, &mut report)
+    );
+    timed!(
+        "check_type1_charset_coverage",
+        check::check_type1_charset_coverage(pdf, &mut report)
     );
 
     // Batch 3
