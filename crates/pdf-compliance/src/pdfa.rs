@@ -2755,15 +2755,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.11.4.2") => Some("6.3.5"),
             (4, "6.2.11.4.2") => Some("6.2.10.4.2"),
 
-            // Image XObject rendering intent: check.rs emits "6.2.5" (check_image_xobject_intent).
-            // PDF/A-1: veraPDF uses §6.2.5 (rendering intent) — no remap needed.
-            // PDF/A-2/3: veraPDF uses §6.2.6 for invalid image /Intent. (#FN-6.2.6)
-            // PDF/A-4: veraPDF uses §6.2.6.
-            (2..=3, "6.2.5") => Some("6.2.6"),
-            (4, "6.2.5") => Some("6.2.6"),
+            // Image XObject rendering intent: previously emitted "6.2.5" remapped to
+            // "6.2.6" — now uses "6.2.8.1" directly (remapped to "6.2.4"/"6.2.8"/"6.2.7.1"
+            // per part). No "6.2.5"→"6.2.6" remap needed. (#FP-6.2.5)
 
             // HTO key forbidden (PDF/A-4 §6.2.5). Internal rule "6.2.5-hto" is used so
-            // the blanket (4,"6.2.5")=>"6.2.6" remap above doesn't capture it. (#FP-6.2.5)
+            // that no other "6.2.5" path accidentally gets remapped. (#FP-6.2.5)
             (4, "6.2.5-hto") => Some("6.2.5"),
 
             // Halftone/TransferFunction: check.rs emits "6.2.10" or "6.2.10.5".

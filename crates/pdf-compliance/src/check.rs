@@ -12636,9 +12636,15 @@ pub fn check_image_xobject_intent(pdf: &Pdf, report: &mut ComplianceReport) {
             if let Some(intent) = dict.get::<Name>(b"Intent" as &[u8]) {
                 if !valid_intents.iter().any(|v| *v == intent.as_ref()) {
                     let intent_str = std::str::from_utf8(intent.as_ref()).unwrap_or("?");
+                    // Image XObject /Intent is an Image XObject restriction, not a
+                    // rendering-intent operator issue. Use "6.2.8.1" so that it remaps
+                    // to the correct clause per PDF/A part:
+                    //   PDF/A-1 → §6.2.4; PDF/A-2/3 → §6.2.8; PDF/A-4 → §6.2.7.1.
+                    // Previously emitted "6.2.5" which was remapped to "6.2.6" for
+                    // PDF/A-2/3/4 — incorrect; veraPDF reports §6.2.8. (#FP-6.2.5)
                     error_at(
                         report,
-                        "6.2.5",
+                        "6.2.8.1",
                         format!("Image XObject has invalid rendering intent '{intent_str}'"),
                         format!("page {}", page_idx + 1),
                     );
