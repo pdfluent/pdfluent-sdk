@@ -922,28 +922,38 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         }
     }
 
-    // /CreationDate ↔ xmp:CreateDate (§6.7.3.1)
-    if metadata.creation_date.is_some() {
-        let xmp_create_date = extract_nested_value(xmp, "xmp:CreateDate");
-        if xmp_create_date.is_none() {
-            error(
-                report,
-                "6.7.3.1",
-                "/Info has CreationDate but XMP is missing xmp:CreateDate",
-            );
-        }
+    // /ModDate ↔ xmp:ModifyDate (§6.7.3.8)
+    // Check both directions: /Info→XMP and XMP→/Info.
+    // veraPDF fires §6.7.3 when XMP has a date that /Info doesn't (reverse direction). (#FN-6.7.3)
+    let xmp_mod_date = extract_nested_value(xmp, "xmp:ModifyDate");
+    if metadata.modification_date.is_some() && xmp_mod_date.is_none() {
+        error(
+            report,
+            "6.7.3",
+            "/Info has ModDate but XMP is missing xmp:ModifyDate",
+        );
+    } else if metadata.modification_date.is_none() && xmp_mod_date.is_some() {
+        error(
+            report,
+            "6.7.3",
+            "XMP has xmp:ModifyDate but /Info is missing /ModDate",
+        );
     }
 
-    // /ModDate ↔ xmp:ModifyDate (§6.7.3.8)
-    if metadata.modification_date.is_some() {
-        let xmp_mod_date = extract_nested_value(xmp, "xmp:ModifyDate");
-        if xmp_mod_date.is_none() {
-            error(
-                report,
-                "6.7.3.8",
-                "/Info has ModDate but XMP is missing xmp:ModifyDate",
-            );
-        }
+    // /CreationDate ↔ xmp:CreateDate (§6.7.3.1) — also check reverse direction.
+    let xmp_create_date = extract_nested_value(xmp, "xmp:CreateDate");
+    if metadata.creation_date.is_some() && xmp_create_date.is_none() {
+        error(
+            report,
+            "6.7.3",
+            "/Info has CreationDate but XMP is missing xmp:CreateDate",
+        );
+    } else if metadata.creation_date.is_none() && xmp_create_date.is_some() {
+        error(
+            report,
+            "6.7.3",
+            "XMP has xmp:CreateDate but /Info is missing /CreationDate",
+        );
     }
 }
 
