@@ -3541,13 +3541,14 @@ fn check_jpeg2000_colr_box(
 ///
 /// Scans page resources, annotation appearances, and Form XObjects.
 pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let loc = format!("page {}", page_idx + 1);
 
         // Page-level resources
         if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
-            check_halftone_in_extgstate(&res_dict, &loc, report);
+            check_halftone_in_extgstate(&res_dict, &loc, xref, report);
 
             // Form XObjects in page resources
             if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
@@ -3559,7 +3560,7 @@ pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
                         {
                             if let Some(xo_res) = xo.get::<Dict<'_>>(keys::RESOURCES) {
                                 let xo_loc = format!("{loc}/XObject");
-                                check_halftone_in_extgstate(&xo_res, &xo_loc, report);
+                                check_halftone_in_extgstate(&xo_res, &xo_loc, xref, report);
                             }
                         }
                     }
@@ -3575,7 +3576,7 @@ pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
                         if let Some(ap_stream) = ap.get::<Dict<'_>>(ap_key.as_ref()) {
                             if let Some(ap_res) = ap_stream.get::<Dict<'_>>(keys::RESOURCES) {
                                 let ap_loc = format!("{loc}/Annot/AP");
-                                check_halftone_in_extgstate(&ap_res, &ap_loc, report);
+                                check_halftone_in_extgstate(&ap_res, &ap_loc, xref, report);
                             }
                         }
                     }
@@ -3586,18 +3587,35 @@ pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// Check halftone and transfer function restrictions in a resource dict's ExtGState.
-fn check_halftone_in_extgstate(res_dict: &Dict<'_>, location: &str, report: &mut ComplianceReport) {
+fn check_halftone_in_extgstate(
+    res_dict: &Dict<'_>,
+    location: &str,
+    xref: &pdf_syntax::xref::XRef,
+    report: &mut ComplianceReport,
+) {
     let Some(gs_dict) = res_dict.get::<Dict<'_>>(keys::EXT_G_STATE) else {
         return;
     };
     for (gs_name, _) in gs_dict.entries() {
-        let Some(gs) = gs_dict.get::<Dict<'_>>(gs_name.as_ref()) else {
+        // Resolve indirect ExtGState entry references via xref
+        let gs_opt: Option<Dict<'_>> = gs_dict
+            .get::<Dict<'_>>(gs_name.as_ref())
+            .or_else(|| {
+                gs_dict
+                    .get_ref(gs_name.as_ref())
+                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+            });
+        let Some(gs) = gs_opt else {
             continue;
         };
         let gs_str = std::str::from_utf8(gs_name.as_ref()).unwrap_or("?");
 
-        // §6.2.10: halftone type
-        if let Some(ht_dict) = gs.get::<Dict<'_>>(b"HT" as &[u8]) {
+        // §6.2.10: halftone type. Resolve indirect /HT references via xref.
+        let ht_dict_opt: Option<Dict<'_>> = gs.get::<Dict<'_>>(b"HT" as &[u8]).or_else(|| {
+            gs.get_ref(b"HT" as &[u8])
+                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+        });
+        if let Some(ht_dict) = ht_dict_opt {
             if let Some(ht_type) = ht_dict.get::<i32>(b"HalftoneType" as &[u8]) {
                 if ht_type != 1 && ht_type != 5 {
                     error_at(
