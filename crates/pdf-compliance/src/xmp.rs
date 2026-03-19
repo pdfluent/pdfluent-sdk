@@ -226,22 +226,6 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
             "XMP extension schema structure violation (§6.6.2)",
         );
     }
-    // PDF/A-1 §6.7.11: an undeclared 'pdfaid:' namespace prefix specifically triggers
-    // §6.7.11 because the identification schema cannot be reliably parsed when the prefix
-    // is missing. veraPDF reports BOTH §6.7.9 AND §6.7.11 in these cases.
-    // Fixes #467 (poppler-106863-0.pdf). Narrowed to 'pdfaid' to avoid FP on
-    // cs-isartor-6-1-7-t01-fail-a.pdf (undeclared non-pdfaid namespace → §6.7.9 only, not §6.7.11).
-    if level.part() == 1
-        && report.issues[ns_violations_before..]
-            .iter()
-            .any(|i| i.rule.starts_with("6.7.9") && i.message.contains("pdfaid"))
-    {
-        error(
-            report,
-            "6.7.11",
-            "XMP namespace violations affect PDF/A identification schema reliability",
-        );
-    }
     check_info_xmp_deep(pdf, xmp_text, report);
     check_date_formats(xmp_text, level, report);
     check_pdfa_id_properties(xmp_text, level, report);
@@ -292,6 +276,26 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     );
     // §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 — properties not predefined in XMP 2004 per veraPDF (#489)
     check_not_predefined_properties(xmp_text, &schemas, level, report);
+    // PDF/A-1 §6.7.11: a §6.7.9 violation specifically mentioning the 'pdfaid:' namespace
+    // triggers §6.7.11 — the identification schema cannot be reliably parsed when the
+    // pdfaid: prefix is undeclared or has invalid properties.
+    // veraPDF reports BOTH §6.7.9 AND §6.7.11 in these cases.
+    // Placed here (after all §6.7.9-emitting checks including the pdfaid: closed-namespace
+    // check above) so that pdfaid: violations cascade correctly.
+    // Fixes #467 (poppler-106863-0.pdf). Narrowed to 'pdfaid' to avoid FP on
+    // cs-isartor-6-1-7-t01-fail-a.pdf (undeclared non-pdfaid namespace → §6.7.9 only).
+    // Fixes §6.7.11 FN on cs-veraPDF test suite 6-7-3-t01-fail-a.pdf.
+    if level.part() == 1
+        && report.issues[ns_violations_before..]
+            .iter()
+            .any(|i| i.rule.starts_with("6.7.9") && i.message.contains("pdfaid"))
+    {
+        error(
+            report,
+            "6.7.11",
+            "XMP namespace violations affect PDF/A identification schema reliability",
+        );
+    }
     // PDF/A-1 §6.7.9: rdf:li with bare 'lang=' attribute (not 'xml:lang=') uses a
     // property from an unregistered namespace. veraPDF reports §6.7.9 in addition to
     // the §6.7.11 type violation. Fixes #467 (PDFBOX-3017-0.pdf).
