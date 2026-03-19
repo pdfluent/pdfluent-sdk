@@ -6073,9 +6073,9 @@ pub fn check_type3_charproc_resources(pdf: &Pdf, report: &mut ComplianceReport) 
             let Some(font_dict) = font_dict_opt else {
                 continue;
             };
-            if !font_dict
+            if font_dict
                 .get::<Name>(keys::SUBTYPE)
-                .is_some_and(|s| s.as_ref() == b"Type3")
+                .is_none_or(|s| s.as_ref() != b"Type3")
             {
                 continue;
             }
@@ -12123,7 +12123,13 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
 /// Check BMC/EMC nesting for a single page content stream.
 fn check_bmc_emc_nesting(content: &[u8], page_idx: usize, report: &mut ComplianceReport) {
     let text = String::from_utf8_lossy(content);
-    let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+
+    // Split on whitespace first, then further split each token on ">>" to handle
+    // inline dict closings like `0>>BDC` where the dict closer is glued to the operator.
+    // Without this, `split_ascii_whitespace()` yields "0>>BDC" as a single token and
+    // the "BDC" operator is not recognised, causing depth miscounts. (#FP-6.8.3.4)
+    let raw_tokens: Vec<&str> = text.split_ascii_whitespace().collect();
+    let tokens: Vec<&str> = raw_tokens.iter().flat_map(|t| t.split(">>")).collect();
 
     let mut depth: i32 = 0;
     for tok in &tokens {
