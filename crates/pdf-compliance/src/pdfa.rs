@@ -117,6 +117,11 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_transparency_vs_output_intent(pdf, level, &mut report);
     check::check_transparency_blending_vs_output_intent(pdf, level.part(), &mut report);
     check::check_output_intent_icc_signature(pdf, &mut report);
+    // §6.2.2 T2: Type3 CharProcs must not inherit resources from the page dict.
+    // Applies to PDF/A-2/3/4 (ISO 19005-2/3/4 §6.2.2). Fixes §6.2.2 FNs. (#FN-6.2.2)
+    if level.part() >= 2 {
+        check::check_type3_charproc_resources(pdf, &mut report);
+    }
 
     // Combined content stream checks: undefined operators + marked content +
     // inline image filters in a single page loop (avoids 2 redundant
@@ -1180,12 +1185,11 @@ fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
     } else {
         "6.2.2"
     };
+    // veraPDF does NOT fire §6.2.2 for absent OutputIntents — it only validates
+    // violations within existing ones (multiple GTS_PDFA1 entries, missing
+    // DestOutputProfile). Silently skip when there is no GTS_PDFA1 entry to
+    // avoid FPs on PDFs that lack OutputIntents but fail for other reasons. (#FP-6.2.2)
     if !check::has_output_intent(pdf) {
-        check::error(
-            report,
-            rule,
-            "No OutputIntents with GTS_PDFA1 subtype found",
-        );
         return;
     }
     // ISO 19005-1 §6.2.2: at most one OutputIntent with S=GTS_PDFA1 is allowed.
