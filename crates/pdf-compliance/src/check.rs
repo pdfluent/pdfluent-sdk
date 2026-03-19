@@ -2822,11 +2822,19 @@ fn icc_based_profile_ref(cs_arr: &Array<'_>) -> Option<ObjRef> {
     raw.next()?.as_obj_ref()
 }
 
-/// Compute a fast non-cryptographic checksum of bytes for identity comparison.
-fn bytes_checksum(data: &[u8]) -> u64 {
+/// Compute a checksum of ICC profile bytes, ignoring the Profile ID field
+/// (16 bytes at offset 84-99). veraPDF considers profiles identical even if
+/// one has a zero Profile ID and the other has a computed one.
+fn icc_profile_checksum(data: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    data.hash(&mut h);
+    // Hash everything EXCEPT bytes 84-100 (Profile ID)
+    if data.len() > 100 {
+        data[..84].hash(&mut h);
+        data[100..].hash(&mut h);
+    } else {
+        data.hash(&mut h);
+    }
     h.finish()
 }
 
@@ -2854,21 +2862,29 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
         if let Some(s) = xref.get::<Stream<'_>>(r.into()) {
             if let Ok(data) = s.decoded() {
                 if !data.is_empty() {
-                    checksums.insert(bytes_checksum(&data));
+                    checksums.insert(icc_profile_checksum(&data));
                 }
             }
         }
     }
 
-    // (a) OutputIntent DestOutputProfile
-    if let Some(cat) = catalog(pdf) {
-        if let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) {
+    // (a) OutputIntent DestOutputProfile — Catalog level and Page level.
+    // PDF/A-4 allows OutputIntents at the page level (§6.2.4). Collect from both.
+    // (#FN-6.2.4.2)
+    let mut collect_output_intents = |dict: &Dict<'_>| {
+        if let Some(intents) = dict.get::<Array<'_>>(keys::OUTPUT_INTENTS) {
             for intent in intents.iter::<Dict<'_>>() {
                 if let Some(r) = intent.get_ref(keys::DEST_OUTPUT_PROFILE) {
                     record_forbidden_stream(r, xref, &mut forbidden_refs, &mut forbidden_checksums);
                 }
             }
         }
+    };
+    if let Some(cat) = catalog(pdf) {
+        collect_output_intents(&cat);
+    }
+    for page in pdf.pages().iter() {
+        collect_output_intents(page.raw());
     }
 
     // (b) Transparency Group CS on pages and Form XObjects
@@ -2943,7 +2959,7 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
                     .as_ref()
                     .and_then(|s| s.decoded().ok())
                     .map(|data| {
-                        !data.is_empty() && forbidden_checksums.contains(&bytes_checksum(&data))
+                        !data.is_empty() && forbidden_checksums.contains(&icc_profile_checksum(&data))
                     })
                     .unwrap_or(false)
             } else {
@@ -4061,6 +4077,7 @@ pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
 /// the same /Registry and /Ordering as the /CIDSystemInfo of the CIDFont
 /// in /DescendantFonts (case-sensitive comparison per PDF spec).
 pub fn check_cidsystem_info_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, page_idx| {
         // Only Type0 fonts have DescendantFonts + Encoding CMap
         let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
@@ -4072,14 +4089,21 @@ pub fn check_cidsystem_info_consistency(pdf: &Pdf, report: &mut ComplianceReport
 
         let loc = format!("page {}", page_idx + 1);
 
-        // Get the CMap stream's CIDSystemInfo
-        let cmap_stream = font_dict.get::<Stream<'_>>(keys::ENCODING);
+        // Get the CMap stream's CIDSystemInfo.
+        // /Encoding may be an indirect reference to an embedded CMap stream — resolve it.
+        // (#FN-6.2.10.3.1)
+        let cmap_stream = font_dict.get::<Stream<'_>>(keys::ENCODING).or_else(|| {
+            font_dict
+                .get_ref(keys::ENCODING)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        });
         let cmap_csi = cmap_stream
             .as_ref()
             .and_then(|s| s.dict().get::<Dict<'_>>(keys::CIDSYSTEMINFO));
 
         let Some(cmap_csi) = cmap_csi else {
-            // Encoding is a name (predefined CMap) — no embedded CIDSystemInfo to compare
+            // Encoding is a predefined CMap name (e.g. Identity-H) — no embedded
+            // CIDSystemInfo to compare directly; the standard CMap is exempt.
             return;
         };
 
