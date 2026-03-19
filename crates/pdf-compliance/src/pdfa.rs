@@ -1205,6 +1205,14 @@ fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
 /// §6.3.3 — All fonts must be embedded.
 fn check_font_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
     check::for_each_font(pdf, |name, font_dict, page_idx| {
+        // Type3 fonts are always "embedded" — their glyphs are defined inline as
+        // CharProc content streams and they never have a FontDescriptor. Skip them.
+        if font_dict
+            .get::<Name>(keys::SUBTYPE)
+            .is_some_and(|s| s.as_ref() == b"Type3")
+        {
+            return;
+        }
         let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) else {
             // Type0 fonts have DescendantFonts instead of a direct FontDescriptor
             if let Some(descendants) =
