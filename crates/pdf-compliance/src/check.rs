@@ -5293,11 +5293,12 @@ pub fn check_actions_deep(pdf: &Pdf, part: u8, rule: &str, report: &mut Complian
                 check_action_recursive(&action, &forbidden, rule, &aloc, report);
             }
             if let Some(aa) = annot.get::<Dict<'_>>(keys::AA) {
-                let is_widget = annot
-                    .get::<Name>(keys::SUBTYPE)
-                    .is_some_and(|s| s.as_ref() == keys::WIDGET);
-                let r = if is_widget { "6.1.6.2" } else { "6.1.6.1" };
-                check_aa_triggers(&aa, &forbidden, r, &aloc, report);
+                // Use the main forbidden-action rule for action TYPE violations within /AA.
+                // "6.1.6.1"/"6.1.6.2" are /AA *presence* rules (handled by the
+                // supplementary scan in pdfa.rs). Using them here caused FNs where veraPDF
+                // reports the action-type clause (§6.5.1/§6.6.1) but we emitted the
+                // /AA-presence clause. (#FN-6.5.1)
+                check_aa_triggers(&aa, &forbidden, rule, &aloc, report);
             }
         }
     }
