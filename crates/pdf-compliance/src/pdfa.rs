@@ -1906,7 +1906,8 @@ fn check_font_embedding_deep(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
 
 /// §6.3.4 — ToUnicode CMap presence.
 fn check_tounicode_cmap(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    check::check_tounicode_cmap(pdf, level.part(), report);
+    let requires_unicode = level.conformance() == "U" || level.part() == 4;
+    check::check_tounicode_cmap(pdf, level.part(), requires_unicode, report);
 }
 
 /// §6.3.5 — Font /Widths array.
