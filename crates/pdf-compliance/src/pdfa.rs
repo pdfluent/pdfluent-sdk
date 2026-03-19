@@ -2042,6 +2042,43 @@ fn check_object_syntax(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
                 issue.rule = "6.1.8-obj".to_string();
             }
         }
+        // Supplementary: check_object_syntax_spacing allows ' '/'\t' after 'obj'
+        // (not just CR/LF), but PDF/A-4 §6.1.8 requires EOL. Scan for the gap
+        // only if no other "6.1.8-obj" issue was already emitted. (#496)
+        // Pattern: "<digit> obj<space>" — require a digit just before the single
+        // whitespace that precedes "obj" to avoid matching "obj" in binary streams.
+        if report.issues[before..].is_empty() {
+            let data = pdf.data().as_ref();
+            let len = data.len();
+            let mut pos = 0;
+            while pos + 3 < len {
+                if &data[pos..pos + 3] == b"obj" {
+                    let is_endobj = pos >= 3 && &data[pos - 3..pos] == b"end";
+                    // Require: not "endobj", preceded by exactly one space, preceded
+                    // by a digit (gen number), then the keyword "obj" must be followed
+                    // by space or tab (not EOL).
+                    if !is_endobj
+                        && pos >= 2
+                        && data[pos - 1] == b' '
+                        && data[pos - 2].is_ascii_digit()
+                        && pos + 3 < len
+                    {
+                        let after = data[pos + 3];
+                        if after == b' ' || after == b'\t' {
+                            check::error(
+                                report,
+                                "6.1.8-obj",
+                                "Keyword 'obj' not followed by EOL marker (PDF/A-4 §6.1.8)",
+                            );
+                            break;
+                        }
+                    }
+                    pos += 3;
+                } else {
+                    pos += 1;
+                }
+            }
+        }
     }
 }
 
