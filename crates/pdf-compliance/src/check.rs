@@ -1065,7 +1065,9 @@ fn is_valid_lang_tag(tag: &str) -> bool {
     let parts: Vec<&str> = tag.split('-').collect();
     // Primary subtag: 2-3 alpha
     let primary = parts[0];
-    if !((primary.len() == 2 || primary.len() == 3) && primary.bytes().all(|b| b.is_ascii_alphabetic())) {
+    if !((primary.len() == 2 || primary.len() == 3)
+        && primary.bytes().all(|b| b.is_ascii_alphabetic()))
+    {
         return false;
     }
     // Validate subsequent subtags (simplified BCP 47)
@@ -5809,7 +5811,8 @@ pub fn check_optional_content(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceR
             // Check each Configs entry has a /Name and that names are unique.
             // /Name in OCG config dicts is a text string (not a PDF name token).
             // Duplicate /Name values in Configs violate §6.9 T2 (veraPDF testNum=2). (#FN-6.9)
-            let mut seen_names: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
+            let mut seen_names: std::collections::HashSet<Vec<u8>> =
+                std::collections::HashSet::new();
             for (idx, cfg) in configs.iter::<Dict<'_>>().enumerate() {
                 // Use Object to capture both Name and String /Name values.
                 if let Some(name_obj) = cfg.get::<Object<'_>>(keys::NAME) {
@@ -6739,7 +6742,8 @@ fn scan_for_notdef_in_content(content: &[u8]) -> bool {
                     if before.iter().rev().any(|&b| b == b'[') {
                         // Inside an array — check if the array is followed by TJ
                         if let Some(close) = content[end..].iter().position(|&b| b == b']') {
-                            let after_arr = &content[end + close + 1..content.len().min(end + close + 10)];
+                            let after_arr =
+                                &content[end + close + 1..content.len().min(end + close + 10)];
                             let trimmed: Vec<u8> = after_arr
                                 .iter()
                                 .copied()
@@ -6764,7 +6768,11 @@ fn scan_for_notdef_in_content(content: &[u8]) -> bool {
 /// Check if a hex string (ASCII hex digits without '<''>') decodes to bytes containing 0x00.
 fn hex_contains_null_byte(hex: &[u8]) -> bool {
     // Collect hex digit pairs, skipping whitespace
-    let digits: Vec<u8> = hex.iter().copied().filter(|b| b.is_ascii_hexdigit()).collect();
+    let digits: Vec<u8> = hex
+        .iter()
+        .copied()
+        .filter(|b| b.is_ascii_hexdigit())
+        .collect();
     // Process pairs
     let mut j = 0;
     while j + 1 < digits.len() {
@@ -11925,20 +11933,28 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
             if let Some(enc_stream) = font_dict.get::<Stream<'_>>(keys::ENCODING) {
                 let d = enc_stream.dict();
                 if let Some(csi) = d.get::<Dict<'_>>(keys::CIDSYSTEMINFO) {
-                    let r = csi.get::<pdf_syntax::object::String>(keys::REGISTRY)
+                    let r = csi
+                        .get::<pdf_syntax::object::String>(keys::REGISTRY)
                         .map(|v| String::from_utf8_lossy(v.as_bytes()).to_string());
-                    let o = csi.get::<pdf_syntax::object::String>(keys::ORDERING)
+                    let o = csi
+                        .get::<pdf_syntax::object::String>(keys::ORDERING)
                         .map(|v| String::from_utf8_lossy(v.as_bytes()).to_string());
                     (r, o)
-                } else { (None, None) }
+                } else {
+                    (None, None)
+                }
             } else if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
                 // Predefined CMap: "Registry-Ordering-Supplement" e.g. "Adobe-Japan1-2"
                 let s = std::str::from_utf8(enc_name.as_ref()).unwrap_or("");
                 let parts: Vec<&str> = s.splitn(3, '-').collect();
                 if parts.len() >= 2 {
                     (Some(parts[0].to_string()), Some(parts[1].to_string()))
-                } else { (None, None) }
-            } else { (None, None) };
+                } else {
+                    (None, None)
+                }
+            } else {
+                (None, None)
+            };
 
         // Get CIDFont's CIDSystemInfo
         let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) else {

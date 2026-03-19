@@ -277,14 +277,7 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     } else {
         VALID_PDFAID_PROPERTIES
     };
-    check_closed_namespace_properties(
-        xmp_text,
-        &schemas,
-        "pdfaid:",
-        pdfaid_valid,
-        level,
-        report,
-    );
+    check_closed_namespace_properties(xmp_text, &schemas, "pdfaid:", pdfaid_valid, level, report);
     // §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 — properties not predefined in XMP 2004 per veraPDF (#489)
     check_not_predefined_properties(xmp_text, &schemas, level, report);
     // PDF/A-1 §6.7.9: rdf:li with bare 'lang=' attribute (not 'xml:lang=') uses a
