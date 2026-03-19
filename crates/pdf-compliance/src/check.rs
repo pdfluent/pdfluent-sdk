@@ -7780,32 +7780,10 @@ fn check_cidfont_descriptor_deep(
         }
     }
 
-    // Check for all-zero CIDToGIDMap stream: all GIDs map to 0 (.notdef) = glyphs absent.
-    // veraPDF reports §6.3.4 (embedding) and §6.3.5 (metrics) for this corruption. (#467)
-    if let Some(ctg) = cid_font.get::<Stream<'_>>(keys::CID_TO_GID_MAP) {
-        if let Ok(data) = ctg.decoded() {
-            let non_zero = data.iter().filter(|&&b| b != 0).count();
-            // More than 256 bytes with fewer than 10 non-zero bytes = effectively all .notdef.
-            if data.len() > 256 && non_zero < 10 {
-                error_at(
-                    report,
-                    "6.3.4",
-                    format!(
-                        "CIDFont {cid_name} has all-zero CIDToGIDMap (all GIDs map to .notdef)"
-                    ),
-                    format!("page {}", page_idx + 1),
-                );
-                error_at(
-                    report,
-                    "6.3.5",
-                    format!(
-                        "CIDFont {cid_name}: glyph metrics unverifiable (all-zero CIDToGIDMap)"
-                    ),
-                    format!("page {}", page_idx + 1),
-                );
-            }
-        }
-    }
+    // NOTE: An all-zero CIDToGIDMap stream (all GIDs → .notdef) is NOT flagged here.
+    // veraPDF does not report §6.3.4/§6.3.5 for an all-zero CIDToGIDMap — the font
+    // IS embedded, just with a degenerate mapping. The former check caused FPs for
+    // pdfbox-3017.pdf (AAAJYI+Code2000). Removed to fix #FP-6.3.4 / #FP-6.3.5.
 
     check_fontfile_subtype_match(&desc, cid_name, page_idx, report);
 
@@ -13102,6 +13080,16 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                 }
             }
+
+            // When CIDFont has a stream CIDToGIDMap, it provides an explicit CID→GID
+            // mapping that overrides the CIDSystemInfo-based matching. veraPDF does NOT
+            // fire §6.3.3.1 / §6.2.11.3.1 / §6.2.10.3.1 for Registry/Ordering/Supplement
+            // mismatches in this case. Skip to avoid FPs (e.g. pdfbox-3017.pdf).
+            // Fixes #FP-6.3.3.1.
+            if cid_font.get::<Stream<'_>>(keys::CID_TO_GID_MAP).is_some() {
+                continue;
+            }
+
             if let (Some(ref co), Some(ref fo)) = (&cmap_ordering, &font_ordering) {
                 if co != fo {
                     error_at(

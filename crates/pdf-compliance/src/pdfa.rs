@@ -168,7 +168,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_soft_mask(pdf, &mut report);
     check_need_appearances_pdfa(pdf, &mut report);
     check::check_acroform_no_xfa(pdf, level.part(), &mut report);
-    check_signature_restrictions_pdfa(pdf, &mut report);
+    check_signature_restrictions_pdfa(pdf, level, &mut report);
     check_document_structure_pdfa(pdf, &mut report);
     check::check_stream_empty_keys_cached(&obj_cache, &mut report);
 
@@ -576,7 +576,7 @@ pub fn validate_with_progress(
     );
     tracked!(
         "check_signature_restrictions_pdfa",
-        check_signature_restrictions_pdfa(pdf, &mut report)
+        check_signature_restrictions_pdfa(pdf, level, &mut report)
     );
     tracked!(
         "check_document_structure_pdfa",
@@ -991,7 +991,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     );
     timed!(
         "check_signature_restrictions_pdfa",
-        check_signature_restrictions_pdfa(pdf, &mut report)
+        check_signature_restrictions_pdfa(pdf, level, &mut report)
     );
     timed!(
         "check_document_structure_pdfa",
@@ -2102,12 +2102,17 @@ fn check_need_appearances_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// §6.10 — Digital signature restrictions.
-fn check_signature_restrictions_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+fn check_signature_restrictions_pdfa(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_signature_restrictions(pdf, report);
     // §6.4.3 (PDF/A-2/3): ByteRange must cover entire file. Fixes #475.
     check::check_sig_byterange_coverage(pdf, report);
-    // §6.1.12 (PDF/A-2/3/4): DocMDP signature reference restrictions
-    check::check_docmdp_signature_restriction(pdf, report);
+    // §6.1.12 (PDF/A-2/3/4): DocMDP signature reference restrictions.
+    // Not applicable to PDF/A-1 — veraPDF does not fire §6.1.12 for DocMDP
+    // key restrictions in PDF/A-1 (ISO 19005-1 has no such clause).
+    // Fixes #FP-6.1.12 (pdfbox-3017.pdf fires FP for PDF/A-1).
+    if level.part() >= 2 {
+        check::check_docmdp_signature_restriction(pdf, report);
+    }
 }
 
 /// §6.11 — Document structure requirements.
