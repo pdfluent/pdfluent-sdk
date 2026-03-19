@@ -3234,7 +3234,7 @@ pub fn check_rendering_intents(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Check 'ri' operators in a content stream.
+/// Check 'ri' operators and inline image /Intent in a content stream.
 fn check_ri_in_content(
     content: &[u8],
     valid_intents: &&[&[u8]],
@@ -3255,6 +3255,45 @@ fn check_ri_in_content(
                     location,
                 );
             }
+        }
+    }
+    // §6.2.6: inline image /Intent must also be a valid rendering intent.
+    // Scan for BI ... /Intent /Name ... ID patterns.
+    let mut pos = 0;
+    while pos + 2 < content.len() {
+        if content[pos] == b'B' && content[pos + 1] == b'I'
+            && (pos == 0 || content[pos - 1].is_ascii_whitespace())
+        {
+            if let Some(id_off) = content[pos..].windows(2).position(|w| w == b"ID") {
+                let header = &content[pos + 2..pos + id_off];
+                if let Some(ip) = header.windows(7).position(|w| w == b"/Intent") {
+                    let after = &header[ip + 7..];
+                    let name_start = after.iter().position(|b| *b == b'/');
+                    if let Some(ns) = name_start {
+                        let name_end = after[ns + 1..]
+                            .iter()
+                            .position(|b| b.is_ascii_whitespace() || *b == b'/')
+                            .unwrap_or(after.len() - ns - 1)
+                            + ns + 1;
+                        let name = &after[ns + 1..name_end];
+                        if !valid_intents.contains(&name) {
+                            let ns = std::str::from_utf8(name).unwrap_or("?");
+                            error_at(
+                                report,
+                                "6.2.5",
+                                format!("Inline image has invalid /Intent /{ns}"),
+                                location,
+                            );
+                            return;
+                        }
+                    }
+                }
+                pos += id_off + 2;
+            } else {
+                break;
+            }
+        } else {
+            pos += 1;
         }
     }
 }
