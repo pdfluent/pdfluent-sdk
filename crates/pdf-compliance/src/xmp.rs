@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::check::{self, error, warning};
 use crate::{ComplianceReport, PdfALevel};
 use pdf_syntax::object::dict::keys;
-use pdf_syntax::object::{Array, Dict, Name, ObjRef, Object};
+use pdf_syntax::object::{Array, DateTime, Dict, Name, ObjRef, Object};
 use pdf_syntax::Pdf;
 
 /// Well-known XMP value types (XMP Specification Part 1, Table 8).
@@ -922,39 +922,91 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         }
     }
 
-    // /ModDate ↔ xmp:ModifyDate (§6.7.3.8)
-    // Check both directions: /Info→XMP and XMP→/Info.
-    // veraPDF fires §6.7.3 when XMP has a date that /Info doesn't (reverse direction). (#FN-6.7.3)
+    // /ModDate ↔ xmp:ModifyDate (§6.7.3.8) — fire when Info has date but XMP doesn't,
+    // or when both are present but the local-time values differ. (#FN-6.7.3)
     let xmp_mod_date = extract_nested_value(xmp, "xmp:ModifyDate");
-    if metadata.modification_date.is_some() && xmp_mod_date.is_none() {
-        error(
-            report,
-            "6.7.3",
-            "/Info has ModDate but XMP is missing xmp:ModifyDate",
-        );
-    } else if metadata.modification_date.is_none() && xmp_mod_date.is_some() {
-        error(
-            report,
-            "6.7.3",
-            "XMP has xmp:ModifyDate but /Info is missing /ModDate",
-        );
+    match (&metadata.modification_date, &xmp_mod_date) {
+        (Some(_), None) => {
+            error(
+                report,
+                "6.7.3",
+                "/Info has ModDate but XMP is missing xmp:ModifyDate",
+            );
+        }
+        (Some(info_dt), Some(xmp_dt)) => {
+            let n_info = datetime_to_local_str(info_dt);
+            if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
+                if n_info != n_xmp {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "/Info ModDate '{}' does not match XMP xmp:ModifyDate '{}'",
+                            n_info, xmp_dt
+                        ),
+                    );
+                }
+            }
+        }
+        _ => {}
     }
 
-    // /CreationDate ↔ xmp:CreateDate (§6.7.3.1) — also check reverse direction.
+    // /CreationDate ↔ xmp:CreateDate (§6.7.3.1)
     let xmp_create_date = extract_nested_value(xmp, "xmp:CreateDate");
-    if metadata.creation_date.is_some() && xmp_create_date.is_none() {
-        error(
-            report,
-            "6.7.3",
-            "/Info has CreationDate but XMP is missing xmp:CreateDate",
-        );
-    } else if metadata.creation_date.is_none() && xmp_create_date.is_some() {
-        error(
-            report,
-            "6.7.3",
-            "XMP has xmp:CreateDate but /Info is missing /CreationDate",
-        );
+    match (&metadata.creation_date, &xmp_create_date) {
+        (Some(_), None) => {
+            error(
+                report,
+                "6.7.3",
+                "/Info has CreationDate but XMP is missing xmp:CreateDate",
+            );
+        }
+        (Some(info_dt), Some(xmp_dt)) => {
+            let n_info = datetime_to_local_str(info_dt);
+            if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
+                if n_info != n_xmp {
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "/Info CreationDate '{}' does not match XMP xmp:CreateDate '{}'",
+                            n_info, xmp_dt
+                        ),
+                    );
+                }
+            }
+        }
+        _ => {}
     }
+}
+
+/// Format a [`DateTime`] as a 14-digit local-time string `YYYYMMDDHHmmSS` for date comparison. (#FN-6.7.3)
+fn datetime_to_local_str(dt: &DateTime) -> String {
+    format!(
+        "{:04}{:02}{:02}{:02}{:02}{:02}",
+        dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+    )
+}
+
+/// Normalize an XMP ISO 8601 date string to 14-digit local-time `YYYYMMDDHHmmSS` for comparison. (#FN-6.7.3)
+///
+/// Extracts the first 14 ASCII digit characters (ignoring separators and timezone), padding
+/// with zeros if the XMP date is shorter than 14 digits (e.g. date-only).
+fn xmp_date_to_comparable(xmp_date: &str) -> Option<String> {
+    let digits: String = xmp_date
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .take(14)
+        .collect();
+    if digits.len() < 8 {
+        return None;
+    }
+    let mut d = digits;
+    while d.len() < 14 {
+        d.push('0');
+    }
+    Some(d)
 }
 
 /// Decode a PDF string (which may be UTF-16BE with BOM, or PDFDocEncoding).
