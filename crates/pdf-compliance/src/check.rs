@@ -7208,17 +7208,17 @@ fn page_fonts_use_transparency(res: &Resources<'_>) -> bool {
     false
 }
 
-/// Check for PostScript XObjects (forbidden in PDF/A, §6.2.9 test 3).
+/// Check for PostScript XObjects (forbidden in PDF/A, §6.2.9.3).
 ///
-/// veraPDF uses "6.2.9" for all PDF/A parts. The remap converts "6.2.9" to
-/// "6.2.5" for PDF/A-1 where needed. Previously used "6.2.10" for non-PDF/A-4
-/// which was wrong. (#467)
+/// veraPDF uses "6.2.9.3" for PDF/A-2/3 (PostScript XObjects specifically),
+/// "6.2.7" for PDF/A-1, and "6.2.9" for PDF/A-4.
 pub fn check_postscript_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
-    // PDF/A-1: veraPDF uses §6.2.7 for PostScript XObject prohibition.
-    // PDF/A-2/3: §6.2.9 (veraPDF §6.2.9 groups PS + Ref + Subtype2 restrictions)
-    // PDF/A-4: §6.2.9
+    // PDF/A-1: §6.2.7 (PS XObject prohibition; veraPDF uses §6.2.7).
+    // PDF/A-2/3: §6.2.9.3 (PostScript XObjects specifically forbidden). (#FN-6.2.9.3)
+    // PDF/A-4: §6.2.9 (different structure; exact veraPDF rule TBD).
     let rule = match part {
         1 => "6.2.7",
+        2 | 3 => "6.2.9.3",
         _ => "6.2.9",
     };
     for (page_idx, page) in pdf.pages().iter().enumerate() {
@@ -8008,13 +8008,27 @@ pub fn check_tounicode_cmap(
                 );
             } else {
                 // PDF/A-1 §6.3.8: ToUnicode CMap required for all fonts used in text
-                // rendering. veraPDF fires §6.3.8 (not §6.3.4) for missing ToUnicode.
-                // (#483)
-                error(
-                    report,
-                    "6.3.8",
-                    format!("Font {name} missing /ToUnicode CMap (§6.3.8)"),
-                );
+                // rendering UNLESS the font uses a predefined encoding (WinAnsiEncoding,
+                // MacRomanEncoding, StandardEncoding) which provides sufficient Unicode
+                // mapping for text extraction. veraPDF does not fire §6.3.8 for fonts
+                // with predefined encodings. Fixes #FP-6.3.8. (#483)
+                let encoding = font_dict.get::<Name>(keys::ENCODING);
+                let uses_predefined_encoding = encoding.as_ref().is_some_and(|enc| {
+                    matches!(
+                        enc.as_ref(),
+                        b"WinAnsiEncoding"
+                            | b"MacRomanEncoding"
+                            | b"StandardEncoding"
+                            | b"MacExpertEncoding"
+                    )
+                });
+                if !uses_predefined_encoding {
+                    error(
+                        report,
+                        "6.3.8",
+                        format!("Font {name} missing /ToUnicode CMap (§6.3.8)"),
+                    );
+                }
             }
         }
     });
@@ -9456,7 +9470,12 @@ fn check_truetype_simple_widths(
     for code in first..=last {
         let idx = code - first;
         let pdf_w = pdf_widths[idx];
-        // Include 0-width entries: a 0 in /Widths when the font says non-zero is a violation.
+        // Skip zero-width entries: pdf_w=0 means the code is unused/absent in this PDF.
+        // veraPDF does not flag width mismatches for zero-width codes in TrueType fonts.
+        // Only non-zero pdf_w entries need to agree with the font program. Fixes #FP-6.3.6.
+        if pdf_w == 0 {
+            continue;
+        }
 
         let ch = if use_winansi {
             winansi_code_to_char(code as u8)
@@ -11359,26 +11378,29 @@ pub fn check_real_value_limits_cached(cache: &ObjectCache<'_>, report: &mut Comp
     }
 }
 
-fn is_real_over_limit(v: f64) -> bool {
-    v.abs() > 32767.0
+// PDF implementation limit: real (floating-point) values must not exceed 32767 in magnitude.
+// Integers are NOT subject to this limit — /Flags 262177, date values etc. are legal.
+// Only fire when n.is_real() to avoid FPs on integer dict values. Fixes #FP-6.1.12.
+fn is_real_over_limit(n: &pdf_syntax::object::Number) -> bool {
+    n.is_real() && n.as_f64().abs() > 32767.0
 }
 
 fn check_real_limit_obj(obj: &Object<'_>) -> bool {
     use pdf_syntax::object::MaybeRef;
     match obj {
-        Object::Number(n) => is_real_over_limit(n.as_f64()),
+        Object::Number(n) => is_real_over_limit(n),
         Object::Dict(dict) => {
             for (_, val) in dict.entries() {
                 match val {
                     MaybeRef::NotRef(Object::Number(n)) => {
-                        if is_real_over_limit(n.as_f64()) {
+                        if is_real_over_limit(&n) {
                             return true;
                         }
                     }
                     MaybeRef::NotRef(Object::Array(arr)) => {
                         for item in arr.raw_iter() {
                             if let MaybeRef::NotRef(Object::Number(n)) = item {
-                                if is_real_over_limit(n.as_f64()) {
+                                if is_real_over_limit(&n) {
                                     return true;
                                 }
                             }
@@ -11392,7 +11414,7 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
         Object::Array(arr) => {
             for item in arr.raw_iter() {
                 if let MaybeRef::NotRef(Object::Number(n)) = item {
-                    if is_real_over_limit(n.as_f64()) {
+                    if is_real_over_limit(&n) {
                         return true;
                     }
                 }
@@ -11402,7 +11424,7 @@ fn check_real_limit_obj(obj: &Object<'_>) -> bool {
         Object::Stream(s) => {
             for (_, val) in s.dict().entries() {
                 if let MaybeRef::NotRef(Object::Number(n)) = val {
-                    if is_real_over_limit(n.as_f64()) {
+                    if is_real_over_limit(&n) {
                         return true;
                     }
                 }
