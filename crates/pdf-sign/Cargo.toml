@@ -1,6 +1,6 @@
 [package]
 name = "pdf-sign"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 edition = "2021"
 license = "MIT"
 description = "PDF digital signature validation — PAdES, CMS, certificate chain, DocMDP/FieldMDP, LTV."
