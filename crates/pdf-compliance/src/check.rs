@@ -5250,20 +5250,25 @@ pub fn check_output_intent_consistency_pdfa(pdf: &Pdf, part: u8, report: &mut Co
     }
 }
 
-/// Check embedded file streams have /Type /EmbeddedFile (§6.1.7, §6.1.7.1).
-pub fn check_embedded_file_streams(pdf: &Pdf, report: &mut ComplianceReport) {
+/// Check embedded file streams have /Type /EmbeddedFile (§6.1.7, §6.1.7.1, §6.9).
+///
+/// For PDF/A-4 the violation falls under §6.9 (embedded file requirements).
+/// For earlier parts it is §6.1.7.1. Fixes §6.9 FNs on PDF/A-4 files. (#FN-6.9)
+pub fn check_embedded_file_streams(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else {
         return;
     };
     let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) else {
         return;
     };
+    // Rule for missing /Type /EmbeddedFile: §6.9 for PDF/A-4, §6.1.7.1 for earlier.
+    let rule = if part == 4 { "6.9" } else { "6.1.7.1" };
     if let Some(ef_tree) = names.get::<Dict<'_>>(keys::EMBEDDED_FILES) {
-        walk_name_tree_filespec(&ef_tree, report);
+        walk_name_tree_filespec(&ef_tree, rule, report);
     }
 }
 
-fn walk_name_tree_filespec(node: &Dict<'_>, report: &mut ComplianceReport) {
+fn walk_name_tree_filespec(node: &Dict<'_>, rule: &str, report: &mut ComplianceReport) {
     if let Some(names_arr) = node.get::<Array<'_>>(keys::NAMES) {
         let items: Vec<Object<'_>> = names_arr.iter::<Object<'_>>().collect();
         for chunk in items.chunks(2) {
@@ -5278,7 +5283,7 @@ fn walk_name_tree_filespec(node: &Dict<'_>, report: &mut ComplianceReport) {
                             if !ok {
                                 error(
                                     report,
-                                    "6.1.7.1",
+                                    rule,
                                     "EmbeddedFile stream missing /Type /EmbeddedFile",
                                 );
                             }
@@ -5290,7 +5295,7 @@ fn walk_name_tree_filespec(node: &Dict<'_>, report: &mut ComplianceReport) {
     }
     if let Some(kids) = node.get::<Array<'_>>(keys::KIDS) {
         for kid in kids.iter::<Dict<'_>>() {
-            walk_name_tree_filespec(&kid, report);
+            walk_name_tree_filespec(&kid, rule, report);
         }
     }
 }
@@ -5801,8 +5806,28 @@ pub fn check_optional_content(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceR
             }
         }
         if let Some(configs) = ocprops.get::<Array<'_>>(b"Configs" as &[u8]) {
+            // Check each Configs entry has a /Name and that names are unique.
+            // /Name in OCG config dicts is a text string (not a PDF name token).
+            // Duplicate /Name values in Configs violate §6.9 T2 (veraPDF testNum=2). (#FN-6.9)
+            let mut seen_names: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
             for (idx, cfg) in configs.iter::<Dict<'_>>().enumerate() {
-                if cfg.get::<Object<'_>>(keys::NAME).is_none() {
+                // Use Object to capture both Name and String /Name values.
+                if let Some(name_obj) = cfg.get::<Object<'_>>(keys::NAME) {
+                    // Extract the raw bytes for comparison.
+                    let name_bytes: Vec<u8> = match name_obj {
+                        Object::Name(n) => n.as_ref().to_vec(),
+                        Object::String(s) => s.as_ref().to_vec(),
+                        _ => format!("{:?}", name_obj).into_bytes(),
+                    };
+                    if !seen_names.insert(name_bytes.clone()) {
+                        let dup = String::from_utf8_lossy(&name_bytes);
+                        error(
+                            report,
+                            rule,
+                            format!("OCG Configs[{idx}] /Name '{dup}' is a duplicate (names must be unique)"),
+                        );
+                    }
+                } else {
                     error(
                         report,
                         rule,
@@ -11072,6 +11097,31 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
     if end == 0 {
         return None; // /Length might be an indirect reference
     }
+    // Detect indirect reference: `/Length N M R` pattern.
+    // After the digits, skip whitespace and check for another integer followed
+    // by whitespace and 'R'. If found, the length is an indirect reference and
+    // we cannot determine the declared length by raw scanning. (#FP-6.1.7)
+    let rest = &after[end..];
+    let ws = rest
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(rest.len());
+    let rest = &rest[ws..];
+    if rest.first().map(|b| b.is_ascii_digit()).unwrap_or(false) {
+        // There is a second number after the first; check if followed by R
+        let gen_end = rest
+            .iter()
+            .position(|b| !b.is_ascii_digit())
+            .unwrap_or(rest.len());
+        let rest2 = &rest[gen_end..];
+        let ws2 = rest2
+            .iter()
+            .position(|b| !b.is_ascii_whitespace())
+            .unwrap_or(rest2.len());
+        if rest2.get(ws2).copied() == Some(b'R') {
+            return None; // Indirect reference — skip length check
+        }
+    }
     std::str::from_utf8(&after[..end]).ok()?.parse().ok()
 }
 
@@ -11905,6 +11955,21 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                 .get::<pdf_syntax::object::String>(keys::REGISTRY)
                 .map(|r| String::from_utf8_lossy(r.as_bytes()).to_string());
 
+            // If Encoding is a non-standard, non-embedded CMap name, the CIDSystemInfo
+            // cannot be verified → flag as violation (veraPDF §6.2.10.3.1 t1).
+            if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
+                if !is_standard_cmap(enc_name.as_ref())
+                    && font_dict.get::<Stream<'_>>(keys::ENCODING).is_none()
+                {
+                    let enc_str = std::str::from_utf8(enc_name.as_ref()).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.3.3.1",
+                        format!("Font {name} uses non-embedded CMap '{enc_str}'; CIDSystemInfo cannot be verified"),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
             if let (Some(ref co), Some(ref fo)) = (&cmap_ordering, &font_ordering) {
                 if co != fo {
                     error_at(
@@ -11926,19 +11991,18 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
 
-            // §6.3.3.3 / §6.2.11.3.3 / §6.2.10.3.3: CIDFont Supplement must be ≤ CMap
-            // Supplement. Internal rule "6.3.3.3" remaps to the correct per-part clause.
-            // (#FN-6.2.10.3.3)
+            // §6.3.3.1 / §6.2.11.3.1 / §6.2.10.3.1: CIDFont Supplement must be ≤ CMap
+            // Supplement. This is a CIDSystemInfo compatibility issue, not CMap embedding.
             let cmap_supp = font_dict
-                .get::<Dict<'_>>(keys::ENCODING)
-                .and_then(|cmap| cmap.get::<Dict<'_>>(keys::CIDSYSTEMINFO))
+                .get::<Stream<'_>>(keys::ENCODING)
+                .and_then(|s| s.dict().get::<Dict<'_>>(keys::CIDSYSTEMINFO))
                 .and_then(|csi| csi.get::<i32>(b"Supplement" as &[u8]));
             let font_supp = cid_si.get::<i32>(b"Supplement" as &[u8]);
             if let (Some(cs), Some(fs)) = (cmap_supp, font_supp) {
                 if fs > cs {
                     error_at(
                         report,
-                        "6.3.3.3",
+                        "6.3.3.1",
                         format!(
                             "CIDFont Supplement ({fs}) > CMap Supplement ({cs}) for font {name}"
                         ),
