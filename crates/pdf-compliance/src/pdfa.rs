@@ -1164,7 +1164,11 @@ fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
     // Use "6.6.2-oi" (OutputIntent variant) so remap_clause_numbers can distinguish
     // this from field/catalog /AA violations that also use "6.6.2" but must NOT be
     // remapped to "6.2.2" (veraPDF reports §6.6.2 for /AA violations in PDF/A-1).
-    let rule = if level.part() == 1 { "6.6.2-oi" } else { "6.2.2" };
+    let rule = if level.part() == 1 {
+        "6.6.2-oi"
+    } else {
+        "6.2.2"
+    };
     if !check::has_output_intent(pdf) {
         check::error(
             report,
@@ -2372,15 +2376,21 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.1.8-obj") => Some("6.1.8"),
 
             // Stream checks: Length, EOL, empty keys, external refs
-            // PDF/A-1: §6.1.7, PDF/A-2/3: §6.1.7 (same), PDF/A-4: §6.1.7 (same).
-            // veraPDF uses "6.1.7" for stream-length violations in all parts 1-4;
-            // normalize_pdfa4_clause does NOT remap "6.1.7" or "6.1.7.1", so
-            // these must match veraPDF directly (no remap for PDF/A-4).
-            // do NOT remap "6.1.7" to "6.1.7.1" for PDF/A-2/3 (was causing false
-            // negatives because veraPDF outputs the parent clause, not the sub-clause).
-            // Round19: 4 FNs for "6.1.7" (PDF/A-4 stream length) were caused by
-            // the now-removed (4,"6.1.7")=>"6.1.6.1" remap. (#496)
+            // PDF/A-1: §6.1.7; PDF/A-2/3: §6.1.7 (veraPDF uses parent clause).
+            // do NOT remap "6.1.7" to "6.1.7.1" for PDF/A-2/3 (veraPDF outputs
+            // the parent clause, not the sub-clause — was causing FNs).
+            //
+            // Stream EOL/empty-key checks emit "6.1.7.1"; stream LENGTH check emits
+            // "6.1.7.1-len" (distinct internal ID). This allows PDF/A-4 stream length
+            // to be remapped to "6.1.6.1" without affecting EOL checks.
+            // Round19: 4 FNs for "6.1.7" (PDF/A-4 name-UTF8) were caused by the
+            // now-removed (4,"6.1.7")=>"6.1.6.1" remap; this new remap uses "6.1.7.1-len"
+            // which is only emitted by check_stream_length, so no collision. (#496)
             (1, "6.1.7.1") => Some("6.1.7"),
+            (1, "6.1.7.1-len") => Some("6.1.7"),
+            // PDF/A-4: stream length mismatch → §6.1.6.1 (ISO 19005-4 reorganised
+            // stream structure rules; veraPDF reports "6.1.6.1" for stream length).
+            (4, "6.1.7.1-len") => Some("6.1.6.1"),
 
             // Widget annotation actions / NeedAppearances
             // PDF/A-1: internal §6.4.1 → §6.6.1 (ISO 19005-1 numbering)

@@ -10267,9 +10267,11 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         let declared = find_length_value(data, abs_stream);
         if let Some(declared_len) = declared {
             if declared_len != actual_len {
+                // Use "6.1.7.1-len" (distinct from stream-EOL "6.1.7.1") so
+                // remap_clause_numbers can map this specifically to §6.1.6.1 for PDF/A-4.
                 error(
                     report,
-                    "6.1.7.1",
+                    "6.1.7.1-len",
                     format!("Stream Length mismatch: declared {declared_len}, actual {actual_len}"),
                 );
                 return; // One violation is enough
