@@ -6874,17 +6874,25 @@ fn is_font_program_corrupt(data: &[u8], is_truetype: bool) -> bool {
 /// PDF/A-1: §6.3.8 (all renderable fonts require ToUnicode).
 /// PDF/A-2/3: §6.2.11.7.2 (Type1 and all non-symbolic non-Type0 fonts). (#483)
 /// PDF/A-4: §6.2.10.7 (ToUnicode required for fonts that can encode characters).
-pub fn check_tounicode_cmap(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+pub fn check_tounicode_cmap(
+    pdf: &Pdf,
+    part: u8,
+    requires_unicode: bool,
+    report: &mut ComplianceReport,
+) {
     for_each_font(pdf, |name, font_dict, _page_idx| {
-        if let Some(enc) = font_dict.get::<Name>(keys::ENCODING) {
-            if enc.as_ref() == keys::IDENTITY_H || enc.as_ref() == keys::IDENTITY_V {
-                return;
-            }
-        }
-
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
-        if let Some(ref st) = subtype {
-            if st.as_ref() == b"Type0" {
+
+        // PDF/A-2/3/4: Identity-H/V and Type0 fonts are exempt from §6.2.11.7.2/§6.2.10.7,
+        // EXCEPT for conformance level 'U' which requires Unicode mapping for ALL fonts.
+        // PDF/A-1 §6.3.8 applies to ALL renderable fonts — no Type0 or encoding exemption.
+        if part >= 2 && !requires_unicode {
+            if let Some(enc) = font_dict.get::<Name>(keys::ENCODING) {
+                if enc.as_ref() == keys::IDENTITY_H || enc.as_ref() == keys::IDENTITY_V {
+                    return;
+                }
+            }
+            if subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type0") {
                 return;
             }
         }
@@ -6893,10 +6901,10 @@ pub fn check_tounicode_cmap(pdf: &Pdf, part: u8, report: &mut ComplianceReport) 
             .as_ref()
             .is_some_and(|s| s.as_ref() == b"Type1" || s.as_ref() == b"MMType1");
 
-        // Symbolic font exemption: only for non-Type1 fonts. Type1 fonts
-        // (including symbolic subsets) need ToUnicode in all PDF/A parts.
-        // veraPDF §6.3.8 (PDF/A-1) and §6.2.11.7.2 (PDF/A-2+) enforce this.
-        if !is_type1 {
+        // Symbolic font exemption: only for non-Type1 fonts and only for non-Unicode levels.
+        // PDF/A-2u/3u and PDF/A-4 require ToUnicode for ALL fonts including symbolic.
+        // §6.2.11.7.2: conformance level 'U' means full Unicode mapping required.
+        if !is_type1 && part >= 2 && !requires_unicode {
             if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
                 if let Some(flags) = desc.get::<i32>(keys::FLAGS) {
                     if flags & 0x04 != 0 {
@@ -7642,6 +7650,7 @@ pub fn check_font_widths(pdf: &Pdf, report: &mut ComplianceReport) {
 /// We emit rule "6.3.5-fw" which is remapped to §6.2.11.5 (parts 2/3) or
 /// §6.2.10.5 (part 4) in pdfa.rs. (#467)
 pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, page_idx| {
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
         let subtype_bytes = subtype.as_ref().map(|s| s.as_ref());
@@ -7649,6 +7658,14 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
         // Type0 fonts: check CIDFontType2 (TrueType) descendant widths. (#467)
         if subtype_bytes == Some(b"Type0") {
             check_cidfont_type2_widths(font_dict, name, page_idx, report);
+            return;
+        }
+
+        // Type3 fonts: compare d0/d1 advance widths in CharProcs against /Widths.
+        // Type3 fonts have no FontDescriptor (they're defined inline), so the
+        // standard font-file width check below does not apply. (§6.2.10.5, ISO 19005-4)
+        if subtype_bytes == Some(b"Type3") {
+            check_type3_charproc_widths(font_dict, xref, name, page_idx, report);
             return;
         }
 
