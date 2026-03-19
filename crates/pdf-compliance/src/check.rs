@@ -9415,10 +9415,9 @@ pub fn check_array_capacity_limit_cached(cache: &ObjectCache<'_>, report: &mut C
 /// Check CID values don't exceed 65535 (§6.1.13 test 10).
 pub fn check_cid_value_limit(pdf: &Pdf, report: &mut ComplianceReport) {
     for_each_font(pdf, |name, font_dict, page_idx| {
-        // Check CIDFont descendants for /DW2 or /W entries with large CID values
+        // Check CIDFont descendants for /W entries with large CID values
         if let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) {
             for cid_font in descendants.iter::<Dict<'_>>() {
-                // /W array has entries like [cid [w1 w2 ...]] or [cid1 cid2 w]
                 if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
                     for item in w_arr.iter::<Object<'_>>() {
                         if let Object::Number(n) = &item {
@@ -9437,7 +9436,54 @@ pub fn check_cid_value_limit(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
         }
+        // Check CMap encoding streams for CID values > 65535 in cidrange/cidchar.
+        // CMap streams contain entries like: <startCode> <endCode> startCID
+        // where startCID is a decimal number that must be <= 65535.
+        if let Some(enc_stream) = font_dict.get::<Stream<'_>>(keys::ENCODING) {
+            if let Ok(decoded) = enc_stream.decoded() {
+                if let Ok(text) = std::str::from_utf8(&decoded) {
+                    check_cmap_cid_values(text, name, page_idx, report);
+                }
+            }
+        }
     });
+}
+
+/// Scan decoded CMap text for CID values > 65535 in cidrange/cidchar sections.
+fn check_cmap_cid_values(text: &str, font_name: &str, page_idx: usize, report: &mut ComplianceReport) {
+    // Look for decimal numbers after hex-coded ranges: <xxxx> <xxxx> DECIMAL
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        // Skip to after '>' (end of hex code)
+        if bytes[i] == b'>' {
+            i += 1;
+            // Skip whitespace
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            // Check if next token is a decimal number (CID value)
+            if i < bytes.len() && bytes[i].is_ascii_digit() {
+                let start = i;
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if let Ok(val) = text[start..i].parse::<u64>() {
+                    if val > 65535 {
+                        error_at(
+                            report,
+                            "6.1.13",
+                            format!("CMap CID value ({val}) exceeds 65535 in font {font_name}"),
+                            format!("page {}", page_idx + 1),
+                        );
+                        return;
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
 }
 
 // ─── §6.1.12 — Real value limits ────────────────────────────────────────────
