@@ -2517,8 +2517,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.4.4") => Some("6.2.3.4"),
 
             // Form XObject restrictions (PS, Subtype2, Ref)
-            // PDF/A-1: §6.2.5, PDF/A-2/3/4: §6.2.9
-            (1, "6.2.9") => Some("6.2.5"),
+            // PDF/A-1: §6.2.6 (reference XObjects forbidden per ISO 19005-1 §6.2.6)
+            // PDF/A-2/3/4: §6.2.9 (#FN-6.2.6)
+            (1, "6.2.9") => Some("6.2.6"),
 
             // Lang tag validation
             // veraPDF uses §6.8.4 for ALL PDF/A parts — no remap needed.
@@ -2722,10 +2723,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.11.4.2") => Some("6.3.5"),
             (4, "6.2.11.4.2") => Some("6.2.10.4.2"),
 
-            // Rendering intent: check.rs emits "6.2.5" (our canonical numbering).
-            // PDF/A-1: veraPDF uses §6.2.9 (not §6.2.5).
-            // Actually our remap (1,"6.2.5")=>"6.2.9" already exists above for form XObjects.
-            // For PDF/A-4: rendering intent is §6.2.6.
+            // Image XObject rendering intent: check.rs emits "6.2.5" (check_image_xobject_intent).
+            // PDF/A-1: veraPDF uses §6.2.5 (rendering intent) — no remap needed.
+            // PDF/A-2/3: veraPDF uses §6.2.6 for invalid image /Intent. (#FN-6.2.6)
+            // PDF/A-4: veraPDF uses §6.2.6.
+            (2..=3, "6.2.5") => Some("6.2.6"),
             (4, "6.2.5") => Some("6.2.6"),
 
             // Halftone/TransferFunction: check.rs emits "6.2.10" or "6.2.10.5".
