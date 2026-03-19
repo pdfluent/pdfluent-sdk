@@ -66,6 +66,14 @@ impl Number {
     pub const fn from_i32(num: i32) -> Self {
         Self(InternalNumber::Integer(num as i64))
     }
+
+    /// Returns true if this number was parsed as a real (floating-point) number.
+    ///
+    /// PDF distinguishes integers from reals: implementation limits (§6.1.12/§6.1.13)
+    /// only apply to real values, not to integers.
+    pub fn is_real(&self) -> bool {
+        matches!(self.0, InternalNumber::Real(_))
+    }
 }
 
 impl Skippable for Number {
