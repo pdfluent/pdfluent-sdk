@@ -1359,44 +1359,27 @@ fn check_xmp_rdf_structure(xmp: &str, level: PdfALevel, report: &mut ComplianceR
         );
     }
 
-    // Check that rdf:Description elements use rdf:about (qualified), not unqualified about=.
-    // Per RDF/XML spec, the about attribute must be namespace-qualified as rdf:about.
-    // Using bare `about=""` is invalid RDF/XML — veraPDF maps this to §6.7.9 for PDF/A-1
-    // (isartor-6-7-9-t01-fail-a) as "malformed XMP metadata". (#467)
-    if xmp.contains(" about=\"") || xmp.contains(" about='") {
-        // Make sure this isn't just rdf:about (which is correct)
-        // Look for about= that is NOT preceded by rdf:
-        let bytes = xmp.as_bytes();
-        let mut i = 0;
-        while i + 6 < bytes.len() {
-            if &bytes[i..i + 7] == b" about=" || &bytes[i..i + 7] == b"\tabout=" {
-                // Check it's not "rdf:about=" pattern — look back for "rdf:"
-                let prefix_start = i.saturating_sub(4);
-                if &bytes[prefix_start..i] != b"rdf:" {
-                    // veraPDF uses §6.7.9.1 for all PDF/A versions when XMP is malformed
-                    // (unqualified bare `about` attribute is invalid per RDF/XML spec,
-                    // which is part of the XMP specification). (#467)
-                    let rule = match level.part() {
-                        4 => "6.5.2", // PDF/A-4 normalized equivalent
-                        _ => "6.7.9.1",
-                    };
-                    error(
-                        report,
-                        rule,
-                        "rdf:Description uses unqualified 'about' attribute instead of 'rdf:about'",
-                    );
-                    // §6.7.11 cascade: malformed XMP means pdfaid cannot be verified.
-                    // veraPDF always flags 6.7.11 when 6.7.9.1 is present. (#467)
-                    error(
-                        report,
-                        "6.7.11",
-                        "XMP is malformed (6.7.9.1 violation) — PDF/A identification cannot be verified",
-                    );
-                    break;
-                }
-            }
-            i += 1;
-        }
+    // §6.7.9.1 — XMP packet must have a proper closing </x:xmpmeta> tag.
+    // A missing closing tag is the actual §6.7.9.1 violation (isartor-6-7-9-t01-fail-a.pdf).
+    // Bare about="" is accepted by veraPDF in well-formed XMP packets — do NOT use
+    // bare about= as the trigger (causes FP on fp-6.7.11-isartor2.pdf, fp-6.7.11-bfo.pdf).
+    // Fixes #FP-6.7.11.
+    if xmp.contains("<x:xmpmeta") && !xmp.contains("</x:xmpmeta>") {
+        let rule = match level.part() {
+            4 => "6.5.2",
+            _ => "6.7.9.1",
+        };
+        error(
+            report,
+            rule,
+            "XMP packet is missing closing </x:xmpmeta> tag (malformed XMP serialization)",
+        );
+        // §6.7.11 cascade: malformed XMP means pdfaid cannot be verified.
+        error(
+            report,
+            "6.7.11",
+            "XMP is malformed (6.7.9.1 violation) — PDF/A identification cannot be verified",
+        );
     }
 
     // Check that the RDF namespace URI is the canonical form.
