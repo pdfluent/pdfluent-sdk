@@ -131,7 +131,7 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     // §6.10 (PDF/A-2/3): OCG Order must contain all referenced OCGs.
     check_oc_d_as_restriction(pdf, level, report);
     check_ocg_order_completeness(pdf, level, report);
-    // §6.11 (PDF/A-2/3/4): Names/AlternatePresentations is forbidden.
+    // §6.10 (PDF/A-2/3) / §6.11 (PDF/A-4): Names/AlternatePresentations and /PresSteps forbidden.
     check_alternate_presentations_absent(pdf, level, report);
     // §6.12 (PDF/A-2/3/4): /Requirements key in catalog is forbidden.
     check_requirements_absent(pdf, level, report);
@@ -164,15 +164,16 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_xmp_rdf_structure(xmp_text, level, report);
 
     check_xmp_packet_header(xmp_text, report);
-    // §6.6.2.1 (PDF/A-2/3), §6.7.2.1 (PDF/A-4), §6.7.2 (PDF/A-1):
+    // §6.6.2.1 (PDF/A-2/3), §6.7.2.1 (PDF/A-4), §6.7.5 (PDF/A-1):
     // The 'bytes' attribute is forbidden in the xpacket PI for all PDF/A parts.
     // veraPDF uses the part-specific clause. Fixes #FN-6.6.2.1.
+    // Note: PDF/A-1 maps to §6.7.5 (isartor-6-7-5-t01-fail-a tests this). (#FN-6.7.5)
     if let Some(xp_start) = xmp_text.find("<?xpacket") {
         let xp_end = xmp_text[xp_start..].find("?>").unwrap_or(0);
         let xp_header = &xmp_text[xp_start..xp_start + xp_end + 2];
         if xp_header.contains("bytes=") {
             let bytes_rule = match level.part() {
-                1 => "6.7.2",
+                1 => "6.7.5", // veraPDF uses §6.7.5 for xpacket bytes= in PDF/A-1 (#FN-6.7.5)
                 4 => "6.7.2.1",
                 _ => "6.6.2.1", // PDF/A-2/3
             };
@@ -182,12 +183,12 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
                 "XMP packet header contains forbidden 'bytes' attribute",
             );
         }
-        // §6.6.2.1 (PDF/A-2/3), §6.7.2.1 (PDF/A-4), §6.7.2 (PDF/A-1):
+        // §6.6.2.1 (PDF/A-2/3), §6.7.2.1 (PDF/A-4), §6.7.5 (PDF/A-1):
         // The 'encoding' attribute is forbidden in the xpacket PI for all PDF/A parts.
         // veraPDF uses the part-specific clause for this violation. Fixes #FN-6.6.2.1.
         if xp_header.contains("encoding=") {
             let enc_rule = match level.part() {
-                1 => "6.7.2",
+                1 => "6.7.5", // veraPDF uses §6.7.5 for xpacket encoding= in PDF/A-1 (#FN-6.7.5)
                 4 => "6.7.2.1",
                 _ => "6.6.2.1", // PDF/A-2/3
             };
@@ -1494,7 +1495,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
 
         // ── xmpDM: (Dynamic Media) ───────────────────────────────────────────
         "xmpDM:absPeakAudioFilePath" => Some(Scalar), // Absolute path URI. (#489)
-        "xmpDM:altTimecode" => Some(Struct), // Timecode structure. (#489)
+        "xmpDM:altTimecode" => Some(Struct),          // Timecode structure. (#489)
         "xmpDM:artist" => Some(Scalar),
         "xmpDM:album" => Some(Scalar),
         "xmpDM:altTapeName" => Some(Scalar),
@@ -1964,11 +1965,7 @@ fn check_pdf_namespace_properties(xmp: &str, level: PdfALevel, report: &mut Comp
 ///
 /// Both element-form (`<xmp:Author>…</xmp:Author>`) and attribute-form
 /// (`xmp:Author="SomeAuthor"`) are scanned.  (#FN-6.7.9-t03)
-fn check_xmp_closed_schema_properties(
-    xmp: &str,
-    level: PdfALevel,
-    report: &mut ComplianceReport,
-) {
+fn check_xmp_closed_schema_properties(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     let rule = match level.part() {
         1 => "6.7.9.2",
         4 => "6.5.2",
@@ -1981,15 +1978,15 @@ fn check_xmp_closed_schema_properties(
 
     while pos + 4 < bytes.len() {
         // Scan positions preceded by '<' (element start) or space/tab/newline (attribute).
-        if bytes[pos] == b'<'
-            || bytes[pos] == b' '
-            || bytes[pos] == b'\t'
-            || bytes[pos] == b'\n'
-        {
+        if bytes[pos] == b'<' || bytes[pos] == b' ' || bytes[pos] == b'\t' || bytes[pos] == b'\n' {
             let start = pos + 1;
             if start + 4 < bytes.len() && &bytes[start..start + 4] == b"xmp:" {
                 // Skip closing tags: </xmp:...
-                if pos < bytes.len() && bytes[pos] == b'<' && start < bytes.len() && bytes[start] == b'/' {
+                if pos < bytes.len()
+                    && bytes[pos] == b'<'
+                    && start < bytes.len()
+                    && bytes[start] == b'/'
+                {
                     pos += 1;
                     continue;
                 }
@@ -2392,7 +2389,10 @@ fn check_seq_integer_items(body: &str, prop_name: &str) -> Option<String> {
     let mut search = 0;
     while let Some(li_pos) = body[search..].find("<rdf:li") {
         let abs = search + li_pos;
-        let tag_end = body[abs..].find('>').map(|i| abs + i + 1).unwrap_or(abs + 7);
+        let tag_end = body[abs..]
+            .find('>')
+            .map(|i| abs + i + 1)
+            .unwrap_or(abs + 7);
         let li_close = "</rdf:li>";
         let val = if let Some(close) = body[tag_end..].find(li_close) {
             body[tag_end..tag_end + close].trim()
@@ -2633,10 +2633,10 @@ fn check_deprecated_types(xmp: &str, report: &mut ComplianceReport) {
 // Structural checks (PDF catalog / document structure, not XMP content)
 // ============================================================================
 
-/// §6.9 (PDF/A-2/3) / §6.10 (PDF/A-4): OCProperties/D must not have /AS.
+/// §6.9 (PDF/A-2/3) / §6.10 (PDF/A-4): OCProperties config dicts must not have /AS.
 ///
-/// The default OCG configuration dict (/D in OCProperties) must not contain
-/// an /AS key in PDF/A-2/3. veraPDF reports this as §6.9. Fixes #FN-6.9.
+/// Neither the default (/D) nor any alternate (/Configs) OCG configuration dict
+/// may contain an /AS entry in PDF/A-2/3. veraPDF reports this as §6.9. (#FN-6.9)
 fn check_oc_d_as_restriction(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     if level.part() < 2 {
         return;
@@ -2647,16 +2647,31 @@ fn check_oc_d_as_restriction(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
     let Some(ocprops) = cat.get::<Dict<'_>>(keys::OCPROPERTIES) else {
         return;
     };
-    let Some(d_dict) = ocprops.get::<Dict<'_>>(b"D" as &[u8]) else {
-        return;
-    };
-    if d_dict.contains_key(b"AS" as &[u8]) {
-        let rule = if level.part() == 4 { "6.10" } else { "6.9" };
-        error(
-            report,
-            rule,
-            "OCProperties default config (/D) must not have /AS entry (§6.9)",
-        );
+    let rule = if level.part() == 4 { "6.10" } else { "6.9" };
+    // Check default config dict /D.
+    if let Some(d_dict) = ocprops.get::<Dict<'_>>(b"D" as &[u8]) {
+        if d_dict.contains_key(b"AS" as &[u8]) {
+            error(
+                report,
+                rule,
+                "OCProperties default config (/D) must not have /AS entry",
+            );
+        }
+    }
+    // Check each alternate config in /Configs array — same /AS restriction applies.
+    if let Some(configs) = ocprops.get::<Array<'_>>(b"Configs" as &[u8]) {
+        for (idx, cfg) in configs.iter::<Dict<'_>>().enumerate() {
+            if cfg.contains_key(b"AS" as &[u8]) {
+                error(
+                    report,
+                    rule,
+                    format!(
+                        "OCProperties alternate config {} must not have /AS entry",
+                        idx
+                    ),
+                );
+            }
+        }
     }
 }
 
@@ -2724,10 +2739,10 @@ fn collect_order_refs(arr: &Array<'_>, out: &mut HashSet<ObjRef>) {
     }
 }
 
-/// §6.11 (PDF/A-2/3/4): Names/AlternatePresentations is forbidden.
+/// §6.10 (PDF/A-2/3) / §6.11 (PDF/A-4): Names/AlternatePresentations is forbidden.
 ///
 /// The document Names dictionary must not contain an AlternatePresentations
-/// entry. Fixes #FN-6.11.
+/// entry. Also checks for /PresSteps in page dictionaries (§6.10 T2). (#FN-6.10)
 fn check_alternate_presentations_absent(
     pdf: &Pdf,
     level: PdfALevel,
@@ -2736,18 +2751,31 @@ fn check_alternate_presentations_absent(
     if level.part() < 2 {
         return;
     }
+    // In ISO 19005-2/3, §6.10 forbids AlternatePresentations; in PDF/A-4 it is §6.11.
+    let rule = if level.part() <= 3 { "6.10" } else { "6.11" };
     let Some(cat) = check::catalog(pdf) else {
         return;
     };
-    let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) else {
-        return;
-    };
-    if names.contains_key(b"AlternatePresentations" as &[u8]) {
-        error(
-            report,
-            "6.11",
-            "Names dictionary must not contain AlternatePresentations (§6.11)",
-        );
+    if let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) {
+        if names.contains_key(b"AlternatePresentations" as &[u8]) {
+            error(
+                report,
+                rule,
+                "Names dictionary must not contain AlternatePresentations",
+            );
+        }
+    }
+    // §6.10 T2 (PDF/A-2/3): page dictionaries must not contain /PresSteps.
+    if level.part() <= 3 {
+        for (page_idx, page) in pdf.pages().iter().enumerate() {
+            if page.raw().contains_key(b"PresSteps" as &[u8]) {
+                error(
+                    report,
+                    rule,
+                    format!("Page {} has forbidden /PresSteps entry", page_idx + 1),
+                );
+            }
+        }
     }
 }
 

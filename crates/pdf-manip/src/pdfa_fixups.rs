@@ -45,6 +45,10 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let concatenated_operators_fixed = fix_concatenated_operators(doc);
     let unknown_operators_stripped = strip_unknown_content_stream_operators(doc);
     let page_boundary_fixed = fix_page_boundary_sizes(doc);
+    // Add /Group to pages using transparency without one (6.2.10-tgroup).
+    // Runs after normalize_colorspaces has already added the OutputIntent, so
+    // /Group << /S /Transparency >> without /CS is valid. (#496)
+    let transparency_groups_added = fix_missing_transparency_groups(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
@@ -77,6 +81,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         concatenated_operators_fixed,
         unknown_operators_stripped,
         page_boundary_fixed,
+        transparency_groups_added,
     }
 }
 
@@ -111,6 +116,7 @@ pub struct FixupReport {
     pub concatenated_operators_fixed: usize,
     pub unknown_operators_stripped: usize,
     pub page_boundary_fixed: usize,
+    pub transparency_groups_added: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -5566,4 +5572,171 @@ fn fix_non_ascii_pdf_names(doc: &mut Document) -> usize {
         }
     }
     count
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.10-tgroup — Pages using transparency must have a /Group entry
+// ---------------------------------------------------------------------------
+//
+// PDF/A-2 §6.2.10: pages that use transparency features (blending modes,
+// opacity, soft masks) must carry a /Group << /S /Transparency >> entry.
+// When the document has an OutputIntent (always present after
+// normalize_colorspaces), no /CS entry is required in the group dict.
+// Fixes violations: "Page uses transparency but has no /Group entry". (#496)
+
+fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+
+    // Collect pages that need a /Group added (read-only pass first).
+    let needs_group: Vec<ObjectId> = page_ids
+        .iter()
+        .copied()
+        .filter(|&page_id| {
+            let Some(Object::Dictionary(page_dict)) = doc.objects.get(&page_id) else {
+                return false;
+            };
+            // Already has /Group — skip.
+            if page_dict.has(b"Group") {
+                return false;
+            }
+            // Add /Group only if the page actually uses transparency.
+            page_uses_transparency_lopdf(page_dict, doc)
+        })
+        .collect();
+
+    let group_dict = lopdf::dictionary! {
+        "S" => Object::Name(b"Transparency".to_vec()),
+    };
+
+    for page_id in &needs_group {
+        if let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) {
+            pd.set("Group", Object::Dictionary(group_dict.clone()));
+        }
+    }
+
+    needs_group.len()
+}
+
+/// Return true if the page's ExtGState resources use transparency.
+///
+/// Checks for CA < 1, ca < 1, non-None SMask, or non-Normal/Compatible BM.
+/// Also checks Form XObjects with their own /Group /S /Transparency.
+fn page_uses_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -> bool {
+    // Check ExtGState entries.
+    if let Some(gs_dict) = get_named_resource_dict_from_resources(page_dict, doc, b"ExtGState") {
+        if extgstate_dict_has_transparency(&gs_dict, doc) {
+            return true;
+        }
+    }
+    // Check Form XObjects: a Form XObject with /Group /S /Transparency implies
+    // the parent page uses transparency blending.
+    if let Some(xobj_dict) = get_named_resource_dict_from_resources(page_dict, doc, b"XObject") {
+        for (_, xobj_val) in xobj_dict.iter() {
+            let stream_id = match xobj_val {
+                Object::Reference(id) => *id,
+                _ => continue,
+            };
+            let Some(Object::Stream(s)) = doc.objects.get(&stream_id) else {
+                continue;
+            };
+            // Only Form XObjects.
+            if s.dict.get(b"Subtype").ok() != Some(&Object::Name(b"Form".to_vec())) {
+                continue;
+            }
+            // Form XObject with its own transparency group.
+            if let Ok(Object::Dictionary(grp)) = s.dict.get(b"Group") {
+                if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
+                    return true;
+                }
+            }
+            // Form XObject with ExtGState transparency in its own resources.
+            if let Some(gs) =
+                get_named_resource_dict_from_stream_resources(&s.dict, doc, b"ExtGState")
+            {
+                if extgstate_dict_has_transparency(&gs, doc) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check whether any entry in an ExtGState dictionary uses transparency.
+fn extgstate_dict_has_transparency(gs_dict: &lopdf::Dictionary, doc: &Document) -> bool {
+    for (_, gs_val) in gs_dict.iter() {
+        let gs = match gs_val {
+            Object::Dictionary(d) => d.clone(),
+            Object::Reference(id) => match doc.objects.get(id) {
+                Some(Object::Dictionary(d)) => d.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+        if extgstate_entry_has_transparency(&gs) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check a single ExtGState dict for transparency features.
+fn extgstate_entry_has_transparency(gs: &lopdf::Dictionary) -> bool {
+    // /SMask present and not /None
+    match gs.get(b"SMask").ok() {
+        Some(Object::Name(n)) if n == b"None" => {}
+        Some(Object::Name(_)) | Some(Object::Dictionary(_)) | Some(Object::Reference(_)) => {
+            return true
+        }
+        _ => {}
+    }
+    // /BM not Normal or Compatible
+    if let Ok(Object::Name(bm)) = gs.get(b"BM") {
+        if bm != b"Normal" && bm != b"Compatible" {
+            return true;
+        }
+    }
+    // /CA (stroke opacity) < 1
+    if opacity_less_than_one(gs.get(b"CA").ok()) {
+        return true;
+    }
+    // /ca (fill opacity) < 1
+    if opacity_less_than_one(gs.get(b"ca").ok()) {
+        return true;
+    }
+    false
+}
+
+fn opacity_less_than_one(obj: Option<&Object>) -> bool {
+    match obj {
+        Some(Object::Real(f)) => *f < 1.0,
+        Some(Object::Integer(i)) => *i < 1,
+        _ => false,
+    }
+}
+
+/// Like `get_named_resource_dict_from_resources` but works on a stream dict
+/// (Form XObject) rather than a page dict — the resource dict is found directly
+/// under the stream dict's /Resources key.
+fn get_named_resource_dict_from_stream_resources(
+    stream_dict: &lopdf::Dictionary,
+    doc: &Document,
+    key: &[u8],
+) -> Option<lopdf::Dictionary> {
+    let resources = match stream_dict.get(b"Resources").ok() {
+        Some(Object::Dictionary(d)) => d.clone(),
+        Some(Object::Reference(id)) => match doc.objects.get(id) {
+            Some(Object::Dictionary(d)) => d.clone(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    match resources.get(key).ok() {
+        Some(Object::Dictionary(d)) => Some(d.clone()),
+        Some(Object::Reference(id)) => match doc.objects.get(id) {
+            Some(Object::Dictionary(d)) => Some(d.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
 }

@@ -893,7 +893,12 @@ fn main() {
             eprintln!("{summary}");
         }
 
-        Command::RenderPage { pdf, page, output, dpi } => {
+        Command::RenderPage {
+            pdf,
+            page,
+            output,
+            dpi,
+        } => {
             let data = match std::fs::read(&pdf) {
                 Ok(d) => d,
                 Err(e) => {
