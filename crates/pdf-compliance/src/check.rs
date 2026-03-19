@@ -143,8 +143,40 @@ pub fn is_encrypted_cached(pdf: &Pdf, cache: &ObjectCache<'_>) -> bool {
 /// Get XMP metadata as bytes from the catalog Metadata stream.
 pub fn get_xmp_metadata(pdf: &Pdf) -> Option<Vec<u8>> {
     let cat = catalog(pdf)?;
-    let stream: Stream<'_> = cat.get(keys::METADATA)?;
-    stream.decoded().ok()
+    // Attempt to resolve /Metadata via pdf-syntax and decode the stream.
+    // cat.get() can return None when the stream keyword is malformed (e.g. 'stream '
+    // with a space before the EOL — §6.1.7.1 violation), because pdf-syntax cannot
+    // locate the stream body and the object fails to parse as a Stream. (#FP-6.7.11)
+    if let Some(stream) = cat.get::<Stream<'_>>(keys::METADATA) {
+        if let Ok(data) = stream.decoded() {
+            if !data.is_empty() {
+                return Some(data);
+            }
+        }
+        let raw = stream.raw_data();
+        if !raw.is_empty() {
+            return Some(raw.to_vec());
+        }
+    }
+    // Fallback: raw-byte scan for <?xpacket in the whole PDF.
+    // Only activate when the catalog has a /Metadata entry; don't fabricate XMP for
+    // documents that genuinely lack it.
+    if !cat.contains_key(keys::METADATA) {
+        return None;
+    }
+    let raw = pdf.data().as_ref();
+    let needle = b"<?xpacket";
+    let start = raw.windows(needle.len()).position(|w| w == needle)?;
+    let end_needle = b"<?xpacket end";
+    let end = raw[start..]
+        .windows(end_needle.len())
+        .position(|w| w == end_needle)
+        .map(|off| {
+            let rel = start + off + end_needle.len();
+            raw[rel..].windows(2).position(|w| w == b"?>").map_or(rel, |e| rel + e + 2)
+        })
+        .unwrap_or(raw.len());
+    Some(raw[start..end].to_vec())
 }
 
 /// Parse XMP metadata to find pdfaid:part and pdfaid:conformance.
@@ -4273,6 +4305,8 @@ pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
                                 format!("page {}", page_idx + 1),
                             );
                         }
+                        // §6.2.11.6: glyph names in /Differences must be in the AGL.
+                        check_encoding_differences_agl(&enc_dict, name, page_idx, report);
                     }
                 }
                 return;
@@ -4307,7 +4341,157 @@ pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
                 );
             }
         }
+        // §6.2.11.6: all names in /Differences must be valid AGL glyph names.
+        check_encoding_differences_agl(&enc_dict, name, page_idx, report);
     });
+}
+
+/// Check that all glyph names in an Encoding /Differences array are valid AGL
+/// glyph names (§6.2.11.6).  A valid name is one defined in the Adobe Glyph List
+/// (AGLFN or common extensions), one of the unicode naming patterns (`uni<HEX>+`
+/// or `u<HEX>{4,6}`), or `.notdef`/`.null`.
+fn check_encoding_differences_agl(
+    enc_dict: &Dict<'_>,
+    font_name: &str,
+    page_idx: usize,
+    report: &mut ComplianceReport,
+) {
+    let Some(diffs) = enc_dict.get::<Array<'_>>(b"Differences" as &[u8]) else {
+        return;
+    };
+    // Differences is [code name name name code name ...] — integers reset the
+    // current code, Names are glyph names that must be in the AGL.
+    for item in diffs.iter::<Object<'_>>() {
+        let Object::Name(n) = item else { continue };
+        let glyph = n.as_ref();
+        if !is_valid_agl_glyph_name(glyph) {
+            let gstr = std::str::from_utf8(glyph).unwrap_or("?");
+            error_at(
+                report,
+                "6.2.11.6",
+                format!(
+                    "Font '{font_name}' Encoding /Differences contains glyph name \
+                     '/{gstr}' not listed in the Adobe Glyph List"
+                ),
+                format!("page {}", page_idx + 1),
+            );
+        }
+    }
+}
+
+/// Return `true` when `name` is a valid AGL glyph name.
+///
+/// Accepts:
+/// - Special names: `.notdef`, `.null`, `.nonmarkingreturn`
+/// - Unicode-derived names: `uni[0-9A-Fa-f]{4}+` and `u[0-9A-Fa-f]{4,6}`
+/// - All entries from the Adobe Glyph List for New Fonts (AGLFN v1.7, ~302 entries)
+///   plus commonly used names from the full AGL that are absent from the AGLFN
+///   (ligatures `ff`/`ffi`/`ffl`, fractions, old-style Greek names, etc.)
+fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
+    // Syntactic validity: only [A-Za-z0-9._], no leading digit, not empty.
+    if name.is_empty() {
+        return false;
+    }
+    if !name[0].is_ascii_alphabetic() && name[0] != b'.' {
+        return false;
+    }
+    if !name.iter().all(|&b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_') {
+        return false;
+    }
+
+    // Special names
+    if matches!(name, b".notdef" | b".null" | b".nonmarkingreturn") {
+        return true;
+    }
+
+    // Unicode naming convention: uni[0-9A-Fa-f]{4}+
+    if let Some(rest) = name.strip_prefix(b"uni") {
+        if rest.len() >= 4 && rest.len() % 4 == 0 && rest.iter().all(|b| b.is_ascii_hexdigit()) {
+            return true;
+        }
+    }
+    // Unicode naming convention: u[0-9A-Fa-f]{4,6}
+    if let Some(rest) = name.strip_prefix(b"u") {
+        if (4..=6).contains(&rest.len()) && rest.iter().all(|b| b.is_ascii_hexdigit()) {
+            return true;
+        }
+    }
+
+    // AGLFN v1.7 + common full-AGL extras — sorted for binary search.
+    const AGL_NAMES: &[&[u8]] = &[
+        b"A", b"AE", b"AEacute", b"AEsmall", b"Aacute", b"Abreve", b"Acircumflex",
+        b"Adieresis", b"Agrave", b"Amacron", b"Aogonek", b"Aring", b"Aringacute", b"Atilde",
+        b"B", b"C", b"Cacute", b"Ccaron", b"Ccedilla", b"D", b"Dcaron", b"Dcroat",
+        b"E", b"Eacute", b"Ebreve", b"Ecaron", b"Ecircumflex", b"Edieresis",
+        b"Edotaccent", b"Egrave", b"Emacron", b"Eogonek", b"Eth",
+        b"F", b"G", b"Gbreve", b"Gcommaaccent", b"H", b"I", b"IJ",
+        b"Iacute", b"Ibreve", b"Icircumflex", b"Idieresis", b"Idotaccent",
+        b"Igrave", b"Imacron", b"Iogonek",
+        b"J", b"K", b"Kcommaaccent",
+        b"L", b"Lacute", b"Lcaron", b"Lcommaaccent", b"Ldot", b"Lslash",
+        b"M", b"N", b"Nacute", b"Ncaron", b"Ncommaaccent", b"Ntilde",
+        b"O", b"OE", b"OEsmall", b"Oacute", b"Obreve", b"Ocircumflex", b"Odieresis",
+        b"Ograve", b"Ohungarumlaut", b"Omacron", b"Oslash", b"Oslashacute", b"Otilde",
+        b"P", b"Q",
+        b"R", b"Racute", b"Rcaron", b"Rcommaaccent",
+        b"S", b"Sacute", b"Scaron", b"Scedilla", b"Scommaaccent",
+        b"T", b"Tbar", b"Tcaron", b"Tcommaaccent", b"Thorn",
+        b"U", b"Uacute", b"Ubreve", b"Ucircumflex", b"Udieresis", b"Ugrave",
+        b"Uhungarumlaut", b"Umacron", b"Uogonek", b"Uring",
+        b"V", b"W", b"Wacute", b"Wcircumflex", b"Wdieresis", b"Wgrave",
+        b"X", b"Y", b"Yacute", b"Ycircumflex", b"Ydieresis",
+        b"Z", b"Zacute", b"Zcaron", b"Zdotaccent",
+        b"a", b"aacute", b"abreve", b"acircumflex", b"acute", b"adieresis",
+        b"ae", b"aeacute", b"agrave", b"amacron", b"ampersand", b"aogonek",
+        b"aring", b"aringacute", b"asciicircum", b"asciitilde", b"asterisk", b"at",
+        b"atilde",
+        b"b", b"backslash", b"bar", b"braceleft", b"braceright",
+        b"bracketleft", b"bracketright", b"breve", b"brokenbar", b"bullet",
+        b"c", b"cacute", b"caron", b"ccaron", b"ccedilla", b"cedilla", b"cent",
+        b"colon", b"comma", b"copyright", b"currency",
+        b"d", b"dagger", b"daggerdbl", b"dcaron", b"dcroat", b"degree",
+        b"dieresis", b"divide", b"dollar", b"dotaccent", b"dotlessi",
+        b"e", b"eacute", b"ebreve", b"ecaron", b"ecircumflex", b"edieresis",
+        b"edotaccent", b"egrave", b"eight", b"ellipsis", b"emacron", b"emdash",
+        b"endash", b"eogonek", b"equal", b"eth", b"exclam", b"exclamdown",
+        b"f", b"ff", b"ffi", b"ffl", b"fi", b"five", b"fl", b"florin", b"four",
+        b"fraction",
+        b"g", b"gbreve", b"gcommaaccent", b"germandbls", b"grave", b"greater",
+        b"guillemotleft", b"guillemotright", b"guilsinglleft", b"guilsinglright",
+        b"h", b"hungarumlaut", b"hyphen",
+        b"i", b"iacute", b"ibreve", b"icircumflex", b"idieresis", b"igrave",
+        b"ij", b"imacron", b"iogonek",
+        b"j", b"k", b"kcommaaccent",
+        b"l", b"lacute", b"lcaron", b"lcommaaccent", b"ldot", b"less",
+        b"logicalnot", b"lozenge", b"lslash",
+        b"m", b"macron", b"minus", b"mu", b"multiply",
+        b"n", b"nacute", b"ncaron", b"ncommaaccent", b"nine", b"notequal",
+        b"ntilde", b"numbersign",
+        b"o", b"oacute", b"obreve", b"ocircumflex", b"odieresis", b"oe",
+        b"ograve", b"ohungarumlaut", b"omacron", b"one", b"onehalf",
+        b"onequarter", b"onesuperior", b"ordfeminine", b"ordmasculine",
+        b"oslash", b"oslashacute", b"otilde",
+        b"p", b"paragraph", b"parenleft", b"parenright", b"partialdiff",
+        b"percent", b"period", b"periodcentered", b"perthousand", b"plus",
+        b"plusminus",
+        b"q", b"question", b"questiondown", b"quotedbl", b"quotedblbase",
+        b"quotedblleft", b"quotedblright", b"quoteleft", b"quoteright",
+        b"quotesinglbase", b"quotesingle",
+        b"r", b"racute", b"radical", b"rcaron", b"rcommaaccent", b"registered",
+        b"ring",
+        b"s", b"sacute", b"scaron", b"scedilla", b"scommaaccent", b"section",
+        b"semicolon", b"seven", b"six", b"slash", b"space", b"sterling",
+        b"summation",
+        b"t", b"tbar", b"tcaron", b"tcommaaccent", b"thorn", b"three",
+        b"threequarters", b"threesuperior", b"tilde", b"trademark", b"two",
+        b"twosuperior",
+        b"u", b"uacute", b"ubreve", b"ucircumflex", b"udieresis", b"ugrave",
+        b"uhungarumlaut", b"umacron", b"underscore", b"uogonek", b"uring",
+        b"v", b"w", b"wacute", b"wcircumflex", b"wdieresis", b"wgrave",
+        b"x", b"y", b"yacute", b"ycircumflex", b"ydieresis", b"yen",
+        b"z", b"zacute", b"zcaron", b"zdotaccent", b"zero",
+    ];
+    AGL_NAMES.binary_search(&name).is_ok()
 }
 
 // ─── §6.2.10.3 — CIDSystemInfo Registry/Ordering consistency ───────────────
@@ -11190,17 +11374,31 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
                 1u8
             }
         } else {
-            // Cross-reference stream — check for /ID in xref stream dicts
-            let found = pdf.objects().into_iter().any(|obj| {
-                if let Object::Stream(s) = obj {
-                    let dict = s.dict();
-                    dict.get::<Name>(keys::TYPE)
-                        .is_some_and(|t| t.as_ref() == keys::XREF)
-                        && dict.contains_key(b"ID" as &[u8])
-                } else {
-                    false
+            // Cross-reference stream (PDF 1.5+): /ID is embedded in the XRef stream dict.
+            // The XRef stream object itself is NOT listed in its own /Index, so pdf.objects()
+            // does not yield it. Scan raw bytes instead: look for "/Type /XRef" within a 2 KB
+            // window that also contains "/ID". (#FP-6.1.3)
+            let found = {
+                let needle_xref = b"/Type /XRef";
+                let needle_id = b"/ID";
+                let mut ok = false;
+                let mut search = 0;
+                while let Some(off) = data[search..]
+                    .windows(needle_xref.len())
+                    .position(|w| w == needle_xref)
+                {
+                    let abs = search + off;
+                    let window_start = abs.saturating_sub(512);
+                    let window_end = (abs + 2048).min(data.len());
+                    let window = &data[window_start..window_end];
+                    if window.windows(needle_id.len()).any(|w| w == needle_id) {
+                        ok = true;
+                        break;
+                    }
+                    search = abs + needle_xref.len();
                 }
-            });
+                ok
+            };
             if found {
                 1u8
             } else {
