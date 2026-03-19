@@ -4697,8 +4697,15 @@ pub fn check_no_data_after_eof(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Check Widget annotations don't have /A or /AA keys (§6.4.1 test 1).
-pub fn check_widget_no_action(pdf: &Pdf, report: &mut ComplianceReport) {
+/// Check Widget annotations don't have /A or /AA keys.
+///
+/// PDF/A-1 §6.6.2 test 1: Widget annotation must not have /AA.
+/// PDF/A-2/3/4 §6.4.1 test 1: Widget annotation must not have /A or /AA.
+pub fn check_widget_no_action(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    // For PDF/A-1, veraPDF reports §6.6.2 for the /AA presence check.
+    // For PDF/A-2/3/4, veraPDF uses §6.4.1.
+    let aa_rule = if part == 1 { "6.6.2" } else { "6.4.1" };
+
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) else {
@@ -4721,12 +4728,63 @@ pub fn check_widget_no_action(pdf: &Pdf, report: &mut ComplianceReport) {
             if annot.contains_key(b"AA" as &[u8]) {
                 error_at(
                     report,
-                    "6.4.1",
+                    aa_rule,
                     "Widget annotation contains /AA key (forbidden additional actions)",
                     format!("page {}", page_idx + 1),
                 );
             }
         }
+    }
+}
+
+/// Check AcroForm field dictionaries don't have /AA entry (PDF/A-1 §6.6.2 test 2).
+///
+/// veraPDF reports §6.6.2 for any field dictionary containing an /AA entry.
+/// This is independent of what actions are inside the /AA.
+pub fn check_field_aa_pdfa1(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(acroform) = cat.get::<Dict<'_>>(keys::ACRO_FORM) else {
+        return;
+    };
+    let Some(fields) = acroform.get::<Array<'_>>(keys::FIELDS) else {
+        return;
+    };
+    check_field_aa_recursive(&fields, report);
+}
+
+fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport) {
+    for (idx, field) in fields.iter::<Dict<'_>>().enumerate() {
+        if field.contains_key(b"AA" as &[u8]) {
+            error_at(
+                report,
+                "6.6.2",
+                "Field dictionary contains /AA entry (forbidden additional-actions)",
+                format!("field {}", idx + 1),
+            );
+        }
+        // Recurse into Kids
+        if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
+            check_field_aa_recursive(&kids, report);
+        }
+    }
+}
+
+/// Check document Catalog does not contain /NeedsRendering (PDF/A-4 §6.4.2 test 2).
+///
+/// After normalization, PDF/A-4 §6.4.2 maps to §6.6.2 in our common numbering.
+/// veraPDF reports this as "6.4.2" in PDF/A-4 mode.
+pub fn check_catalog_needs_rendering(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    if cat.contains_key(b"NeedsRendering" as &[u8]) {
+        error(
+            report,
+            "6.4.2",
+            "Document Catalog contains forbidden /NeedsRendering key (PDF/A-4 §6.4.2)",
+        );
     }
 }
 
@@ -8257,17 +8315,20 @@ pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceR
         }
     }
 
-    // PDF/A-2/3 §6.5.2 t2: The document Catalog shall not contain an /AA entry.
-    // (veraPDF reports §6.5.2 for this — same clause as non-widget annotation /AA.) (#FN-6.5.2)
-    if matches!(part, 2 | 3) {
-        if let Some(cat) = catalog(pdf) {
-            if cat.contains_key(b"AA" as &[u8]) {
-                error(
-                    report,
-                    "6.5.2",
-                    "Document Catalog contains forbidden /AA entry (PDF/A-2/3 §6.5.2)",
-                );
-            }
+    // PDF/A-1 §6.6.2 t3 / PDF/A-2/3 §6.5.2 t2: Document Catalog must not have /AA.
+    // veraPDF reports §6.6.2 for PDF/A-1 and §6.5.2 for PDF/A-2/3. (#FN-6.6.2)
+    if let Some(cat) = catalog(pdf) {
+        if cat.contains_key(b"AA" as &[u8]) {
+            let cat_aa_rule = match part {
+                1 => "6.6.2",
+                2 | 3 => "6.5.2",
+                _ => "6.5.2",
+            };
+            error(
+                report,
+                cat_aa_rule,
+                "Document Catalog contains forbidden /AA entry",
+            );
         }
     }
 }

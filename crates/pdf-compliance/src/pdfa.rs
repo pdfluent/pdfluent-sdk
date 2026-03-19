@@ -191,7 +191,11 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_embedded_file_spec(pdf, level, &mut report);
     check_postscript_xobjects_pdfa(pdf, level, &mut report);
     check::check_stream_external_refs_cached(&obj_cache, &mut report);
-    check::check_widget_no_action(pdf, &mut report);
+    check::check_widget_no_action(pdf, level.part(), &mut report);
+    // PDF/A-1 §6.6.2: Field dictionary must not have /AA.
+    if level.part() == 1 {
+        check::check_field_aa_pdfa1(pdf, &mut report);
+    }
     check::check_output_intent_profile_class(pdf, &mut report);
     check::check_hex_strings(pdf, &mut report);
     check::check_output_intent_destref(pdf, &mut report);
@@ -610,8 +614,20 @@ pub fn validate_with_progress(
     );
     tracked!(
         "check_widget_no_action",
-        check::check_widget_no_action(pdf, &mut report)
+        check::check_widget_no_action(pdf, level.part(), &mut report)
     );
+    if level.part() == 1 {
+        tracked!(
+            "check_field_aa_pdfa1",
+            check::check_field_aa_pdfa1(pdf, &mut report)
+        );
+    }
+    if level.part() == 4 {
+        tracked!(
+            "check_catalog_needs_rendering",
+            check::check_catalog_needs_rendering(pdf, &mut report)
+        );
+    }
     tracked!(
         "check_output_intent_profile_class",
         check::check_output_intent_profile_class(pdf, &mut report)
@@ -1014,8 +1030,21 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     );
     timed!(
         "check_widget_no_action",
-        check::check_widget_no_action(pdf, &mut report)
+        check::check_widget_no_action(pdf, level.part(), &mut report)
     );
+    // PDF/A-1 §6.6.2: Field /AA forbidden; PDF/A-4 §6.4.2: NeedsRendering forbidden.
+    if level.part() == 1 {
+        timed!(
+            "check_field_aa_pdfa1",
+            check::check_field_aa_pdfa1(pdf, &mut report)
+        );
+    }
+    if level.part() == 4 {
+        timed!(
+            "check_catalog_needs_rendering",
+            check::check_catalog_needs_rendering(pdf, &mut report)
+        );
+    }
     timed!(
         "check_output_intent_profile_class",
         check::check_output_intent_profile_class(pdf, &mut report)
