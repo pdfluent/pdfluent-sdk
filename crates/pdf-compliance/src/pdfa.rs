@@ -1264,6 +1264,135 @@ fn check_page_dimensions(
     if level.part() == 4 {
         check::check_catalog_version_pdfa4(pdf, report);
     }
+    // PDF/A-2/3/4 §6.1.13: string literals used as content-stream operands must
+    // not exceed 32767 bytes (decoded). check.rs only enforces the 65535-byte
+    // object-level limit via check_string_lengths_cached. (#496)
+    if level.part() >= 2 {
+        let rule = if level.part() == 1 { "6.1.12" } else { "6.1.13" };
+        for (page_idx, page) in pdf.pages().iter().enumerate() {
+            if let Some(content) = page.page_stream() {
+                if content_stream_has_long_string(content) {
+                    check::error_at(
+                        report,
+                        rule,
+                        "Content stream contains string literal exceeding 32767 bytes",
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Scan a decoded content-stream byte slice for string literals > 32767 bytes.
+///
+/// Both literal `(...)` and hex `<...>` string forms are checked. Returns true
+/// on the first offending string so callers can report and bail out quickly.
+fn content_stream_has_long_string(data: &[u8]) -> bool {
+    const LIMIT: usize = 32767;
+    let mut pos = 0;
+    let len = data.len();
+    // Fast path: if the entire stream is shorter than the limit, no string can exceed it.
+    if len <= LIMIT {
+        return false;
+    }
+    while pos < len {
+        match data[pos] {
+            b'(' => {
+                // Literal string: scan to matching ')' counting nesting and escapes;
+                // accumulate decoded byte count.
+                let mut depth: i32 = 1;
+                let mut decoded: usize = 0;
+                pos += 1; // skip opening '('
+                while pos < len && depth > 0 {
+                    match data[pos] {
+                        b'\\' => {
+                            pos += 1;
+                            if pos >= len {
+                                break;
+                            }
+                            match data[pos] {
+                                b'0'..=b'7' => {
+                                    // Octal escape \ddd (1–3 octal digits) → 1 decoded byte
+                                    let mut n = 1usize;
+                                    while n < 3
+                                        && pos + n < len
+                                        && matches!(data[pos + n], b'0'..=b'7')
+                                    {
+                                        n += 1;
+                                    }
+                                    pos += n;
+                                    decoded += 1;
+                                }
+                                b'\n' => {
+                                    // \<LF> — line continuation, 0 decoded bytes
+                                    pos += 1;
+                                }
+                                b'\r' => {
+                                    // \<CR> or \<CRLF> — line continuation, 0 decoded bytes
+                                    pos += 1;
+                                    if pos < len && data[pos] == b'\n' {
+                                        pos += 1;
+                                    }
+                                }
+                                _ => {
+                                    // \n, \t, \\, \(, \), \b, \f, etc. → 1 decoded byte
+                                    pos += 1;
+                                    decoded += 1;
+                                }
+                            }
+                        }
+                        b'(' => {
+                            depth += 1;
+                            pos += 1;
+                            decoded += 1;
+                        }
+                        b')' => {
+                            depth -= 1;
+                            if depth > 0 {
+                                decoded += 1;
+                            }
+                            pos += 1;
+                        }
+                        _ => {
+                            decoded += 1;
+                            pos += 1;
+                        }
+                    }
+                    if decoded > LIMIT {
+                        return true;
+                    }
+                }
+            }
+            b'<' if pos + 1 < len && data[pos + 1] != b'<' => {
+                // Hex string <hexdigits>: decoded length = ceil(hex_digit_count / 2)
+                pos += 1; // skip '<'
+                let mut hex_count: usize = 0;
+                while pos < len && data[pos] != b'>' {
+                    if data[pos].is_ascii_hexdigit() {
+                        hex_count += 1;
+                    }
+                    pos += 1;
+                }
+                if (hex_count + 1) / 2 > LIMIT {
+                    return true;
+                }
+                if pos < len {
+                    pos += 1; // skip '>'
+                }
+            }
+            b'%' => {
+                // Comment — skip to end of line
+                while pos < len && data[pos] != b'\n' && data[pos] != b'\r' {
+                    pos += 1;
+                }
+            }
+            _ => {
+                pos += 1;
+            }
+        }
+    }
+    false
 }
 
 /// §6.3.2 — Annotations must have /F key with correct flags.
@@ -2280,11 +2409,6 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-2/3: check.rs emits "6.12" (our canonical numbering); veraPDF uses
             // ISO 19005-2/3 §6.11 for role-mapping violations. (#496)
             (2..=3, "6.12") => Some("6.11"),
-
-            // Annotation appearance stream required.
-            // PDF/A-1: our checker emits "6.5.3" (annotation AP); veraPDF uses ISO 19005-1
-            // §6.6.2 for annotation appearance requirements. (#496)
-            (1, "6.5.3") => Some("6.6.2"),
 
             _ => None,
         };
