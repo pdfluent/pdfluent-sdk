@@ -2637,8 +2637,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
 
             // Role mapping check.
             // PDF/A-2/3: check.rs emits "6.12" (our canonical numbering); veraPDF uses
-            // ISO 19005-2/3 §6.11 for role-mapping violations. (#496)
-            (2..=3, "6.12") => Some("6.11"),
+            // §6.7.3.4 for role-mapping violations in PDF/A-2/3 (not §6.11). (#FN-6.7.3.4)
+            (2..=3, "6.12") => Some("6.7.3.4"),
 
             // CIDSet coverage check emits "6.2.11.4.2" (PDF/A-2/3 numbering).
             // PDF/A-1: veraPDF uses §6.3.5 for CIDSet/CharSet violations.
