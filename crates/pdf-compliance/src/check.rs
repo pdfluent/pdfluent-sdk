@@ -2174,40 +2174,10 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         return;
     }
 
-    // Reverse direction: XMP has metadata but Info dict is empty.
-    // §6.7.3 applies when both Info dict AND XMP are present but inconsistent.
-    // If the trailer has an /Info reference but the pointed-to object is corrupt
-    // (e.g. points to a Font dict), pdf.metadata() returns all-None even though
-    // /Info is present. When XMP has metadata fields that are absent from Info,
-    // the two representations are inconsistent → §6.7.3. Fixes #467 (PDFBOX-3105-1).
-    if !has_info_meta {
-        let xmp_has_info_fields = xmp_text.contains("pdf:Producer")
-            || xmp_text.contains("xmp:CreateDate")
-            || xmp_text.contains("xmp:ModifyDate")
-            || xmp_text.contains("dc:title")
-            || xmp_text.contains("dc:creator")
-            || xmp_text.contains("dc:description")
-            || xmp_text.contains("pdf:Keywords");
-        if xmp_has_info_fields {
-            // Scan raw bytes for /Info reference in the trailer (corrupt or empty /Info).
-            let raw = pdf.data().as_ref();
-            let has_info_ref = raw.windows(5).any(|w| {
-                w == b"/Info" && {
-                    // Ensure it's not a false match inside a binary stream
-                    true
-                }
-            });
-            if has_info_ref {
-                error(
-                    report,
-                    "6.7.3",
-                    "XMP metadata present but Info dict is absent or corrupt \
-                     (Info pointer exists but dict has no metadata fields)",
-                );
-                return;
-            }
-        }
-    }
+    // Note: if Info dict is genuinely empty (no metadata fields), that's NOT a
+    // violation — XMP can have whatever it wants. The per-field checks below
+    // handle specific property-level inconsistencies. veraPDF only fires §6.7.3
+    // when both Info and XMP have conflicting values for the SAME property.
 
     // Check Creator (/Info Creator vs xmp:CreatorTool) — §6.7.3.6
     if metadata.creator.is_some() {
@@ -2238,42 +2208,22 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     // Check CreationDate (/Info CreationDate vs xmp:CreateDate) — §6.7.3.1
     let xmp_create_date = extract_xmp_value(xmp_text, "xmp:CreateDate")
         .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreateDate"));
-    if metadata.creation_date.is_some() {
-        if xmp_create_date.is_none() {
-            error(
-                report,
-                "6.7.3.1",
-                "/Info has CreationDate but XMP is missing xmp:CreateDate",
-            );
-        }
-    } else if xmp_create_date.is_some() {
-        // Reverse direction: XMP has xmp:CreateDate but /Info has no /CreationDate.
-        // §6.7.3 requires consistent metadata in both representations. Fixes #467 (PDFBOX-3105-1).
+    if metadata.creation_date.is_some() && xmp_create_date.is_none() {
         error(
             report,
             "6.7.3.1",
-            "XMP has xmp:CreateDate but /Info dict has no /CreationDate",
+            "/Info has CreationDate but XMP is missing xmp:CreateDate",
         );
     }
 
     // Check ModDate (/Info ModDate vs xmp:ModifyDate) — §6.7.3.8
     let xmp_mod_date = extract_xmp_value(xmp_text, "xmp:ModifyDate")
         .or_else(|| extract_xmp_attr(xmp_text, "xmp:ModifyDate"));
-    if metadata.modification_date.is_some() {
-        if xmp_mod_date.is_none() {
-            error(
-                report,
-                "6.7.3.8",
-                "/Info has ModDate but XMP is missing xmp:ModifyDate",
-            );
-        }
-    } else if xmp_mod_date.is_some() {
-        // Reverse direction: XMP has xmp:ModifyDate but /Info has no /ModDate.
-        // §6.7.3 requires consistent metadata in both representations. Fixes #467.
+    if metadata.modification_date.is_some() && xmp_mod_date.is_none() {
         error(
             report,
             "6.7.3.8",
-            "XMP has xmp:ModifyDate but /Info dict has no /ModDate",
+            "/Info has ModDate but XMP is missing xmp:ModifyDate",
         );
     }
 
@@ -11036,8 +10986,27 @@ pub fn check_hex_strings(pdf: &Pdf, report: &mut ComplianceReport) {
     let data = pdf.data().as_ref();
     let len = data.len();
     let mut pos = 0;
+    let mut in_stream = false;
 
     while pos < len {
+        // Track stream/endstream to skip binary content
+        if !in_stream && pos + 6 < len && &data[pos..pos + 6] == b"stream" {
+            let next = data.get(pos + 6).copied().unwrap_or(0);
+            if next == b'\n' || next == b'\r' {
+                in_stream = true;
+                pos += 7;
+                continue;
+            }
+        }
+        if in_stream {
+            if pos + 9 < len && &data[pos..pos + 9] == b"endstream" {
+                in_stream = false;
+                pos += 9;
+            } else {
+                pos += 1;
+            }
+            continue;
+        }
         if data[pos] != b'<' {
             pos += 1;
             continue;
