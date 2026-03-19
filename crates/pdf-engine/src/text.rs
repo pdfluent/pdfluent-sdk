@@ -56,7 +56,7 @@ impl TextBlock {
 }
 
 /// A Device implementation that captures text from draw_glyph calls.
-pub struct TextExtractionDevice {
+pub(crate) struct TextExtractionDevice {
     spans: Vec<TextSpan>,
     /// Last glyph position for merging adjacent glyphs into spans.
     last_x: f64,
@@ -97,7 +97,7 @@ impl TextExtractionDevice {
     }
 
     /// Consume the device and return raw spans.
-    pub fn into_spans(self) -> Vec<TextSpan> {
+    pub(crate) fn into_spans(self) -> Vec<TextSpan> {
         self.spans
     }
 }
