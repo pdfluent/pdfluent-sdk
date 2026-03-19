@@ -5246,6 +5246,8 @@ pub fn check_xref_format(pdf: &Pdf, report: &mut ComplianceReport) {
         if &data[pos..pos + 4] == b"xref" {
             let after = pos + 4;
             if after < data.len() && (data[after] == b'\n' || data[after] == b'\r') {
+                // §6.1.4 t1: xref subsection header "N M" must use single space.
+                check_xref_header_spacing(&data[after..], report);
                 if let Some(issue) = validate_xref_section(&data[after..]) {
                     error(report, "6.1.3", issue);
                     return;
@@ -5253,6 +5255,45 @@ pub fn check_xref_format(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
         pos += 1;
+    }
+}
+
+/// Check xref subsection headers for single-space separator (§6.1.4 t1).
+fn check_xref_header_spacing(data: &[u8], report: &mut ComplianceReport) {
+    let mut pos = 0;
+    // Skip initial EOL
+    while pos < data.len() && (data[pos] == b'\n' || data[pos] == b'\r') {
+        pos += 1;
+    }
+    while pos < data.len() {
+        if data[pos..].starts_with(b"trailer") {
+            break;
+        }
+        // Check if this line is a subsection header (short number + space + number)
+        let line_start = pos;
+        while pos < data.len() && data[pos] != b'\n' && data[pos] != b'\r' {
+            pos += 1;
+        }
+        let line = &data[line_start..pos];
+        // Subsection headers have format "N M" where N and M are numbers.
+        // They're shorter than xref entries (which are exactly 18+ bytes).
+        if line.len() < 18 && !line.is_empty() {
+            // Check for multiple spaces between the two numbers
+            if let Some(sp) = line.iter().position(|&b| b == b' ') {
+                if sp + 1 < line.len() && line[sp + 1] == b' ' {
+                    error(
+                        report,
+                        "6.1.4",
+                        "Cross-reference subsection header has multiple spaces between object number and count",
+                    );
+                    return;
+                }
+            }
+        }
+        // Skip EOL
+        while pos < data.len() && (data[pos] == b'\n' || data[pos] == b'\r') {
+            pos += 1;
+        }
     }
 }
 
