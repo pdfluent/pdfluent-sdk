@@ -2322,7 +2322,6 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         .issues
         .iter()
         .any(|i| i.rule == "6.7.11" || i.rule.starts_with("6.7.9"));
-    eprintln!("DEBUG check_info_xmp_consistency: has_info_meta={has_info_meta} xmp_structurally_invalid={xmp_structurally_invalid} producer={:?}", metadata.producer);
     if xmp_structurally_invalid && has_info_meta {
         error(
             report,
@@ -2534,6 +2533,26 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         xmp_text,
         report,
     );
+
+    // PDF/A-4 requires pdfaid:rev to be a 4-digit year (ISO 19005-4, §6.7.3).
+    // This check runs regardless of Info dict presence. Fixes #468 (fail-e FN).
+    let is_pdfa4 = xmp_text.contains("pdfaid:part=\"4\"")
+        || xmp_text.contains("<pdfaid:part>4</pdfaid:part>");
+    if is_pdfa4 {
+        let rev_val = extract_xmp_value(xmp_text, "pdfaid:rev")
+            .or_else(|| extract_xmp_attr(xmp_text, "pdfaid:rev"));
+        let valid = rev_val
+            .as_deref()
+            .and_then(|s| s.parse::<u32>().ok())
+            .is_some_and(|n| (1000..=9999).contains(&n));
+        if !valid {
+            error(
+                report,
+                "6.7.3",
+                "PDF/A-4 requires pdfaid:rev to be a 4-digit year, but it is missing or invalid",
+            );
+        }
+    }
 }
 
 /// Check predefined XMP properties with Lang Alt type are properly structured (§6.7.9.3).
@@ -7812,9 +7831,9 @@ pub fn check_type0_cid_tounicode_coverage(pdf: &Pdf, report: &mut ComplianceRepo
                         .and_then(|r| xref.get::<Dict<'_>>(r.into()))
                 });
             let Some(fd) = font_dict_opt else { continue };
-            if !fd
+            if fd
                 .get::<Name>(keys::SUBTYPE)
-                .is_some_and(|s| s.as_ref() == b"Type0")
+                .is_none_or(|s| s.as_ref() != b"Type0")
             {
                 continue;
             }
