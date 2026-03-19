@@ -8487,7 +8487,15 @@ pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
 
         // §6.2.11.3.3 / §6.2.10.3.3: check /UseCMap within embedded CMap streams.
         // A CMap shall not reference any other CMap except standard predefined ones.
-        if let Some(enc_stream) = font_dict.get::<Stream<'_>>(keys::ENCODING) {
+        // /Encoding may be a direct stream or an indirect reference (resolve both).
+        let enc_stream_opt: Option<Stream<'_>> = font_dict
+            .get::<Stream<'_>>(keys::ENCODING)
+            .or_else(|| {
+                font_dict
+                    .get_ref(keys::ENCODING)
+                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+            });
+        if let Some(enc_stream) = enc_stream_opt {
             let enc_dict = enc_stream.dict();
 
             // §6.3.3.3: /WMode in the CMap dict must equal the WMode in stream content.
@@ -8495,11 +8503,12 @@ pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
             if let Some(dict_wmode) = enc_dict.get::<i64>(b"WMode" as &[u8]) {
                 if let Ok(decoded) = enc_stream.decoded() {
                     let content = std::str::from_utf8(&decoded).unwrap_or("");
+                    // CMap stream uses PostScript syntax: "/WMode 0 def"
                     let stream_wmode: Option<i64> = content
                         .split_whitespace()
                         .collect::<Vec<_>>()
                         .windows(3)
-                        .find(|w| w[0] == "WMode" && w[2] == "def")
+                        .find(|w| (w[0] == "/WMode" || w[0] == "WMode") && w[2] == "def")
                         .and_then(|w| w[1].parse::<i64>().ok());
                     if let Some(sw) = stream_wmode {
                         if sw != dict_wmode {
