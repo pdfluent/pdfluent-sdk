@@ -1062,8 +1062,29 @@ fn is_valid_lang_tag(tag: &str) -> bool {
     if tag.is_empty() {
         return false;
     }
-    let primary = tag.split('-').next().unwrap_or("");
-    (primary.len() == 2 || primary.len() == 3) && primary.bytes().all(|b| b.is_ascii_alphabetic())
+    let parts: Vec<&str> = tag.split('-').collect();
+    // Primary subtag: 2-3 alpha
+    let primary = parts[0];
+    if !((primary.len() == 2 || primary.len() == 3) && primary.bytes().all(|b| b.is_ascii_alphabetic())) {
+        return false;
+    }
+    // Validate subsequent subtags (simplified BCP 47)
+    for sub in &parts[1..] {
+        let len = sub.len();
+        let all_alpha = sub.bytes().all(|b| b.is_ascii_alphabetic());
+        let all_digit = sub.bytes().all(|b| b.is_ascii_digit());
+        let all_alnum = sub.bytes().all(|b| b.is_ascii_alphanumeric());
+        // Script: 4 alpha, Region: 2 alpha or 3 digit, Variant: 5-8 alnum or 4+ starting with digit
+        let valid = ((len == 2 || len == 4) && all_alpha) // region (2 alpha) or script (4 alpha)
+            || (len == 3 && all_digit)              // region (numeric)
+            || ((5..=8).contains(&len) && all_alnum) // variant
+            || (len >= 4 && sub.as_bytes()[0].is_ascii_digit() && all_alnum) // variant (digit start)
+            || (len == 1 && sub.as_bytes()[0].is_ascii_alphanumeric()); // singleton
+        if !valid {
+            return false;
+        }
+    }
+    true
 }
 
 /// Check /Lang entries in catalog and structure elements are valid BCP-47.

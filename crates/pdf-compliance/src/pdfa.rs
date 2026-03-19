@@ -196,6 +196,9 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_embedded_file_spec(pdf, level, &mut report);
     check_postscript_xobjects_pdfa(pdf, level, &mut report);
     check::check_stream_external_refs_cached(&obj_cache, &mut report);
+    // Supplementary: raw byte scan for /FFilter and /FDecodeParms in stream dicts.
+    // The ObjectCache-based check may miss Length=0 streams that the parser skips.
+    check_stream_external_refs_raw(pdf, &mut report);
     check::check_widget_no_action(pdf, level.part(), &mut report);
     // PDF/A-1 §6.6.2: Field dictionary must not have /AA.
     if level.part() == 1 {
@@ -1622,6 +1625,32 @@ fn check_devicen_separation_alternate(pdf: &Pdf, report: &mut ComplianceReport) 
     // §6.2.4.4: all Separation arrays with the same colorant name must have the
     // same alternateSpace (cross-document consistency check). Fixes #467.
     check::check_separation_consistency(pdf, report);
+}
+
+/// Raw byte scan for /FFilter and /FDecodeParms in stream object dicts.
+/// Catches Length=0 streams that the ObjectCache may skip.
+fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
+    let data = pdf.data().as_ref();
+    for key in [b"/FFilter" as &[u8], b"/FDecodeParms"] {
+        for i in 0..data.len().saturating_sub(key.len()) {
+            if &data[i..i + key.len()] == key {
+                // Verify we're inside an object dict (not a string or stream content)
+                // Look backward for "obj" and "<<", forward for ">>" before "endobj"
+                let before = &data[i.saturating_sub(200)..i];
+                let has_obj = before.windows(3).any(|w| w == b"obj");
+                let has_dict = before.windows(2).any(|w| w == b"<<");
+                if has_obj && has_dict {
+                    let key_str = std::str::from_utf8(key).unwrap_or("?");
+                    check::error(
+                        report,
+                        "6.1.7.1",
+                        format!("Stream dictionary contains {key_str} (external file reference)"),
+                    );
+                    return;
+                }
+            }
+        }
+    }
 }
 
 /// §6.2.5 — Rendering intents must be valid.
