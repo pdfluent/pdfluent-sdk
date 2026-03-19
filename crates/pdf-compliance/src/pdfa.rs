@@ -155,7 +155,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // PDF/A-4 requires tagged PDF for all conformance levels;
     // PDF/A-1a/2a/3a require it only for level 'a'
     // Lang validation applies to all PDF/A levels (not just tagged)
-    check_lang(pdf, &mut report);
+    check_lang(pdf, level, &mut report);
 
     if level.requires_tagged() || level.part() == 4 {
         check_tagged_requirements(pdf, level, &mut report);
@@ -531,7 +531,7 @@ pub fn validate_with_progress(
         "check_stream_empty_keys",
         check::check_stream_empty_keys_cached(&obj_cache, &mut report)
     );
-    tracked!("check_lang", check_lang(pdf, &mut report));
+    tracked!("check_lang", check_lang(pdf, level, &mut report));
     if level.requires_tagged() || level.part() == 4 {
         tracked!(
             "check_tagged_requirements",
@@ -949,7 +949,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         "check_stream_empty_keys",
         check::check_stream_empty_keys_cached(&obj_cache, &mut report)
     );
-    timed!("check_lang", check_lang(pdf, &mut report));
+    timed!("check_lang", check_lang(pdf, level, &mut report));
 
     // Batch 6
     timed!(
@@ -1952,9 +1952,16 @@ fn check_figure_alt(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_figure_alt_text(pdf, report);
 }
 
-/// §6.8.4 — Lang values must be valid BCP-47 language tags.
-fn check_lang(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_lang_values(pdf, report);
+/// §6.7.4 (PDF/A-2/3) / §6.8.4 (PDF/A-1/4) — Lang values must be valid BCP-47.
+///
+/// veraPDF uses §6.7.4 for PDF/A-2/3 Lang validation, §6.8.4 for others.
+fn check_lang(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // PDF/A-2/3: veraPDF uses §6.7.4 for Lang entry validation.
+    let rule = match level.part() {
+        2 | 3 => "6.7.4",
+        _ => "6.8.4",
+    };
+    check::check_lang_values(pdf, rule, report);
 }
 
 /// Check that tagged PDFs have a /Lang entry in the catalog.
