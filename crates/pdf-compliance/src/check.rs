@@ -4340,8 +4340,12 @@ pub fn check_page_dimensions_with_cache(
     // String objects must not exceed 65535 bytes
     check_string_lengths_cached(cache, rule, report);
 
-    // Array objects must not exceed 8191 elements
+    // Array objects must not exceed 8191 elements.
+    // check_array_sizes_cached covers most objects but skips large PDFs (bounded cache).
+    // check_pages_tree_kids_sizes directly checks /Kids in the pages tree — the
+    // most common location for an oversized array (e.g. flat 10000-page tree). (#FN-6.1.12)
     check_array_sizes_cached(cache, rule, report);
+    check_pages_tree_kids_sizes(pdf, rule, report);
 
     // Dictionary objects must not exceed 4095 entries
     check_dict_sizes_cached(cache, rule, report);
@@ -4491,6 +4495,38 @@ fn check_array_sizes_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut Co
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Check /Kids arrays in the pages tree for the 8191-element limit.
+///
+/// The object cache is skipped for large PDFs (>20K objects), so a flat
+/// /Kids array with e.g. 10000 entries would be invisible to
+/// `check_array_sizes_cached`. This function resolves the pages tree
+/// via xref and checks the /Kids count directly. (#FN-6.1.12)
+fn check_pages_tree_kids_sizes(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(pages_ref) = cat.get_ref(b"Pages" as &[u8]) else {
+        return;
+    };
+    let Some(pages) = xref.get::<Dict<'_>>(pages_ref.into()) else {
+        return;
+    };
+    // Check the root /Kids array — a flat tree with >8191 pages violates §6.1.12.
+    // Nested trees typically have small /Kids arrays (<1000 each); the root is
+    // the only realistic place for an oversized array. (#FN-6.1.12)
+    if let Some(kids) = pages.get::<Array<'_>>(keys::KIDS) {
+        let count = kids.raw_iter().count();
+        if count > 8191 {
+            error(
+                report,
+                rule,
+                format!("Pages /Kids array exceeds 8191 elements ({count})"),
+            );
         }
     }
 }
@@ -10029,7 +10065,8 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
                     any_missing = true;
                 } else if let Some(id_off) = region.windows(4).position(|w| w == b"/ID ") {
                     let after = &region[id_off + 4..];
-                    let stripped: Vec<_> = after.iter()
+                    let stripped: Vec<_> = after
+                        .iter()
                         .skip_while(|&&b| b == b'[' || b == b' ' || b == b'\n' || b == b'\r')
                         .collect();
                     if stripped.first() == Some(&&b'<') && stripped.get(1) == Some(&&b'>') {
@@ -10038,7 +10075,13 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
                 }
                 search = abs + 7;
             }
-            if any_missing { 0u8 } else if any_empty { 2u8 } else { 1u8 }
+            if any_missing {
+                0u8
+            } else if any_empty {
+                2u8
+            } else {
+                1u8
+            }
         } else {
             // Cross-reference stream — check for /ID in xref stream dicts
             let found = pdf.objects().into_iter().any(|obj| {
