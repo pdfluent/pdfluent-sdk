@@ -10002,34 +10002,43 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
     let data = pdf.data().as_ref();
 
     // All PDF/A parts require /ID in trailer (§6.1.3).
-    // PDF/A-4 §6.1.3 explicitly requires ID entry. (#467)
+    // Check ALL trailer dicts — linearized PDFs have multiple trailers and
+    // ALL must contain /ID (veraPDF §6.1.3 t1/t4).
     if part >= 1 {
-        // Check presence and non-empty values of /ID in trailer.
-        // /ID [<> <>] (empty hex strings) is treated as "empty" by veraPDF.
-        let id_status = if let Some(trailer_pos) = data.windows(7).rposition(|w| w == b"trailer") {
-            let end = data.len().min(trailer_pos + 2000);
-            let trailer_region = &data[trailer_pos..end];
-            if !trailer_region.windows(3).any(|w| w == b"/ID") {
-                0u8 // absent
-            } else {
-                // Find "/ID [" then check first hex string is non-empty
-                if let Some(id_off) = trailer_region.windows(4).position(|w| w == b"/ID ") {
-                    let after_id = &trailer_region[id_off + 4..];
-                    // Skip '[' and whitespace to find first '<'
-                    let stripped = after_id
-                        .iter()
-                        .skip_while(|&&b| b == b'[' || b == b' ' || b == b'\n' || b == b'\r')
-                        .collect::<Vec<_>>();
-                    // Check if first hex string is '<>'  (empty)
-                    if stripped.first() == Some(&&b'<') && stripped.get(1) == Some(&&b'>') {
-                        2u8 // present but empty
-                    } else {
-                        1u8 // present and non-empty
-                    }
-                } else {
-                    1u8 // has /ID but different format — assume ok
+        let id_status = if data.windows(7).any(|w| w == b"trailer") {
+            // Scan every "trailer" occurrence in the file
+            let mut any_missing = false;
+            let mut any_empty = false;
+            let mut search = 0;
+            while let Some(rel) = data[search..].windows(7).position(|w| w == b"trailer") {
+                let abs = search + rel;
+                // Must be followed by whitespace or << to be a real trailer keyword
+                let next = data.get(abs + 7).copied().unwrap_or(0);
+                if next != b'\n' && next != b'\r' && next != b' ' && next != b'<' {
+                    search = abs + 7;
+                    continue;
                 }
+                let end = data.len().min(abs + 2000);
+                let region = &data[abs..end];
+                // Must have dict start
+                if !region.windows(2).any(|w| w == b"<<") {
+                    search = abs + 7;
+                    continue;
+                }
+                if !region.windows(3).any(|w| w == b"/ID") {
+                    any_missing = true;
+                } else if let Some(id_off) = region.windows(4).position(|w| w == b"/ID ") {
+                    let after = &region[id_off + 4..];
+                    let stripped: Vec<_> = after.iter()
+                        .skip_while(|&&b| b == b'[' || b == b' ' || b == b'\n' || b == b'\r')
+                        .collect();
+                    if stripped.first() == Some(&&b'<') && stripped.get(1) == Some(&&b'>') {
+                        any_empty = true;
+                    }
+                }
+                search = abs + 7;
             }
+            if any_missing { 0u8 } else if any_empty { 2u8 } else { 1u8 }
         } else {
             // Cross-reference stream — check for /ID in xref stream dicts
             let found = pdf.objects().into_iter().any(|obj| {
@@ -10192,7 +10201,7 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         if !eol_before_endstream {
             error(
                 report,
-                "6.1.7",
+                "6.1.7.1",
                 "endstream keyword not preceded by required end-of-line marker",
             );
             return; // one violation is enough
@@ -10217,7 +10226,7 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
             if declared_len != actual_len {
                 error(
                     report,
-                    "6.1.7",
+                    "6.1.7.1",
                     format!("Stream Length mismatch: declared {declared_len}, actual {actual_len}"),
                 );
                 return; // One violation is enough
