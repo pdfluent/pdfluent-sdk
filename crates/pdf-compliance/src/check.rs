@@ -4458,17 +4458,39 @@ fn check_string_lengths_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut
 }
 
 fn check_array_sizes_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut ComplianceReport) {
+    use pdf_syntax::object::MaybeRef;
     for obj in cache.iter() {
-        if let Object::Array(ref a) = obj {
-            let count = a.raw_iter().count();
-            if count > 8191 {
-                error(
-                    report,
-                    rule,
-                    format!("Array object exceeds 8191 elements ({count})"),
-                );
-                return;
+        match obj {
+            Object::Array(ref a) => {
+                let count = a.raw_iter().count();
+                if count > 8191 {
+                    error(
+                        report,
+                        rule,
+                        format!("Array object exceeds 8191 elements ({count})"),
+                    );
+                    return;
+                }
             }
+            // Also check arrays that are values inside a dict (e.g. /Kids in a Pages dict).
+            // Top-level objects are dicts or arrays; arrays nested as dict values are not
+            // returned directly by cache.iter(). (#FN-6.1.12)
+            Object::Dict(ref d) => {
+                for (_, val) in d.entries() {
+                    if let MaybeRef::NotRef(Object::Array(ref inner)) = val {
+                        let count = inner.raw_iter().count();
+                        if count > 8191 {
+                            error(
+                                report,
+                                rule,
+                                format!("Array object exceeds 8191 elements ({count})"),
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -5416,6 +5438,17 @@ fn check_action_recursive(
                 location.to_string(),
             );
         }
+    } else if action.contains_key(keys::S) {
+        // /S key exists but is not a Name (e.g. a string literal or null value).
+        // veraPDF treats this as "Unknown or not permitted Action type null".
+        // ISO 19005-2 §6.5.1 / PDF/A-1/4 §6.6.1 require /S to be one of the
+        // allowed action name values. A non-Name /S is never in the allowed set.
+        error_at(
+            report,
+            rule,
+            "Unknown action type (non-Name /S value)",
+            location.to_string(),
+        );
     }
     if let Some(next) = action.get::<Dict<'_>>(b"Next" as &[u8]) {
         check_action_recursive(&next, forbidden, rule, location, report);
@@ -9460,7 +9493,12 @@ pub fn check_cid_value_limit(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// Scan decoded CMap text for CID values > 65535 in cidrange/cidchar sections.
-fn check_cmap_cid_values(text: &str, font_name: &str, page_idx: usize, report: &mut ComplianceReport) {
+fn check_cmap_cid_values(
+    text: &str,
+    font_name: &str,
+    page_idx: usize,
+    report: &mut ComplianceReport,
+) {
     // Look for decimal numbers after hex-coded ranges: <xxxx> <xxxx> DECIMAL
     let bytes = text.as_bytes();
     let mut i = 0;

@@ -557,6 +557,20 @@ fn check_extension_schema_structure(
                         schema.prefix, prop.name
                     ),
                 );
+                // veraPDF also fires §6.6.2.3.1 T2 ("isValueTypeCorrect == false")
+                // when a property with null/missing valueType is actually present in
+                // the XMP packet (type is "null" → T2 violation). (#FN-6.6.2.3.1)
+                let qualified = format!("{}:{}", schema.prefix, prop.name);
+                if xmp.contains(&qualified) {
+                    error(
+                        report,
+                        "6.6.2.3.1",
+                        format!(
+                            "Extension property '{}' used with undefined (null) valueType",
+                            qualified
+                        ),
+                    );
+                }
             } else if !is_valid_value_type(&prop.value_type, &custom_types) {
                 error(
                     report,
@@ -1141,7 +1155,57 @@ fn check_date_formats(xmp: &str, level: PdfALevel, report: &mut ComplianceReport
                 );
             }
         }
+        // dc:date is a "seq Date" — its values live inside <rdf:Seq><rdf:li>.
+        // extract_nested_value skips them because the body starts with '<'.
+        // Check each rdf:li item individually. (#FN-6.6.2.3.1-t06)
+        if *prop == "dc:date" {
+            for item in extract_rdf_seq_items(xmp, "dc:date") {
+                if !is_valid_iso8601(&item) {
+                    error(
+                        report,
+                        rule,
+                        format!(
+                            "XMP dc:date seq item '{}' is not valid ISO 8601 date",
+                            &item[..item.len().min(60)]
+                        ),
+                    );
+                    break; // one error per property is enough
+                }
+            }
+        }
     }
+}
+
+/// Extract `rdf:li` text values from a sequence property.
+///
+/// For `<prop><rdf:Seq><rdf:li>v1</rdf:li>...</rdf:Seq></prop>` returns
+/// `["v1", ...]`.  Handles attribute-form `<rdf:li>value</rdf:li>` only;
+/// ignores items that are themselves nested structures.
+fn extract_rdf_seq_items(xmp: &str, prop: &str) -> Vec<String> {
+    let open = format!("<{prop}>");
+    let close = format!("</{prop}>");
+    let Some(prop_start) = xmp.find(&open) else {
+        return Vec::new();
+    };
+    let body_start = prop_start + open.len();
+    let Some(body_len) = xmp[body_start..].find(&close) else {
+        return Vec::new();
+    };
+    let body = &xmp[body_start..body_start + body_len];
+    let mut items = Vec::new();
+    let mut pos = 0;
+    while let Some(li_off) = body[pos..].find("<rdf:li>") {
+        let val_start = pos + li_off + 8; // len("<rdf:li>") == 8
+        let Some(val_len) = body[val_start..].find("</rdf:li>") else {
+            break;
+        };
+        let val = body[val_start..val_start + val_len].trim();
+        if !val.is_empty() && !val.starts_with('<') {
+            items.push(val.to_string());
+        }
+        pos = val_start + val_len + 9; // len("</rdf:li>") == 9
+    }
+    items
 }
 
 /// Check if a string is a valid ISO 8601 date/time.
@@ -1212,6 +1276,13 @@ fn is_valid_iso8601(date: &str) -> bool {
             return false;
         }
         if date.as_bytes().get(13) != Some(&b':') {
+            return false;
+        }
+        // Reject "Z+offset" and "Z-offset" — Z (UTC) may not be followed by a
+        // numeric offset.  ISO 8601 allows either Z OR ±HH:MM, never both.
+        // E.g. "1997-07-16T19:20:15.45Z+01:00" is invalid. (#FN-6.6.2.3.1-t06)
+        let tail = &date[16..];
+        if tail.contains("Z+") || tail.contains("Z-") {
             return false;
         }
     }
