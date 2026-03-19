@@ -261,6 +261,7 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
         "photoshop:",
         VALID_PHOTOSHOP_PROPERTIES,
         level,
+        None,
         report,
     );
     check_closed_namespace_properties(
@@ -269,15 +270,25 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
         "xmpRights:",
         VALID_XMPRIGHTS_PROPERTIES,
         level,
+        None,
         report,
     );
     // PDF/A-1 pdfaid: namespace only defines `part` and `conformance`.
+    // veraPDF maps ALL pdfaid: namespace violations to §6.7.9 regardless of level. (#FN-6.7.9-6-7-3-t01)
     let pdfaid_valid = if level.part() == 1 {
         VALID_PDFAID_PROPERTIES_V1
     } else {
         VALID_PDFAID_PROPERTIES
     };
-    check_closed_namespace_properties(xmp_text, &schemas, "pdfaid:", pdfaid_valid, level, report);
+    check_closed_namespace_properties(
+        xmp_text,
+        &schemas,
+        "pdfaid:",
+        pdfaid_valid,
+        level,
+        Some("6.7.9"),
+        report,
+    );
     // §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 — properties not predefined in XMP 2004 per veraPDF (#489)
     check_not_predefined_properties(xmp_text, &schemas, level, report);
     // PDF/A-1 §6.7.9: rdf:li with bare 'lang=' attribute (not 'xml:lang=') uses a
@@ -1414,16 +1425,14 @@ fn check_xmp_rdf_structure(xmp: &str, level: PdfALevel, report: &mut ComplianceR
 /// A mismatch means the document either claims a different PDF/A version
 /// than it actually conforms to, or the identification properties are wrong.
 fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
-    // §6.7.11 test 1: XMP must use the correct pdfaid namespace URI.
-    // The canonical URI is "http://www.aiim.org/pdfa/ns/id/" (trailing slash).
-    // A wrong URI (e.g. with .html suffix) means the identification schema is
-    // not recognised by conforming processors. (#467)
+    // Wrong pdfaid namespace URI — veraPDF always fires §6.7.9 for this
+    // (pdfaid: properties in an unrecognized namespace), not §6.7.11. (#FN-6.7.9-6-7-3-t01)
     let has_correct_pdfaid_ns = xmp.contains("http://www.aiim.org/pdfa/ns/id/");
     let has_pdfaid_part = xmp.contains("pdfaid:part");
     if has_pdfaid_part && !has_correct_pdfaid_ns {
         error(
             report,
-            "6.7.11",
+            "6.7.9",
             "XMP pdfaid namespace URI is wrong or missing (must be 'http://www.aiim.org/pdfa/ns/id/')",
         );
         return;
@@ -2607,19 +2616,23 @@ fn check_seq_integer_items(body: &str, prop_name: &str) -> Option<String> {
 /// For namespaces with a fixed set of defined properties (photoshop:, xmpRights:, pdfaid:),
 /// any property not in the known set fires T2. Extension schema declarations in the current
 /// PDF package override this check. (#489)
+///
+/// `rule_override` allows the caller to force a specific rule ID. Used for pdfaid: which
+/// veraPDF always maps to §6.7.9 regardless of the document's PDF/A level. (#FN-6.7.9-6-7-3-t01)
 fn check_closed_namespace_properties(
     xmp: &str,
     schemas: &[ExtensionSchema],
     prefix: &str,
     valid_props: &[&str],
     level: PdfALevel,
+    rule_override: Option<&str>,
     report: &mut ComplianceReport,
 ) {
-    let rule = match level.part() {
+    let rule = rule_override.unwrap_or_else(|| match level.part() {
         1 => "6.7.9.2",
         4 => "6.5.2",
         _ => "6.6.2.3.1",
-    };
+    });
 
     let prefix_bytes = prefix.as_bytes();
     let prefix_len = prefix_bytes.len();
