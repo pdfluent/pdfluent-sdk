@@ -1418,13 +1418,16 @@ fn check_xmp_rdf_structure(xmp: &str, level: PdfALevel, report: &mut ComplianceR
     }
 }
 
-/// §6.7.11 — pdfaid:part and pdfaid:conformance must match the actual PDF/A level.
-///
-/// Checks that the values declared in the XMP PDF/A Identification Schema
-/// are consistent with the level that the validator is validating against.
-/// A mismatch means the document either claims a different PDF/A version
-/// than it actually conforms to, or the identification properties are wrong.
+/// pdfaid:part and pdfaid:conformance must match the actual PDF/A level.
+/// PDF/A-1: §6.7.11, PDF/A-2/3: §6.6.4, PDF/A-4: §6.5.2. (#FP-6.7.11)
 fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
+    // The clause number differs per PDF/A part — use the correct one so that
+    // the comparison with veraPDF uses matching rule IDs.
+    let rule = match level.part() {
+        1 => "6.7.11",
+        4 => "6.5.2",
+        _ => "6.6.4",
+    };
     // Wrong pdfaid namespace URI — veraPDF always fires §6.7.9 for this
     // (pdfaid: properties in an unrecognized namespace), not §6.7.11. (#FN-6.7.9-6-7-3-t01)
     let has_correct_pdfaid_ns = xmp.contains("http://www.aiim.org/pdfa/ns/id/");
@@ -1440,7 +1443,7 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
     if !has_pdfaid_part {
         error(
             report,
-            "6.7.11",
+            rule,
             "XMP does not contain pdfaid:part (PDF/A Identification Schema is absent)",
         );
         return;
@@ -1462,7 +1465,7 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
         if part_str.trim() != expected {
             error(
                 report,
-                "6.7.11",
+                rule,
                 format!(
                     "XMP pdfaid:part is '{}' but document is being validated as PDF/A-{}",
                     part_str.trim(),
@@ -1491,11 +1494,10 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
             let actual = conf_str.trim();
             if !expected_conf.is_empty() {
                 // Case-sensitive comparison: spec requires uppercase letter (e.g. "A", "B", "U").
-                // A lowercase value (e.g. "a") is a §6.7.11 violation. (#467)
                 if actual != expected_conf {
                     error(
                         report,
-                        "6.7.11",
+                        rule,
                         format!(
                             "XMP pdfaid:conformance is '{}' but expected '{}' (PDF/A-{}{})",
                             actual,
@@ -1507,13 +1509,13 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
                 }
             }
         } else {
-            // §6.7.11: pdfaid:conformance is required for PDF/A-1/2/3.
+            // pdfaid:conformance is required for PDF/A-1/2/3.
             // Its absence (when pdfaid:part is present) is a violation. Fixes #FN-6.7.11.
             let expected_conf = level.conformance();
             if !expected_conf.is_empty() {
                 error(
                     report,
-                    "6.7.11",
+                    rule,
                     format!(
                         "XMP pdfaid:conformance is absent (expected '{}' for PDF/A-{}{})",
                         expected_conf,
