@@ -6943,14 +6943,17 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                 // An invalid font program stream (all-zero or missing magic bytes) means
                 // glyphs are effectively not present. (#467)
                 // veraPDF emits §6.3.2 (PDF/A-1) or §6.3.4 (PDF/A-2/3/4) for this.
-                let has_ff2 = desc.get::<Stream<'_>>(keys::FONT_FILE2).is_some();
+                // Track which font file key is used — CFF (FontFile3) needs a different
+                // corrupt check than Type1 (FontFile) or TrueType (FontFile2).
+                let is_truetype = desc.get::<Stream<'_>>(keys::FONT_FILE2).is_some();
+                let is_cff = !is_truetype && desc.get::<Stream<'_>>(keys::FONT_FILE3).is_some();
                 let ff_stream: Option<Stream<'_>> = desc
                     .get::<Stream<'_>>(keys::FONT_FILE)
                     .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE2))
                     .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE3));
                 if let Some(ff) = ff_stream {
                     if let Ok(data) = ff.decoded() {
-                        let is_corrupt = is_font_program_corrupt(&data, has_ff2);
+                        let is_corrupt = is_font_program_corrupt(&data, is_truetype, is_cff);
                         if is_corrupt {
                             // PDF/A-1 §6.3.2: glyphs must be present; corrupt font = absent
                             // PDF/A-2/3/4 §6.3.4: font embedding violation
@@ -6969,7 +6972,7 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
             }
             check_fontfile_subtype_match(&desc, font_name, page_idx, report);
             if is_subset_font(font_name) {
-                // §6.3.5 t2 + §6.2.11.4.2 t1: Type1 CharSet checks
+                // §6.3.5 t2 + §6.2.11.4.2 t1: Type1/CFF CharSet checks
                 let is_type1 = subtype_bytes == Some(b"Type1");
                 if is_type1 {
                     let cs = desc
@@ -7006,6 +7009,34 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                                                 format!("Type1 font {font_name}: /CharSet missing '/{gn}' (code {code})"),
                                                 format!("page {}", page_idx + 1));
                                             break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // §6.3.5 T2: For CFF (FontFile3/Type1C) subset fonts, /CharSet must
+                        // list ALL glyph names present in the font program. Enumerate via
+                        // cff-parser and flag any unlisted glyph. Fixes FN for fail-c.
+                        if let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3) {
+                            if let Ok(cff_data) = ff3.decoded() {
+                                if let Some(cff) = cff_parser::Table::parse(&cff_data) {
+                                    for gid in 1..cff.number_of_glyphs() {
+                                        // GID 0 is always .notdef — skip
+                                        if let Some(gname) =
+                                            cff.glyph_name(cff_parser::GlyphId(gid))
+                                        {
+                                            if gname != ".notdef"
+                                                && !names.contains(gname)
+                                            {
+                                                error_at(
+                                                    report,
+                                                    "6.3.5",
+                                                    format!("CFF font {font_name}: /CharSet missing '/{gname}' (glyph present in font program)"),
+                                                    format!("page {}", page_idx + 1),
+                                                );
+                                                break;
+                                            }
                                         }
                                     }
                                 }
@@ -7055,14 +7086,15 @@ fn check_cidfont_descriptor_deep(
     // Check for corrupt/empty font program in CIDFont descriptor. (#467)
     // The main font_has_embedding check only verifies the key exists, not content validity.
     // CIDFontType2 uses FontFile2 (TrueType); check that the stream is a valid program.
-    let has_ff2 = desc.get::<Stream<'_>>(keys::FONT_FILE2).is_some();
+    let is_truetype = desc.get::<Stream<'_>>(keys::FONT_FILE2).is_some();
+    let is_cff = !is_truetype && desc.get::<Stream<'_>>(keys::FONT_FILE3).is_some();
     let ff_stream: Option<Stream<'_>> = desc
         .get::<Stream<'_>>(keys::FONT_FILE)
         .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE2))
         .or_else(|| desc.get::<Stream<'_>>(keys::FONT_FILE3));
     if let Some(ff) = ff_stream {
         if let Ok(data) = ff.decoded() {
-            if is_font_program_corrupt(&data, has_ff2) {
+            if is_font_program_corrupt(&data, is_truetype, is_cff) {
                 // PDF/A-1 §6.3.4: glyphs must be present; corrupt font = absent
                 // PDF/A-2/3/4 §6.3.4: font embedding violation
                 // veraPDF maps this to §6.3.4 for all PDF/A parts. (#467)
@@ -7203,9 +7235,11 @@ fn is_subset_font(name: &str) -> bool {
 /// null bytes instead of the magic is considered corrupt — veraPDF flags §6.3.2
 /// (PDF/A-1) or §6.3.4 (PDF/A-2/3/4) for this. (#467)
 ///
-/// For FontFile / FontFile3: only checks for empty or all-zero streams since
-/// Type1 and CFF formats are more variable in their headers.
-fn is_font_program_corrupt(data: &[u8], is_truetype: bool) -> bool {
+/// For FontFile3 (CFF/OpenType): checks for CFF major version 1 header byte or
+/// OpenType 'OTTO' magic. Does NOT apply Type1 PostScript magic check.
+///
+/// For FontFile (Type1 PostScript): must start with '%!' or PFB binary marker.
+fn is_font_program_corrupt(data: &[u8], is_truetype: bool, is_cff: bool) -> bool {
     if data.is_empty() || data.iter().all(|&b| b == 0) {
         return true;
     }
@@ -7222,7 +7256,14 @@ fn is_font_program_corrupt(data: &[u8], is_truetype: bool) -> bool {
         if !valid {
             return true;
         }
-    } else if !is_truetype && data.len() >= 2 {
+    } else if is_cff {
+        // CFF (FontFile3/Type1C): header byte 0 = major version (must be 1).
+        // OpenType CFF uses 'OTTO' magic (4 bytes). Both are valid.
+        // Do NOT apply Type1 PostScript magic here — CFF starts with \x01\x00 not '%!'.
+        if data[0] != 1 && data.len() >= 4 && &data[..4] != b"OTTO" {
+            return true;
+        }
+    } else if data.len() >= 2 {
         // Type1 (FontFile) must start with '%!' (ASCII) or 0x80 0x01 (PFB binary marker).
         // Any other start bytes mean the stream is not a valid PostScript/PFB font program.
         // isartor-6-3-2-t01-fail-b uses a /FontFile stream filled with garbage bytes
@@ -8282,6 +8323,7 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                 check_truetype_simple_widths(
                     &font_data,
                     font_dict,
+                    xref,
                     name,
                     first_char,
                     last_char,
@@ -8301,6 +8343,7 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                 check_type1_simple_widths(
                     &font_data,
                     font_dict,
+                    xref,
                     name,
                     first_char,
                     last_char,
@@ -8551,12 +8594,15 @@ fn check_cidfont_type2_widths(
 
         let loc = format!("page {}", page_idx + 1);
 
-        // Parse /W array: [c1 [w1 w2 ...] c2 c3 w ...]
-        let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) else {
-            continue;
-        };
-        let w_map = parse_cidfont_w_array(&w_arr);
+        // Parse /W array: [c1 [w1 w2 ...] c2 c3 w ...] (optional).
+        let w_map: std::collections::HashMap<u32, i32> =
+            if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
+                parse_cidfont_w_array(&w_arr)
+            } else {
+                std::collections::HashMap::new()
+            };
 
+        // Check each explicit /W entry against the font program.
         for (cid, pdf_w) in &w_map {
             if *pdf_w == 0 {
                 // Skip entries that are explicitly 0 — this means "glyph absent/unused".
@@ -8583,6 +8629,40 @@ fn check_cidfont_type2_widths(
                     loc.clone(),
                 );
                 return; // First mismatch per font only
+            }
+        }
+
+        // Check /DW (DefaultWidth) against the actual font advance for all GIDs
+        // not explicitly covered by /W. §6.3.5/§6.3.6 requires the default width
+        // declared in the PDF to be consistent with the font program.
+        // Fixes FN for cs-isartor-6-3-5-t01-fail-b where DW=1000 but GID 1674
+        // has advance=750 and is not listed in /W.
+        if let Some(dw) = cid_font.get::<i32>(keys::DW) {
+            let num_glyphs = face.number_of_glyphs() as u32;
+            for gid_u32 in 0..num_glyphs {
+                if w_map.contains_key(&gid_u32) {
+                    continue; // Covered by /W — already checked above
+                }
+                let gid = ttf_parser::GlyphId(gid_u32 as u16);
+                let Some(advance) = face.glyph_hor_advance(gid) else {
+                    continue;
+                };
+                if advance == 0 {
+                    continue; // Skip .notdef or genuinely 0-width glyphs
+                }
+                let font_w = (advance as f64 * 1000.0 / upem).round() as i32;
+                if (font_w - dw).abs() > 2 {
+                    error_at(
+                        report,
+                        "6.3.5-fw",
+                        format!(
+                            "Font {cid_name} GID {gid_u32}: TrueType advance {font_w} \
+                             != /DW {dw} (not in /W)"
+                        ),
+                        loc.clone(),
+                    );
+                    return; // First mismatch per font only
+                }
             }
         }
     }
@@ -8651,10 +8731,16 @@ fn parse_cidfont_w_array(w_arr: &Array<'_>) -> std::collections::HashMap<u32, i3
 ///
 /// Uses ttf-parser to look up advance widths by Unicode codepoint.
 /// Supports WinAnsiEncoding and MacRomanEncoding. (#467)
+///
+/// Also resolves /Encoding given as an indirect reference to an Encoding dict,
+/// using the /BaseEncoding key when the direct name is unavailable.
+/// This fixes FNs where veraPDF fires §6.3.6 but we skipped the check because
+/// we couldn't read the encoding name from an indirect reference (cs-isartor-fail-d).
 #[allow(clippy::too_many_arguments)]
 fn check_truetype_simple_widths(
     font_data: &[u8],
     font_dict: &Dict<'_>,
+    xref: &pdf_syntax::xref::XRef,
     name: &str,
     first_char: i32,
     last_char: i32,
@@ -8676,13 +8762,26 @@ fn check_truetype_simple_widths(
         return;
     }
 
-    // Determine the encoding name (collect to owned to avoid lifetime issues).
+    // Determine the encoding name. Try direct /Encoding name first; if /Encoding is
+    // an indirect reference to a dict, read /BaseEncoding from that dict.
     let enc_bytes: Vec<u8> = font_dict
         .get::<Name>(keys::ENCODING)
         .map(|n| n.as_ref().to_vec())
+        .or_else(|| {
+            // /Encoding is an indirect ref or a dict: resolve and read /BaseEncoding.
+            font_dict
+                .get::<Dict<'_>>(keys::ENCODING)
+                .or_else(|| {
+                    font_dict
+                        .get_ref(keys::ENCODING)
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                })
+                .and_then(|d| d.get::<Name>(keys::BASE_ENCODING))
+                .map(|n| n.as_ref().to_vec())
+        })
         .unwrap_or_default();
 
-    // Only handle well-known named encodings (no /Differences dict for now).
+    // Only handle well-known named encodings (no /Differences dict support for TrueType).
     let use_winansi = enc_bytes == b"WinAnsiEncoding";
     let use_macroman = enc_bytes == b"MacRomanEncoding";
     if !use_winansi && !use_macroman {
@@ -12828,10 +12927,16 @@ pub fn check_truetype_cmap_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
 /// per-glyph advance widths from the eexec-encrypted charstrings, and compares
 /// them against the /Widths array declared in the PDF font dictionary.
 /// Emits rule "6.3.5-fw" which pdfa.rs remaps to §6.3.6 for PDF/A-1. (#467)
+///
+/// Handles /Encoding given as an indirect reference (e.g. 24 0 R) by resolving
+/// it via xref to obtain the actual Encoding dict and its /BaseEncoding + /Differences.
+/// This fixes FNs where veraPDF fires §6.3.6 but we missed it because we couldn't
+/// determine the glyph name for a code whose PDF encoding was specified indirectly.
 #[allow(clippy::too_many_arguments)]
 fn check_type1_simple_widths(
     font_data: &[u8],
     font_dict: &Dict<'_>,
+    xref: &pdf_syntax::xref::XRef,
     name: &str,
     first_char: i32,
     last_char: i32,
@@ -12850,31 +12955,70 @@ fn check_type1_simple_widths(
         return;
     }
 
-    // Determine PDF-level encoding once (for glyph name lookup).
-    let pdf_enc = font_dict
+    // Resolve /Encoding: may be a Name (direct) or an indirect ref to an Encoding dict.
+    // Direct name case (e.g. /WinAnsiEncoding):
+    let direct_enc_name: Option<Vec<u8>> = font_dict
         .get::<Name>(keys::ENCODING)
+        .map(|n| n.as_ref().to_vec());
+
+    // Encoding dict case: try direct dict, then resolve indirect ref via xref.
+    // Fixes FNs where /Encoding = 24 0 R and we couldn't determine the glyph name.
+    let enc_dict_opt: Option<Dict<'_>> = font_dict.get::<Dict<'_>>(keys::ENCODING).or_else(|| {
+        font_dict
+            .get_ref(keys::ENCODING)
+            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+    });
+
+    // BaseEncoding from the encoding dict (overrides direct name if dict is present).
+    let base_enc_name: Option<Vec<u8>> = enc_dict_opt
+        .as_ref()
+        .and_then(|d| d.get::<Name>(keys::BASE_ENCODING))
         .map(|n| n.as_ref().to_vec())
-        .unwrap_or_default();
+        .or(direct_enc_name);
+
+    // /Differences from the encoding dict: maps specific codes to glyph names.
+    // These take highest priority and override both BaseEncoding and the font's
+    // internal encoding for the codes they cover. Fixes §6.3.6 FN (cs-isartor-fail-c).
+    let mut differences: std::collections::HashMap<u8, String> =
+        std::collections::HashMap::new();
+    if let Some(enc_dict) = enc_dict_opt.as_ref() {
+        if let Some(diffs) = enc_dict.get::<Array<'_>>(b"Differences" as &[u8]) {
+            let mut current_code = 0u8;
+            for item in diffs.iter::<Object<'_>>() {
+                match item {
+                    Object::Number(n) => current_code = n.as_i64() as u8,
+                    Object::Name(n) => {
+                        if let Ok(s) = std::str::from_utf8(n.as_ref()) {
+                            differences.insert(current_code, s.to_string());
+                        }
+                        current_code = current_code.saturating_add(1);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 
     let loc = format!("page {}", page_idx + 1);
 
     for code in first..=last {
         let idx = code - first;
         let pdf_w = pdf_widths[idx];
-        if pdf_w == 0 {
-            continue; // 0 means unused/absent
-        }
 
-        // Look up glyph name via:
-        // 1. Internal Type1 encoding (dup…put entries in the font program).
-        // 2. PDF /Encoding name if it is StandardEncoding or absent (Type1 default).
-        // 3. WinAnsiEncoding: map code → glyph name using the WinAnsi→AGL table.
-        let glyph_name: Option<String> =
-            parsed.encoding.get(&(code as u8)).cloned().or_else(|| {
-                if pdf_enc.is_empty() || pdf_enc == b"StandardEncoding" {
-                    // Absent /Encoding or StandardEncoding: use standard encoding table.
+        // Look up glyph name by priority:
+        // 1. /Differences entry for this code (highest priority — PDF spec §9.6.6.1)
+        // 2. Internal Type1 encoding (dup…put entries in the font program)
+        // 3. BaseEncoding (WinAnsiEncoding / StandardEncoding) from the PDF dict
+        // 4. StandardEncoding as final fallback (Type1 default)
+        let glyph_name: Option<String> = differences
+            .get(&(code as u8))
+            .cloned()
+            .or_else(|| parsed.encoding.get(&(code as u8)).cloned())
+            .or_else(|| {
+                let enc_name = base_enc_name.as_deref().unwrap_or(b"");
+                if enc_name.is_empty() || enc_name == b"StandardEncoding" {
                     t1_standard_encoding_name(code as u8).map(str::to_string)
-                } else if pdf_enc == b"WinAnsiEncoding" {
+                } else if enc_name == b"WinAnsiEncoding" {
                     t1_winansi_glyph_name(code as u8).map(str::to_string)
                 } else {
                     None
@@ -12889,8 +13033,9 @@ fn check_type1_simple_widths(
         }
 
         if let Some(&cs_width) = parsed.charstring_widths.get(glyph_name.as_str()) {
-            // Glyph is in the font: compare charstring advance width with /Widths.
-            // Scale charstring units → PDF text units (×FontMatrix_sx×1000).
+            // Glyph IS in the font program: compare charstring advance with /Widths.
+            // Do NOT skip pdf_w==0 here — a zero /Widths entry with non-zero font
+            // advance is a real §6.3.6 violation (isartor-6-3-5-t01-fail-c).
             let font_w = (cs_width as f64 * parsed.font_matrix_sx * 1000.0).round() as i32;
             if (font_w - pdf_w).abs() > 1 {
                 error_at(
@@ -12904,22 +13049,24 @@ fn check_type1_simple_widths(
                 );
                 return; // First mismatch per font only
             }
-        } else if let Some(mw) = missing_width {
-            // Glyph is absent from the font program: the effective advance width is
-            // MissingWidth, not pdf_w.  If they differ, the /Widths entry is
-            // inconsistent with what the font would actually render. (#467, §6.3.6)
-            if (mw - pdf_w).abs() > 1 {
-                error_at(
-                    report,
-                    "6.3.5-fw",
-                    format!(
-                        "Font {name} code {code} ({glyph_name}): \
-                         glyph absent from font program, MissingWidth {mw} \
-                         != PDF /Widths[{idx}] {pdf_w}"
-                    ),
-                    loc.clone(),
-                );
-                return; // First mismatch per font only
+        } else if pdf_w != 0 {
+            // Glyph is absent from the font program and /Widths claims non-zero advance.
+            // The effective advance is MissingWidth; if that disagrees, the entry is wrong.
+            // Do NOT check pdf_w==0 cases here: width=0 for absent glyphs is common/valid.
+            if let Some(mw) = missing_width {
+                if (mw - pdf_w).abs() > 1 {
+                    error_at(
+                        report,
+                        "6.3.5-fw",
+                        format!(
+                            "Font {name} code {code} ({glyph_name}): \
+                             glyph absent from font program, MissingWidth {mw} \
+                             != PDF /Widths[{idx}] {pdf_w}"
+                        ),
+                        loc.clone(),
+                    );
+                    return; // First mismatch per font only
+                }
             }
         }
     }
