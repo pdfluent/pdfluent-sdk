@@ -2262,6 +2262,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         .issues
         .iter()
         .any(|i| i.rule == "6.7.11" || i.rule.starts_with("6.7.9"));
+    eprintln!("DEBUG check_info_xmp_consistency: has_info_meta={has_info_meta} xmp_structurally_invalid={xmp_structurally_invalid} producer={:?}", metadata.producer);
     if xmp_structurally_invalid && has_info_meta {
         error(
             report,
@@ -7661,6 +7662,232 @@ pub fn check_notdef_glyph_usage(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
         }
+    }
+}
+
+/// §6.2.10.9 — ToUnicode C0 forbidden codepoints (PDF/A-4).
+///
+/// Scans font ToUnicode CMaps for destination codepoints in the C0 control
+/// range (U+0001–U+0008, U+000B–U+000C, U+000E–U+001F) which are forbidden.
+/// TAB (U+0009), LF (U+000A) and CR (U+000D) are permitted.
+pub fn check_tounicode_c0_forbidden(pdf: &Pdf, report: &mut ComplianceReport) {
+    for_each_font(pdf, |name, font_dict, page_idx| {
+        let Some(cmap_stream) = font_dict.get::<Stream<'_>>(keys::TO_UNICODE) else {
+            return;
+        };
+        let Ok(data) = cmap_stream.decoded() else {
+            return;
+        };
+        let text = String::from_utf8_lossy(&data);
+        let mut in_bfchar = false;
+        let mut in_bfrange = false;
+        for line in text.lines() {
+            let t = line.trim();
+            if t.ends_with("beginbfchar") {
+                in_bfchar = true;
+                continue;
+            }
+            if t == "endbfchar" {
+                in_bfchar = false;
+                continue;
+            }
+            if t.ends_with("beginbfrange") {
+                in_bfrange = true;
+                continue;
+            }
+            if t == "endbfrange" {
+                in_bfrange = false;
+                continue;
+            }
+            if !in_bfchar && !in_bfrange {
+                continue;
+            }
+            let tokens: Vec<u32> = t
+                .split('<')
+                .skip(1)
+                .filter_map(|chunk| {
+                    let end = chunk.find('>')?;
+                    u32::from_str_radix(&chunk[..end], 16).ok()
+                })
+                .collect();
+            let dst_idx = if in_bfchar { 1 } else { 2 };
+            if let Some(&val) = tokens.get(dst_idx) {
+                // C0 forbidden: U+0001–U+0008, U+000B–U+000C, U+000E–U+001F
+                // (TAB=0x09, LF=0x0A, CR=0x0D are allowed)
+                if matches!(val, 0x0001..=0x0008 | 0x000B..=0x000C | 0x000E..=0x001F) {
+                    error_at(
+                        report,
+                        "6.2.10.9",
+                        format!(
+                            "Font {name} ToUnicode maps to forbidden C0 codepoint U+{val:04X}"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                    return;
+                }
+            }
+        }
+    });
+}
+
+/// §6.2.10.9 — ToUnicode coverage for Type0 (CID) font rendered glyphs (PDF/A-4).
+///
+/// Scans page content streams for 2-byte CIDs rendered with Type0 fonts.
+/// Each CID must have an entry in the font's ToUnicode CMap.
+pub fn check_type0_cid_tounicode_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        // Build font name → covered CID set for all Type0 fonts that have ToUnicode.
+        let mut font_covered: std::collections::HashMap<
+            Vec<u8>,
+            std::collections::HashSet<u32>,
+        > = std::collections::HashMap::new();
+
+        let fonts = &page.resources().fonts;
+        for (name, _) in fonts.entries() {
+            let font_dict_opt: Option<Dict<'_>> =
+                fonts.get::<Dict<'_>>(name.as_ref()).or_else(|| {
+                    fonts
+                        .get_ref(name.as_ref())
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            let Some(fd) = font_dict_opt else { continue };
+            if !fd
+                .get::<Name>(keys::SUBTYPE)
+                .is_some_and(|s| s.as_ref() == b"Type0")
+            {
+                continue;
+            }
+            // Only check fonts that HAVE a ToUnicode; missing ToUnicode = §6.2.10.7.
+            let Some(cmap_stream) = fd.get::<Stream<'_>>(keys::TO_UNICODE) else {
+                continue;
+            };
+            let Ok(data) = cmap_stream.decoded() else { continue };
+            let Ok(text) = std::str::from_utf8(&data) else { continue };
+            let covered = parse_tounicode_source_codes(text);
+            font_covered.insert(name.as_ref().to_vec(), covered);
+        }
+
+        if font_covered.is_empty() {
+            continue;
+        }
+
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE {
+            continue;
+        }
+
+        let tokens = tokenize_pdf_content(content);
+        let n = tokens.len();
+        let loc = format!("page {}", page_idx + 1);
+        let mut active_font: Option<Vec<u8>> = None;
+
+        'page: for i in 0..n {
+            let tok = tokens[i].as_slice();
+
+            if tok == b"Tf" && i >= 2 {
+                let font_name = tokens[i - 2].as_slice();
+                active_font = font_name.strip_prefix(b"/").and_then(|n| {
+                    if font_covered.contains_key(n) {
+                        Some(n.to_vec())
+                    } else {
+                        None
+                    }
+                });
+            }
+
+            let Some(ref font_key) = active_font else {
+                continue;
+            };
+            let Some(covered) = font_covered.get(font_key.as_slice()) else {
+                continue;
+            };
+
+            if matches!(tok, b"Tj" | b"'" | b"\"") && i >= 1 {
+                if let Some(cid) = first_cid_not_in_tounicode(&tokens[i - 1], covered) {
+                    error_at(
+                        report,
+                        "6.2.10.9",
+                        format!("Type0 font CID 0x{cid:04X} not covered by ToUnicode"),
+                        loc.clone(),
+                    );
+                    break 'page;
+                }
+            }
+
+            if tok == b"TJ" {
+                let mut j = i as isize - 1;
+                while j >= 0 {
+                    let t = &tokens[j as usize];
+                    if t.as_slice() == b"[" {
+                        break;
+                    }
+                    if let Some(cid) = first_cid_not_in_tounicode(t, covered) {
+                        error_at(
+                            report,
+                            "6.2.10.9",
+                            format!("Type0 font CID 0x{cid:04X} not covered by ToUnicode"),
+                            loc.clone(),
+                        );
+                        break 'page;
+                    }
+                    j -= 1;
+                }
+            }
+        }
+    }
+}
+
+/// Return the first 2-byte CID from a hex or literal string token that is NOT in `covered`.
+///
+/// - Hex token `<XXYYZZ…>`: each 4 nibbles encode one 2-byte CID.
+/// - Literal token `(...)`: bytes are paired as 2-byte CIDs (Identity-H style).
+///   An odd final byte is treated as CID `0x00XX`.
+fn first_cid_not_in_tounicode(
+    tok: &[u8],
+    covered: &std::collections::HashSet<u32>,
+) -> Option<u32> {
+    if let Some(inner) = tok.strip_prefix(b"<").and_then(|t| t.strip_suffix(b">")) {
+        if inner.is_empty() {
+            return None;
+        }
+        let nibbles: Vec<u8> = inner
+            .iter()
+            .filter(|&&b| b.is_ascii_hexdigit())
+            .map(|&b| (b as char).to_digit(16).unwrap_or(0) as u8)
+            .collect();
+        let mut k = 0;
+        while k + 3 < nibbles.len() {
+            let cid = ((nibbles[k] as u32) << 12)
+                | ((nibbles[k + 1] as u32) << 8)
+                | ((nibbles[k + 2] as u32) << 4)
+                | (nibbles[k + 3] as u32);
+            if !covered.contains(&cid) {
+                return Some(cid);
+            }
+            k += 4;
+        }
+        None
+    } else if let Some(inner) = tok.strip_prefix(b"(").and_then(|t| t.strip_suffix(b")")) {
+        // Literal string: pair bytes as 2-byte CIDs (for Type0/Identity-H fonts).
+        // Odd trailing byte is treated as CID 0x00XX (high-byte zero padding).
+        let mut k = 0;
+        while k < inner.len() {
+            let cid = if k + 1 < inner.len() {
+                ((inner[k] as u32) << 8) | inner[k + 1] as u32
+            } else {
+                inner[k] as u32
+            };
+            if !covered.contains(&cid) {
+                return Some(cid);
+            }
+            k += 2;
+        }
+        None
+    } else {
+        None
     }
 }
 
