@@ -460,6 +460,13 @@ pub fn validate_with_progress(
         "check_output_intent_icc_signature",
         check::check_output_intent_icc_signature(pdf, &mut report)
     );
+    // §6.2.2 T2: Type3 CharProcs must not inherit resources from the page dict. (#FN-6.2.2)
+    if level.part() >= 2 {
+        tracked!(
+            "check_type3_charproc_resources",
+            check::check_type3_charproc_resources(pdf, &mut report)
+        );
+    }
     tracked!(
         "check_page_content_streams_cached",
         check::check_page_content_streams_cached(pdf, level.part(), &mut report)
