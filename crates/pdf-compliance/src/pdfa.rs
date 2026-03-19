@@ -1827,18 +1827,12 @@ fn check_actions_deep(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
         _ => "6.5.1",
     };
     check::check_actions_deep(pdf, level.part(), rule, report);
-    // Supplementary: catalog /AA is forbidden in PDF/A-4.
-    // veraPDF §6.6.3 (normalizes to §6.8.3): catalog /AA entry prohibited.
-    // check.rs checks page/annotation /AA but not catalog /AA.
-    if let Some(cat) = check::catalog(pdf) {
-        if cat.get::<Dict<'_>>(keys::AA).is_some() {
-            check::error(
-                report,
-                "6.1.6.1",
-                "Document Catalog contains forbidden /AA entry",
-            );
-        }
-    }
+    // NOTE: Catalog /AA check is handled in check_annotation_flags_deep (check.rs
+    // check_annotation_flags_deep lines ~10191-10206) for all PDF/A parts. The per-part
+    // rule mapping is: §6.6.2 (part 1), §6.5.2 (parts 2/3), §6.1.6.1→§6.6.3 (part 4).
+    // No supplementary catalog /AA check here to avoid double-fire. Fixes double "6.5.2"
+    // and spurious "6.1.6.1" FPs for PDF/A-1/2/3.
+
     // Supplementary: /AA on non-widget annotations is forbidden in PDF/A.
     // check.rs only checks action TYPES within /AA, not the mere presence.
     // veraPDF §6.6.3 (PDF/A-4) / §6.5.2 (PDF/A-2/3) flags /AA on non-widget annots.

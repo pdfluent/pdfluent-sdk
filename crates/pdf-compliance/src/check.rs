@@ -10188,13 +10188,15 @@ pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceR
         }
     }
 
-    // PDF/A-1 §6.6.2 t3 / PDF/A-2/3 §6.5.2 t2: Document Catalog must not have /AA.
-    // veraPDF reports §6.6.2 for PDF/A-1 and §6.5.2 for PDF/A-2/3. (#FN-6.6.2)
+    // PDF/A-1 §6.6.2 t3 / PDF/A-2/3 §6.5.2 t2 / PDF/A-4 §6.6.3: Catalog must not have /AA.
+    // veraPDF: §6.6.2 (part 1), §6.5.2 (parts 2/3), §6.6.3 (part 4 — normalizes to §6.8.3).
+    // For PDF/A-4 emit "6.1.6.1" which remap_clause_numbers maps to "6.6.3". (#FN-6.6.2)
     if let Some(cat) = catalog(pdf) {
         if cat.contains_key(b"AA" as &[u8]) {
             let cat_aa_rule = match part {
                 1 => "6.6.2",
                 2 | 3 => "6.5.2",
+                4 => "6.1.6.1", // remaps to "6.6.3" → normalizes to "6.8.3" for PDF/A-4
                 _ => "6.5.2",
             };
             error(
