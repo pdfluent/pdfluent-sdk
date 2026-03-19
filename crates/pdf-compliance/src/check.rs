@@ -7783,6 +7783,123 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
+/// §6.3.5-fw — Check Type3 font CharProc d0/d1 advance widths against /Widths array.
+///
+/// For each CharProc glyph, parses the content stream to extract the horizontal
+/// advance (`ux`) from the `d0` or `d1` operator and compares it with the
+/// corresponding /Widths entry. Any mismatch fires rule "6.3.5-fw". (ISO 19005-4 §6.2.10.5)
+fn check_type3_charproc_widths(
+    font_dict: &Dict<'_>,
+    xref: &pdf_syntax::xref::XRef,
+    name: &str,
+    page_idx: usize,
+    report: &mut ComplianceReport,
+) {
+    let Some(charprocs) = font_dict.get::<Dict<'_>>(b"CharProcs" as &[u8]) else {
+        return;
+    };
+    let Some(first_char) = font_dict.get::<i32>(keys::FIRST_CHAR) else {
+        return;
+    };
+    let Some(widths_arr) = font_dict.get::<Array<'_>>(keys::WIDTHS) else {
+        return;
+    };
+
+    // Build code → glyph-name mapping from the font's Encoding /Differences array.
+    let mut code_to_name: std::collections::HashMap<i32, Vec<u8>> =
+        std::collections::HashMap::new();
+    let enc_opt: Option<Dict<'_>> = font_dict.get::<Dict<'_>>(keys::ENCODING).or_else(|| {
+        font_dict
+            .get_ref(keys::ENCODING)
+            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+    });
+    if let Some(enc) = enc_opt {
+        if let Some(diffs) = enc.get::<Array<'_>>(b"Differences" as &[u8]) {
+            let mut current_code = 0i32;
+            for item in diffs.iter::<Object<'_>>() {
+                match item {
+                    Object::Number(n) => current_code = n.as_i64() as i32,
+                    Object::Name(n) => {
+                        code_to_name.insert(current_code, n.as_ref().to_vec());
+                        current_code += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let pdf_widths: Vec<i32> = widths_arr.iter::<i32>().collect();
+    let loc = format!("page {}", page_idx + 1);
+
+    for (glyph_name_key, _) in charprocs.entries() {
+        let glyph_bytes = glyph_name_key.as_ref();
+
+        // Find the character code for this glyph name.
+        let code = code_to_name
+            .iter()
+            .find(|(_, n)| n.as_slice() == glyph_bytes)
+            .map(|(c, _)| *c);
+        let Some(code) = code else { continue };
+
+        let idx = (code - first_char) as usize;
+        if idx >= pdf_widths.len() {
+            continue;
+        }
+        let pdf_w = pdf_widths[idx];
+
+        // Resolve the CharProc content stream (may be an indirect reference).
+        let stream_opt: Option<Stream<'_>> =
+            charprocs.get::<Stream<'_>>(glyph_bytes).or_else(|| {
+                charprocs
+                    .get_ref(glyph_bytes)
+                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+            });
+        let Some(stream) = stream_opt else { continue };
+        let Ok(stream_data) = stream.decoded() else {
+            continue;
+        };
+
+        // Extract the horizontal advance width from the d0 or d1 operator.
+        let Some(ux) = parse_type3_charproc_width(&stream_data) else {
+            continue;
+        };
+
+        // Type3 widths must match exactly (no 1-unit tolerance; d0/d1 ux is an integer).
+        if ux != pdf_w {
+            let glyph_str = std::str::from_utf8(glyph_bytes).unwrap_or("?");
+            error_at(
+                report,
+                "6.3.5-fw",
+                format!(
+                    "Type3 font {name} glyph '{glyph_str}' d0/d1 width {ux} != /Widths[{idx}] {pdf_w}"
+                ),
+                loc.clone(),
+            );
+            return; // Report first mismatch per font to avoid flooding.
+        }
+    }
+}
+
+/// Parse the first `d0` or `d1` operator in a Type3 CharProc content stream and
+/// return the horizontal advance width (`ux`, the first numeric operand).
+///
+/// `d0 ux uy` → ux is the token two positions before `d0`.
+/// `d1 ux uy llx lly urx ury` → ux is the token six positions before `d1`.
+fn parse_type3_charproc_width(data: &[u8]) -> Option<i32> {
+    let text = std::str::from_utf8(data).ok()?;
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    for (i, token) in tokens.iter().enumerate() {
+        if *token == "d0" && i >= 2 {
+            return tokens[i - 2].parse().ok();
+        }
+        if *token == "d1" && i >= 6 {
+            return tokens[i - 6].parse().ok();
+        }
+    }
+    None
+}
+
 /// §6.3.5-fw — Check CIDFontType2 (TrueType) /W widths against font program.
 ///
 /// For Type0 fonts, inspect each CIDFontType2 descendant that has FontFile2.
