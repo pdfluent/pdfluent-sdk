@@ -229,8 +229,34 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_predefined_property_types(xmp_text, level, report);
     // §6.7.9 test=3 / §6.6.2.3.1 test=3 — non-standard properties in pdf: namespace
     check_pdf_namespace_properties(xmp_text, level, report);
-    // §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 — unknown properties in the closed xmp: schema
+    // §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 — unknown properties in closed XMP namespaces (#489)
     check_xmp_closed_schema_properties(xmp_text, level, report);
+    check_closed_namespace_properties(
+        xmp_text,
+        &schemas,
+        "photoshop:",
+        VALID_PHOTOSHOP_PROPERTIES,
+        level,
+        report,
+    );
+    check_closed_namespace_properties(
+        xmp_text,
+        &schemas,
+        "xmpRights:",
+        VALID_XMPRIGHTS_PROPERTIES,
+        level,
+        report,
+    );
+    check_closed_namespace_properties(
+        xmp_text,
+        &schemas,
+        "pdfaid:",
+        VALID_PDFAID_PROPERTIES,
+        level,
+        report,
+    );
+    // §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 — properties not predefined in XMP 2004 per veraPDF (#489)
+    check_not_predefined_properties(xmp_text, &schemas, level, report);
     // PDF/A-1 §6.7.9: rdf:li with bare 'lang=' attribute (not 'xml:lang=') uses a
     // property from an unregistered namespace. veraPDF reports §6.7.9 in addition to
     // the §6.7.11 type violation. Fixes #467 (PDFBOX-3017-0.pdf).
@@ -1377,6 +1403,10 @@ enum PropValueKind {
     /// Structure — must use rdf:parseType="Resource" or contain child elements.
     /// Plain text is invalid for struct types (e.g. xmpDM:startTimecode = Timecode struct).
     Struct,
+    /// Ordered array of Integer items — the Seq container must hold only valid integer
+    /// values in each rdf:li. Used for tiff:BitsPerSample, exif:ISOSpeedRatings.
+    /// Catches "8.0" decimal and "1/1" rational items. (#489)
+    SeqInteger,
 }
 
 /// Look up the expected value kind for a well-known predefined XMP property.
@@ -1446,6 +1476,10 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         // LastURL is deprecated but veraPDF still validates it as Scalar.
         // Using it wrapped in rdf:Seq is a §6.6.2.3.1 violation. (#FN-6.6.2.3.1-t09)
         "xmpMM:LastURL" => Some(Scalar),
+        // SaveID is deprecated but veraPDF still validates T3 for it. (#489)
+        "xmpMM:SaveID" => Some(Scalar),
+        // Manifest is defined in xmpMM schema but veraPDF treats it as T2 not predefined. (#489)
+        "xmpMM:Manifest" => Some(Bag),
 
         // ── xmpTPg: (Paged-text) ─────────────────────────────────────────────
         "xmpTPg:Colorants" => Some(Seq),
@@ -1459,6 +1493,8 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpBJ:JobRef" => Some(Bag), // Bag of Job structs. (#FN-6.6.2.3.1-t10)
 
         // ── xmpDM: (Dynamic Media) ───────────────────────────────────────────
+        "xmpDM:absPeakAudioFilePath" => Some(Scalar), // Absolute path URI. (#489)
+        "xmpDM:altTimecode" => Some(Struct), // Timecode structure. (#489)
         "xmpDM:artist" => Some(Scalar),
         "xmpDM:album" => Some(Scalar),
         "xmpDM:altTapeName" => Some(Scalar),
@@ -1490,21 +1526,24 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:loop" => Some(Scalar),
         "xmpDM:markers" => Some(Seq),
         "xmpDM:audioModDate" => Some(Date), // Date type; missing from table → FN t02
+        "xmpDM:beatSpliceParams" => Some(Struct), // BeatSpliceStretch structure. (#489)
         "xmpDM:metadataModDate" => Some(Date), // Date type, was Scalar
         "xmpDM:numberOfBeats" => Some(Scalar),
         "xmpDM:outCue" => Some(Struct),
         "xmpDM:partOfCompilation" => Some(Scalar),
         "xmpDM:pick" => Some(Scalar),
         "xmpDM:projectName" => Some(Scalar),
-        "xmpDM:projectRef" => Some(Scalar),
+        "xmpDM:projectRef" => Some(Struct), // ProjectRef structure, not scalar. (#489)
         "xmpDM:pullDown" => Some(Scalar),
         "xmpDM:relativePeakAudio" => Some(Scalar),
+        "xmpDM:relativeTimestamp" => Some(Struct), // Time structure. (#489)
         "xmpDM:relativePeakAudioFilePath" => Some(Scalar), // URI (scalar); wrong container → violation. (#FN-6.6.2.3.1-t02)
         "xmpDM:relativeTapeOffset" => Some(Scalar),
         "xmpDM:releaseDate" => Some(Date), // Date type, was Scalar
         "xmpDM:resampleParams" => Some(Struct), // ResampleParams structure (#477)
         "xmpDM:resizeType" => Some(Scalar),
         "xmpDM:scaleType" => Some(Scalar),
+        "xmpDM:stretchMode" => Some(Scalar), // Open-choice text. (#489)
         "xmpDM:scene" => Some(Scalar),
         "xmpDM:shotDate" => Some(Date),
         "xmpDM:shotDay" => Some(Scalar),
@@ -1518,13 +1557,13 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "xmpDM:takeNumber" => Some(Integer),
         "xmpDM:tapeName" => Some(Scalar),
         "xmpDM:tempo" => Some(Scalar),
-        "xmpDM:timeScaleParams" => Some(Scalar),
+        "xmpDM:timeScaleParams" => Some(Struct), // TimeScaleParams structure, not scalar. (#489)
         "xmpDM:timeSignature" => Some(Scalar),
         "xmpDM:trackNumber" => Some(Integer),
         "xmpDM:Tracks" => Some(Bag),
         "xmpDM:videoAlphaMode" => Some(Scalar),
         "xmpDM:videoAlphaPremultipleColor" => Some(Scalar),
-        "xmpDM:videoAlphaUnityIsTransparent" => Some(Scalar),
+        "xmpDM:videoAlphaUnityIsTransparent" => Some(Boolean), // Boolean, not scalar. (#489)
         "xmpDM:videoColorSpace" => Some(Scalar),
         "xmpDM:videoCompressor" => Some(Scalar),
         "xmpDM:videoFieldOrder" => Some(Scalar),
@@ -1561,7 +1600,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
 
         // ── tiff: (EXIF/TIFF) ────────────────────────────────────────────────
         "tiff:Artist" => Some(Scalar),
-        "tiff:BitsPerSample" => Some(Seq),
+        "tiff:BitsPerSample" => Some(SeqInteger), // Seq of integer values; "8.0" is invalid. (#489)
         "tiff:CellLength" => Some(Integer),
         "tiff:CellWidth" => Some(Integer),
         "tiff:ColorMap" => Some(Seq),
@@ -1669,13 +1708,13 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "exif:GPSTrackRef" => Some(Scalar),
         "exif:GPSVersionID" => Some(Scalar),
         "exif:ImageUniqueID" => Some(Scalar),
-        "exif:ISOSpeedRatings" => Some(Seq),
+        "exif:ISOSpeedRatings" => Some(SeqInteger), // Seq of integer values; "1/1" rational is invalid. (#489)
         "exif:InteroperabilityIndex" => Some(Scalar),
         "exif:LightSource" => Some(Integer),
         "exif:MakerNote" => Some(Scalar),
         "exif:MaxApertureValue" => Some(Scalar),
         "exif:MeteringMode" => Some(Integer),
-        "exif:OECF" => Some(Scalar),
+        "exif:OECF" => Some(Struct), // OECF/SFR structure, not plain text. (#489)
         "exif:PixelXDimension" => Some(Integer),
         "exif:PixelYDimension" => Some(Integer),
         "exif:RelatedSoundFile" => Some(Scalar),
@@ -1696,6 +1735,7 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
 
         // ── aux: (Auxiliary EXIF) ────────────────────────────────────────────
         "aux:Lens" => Some(Scalar), // Text type. (#FN-6.6.2.3.1-t19)
+        "aux:SerialNumber" => Some(Scalar), // Camera serial number. (#489)
 
         // ── crs: (Camera Raw Settings) ───────────────────────────────────────
         "crs:AutoBrightness" => Some(CapBoolean), // CRS uses "True"/"False" (capitalized). (#FN-6.6.2.3.1-t04)
@@ -1737,6 +1777,8 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "crs:ToneCurve" => Some(Seq),
         "crs:ToneCurveName" => Some(Scalar),
         "crs:Version" => Some(Scalar),
+        "crs:VignetteAmount" => Some(Integer), // Vignette amount setting. (#489)
+        "crs:VignetteMidpoint" => Some(Integer), // Vignette midpoint setting. (#489)
         "crs:Vignetting" => Some(Integer),
         "crs:VignettingMidpoint" => Some(Integer),
         "crs:WhiteBalance" => Some(Scalar),
@@ -1757,7 +1799,98 @@ const VALID_PDF_PROPERTIES: &[&str] = &[
     "pdf:Keywords",
     "pdf:PDFVersion",
     "pdf:Producer",
+    // pdf:Trapped is intentionally OMITTED — veraPDF does not consider it predefined
+    // in XMP 2004 and fires §6.7.9 test=2 / §6.6.2.3.1 test=2 for it. (#489)
+];
+
+/// Valid property names in the `photoshop:` XMP namespace.
+/// Properties outside this set (e.g. photoshop:Copyright, photoshop:Author,
+/// photoshop:Title) are not defined in the photoshop schema and fire T2. (#489)
+const VALID_PHOTOSHOP_PROPERTIES: &[&str] = &[
+    "photoshop:AncestorID",
+    "photoshop:AuthorsPosition",
+    "photoshop:CaptionWriter",
+    "photoshop:Category",
+    "photoshop:City",
+    "photoshop:ColorMode",
+    "photoshop:ColorProfile",
+    "photoshop:Country",
+    "photoshop:Credit",
+    "photoshop:DateCreated",
+    "photoshop:DocumentAncestors",
+    "photoshop:Headline",
+    "photoshop:History",
+    "photoshop:ICCProfile",
+    "photoshop:Instructions",
+    "photoshop:LegacyIPTCDigest",
+    "photoshop:SidecarForExtension",
+    "photoshop:Source",
+    "photoshop:State",
+    "photoshop:SupplementalCategories",
+    "photoshop:TextLayers",
+    "photoshop:TransmissionReference",
+    "photoshop:Urgency",
+];
+
+/// Valid property names in the `xmpRights:` XMP namespace.
+/// xmpRights:Copyright is NOT in this schema — xmpRights:Marked is the boolean marker. (#489)
+const VALID_XMPRIGHTS_PROPERTIES: &[&str] = &[
+    "xmpRights:Certificate",
+    "xmpRights:Marked",
+    "xmpRights:Owner",
+    "xmpRights:UsageTerms",
+    "xmpRights:WebStatement",
+];
+
+/// Valid property names in the `pdfaid:` XMP namespace per ISO 19005.
+/// pdfaid:rev is NOT valid (not defined in the pdfaid schema). (#489)
+const VALID_PDFAID_PROPERTIES: &[&str] = &[
+    "pdfaid:part",
+    "pdfaid:conformance",
+    "pdfaid:amd",
+    "pdfaid:corr",
+];
+
+/// Properties that are NOT predefined in XMP 2004 per veraPDF's strict internal list.
+///
+/// Any occurrence of these properties fires §6.7.9 test=2 / §6.6.2.3.1 test=2, unless
+/// the property is explicitly declared in a pdfaExtension schema in the current PDF.
+/// These properties ARE defined in some version of XMP or an extension schema, but
+/// veraPDF's XMP 2004 predefined list excludes them. (#489)
+const VERAPDF_NOT_PREDEFINED_PROPS: &[&str] = &[
+    // XMP Basic — added after XMP 2004 initial release
+    "xmp:Rating",
+    "xmp:Label",
+    // XMP Paged-Text — not in veraPDF's XMP 2004 predefined list
+    "xmpTPg:Fonts",
+    "xmpTPg:PlateNames",
+    // PDF namespace — pdf:Trapped is Adobe-defined but not XMP 2004 predefined
     "pdf:Trapped",
+    // Camera Raw Settings — Adobe Lightroom extension, not XMP 2004 predefined
+    "crs:AutoBrightness",
+    "crs:AutoContrast",
+    "crs:AutoExposure",
+    "crs:AutoShadows",
+    "crs:VignetteMidpoint",
+    "crs:VignetteAmount",
+    // Auxiliary EXIF — not in XMP 2004 predefined list
+    "aux:Lens",
+    "aux:SerialNumber",
+    // XMP Dynamic Media — not in veraPDF's XMP 2004 predefined list
+    "xmpDM:videoColorSpace",
+    "xmpDM:loop",
+    "xmpDM:videoAlphaPremultipleColor",
+    "xmpDM:videoAlphaUnityIsTransparent",
+    "xmpDM:beatSpliceParams",
+    "xmpDM:projectRef",
+    "xmpDM:altTimecode",
+    "xmpDM:absPeakAudioFilePath",
+    "xmpDM:tempo",
+    "xmpDM:relativeTimestamp",
+    "xmpDM:stretchMode",
+    "xmpDM:timeScaleParams",
+    // XMP Media Management — not in veraPDF's XMP 2004 predefined list
+    "xmpMM:Manifest",
 ];
 
 /// §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 (PDF/A-2/3/4) — Non-standard property in restricted XMP namespace.
@@ -1959,6 +2092,12 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
 
         // Only process known predefined properties
         if let Some(kind) = predefined_prop_kind(tag_name) {
+            // Properties in VERAPDF_NOT_PREDEFINED_PROPS are handled by
+            // check_not_predefined_properties (T2), not here (T3). (#489)
+            if VERAPDF_NOT_PREDEFINED_PROPS.contains(&tag_name) {
+                pos = name_end.max(pos + 1);
+                continue;
+            }
             if !reported.contains(tag_name) {
                 // Find the element body between '>' and '</tag_name>'
                 let close_start = match xmp[name_end..].find('>') {
@@ -2189,6 +2328,29 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
                             None
                         }
                     }
+                    PropValueKind::SeqInteger => {
+                        // Ordered array of integer items — must use rdf:Seq container, and each
+                        // rdf:li must be a valid integer (no decimal point, no rational).
+                        // Catches tiff:BitsPerSample "8.0" and exif:ISOSpeedRatings "1/1". (#489)
+                        if has_bag || has_alt {
+                            Some(format!(
+                                "XMP property '{}' requires 'seq' (rdf:Seq) but uses wrong container",
+                                tag_name
+                            ))
+                        } else if !has_seq
+                            && !body.trim().is_empty()
+                            && !body.trim().starts_with('<')
+                        {
+                            Some(format!(
+                                "XMP property '{}' requires 'seq' (rdf:Seq) but is plain text",
+                                tag_name
+                            ))
+                        } else if has_seq {
+                            check_seq_integer_items(body, tag_name)
+                        } else {
+                            None
+                        }
+                    }
                 };
 
                 if let Some(msg) = violation {
@@ -2220,6 +2382,160 @@ fn is_non_integer_value(val: &str) -> bool {
     };
     // A valid XMP Integer consists solely of ASCII digits after the sign
     digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Check that all rdf:li items in a Seq body are valid integer values.
+///
+/// Returns an error message if any rdf:li contains a non-integer value
+/// (decimal "8.0", rational "1/1", or arbitrary text). (#489)
+fn check_seq_integer_items(body: &str, prop_name: &str) -> Option<String> {
+    let mut search = 0;
+    while let Some(li_pos) = body[search..].find("<rdf:li") {
+        let abs = search + li_pos;
+        let tag_end = body[abs..].find('>').map(|i| abs + i + 1).unwrap_or(abs + 7);
+        let li_close = "</rdf:li>";
+        let val = if let Some(close) = body[tag_end..].find(li_close) {
+            body[tag_end..tag_end + close].trim()
+        } else {
+            ""
+        };
+        if !val.is_empty() && !val.starts_with('<') && is_non_integer_value(val) {
+            return Some(format!(
+                "XMP property '{}' contains non-integer item '{}' in rdf:Seq (must be integer)",
+                prop_name,
+                &val[..val.len().min(40)]
+            ));
+        }
+        search = tag_end;
+    }
+    None
+}
+
+/// §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 (PDF/A-2/3/4) — Non-standard property in a closed XMP namespace.
+///
+/// For namespaces with a fixed set of defined properties (photoshop:, xmpRights:, pdfaid:),
+/// any property not in the known set fires T2. Extension schema declarations in the current
+/// PDF package override this check. (#489)
+fn check_closed_namespace_properties(
+    xmp: &str,
+    schemas: &[ExtensionSchema],
+    prefix: &str,
+    valid_props: &[&str],
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
+    let rule = match level.part() {
+        1 => "6.7.9.2",
+        4 => "6.5.2",
+        _ => "6.6.2.3.1",
+    };
+
+    let prefix_bytes = prefix.as_bytes();
+    let prefix_len = prefix_bytes.len();
+
+    // Collect property names declared in extension schemas for this prefix.
+    let ext_local_names: HashSet<String> = schemas
+        .iter()
+        .filter(|s| format!("{}:", s.prefix) == prefix)
+        .flat_map(|s| s.properties.iter().map(|p| p.name.clone()))
+        .collect();
+
+    let bytes = xmp.as_bytes();
+    let mut reported: HashSet<String> = HashSet::new();
+    let mut pos = 0;
+
+    while pos + prefix_len < bytes.len() {
+        if &bytes[pos..pos + prefix_len] == prefix_bytes {
+            let preceded = pos == 0
+                || bytes[pos - 1] == b'<'
+                || bytes[pos - 1] == b' '
+                || bytes[pos - 1] == b'\t'
+                || bytes[pos - 1] == b'\n';
+            if preceded {
+                let name_start = pos;
+                let name_end = xmp[pos + prefix_len..]
+                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '-')
+                    .map(|i| pos + prefix_len + i)
+                    .unwrap_or(xmp.len());
+                let prop_name = &xmp[name_start..name_end];
+                let local_name = &prop_name[prefix_len..];
+
+                // Skip closing tags, empty names, and xmlns: declarations.
+                if !local_name.is_empty()
+                    && !local_name.starts_with('/')
+                    && !prop_name.contains("xmlns")
+                    && !reported.contains(prop_name)
+                    && !valid_props.contains(&prop_name)
+                    && !ext_local_names.contains(local_name)
+                {
+                    error(
+                        report,
+                        rule,
+                        format!(
+                            "XMP property '{}' is not defined in the predefined {} schema",
+                            prop_name, prefix
+                        ),
+                    );
+                    reported.insert(prop_name.to_string());
+                }
+            }
+            pos += prefix_len;
+        } else {
+            pos += 1;
+        }
+    }
+}
+
+/// §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 (PDF/A-2/3/4) — Properties not predefined in XMP 2004.
+///
+/// Scans for properties in `VERAPDF_NOT_PREDEFINED_PROPS`. Per veraPDF's strict XMP 2004
+/// internal list, these properties are not predefined and fire T2 unless declared in a
+/// pdfaExtension schema in the current PDF. (#489)
+fn check_not_predefined_properties(
+    xmp: &str,
+    schemas: &[ExtensionSchema],
+    level: PdfALevel,
+    report: &mut ComplianceReport,
+) {
+    let rule = match level.part() {
+        1 => "6.7.9.2",
+        4 => "6.5.2",
+        _ => "6.6.2.3.1",
+    };
+
+    // Build full qualified property names declared in extension schemas.
+    let ext_props: HashSet<String> = schemas
+        .iter()
+        .flat_map(|s| {
+            s.properties
+                .iter()
+                .map(move |p| format!("{}:{}", s.prefix, p.name))
+        })
+        .collect();
+
+    for &prop in VERAPDF_NOT_PREDEFINED_PROPS {
+        // Skip if declared in extension schemas of the current PDF.
+        if ext_props.contains(prop) {
+            continue;
+        }
+        // Scan for element-form or attribute-form usage of the property.
+        let has_prop = xmp.contains(&format!("<{}>", prop))
+            || xmp.contains(&format!("<{} ", prop))
+            || xmp.contains(&format!("<{}/", prop))
+            || xmp.contains(&format!(" {}=", prop))
+            || xmp.contains(&format!("\t{}=", prop))
+            || xmp.contains(&format!("\n{}=", prop));
+        if has_prop {
+            error(
+                report,
+                rule,
+                format!(
+                    "XMP property '{}' is not predefined in XMP 2004 and not declared in an extension schema",
+                    prop
+                ),
+            );
+        }
+    }
 }
 
 /// Check whether a body containing rdf:Alt has at least one rdf:li without xml:lang.
