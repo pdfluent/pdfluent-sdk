@@ -1268,7 +1268,10 @@ fn check_page_dimensions(
         check::check_catalog_version_pdfa4(pdf, report);
         // Supplement: Version key must be present in the catalog for PDF/A-4.
         if let Some(cat) = check::catalog(pdf) {
-            if cat.get::<pdf_syntax::object::Object<'_>>(b"Version" as &[u8]).is_none() {
+            if cat
+                .get::<pdf_syntax::object::Object<'_>>(b"Version" as &[u8])
+                .is_none()
+            {
                 check::error(
                     report,
                     "6.1.12",
@@ -2054,16 +2057,12 @@ fn check_trailer_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complian
     while pos + 6 < data.len() {
         if &data[pos..pos + 3] == b"/ID" {
             let mut after = pos + 3;
-            while after < data.len()
-                && matches!(data[after], b' ' | b'\n' | b'\r' | b'\t')
-            {
+            while after < data.len() && matches!(data[after], b' ' | b'\n' | b'\r' | b'\t') {
                 after += 1;
             }
             if after < data.len() && data[after] == b'[' {
                 after += 1;
-                while after < data.len()
-                    && matches!(data[after], b' ' | b'\n' | b'\r' | b'\t')
-                {
+                while after < data.len() && matches!(data[after], b' ' | b'\n' | b'\r' | b'\t') {
                     after += 1;
                 }
                 if after + 1 < data.len() && data[after] == b'<' && data[after + 1] == b'>' {
@@ -2128,9 +2127,7 @@ fn check_object_syntax(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
         2 | 3 => "6.1.9",
         _ => return,
     };
-    let already_emitted = report.issues[before..]
-        .iter()
-        .any(|i| i.rule == rule);
+    let already_emitted = report.issues[before..].iter().any(|i| i.rule == rule);
     if already_emitted {
         return;
     }
@@ -2557,8 +2554,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
 
             // ── 6.2.x color/font rule remaps ──
 
-            // Device color vs OutputIntent: veraPDF uses §6.2.4.3 for PDF/A-4.
-            // Our checker emits "6.2.3.3" (PDF/A-2/3 numbering).
+            // Device color vs OutputIntent: veraPDF uses §6.2.4.3 for PDF/A-2/3/4.
+            // Our checker emits "6.2.3.3" (internal numbering).
+            (2..=3, "6.2.3.3") => Some("6.2.4.3"),
             (4, "6.2.3.3") => Some("6.2.4.3"),
 
             // Undefined operators: veraPDF uses §6.2.10 for PDF/A-1, §6.2.2 for PDF/A-4.
@@ -2600,7 +2598,6 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // CMap external reference: check.rs emits "6.3.3.3" for CMap references.
             // PDF/A-1: §6.3.3.3 (already correct).
             // PDF/A-4: already remapped to "6.2.10.3.3" above.
-
             _ => None,
         };
         if let Some(r) = new_rule {
@@ -2721,9 +2718,15 @@ mod tests {
         remap_clause_numbers(&mut report, PdfALevel::A1b);
         let rules: Vec<&str> = report.issues.iter().map(|i| i.rule.as_str()).collect();
         // Halftone violation must remain as "6.2.10" (veraPDF §6.2.10 for PDF/A-1)
-        assert!(rules.contains(&"6.2.10"), "halftone rule incorrectly remapped: {rules:?}");
+        assert!(
+            rules.contains(&"6.2.10"),
+            "halftone rule incorrectly remapped: {rules:?}"
+        );
         // Transparency violation must map to "6.4" (veraPDF §6.4 for PDF/A-1)
-        assert!(rules.contains(&"6.4"), "transparency rule not remapped to 6.4: {rules:?}");
+        assert!(
+            rules.contains(&"6.4"),
+            "transparency rule not remapped to 6.4: {rules:?}"
+        );
         // Must NOT have "6.4" coming from halftone (i.e. only one "6.4" entry max)
         assert_eq!(rules.iter().filter(|&&r| r == "6.4").count(), 1);
     }
@@ -2744,6 +2747,10 @@ mod tests {
         });
         remap_clause_numbers(&mut report, PdfALevel::A2b);
         let rules: Vec<&str> = report.issues.iter().map(|i| i.rule.as_str()).collect();
-        assert_eq!(rules, vec!["6.2.10"], "transparency tgroup rule wrong for PDF/A-2: {rules:?}");
+        assert_eq!(
+            rules,
+            vec!["6.2.10"],
+            "transparency tgroup rule wrong for PDF/A-2: {rules:?}"
+        );
     }
 }

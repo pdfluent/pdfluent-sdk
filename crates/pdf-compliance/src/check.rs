@@ -900,7 +900,10 @@ pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>,
                     });
                     if let Some(stream) = xobj_stream {
                         let dict = stream.dict();
-                        if dict.get::<Name>(keys::SUBTYPE).is_some_and(|s| s.as_ref() == b"Form") {
+                        if dict
+                            .get::<Name>(keys::SUBTYPE)
+                            .is_some_and(|s| s.as_ref() == b"Form")
+                        {
                             if let Some(xo_res) = dict.get::<Dict<'_>>(keys::RESOURCES) {
                                 if let Some(xo_fonts) = xo_res.get::<Dict<'_>>(keys::FONT) {
                                     visit_fonts(&xo_fonts);
@@ -3290,7 +3293,8 @@ fn check_ri_in_content(
     // Scan for BI ... /Intent /Name ... ID patterns.
     let mut pos = 0;
     while pos + 2 < content.len() {
-        if content[pos] == b'B' && content[pos + 1] == b'I'
+        if content[pos] == b'B'
+            && content[pos + 1] == b'I'
             && (pos == 0 || content[pos - 1].is_ascii_whitespace())
         {
             if let Some(id_off) = content[pos..].windows(2).position(|w| w == b"ID") {
@@ -3303,7 +3307,8 @@ fn check_ri_in_content(
                             .iter()
                             .position(|b| b.is_ascii_whitespace() || *b == b'/')
                             .unwrap_or(after.len() - ns - 1)
-                            + ns + 1;
+                            + ns
+                            + 1;
                         let name = &after[ns + 1..name_end];
                         if !valid_intents.contains(&name) {
                             let ns = std::str::from_utf8(name).unwrap_or("?");
@@ -6369,9 +6374,7 @@ fn check_cidfont_descriptor_deep(
                 // present in the font program.  Use the /W array as the authoritative set of
                 // CIDs that the font declares; every CID listed in /W must have its bit set
                 // in the CIDSet bitstream (bit 7 of byte 0 = CID 0, MSB-first). Fixes #496.
-                let cidset_bits = cidset_stream
-                    .decoded()
-                    .unwrap_or_else(|_| raw.to_vec());
+                let cidset_bits = cidset_stream.decoded().unwrap_or_else(|_| raw.to_vec());
                 if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
                     let w_cids = parse_cidfont_w_array(&w_arr);
                     for &cid in w_cids.keys() {
@@ -6867,8 +6870,7 @@ pub fn check_notdef_glyph_usage(pdf: &Pdf, report: &mut ComplianceReport) {
     let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         // Collect Type0 (CID) font resource names for this page.
-        let mut type0_fonts: std::collections::HashSet<Vec<u8>> =
-            std::collections::HashSet::new();
+        let mut type0_fonts: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
         let fonts = &page.resources().fonts;
         for (name, _) in fonts.entries() {
             let font_dict_opt: Option<Dict<'_>> =
@@ -7848,6 +7850,7 @@ pub fn check_cidtogidmap_identity(pdf: &Pdf, report: &mut ComplianceReport) {
 /// PDF/A-1: §6.3.3.3; PDF/A-2/3: §6.2.11.3.3; PDF/A-4: §6.2.10.3.3.
 /// Internal rule "6.3.3.3" is remapped per-part in remap_clause_numbers. (#483)
 pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, _page_idx| {
         let Some(subtype) = font_dict.get::<Name>(keys::SUBTYPE) else {
             return;
@@ -7858,18 +7861,7 @@ pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
 
         if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
             let enc = enc_name.as_ref();
-            if enc == keys::IDENTITY_H || enc == keys::IDENTITY_V {
-                return;
-            }
-            if enc.starts_with(b"90")
-                || enc.starts_with(b"ETen")
-                || enc.starts_with(b"UniGB")
-                || enc.starts_with(b"UniJIS")
-                || enc.starts_with(b"UniCNS")
-                || enc.starts_with(b"UniKS")
-                || enc.starts_with(b"GBK")
-                || enc.starts_with(b"B5")
-            {
+            if is_standard_cmap(enc) {
                 return;
             }
 
@@ -7883,7 +7875,57 @@ pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
                 format!("Type0 font {name} uses non-standard CMap {enc_str} that must be embedded"),
             );
         }
+
+        // §6.2.11.3.3 / §6.2.10.3.3: check /UseCMap within embedded CMap streams.
+        // A CMap shall not reference any other CMap except standard predefined ones.
+        if let Some(enc_stream) = font_dict.get::<Stream<'_>>(keys::ENCODING) {
+            let enc_dict = enc_stream.dict();
+            // Check /UseCMap — can be a Name (predefined) or a reference to another stream
+            if let Some(usecmap_name) = enc_dict.get::<Name>(b"UseCMap" as &[u8]) {
+                if !is_standard_cmap(usecmap_name.as_ref()) {
+                    let cm = std::str::from_utf8(usecmap_name.as_ref()).unwrap_or("?");
+                    error(
+                        report,
+                        "6.3.3.3",
+                        format!("Font {name} CMap /UseCMap references non-standard CMap /{cm}"),
+                    );
+                }
+            }
+            // /UseCMap may be an indirect reference to a stream with /CMapName
+            if let Some(usecmap_ref) = enc_dict.get_ref(b"UseCMap" as &[u8]) {
+                if let Some(ref_stream) = xref.get::<Stream<'_>>(usecmap_ref.into()) {
+                    if let Some(cmap_name) = ref_stream.dict().get::<Name>(b"CMapName" as &[u8]) {
+                        if !is_standard_cmap(cmap_name.as_ref()) {
+                            let cm = std::str::from_utf8(cmap_name.as_ref()).unwrap_or("?");
+                            error(
+                                report,
+                                "6.3.3.3",
+                                format!(
+                                    "Font {name} CMap /UseCMap references non-standard CMap {cm}"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
     });
+}
+
+/// Check if a CMap name is one of the predefined standard CMaps from ISO 32000.
+fn is_standard_cmap(name: &[u8]) -> bool {
+    name == keys::IDENTITY_H
+        || name == keys::IDENTITY_V
+        || name.starts_with(b"90")
+        || name.starts_with(b"ETen")
+        || name.starts_with(b"UniGB")
+        || name.starts_with(b"UniJIS")
+        || name.starts_with(b"UniCNS")
+        || name.starts_with(b"UniKS")
+        || name.starts_with(b"GBK")
+        || name.starts_with(b"B5")
+        || name.starts_with(b"Adobe-")
+            && (name.ends_with(b"-UCS2") || name.ends_with(b"-H") || name.ends_with(b"-V"))
 }
 
 /// Validate annotation appearance streams (§6.5.3).
