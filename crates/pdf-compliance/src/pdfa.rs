@@ -2745,6 +2745,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.11.6") => Some("6.3.7"),
 
             // Role mapping check.
+            // PDF/A-1: check.rs emits "6.12" (our canonical numbering); veraPDF uses
+            // §6.8.3.4 for non-standard structure types without RoleMap in PDF/A-1. (#FN-6.8.3.4)
+            (1, "6.12") => Some("6.8.3.4"),
             // PDF/A-2/3: check.rs emits "6.12" (our canonical numbering); veraPDF uses
             // §6.7.3.4 for role-mapping violations in PDF/A-2/3 (not §6.11). (#FN-6.7.3.4)
             (2..=3, "6.12") => Some("6.7.3.4"),
