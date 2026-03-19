@@ -10984,8 +10984,10 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         };
         let abs_endstream = search_from + endstream_off;
 
-        // §6.1.7: endstream shall be preceded by \r\n or lone \n (lone \r is
-        // forbidden for PDF/A). Check the byte(s) immediately before the keyword.
+        // §6.1.7: endstream should be preceded by an EOL marker.
+        // ISO 32000-1 §7.3.8.1 uses "should" (not "shall") for EOL before endstream.
+        // PDF/A-1 §6.1.7 prohibits lone \r after "stream" (not before "endstream").
+        // veraPDF accepts \r\n, \n, and lone \r before endstream. (#FP-6.1.7.1)
         // Fixes #467.
         let eol_before_endstream = if abs_endstream >= 2
             && data[abs_endstream - 2] == b'\r'
@@ -10993,8 +10995,9 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         {
             true // \r\n — valid
         } else {
-            abs_endstream >= 1 && data[abs_endstream - 1] == b'\n'
-            // lone \n — valid; lone \r or no EOL → false
+            abs_endstream >= 1
+                && (data[abs_endstream - 1] == b'\n' || data[abs_endstream - 1] == b'\r')
+            // lone \n or lone \r — valid for endstream; no EOL → false
         };
         if !eol_before_endstream {
             error(
