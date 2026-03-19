@@ -2911,7 +2911,14 @@ fn check_ocg_order_completeness(pdf: &Pdf, level: PdfALevel, report: &mut Compli
     let mut order_ocgs: HashSet<ObjRef> = HashSet::new();
     collect_order_refs(&order_arr, &mut order_ocgs);
 
-    let rule = if level.part() == 4 { "6.10" } else { "6.6.4" };
+    // veraPDF reports OCG Order violations as §6.9 for PDF/A-2/3 and §6.10 for PDF/A-4.
+    // Use "6.9" directly (not "6.6.4") to avoid a blanket remap that would also
+    // clobber unrelated XMP §6.6.4 violations. (#FN-6.9)
+    let rule = match level.part() {
+        2 | 3 => "6.9",
+        4 => "6.10",
+        _ => "6.6.4",
+    };
     for ocg_ref in &all_ocgs {
         if !order_ocgs.contains(ocg_ref) {
             error(

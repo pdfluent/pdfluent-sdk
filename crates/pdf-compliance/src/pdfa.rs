@@ -104,7 +104,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // File structure, actions, streams (§6.1.x, §6.6.1)
     check_all_page_boundaries(pdf, &mut report);
     check_stream_filters_cached(&obj_cache, level, &mut report);
-    check_embedded_file_streams(pdf, &mut report);
+    check_embedded_file_streams(pdf, level, &mut report);
     check_actions_deep(pdf, level, &mut report);
     check_form_xobject_geometry(pdf, &mut report);
     check_optional_content(pdf, level, &mut report);
@@ -421,7 +421,7 @@ pub fn validate_with_progress(
     );
     tracked!(
         "check_embedded_file_streams",
-        check_embedded_file_streams(pdf, &mut report)
+        check_embedded_file_streams(pdf, level, &mut report)
     );
     tracked!(
         "check_actions_deep",
@@ -823,7 +823,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     );
     timed!(
         "check_embedded_file_streams",
-        check_embedded_file_streams(pdf, &mut report)
+        check_embedded_file_streams(pdf, level, &mut report)
     );
     timed!(
         "check_file_header",
@@ -1725,9 +1725,9 @@ fn check_stream_filters_cached(
     check::check_stream_filters_cached(cache, level.part(), report);
 }
 
-/// §6.1.7, §6.1.7.1 — Embedded file stream type.
-fn check_embedded_file_streams(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_embedded_file_streams(pdf, report);
+/// §6.1.7, §6.1.7.1, §6.9 — Embedded file stream type.
+fn check_embedded_file_streams(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_embedded_file_streams(pdf, level.part(), report);
 }
 
 /// §6.1.2 — File header binary comment and version format.
