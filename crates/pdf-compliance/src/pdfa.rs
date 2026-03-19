@@ -1728,8 +1728,17 @@ fn check_form_xobject_geometry(pdf: &Pdf, report: &mut ComplianceReport) {
 fn check_optional_content(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     let before = report.issues.len();
     check::check_optional_content(pdf, level.part(), report);
-    // PDF/A-2/3: base check emits "6.6.4" (remapped to "6.9"), but veraPDF also
-    // reports "6.1.11" as the parent OC clause. Emit it too. (#FN-6.1.11)
+    // PDF/A-2/3: check.rs emits "6.6.4" for OC violations; veraPDF uses "6.9" for these.
+    // Re-tag directly here so the blanket remap isn't needed (and doesn't clobber the
+    // XMP-conformance "6.6.4" emitted by check_xmp_metadata). (#FN-6.9, #FN-6.6.4)
+    if matches!(level.part(), 2 | 3) {
+        for issue in &mut report.issues[before..] {
+            if issue.rule == "6.6.4" {
+                issue.rule = "6.9".to_string();
+            }
+        }
+    }
+    // veraPDF also reports "6.1.11" as the parent OC clause. Emit it too. (#FN-6.1.11)
     if matches!(level.part(), 2 | 3)
         && report.issues.len() > before
         && !report.issues.iter().any(|i| i.rule == "6.1.11")
@@ -2524,9 +2533,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.3.3.3") => Some("6.2.11.3.3"),
             (4, "6.3.3.3") => Some("6.2.10.3.3"),
 
-            // Optional content violations: check_optional_content emits "6.6.4" for PDF/A-2/3.
-            // veraPDF uses "6.9" for PDF/A-2/3 OC violations. Fixes #FN-6.9.
-            (2..=3, "6.6.4") => Some("6.9"),
+            // Optional content "6.6.4" → "6.9" was a blanket remap but it also clobbered
+            // XMP-conformance "6.6.4" from check_xmp_metadata. Re-tagging is now done in
+            // check_optional_content() directly before the global remap. (#FN-6.9, #FN-6.6.4)
 
             // Forbidden ToUnicode values (U+0000, U+FEFF, U+FFFE) use "6.2.11.7.2".
             // PDF/A-4 §6.2.10.7 covers both missing-ToUnicode AND forbidden-values.
@@ -2632,7 +2641,6 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: veraPDF uses §6.2.7. Our remap (1,"6.2.9")=>"6.2.5" already exists
             // but veraPDF uses "6.2.7" for PS XObjects (not "6.2.5" which is rendering intent).
             // Fix: specific remap for PS XObject rule.
-
             _ => None,
         };
         if let Some(r) = new_rule {

@@ -199,10 +199,28 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
             );
         }
     }
+    let ext_schema_before = report.issues.len();
     let schemas = parse_extension_schemas(xmp_text);
     check_extension_schema_structure(xmp_text, &schemas, report);
     let ns_violations_before = report.issues.len();
     check_property_namespaces(xmp_text, &schemas, level, report);
+    // PDF/A-2/3: emit parent "6.6.2" alongside any extension-schema sub-clause violations
+    // ("6.6.2.3.1", "6.6.2.3.3"). veraPDF reports the parent clause in addition to sub-clauses.
+    // (#FN-6.6.2)
+    if matches!(level.part(), 2 | 3)
+        && report.issues[ext_schema_before..]
+            .iter()
+            .any(|i| i.rule.starts_with("6.6.2.3"))
+        && !report.issues[..ext_schema_before]
+            .iter()
+            .any(|i| i.rule == "6.6.2")
+    {
+        error(
+            report,
+            "6.6.2",
+            "XMP extension schema structure violation (§6.6.2)",
+        );
+    }
     // PDF/A-1 §6.7.11: undeclared namespace prefix violations (§6.7.9.1/§6.7.9.2) in the
     // XMP also trigger §6.7.11 because the identification schema cannot be reliably parsed
     // when prefixes are missing. veraPDF reports BOTH §6.7.9 AND §6.7.11 in these cases.
