@@ -50,6 +50,9 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_forbidden_actions(pdf, level, &mut report);
     check_annotation_flags(pdf, level, &mut report);
     check_annotation_types(pdf, level, &mut report);
+    // Run annotation appearance check in Phase 1 so it executes even on PDFs that
+    // trigger the early exit (e.g. missing XMP). Avoids §6.5.3 FNs. (#FN-6.5.3)
+    check_annotation_appearance(pdf, &mut report);
     check_trailer_requirements(pdf, level, &mut report);
     check::check_xmp_pdfa_identification(pdf, &mut report);
     check::check_no_data_after_eof(pdf, &mut report);
@@ -138,7 +141,6 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_cidtogidmap_identity(pdf, &mut report);
     check_cmap_embedding(pdf, &mut report);
     check::check_cidsysteminfo_compat(pdf, &mut report);
-    check_annotation_appearance(pdf, &mut report);
     check_annotation_subtypes_deep(pdf, level, &mut report);
     check_annotation_flags_deep(pdf, level, &mut report);
 
@@ -291,6 +293,12 @@ pub fn validate_with_progress(
     tracked!(
         "check_annotation_types",
         check_annotation_types(pdf, level, &mut report)
+    );
+    // Run annotation appearance check in Phase 1 so it executes even on PDFs that
+    // trigger the early exit (e.g. missing XMP). Avoids §6.5.3 FNs. (#FN-6.5.3)
+    tracked!(
+        "check_annotation_appearance",
+        check_annotation_appearance(pdf, &mut report)
     );
     tracked!(
         "check_trailer_requirements",
@@ -496,10 +504,6 @@ pub fn validate_with_progress(
     tracked!(
         "check_cidsysteminfo_compat",
         check::check_cidsysteminfo_compat(pdf, &mut report)
-    );
-    tracked!(
-        "check_annotation_appearance",
-        check_annotation_appearance(pdf, &mut report)
     );
     tracked!(
         "check_annotation_subtypes_deep",

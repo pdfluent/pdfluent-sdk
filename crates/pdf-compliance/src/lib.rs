@@ -41,14 +41,14 @@
 //! | [`ComplianceIssue`] | Rule ID, severity, message, and optional location |
 //! | [`Severity`] | `Error`, `Warning`, `Info` |
 
-pub mod pdfa;
-pub mod pdfua;
-pub mod pdfx;
+pub(crate) mod pdfa;
+pub(crate) mod pdfua;
+pub(crate) mod pdfx;
 pub mod pdfx_gen;
 pub mod tagged;
 pub mod tagged_gen;
 
-pub mod check;
+pub(crate) mod check;
 mod xmp;
 
 use pdf_syntax::Pdf;
@@ -214,11 +214,13 @@ impl ComplianceReport {
 }
 
 /// Validate a PDF against a PDF/A conformance level.
+#[must_use]
 pub fn validate_pdfa(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     pdfa::validate(pdf, level)
 }
 
 /// Like `validate_pdfa` but prints per-check timing to stderr.
+#[must_use]
 pub fn validate_pdfa_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     pdfa::validate_timed(pdf, level)
 }
@@ -226,6 +228,7 @@ pub fn validate_pdfa_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 /// Like `validate_pdfa` but updates a progress tracker with the name of the
 /// current check.  Useful for diagnosing timeouts — the caller can read the
 /// tracker to see which check was last running.
+#[must_use]
 pub fn validate_pdfa_with_progress(
     pdf: &Pdf,
     level: PdfALevel,
@@ -235,6 +238,7 @@ pub fn validate_pdfa_with_progress(
 }
 
 /// Detect the PDF/A level declared in XMP metadata.
+#[must_use]
 pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
     let xmp = check::get_xmp_metadata(pdf)?;
     let (part, conformance) = check::parse_xmp_pdfa(&xmp)?;
