@@ -99,7 +99,10 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_cidsystem_info_consistency(pdf, &mut report);
     check_font_base_encoding(pdf, &mut report);
     check_output_intent_profile(pdf, &mut report);
-    check::check_notdef_glyph_reference(pdf, &mut report);
+    // NOTE: check_notdef_glyph_reference is NOT called for PDF/A-1. It emits rule
+    // "6.2.11.8" which is a PDF/A-2/3 clause; ISO 19005-1 has no §6.2.11.8.
+    // Calling it for PDF/A-1 caused FPs (e.g. pdfbox-3017.pdf CID fonts with 0x00
+    // high-bytes in 2-byte CID strings). Fixes #FP-6.2.11.8.
     // §6.2.11.4.1: content stream renders glyph not defined in Type1 subset font.
     check::check_type1_charset_coverage(pdf, &mut report);
 
@@ -2594,10 +2597,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.3.3 → §6.3.4 (veraPDF uses 6.3.4 for font embedding in PDF/A-1)
             (1, "6.3.3") => Some("6.3.4"),
             (1, "6.3.3-nd") => Some("6.3.4"), // no-FontDescriptor case, same clause in PDF/A-1
-            // PDF/A-1: corrupt/null font file — veraPDF maps this to §6.3.4 (same as
-            // missing embedding), not §6.3.2. §6.3.2 is for glyph-presence in the
-            // content (annotation/XObject level), not the font program itself. (#467)
-            (1, "6.3.2-null") => Some("6.3.4"),
+            // PDF/A-1: corrupt/null TrueType/CID font program — veraPDF fires §6.3.2
+            // (TrueType font requirements) for this case. Confirmed by isartor-6-3-2-t01-fail-c.
+            (1, "6.3.2-null") => Some("6.3.2"),
             // PDF/A-2/3: §6.3.4 → §6.2.11.4.1 (font program not embedded)
             (2..=3, "6.3.4") => Some("6.2.11.4.1"),
             (2..=3, "6.3.3") => Some("6.2.11.4.1"),
