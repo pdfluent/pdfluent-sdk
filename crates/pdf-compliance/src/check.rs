@@ -4024,11 +4024,13 @@ fn check_halftone_in_extgstate(
             }
         }
 
-        // §6.2.5: HTO key forbidden (PDF/A-4)
+        // §6.2.5: HTO key forbidden (PDF/A-4).
+        // Uses internal rule "6.2.5-hto" so remap_clause_numbers does not fold it into
+        // "6.2.6" (which is the remap for Image XObject /Intent errors). (#FP-6.2.5)
         if gs.contains_key(b"HTO" as &[u8]) {
             error_at(
                 report,
-                "6.2.5",
+                "6.2.5-hto",
                 format!("ExtGState {gs_str} contains forbidden /HTO key"),
                 location,
             );
@@ -4736,6 +4738,7 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
         b"six",
         b"slash",
         b"space",
+        b"square",
         b"sterling",
         b"summation",
         b"t",
@@ -4748,6 +4751,7 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
         b"threesuperior",
         b"tilde",
         b"trademark",
+        b"triangle",
         b"two",
         b"twosuperior",
         b"u",
@@ -7946,6 +7950,12 @@ pub fn check_tounicode_cmap(
 ) {
     for_each_font(pdf, |name, font_dict, _page_idx| {
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
+
+        // Type3 fonts define their own glyph shapes via CharProcs (no Unicode encoding).
+        // veraPDF does not require ToUnicode for Type3 fonts under §6.2.11.7.2 / §6.3.8.
+        if subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type3") {
+            return;
+        }
 
         // PDF/A-2/3/4: Identity-H/V and Type0 fonts are exempt from §6.2.11.7.2/§6.2.10.7,
         // EXCEPT for conformance level 'U' which requires Unicode mapping for ALL fonts.
@@ -13048,6 +13058,9 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
 
             // If Encoding is a non-standard, non-embedded CMap name, the CIDSystemInfo
             // cannot be verified → flag as violation (veraPDF §6.2.10.3.1 t1).
+            // Use "6.2.10.3.1" (internal rule); remap_clause_numbers maps it to the
+            // correct clause per PDF/A part: §6.3.3.1 (part 1), §6.2.11.3.1 (parts 2/3),
+            // §6.2.10.3.1 (part 4). (#FP-6.2.11.3.1)
             if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
                 if !is_standard_cmap(enc_name.as_ref())
                     && font_dict.get::<Stream<'_>>(keys::ENCODING).is_none()
@@ -13055,7 +13068,7 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                     let enc_str = std::str::from_utf8(enc_name.as_ref()).unwrap_or("?");
                     error_at(
                         report,
-                        "6.3.3.1",
+                        "6.2.10.3.1",
                         format!("Font {name} uses non-embedded CMap '{enc_str}'; CIDSystemInfo cannot be verified"),
                         format!("page {}", page_idx + 1),
                     );
@@ -13065,7 +13078,7 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                 if co != fo {
                     error_at(
                         report,
-                        "6.3.3.1",
+                        "6.2.10.3.1",
                         format!("CIDSystemInfo Ordering mismatch: CMap='{co}', CIDFont='{fo}' in font {name}"),
                         format!("page {}", page_idx + 1),
                     );
@@ -13075,7 +13088,7 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                 if cr != fr {
                     error_at(
                         report,
-                        "6.3.3.1",
+                        "6.2.10.3.1",
                         format!("CIDSystemInfo Registry mismatch: CMap='{cr}', CIDFont='{fr}' in font {name}"),
                         format!("page {}", page_idx + 1),
                     );
@@ -13093,7 +13106,7 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                 if fs > cs {
                     error_at(
                         report,
-                        "6.3.3.1",
+                        "6.2.10.3.1",
                         format!(
                             "CIDFont Supplement ({fs}) > CMap Supplement ({cs}) for font {name}"
                         ),
