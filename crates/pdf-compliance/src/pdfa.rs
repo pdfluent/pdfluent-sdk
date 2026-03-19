@@ -2762,6 +2762,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.2.5") => Some("6.2.6"),
             (4, "6.2.5") => Some("6.2.6"),
 
+            // HTO key forbidden (PDF/A-4 §6.2.5). Internal rule "6.2.5-hto" is used so
+            // the blanket (4,"6.2.5")=>"6.2.6" remap above doesn't capture it. (#FP-6.2.5)
+            (4, "6.2.5-hto") => Some("6.2.5"),
+
             // Halftone/TransferFunction: check.rs emits "6.2.10" or "6.2.10.5".
             // PDF/A-2/3: veraPDF uses §6.2.5 for halftone+transfer restrictions.
             // Our remap (1,"6.2.10.5")=>"6.2.8" already exists for PDF/A-1.
