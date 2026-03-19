@@ -2601,27 +2601,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.3.3.3 (already correct).
             // PDF/A-4: already remapped to "6.2.10.3.3" above.
 
-            // Info dict / XMP consistency sub-clauses → §6.7.3.
-            // check_info_xmp_deep emits "6.7.3.1"–"6.7.3.8" (sub-clauses); veraPDF reports the
-            // parent §6.7.3 for all Info/XMP consistency violations in all PDF/A parts. (#FN-6.7.3)
-            (_, "6.7.3.1") => Some("6.7.3"),
-            (_, "6.7.3.2") => Some("6.7.3"),
-            (_, "6.7.3.3") => Some("6.7.3"),
-            (_, "6.7.3.4") => Some("6.7.3"),
-            (_, "6.7.3.5") => Some("6.7.3"),
-            (_, "6.7.3.6") => Some("6.7.3"),
-            (_, "6.7.3.7") => Some("6.7.3"),
-            (_, "6.7.3.8") => Some("6.7.3"),
-
-            // ── Image XObject Interpolate/Alternates/OPI remaps ──
-
-            // /Interpolate true: check.rs emits "6.2.8.1".
-            // PDF/A-2/3: veraPDF uses parent §6.2.8 for all image restrictions.
-            // PDF/A-4: veraPDF uses §6.2.7.1.
-            (2..=3, "6.2.8.1") => Some("6.2.8"),
-            (4, "6.2.8.1") => Some("6.2.7.1"),
-            // /Alternates: check.rs emits "6.2.8.2". Same parent clause.
-            (2..=3, "6.2.8.2") => Some("6.2.8"),
+            // ── Image XObject remaps ──
+            // (6.2.8.1/6.2.8.2 for PDF/A-1/2/3/4 already handled above at ~line 2277-2505)
 
             // ── PDF/A-4 font width remaps ──
 

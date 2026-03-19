@@ -3410,8 +3410,8 @@ fn check_inline_image_interpolate(content: &[u8], location: &str, report: &mut C
             if let Some(id_off) = content[pos..].windows(2).position(|w| w == b"ID") {
                 let header = &content[pos + 2..pos + id_off];
                 // Check for /I true or /Interpolate true
-                let has_interp = header.windows(7).any(|w| w == b"/I tru")
-                    || header.windows(17).any(|w| w == b"/Interpolate tru");
+                let has_interp = header.windows(6).any(|w| w == b"/I tru")
+                    || header.windows(16).any(|w| w == b"/Interpolate tru");
                 if has_interp {
                     error_at(
                         report,
