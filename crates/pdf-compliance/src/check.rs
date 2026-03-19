@@ -2837,6 +2837,29 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
 
 // ─── §6.2.4.2 — ICCBased CMYK identical to OutputIntent/transparency CS ─────
 
+/// Extract ICCBased profile ref from a colorspace array.
+///
+/// Handles direct `[/ICCBased <stream>]` and nested alternates in
+/// `[/DeviceN [...] [/ICCBased <stream>] ...]` or `[/Separation name [/ICCBased <stream>] ...]`.
+fn extract_iccbased_cmyk_ref(cs_arr: &Array<'_>) -> Option<ObjRef> {
+    // Try direct ICCBased first
+    if let Some(r) = icc_based_profile_ref(cs_arr) {
+        return Some(r);
+    }
+    // Check if DeviceN/Separation alternate is ICCBased
+    let mut items = cs_arr.iter::<Object<'_>>();
+    let Object::Name(cs_type) = items.next()? else {
+        return None;
+    };
+    if cs_type.as_ref() == keys::DEVICE_N || cs_type.as_ref() == keys::SEPARATION {
+        items.next()?; // skip names array or colorant name
+        if let Some(Object::Array(alt_arr)) = items.next() {
+            return icc_based_profile_ref(&alt_arr);
+        }
+    }
+    None
+}
+
 /// Extract the ICC stream object reference from an ICCBased colorspace array.
 ///
 /// The array has the form `[/ICCBased <stream-ref-or-inline-stream>]`.
@@ -2955,26 +2978,13 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
             let Some(cs_arr) = cs_dict.get::<Array<'_>>(cs_name.as_ref()) else {
                 continue;
             };
-            let mut items = cs_arr.iter::<Object<'_>>();
-            let Some(Object::Name(cs_type)) = items.next() else {
+            // Extract ICCBased CMYK profile ref — either top-level or nested
+            // in DeviceN/Separation alternate colorspace.
+            let prof_ref = extract_iccbased_cmyk_ref(&cs_arr);
+            let Some(prof_ref) = prof_ref else {
                 continue;
             };
-            if cs_type.as_ref() != keys::ICC_BASED {
-                continue;
-            }
-            // Check N=4 (CMYK) from the ICC stream dict (auto-resolved)
-            let icc_stream: Option<Stream<'_>> = items.next().and_then(|o| match o {
-                Object::Stream(s) => Some(s),
-                _ => None,
-            });
-            let n_components: Option<i32> = icc_stream.as_ref().and_then(|s| s.dict().get(keys::N));
-            if n_components != Some(4) {
-                continue; // only flag CMYK (N=4)
-            }
-            // Get the profile object reference (for ref-identity check)
-            let Some(prof_ref) = icc_based_profile_ref(&cs_arr) else {
-                continue;
-            };
+            let icc_stream: Option<Stream<'_>> = xref.get::<Stream<'_>>(prof_ref.into());
             // Check 1: same object reference
             let ref_match = forbidden_refs.contains(&prof_ref);
             // Check 2: same decoded bytes (MD5-equivalent)
