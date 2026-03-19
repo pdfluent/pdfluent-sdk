@@ -6842,11 +6842,6 @@ fn is_font_program_corrupt(data: &[u8], is_truetype: bool) -> bool {
     if data.is_empty() || data.iter().all(|&b| b == 0) {
         return true;
     }
-    // All-whitespace stream has no valid font content (e.g. isartor-6-3-2-t01-fail-b
-    // uses a /FontFile stream filled entirely with spaces). Fixes §6.3.4 FN.
-    if data.iter().all(|&b| b.is_ascii_whitespace()) {
-        return true;
-    }
     if is_truetype && data.len() >= 4 {
         // Valid TrueType/OpenType sfVersion magic values:
         // 0x00010000 — standard TrueType/OpenType with TT outlines
@@ -6858,6 +6853,16 @@ fn is_font_program_corrupt(data: &[u8], is_truetype: bool) -> bool {
             || magic == b"OTTO"
             || magic == b"typ1"; // legacy Mac Type 1 in sfnt wrapper
         if !valid {
+            return true;
+        }
+    } else if !is_truetype && data.len() >= 2 {
+        // Type1 (FontFile) must start with '%!' (ASCII) or 0x80 0x01 (PFB binary marker).
+        // Any other start bytes mean the stream is not a valid PostScript/PFB font program.
+        // isartor-6-3-2-t01-fail-b uses a /FontFile stream filled with garbage bytes
+        // that starts with spaces. Fixes §6.3.4 FN.
+        let magic2 = &data[..2];
+        let valid_type1 = magic2 == b"%!" || magic2 == b"\x80\x01";
+        if !valid_type1 {
             return true;
         }
     }
