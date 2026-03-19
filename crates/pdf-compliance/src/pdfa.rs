@@ -196,6 +196,11 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     if level.part() == 1 {
         check::check_field_aa_pdfa1(pdf, &mut report);
     }
+    // PDF/A-2+ §6.4.2 test 2: Catalog must not contain /NeedsRendering.
+    // ISO 19005-2/3/4 §6.4.2 test 2; veraPDF reports clause "6.4.2" for all parts ≥2.
+    if level.part() >= 2 {
+        check::check_catalog_needs_rendering(pdf, &mut report);
+    }
     check::check_output_intent_profile_class(pdf, &mut report);
     check::check_hex_strings(pdf, &mut report);
     check::check_output_intent_destref(pdf, &mut report);
@@ -622,7 +627,8 @@ pub fn validate_with_progress(
             check::check_field_aa_pdfa1(pdf, &mut report)
         );
     }
-    if level.part() == 4 {
+    // PDF/A-2+ §6.4.2 test 2: Catalog must not contain /NeedsRendering.
+    if level.part() >= 2 {
         tracked!(
             "check_catalog_needs_rendering",
             check::check_catalog_needs_rendering(pdf, &mut report)
@@ -1039,7 +1045,8 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
             check::check_field_aa_pdfa1(pdf, &mut report)
         );
     }
-    if level.part() == 4 {
+    // PDF/A-2+ §6.4.2 test 2: Catalog must not contain /NeedsRendering.
+    if level.part() >= 2 {
         timed!(
             "check_catalog_needs_rendering",
             check::check_catalog_needs_rendering(pdf, &mut report)

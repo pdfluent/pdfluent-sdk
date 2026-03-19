@@ -4811,10 +4811,10 @@ fn check_field_aa_recursive(fields: &Array<'_>, report: &mut ComplianceReport) {
     }
 }
 
-/// Check document Catalog does not contain /NeedsRendering (PDF/A-4 §6.4.2 test 2).
+/// Check document Catalog does not contain /NeedsRendering (PDF/A-2+ §6.4.2 test 2).
 ///
-/// After normalization, PDF/A-4 §6.4.2 maps to §6.6.2 in our common numbering.
-/// veraPDF reports this as "6.4.2" in PDF/A-4 mode.
+/// ISO 19005-2 §6.4.2 test 2 (and ISO 19005-4 §6.4.2 test 2): Catalog shall not
+/// contain the NeedsRendering key. veraPDF reports clause "6.4.2" for PDF/A-2/3/4.
 pub fn check_catalog_needs_rendering(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else {
         return;
@@ -4823,7 +4823,7 @@ pub fn check_catalog_needs_rendering(pdf: &Pdf, report: &mut ComplianceReport) {
         error(
             report,
             "6.4.2",
-            "Document Catalog contains forbidden /NeedsRendering key (PDF/A-4 §6.4.2)",
+            "Document Catalog contains forbidden /NeedsRendering key (§6.4.2 test 2)",
         );
     }
 }
