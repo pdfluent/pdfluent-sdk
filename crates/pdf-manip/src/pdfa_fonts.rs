@@ -5996,8 +5996,14 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 fd.has(b"FontFile3"),
             )
         };
-        let ambiguous_cff_base_encoding =
-            has_ff3 && (subtype == "Type1" || subtype == "MMType1") && enc_info.0.is_empty();
+        // Subset CFF Type1 fonts (ABCDEF+Name) have an authoritative CFF internal
+        // encoding created during subsetting. The ≤50-unit conservative filter
+        // is not needed for them — apply it only to non-subset fonts. (#496)
+        let is_subset_font = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
+        let ambiguous_cff_base_encoding = has_ff3
+            && (subtype == "Type1" || subtype == "MMType1")
+            && enc_info.0.is_empty()
+            && !is_subset_font;
 
         let font_data = read_embedded_font_data(doc, fd_id);
         let Some(font_data) = font_data else {
@@ -6016,7 +6022,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             );
         } else if has_ff3 && (subtype == "Type1" || subtype == "MMType1") {
             // Type1/CFF font with FontFile3 — use CFF glyph names.
-            let is_subset_font = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
+            // is_subset_font already computed above.
             corrections = compute_cff_type1_width_corrections(
                 &font_data,
                 first_char,
@@ -10689,24 +10695,33 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
                     }
                 }
 
-                // Without explicit Differences, code->glyph mapping for classic
-                // Symbol/Zapf fonts is ambiguous. In that case, do not apply a
-                // broad .notdef fallback rewrite: it can replace correct widths
-                // and trigger 6.2.11.5:1 mismatches.
-                //
-                // For subset fonts with explicit Differences, keep the fallback
-                // to fill unmapped slots conservatively.
-                if is_subset && has_explicit_differences {
-                    for (idx, w) in compute_classic_symbol_cff_width_corrections(
+                // For subset classic Symbol/Zapf CFF fonts, use the CFF internal
+                // encoding to compute per-glyph widths. veraPDF validates /Widths
+                // against the CFF encoding, so this is the authoritative source. (#496)
+                if is_subset {
+                    let empty_enc = (String::new(), std::collections::HashMap::new());
+                    for (idx, w) in compute_cff_type1_width_corrections(
                         &font_data,
                         first_char,
                         &existing_widths,
+                        &empty_enc,
+                        true,
                     ) {
-                        let code = first_char + idx as u32;
-                        if enc_info.1.contains_key(&code) {
-                            continue;
-                        }
                         merged.entry(idx).or_insert(w);
+                    }
+                    // Also fill unmapped slots with .notdef when explicit Differences exist.
+                    if has_explicit_differences {
+                        for (idx, w) in compute_classic_symbol_cff_width_corrections(
+                            &font_data,
+                            first_char,
+                            &existing_widths,
+                        ) {
+                            let code = first_char + idx as u32;
+                            if enc_info.1.contains_key(&code) {
+                                continue;
+                            }
+                            merged.entry(idx).or_insert(w);
+                        }
                     }
                 }
 
