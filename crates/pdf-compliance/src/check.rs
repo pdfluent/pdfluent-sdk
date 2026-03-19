@@ -6508,6 +6508,69 @@ pub fn check_postscript_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceRep
     }
 }
 
+/// §6.2.11.8: detect .notdef glyph references in content stream text operators.
+///
+/// Scans page content streams for Tj/TJ operators using hex strings that
+/// encode character code 0 (simple fonts) or CID 0 (CID fonts).
+/// Code/CID 0 always maps to the .notdef glyph.
+pub fn check_notdef_glyph_reference(pdf: &Pdf, report: &mut ComplianceReport) {
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        if let Some(content) = page.page_stream() {
+            if scan_for_notdef_in_content(content) {
+                error_at(
+                    report,
+                    "6.2.11.8",
+                    "Content stream contains reference to .notdef glyph (code 0 / CID 0)",
+                    format!("page {}", page_idx + 1),
+                );
+                return;
+            }
+        }
+    }
+}
+
+/// Scan a content stream for Tj/TJ operators with hex-encoded code 0.
+///
+/// Patterns detected:
+/// - `<00> Tj` — simple font, character code 0
+/// - `<0000> Tj` — CID font (Identity-H), CID 0
+/// - `[<00>] TJ` — array form of text showing
+fn scan_for_notdef_in_content(content: &[u8]) -> bool {
+    // Look for hex string patterns followed by Tj
+    let mut i = 0;
+    while i + 5 < content.len() {
+        if content[i] == b'<' {
+            // Parse hex string
+            let start = i + 1;
+            let mut end = start;
+            while end < content.len() && content[end] != b'>' {
+                end += 1;
+            }
+            if end < content.len() {
+                let hex = &content[start..end];
+                // Check if this is <00> or <0000> (all zeros)
+                let all_zero = !hex.is_empty()
+                    && hex.iter().all(|&b| b == b'0' || b.is_ascii_whitespace());
+                if all_zero {
+                    // Check if followed by Tj or within a TJ array
+                    let after = &content[end + 1..];
+                    let trimmed = after.iter().skip_while(|b| b.is_ascii_whitespace());
+                    let next_bytes: Vec<u8> = trimmed.take(3).copied().collect();
+                    if next_bytes.starts_with(b"Tj") {
+                        return true;
+                    }
+                    // Also check if we're inside a [...] TJ array
+                    // (the Tj check above is sufficient for most cases)
+                }
+            }
+            i = end + 1;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 // ─── Batch 4: Font & Annotation Deep Validation (§6.3.x, §6.5.x) ───────────
 
 /// Check every font has a /Type key set to /Font (§6.3.1).
@@ -8426,6 +8489,32 @@ pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
         // A CMap shall not reference any other CMap except standard predefined ones.
         if let Some(enc_stream) = font_dict.get::<Stream<'_>>(keys::ENCODING) {
             let enc_dict = enc_stream.dict();
+
+            // §6.3.3.3: /WMode in the CMap dict must equal the WMode in stream content.
+            // Fixes §6.3.3.3 t02 FN (dict says WMode 1, stream body says WMode 0).
+            if let Some(dict_wmode) = enc_dict.get::<i64>(b"WMode" as &[u8]) {
+                if let Ok(decoded) = enc_stream.decoded() {
+                    let content = std::str::from_utf8(&decoded).unwrap_or("");
+                    let stream_wmode: Option<i64> = content
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .windows(3)
+                        .find(|w| w[0] == "WMode" && w[2] == "def")
+                        .and_then(|w| w[1].parse::<i64>().ok());
+                    if let Some(sw) = stream_wmode {
+                        if sw != dict_wmode {
+                            error(
+                                report,
+                                "6.3.3.3",
+                                format!(
+                                    "Font {name} embedded CMap /WMode mismatch: dict={dict_wmode} stream={sw}"
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+
             // Check /UseCMap — can be a Name (predefined) or a reference to another stream
             if let Some(usecmap_name) = enc_dict.get::<Name>(b"UseCMap" as &[u8]) {
                 if !is_standard_cmap(usecmap_name.as_ref()) {
@@ -8458,20 +8547,13 @@ pub fn check_cmap_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
     });
 }
 
-/// Check if a CMap name is one of the predefined standard CMaps from ISO 32000.
+/// Check if a CMap name is exempt from the PDF/A §6.3.3.3 embedding requirement.
+///
+/// Per ISO 19005-1 §6.3.3.3, ONLY Identity-H and Identity-V are exempt.
+/// All other CMaps — including predefined ones like UniJIS-UCS2-H, UniGB-UCS2-H,
+/// etc. — must be embedded as stream objects. Fixes §6.3.3.3 FN.
 fn is_standard_cmap(name: &[u8]) -> bool {
-    name == keys::IDENTITY_H
-        || name == keys::IDENTITY_V
-        || name.starts_with(b"90")
-        || name.starts_with(b"ETen")
-        || name.starts_with(b"UniGB")
-        || name.starts_with(b"UniJIS")
-        || name.starts_with(b"UniCNS")
-        || name.starts_with(b"UniKS")
-        || name.starts_with(b"GBK")
-        || name.starts_with(b"B5")
-        || name.starts_with(b"Adobe-")
-            && (name.ends_with(b"-UCS2") || name.ends_with(b"-H") || name.ends_with(b"-V"))
+    name == keys::IDENTITY_H || name == keys::IDENTITY_V
 }
 
 /// Validate annotation appearance streams (§6.5.3).

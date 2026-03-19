@@ -96,6 +96,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_cidsystem_info_consistency(pdf, &mut report);
     check_font_base_encoding(pdf, &mut report);
     check_output_intent_profile(pdf, &mut report);
+    check::check_notdef_glyph_reference(pdf, &mut report);
 
     // File structure, actions, streams (§6.1.x, §6.6.1)
     check_all_page_boundaries(pdf, &mut report);
