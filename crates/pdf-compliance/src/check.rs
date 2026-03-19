@@ -7379,7 +7379,7 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                 });
             let Some(fd) = font_dict_opt else { continue };
             let subtype = fd.get::<Name>(keys::SUBTYPE);
-            if !subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type1") {
+            if subtype.as_ref().is_none_or(|s| s.as_ref() != b"Type1") {
                 continue;
             }
             let base = fd

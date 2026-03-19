@@ -226,14 +226,15 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
             "XMP extension schema structure violation (§6.6.2)",
         );
     }
-    // PDF/A-1 §6.7.11: undeclared namespace prefix violations (§6.7.9.1/§6.7.9.2) in the
-    // XMP also trigger §6.7.11 because the identification schema cannot be reliably parsed
-    // when prefixes are missing. veraPDF reports BOTH §6.7.9 AND §6.7.11 in these cases.
-    // Fixes #467 (poppler-106863-0.pdf).
+    // PDF/A-1 §6.7.11: an undeclared 'pdfaid:' namespace prefix specifically triggers
+    // §6.7.11 because the identification schema cannot be reliably parsed when the prefix
+    // is missing. veraPDF reports BOTH §6.7.9 AND §6.7.11 in these cases.
+    // Fixes #467 (poppler-106863-0.pdf). Narrowed to 'pdfaid' to avoid FP on
+    // cs-isartor-6-1-7-t01-fail-a.pdf (undeclared non-pdfaid namespace → §6.7.9 only, not §6.7.11).
     if level.part() == 1
         && report.issues[ns_violations_before..]
             .iter()
-            .any(|i| i.rule.starts_with("6.7.9"))
+            .any(|i| i.rule.starts_with("6.7.9") && i.message.contains("pdfaid"))
     {
         error(
             report,
@@ -248,7 +249,7 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     // Note: dc:title consistency is covered by check_info_xmp_deep (§6.7.3.2).
     // The separate check_dc_title_consistency was removed to avoid emitting
     // the wrong clause "6.7.8" for a case where veraPDF uses "6.7.3.2". (#467)
-    check_deprecated_types(xmp_text, report);
+    check_deprecated_types(xmp_text, level, report);
     // §6.6.2.3.1 test=2 / §6.7.9 test=3 — predefined property value types
     check_predefined_property_types(xmp_text, level, report);
     // §6.7.9 test=3 / §6.6.2.3.1 test=3 — non-standard properties in pdf: namespace
@@ -334,8 +335,8 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
             );
         }
     }
-    // §6.7.11 test=4/5 — pdfaid namespace must use 'pdfaid' prefix
-    check_pdfaid_prefix(xmp_text, report);
+    // §6.7.11 test=4/5 (PDF/A-1) / §6.6.4 (PDF/A-2/3) — pdfaid namespace must use 'pdfaid' prefix
+    check_pdfaid_prefix(xmp_text, level, report);
 }
 
 /// §6.6.2.1 — XMP must have a correct packet header.
@@ -2754,14 +2755,21 @@ fn has_rdf_li_without_lang(body: &str) -> bool {
     false
 }
 
-/// §6.7.11 — pdfaid identification properties must use the 'pdfaid' prefix.
+/// §6.7.11 (PDF/A-1) / §6.6.4 (PDF/A-2/3) / §6.5.2 (PDF/A-4) — pdfaid prefix check.
 ///
 /// veraPDF tests 4 and 5: if the PDF/A Identification Schema namespace
 /// (http://www.aiim.org/pdfa/ns/id/) is bound to any prefix other than
 /// 'pdfaid', the part and conformance properties are not accessible and
 /// the document is non-conformant. (#467)
-fn check_pdfaid_prefix(xmp: &str, report: &mut ComplianceReport) {
+/// PDF/A-2/3 use §6.6.4 (identification schema) instead of §6.7.11. Fixes FP on
+/// cs-veraPDF test suite 6-7-2-1-t01-fail-a.pdf.
+fn check_pdfaid_prefix(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     const PDFAID_NS: &str = "http://www.aiim.org/pdfa/ns/id/";
+    let rule = match level.part() {
+        1 => "6.7.11",
+        4 => "6.5.2",
+        _ => "6.6.4", // PDF/A-2/3: identification schema clause
+    };
 
     // Find xmlns: declarations that bind the pdfaid namespace to a prefix
     let mut search = 0;
@@ -2787,7 +2795,7 @@ fn check_pdfaid_prefix(xmp: &str, report: &mut ComplianceReport) {
                         if uri == PDFAID_NS && prefix_name != "pdfaid" {
                             error(
                                 report,
-                                "6.7.11",
+                                rule,
                                 format!(
                                     "PDF/A Identification Schema bound to prefix '{}' instead of required 'pdfaid'",
                                     prefix_name
@@ -2803,11 +2811,19 @@ fn check_pdfaid_prefix(xmp: &str, report: &mut ComplianceReport) {
     }
 }
 
-/// §6.7.11 — XMP properties must not use deprecated types.
+/// §6.7.11 (PDF/A-1) / §6.7.2 (PDF/A-2/3) / §6.5.2 (PDF/A-4) — XMP deprecated types.
 ///
 /// Deprecated properties: xmp:Identifier (use xmpMM:Identifier instead),
 /// xmpMM:SaveID, etc.
-fn check_deprecated_types(xmp: &str, report: &mut ComplianceReport) {
+/// veraPDF uses clause §6.7.2 for deprecated properties in PDF/A-2/3 since they
+/// are XMP schema conformance violations (not identification schema violations).
+fn check_deprecated_types(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
+    // Clause differs per PDF/A part — must match veraPDF's reporting.
+    let rule = match level.part() {
+        1 => "6.7.11",
+        4 => "6.5.2",
+        _ => "6.7.2", // PDF/A-2/3: deprecated properties are §6.7.2 schema violations
+    };
     let deprecated_properties = [
         ("xmp:Identifier", "Use xmpMM:Identifier instead"),
         ("xmpMM:SaveID", "SaveID is deprecated"),
@@ -2819,7 +2835,7 @@ fn check_deprecated_types(xmp: &str, report: &mut ComplianceReport) {
         if xmp.contains(&format!("<{prop}>")) || xmp.contains(&format!("{prop}=\"")) {
             error(
                 report,
-                "6.7.11",
+                rule,
                 format!("Deprecated XMP property '{}' found. {}", prop, hint),
             );
         }
@@ -3408,10 +3424,16 @@ mod tests {
 
     #[test]
     fn deprecated_property_detection() {
+        // PDF/A-1: deprecated properties → §6.7.11
         let mut report = ComplianceReport::default();
         let xmp = r#"<xmpMM:SaveID>12345</xmpMM:SaveID>"#;
-        check_deprecated_types(xmp, &mut report);
+        check_deprecated_types(xmp, crate::PdfALevel::A1b, &mut report);
         assert!(report.error_count() > 0);
         assert!(report.issues[0].rule == "6.7.11");
+        // PDF/A-2: deprecated properties → §6.7.2 (not §6.7.11)
+        let mut report2 = ComplianceReport::default();
+        check_deprecated_types(xmp, crate::PdfALevel::A2b, &mut report2);
+        assert!(report2.error_count() > 0);
+        assert!(report2.issues[0].rule == "6.7.2");
     }
 }
