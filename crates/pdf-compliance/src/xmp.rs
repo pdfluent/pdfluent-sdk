@@ -2953,14 +2953,23 @@ fn check_embedded_file_spec_keys_pdfa2(pdf: &Pdf, level: PdfALevel, report: &mut
             continue;
         }
         // §6.8 T2: /F and /UF must be present and non-null.
-        if !matches!(dict.get::<Object<'_>>(keys::F), Some(obj) if !matches!(obj, Object::Null(_))) {
-            error(report, "6.8", "Embedded file specification missing /F key (§6.8 T2)");
+        if !matches!(dict.get::<Object<'_>>(keys::F), Some(obj) if !matches!(obj, Object::Null(_)))
+        {
+            error(
+                report,
+                "6.8",
+                "Embedded file specification missing /F key (§6.8 T2)",
+            );
         }
         if !matches!(
             dict.get::<Object<'_>>(b"UF" as &[u8]),
             Some(obj) if !matches!(obj, Object::Null(_))
         ) {
-            error(report, "6.8", "Embedded file specification missing /UF key (§6.8 T2)");
+            error(
+                report,
+                "6.8",
+                "Embedded file specification missing /UF key (§6.8 T2)",
+            );
         }
     }
 }
