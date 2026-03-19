@@ -206,7 +206,7 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     }
     let ext_schema_before = report.issues.len();
     let schemas = parse_extension_schemas(xmp_text);
-    check_extension_schema_structure(xmp_text, &schemas, report);
+    check_extension_schema_structure(xmp_text, &schemas, level, report);
     let ns_violations_before = report.issues.len();
     check_property_namespaces(xmp_text, &schemas, level, report);
     // PDF/A-2/3: emit parent "6.6.2" alongside any extension-schema sub-clause violations
@@ -271,11 +271,17 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
         level,
         report,
     );
+    // PDF/A-1 pdfaid: namespace only defines `part` and `conformance`.
+    let pdfaid_valid = if level.part() == 1 {
+        VALID_PDFAID_PROPERTIES_V1
+    } else {
+        VALID_PDFAID_PROPERTIES
+    };
     check_closed_namespace_properties(
         xmp_text,
         &schemas,
         "pdfaid:",
-        VALID_PDFAID_PROPERTIES,
+        pdfaid_valid,
         level,
         report,
     );
@@ -514,6 +520,7 @@ fn extract_nested_value(block: &str, key: &str) -> Option<String> {
 fn check_extension_schema_structure(
     xmp: &str,
     schemas: &[ExtensionSchema],
+    level: PdfALevel,
     report: &mut ComplianceReport,
 ) {
     if !xmp.contains("pdfaExtension:schemas") {
@@ -580,6 +587,35 @@ fn check_extension_schema_structure(
                         schema.prefix, prop.name, prop.value_type
                     ),
                 );
+                // veraPDF (PDF/A-1 §6.7.9 T2+T3, PDF/A-2/3 §6.6.2.3.1 T2+T3): when a
+                // property's declared valueType is invalid (references an undeclared custom
+                // type), veraPDF treats the property as "not properly declared" and fires T2
+                // (undeclared) + T3 (value type incorrect) for each property occurrence in
+                // the XMP packet. (#FN-6.7.9-6-7-8-t02)
+                let qualified = format!("{}:{}", schema.prefix, prop.name);
+                if xmp.contains(&qualified) {
+                    let (rule_t2, rule_t3) = match level.part() {
+                        1 => ("6.7.9.2", "6.7.9.3"),
+                        4 => ("6.5.2", "6.5.2"),
+                        _ => ("6.6.2.3.1", "6.6.2.3.1"),
+                    };
+                    error(
+                        report,
+                        rule_t2,
+                        format!(
+                            "Extension property '{}' used but declaration has invalid valueType '{}'",
+                            qualified, prop.value_type
+                        ),
+                    );
+                    error(
+                        report,
+                        rule_t3,
+                        format!(
+                            "Extension property '{}' value type incorrect: declared as undefined type '{}'",
+                            qualified, prop.value_type
+                        ),
+                    );
+                }
             }
 
             if prop.category.is_empty() {
@@ -1131,6 +1167,8 @@ fn check_date_formats(xmp: &str, level: PdfALevel, report: &mut ComplianceReport
         "pdf:CreationDate",
         "pdf:ModDate",
         "xmpMM:CreateDate",
+        // tiff:DateTime must be ISO 8601 per XMP spec (§6.7.9-t14)
+        "tiff:DateTime",
     ];
 
     // For PDF/A-2/3/4 veraPDF reports invalid date values under §6.6.2.3.1
@@ -1633,8 +1671,8 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         // LastURL is deprecated but veraPDF still validates it as Scalar.
         // Using it wrapped in rdf:Seq is a §6.6.2.3.1 violation. (#FN-6.6.2.3.1-t09)
         "xmpMM:LastURL" => Some(Scalar),
-        // SaveID is deprecated but veraPDF still validates T3 for it. (#489)
-        "xmpMM:SaveID" => Some(Scalar),
+        // SaveID is deprecated but veraPDF validates T3 for non-integer values. (#489, #FN-6.7.9-t09)
+        "xmpMM:SaveID" => Some(Integer),
         // Manifest is defined in xmpMM schema but veraPDF treats it as T2 not predefined. (#489)
         "xmpMM:Manifest" => Some(Bag),
 
@@ -1750,7 +1788,8 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "photoshop:SidecarForExtension" => Some(Scalar),
         "photoshop:Source" => Some(Scalar),
         "photoshop:State" => Some(Scalar),
-        "photoshop:SupplementalCategories" => Some(Bag),
+        // veraPDF expects Seq, not Bag, for SupplementalCategories. (#FN-6.7.9-t13)
+        "photoshop:SupplementalCategories" => Some(Seq),
         "photoshop:TextLayers" => Some(Seq),
         "photoshop:TransmissionReference" => Some(Scalar),
         "photoshop:Urgency" => Some(Integer),
@@ -2001,6 +2040,9 @@ const VALID_XMPRIGHTS_PROPERTIES: &[&str] = &[
 
 /// Valid property names in the `pdfaid:` XMP namespace per ISO 19005.
 /// pdfaid:rev is NOT valid (not defined in the pdfaid schema). (#489)
+/// PDF/A-1 defines only `part` and `conformance`; `amd`/`corr` are absent.
+/// Using them in PDF/A-1 fires §6.7.9 T2. (#FN-6.7.9-t04)
+const VALID_PDFAID_PROPERTIES_V1: &[&str] = &["pdfaid:part", "pdfaid:conformance"];
 const VALID_PDFAID_PROPERTIES: &[&str] = &[
     "pdfaid:part",
     "pdfaid:conformance",
