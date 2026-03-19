@@ -3374,6 +3374,11 @@ pub fn check_image_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
             check_image_restrictions_in_res(&res_dict, &loc, report);
         }
 
+        // Check inline images for /Interpolate true (§6.2.8.1)
+        if let Some(content) = page.page_stream() {
+            check_inline_image_interpolate(content, &loc, report);
+        }
+
         // Check annotation appearances
         if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
             for annot in annots.iter::<Dict<'_>>() {
@@ -3389,6 +3394,39 @@ pub fn check_image_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Check inline images in a content stream for /Interpolate true (§6.2.8.1).
+fn check_inline_image_interpolate(content: &[u8], location: &str, report: &mut ComplianceReport) {
+    // Scan for BI ... /I true ... ID patterns (inline image with Interpolate=true)
+    // /I is the abbreviation for /Interpolate in inline images.
+    let mut pos = 0;
+    while pos + 2 < content.len() {
+        if content[pos] == b'B' && content[pos + 1] == b'I'
+            && (pos == 0 || content[pos - 1].is_ascii_whitespace())
+        {
+            if let Some(id_off) = content[pos..].windows(2).position(|w| w == b"ID") {
+                let header = &content[pos + 2..pos + id_off];
+                // Check for /I true or /Interpolate true
+                let has_interp = header.windows(7).any(|w| w == b"/I tru")
+                    || header.windows(17).any(|w| w == b"/Interpolate tru");
+                if has_interp {
+                    error_at(
+                        report,
+                        "6.2.8.1",
+                        "Inline image has /Interpolate true (forbidden in PDF/A)",
+                        location,
+                    );
+                    return;
+                }
+                pos += id_off + 2;
+            } else {
+                break;
+            }
+        } else {
+            pos += 1;
         }
     }
 }
@@ -6123,13 +6161,12 @@ fn page_fonts_use_transparency(res: &Resources<'_>) -> bool {
 /// "6.2.5" for PDF/A-1 where needed. Previously used "6.2.10" for non-PDF/A-4
 /// which was wrong. (#467)
 pub fn check_postscript_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
-    // PDF/A-1: §6.2.9 (Form XObject restrictions group)
-    // PDF/A-2/3: §6.2.9.3 (PostScript XObjects specifically)
-    // PDF/A-4: §6.2.9 (veraPDF uses §6.2.9 for the PS XObject check)
-    let rule = if part == 2 || part == 3 {
-        "6.2.9.3"
-    } else {
-        "6.2.9"
+    // PDF/A-1: veraPDF uses §6.2.7 for PostScript XObject prohibition.
+    // PDF/A-2/3: §6.2.9 (veraPDF §6.2.9 groups PS + Ref + Subtype2 restrictions)
+    // PDF/A-4: §6.2.9
+    let rule = match part {
+        1 => "6.2.7",
+        _ => "6.2.9",
     };
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let xobjects = &page.resources().x_objects;
