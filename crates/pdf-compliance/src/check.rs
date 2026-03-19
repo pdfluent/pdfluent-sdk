@@ -524,6 +524,23 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
         if let Some(content) = page.page_stream() {
             let ops = detect_device_color_ops(content);
             report_color_vs_profile_eff(&ops, eff_cmyk, eff_rgb, eff_gray, &loc, report);
+            // §6.2.4.3: implicit DeviceGray — painting operators with no prior color command
+            // use DeviceGray as the default. Fire when gray has no matching profile/Default*.
+            if eff_gray != 1
+                && eff_gray != 3
+                && eff_gray != 4
+                && !ops.has_rgb
+                && !ops.has_cmyk
+                && !ops.has_gray
+                && content_has_implicit_gray(content)
+            {
+                error_at(
+                    report,
+                    "6.2.4.3",
+                    "Implicit DeviceGray (painting without explicit color) in page content",
+                    loc.clone(),
+                );
+            }
         }
 
         // Scan Form XObject content streams
@@ -557,14 +574,33 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
             for annot in annots.iter::<Dict<'_>>() {
                 if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
                     for key in [b"N" as &[u8], b"R", b"D"] {
+                        let kstr = std::str::from_utf8(key).unwrap_or("?");
                         if let Some(stream) = ap.get::<Stream<'_>>(key) {
+                            // Direct appearance stream (most common case)
                             if let Ok(decoded) = stream.decoded() {
                                 let ops = detect_device_color_ops(&decoded);
-                                let kloc =
-                                    format!("{loc} AP/{}", std::str::from_utf8(key).unwrap_or("?"));
+                                let kloc = format!("{loc} AP/{kstr}");
                                 report_color_vs_profile_eff(
                                     &ops, eff_cmyk, eff_rgb, eff_gray, &kloc, report,
                                 );
+                            }
+                        } else if let Some(sub_dict) = ap.get::<Dict<'_>>(key) {
+                            // §6.2.4.3: AP sub-state dict (e.g. /N << /True 13 0 R /False 14 0 R >>)
+                            // Each sub-state value is an appearance stream; scan each for device colors.
+                            for (state_name, _) in sub_dict.entries() {
+                                if let Some(state_stream) =
+                                    sub_dict.get::<Stream<'_>>(state_name.as_ref())
+                                {
+                                    if let Ok(decoded) = state_stream.decoded() {
+                                        let ops = detect_device_color_ops(&decoded);
+                                        let sstr =
+                                            std::str::from_utf8(state_name.as_ref()).unwrap_or("?");
+                                        let kloc = format!("{loc} AP/{kstr}/{sstr}");
+                                        report_color_vs_profile_eff(
+                                            &ops, eff_cmyk, eff_rgb, eff_gray, &kloc, report,
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -710,6 +746,9 @@ fn scan_type3_charprocs_vs_profile(
     let Some(font_dict) = res_dict.get::<Dict<'_>>(keys::FONT) else {
         return;
     };
+    let rgb_ok = eff_rgb == 3;
+    let cmyk_ok = eff_cmyk == 4;
+    let gray_ok = eff_gray == 1 || eff_gray == 3 || eff_gray == 4;
     for (fname, _) in font_dict.entries() {
         let Some(font) = font_dict.get::<Dict<'_>>(fname.as_ref()) else {
             continue;
@@ -720,17 +759,38 @@ fn scan_type3_charprocs_vs_profile(
         if !is_type3 {
             continue;
         }
-        let Some(charprocs) = font.get::<Dict<'_>>(b"CharProcs" as &[u8]) else {
-            continue;
-        };
         let fstr = std::str::from_utf8(fname.as_ref()).unwrap_or("?");
-        for (cname, _) in charprocs.entries() {
-            if let Some(stream) = charprocs.get::<Stream<'_>>(cname.as_ref()) {
-                if let Ok(decoded) = stream.decoded() {
-                    let cstr = std::str::from_utf8(cname.as_ref()).unwrap_or("?");
-                    let ops = detect_device_color_ops(&decoded);
-                    let loc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
-                    report_color_vs_profile_eff(&ops, eff_cmyk, eff_rgb, eff_gray, &loc, report);
+        if let Some(charprocs) = font.get::<Dict<'_>>(b"CharProcs" as &[u8]) {
+            for (cname, _) in charprocs.entries() {
+                if let Some(stream) = charprocs.get::<Stream<'_>>(cname.as_ref()) {
+                    if let Ok(decoded) = stream.decoded() {
+                        let cstr = std::str::from_utf8(cname.as_ref()).unwrap_or("?");
+                        let ops = detect_device_color_ops(&decoded);
+                        let loc = format!("{base_loc} Type3Font {fstr} CharProc {cstr}");
+                        report_color_vs_profile_eff(&ops, eff_cmyk, eff_rgb, eff_gray, &loc, report);
+                    }
+                }
+            }
+        }
+        // §6.2.4.3: Form XObjects in the Type3 font's /Resources may carry a
+        // /Group with /S /Transparency and /CS <device-cs>, which counts as
+        // implicit device-color use even if the CharProc streams are colorless.
+        if let Some(font_res) = font.get::<Dict<'_>>(keys::RESOURCES) {
+            if let Some(xobj_dict) = font_res.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xname, _) in xobj_dict.entries() {
+                    let Some(xobj_stream) = xobj_dict.get::<Stream<'_>>(xname.as_ref()) else {
+                        continue;
+                    };
+                    if let Some(group) = xobj_stream.dict().get::<Dict<'_>>(b"Group" as &[u8]) {
+                        if let Some(cs) = group.get::<Name>(keys::CS) {
+                            let xstr = std::str::from_utf8(xname.as_ref()).unwrap_or("?");
+                            let xloc =
+                                format!("{base_loc} Type3Font {fstr} XObject {xstr} Group /CS");
+                            report_device_cs_name(
+                                cs.as_ref(), rgb_ok, cmyk_ok, gray_ok, &xloc, report,
+                            );
+                        }
+                    }
                 }
             }
         }
