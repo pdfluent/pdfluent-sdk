@@ -868,18 +868,47 @@ pub fn font_has_tounicode(font_dict: &Dict<'_>) -> bool {
 pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>, usize)) {
     let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
-        let fonts = &page.resources().fonts;
-        for (name, _) in fonts.entries() {
-            let name_str = std::str::from_utf8(name.as_ref()).unwrap_or("<invalid>");
-            // Font entries may be inline dicts or indirect references
-            let font_dict_opt: Option<Dict<'a>> =
-                fonts.get::<Dict<'_>>(name.as_ref()).or_else(|| {
-                    fonts
-                        .get_ref(name.as_ref())
-                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
-                });
-            if let Some(font_dict) = font_dict_opt {
-                callback(name_str, &font_dict, page_idx);
+        // Helper: iterate fonts in a resource dict
+        let mut visit_fonts = |fonts: &Dict<'a>| {
+            for (name, _) in fonts.entries() {
+                let name_str = std::str::from_utf8(name.as_ref()).unwrap_or("<invalid>");
+                let font_dict_opt: Option<Dict<'a>> =
+                    fonts.get::<Dict<'_>>(name.as_ref()).or_else(|| {
+                        fonts
+                            .get_ref(name.as_ref())
+                            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                    });
+                if let Some(font_dict) = font_dict_opt {
+                    callback(name_str, &font_dict, page_idx);
+                }
+            }
+        };
+
+        // Page-level fonts
+        visit_fonts(&page.resources().fonts);
+
+        // Fonts in Form XObject resources (catches fonts used via Do operator)
+        let page_dict = page.raw();
+        if let Some(res) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
+            if let Some(xobjs) = res.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xname, _) in xobjs.entries() {
+                    // Resolve indirect references via xref
+                    let xobj_stream = xobjs.get::<Stream<'_>>(xname.as_ref()).or_else(|| {
+                        xobjs
+                            .get_ref(xname.as_ref())
+                            .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                    });
+                    if let Some(stream) = xobj_stream {
+                        let dict = stream.dict();
+                        if dict.get::<Name>(keys::SUBTYPE).is_some_and(|s| s.as_ref() == b"Form") {
+                            if let Some(xo_res) = dict.get::<Dict<'_>>(keys::RESOURCES) {
+                                if let Some(xo_fonts) = xo_res.get::<Dict<'_>>(keys::FONT) {
+                                    visit_fonts(&xo_fonts);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

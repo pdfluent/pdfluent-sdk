@@ -1260,9 +1260,22 @@ fn check_page_dimensions(
     report: &mut ComplianceReport,
 ) {
     check::check_page_dimensions_with_cache(pdf, cache, level.part(), report);
-    // PDF/A-4: catalog Version must match "2.n"
+    // PDF/A-4: catalog Version must be present and match "2.n" (ISO 19005-4 §6.1.12).
+    // check_catalog_version_pdfa4 validates the FORMAT when the key is present,
+    // but does NOT flag the key's absence. PDF/A-4 §6.1.12 requires Version to be present.
+    // Add a supplementary required-presence check. (#FN-6.1.12)
     if level.part() == 4 {
         check::check_catalog_version_pdfa4(pdf, report);
+        // Supplement: Version key must be present in the catalog for PDF/A-4.
+        if let Some(cat) = check::catalog(pdf) {
+            if cat.get::<pdf_syntax::object::Object<'_>>(b"Version" as &[u8]).is_none() {
+                check::error(
+                    report,
+                    "6.1.12",
+                    "Catalog dictionary missing required /Version key (PDF/A-4 §6.1.12)",
+                );
+            }
+        }
     }
     // PDF/A-2/3/4 §6.1.13: string literals used as content-stream operands must
     // not exceed 32767 bytes (decoded). check.rs only enforces the 65535-byte
@@ -2005,8 +2018,55 @@ fn check_explicit_resources(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// §6.1.3 — Trailer requirements.
+///
+/// check::check_trailer_requirements validates /ID presence and emptiness for
+/// traditional "trailer" sections, but only checks KEY presence for cross-reference
+/// stream PDFs (no "trailer" keyword). Supplement with a raw scan to catch empty
+/// /ID arrays in xref-stream PDFs. (#FN-6.1.3)
 fn check_trailer_requirements(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_trailer_requirements(pdf, level.part(), report);
+    // If 6.1.3 already emitted, nothing more to add.
+    if report.issues.iter().any(|i| i.rule == "6.1.3") {
+        return;
+    }
+    let data = pdf.data().as_ref();
+    // Only supplement for xref-stream PDFs (no traditional "trailer" keyword near EOF).
+    let tail_start = data.len().saturating_sub(4096);
+    let has_trailer_kw = data[tail_start..].windows(7).any(|w| w == b"trailer");
+    if has_trailer_kw {
+        return; // Traditional trailer already fully handled.
+    }
+    // Scan for "/ID" followed by "[<>" which signals an empty first identifier element.
+    let mut pos = 0;
+    while pos + 6 < data.len() {
+        if &data[pos..pos + 3] == b"/ID" {
+            let mut after = pos + 3;
+            while after < data.len()
+                && matches!(data[after], b' ' | b'\n' | b'\r' | b'\t')
+            {
+                after += 1;
+            }
+            if after < data.len() && data[after] == b'[' {
+                after += 1;
+                while after < data.len()
+                    && matches!(data[after], b' ' | b'\n' | b'\r' | b'\t')
+                {
+                    after += 1;
+                }
+                if after + 1 < data.len() && data[after] == b'<' && data[after + 1] == b'>' {
+                    check::error(
+                        report,
+                        "6.1.3",
+                        "Trailer /ID array contains empty identifier (xref-stream PDF)",
+                    );
+                    return;
+                }
+            }
+            pos += 3;
+        } else {
+            pos += 1;
+        }
+    }
 }
 
 // ─── Batch 7: Stream/syntax validation, XMP extension, image intent ─────────
@@ -2042,42 +2102,56 @@ fn check_object_syntax(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
                 issue.rule = "6.1.8-obj".to_string();
             }
         }
-        // Supplementary: check_object_syntax_spacing allows ' '/'\t' after 'obj'
-        // (not just CR/LF), but PDF/A-4 §6.1.8 requires EOL. Scan for the gap
-        // only if no other "6.1.8-obj" issue was already emitted. (#496)
-        // Pattern: "<digit> obj<space>" — require a digit just before the single
-        // whitespace that precedes "obj" to avoid matching "obj" in binary streams.
-        if report.issues[before..].is_empty() {
-            let data = pdf.data().as_ref();
-            let len = data.len();
-            let mut pos = 0;
-            while pos + 3 < len {
-                if &data[pos..pos + 3] == b"obj" {
-                    let is_endobj = pos >= 3 && &data[pos - 3..pos] == b"end";
-                    // Require: not "endobj", preceded by exactly one space, preceded
-                    // by a digit (gen number), then the keyword "obj" must be followed
-                    // by space or tab (not EOL).
-                    if !is_endobj
-                        && pos >= 2
-                        && data[pos - 1] == b' '
-                        && data[pos - 2].is_ascii_digit()
-                        && pos + 3 < len
-                    {
-                        let after = data[pos + 3];
-                        if after == b' ' || after == b'\t' {
-                            check::error(
-                                report,
-                                "6.1.8-obj",
-                                "Keyword 'obj' not followed by EOL marker (PDF/A-4 §6.1.8)",
-                            );
-                            break;
-                        }
-                    }
-                    pos += 3;
-                } else {
-                    pos += 1;
+    }
+
+    // Supplementary: check_object_syntax_spacing allows ' '/'\t' after 'obj',
+    // but PDF/A-2/3 §6.1.9 and PDF/A-4 §6.1.8 require EOL after 'obj'.
+    // Scan for the gap only if no object-syntax issue was already emitted.
+    // Pattern: "<digit> obj<space/tab>" — require digit before the single
+    // whitespace preceding "obj" to avoid false matches in binary streams.
+    // (#496 = PDF/A-4; #FN-6.1.9 = PDF/A-2/3)
+    let rule = match level.part() {
+        4 => "6.1.8-obj",
+        2 | 3 => "6.1.9",
+        _ => return,
+    };
+    let already_emitted = report.issues[before..]
+        .iter()
+        .any(|i| i.rule == rule);
+    if already_emitted {
+        return;
+    }
+    let data = pdf.data().as_ref();
+    let len = data.len();
+    let mut pos = 0;
+    while pos + 3 < len {
+        if &data[pos..pos + 3] == b"obj" {
+            let is_endobj = pos >= 3 && &data[pos - 3..pos] == b"end";
+            // Require: not "endobj", preceded by exactly one space, preceded
+            // by a digit (gen number), then the keyword "obj" must be followed
+            // by space or tab (not EOL).
+            if !is_endobj
+                && pos >= 2
+                && data[pos - 1] == b' '
+                && data[pos - 2].is_ascii_digit()
+                && pos + 3 < len
+            {
+                let after = data[pos + 3];
+                if after == b' ' || after == b'\t' {
+                    check::error(
+                        report,
+                        rule,
+                        format!(
+                            "Keyword 'obj' not followed by EOL marker (PDF/A §{})",
+                            if level.part() == 4 { "6.1.8" } else { "6.1.9" }
+                        ),
+                    );
+                    break;
                 }
             }
+            pos += 3;
+        } else {
+            pos += 1;
         }
     }
 }
@@ -2093,8 +2167,47 @@ fn check_image_intent(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// §6.1.4 — xref keyword syntax.
+///
+/// check::check_xref_syntax stops after the first valid "xref" (breaks on first
+/// match) and misses malformed "xref" keywords in later xref sections (incremental
+/// updates). Supplement with a full-file scan that checks ALL standalone "xref"
+/// keywords. (#FN-6.1.4)
 fn check_xref_syntax_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_xref_syntax(pdf, report);
+    // Already emitted — don't double-count.
+    if report.issues.iter().any(|i| i.rule == "6.1.4") {
+        return;
+    }
+    // Scan every standalone "xref" occurrence (not inside "startxref") and
+    // verify each is followed immediately by CR, LF, or CRLF.
+    let data = pdf.data().as_ref();
+    let len = data.len();
+    let mut pos = 0;
+    while pos + 4 <= len {
+        if &data[pos..pos + 4] != b"xref" {
+            pos += 1;
+            continue;
+        }
+        // Skip "startxref"
+        if pos >= 5 && &data[pos - 5..pos] == b"start" {
+            pos += 4;
+            continue;
+        }
+        // Found standalone "xref" — verify followed by EOL
+        let after = pos + 4;
+        if after < len {
+            let c = data[after];
+            if c != b'\n' && c != b'\r' {
+                check::error(
+                    report,
+                    "6.1.4",
+                    "Keyword 'xref' not followed by proper EOL marker",
+                );
+                return;
+            }
+        }
+        pos += 4;
+    }
 }
 
 /// §6.9 — Embedded file specification keys.
