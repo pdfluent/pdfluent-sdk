@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::check::{self, error, warning};
 use crate::{ComplianceReport, PdfALevel};
 use pdf_syntax::object::dict::keys;
+use pdf_syntax::object::String as PdfString;
 use pdf_syntax::object::{Array, DateTime, Dict, Name, ObjRef, Object};
 use pdf_syntax::Pdf;
 
@@ -131,8 +132,12 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     // §6.10 (PDF/A-2/3): OCG Order must contain all referenced OCGs.
     check_oc_d_as_restriction(pdf, level, report);
     check_ocg_order_completeness(pdf, level, report);
+    // §6.10 (PDF/A-4): OC config /Name values must be unique. (#FN-6.10)
+    check_oc_config_name_uniqueness(pdf, level, report);
     // §6.10 (PDF/A-2/3) / §6.11 (PDF/A-4): Names/AlternatePresentations and /PresSteps forbidden.
     check_alternate_presentations_absent(pdf, level, report);
+    // §6.8 (PDF/A-2): file spec dicts with /EF must have /F and /UF keys. (#FN-6.8)
+    check_embedded_file_spec_keys_pdfa2(pdf, level, report);
     // §6.12 (PDF/A-2/3/4): /Requirements key in catalog is forbidden.
     check_requirements_absent(pdf, level, report);
     // §6.6.2 (PDF/A-2/3): Widget annotations must not have /AA entry.
@@ -2845,16 +2850,14 @@ fn check_alternate_presentations_absent(
             );
         }
     }
-    // §6.10 T2 (PDF/A-2/3): page dictionaries must not contain /PresSteps.
-    if level.part() <= 3 {
-        for (page_idx, page) in pdf.pages().iter().enumerate() {
-            if page.raw().contains_key(b"PresSteps" as &[u8]) {
-                error(
-                    report,
-                    rule,
-                    format!("Page {} has forbidden /PresSteps entry", page_idx + 1),
-                );
-            }
+    // §6.10 T2 (PDF/A-2/3) / §6.11 T2 (PDF/A-4): page dicts must not contain /PresSteps.
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        if page.raw().contains_key(b"PresSteps" as &[u8]) {
+            error(
+                report,
+                rule,
+                format!("Page {} has forbidden /PresSteps entry", page_idx + 1),
+            );
         }
     }
 }
@@ -2875,6 +2878,102 @@ fn check_requirements_absent(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
             "6.12",
             "Document catalog must not contain /Requirements entry (§6.12)",
         );
+    }
+}
+
+/// §6.10 (PDF/A-4): each OC configuration dictionary must have a /Name key with a unique value.
+///
+/// The /D (default) and every /Configs entry are all configuration dictionaries.
+/// veraPDF test: `hasDuplicateName == false`. (#FN-6.10)
+fn check_oc_config_name_uniqueness(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    if level.part() != 4 {
+        return;
+    }
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    let Some(ocprops) = cat.get::<Dict<'_>>(keys::OCPROPERTIES) else {
+        return;
+    };
+
+    let mut names: Vec<Vec<u8>> = Vec::new();
+
+    // Collect /Name from default config /D.
+    if let Some(d_dict) = ocprops.get::<Dict<'_>>(b"D" as &[u8]) {
+        if let Some(n) = d_dict.get::<PdfString>(keys::NAME) {
+            names.push(n.as_bytes().to_vec());
+        }
+    }
+    // Collect /Name from each alternate config in /Configs.
+    if let Some(configs) = ocprops.get::<Array<'_>>(b"Configs" as &[u8]) {
+        for cfg in configs.iter::<Dict<'_>>() {
+            if let Some(n) = cfg.get::<PdfString>(keys::NAME) {
+                names.push(n.as_bytes().to_vec());
+            }
+        }
+    }
+
+    // Check for duplicate /Name values.
+    let mut seen: HashSet<Vec<u8>> = HashSet::new();
+    for name in &names {
+        if !seen.insert(name.clone()) {
+            error(
+                report,
+                "6.10",
+                "OC configuration /Name values must be unique across all config dicts (§6.10 T2)",
+            );
+            return;
+        }
+    }
+}
+
+/// §6.8 (PDF/A-2): file specification dicts with /EF must have /F and /UF keys.
+///
+/// check.rs `check_embedded_file_spec_keys` returns early for `part < 3`; this adds
+/// the equivalent check for PDF/A-2 with rule "6.8". (#FN-6.8)
+fn check_embedded_file_spec_keys_pdfa2(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    if level.part() != 2 {
+        return;
+    }
+    let Some(cat) = check::catalog(pdf) else {
+        return;
+    };
+    let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) else {
+        return;
+    };
+    let Some(ef_tree) = names.get::<Dict<'_>>(keys::EMBEDDED_FILES) else {
+        return;
+    };
+    let Some(names_arr) = ef_tree.get::<Array<'_>>(keys::NAMES) else {
+        return;
+    };
+
+    let items: Vec<Object<'_>> = names_arr.iter::<Object<'_>>().collect();
+    for chunk in items.chunks(2) {
+        let spec = match chunk.get(1) {
+            Some(Object::Dict(d)) => d,
+            _ => continue,
+        };
+        if !spec.contains_key(keys::EF) {
+            continue;
+        }
+        // §6.8 T2: /F and /UF must be present and non-null.
+        if !matches!(spec.get::<Object<'_>>(keys::F), Some(obj) if !matches!(obj, Object::Null(_)))
+        {
+            error(
+                report,
+                "6.8",
+                "Embedded file specification missing /F key (§6.8 T2)",
+            );
+        }
+        if !matches!(spec.get::<Object<'_>>(b"UF" as &[u8]), Some(obj) if !matches!(obj, Object::Null(_)))
+        {
+            error(
+                report,
+                "6.8",
+                "Embedded file specification missing /UF key (§6.8 T2)",
+            );
+        }
     }
 }
 
