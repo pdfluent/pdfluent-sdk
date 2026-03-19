@@ -1,126 +1,163 @@
-# Quickstart: PDF to JSON in 5 Minutes
+# Quickstart Guide
 
 ## Installation
 
-Add `xfa-json` and `pdfium-ffi-bridge` to your `Cargo.toml`:
+Add the crates you need to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-xfa-json = { git = "https://github.com/jasperdew/xfa-native-rust" }
-pdfium-ffi-bridge = { git = "https://github.com/jasperdew/xfa-native-rust" }
+pdf-engine = { path = "crates/pdf-engine" }         # open, render, extract text
+pdf-compliance = { path = "crates/pdf-compliance" }  # PDF/A validation
+pdf-manip = { path = "crates/pdf-manip" }            # text replace, merge, split
+lopdf = { path = "crates/lopdf" }                    # low-level PDF mutation
+pdf-syntax = { path = "crates/pdf-syntax" }          # read-only PDF parsing
 ```
 
-## Extract Fields from an XFA PDF
+## Open a PDF and read page info
 
 ```rust
-use pdfium_ffi_bridge::pipeline::extract_xfa_from_file;
-use pdfium_ffi_bridge::template_parser::parse_template;
-use xfa_json::form_tree_to_json;
-use std::path::Path;
+use pdf_engine::PdfDocument;
 
-fn main() -> anyhow::Result<()> {
-    // 1. Open the PDF and extract XFA packets
-    let packets = extract_xfa_from_file(Path::new("form.pdf"))?;
+fn main() -> pdf_engine::Result<()> {
+    let data = std::fs::read("invoice.pdf")?;
+    let doc = PdfDocument::open(data)?;
 
-    // 2. Parse the template into a FormTree (with optional datasets merge)
-    let template_xml = packets.template().expect("no template packet");
-    let (tree, root) = parse_template(template_xml, packets.datasets())?;
+    println!("Pages: {}", doc.page_count());
 
-    // 3. Export field values as JSON
-    let data = form_tree_to_json(&tree, root);
-    println!("{}", serde_json::to_string_pretty(&data)?);
+    let info = doc.info();
+    if let Some(title) = &info.title {
+        println!("Title: {title}");
+    }
+
+    for i in 0..doc.page_count() {
+        let geo = doc.page_geometry(i)?;
+        println!(
+            "Page {}: {:.0} x {:.0} pt",
+            i + 1,
+            geo.media_box.width,
+            geo.media_box.height
+        );
+    }
 
     Ok(())
 }
 ```
 
-### Output
-
-```json
-{
-  "fields": {
-    "form1.Customer.Name": "John Doe",
-    "form1.Customer.Email": "john@example.com",
-    "form1.Invoice.Amount": 1250.00,
-    "form1.Invoice.Paid": true
-  }
-}
-```
-
-## Fill a Form with JSON Data
+## Extract text
 
 ```rust
-use xfa_json::{json_to_form_tree, FormData, FieldValue};
-use indexmap::IndexMap;
+use pdf_engine::PdfDocument;
 
-// Build form data
-let mut fields = IndexMap::new();
-fields.insert("form1.Customer.Name".into(), FieldValue::Text("Jane Smith".into()));
-fields.insert("form1.Invoice.Amount".into(), FieldValue::Number(2500.0));
-let data = FormData { fields };
+fn main() -> pdf_engine::Result<()> {
+    let doc = PdfDocument::open(std::fs::read("report.pdf")?)?;
 
-// Merge into existing FormTree
-json_to_form_tree(&data, &mut tree, root);
-```
-
-## Export Schema
-
-```rust
-use xfa_json::export_schema;
-
-let schema = export_schema(&tree, root);
-println!("{}", serde_json::to_string_pretty(&schema)?);
-```
-
-### Schema Output
-
-```json
-{
-  "fields": {
-    "form1.Customer.Name": {
-      "som_path": "form1.Customer.Name",
-      "field_type": "text",
-      "required": true,
-      "repeatable": false,
-      "max_occurrences": 1
-    },
-    "form1.Invoice.Amount": {
-      "som_path": "form1.Invoice.Amount",
-      "field_type": "numeric",
-      "required": true,
-      "repeatable": false,
-      "max_occurrences": 1
+    for i in 0..doc.page_count() {
+        let text = doc.extract_text(i)?;
+        println!("--- Page {} ---\n{}", i + 1, text);
     }
-  }
+
+    // Search across all pages — returns matching page indices
+    let pages = doc.search_text("quarterly revenue");
+    println!("Found on pages: {:?}", pages);
+
+    Ok(())
 }
 ```
 
-## REST API
+## Validate PDF/A compliance
 
-If you're using the REST API server:
+```rust
+use pdf_syntax::Pdf;
+use pdf_compliance::{validate_pdfa, detect_pdfa_level, PdfALevel};
+
+fn main() {
+    let data = std::fs::read("document.pdf").unwrap();
+    let pdf = Pdf::new(data).unwrap();
+
+    // Auto-detect the claimed PDF/A level from XMP metadata
+    let level = detect_pdfa_level(&pdf).unwrap_or(PdfALevel::A2b);
+    let report = validate_pdfa(&pdf, level);
+
+    if report.compliant {
+        println!("Compliant with PDF/A-{}{}", level.part(), level.conformance());
+    } else {
+        println!("{} errors, {} warnings", report.error_count(), report.warning_count());
+        for issue in &report.issues {
+            println!("  [{}] {}", issue.rule, issue.message);
+        }
+    }
+}
+```
+
+## Replace text in a PDF
+
+```rust
+use pdf_manip::{FontMap, text_replace};
+
+fn main() -> pdf_manip::Result<()> {
+    let data = std::fs::read("template.pdf")?;
+    let mut doc = lopdf::Document::load_mem(&data)?;
+
+    // Replace on all pages at once
+    let count = text_replace::replace_text_all_pages(
+        &mut doc,
+        "{{COMPANY}}",
+        "Acme Corp",
+    )?;
+    println!("Replaced {count} occurrences");
+
+    // Or target a specific page (1-based)
+    let fonts = FontMap::from_page(&doc, 1)?;
+    text_replace::replace_text(&mut doc, 1, "{{DATE}}", "2026-03-19", &fonts)?;
+
+    doc.save_to("output.pdf")?;
+    Ok(())
+}
+```
+
+## Render a page to PNG
+
+```rust
+use pdf_engine::{PdfDocument, RenderOptions};
+
+fn main() -> pdf_engine::Result<()> {
+    let doc = PdfDocument::open(std::fs::read("brochure.pdf")?)?;
+
+    let options = RenderOptions {
+        dpi: 150.0,
+        ..Default::default()
+    };
+
+    let rendered = doc.render_page(0, &options)?;
+    println!("{}x{} pixels", rendered.width, rendered.height);
+
+    // rendered.pixels contains RGBA data — encode to PNG with the `png` crate
+    let file = std::fs::File::create("page1.png").unwrap();
+    let mut encoder = png::Encoder::new(file, rendered.width, rendered.height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().unwrap();
+    writer.write_image_data(&rendered.pixels).unwrap();
+
+    Ok(())
+}
+```
+
+## Python and Node.js bindings
+
+Pre-built bindings are available in `crates/pdf-python` and `crates/pdf-node`:
 
 ```bash
-# Extract fields
-curl -X POST http://localhost:3000/extract \
-  -F "file=@form.pdf" | jq .
+# Python (requires maturin)
+cd crates/pdf-python && maturin develop --release
 
-# Fill form
-curl -X POST http://localhost:3000/fill \
-  -F "file=@form.pdf" \
-  -F 'data={"form1.Name": "Jane"}' \
-  --output filled.pdf
-
-# Validate
-curl -X POST http://localhost:3000/validate \
-  -F "file=@form.pdf" | jq .
-
-# Flatten (XFA → AcroForm)
-curl -X POST http://localhost:3000/flatten \
-  -F "file=@form.pdf" \
-  --output flattened.pdf
+# Node.js (requires napi-rs)
+cd crates/pdf-node && npm install && npm run build
 ```
 
-## Next Steps
+See `crates/pdf-python/python/xfa_pdf/` and `crates/pdf-node/src/` for the binding APIs.
 
-- [API Reference](api-reference.md) — Full endpoint and type documentation
-- [Code Examples](examples.md) — Python, JavaScript, C#, and Java integration
+## Next steps
+
+- [API Reference](api-reference.md) — full type and function documentation
+- [Code Examples](examples.md) — advanced usage patterns
