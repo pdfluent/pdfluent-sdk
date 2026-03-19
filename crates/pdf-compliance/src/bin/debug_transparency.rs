@@ -13,7 +13,19 @@ fn main() {
     let level = pdf_compliance::detect_pdfa_level(&pdf);
     println!("Detected level: {level:?}");
 
-    let has_oi = pdf_compliance::check::has_output_intent(&pdf);
+    // Inline has_output_intent: check module is pub(crate), not accessible from bins.
+    let has_oi = {
+        let xref = pdf.xref();
+        xref.get::<Dict<'_>>(xref.root_id())
+            .and_then(|cat| cat.get::<pdf_syntax::object::Array<'_>>(b"OutputIntents" as &[u8]))
+            .map(|intents| {
+                intents.iter::<Dict<'_>>().any(|d| {
+                    d.get::<Name>(b"S" as &[u8])
+                        .is_some_and(|s| s.as_ref() == b"GTS_PDFA1")
+                })
+            })
+            .unwrap_or(false)
+    };
     println!("Has OutputIntent: {has_oi}");
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
