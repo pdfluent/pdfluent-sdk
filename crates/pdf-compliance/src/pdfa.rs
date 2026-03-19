@@ -1901,7 +1901,20 @@ fn check_stream_length_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
 /// (clause numbers shifted between PDF/A-2/3 and PDF/A-4).
 /// The check function emits the correct rule ID based on the part number.
 fn check_object_syntax(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    let before = report.issues.len();
     check::check_object_syntax_spacing(pdf, level.part(), report);
+    // For PDF/A-4: check_object_syntax_spacing emits "6.1.8" (object-syntax violations),
+    // but the global remap (4, "6.1.8") => Some("6.1.6.2") exists for LZW-filter
+    // violations. Object-syntax "6.1.8" must stay as "6.1.8" in veraPDF.
+    // Retag to "6.1.8-obj" so the LZW remap doesn't capture it; remap_clause_numbers
+    // then maps "6.1.8-obj" back to "6.1.8". (#496)
+    if level.part() == 4 {
+        for issue in &mut report.issues[before..] {
+            if issue.rule == "6.1.8" {
+                issue.rule = "6.1.8-obj".to_string();
+            }
+        }
+    }
 }
 
 /// §6.7.8 — XMP extension schema validation.
@@ -1995,6 +2008,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.1.6") => Some("6.1.5"),    // hex strings
             (4, "6.1.8") => Some("6.1.6.2"),  // stream filters (LZWDecode etc.)
             (4, "6.1.10") => Some("6.1.6.2"), // PDF/A-1 filter rule → PDF/A-4
+            // Object-syntax spacing retagged to "6.1.8-obj" in check_object_syntax to
+            // avoid collision with the LZW-filter remap above. veraPDF uses "6.1.8". (#496)
+            (4, "6.1.8-obj") => Some("6.1.8"),
 
             // Stream checks: Length, EOL, empty keys, external refs
             // PDF/A-1: §6.1.7, PDF/A-2/3: §6.1.7 (same), PDF/A-4: §6.1.6.1
@@ -2104,8 +2120,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.3.6 (ISO 19005-1 — veraPDF uses §6.3.6 for width consistency)
             // Previously wrongly remapped to §6.3.5; fixed in #467.
             (1, "6.3.5-fw") => Some("6.3.6"),
-            // PDF/A-2/3: §6.2.11.8 (glyph width consistency, not CIDSet). (#483)
-            (2..=3, "6.3.5-fw") => Some("6.2.11.8"),
+            // PDF/A-2/3: §6.2.11.5 (glyph width consistency). veraPDF uses §6.2.11.5 t1.
+            (2..=3, "6.3.5-fw") => Some("6.2.11.5"),
             // PDF/A-4: §6.2.10.5
             (4, "6.3.5-fw") => Some("6.2.10.5"),
 
@@ -2170,8 +2186,7 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.3.7") => Some("6.2.11.3.2"),
 
             // CIDSystemInfo compatibility (internal rule "6.3.3.1").
-            // PDF/A-1: veraPDF uses §6.3.7 for CIDSystemInfo violations.
-            (1, "6.3.3.1") => Some("6.3.7"),
+            // PDF/A-1: veraPDF uses §6.3.3.1 directly — no remap needed.
 
             // CIDSystemInfo mismatch (check_cidsystem_info_consistency emits "6.2.10.3.1").
             // PDF/A-2/3: §6.2.11.3.1. (#483)
@@ -2249,16 +2264,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Our checker emits "6.2.3.3" (PDF/A-2/3 numbering).
             (4, "6.2.3.3") => Some("6.2.4.3"),
 
-            // Undefined operators: veraPDF uses §6.2.10 for PDF/A-1.
-            // Our check_page_content_streams emits "6.2.7.1"; remap for PDF/A-1.
-            (1, "6.2.7.1") => Some("6.2.10"),
-
-            // Stream keyword / object syntax spacing.
-            // PDF/A-1 already handled above: (1, "6.1.7.1") => Some("6.1.7").
-            // PDF/A-2/3: check_object_syntax_spacing emits "6.1.7.1" but veraPDF uses
-            // the parent clause "6.1.7" for ALL stream-structure violations in parts 1-3.
-            // Remap to parent so sub-rule matching succeeds. (#496)
-            (2..=3, "6.1.7.1") => Some("6.1.7"),
+            // Undefined operators: veraPDF uses §6.2.10 for PDF/A-1, §6.2.2 for PDF/A-4.
+            // Our check_page_content_streams emits "6.2.10" for PDF/A-1 (direct),
+            // "6.2.7.1" for PDF/A-2+. PDF/A-4 needs remap to §6.2.2.
+            (4, "6.2.7.1") => Some("6.2.2"),
 
             // TrueType encoding requirements.
             // PDF/A-1: check.rs emits "6.2.11.6" (PDF/A-2/3 clause numbering); remap to
