@@ -2386,8 +2386,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.9") => Some("6.2.5"),
 
             // Lang tag validation
-            // Our canonical: 6.8.4, PDF/A-2/3: 6.7.4 (PDF/A-1 uses 6.8.4 natively)
-            (2..=3, "6.8.4") => Some("6.7.4"),
+            // veraPDF uses §6.8.4 for ALL PDF/A parts — no remap needed.
+            // The previous (2..=3,"6.8.4")=>"6.7.4" remap was wrong and caused 4 FNs. (#FN-6.8.4)
 
             // CIDSystemInfo compatibility
             // PDF/A-2/3: §6.2.11.3.1
@@ -2483,6 +2483,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: veraPDF uses §6.3.3.1 directly — no remap needed.
 
             // CIDSystemInfo mismatch (check_cidsystem_info_consistency emits "6.2.10.3.1").
+            // PDF/A-1: §6.3.3.1 (clause numbering differs from PDF/A-4). (#FN-6.3.3.1)
+            (1, "6.2.10.3.1") => Some("6.3.3.1"),
             // PDF/A-2/3: §6.2.11.3.1. (#483)
             (2..=3, "6.2.10.3.1") => Some("6.2.11.3.1"),
 
@@ -2598,6 +2600,58 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // CMap external reference: check.rs emits "6.3.3.3" for CMap references.
             // PDF/A-1: §6.3.3.3 (already correct).
             // PDF/A-4: already remapped to "6.2.10.3.3" above.
+
+            // Info dict / XMP consistency sub-clauses → §6.7.3.
+            // check_info_xmp_deep emits "6.7.3.1"–"6.7.3.8" (sub-clauses); veraPDF reports the
+            // parent §6.7.3 for all Info/XMP consistency violations in all PDF/A parts. (#FN-6.7.3)
+            (_, "6.7.3.1") => Some("6.7.3"),
+            (_, "6.7.3.2") => Some("6.7.3"),
+            (_, "6.7.3.3") => Some("6.7.3"),
+            (_, "6.7.3.4") => Some("6.7.3"),
+            (_, "6.7.3.5") => Some("6.7.3"),
+            (_, "6.7.3.6") => Some("6.7.3"),
+            (_, "6.7.3.7") => Some("6.7.3"),
+            (_, "6.7.3.8") => Some("6.7.3"),
+
+            // ── Image XObject Interpolate/Alternates/OPI remaps ──
+
+            // /Interpolate true: check.rs emits "6.2.8.1".
+            // PDF/A-2/3: veraPDF uses parent §6.2.8 for all image restrictions.
+            // PDF/A-4: veraPDF uses §6.2.7.1.
+            (2..=3, "6.2.8.1") => Some("6.2.8"),
+            (4, "6.2.8.1") => Some("6.2.7.1"),
+            // /Alternates: check.rs emits "6.2.8.2". Same parent clause.
+            (2..=3, "6.2.8.2") => Some("6.2.8"),
+
+            // ── PDF/A-4 font width remaps ──
+
+            // Font width mismatches: our width check emits "6.2.11.5" (PDF/A-2/3).
+            // PDF/A-4: veraPDF uses §6.2.10.5.
+            (4, "6.2.11.5") => Some("6.2.10.5"),
+
+            // ToUnicode missing: check.rs emits "6.2.11.7.2" for PDF/A-2/3.
+            // PDF/A-4: already remapped to "6.2.10.7" above.
+
+            // CIDSet missing: check.rs emits "6.3.5" for PDF/A-1.
+            // PDF/A-4: "6.2.11.4.2" → "6.2.10.4.2" already above.
+
+            // Font embedding: "6.2.11.4.1" stays for PDF/A-2/3.
+            // PDF/A-4: "6.3.4" → "6.2.10.4.1" already above.
+
+            // ── OutputIntent/ICC remaps ──
+
+            // OutputIntent consistency (multiple DestOutputProfile entries).
+            // PDF/A-4: veraPDF uses §6.2.3 (not §6.2.2).
+            // Our check_output_intent_consistency emits "6.2.2".
+            // Note: "6.2.2" is also used for undefined operators (PDF/A-4 remap from 6.2.7.1).
+            // Only remap "6.2.2" that comes from OutputIntent checks (has "OutputIntent" in message).
+            // Since we can't distinguish by message in remap, use a separate internal rule.
+
+            // PostScript XObject check: check.rs emits "6.2.9" for PS XObjects.
+            // PDF/A-1: veraPDF uses §6.2.7. Our remap (1,"6.2.9")=>"6.2.5" already exists
+            // but veraPDF uses "6.2.7" for PS XObjects (not "6.2.5" which is rendering intent).
+            // Fix: specific remap for PS XObject rule.
+
             _ => None,
         };
         if let Some(r) = new_rule {

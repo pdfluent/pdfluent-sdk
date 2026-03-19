@@ -2475,12 +2475,9 @@ pub fn check_annotation_flags(pdf: &Pdf, part: u8, report: &mut ComplianceReport
             continue;
         };
         for annot in annots.iter::<Dict<'_>>() {
-            // Skip Popup annotations
-            if let Some(subtype) = annot.get::<Name>(keys::SUBTYPE) {
-                if subtype.as_ref() == b"Popup" {
-                    continue;
-                }
-            }
+            let is_popup = annot
+                .get::<Name>(keys::SUBTYPE)
+                .is_some_and(|s| s.as_ref() == b"Popup");
 
             if let Some(flags) = annot.get::<i32>(keys::F) {
                 // Bit 1 (0x01) = Invisible, Bit 2 (0x02) = Hidden,
@@ -2492,7 +2489,10 @@ pub fn check_annotation_flags(pdf: &Pdf, part: u8, report: &mut ComplianceReport
                 let no_view = flags & 0x20 != 0;
                 let toggle_no_view = flags & 0x100 != 0;
 
-                if !print || invisible || hidden || no_view || toggle_no_view {
+                // Popup annotations are exempt from the Print flag requirement
+                // (§6.3.2 / §6.5.3), but forbidden flags must still be clear. (#FN-6.3.2)
+                let print_ok = is_popup || print;
+                if !print_ok || invisible || hidden || no_view || toggle_no_view {
                     error_at(
                         report,
                         rule,
@@ -2502,7 +2502,7 @@ pub fn check_annotation_flags(pdf: &Pdf, part: u8, report: &mut ComplianceReport
                         format!("page {}", page_idx + 1),
                     );
                 }
-            } else {
+            } else if !is_popup {
                 let subtype_name = annot
                     .get::<Name>(keys::SUBTYPE)
                     .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or("?").to_string())
@@ -3598,13 +3598,11 @@ fn check_halftone_in_extgstate(
     };
     for (gs_name, _) in gs_dict.entries() {
         // Resolve indirect ExtGState entry references via xref
-        let gs_opt: Option<Dict<'_>> = gs_dict
-            .get::<Dict<'_>>(gs_name.as_ref())
-            .or_else(|| {
-                gs_dict
-                    .get_ref(gs_name.as_ref())
-                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
-            });
+        let gs_opt: Option<Dict<'_>> = gs_dict.get::<Dict<'_>>(gs_name.as_ref()).or_else(|| {
+            gs_dict
+                .get_ref(gs_name.as_ref())
+                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+        });
         let Some(gs) = gs_opt else {
             continue;
         };
@@ -8130,6 +8128,52 @@ pub fn check_annotation_subtypes_deep(pdf: &Pdf, part: u8, report: &mut Complian
                     format!("page {}", page_idx + 1),
                 );
             }
+
+            // PDF/A-4 §6.3.1: annotation Subtype must be defined in ISO 32000-2:2020.
+            // Unknown / non-standard types (e.g. lowercase "/line") are a violation. (#FN-6.5.1)
+            if part == 4 {
+                const ISO32000_TYPES: &[&[u8]] = &[
+                    b"Text",
+                    b"Link",
+                    b"FreeText",
+                    b"Line",
+                    b"Square",
+                    b"Circle",
+                    b"Polygon",
+                    b"PolyLine",
+                    b"Highlight",
+                    b"Underline",
+                    b"Squiggly",
+                    b"StrikeOut",
+                    b"Stamp",
+                    b"Caret",
+                    b"Ink",
+                    b"Popup",
+                    b"FileAttachment",
+                    b"Sound",
+                    b"Movie",
+                    b"Screen",
+                    b"Widget",
+                    b"PrinterMark",
+                    b"TrapNet",
+                    b"Watermark",
+                    b"3D",
+                    b"Redact",
+                    b"Projection",
+                    b"RichMedia",
+                ];
+                if !ISO32000_TYPES.contains(&st) {
+                    let name = std::str::from_utf8(st).unwrap_or("?");
+                    error_at(
+                        report,
+                        rule,
+                        format!(
+                            "Annotation type /{name} is not defined in ISO 32000-2:2020 (§6.3.1)"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+            }
         }
     }
 }
@@ -8171,6 +8215,20 @@ pub fn check_annotation_flags_deep(pdf: &Pdf, part: u8, report: &mut ComplianceR
                         format!("page {}", page_idx + 1),
                     );
                 }
+            }
+        }
+    }
+
+    // PDF/A-2/3 §6.5.2 t2: The document Catalog shall not contain an /AA entry.
+    // (veraPDF reports §6.5.2 for this — same clause as non-widget annotation /AA.) (#FN-6.5.2)
+    if matches!(part, 2 | 3) {
+        if let Some(cat) = catalog(pdf) {
+            if cat.contains_key(b"AA" as &[u8]) {
+                error(
+                    report,
+                    "6.5.2",
+                    "Document Catalog contains forbidden /AA entry (PDF/A-2/3 §6.5.2)",
+                );
             }
         }
     }
