@@ -1160,8 +1160,11 @@ fn check_output_intent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
     if level.part() == 4 {
         return;
     }
-    // §6.6.2 in PDF/A-1 (ISO 19005-1), §6.2.2 in PDF/A-2/3
-    let rule = if level.part() == 1 { "6.6.2" } else { "6.2.2" };
+    // §6.6.2 in PDF/A-1 (ISO 19005-1), §6.2.2 in PDF/A-2/3.
+    // Use "6.6.2-oi" (OutputIntent variant) so remap_clause_numbers can distinguish
+    // this from field/catalog /AA violations that also use "6.6.2" but must NOT be
+    // remapped to "6.2.2" (veraPDF reports §6.6.2 for /AA violations in PDF/A-1).
+    let rule = if level.part() == 1 { "6.6.2-oi" } else { "6.2.2" };
     if !check::has_output_intent(pdf) {
         check::error(
             report,
@@ -2503,10 +2506,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.3.3-nd") => Some("6.2.10.4.1"),
 
             // OutputIntent requirements (missing GTS_PDFA1, multiple GTS_PDFA1 entries).
-            // check_output_intent emits "6.6.2" for PDF/A-1 OutputIntent violations.
+            // check_output_intent emits "6.6.2-oi" for PDF/A-1 OutputIntent violations.
             // veraPDF uses §6.2.2 for ALL PDF/A-1 OutputIntent violations (confirmed
             // by isartor 6-2-2-t03 FN where multiple GTS_PDFA1 entries → "6.2.2"). (#FN-6.2.2)
-            (1, "6.6.2") => Some("6.2.2"),
+            // Note: Field /AA and Catalog /AA violations emit "6.6.2" and must NOT be
+            // remapped here (veraPDF uses "6.6.2" for /AA in PDF/A-1).
+            (1, "6.6.2-oi") => Some("6.2.2"),
 
             // OutputIntent ICC profile class (prtr/mntr) check
             // PDF/A-1: veraPDF uses §6.2.2 for all OutputIntent/ICC violations.
