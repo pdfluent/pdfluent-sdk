@@ -141,6 +141,10 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report);
         // §6.2.10.9: no .notdef glyph (CID 0x0000) in text operators. (#496)
         check::check_notdef_glyph_usage(pdf, &mut report);
+        // §6.2.10.9: ToUnicode must not map to C0 control codepoints.
+        check::check_tounicode_c0_forbidden(pdf, &mut report);
+        // §6.2.10.9: every rendered Type0 CID must be in the ToUnicode CMap.
+        check::check_type0_cid_tounicode_coverage(pdf, &mut report);
     }
     check_symbolic_truetype_encoding(pdf, &mut report);
     check_cidtogidmap_identity(pdf, &mut report);
@@ -502,6 +506,16 @@ pub fn validate_with_progress(
         tracked!(
             "check_notdef_glyph_usage",
             check::check_notdef_glyph_usage(pdf, &mut report)
+        );
+        // §6.2.10.9: ToUnicode must not map to C0 control codepoints.
+        tracked!(
+            "check_tounicode_c0_forbidden",
+            check::check_tounicode_c0_forbidden(pdf, &mut report)
+        );
+        // §6.2.10.9: every rendered Type0 CID must be in the ToUnicode CMap.
+        tracked!(
+            "check_type0_cid_tounicode_coverage",
+            check::check_type0_cid_tounicode_coverage(pdf, &mut report)
         );
     }
     tracked!(
