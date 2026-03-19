@@ -1120,6 +1120,14 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 /// XMP metadata must declare the correct PDF/A part and conformance.
 /// PDF/A-1: §6.7.11, PDF/A-2/3: §6.6.4, PDF/A-4: §6.5.2.
 fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // PDF/A-1 §6.7.2: missing XMP stream → "the file shall contain a metadata stream" violation.
+    // §6.7.11 applies only when XMP exists but lacks the pdfaid identification schema.
+    // veraPDF fires §6.7.2 (not §6.7.11) when the catalog has no /Metadata stream. Fixes #FP-6.7.11.
+    let missing_xmp_rule = match level.part() {
+        1 => "6.7.2",
+        4 => "6.5.2",
+        _ => "6.6.4",
+    };
     let rule = match level.part() {
         1 => "6.7.11",
         4 => "6.5.2",
@@ -1127,7 +1135,7 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     };
 
     let Some(xmp) = check::get_xmp_metadata(pdf) else {
-        check::error(report, rule, "No XMP metadata stream in catalog");
+        check::error(report, missing_xmp_rule, "No XMP metadata stream in catalog");
         // If the catalog has a /Metadata key but the pointed-to object is not a stream
         // (e.g., points to a Font dict — as in PDFBOX-3105-1), and the trailer also has
         // an /Info reference, then metadata synchronization (§6.7.3) is broken.

@@ -324,6 +324,14 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
                 "6.7.9",
                 "rdf:li uses bare 'lang' attribute instead of 'xml:lang' (unregistered attribute namespace)",
             );
+            // §6.7.11 cascade: bare lang= attribute causes non-conformant XMP serialization
+            // which prevents reliable parsing of the pdfaid identification schema.
+            // veraPDF reports §6.7.11 alongside §6.7.9 in this case. Fixes #FN-6.7.11 (pdfbox-3017.pdf).
+            error(
+                report,
+                "6.7.11",
+                "XMP namespace violations affect PDF/A identification schema reliability",
+            );
         }
     }
     // §6.7.11 test=4/5 — pdfaid namespace must use 'pdfaid' prefix
