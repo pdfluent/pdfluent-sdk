@@ -2930,49 +2930,37 @@ fn check_oc_config_name_uniqueness(pdf: &Pdf, level: PdfALevel, report: &mut Com
 /// §6.8 (PDF/A-2): file specification dicts with /EF must have /F and /UF keys.
 ///
 /// check.rs `check_embedded_file_spec_keys` returns early for `part < 3`; this adds
-/// the equivalent check for PDF/A-2 with rule "6.8". (#FN-6.8)
+/// the equivalent check for PDF/A-2 with rule "6.8". Scans all indirect objects for
+/// /Type /Filespec dicts that have /EF, matching veraPDF's CosFileSpecification approach. (#FN-6.8)
 fn check_embedded_file_spec_keys_pdfa2(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     if level.part() != 2 {
         return;
     }
-    let Some(cat) = check::catalog(pdf) else {
-        return;
-    };
-    let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) else {
-        return;
-    };
-    let Some(ef_tree) = names.get::<Dict<'_>>(keys::EMBEDDED_FILES) else {
-        return;
-    };
-    let Some(names_arr) = ef_tree.get::<Array<'_>>(keys::NAMES) else {
-        return;
-    };
-
-    let items: Vec<Object<'_>> = names_arr.iter::<Object<'_>>().collect();
-    for chunk in items.chunks(2) {
-        let spec = match chunk.get(1) {
-            Some(Object::Dict(d)) => d,
+    for obj in pdf.objects() {
+        let dict = match &obj {
+            Object::Dict(d) => d.clone(),
             _ => continue,
         };
-        if !spec.contains_key(keys::EF) {
+        // Only check /Type /Filespec dicts.
+        let is_filespec = dict
+            .get::<Name>(keys::TYPE)
+            .is_some_and(|t| t.as_ref().eq_ignore_ascii_case(b"Filespec"));
+        if !is_filespec {
+            continue;
+        }
+        // Only check specs that have an /EF (embedded file) key.
+        if !dict.contains_key(keys::EF) {
             continue;
         }
         // §6.8 T2: /F and /UF must be present and non-null.
-        if !matches!(spec.get::<Object<'_>>(keys::F), Some(obj) if !matches!(obj, Object::Null(_)))
-        {
-            error(
-                report,
-                "6.8",
-                "Embedded file specification missing /F key (§6.8 T2)",
-            );
+        if !matches!(dict.get::<Object<'_>>(keys::F), Some(obj) if !matches!(obj, Object::Null(_))) {
+            error(report, "6.8", "Embedded file specification missing /F key (§6.8 T2)");
         }
-        if !matches!(spec.get::<Object<'_>>(b"UF" as &[u8]), Some(obj) if !matches!(obj, Object::Null(_)))
-        {
-            error(
-                report,
-                "6.8",
-                "Embedded file specification missing /UF key (§6.8 T2)",
-            );
+        if !matches!(
+            dict.get::<Object<'_>>(b"UF" as &[u8]),
+            Some(obj) if !matches!(obj, Object::Null(_))
+        ) {
+            error(report, "6.8", "Embedded file specification missing /UF key (§6.8 T2)");
         }
     }
 }
