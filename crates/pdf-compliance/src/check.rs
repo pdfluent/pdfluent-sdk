@@ -14288,7 +14288,7 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
             }
         }
 
-        // Form XObjects — only for undefined operators
+        // Form XObjects — undefined operators + BDC /ActualText PUA.
         let xobjects = &page.resources().x_objects;
         for (name, _) in xobjects.entries() {
             let Some(stream) = xobjects.get::<Stream<'_>>(name.as_ref()) else {
@@ -14308,6 +14308,15 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
                         report,
                         undef_op_rule,
                         format!("Form XObject {xn} contains undefined operator"),
+                        loc.clone(),
+                    );
+                }
+                // §6.2.10.8 — BDC /ActualText PUA in Form XObject content. (#FN-6.2.10.8)
+                if scan_bdc_actualtext_pua(&decoded) {
+                    error_at(
+                        report,
+                        "6.2.10.8",
+                        "BDC marked content /ActualText in Form XObject contains PUA codepoint",
                         loc.clone(),
                     );
                 }
