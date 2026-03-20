@@ -7,9 +7,16 @@ repository.workspace = true
 description = "PDF content extraction: images, text with positions, and full-text search"
 
 [dependencies]
-lopdf.workspace = true
 thiserror.workspace = true
 flate2 = "1"
+
+# lopdf: full-featured on native, wasm_js backend (no rayon) on wasm32.
+# Direct path used (not workspace = true) to allow default-features = false override.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lopdf = { path = "../lopdf" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"] }
 
 [dev-dependencies]
 tempfile = "3"

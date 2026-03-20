@@ -7,8 +7,16 @@ description = "PDF compliance checking (PDF/A, PDF/UA)."
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax" }
-lopdf.workspace = true
 thiserror = "2"
 log = "0.4"
 cff-parser.workspace = true
 ttf-parser.workspace = true
+
+# lopdf: full-featured on native (default features = rayon/chrono/jiff/time),
+# wasm_js backend only (no rayon) on wasm32. Cannot use workspace = true here
+# because workspace default-features override per-crate default-features = false.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lopdf = { path = "../lopdf" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"] }
