@@ -7,8 +7,13 @@ description = "AcroForm engine for PDF interactive forms."
 
 [dependencies]
 pdf-syntax = { path = "../pdf-syntax" }
-lopdf = { workspace = true }
 thiserror = { workspace = true }
 log = "0.4"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lopdf = { path = "../lopdf" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"] }
 
 [dev-dependencies]
