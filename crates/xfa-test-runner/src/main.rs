@@ -320,6 +320,10 @@ enum Command {
         /// Run ID (auto-generated if not provided)
         #[arg(long)]
         run_id: Option<String>,
+
+        /// Path to pre-generated oracle database (passed to each child single-pdf process)
+        #[arg(long)]
+        oracle_db: Option<PathBuf>,
     },
 
     /// Render one page of a PDF to a PNG file (for render comparison scripts)
@@ -850,6 +854,7 @@ fn main() {
             no_verapdf,
             verapdf_path,
             run_id,
+            oracle_db: oracle_db_path,
         } => {
             // Collect PDF list.
             let pdfs = match (corpus, pdf_list) {
@@ -910,6 +915,10 @@ fn main() {
             } else {
                 extra.push("--verapdf-path".to_string());
                 extra.push(verapdf_path.to_string_lossy().to_string());
+            }
+            if let Some(ref odb_path) = oracle_db_path {
+                extra.push("--oracle-db".to_string());
+                extra.push(odb_path.to_string_lossy().to_string());
             }
 
             // Path to this binary (used to spawn children).
