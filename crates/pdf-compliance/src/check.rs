@@ -4440,7 +4440,13 @@ pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
         // §6.2.11.6: all names in /Differences must be valid AGL glyph names.
-        check_encoding_differences_agl(&enc_dict, name, page_idx, report);
+        // Exception: fonts with a /ToUnicode CMap are exempt because the Unicode
+        // mapping is provided by the CMap, not by glyph name → AGL lookup.
+        // veraPDF does not fire for fonts that have /ToUnicode. (#FP-6.2.11.6)
+        let has_tounicode = font_has_tounicode(font_dict);
+        if !has_tounicode {
+            check_encoding_differences_agl(&enc_dict, name, page_idx, report);
+        }
     });
 }
 
@@ -4569,6 +4575,7 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
         b"Emacron",
         b"Eogonek",
         b"Eth",
+        b"Euro",
         b"F",
         b"G",
         b"Gbreve",
