@@ -279,6 +279,51 @@ impl FontMap {
             .unwrap_or(false)
     }
 
+    /// For a CID font, return the byte offset in `orig_bytes` after the first
+    /// `char_count` decoded Unicode chars.
+    ///
+    /// Each CID code is 2 bytes. Some codes map to multiple Unicode chars via
+    /// `BfString::String` (e.g. ligatures). This function walks the bytes
+    /// two at a time, accumulating decoded char counts, and returns the byte
+    /// offset once `char_count` chars have been consumed.
+    ///
+    /// Falls back to `char_count * 2` when the ToUnicode CMap is unavailable,
+    /// assuming a 1:1 char-to-CID-code mapping.
+    pub(crate) fn cid_byte_offset_for_chars(
+        &self,
+        font_name: &str,
+        orig_bytes: &[u8],
+        char_count: usize,
+    ) -> usize {
+        if char_count == 0 {
+            return 0;
+        }
+        let info = match self.fonts.get(font_name) {
+            Some(info) => info,
+            None => return char_count * 2,
+        };
+        let cmap = match info.to_unicode {
+            Some(ref c) => c,
+            None => return char_count * 2,
+        };
+        let mut chars_seen = 0;
+        let mut i = 0;
+        while i + 1 < orig_bytes.len() {
+            if chars_seen >= char_count {
+                break;
+            }
+            let code = u32::from(orig_bytes[i]) << 8 | u32::from(orig_bytes[i + 1]);
+            let n = match cmap.lookup_bf_string(code) {
+                Some(BfString::Char(_)) => 1,
+                Some(BfString::String(ref s)) => s.chars().count().max(1),
+                None => 1,
+            };
+            chars_seen += n;
+            i += 2;
+        }
+        i
+    }
+
     /// Build a reverse map (Unicode char → character code) for a font.
     ///
     /// Priority:
