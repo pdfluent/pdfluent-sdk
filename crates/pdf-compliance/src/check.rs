@@ -8598,7 +8598,8 @@ pub fn check_tounicode_cmap(
             // For PDF/A-u (requires_unicode=true), "no explicit encoding" is NOT exempt:
             // fonts like TeX CM fonts have built-in non-AGL names (e.g. integraldisplay)
             // and veraPDF fires §6.2.11.7.2 for them. (#FN-6.2.11.7.2)
-            let no_enc_exempt = !requires_unicode && encoding_name.is_none() && encoding_dict.is_none();
+            let no_enc_exempt =
+                !requires_unicode && encoding_name.is_none() && encoding_dict.is_none();
             if uses_predefined_encoding || no_enc_exempt {
                 // Exempt: predefined or built-in encoding — Unicode mapping known.
             } else if part == 4 {

@@ -417,7 +417,10 @@ pub fn validate_with_progress(
         "check_annotation_color_arrays",
         check_annotation_color_arrays(pdf, &mut report)
     );
-    tracked!("check_form_xobjects", check_form_xobjects(pdf, level, &mut report));
+    tracked!(
+        "check_form_xobjects",
+        check_form_xobjects(pdf, level, &mut report)
+    );
     tracked!(
         "check_page_boundary_sizes",
         check_page_boundary_sizes(pdf, &mut report)
@@ -863,7 +866,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         "check_annotation_color_arrays",
         check_annotation_color_arrays(pdf, &mut report)
     );
-    timed!("check_form_xobjects", check_form_xobjects(pdf, level, &mut report));
+    timed!(
+        "check_form_xobjects",
+        check_form_xobjects(pdf, level, &mut report)
+    );
     timed!(
         "check_page_boundary_sizes",
         check_page_boundary_sizes(pdf, &mut report)
