@@ -1577,9 +1577,10 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
 /// §6.7.5 — pdfaid:corr handling.
 fn check_pdfa_id_properties(xmp: &str, level: PdfALevel, report: &mut ComplianceReport) {
     if level.part() >= 2 {
-        // §6.7.4: pdfaid:amd forbidden in PDF/A-2, PDF/A-3, and PDF/A-4
-        let has_amd =
-            extract_nested_value(xmp, "pdfaid:amd").is_some() || xmp.contains("pdfaid:amd=");
+        // §6.7.4: pdfaid:amd forbidden in PDF/A-2, PDF/A-3, and PDF/A-4.
+        // Detect all forms: element (<pdfaid:amd>...</pdfaid:amd>, <pdfaid:amd/>,
+        // <pdfaid:amd></pdfaid:amd>) and attribute (pdfaid:amd="...").
+        let has_amd = xmp.contains("<pdfaid:amd") || xmp.contains("pdfaid:amd=");
         if has_amd {
             error(
                 report,

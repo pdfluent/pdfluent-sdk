@@ -2565,6 +2565,34 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         }
     }
 
+    // Check Subject (/Info Subject vs dc:description) — §6.7.3.4
+    if let Some(subject) = &metadata.subject {
+        if !xmp_text.contains("dc:description") {
+            error(
+                report,
+                "6.7.3.4",
+                "/Info has Subject but XMP is missing dc:description",
+            );
+        } else {
+            let xmp_desc = extract_rdf_alt_value(xmp_text, "dc:description");
+            if let Some(xmp_val) = &xmp_desc {
+                if let Some(info_decoded) = decode_pdf_info_string(subject) {
+                    if info_decoded.trim() != xmp_val.trim() {
+                        error(
+                            report,
+                            "6.7.3.4",
+                            format!(
+                                "Subject mismatch: Info='{}' vs XMP='{}'",
+                                info_decoded.chars().take(50).collect::<String>(),
+                                xmp_val.chars().take(50).collect::<String>()
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // Check Keywords (/Info Keywords vs pdf:Keywords) — §6.7.3.5
     if let Some(keywords) = &metadata.keywords {
         // Detect wrong-case variant: pdf:keywords (lowercase) is not a valid XMP property.
