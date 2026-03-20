@@ -308,4 +308,18 @@ mod tests {
         assert_eq!(PdfXLevel::X32003.version_string(), "PDF/X-3:2003");
         assert_eq!(PdfXLevel::X4.version_string(), "PDF/X-4");
     }
+
+    #[test]
+    fn empty_pdf_fails_pdfx() {
+        let data = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n\
+          2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n\
+          xref\n0 3\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n\
+          trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n109\n%%EOF"
+            .to_vec();
+        if let Ok(pdf) = pdf_syntax::Pdf::new(data) {
+            let report = validate(&pdf, PdfXLevel::X4);
+            assert!(!report.is_compliant());
+            assert!(report.error_count() > 0);
+        }
+    }
 }
