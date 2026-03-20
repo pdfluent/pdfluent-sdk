@@ -2438,13 +2438,13 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         return;
     };
 
-    // If XMP is structurally malformed (detected as §6.7.11 / §6.7.9.1 violation),
-    // veraPDF still reports §6.7.3 when Info dict has metadata that cannot be
-    // reliably extracted from the broken XMP. Fixes #467 (isartor-6-7-9-t01).
-    let xmp_structurally_invalid = report
-        .issues
-        .iter()
-        .any(|i| i.rule == "6.7.11" || i.rule.starts_with("6.7.9"));
+    // If XMP is structurally malformed (§6.7.11: unparseable XML), veraPDF also
+    // reports §6.7.3 because Info dict fields cannot be verified against broken XMP.
+    // Only trigger this for genuine structural breakage (6.7.11), not for semantic
+    // extension-schema violations (6.7.9.x) which don't prevent XMP parsing.
+    // Fixes #467 (isartor-6-7-9-t01). Narrowed to 6.7.11-only to avoid FP on
+    // PDFs that have 6.7.9 violations but parseable XMP. (#FP-6.7.3)
+    let xmp_structurally_invalid = report.issues.iter().any(|i| i.rule == "6.7.11");
     if xmp_structurally_invalid && has_info_meta {
         error(
             report,
@@ -2460,9 +2460,12 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     // when both Info and XMP have conflicting values for the SAME property.
 
     // Check Creator (/Info Creator vs xmp:CreatorTool) — §6.7.3.6
+    // Also accept legacy xap: alias. (#FP-6.7.3)
     if metadata.creator.is_some() {
         let xmp_creator = extract_xmp_value(xmp_text, "xmp:CreatorTool")
-            .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreatorTool"));
+            .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreatorTool"))
+            .or_else(|| extract_xmp_value(xmp_text, "xap:CreatorTool"))
+            .or_else(|| extract_xmp_attr(xmp_text, "xap:CreatorTool"));
         if xmp_creator.is_none() {
             error(
                 report,
@@ -2486,8 +2489,11 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 
     // Check CreationDate (/Info CreationDate vs xmp:CreateDate) — §6.7.3.1
+    // Also accept legacy xap: alias (xap: was renamed to xmp: in XMP spec 2008). (#FP-6.7.3)
     let xmp_create_date = extract_xmp_value(xmp_text, "xmp:CreateDate")
-        .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreateDate"));
+        .or_else(|| extract_xmp_attr(xmp_text, "xmp:CreateDate"))
+        .or_else(|| extract_xmp_value(xmp_text, "xap:CreateDate"))
+        .or_else(|| extract_xmp_attr(xmp_text, "xap:CreateDate"));
     if metadata.creation_date.is_some() && xmp_create_date.is_none() {
         error(
             report,
@@ -2497,8 +2503,11 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 
     // Check ModDate (/Info ModDate vs xmp:ModifyDate) — §6.7.3.8
+    // Also accept legacy xap: alias. (#FP-6.7.3)
     let xmp_mod_date = extract_xmp_value(xmp_text, "xmp:ModifyDate")
-        .or_else(|| extract_xmp_attr(xmp_text, "xmp:ModifyDate"));
+        .or_else(|| extract_xmp_attr(xmp_text, "xmp:ModifyDate"))
+        .or_else(|| extract_xmp_value(xmp_text, "xap:ModifyDate"))
+        .or_else(|| extract_xmp_attr(xmp_text, "xap:ModifyDate"));
     if metadata.modification_date.is_some() && xmp_mod_date.is_none() {
         error(
             report,
@@ -8144,10 +8153,10 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                     if let Ok(data) = ff.decoded() {
                         let is_corrupt = is_font_program_corrupt(&data, is_truetype, is_cff);
                         if is_corrupt {
-                            // PDF/A-1 §6.3.2: glyphs must be present; corrupt font = absent.
-                            // veraPDF also fires §6.3.4 for all PDF/A parts for this case.
-                            // PDF/A-2/3/4: §6.3.4 (remapped from "6.3.4" directly).
-                            let rule = if part == 1 { "6.3.2-null" } else { "6.3.4" };
+                            // veraPDF fires §6.3.4 (not §6.3.2) for corrupt font programs in
+                            // all PDF/A parts. "6.3.3" remaps to "6.3.4" for PDF/A-1;
+                            // "6.3.4" remaps to "6.2.11.4.1" for PDF/A-2/3. (#FP-6.3.2)
+                            let rule = if part == 1 { "6.3.3" } else { "6.3.4" };
                             error_at(
                                 report,
                                 rule,
@@ -8156,18 +8165,6 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                                 ),
                                 format!("page {}", page_idx + 1),
                             );
-                            // veraPDF emits §6.3.4 for PDF/A-1 corrupt fonts too. (#FN-6.3.4)
-                            // "6.3.3" is remapped to "6.3.4" for PDF/A-1.
-                            if part == 1 {
-                                error_at(
-                                    report,
-                                    "6.3.3",
-                                    format!(
-                                        "Font {font_name} has corrupt/null font program (invalid or empty stream)"
-                                    ),
-                                    format!("page {}", page_idx + 1),
-                                );
-                            }
                         }
                     }
                 }
@@ -8295,10 +8292,10 @@ fn check_cidfont_descriptor_deep(
     if let Some(ff) = ff_stream {
         if let Ok(data) = ff.decoded() {
             if is_font_program_corrupt(&data, is_truetype, is_cff) {
-                // PDF/A-1 §6.3.2: TrueType font with invalid program; corrupt font = absent.
-                // veraPDF also fires §6.3.4 for all PDF/A parts for this case. (#467)
-                // PDF/A-2/3/4: §6.3.4 (remapped from "6.3.4" directly).
-                let rule = if part == 1 { "6.3.2-null" } else { "6.3.4" };
+                // veraPDF fires §6.3.4 (not §6.3.2) for corrupt font programs in all parts.
+                // "6.3.3" remaps to "6.3.4" for PDF/A-1; "6.3.4" → "6.2.11.4.1" for PDF/A-2/3.
+                // (#FP-6.3.2)
+                let rule = if part == 1 { "6.3.3" } else { "6.3.4" };
                 error_at(
                     report,
                     rule,
@@ -8307,18 +8304,6 @@ fn check_cidfont_descriptor_deep(
                     ),
                     format!("page {}", page_idx + 1),
                 );
-                // veraPDF emits §6.3.4 for PDF/A-1 corrupt CIDFont programs too. (#FN-6.3.4)
-                // "6.3.3" is remapped to "6.3.4" for PDF/A-1.
-                if part == 1 {
-                    error_at(
-                        report,
-                        "6.3.3",
-                        format!(
-                            "CIDFont {cid_name} has corrupt/null font program (invalid or empty stream)"
-                        ),
-                        format!("page {}", page_idx + 1),
-                    );
-                }
                 // A corrupt font program means glyph metrics cannot be verified — §6.3.5. (#467)
                 error_at(
                     report,
@@ -13769,15 +13754,25 @@ fn scan_for_invalid_hex_string(data: &[u8], skip_streams: bool) -> Option<(bool,
     let len = data.len();
     let mut pos = 0;
     let mut in_stream = false;
+    // Track nesting depth of parenthesized strings ((...)) to avoid treating
+    // '<' inside /RC or /Contents strings as hex string delimiters. (#FP-6.1.6)
+    let mut paren_depth: i32 = 0;
 
     while pos < len {
         if skip_streams {
-            // Track stream/endstream to skip binary content
+            // Track stream/endstream to skip binary content.
+            // Accept optional spaces/tabs between 'stream' and EOL, matching PDF
+            // parsers that allow `stream \n` (technically a §6.1.7 violation but
+            // still needs to be treated as a stream body for hex-string scanning).
             if !in_stream && pos + 6 < len && &data[pos..pos + 6] == b"stream" {
-                let next = data.get(pos + 6).copied().unwrap_or(0);
-                if next == b'\n' || next == b'\r' {
+                let mut skip = pos + 6;
+                while skip < len && (data[skip] == b' ' || data[skip] == b'\t') {
+                    skip += 1;
+                }
+                let eol = data.get(skip).copied().unwrap_or(0);
+                if eol == b'\n' || eol == b'\r' {
                     in_stream = true;
-                    pos += 7;
+                    pos = skip + 1;
                     continue;
                 }
             }
@@ -13788,6 +13783,32 @@ fn scan_for_invalid_hex_string(data: &[u8], skip_streams: bool) -> Option<(bool,
                 } else {
                     pos += 1;
                 }
+                continue;
+            }
+        }
+        // Track parenthesized string depth so '<' inside literal strings
+        // like /RC (<?xml...><body...>) is not treated as a hex string start.
+        // Backslash escapes inside strings (e.g. \() must be skipped too. (#FP-6.1.6)
+        if !in_stream {
+            if data[pos] == b'\\' && paren_depth > 0 {
+                pos += 2; // skip escape + next char
+                continue;
+            }
+            if data[pos] == b'(' {
+                paren_depth += 1;
+                pos += 1;
+                continue;
+            }
+            if data[pos] == b')' {
+                if paren_depth > 0 {
+                    paren_depth -= 1;
+                }
+                pos += 1;
+                continue;
+            }
+            if paren_depth > 0 {
+                // Inside a literal string — skip everything, including '<'
+                pos += 1;
                 continue;
             }
         }
