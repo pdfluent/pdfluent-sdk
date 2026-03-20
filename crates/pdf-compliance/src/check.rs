@@ -10324,8 +10324,9 @@ fn parse_type3_charproc_width(data: &[u8]) -> Option<i32> {
 /// against the embedded font program.
 ///
 /// For Type0 fonts, inspect each CIDFont descendant:
-/// - CIDFontType2: parse FontFile2 (TrueType) with ttf_parser
-/// - CIDFontType0: parse FontFile3 (CFF) with cff_parser (#FN-6.2.11.5)
+///   - CIDFontType2: parse FontFile2 (TrueType) with ttf_parser
+///   - CIDFontType0: parse FontFile3 (CFF) with cff_parser (#FN-6.2.11.5)
+///
 /// Compare declared CID widths in /W against actual glyph advance widths.
 fn check_cidfont_type2_widths(
     type0_dict: &Dict<'_>,
@@ -10636,12 +10637,11 @@ fn check_truetype_simple_widths(
     for code in first..=last {
         let idx = code - first;
         let pdf_w = pdf_widths[idx];
-        // Skip zero-width entries: pdf_w=0 means the code is unused/absent in this PDF.
-        // veraPDF does not flag width mismatches for zero-width codes in TrueType fonts.
-        // Only non-zero pdf_w entries need to agree with the font program. Fixes #FP-6.3.6.
-        if pdf_w == 0 {
-            continue;
-        }
+        // §6.2.10.5: pdf_w=0 is a declared width (not "absent") — if the font program
+        // has a non-zero advance for that glyph it is a genuine mismatch. The MissingWidth
+        // check below handles legitimate "unused code" entries whose value equals the
+        // declared fallback. DO NOT skip 0-width entries here. (#FN-6.2.10.5)
+
         // §6.2.11.5 applies only to characters "used in the document". PDF creators
         // set entries for unused codes to /MissingWidth (the generic fallback width).
         // Skip codes whose PDF width equals the MissingWidth sentinel. (#FP-6.2.11.5)
