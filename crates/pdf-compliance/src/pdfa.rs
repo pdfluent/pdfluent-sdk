@@ -180,6 +180,11 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         // §6.2.10.9: every rendered Type0 CID must be in the ToUnicode CMap.
         check::check_type0_cid_tounicode_coverage(pdf, &mut report);
     }
+    // §6.2.11.8: content stream references .notdef glyph (PDF/A-2/3).
+    // Not called for PDF/A-1 (no §6.2.11.8 clause) or PDF/A-4 (uses §6.2.10.9 above).
+    if level.part() >= 2 && level.part() < 4 {
+        check::check_notdef_glyph_reference(pdf, &mut report);
+    }
     check_symbolic_truetype_encoding(pdf, &mut report);
     check_cidtogidmap_identity(pdf, &mut report);
     check_cmap_embedding(pdf, &mut report);
@@ -586,6 +591,13 @@ pub fn validate_with_progress(
         tracked!(
             "check_type0_cid_tounicode_coverage",
             check::check_type0_cid_tounicode_coverage(pdf, &mut report)
+        );
+    }
+    // §6.2.11.8: content stream references .notdef glyph (PDF/A-2/3). (#FN-6.2.11.8)
+    if level.part() >= 2 && level.part() < 4 {
+        tracked!(
+            "check_notdef_glyph_reference",
+            check::check_notdef_glyph_reference(pdf, &mut report)
         );
     }
     tracked!(
@@ -1027,6 +1039,13 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         timed!(
             "check_notdef_glyph_usage",
             check::check_notdef_glyph_usage(pdf, &mut report)
+        );
+    }
+    // §6.2.11.8: content stream references .notdef glyph (PDF/A-2/3). (#FN-6.2.11.8)
+    if level.part() >= 2 && level.part() < 4 {
+        timed!(
+            "check_notdef_glyph_reference",
+            check::check_notdef_glyph_reference(pdf, &mut report)
         );
     }
     timed!(
@@ -2588,8 +2607,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // which is only emitted by check_stream_length, so no collision. (#496)
             (1, "6.1.7.1") => Some("6.1.7"),
             (1, "6.1.7.1-len") => Some("6.1.7"),
-            // PDF/A-4: stream length mismatch → §6.1.6.1 (ISO 19005-4 reorganised
-            // stream structure rules; veraPDF reports "6.1.6.1" for stream length).
+            // PDF/A-4: stream rules reorganised in ISO 19005-4:
+            //   §6.1.7.1 (EOL/external-file/empty-keys) → §6.1.6.1
+            //   §6.1.7.1-len (Length mismatch) → §6.1.6.1 (same clause, different internal ID)
+            // veraPDF uses "6.1.6.1" for both stream EOL and Length violations in PDF/A-4.
+            // (#FN-6.1.6.1)
+            (4, "6.1.7.1") => Some("6.1.6.1"),
             (4, "6.1.7.1-len") => Some("6.1.6.1"),
 
             // Widget annotation actions / NeedAppearances
@@ -2684,10 +2707,26 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.3.7-absent") => Some("6.2.10.3.2"),
             (_, "6.3.7-absent") => Some("SUPPRESS"),
 
-            // Form XObject OPI/PS/Ref violations (internal rule "6.2.9-form-opi").
-            // PDF/A-4 §6.2.8.1 covers these; PDF/A-1/2/3 use §6.2.9. (#FN-6.2.8.1)
+            // Form XObject OPI violations (internal rule "6.2.9-form-opi").
+            // PDF/A-4 §6.2.8.1 covers OPI on Form XObjects; PDF/A-1/2/3 use §6.2.9.
             (4, "6.2.9-form-opi") => Some("6.2.8.1"),
             (_, "6.2.9-form-opi") => Some("6.2.9"),
+
+            // Form XObject PS/Subtype2=PS violations (internal rule "6.2.9-form-ps").
+            // PDF/A-1: veraPDF fires §6.2.5 for PS XObjects (not §6.2.6). (#FN-6.2.5)
+            // PDF/A-4: §6.2.8.1 covers PS on Form XObjects.
+            // PDF/A-2/3: §6.2.9.
+            (1, "6.2.9-form-ps") => Some("6.2.5"),
+            (4, "6.2.9-form-ps") => Some("6.2.8.1"),
+            (_, "6.2.9-form-ps") => Some("6.2.9"),
+
+            // Form XObject /Ref key violations (internal rule "6.2.9-form-ref").
+            // PDF/A-4: veraPDF fires §6.2.8.2 for /Ref (not §6.2.8.1). (#FN-6.2.8.2)
+            // PDF/A-1: §6.2.6 (via existing (1, "6.2.9") → "6.2.6" remap below).
+            // PDF/A-2/3: §6.2.9.
+            (4, "6.2.9-form-ref") => Some("6.2.8.2"),
+            (1, "6.2.9-form-ref") => Some("6.2.6"),
+            (_, "6.2.9-form-ref") => Some("6.2.9"),
 
             // Name UTF-8 validation.
             // PDF/A-2/3: veraPDF uses §6.1.8 (isValidUtf8). (#FN-6.1.8)
