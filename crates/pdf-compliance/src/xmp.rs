@@ -3049,9 +3049,11 @@ fn check_alternate_presentations_absent(
     }
 }
 
-/// §6.12 (PDF/A-2/3/4): /Requirements key in catalog is forbidden.
+/// /Requirements key in catalog is forbidden.
 ///
-/// The document catalog must not have a /Requirements entry. Fixes #FN-6.12.
+/// PDF/A-2/3 §6.11, PDF/A-4 §6.12. veraPDF fires "6.11" for PDF/A-2/3.
+/// Do NOT use "6.12" here — that is our internal number for role-mapping violations
+/// and remap_clause_numbers would incorrectly remap it to "6.7.3.4". Fixes #FN-6.11.
 fn check_requirements_absent(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     if level.part() < 2 {
         return;
@@ -3060,10 +3062,12 @@ fn check_requirements_absent(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
         return;
     };
     if cat.contains_key(b"Requirements" as &[u8]) {
+        // PDF/A-2/3: §6.11 (veraPDF). PDF/A-4: §6.12 (our normalised numbering).
+        let rule = if level.part() <= 3 { "6.11" } else { "6.12" };
         error(
             report,
-            "6.12",
-            "Document catalog must not contain /Requirements entry (§6.12)",
+            rule,
+            "Document catalog must not contain /Requirements entry",
         );
     }
 }
