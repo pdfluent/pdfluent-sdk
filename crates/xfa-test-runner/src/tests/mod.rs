@@ -4,6 +4,7 @@ pub mod bookmarks;
 pub mod compliance;
 pub mod compress_roundtrip;
 pub mod content_roundtrip;
+pub mod docx_convert;
 pub mod encrypt_roundtrip;
 pub mod form_fields;
 pub mod form_write;
@@ -31,6 +32,8 @@ pub mod text_replace;
 pub mod watermark_roundtrip;
 pub mod xfa_extract;
 pub mod xfa_flatten;
+pub mod xlsx_convert;
+pub mod zugferd_roundtrip;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -131,6 +134,9 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(compress_roundtrip::CompressRoundtripTest),
         Box::new(xfa_extract::XfaExtractTest),
         Box::new(xfa_flatten::XfaFlattenTest),
+        Box::new(docx_convert::DocxConvertTest),
+        Box::new(xlsx_convert::XlsxConvertTest),
+        Box::new(zugferd_roundtrip::ZugferdRoundtripTest),
     ];
 
     #[cfg(feature = "pdfium-oracle")]
