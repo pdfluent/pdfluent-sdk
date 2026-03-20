@@ -182,12 +182,50 @@ pub fn get_xmp_metadata(pdf: &Pdf) -> Option<Vec<u8>> {
     Some(raw[start..end].to_vec())
 }
 
+/// Returns `true` when the XMP text contains a closing tag `</ns:tag>` with no
+/// corresponding opening tag anywhere in the document (case-sensitive).
+/// Detects malformed XML like `<dc:creator>…</dc:Creator>` (wrong-case close tag).
+/// veraPDF's strict XML parser throws on this; our regex would silently succeed.
+pub(crate) fn xmp_has_mismatched_close_tags(text: &str) -> bool {
+    let mut pos = 0;
+    while let Some(close_rel) = text[pos..].find("</") {
+        let name_start = pos + close_rel + 2;
+        let Some(gt_rel) = text[name_start..].find('>') else {
+            break;
+        };
+        let tag = text[name_start..name_start + gt_rel].trim();
+        // Skip XML comments (<!--...) and processing instructions (<?...).
+        if !tag.is_empty() && !tag.starts_with('!') && !tag.starts_with('?') {
+            // A matching opening tag must be present: <tag>, <tag >, <tag\t>, or <tag\n>.
+            let open = format!("<{tag}");
+            let has_open = text.contains(&format!("{open}>"))
+                || text.find(&open).is_some_and(|i| {
+                    text.as_bytes()
+                        .get(i + open.len())
+                        .is_some_and(|&b| matches!(b, b' ' | b'\t' | b'\n' | b'\r'))
+                });
+            if !has_open {
+                return true;
+            }
+        }
+        pos = name_start + gt_rel + 1;
+    }
+    false
+}
+
 /// Parse XMP metadata to find pdfaid:part and pdfaid:conformance.
 ///
 /// PDF/A-4 (ISO 19005-4) may omit pdfaid:conformance entirely;
 /// in that case, conformance defaults to an empty string.
 pub fn parse_xmp_pdfa(xmp: &[u8]) -> Option<(u8, String)> {
     let text = std::str::from_utf8(xmp).ok()?;
+
+    // Malformed XML (e.g. mismatched close tag) makes the XMP untrustworthy.
+    // Return None so callers fall back to the PDF/A-1B default and fire §6.7.11,
+    // matching veraPDF's behaviour. Fixes §6.7.11 FN on 6-7-2-1-t01-fail-d.pdf.
+    if xmp_has_mismatched_close_tags(text) {
+        return None;
+    }
 
     let part = extract_xmp_value(text, "pdfaid:part")
         .or_else(|| extract_xmp_attr(text, "pdfaid:part"))?
@@ -2542,22 +2580,26 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         }
         let xmp_keywords = extract_xmp_value(xmp_text, "pdf:Keywords")
             .or_else(|| extract_xmp_attr(xmp_text, "pdf:Keywords"));
+        // If /Info Keywords is empty, veraPDF considers it trivially consistent with
+        // an absent XMP pdf:Keywords property — no violation. (#FP-6.7.3.5)
+        let info_decoded = decode_pdf_info_string(keywords);
+        let info_is_empty = info_decoded.as_deref().unwrap_or("").trim().is_empty();
         if let Some(xmp_val) = &xmp_keywords {
-            if let Some(info_decoded) = decode_pdf_info_string(keywords) {
-                if info_decoded.as_str() != xmp_val.as_str() {
+            if let Some(ref info_str) = info_decoded {
+                if !info_is_empty && info_str.as_str() != xmp_val.as_str() {
                     error(
                         report,
                         "6.7.3.5",
                         format!(
                             "Keywords mismatch: Info='{}' vs XMP='{}'",
-                            info_decoded.chars().take(50).collect::<String>(),
+                            info_str.chars().take(50).collect::<String>(),
                             xmp_val.chars().take(50).collect::<String>()
                         ),
                     );
                 }
             }
-        } else {
-            // pdf:Keywords (correct case) is absent. veraPDF emits §6.7.3.5 (#467)
+        } else if !info_is_empty {
+            // Non-empty /Info Keywords but pdf:Keywords absent from XMP.
             error(
                 report,
                 "6.7.3.5",
