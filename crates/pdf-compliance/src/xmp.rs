@@ -165,6 +165,19 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
         return;
     };
 
+    // §6.7.9 — XMP serialization must be well-formed XML.
+    // A mismatched element close tag (e.g. <dc:creator>…</dc:Creator>) makes the XMP
+    // non-conformant. veraPDF fires §6.7.9 isSerializationValid for this.
+    // Fixes §6.7.9 FN on cs-veraPDF test suite 6-7-2-1-t01-fail-d.pdf.
+    if check::xmp_has_mismatched_close_tags(xmp_text) {
+        error(
+            report,
+            "6.7.9",
+            "XMP serialization is not valid XML: mismatched element close tag",
+        );
+        return;
+    }
+
     // §6.7.3 — XMP stream must contain valid RDF structure
     check_xmp_rdf_structure(xmp_text, level, report);
 
