@@ -3595,6 +3595,12 @@ fn check_ri_in_content(
             && (pos == 0 || content[pos - 1].is_ascii_whitespace())
         {
             if let Some(id_off) = content[pos..].windows(2).position(|w| w == b"ID") {
+                // id_off must be >= 2 to have any header bytes between "BI" and "ID".
+                // Content like "BID" would give id_off=1 and make content[pos+2..pos+1] panic.
+                if id_off < 2 {
+                    pos += id_off + 2;
+                    continue;
+                }
                 let header = &content[pos + 2..pos + id_off];
                 if let Some(ip) = header.windows(7).position(|w| w == b"/Intent") {
                     let after = &header[ip + 7..];
@@ -3706,6 +3712,10 @@ fn check_inline_image_interpolate(content: &[u8], location: &str, report: &mut C
             && (pos == 0 || content[pos - 1].is_ascii_whitespace())
         {
             if let Some(id_off) = content[pos..].windows(2).position(|w| w == b"ID") {
+                if id_off < 2 {
+                    pos += id_off + 2;
+                    continue;
+                }
                 let header = &content[pos + 2..pos + id_off];
                 // Check for /I true or /Interpolate true
                 let has_interp = header.windows(6).any(|w| w == b"/I tru")
@@ -4828,7 +4838,178 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
         b"zdotaccent",
         b"zero",
     ];
-    AGL_NAMES.binary_search(&name).is_ok()
+    if AGL_NAMES.binary_search(&name).is_ok() {
+        return true;
+    }
+
+    // Greek alphabet glyph names from AGL 2.0 (capital and lowercase).
+    // These are in the full AGL but absent from the AGLFN subset above.
+    // (#FP-6.2.11.6 — fonts using Gamma, Upsilon, etc. from standard Greek set)
+    matches!(
+        name,
+        b"Alpha"
+            | b"Alphatonos"
+            | b"Beta"
+            | b"Chi"
+            | b"Delta"
+            | b"Epsilon"
+            | b"Epsilontonos"
+            | b"Eta"
+            | b"Etatonos"
+            | b"Gamma"
+            | b"Iota"
+            | b"Iotadieresis"
+            | b"Iotatonos"
+            | b"Kappa"
+            | b"Lambda"
+            | b"Mu"
+            | b"Nu"
+            | b"Omega"
+            | b"Omegatonos"
+            | b"Omicron"
+            | b"Omicrontonos"
+            | b"Phi"
+            | b"Pi"
+            | b"Psi"
+            | b"Rho"
+            | b"Sigma"
+            | b"Tau"
+            | b"Theta"
+            | b"Upsilon"
+            | b"Upsilondieresis"
+            | b"Upsilontonos"
+            | b"Xi"
+            | b"Zeta"
+            | b"alpha"
+            | b"alphatonos"
+            | b"beta"
+            | b"chi"
+            | b"delta"
+            | b"epsilon"
+            | b"epsilontonos"
+            | b"eta"
+            | b"etatonos"
+            | b"gamma"
+            | b"iota"
+            | b"iotadieresis"
+            | b"iotadieresistonos"
+            | b"iotatonos"
+            | b"kappa"
+            | b"lambda"
+            | b"mu"
+            | b"nu"
+            | b"omega"
+            | b"omegaadscript"
+            | b"omegatonos"
+            | b"omicron"
+            | b"omicrontonos"
+            | b"phi"
+            | b"pi"
+            | b"psi"
+            | b"rho"
+            | b"sigma"
+            | b"sigmafinal"
+            | b"tau"
+            | b"theta"
+            | b"theta1"
+            | b"upsilon"
+            | b"upsilonadscript"
+            | b"upsilondieresis"
+            | b"upsilondieresistonos"
+            | b"upsilontonos"
+            | b"xi"
+            | b"zeta"
+            // Mathematical operators and symbols (AGL 2.0, common subset)
+            | b"circlemultiply"
+            | b"circleplus"
+            | b"circledot"
+            | b"circleminus"
+            | b"equivalence"
+            | b"greaterequal"
+            | b"lessequal"
+            | b"notequal"
+            | b"approxequal"
+            | b"union"
+            | b"intersection"
+            | b"propersuperset"
+            | b"propersubset"
+            | b"reflexsuperset"
+            | b"reflexsubset"
+            | b"logicaland"
+            | b"logicalor"
+            | b"logicalnot"
+            | b"universal"
+            | b"existential"
+            | b"plusminus"
+            | b"divide"
+            | b"multiply"
+            | b"aleph"
+            | b"infinity"
+            | b"integral"
+            | b"integraltp"
+            | b"integralbt"
+            | b"gradient"
+            | b"partialdiff"
+            | b"increment"
+            | b"anglebracketleft"
+            | b"anglebracketright"
+            // Arrows (AGL 2.0)
+            | b"arrowboth"
+            | b"arrowdblboth"
+            | b"arrowdblleft"
+            | b"arrowdblright"
+            | b"arrowdblup"
+            | b"arrowdbldown"
+            | b"arrowdown"
+            | b"arrowleft"
+            | b"arrowright"
+            | b"arrowup"
+            | b"arrowupdn"
+            | b"arrowupdnbse"
+            // Bracket/paren extensions (AGL 2.0)
+            | b"bracketleftbt"
+            | b"bracketleftex"
+            | b"bracketlefttp"
+            | b"bracketrightbt"
+            | b"bracketrightex"
+            | b"bracketrighttp"
+            | b"parenleftbt"
+            | b"parenleftex"
+            | b"parenlefttp"
+            | b"parenrightbt"
+            | b"parenrightex"
+            | b"parenrighttp"
+            // Miscellaneous common symbols (AGL 2.0)
+            | b"endash"
+            | b"emdash"
+            | b"figuredash"
+            | b"softhyphen"
+            | b"perthousand"
+            | b"lozenge"
+            | b"dagger"
+            | b"daggerdbl"
+            | b"filledbox"
+            | b"filledrect"
+            | b"openbullet"
+            | b"musicalnote"
+            | b"musicalnotedbl"
+            | b"dotlessi"
+            | b"dotlessj"
+            // More mathematical relation/set symbols (AGL 2.0)
+            | b"similar"
+            | b"proportional"
+            | b"perpendicular"
+            | b"angle"
+            | b"congruent"
+            | b"notgreater"
+            | b"notless"
+            | b"notsubset"
+            | b"suchthat"
+            | b"therefore"
+            | b"notelement"
+            | b"element"
+            | b"emptyset"
+    )
 }
 
 // ─── §6.2.10.3 — CIDSystemInfo Registry/Ordering consistency ───────────────
