@@ -1138,7 +1138,11 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     };
 
     let Some(xmp) = check::get_xmp_metadata(pdf) else {
-        check::error(report, missing_xmp_rule, "No XMP metadata stream in catalog");
+        check::error(
+            report,
+            missing_xmp_rule,
+            "No XMP metadata stream in catalog",
+        );
         // If the catalog has a /Metadata key but the pointed-to object is not a stream
         // (e.g., points to a Font dict — as in PDFBOX-3105-1), and the trailer also has
         // an /Info reference, then metadata synchronization (§6.7.3) is broken.

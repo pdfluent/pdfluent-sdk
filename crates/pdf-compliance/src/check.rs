@@ -7392,17 +7392,25 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
             if !is_subset_font(&base) {
                 continue;
             }
-            let Some(desc) = fd.get::<Dict<'_>>(keys::FONT_DESC) else { continue };
+            let Some(desc) = fd.get::<Dict<'_>>(keys::FONT_DESC) else {
+                continue;
+            };
             let cs_opt = desc
                 .get::<pdf_syntax::object::String>(keys::CHAR_SET)
                 .map(|s| s.as_bytes().to_vec());
             let Some(cs_bytes) = cs_opt else { continue };
-            if cs_bytes.is_empty() { continue }
+            if cs_bytes.is_empty() {
+                continue;
+            }
             let ct = std::str::from_utf8(&cs_bytes).unwrap_or("");
-            let names: std::collections::HashSet<String> =
-                ct.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+            let names: std::collections::HashSet<String> = ct
+                .split('/')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
             // WinAnsiEncoding or Encoding dict with WinAnsi base
-            let winansi = fd.get::<Name>(keys::ENCODING)
+            let winansi = fd
+                .get::<Name>(keys::ENCODING)
                 .is_some_and(|e| e.as_ref() == b"WinAnsiEncoding");
             type1_charsets.insert(rname.as_ref().to_vec(), (names, winansi));
         }
@@ -7410,8 +7418,12 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
             continue;
         }
 
-        let Some(content) = page.page_stream() else { continue };
-        if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE { continue }
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE {
+            continue;
+        }
 
         let tokens = tokenize_pdf_content(content);
         let n = tokens.len();
@@ -7429,7 +7441,9 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                     active = None;
                 }
             }
-            let Some((charset, winansi)) = active else { continue };
+            let Some((charset, winansi)) = active else {
+                continue;
+            };
             // Text show operators: preceding token is the string
             let str_tok = if matches!(tok, b"Tj" | b"'" | b"\"") && i >= 1 {
                 Some(tokens[i - 1].as_slice())
@@ -7443,8 +7457,14 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
             let check_str = |s: &[u8]| -> Option<String> {
                 let codes = extract_simple_codes(s);
                 for code in codes {
-                    if code == 0 { continue } // .notdef handled elsewhere
-                    if let Some(gname) = if *winansi { t1_winansi_glyph_name(code) } else { None } {
+                    if code == 0 {
+                        continue;
+                    } // .notdef handled elsewhere
+                    if let Some(gname) = if *winansi {
+                        t1_winansi_glyph_name(code)
+                    } else {
+                        None
+                    } {
                         if !charset.contains(gname) {
                             return Some(gname.to_string());
                         }
@@ -7471,7 +7491,9 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                 let mut j = i as isize - 1;
                 while j >= 0 {
                     let t = tokens[j as usize].as_slice();
-                    if t == b"[" { break }
+                    if t == b"[" {
+                        break;
+                    }
                     if let Some(gname) = check_str(t) {
                         error_at(
                             report,
@@ -7495,12 +7517,19 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
 fn extract_simple_codes(tok: &[u8]) -> Vec<u8> {
     if let Some(inner) = tok.strip_prefix(b"<").and_then(|t| t.strip_suffix(b">")) {
         // Hex string: pairs of hex digits
-        let digits: Vec<u8> = inner.iter().copied().filter(|b| b.is_ascii_hexdigit()).collect();
-        digits.chunks(2).map(|c| {
-            let hi = hex_val(c[0]);
-            let lo = if c.len() > 1 { hex_val(c[1]) } else { 0 };
-            (hi << 4) | lo
-        }).collect()
+        let digits: Vec<u8> = inner
+            .iter()
+            .copied()
+            .filter(|b| b.is_ascii_hexdigit())
+            .collect();
+        digits
+            .chunks(2)
+            .map(|c| {
+                let hi = hex_val(c[0]);
+                let lo = if c.len() > 1 { hex_val(c[1]) } else { 0 };
+                (hi << 4) | lo
+            })
+            .collect()
     } else if let Some(inner) = tok.strip_prefix(b"(").and_then(|t| t.strip_suffix(b")")) {
         // Literal string: bytes with backslash escapes
         let mut codes = Vec::new();
@@ -7508,12 +7537,26 @@ fn extract_simple_codes(tok: &[u8]) -> Vec<u8> {
         while i < inner.len() {
             if inner[i] == b'\\' {
                 i += 1;
-                if i >= inner.len() { break }
+                if i >= inner.len() {
+                    break;
+                }
                 match inner[i] {
-                    b'n' => { codes.push(b'\n'); i += 1; }
-                    b'r' => { codes.push(b'\r'); i += 1; }
-                    b't' => { codes.push(b'\t'); i += 1; }
-                    b'(' | b')' | b'\\' => { codes.push(inner[i]); i += 1; }
+                    b'n' => {
+                        codes.push(b'\n');
+                        i += 1;
+                    }
+                    b'r' => {
+                        codes.push(b'\r');
+                        i += 1;
+                    }
+                    b't' => {
+                        codes.push(b'\t');
+                        i += 1;
+                    }
+                    b'(' | b')' | b'\\' => {
+                        codes.push(inner[i]);
+                        i += 1;
+                    }
                     b'0'..=b'7' => {
                         // Octal: up to 3 digits
                         let start = i;
@@ -7527,7 +7570,10 @@ fn extract_simple_codes(tok: &[u8]) -> Vec<u8> {
                         codes.push(val as u8);
                         i = k;
                     }
-                    _ => { codes.push(inner[i]); i += 1; }
+                    _ => {
+                        codes.push(inner[i]);
+                        i += 1;
+                    }
                 }
             } else {
                 codes.push(inner[i]);
@@ -7970,7 +8016,52 @@ pub fn check_tounicode_cmap(
         }
 
         if !font_has_tounicode(font_dict) {
-            if part == 4 {
+            // ISO 19005-2 §6.2.11.7.2 / ISO 19005-1 §6.3.8: fonts with a predefined
+            // encoding from ISO 32000-1 Tables D.2/D.3/D.4 (WinAnsiEncoding,
+            // MacRomanEncoding, StandardEncoding, MacExpertEncoding) are exempt because
+            // the Unicode mapping is derivable from the encoding alone. Applies to all
+            // PDF/A parts.
+            //
+            // Additionally, fonts with NO /Encoding key use their built-in encoding
+            // (typically StandardEncoding for Type1), and veraPDF does not fire for them.
+            //
+            // An encoding DICT with /BaseEncoding set to a predefined name is also exempt:
+            // the small /Differences array only overrides a few slots of the predefined
+            // base, so Unicode mapping is still derivable. (#FP-6.2.11.7.2)
+            let is_predefined_enc_name = |name: &[u8]| {
+                matches!(
+                    name,
+                    b"WinAnsiEncoding"
+                        | b"MacRomanEncoding"
+                        | b"StandardEncoding"
+                        | b"MacExpertEncoding"
+                )
+            };
+            let xref = pdf.xref();
+            // Resolve /Encoding: may be a direct Name, direct Dict, or indirect ref.
+            let encoding_name = font_dict.get::<Name>(keys::ENCODING).or_else(|| {
+                font_dict
+                    .get_ref(keys::ENCODING)
+                    .and_then(|r| xref.get::<Name>(r.into()))
+            });
+            let encoding_dict: Option<Dict<'_>> =
+                font_dict.get::<Dict<'_>>(keys::ENCODING).or_else(|| {
+                    font_dict
+                        .get_ref(keys::ENCODING)
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            // Check for predefined name encoding or predefined /BaseEncoding in dict.
+            let uses_predefined_encoding = encoding_name
+                .as_ref()
+                .is_some_and(|n| is_predefined_enc_name(n.as_ref()))
+                || encoding_dict
+                    .as_ref()
+                    .and_then(|d| d.get::<Name>(b"BaseEncoding" as &[u8]))
+                    .is_some_and(|n| is_predefined_enc_name(n.as_ref()));
+            // Exempt if: predefined encoding OR no encoding at all (built-in).
+            if uses_predefined_encoding || encoding_name.is_none() && encoding_dict.is_none() {
+                // Exempt: predefined or built-in encoding — Unicode mapping known.
+            } else if part == 4 {
                 // §6.2.10.7: ToUnicode required for all fonts in PDF/A-4. (#483)
                 error(
                     report,
@@ -7979,37 +8070,19 @@ pub fn check_tounicode_cmap(
                 );
             } else if part >= 2 {
                 // §6.2.11.7.2: applies to Type1 and all non-symbolic non-Type0 fonts
-                // in PDF/A-2/3. Previously only Type1 was checked — extended to cover
-                // all non-symbolic fonts because veraPDF fires §6.2.11.7.2 for them too.
-                // (#483)
+                // in PDF/A-2/3. (#483)
                 error(
                     report,
                     "6.2.11.7.2",
                     format!("Font {name} missing /ToUnicode CMap (§6.2.11.7.2)"),
                 );
             } else {
-                // PDF/A-1 §6.3.8: ToUnicode CMap required for all fonts used in text
-                // rendering UNLESS the font uses a predefined encoding (WinAnsiEncoding,
-                // MacRomanEncoding, StandardEncoding) which provides sufficient Unicode
-                // mapping for text extraction. veraPDF does not fire §6.3.8 for fonts
-                // with predefined encodings. Fixes #FP-6.3.8. (#483)
-                let encoding = font_dict.get::<Name>(keys::ENCODING);
-                let uses_predefined_encoding = encoding.as_ref().is_some_and(|enc| {
-                    matches!(
-                        enc.as_ref(),
-                        b"WinAnsiEncoding"
-                            | b"MacRomanEncoding"
-                            | b"StandardEncoding"
-                            | b"MacExpertEncoding"
-                    )
-                });
-                if !uses_predefined_encoding {
-                    error(
-                        report,
-                        "6.3.8",
-                        format!("Font {name} missing /ToUnicode CMap (§6.3.8)"),
-                    );
-                }
+                // PDF/A-1 §6.3.8
+                error(
+                    report,
+                    "6.3.8",
+                    format!("Font {name} missing /ToUnicode CMap (§6.3.8)"),
+                );
             }
         }
     });
@@ -12043,12 +12116,7 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         // A valid stream keyword is preceded by whitespace or '>' (end of dict '>>').
         if abs_stream > 0 {
             let prev = data[abs_stream - 1];
-            if prev != b'\n'
-                && prev != b'\r'
-                && prev != b' '
-                && prev != b'\t'
-                && prev != b'>'
-            {
+            if prev != b'\n' && prev != b'\r' && prev != b' ' && prev != b'\t' && prev != b'>' {
                 pos = abs_stream + 6;
                 continue;
             }
@@ -12065,25 +12133,24 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         while eol_start < len && (data[eol_start] == b' ' || data[eol_start] == b'\t') {
             eol_start += 1;
         }
-        let data_start =
-            if eol_start < len
-                && data[eol_start] == b'\r'
-                && eol_start + 1 < len
-                && data[eol_start + 1] == b'\n'
-            {
-                eol_start + 2
-            } else if eol_start < len && data[eol_start] == b'\n' {
-                eol_start + 1
-            } else {
-                // No EOL after 'stream' keyword (with or without whitespace) — genuine violation
-                error(
-                    report,
-                    "6.1.7.1",
-                    "Stream keyword not followed by required CR LF or LF end-of-line",
-                );
-                pos = after_keyword;
-                continue;
-            };
+        let data_start = if eol_start < len
+            && data[eol_start] == b'\r'
+            && eol_start + 1 < len
+            && data[eol_start + 1] == b'\n'
+        {
+            eol_start + 2
+        } else if eol_start < len && data[eol_start] == b'\n' {
+            eol_start + 1
+        } else {
+            // No EOL after 'stream' keyword (with or without whitespace) — genuine violation
+            error(
+                report,
+                "6.1.7.1",
+                "Stream keyword not followed by required CR LF or LF end-of-line",
+            );
+            pos = after_keyword;
+            continue;
+        };
 
         // Find "endstream" after the stream data
         let search_from = if data_start + 10 < len {
@@ -13070,9 +13137,7 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                 // per ISO 32000-1 §9.10.3: "For CIDFont dictionaries with a CMap that
                 // is not an Identity CMap, the Registry and Ordering values shall be
                 // the same." Skip the comparison for Identity CMaps. (#FP-6.2.11.3.1)
-                if enc_name.as_ref() == keys::IDENTITY_H
-                    || enc_name.as_ref() == keys::IDENTITY_V
-                {
+                if enc_name.as_ref() == keys::IDENTITY_H || enc_name.as_ref() == keys::IDENTITY_V {
                     (None, None)
                 } else {
                     // Predefined CMap: "Registry-Ordering-Supplement" e.g. "Adobe-Japan1-2"
