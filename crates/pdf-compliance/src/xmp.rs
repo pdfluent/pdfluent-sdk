@@ -791,9 +791,19 @@ fn check_property_namespaces(
     let bytes = xmp.as_bytes();
     let mut pos = 0;
     let mut reported: HashSet<String> = HashSet::new();
+    // Track whether we are inside an XML tag (<...>) so that spaces in element
+    // text content (e.g. " http://example.com" inside <pdf:Producer>…</pdf:Producer>)
+    // are not mistaken for namespace prefix usages. Only spaces inside a tag
+    // (between the tag opener and the closing >) can introduce new prefix:attr pairs.
+    let mut inside_tag = false;
 
     while pos < bytes.len() {
-        if bytes[pos] == b'<' || bytes[pos] == b' ' {
+        match bytes[pos] {
+            b'<' => inside_tag = true,
+            b'>' => inside_tag = false,
+            _ => {}
+        }
+        if bytes[pos] == b'<' || (bytes[pos] == b' ' && inside_tag) {
             let start = pos + 1;
             if start < bytes.len() && bytes[start].is_ascii_alphabetic() {
                 if let Some(colon_offset) = xmp[start..].find(':') {

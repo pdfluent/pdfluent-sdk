@@ -4513,10 +4513,7 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
 
     // Zapf Dingbats names: a1–a202 (AGL 2.0 Appendix D)
     if let Some(rest) = name.strip_prefix(b"a") {
-        if !rest.is_empty()
-            && rest.iter().all(|b| b.is_ascii_digit())
-            && rest.len() <= 3
-        {
+        if !rest.is_empty() && rest.iter().all(|b| b.is_ascii_digit()) && rest.len() <= 3 {
             let n: u32 = std::str::from_utf8(rest)
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -7221,7 +7218,11 @@ fn scan_for_undefined_ops(
     content: &[u8],
     valid_ops: &std::collections::HashSet<&'static str>,
 ) -> bool {
-    let text = String::from_utf8_lossy(content);
+    // Pre-process: replace the contents of PDF string literals `(...)` with
+    // spaces so that embedded text (e.g. `(text with TrueType font)`) is not
+    // tokenised into words that look like undefined operators. (#FP-6.2.10)
+    let stripped = strip_string_literal_content(content);
+    let text = String::from_utf8_lossy(&stripped);
     let mut in_inline_image = false;
     for token in text.split_ascii_whitespace() {
         // Skip inline image data
@@ -7240,6 +7241,7 @@ fn scan_for_undefined_ops(
         // Skip operands (numbers, names, strings, arrays, dicts)
         if token.starts_with('/')
             || token.starts_with('(')
+            || token.starts_with(')')
             || token.starts_with('<')
             || token.starts_with('[')
             || token == "true"
@@ -7267,6 +7269,59 @@ fn scan_for_undefined_ops(
         }
     }
     false
+}
+
+/// Replace the contents of PDF string literals `(...)` with spaces so that
+/// embedded text cannot be confused with operator tokens during scanning.
+/// Handles escape sequences (`\n`, `\\`, `\(`, `\)`) and nested parentheses.
+fn strip_string_literal_content(content: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(content.len());
+    let mut i = 0;
+    let mut depth = 0u32;
+    while i < content.len() {
+        match content[i] {
+            b'\\' if depth > 0 => {
+                // Escape inside a string: skip both bytes, emit spaces
+                out.push(b' ');
+                if i + 1 < content.len() {
+                    out.push(b' ');
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            b'(' if depth == 0 => {
+                depth = 1;
+                out.push(b'(');
+                i += 1;
+            }
+            b'(' => {
+                depth += 1;
+                out.push(b' ');
+                i += 1;
+            }
+            b')' if depth == 1 => {
+                depth = 0;
+                out.push(b')');
+                i += 1;
+            }
+            b')' if depth > 1 => {
+                depth -= 1;
+                out.push(b' ');
+                i += 1;
+            }
+            _ if depth > 0 => {
+                // Inside a string literal: replace with space
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 /// Check transparency groups on pages without OutputIntent (§6.2.9).
@@ -8902,6 +8957,243 @@ pub fn check_notdef_glyph_usage(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// §6.3.5 (PDF/A-1) / §6.2.11.4.1 (PDF/A-2+): CID referenced in content stream
+/// not present in the embedded CIDFont program (as indicated by the CIDSet).
+///
+/// For each Type0 (composite CIDFont) subset resource that has a /CIDSet, extracts
+/// all 2-byte CID codes from Tj/TJ text operators in the page content stream and
+/// checks whether each CID is set in the CIDSet bit array.  A CID that is used for
+/// rendering but not in the CIDSet means the font program cannot supply the glyph
+/// → §6.3.5 (PDF/A-1) or §6.2.11.4.1 (PDF/A-2+).
+///
+/// Because a CID absent from the CIDSet renders as .notdef, this simultaneously
+/// triggers §6.2.11.8 (PDF/A-2+): "reference to the .notdef glyph".
+///
+/// This check only fires for subset fonts (ABCDEF+ prefix) that already have a
+/// CIDSet; missing/empty CIDSet is handled by check_font_embedding_deep.
+pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    // PDF/A-1 §6.3.5 = "font programs shall define all glyphs referenced for rendering".
+    // PDF/A-2+ §6.2.11.4.1 = same concept, different clause numbering.
+    let glyph_rule = if part == 1 { "6.3.5" } else { "6.2.11.4.1" };
+    let xref = pdf.xref();
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        // Build map: resource name → CIDSet bit array (only for subset Type0 fonts).
+        let mut font_cidsets: std::collections::HashMap<Vec<u8>, Vec<u8>> =
+            std::collections::HashMap::new();
+        let fonts = &page.resources().fonts;
+
+        for (name, _) in fonts.entries() {
+            let font_dict_opt: Option<Dict<'_>> =
+                fonts.get::<Dict<'_>>(name.as_ref()).or_else(|| {
+                    fonts
+                        .get_ref(name.as_ref())
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            let Some(font_dict) = font_dict_opt else {
+                continue;
+            };
+            if font_dict
+                .get::<Name>(keys::SUBTYPE)
+                .is_none_or(|s| s.as_ref() != b"Type0")
+            {
+                continue;
+            }
+            if let Some(cidset_bits) = get_type0_cidset(&font_dict) {
+                font_cidsets.insert(name.as_ref().to_vec(), cidset_bits);
+            }
+        }
+
+        if font_cidsets.is_empty() {
+            continue;
+        }
+
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        if content.len() > MAX_CONTENT_STREAM_SCAN_SIZE {
+            continue;
+        }
+
+        let tokens = tokenize_pdf_content(content);
+        let loc = format!("page {}", page_idx + 1);
+        let n = tokens.len();
+        let mut active_cidset: Option<&Vec<u8>> = None;
+        // Report at most one glyph-rule and one notdef-rule violation per page
+        // to match veraPDF's single-check-per-rule behaviour.
+        let mut reported_glyph = false;
+        let mut reported_notdef = false;
+
+        'page: for i in 0..n {
+            let tok = tokens[i].as_slice();
+
+            // /FontName size Tf — track which Type0 font is active.
+            if tok == b"Tf" && i >= 2 {
+                let font_name = tokens[i - 2].as_slice();
+                active_cidset = font_name
+                    .strip_prefix(b"/")
+                    .and_then(|n| font_cidsets.get(n));
+            }
+
+            let Some(cidset) = active_cidset else {
+                continue;
+            };
+
+            if reported_glyph && reported_notdef {
+                break 'page;
+            }
+
+            // Tj / ' / " — the preceding token is the string argument.
+            if matches!(tok, b"Tj" | b"'" | b"\"") && i >= 1 {
+                for cid in extract_cids_from_hex(tokens[i - 1].as_slice()) {
+                    // CID 0 = .notdef by definition; handled separately.
+                    if cid == 0 {
+                        continue;
+                    }
+                    if !cid_in_cidset(cid, cidset) {
+                        if !reported_glyph {
+                            error_at(
+                                report,
+                                glyph_rule,
+                                format!(
+                                    "CID 0x{cid:04X} used in content stream but absent from CIDSet"
+                                ),
+                                loc.clone(),
+                            );
+                            reported_glyph = true;
+                        }
+                        // Missing glyph renders as .notdef → §6.2.11.8 (PDF/A-2+).
+                        if part >= 2 && !reported_notdef {
+                            error_at(
+                                report,
+                                "6.2.11.8",
+                                format!("CID 0x{cid:04X} absent from CIDSet renders as .notdef"),
+                                loc.clone(),
+                            );
+                            reported_notdef = true;
+                        }
+                        if reported_glyph && (part < 2 || reported_notdef) {
+                            break 'page;
+                        }
+                    }
+                }
+            }
+
+            // TJ — scan the preceding array for hex string tokens.
+            if tok == b"TJ" {
+                let mut j = i as isize - 1;
+                while j >= 0 {
+                    let t = tokens[j as usize].as_slice();
+                    if t == b"[" {
+                        break;
+                    }
+                    if t.starts_with(b"<") {
+                        for cid in extract_cids_from_hex(t) {
+                            if cid == 0 {
+                                continue;
+                            }
+                            if !cid_in_cidset(cid, cidset) {
+                                if !reported_glyph {
+                                    error_at(
+                                        report,
+                                        glyph_rule,
+                                        format!(
+                                            "CID 0x{cid:04X} used in content stream but absent from CIDSet"
+                                        ),
+                                        loc.clone(),
+                                    );
+                                    reported_glyph = true;
+                                }
+                                if part >= 2 && !reported_notdef {
+                                    error_at(
+                                        report,
+                                        "6.2.11.8",
+                                        format!(
+                                            "CID 0x{cid:04X} absent from CIDSet renders as .notdef"
+                                        ),
+                                        loc.clone(),
+                                    );
+                                    reported_notdef = true;
+                                }
+                                if reported_glyph && (part < 2 || reported_notdef) {
+                                    break 'page;
+                                }
+                            }
+                        }
+                    }
+                    j -= 1;
+                }
+            }
+        }
+    }
+}
+
+/// Resolve the CIDSet bit array for the first CIDFont descendant of a Type0 font
+/// dict that is a subset font (ABCDEF+ prefix) and has a non-empty /CIDSet.
+fn get_type0_cidset(font_dict: &Dict<'_>) -> Option<Vec<u8>> {
+    let descendants = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS)?;
+    for cid_font in descendants.iter::<Dict<'_>>() {
+        let base = cid_font.get::<Name>(keys::BASE_FONT)?;
+        let base_str = std::str::from_utf8(base.as_ref()).unwrap_or("");
+        if !is_subset_font(base_str) {
+            continue;
+        }
+        let desc = cid_font.get::<Dict<'_>>(keys::FONT_DESC)?;
+        let cidset = desc.get::<Stream<'_>>(keys::CID_SET)?;
+        let bits = cidset.decoded().ok()?;
+        if bits.is_empty() || bits.iter().all(|&b| b == 0) {
+            continue;
+        }
+        return Some(bits);
+    }
+    None
+}
+
+/// Returns `true` if CID `cid` has its bit set in the CIDSet bit array.
+/// CIDSet is a bit string where bit 7 of byte 0 corresponds to CID 0 (MSB first).
+#[inline]
+fn cid_in_cidset(cid: u32, cidset: &[u8]) -> bool {
+    let byte_idx = (cid / 8) as usize;
+    let bit_pos = 7 - (cid % 8);
+    cidset
+        .get(byte_idx)
+        .map(|&b| (b >> bit_pos) & 1 == 1)
+        .unwrap_or(false)
+}
+
+/// Extract 2-byte big-endian CID values from a PDF hex-string token (`<XXYY...>`).
+/// Each group of 4 hex digits encodes one CID (2 bytes, big-endian).
+fn extract_cids_from_hex(tok: &[u8]) -> Vec<u32> {
+    if !tok.starts_with(b"<") || !tok.ends_with(b">") {
+        return vec![];
+    }
+    let hex = &tok[1..tok.len() - 1];
+    let digits: Vec<u8> = hex
+        .iter()
+        .copied()
+        .filter(|b| b.is_ascii_hexdigit())
+        .collect();
+    let mut cids = Vec::new();
+    let mut i = 0;
+    while i + 4 <= digits.len() {
+        let hi = hex_nibble(digits[i]) << 4 | hex_nibble(digits[i + 1]);
+        let lo = hex_nibble(digits[i + 2]) << 4 | hex_nibble(digits[i + 3]);
+        cids.push((hi as u32) << 8 | lo as u32);
+        i += 4;
+    }
+    cids
+}
+
+#[inline]
+fn hex_nibble(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'a'..=b'f' => b - b'a' + 10,
+        b'A'..=b'F' => b - b'A' + 10,
+        _ => 0,
+    }
+}
+
 /// §6.2.10.9 — ToUnicode C0 forbidden codepoints (PDF/A-4).
 ///
 /// Scans font ToUnicode CMaps for destination codepoints in the C0 control
@@ -9437,6 +9729,7 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                 check_truetype_simple_widths(
                     &font_data,
                     font_dict,
+                    &desc,
                     xref,
                     name,
                     first_char,
@@ -9854,6 +10147,7 @@ fn parse_cidfont_w_array(w_arr: &Array<'_>) -> std::collections::HashMap<u32, i3
 fn check_truetype_simple_widths(
     font_data: &[u8],
     font_dict: &Dict<'_>,
+    desc: &Dict<'_>,
     xref: &pdf_syntax::xref::XRef,
     name: &str,
     first_char: i32,
@@ -9875,6 +10169,12 @@ fn check_truetype_simple_widths(
     if last < first || pdf_widths.len() < last - first + 1 {
         return;
     }
+
+    // §6.2.11.5 applies only to "characters used in the document". PDF creators
+    // set the /Widths entry for unused codes to /MissingWidth (the fallback width
+    // for codes not represented in the subset). If pdf_w == missing_width, treat
+    // the code as "not used" and skip the width comparison. (#FP-6.2.11.5)
+    let missing_width: Option<i32> = desc.get::<i32>(keys::MISSING_WIDTH);
 
     // Determine the encoding name. Try direct /Encoding name first; if /Encoding is
     // an indirect reference to a dict, read /BaseEncoding from that dict.
@@ -9911,6 +10211,12 @@ fn check_truetype_simple_widths(
         // veraPDF does not flag width mismatches for zero-width codes in TrueType fonts.
         // Only non-zero pdf_w entries need to agree with the font program. Fixes #FP-6.3.6.
         if pdf_w == 0 {
+            continue;
+        }
+        // §6.2.11.5 applies only to characters "used in the document". PDF creators
+        // set entries for unused codes to /MissingWidth (the generic fallback width).
+        // Skip codes whose PDF width equals the MissingWidth sentinel. (#FP-6.2.11.5)
+        if missing_width.is_some_and(|mw| mw == pdf_w) {
             continue;
         }
 
@@ -13472,9 +13778,17 @@ pub fn check_hex_strings(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRep
     // Scan structural (non-stream) PDF bytes first.
     if let Some((odd, invalid)) = scan_for_invalid_hex_string(pdf.data().as_ref(), true) {
         if odd {
-            error(report, rule, "Hexadecimal string contains odd number of non-whitespace characters");
+            error(
+                report,
+                rule,
+                "Hexadecimal string contains odd number of non-whitespace characters",
+            );
         } else if invalid {
-            error(report, rule, "Hexadecimal string contains non-hex characters");
+            error(
+                report,
+                rule,
+                "Hexadecimal string contains non-hex characters",
+            );
         }
         return;
     }
@@ -13490,7 +13804,11 @@ pub fn check_hex_strings(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRep
             if odd {
                 error(report, rule, "Hexadecimal string in content stream contains odd number of non-whitespace characters");
             } else if invalid {
-                error(report, rule, "Hexadecimal string in content stream contains non-hex characters");
+                error(
+                    report,
+                    rule,
+                    "Hexadecimal string in content stream contains non-hex characters",
+                );
             }
             return;
         }
