@@ -227,6 +227,15 @@ pub fn parse_xmp_pdfa(xmp: &[u8]) -> Option<(u8, String)> {
         return None;
     }
 
+    // Wrong pdfaid namespace URI makes the identification schema untrustworthy.
+    // Return None so callers fall back to PDF/A-1B default and fire §6.7.11.
+    // Fixes §6.7.11 FN on cs-veraPDF test suite 6-7-3-t01-fail-a.pdf
+    // (xmlns:pdfaid="http://www.aiim.org/pdfa/" — missing "/ns/id/").
+    const CORRECT_PDFAID_NS: &str = "http://www.aiim.org/pdfa/ns/id/";
+    if text.contains("xmlns:pdfaid") && !text.contains(CORRECT_PDFAID_NS) {
+        return None;
+    }
+
     let part = extract_xmp_value(text, "pdfaid:part")
         .or_else(|| extract_xmp_attr(text, "pdfaid:part"))?
         .parse::<u8>()
@@ -2550,6 +2559,18 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
             "6.7.3.8",
             "/Info has ModDate but XMP is missing xmp:ModifyDate",
         );
+    } else if metadata.modification_date.is_none()
+        && xmp_mod_date.is_some()
+        && raw_info_has_key(pdf.data().as_ref(), b"/ModDate")
+    {
+        // /Info has a /ModDate key but its value is not a valid PDF D: date (e.g. ISO 8601 format).
+        // veraPDF reports §6.7.3 because consistency cannot be verified.
+        // Fixes §6.7.3 FN on cs/tagged-veraPDF test suite 6-1-5-t01-fail-h.pdf.
+        error(
+            report,
+            "6.7.3",
+            "/Info has ModDate but value is not in PDF D: format — cannot verify consistency with XMP",
+        );
     }
 
     // Check Title (/Info Title vs dc:title) — §6.7.3.2
@@ -4027,34 +4048,40 @@ pub fn check_halftone_and_transfer(pdf: &Pdf, report: &mut ComplianceReport) {
         if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
             check_halftone_in_extgstate(&res_dict, &loc, xref, report);
 
-            // Form XObjects in page resources
+            // Form XObjects in page resources. Form XObjects are streams (possibly
+            // indirect refs), so use get::<Stream<'_>> to resolve them correctly.
+            // Using get::<Dict<'_>> silently failed for indirect stream refs. (#FN-6.2.10)
             if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
                 for (xo_name, _) in xobj_dict.entries() {
-                    if let Some(xo) = xobj_dict.get::<Dict<'_>>(xo_name.as_ref()) {
-                        if xo
-                            .get::<Name>(keys::SUBTYPE)
-                            .is_some_and(|s| s.as_ref() == b"Form")
-                        {
-                            if let Some(xo_res) = xo.get::<Dict<'_>>(keys::RESOURCES) {
-                                let xo_loc = format!("{loc}/XObject");
-                                check_halftone_in_extgstate(&xo_res, &xo_loc, xref, report);
-                            }
+                    let Some(xo_stream) = xobj_dict.get::<Stream<'_>>(xo_name.as_ref()) else {
+                        continue;
+                    };
+                    let xo_dict = xo_stream.dict();
+                    if xo_dict
+                        .get::<Name>(keys::SUBTYPE)
+                        .is_some_and(|s| s.as_ref() == b"Form")
+                    {
+                        if let Some(xo_res) = xo_dict.get::<Dict<'_>>(keys::RESOURCES) {
+                            let xo_loc = format!("{loc}/XObject");
+                            check_halftone_in_extgstate(&xo_res, &xo_loc, xref, report);
                         }
                     }
                 }
             }
         }
 
-        // Annotation appearances
+        // Annotation appearances. AP entries (/N, /R, /D) are streams — use
+        // get::<Stream<'_>> so indirect stream refs are resolved correctly. (#FN-6.2.10)
         if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
             for annot in annots.iter::<Dict<'_>>() {
                 if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
                     for (ap_key, _) in ap.entries() {
-                        if let Some(ap_stream) = ap.get::<Dict<'_>>(ap_key.as_ref()) {
-                            if let Some(ap_res) = ap_stream.get::<Dict<'_>>(keys::RESOURCES) {
-                                let ap_loc = format!("{loc}/Annot/AP");
-                                check_halftone_in_extgstate(&ap_res, &ap_loc, xref, report);
-                            }
+                        let Some(ap_stream) = ap.get::<Stream<'_>>(ap_key.as_ref()) else {
+                            continue;
+                        };
+                        if let Some(ap_res) = ap_stream.dict().get::<Dict<'_>>(keys::RESOURCES) {
+                            let ap_loc = format!("{loc}/Annot/AP");
+                            check_halftone_in_extgstate(&ap_res, &ap_loc, xref, report);
                         }
                     }
                 }
