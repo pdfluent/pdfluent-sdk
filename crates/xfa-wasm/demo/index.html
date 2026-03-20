@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xfa-wasm Demo</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 800px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+    p.sub { color: #666; font-size: 0.9rem; margin-top: 0; }
+    label {
+      display: inline-block;
+      background: #0066cc;
+      color: #fff;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    label:hover { background: #0052a3; }
+    #file-input { display: none; }
+    #drop-zone {
+      border: 2px dashed #ccc;
+      border-radius: 8px;
+      padding: 2rem;
+      text-align: center;
+      margin: 1.5rem 0;
+      color: #888;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    #drop-zone.drag-over {
+      border-color: #0066cc;
+      background: #f0f7ff;
+      color: #0066cc;
+    }
+    #result {
+      display: none;
+      margin-top: 1.5rem;
+    }
+    .card {
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #666;
+      margin: 0 0 0.5rem;
+    }
+    .card .value {
+      font-size: 1.05rem;
+      font-weight: 500;
+      word-break: break-word;
+    }
+    #text-content {
+      font-family: monospace;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow-y: auto;
+      background: #f8f8f8;
+      border-radius: 4px;
+      padding: 0.75rem;
+      line-height: 1.5;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.2em 0.6em;
+      border-radius: 3px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .badge.pass { background: #d4edda; color: #155724; }
+    .badge.fail { background: #f8d7da; color: #721c24; }
+    .page-nav {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+    .page-nav button {
+      padding: 0.25rem 0.75rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .page-nav button:hover:not(:disabled) { background: #f0f0f0; }
+    .page-nav button:disabled { opacity: 0.4; cursor: default; }
+    #page-indicator { font-size: 0.9rem; color: #555; }
+    #error-msg {
+      color: #721c24;
+      background: #f8d7da;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      margin-top: 1rem;
+      display: none;
+    }
+    #loading {
+      color: #555;
+      margin-top: 1rem;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<h1>xfa-wasm Demo</h1>
+<p class="sub">PDF text extraction and PDF/A validation in the browser — pure Rust + WebAssembly.</p>
+
+<div id="drop-zone">
+  <p>Drop a PDF here or</p>
+  <label for="file-input">Choose PDF</label>
+  <input type="file" id="file-input" accept=".pdf">
+</div>
+
+<div id="loading">Loading…</div>
+<div id="error-msg"></div>
+
+<div id="result">
+  <div class="card">
+    <h2>File</h2>
+    <div class="value" id="file-name"></div>
+  </div>
+
+  <div class="card">
+    <h2>Pages</h2>
+    <div class="value" id="page-count"></div>
+  </div>
+
+  <div class="card">
+    <h2>Metadata</h2>
+    <div id="metadata"></div>
+  </div>
+
+  <div class="card">
+    <h2>Page Text</h2>
+    <div class="page-nav">
+      <button id="prev-btn" disabled>&#8592;</button>
+      <span id="page-indicator">Page 1</span>
+      <button id="next-btn">&#8594;</button>
+    </div>
+    <div id="text-content"></div>
+  </div>
+
+  <div class="card">
+    <h2>PDF/A Validation</h2>
+    <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
+      <select id="pdfa-level" style="padding:0.3rem 0.5rem;border:1px solid #ccc;border-radius:4px;font-size:0.9rem">
+        <option value="pdfa1b">PDF/A-1b</option>
+        <option value="pdfa1a">PDF/A-1a</option>
+        <option value="pdfa2b">PDF/A-2b</option>
+        <option value="pdfa2a">PDF/A-2a</option>
+        <option value="pdfa2u">PDF/A-2u</option>
+        <option value="pdfa3b">PDF/A-3b</option>
+        <option value="pdfa3a">PDF/A-3a</option>
+        <option value="pdfa3u">PDF/A-3u</option>
+      </select>
+      <button id="validate-btn" style="padding:0.3rem 0.75rem;border:1px solid #ccc;border-radius:4px;cursor:pointer;font-size:0.9rem">Validate</button>
+    </div>
+    <div id="pdfa-result"></div>
+  </div>
+</div>
+
+<script type="module">
+  import init, { PdfDoc } from '../pkg/xfa_wasm.js';
+
+  await init();
+
+  let currentDoc = null;
+  let currentPage = 0;
+  let totalPages = 0;
+
+  function showError(msg) {
+    const el = document.getElementById('error-msg');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function clearError() {
+    document.getElementById('error-msg').style.display = 'none';
+  }
+
+  function renderMetadata(doc) {
+    const raw = doc.metadata();
+    const meta = JSON.parse(raw);
+    const el = document.getElementById('metadata');
+    const fields = ['title', 'author', 'subject', 'creator', 'producer'];
+    const rows = fields
+      .filter(k => meta[k])
+      .map(k => `<div style="margin-bottom:0.2rem"><span style="color:#888;font-size:0.85rem;text-transform:capitalize">${k}:</span> ${escapeHtml(meta[k])}</div>`);
+    el.innerHTML = rows.length ? rows.join('') : '<span style="color:#999">No metadata</span>';
+  }
+
+  function renderPageText(doc, pageIndex) {
+    const text = doc.text(pageIndex);
+    const el = document.getElementById('text-content');
+    el.textContent = text.trim() || '(no extractable text on this page)';
+    document.getElementById('page-indicator').textContent = `Page ${pageIndex + 1} of ${totalPages}`;
+    document.getElementById('prev-btn').disabled = pageIndex === 0;
+    document.getElementById('next-btn').disabled = pageIndex === totalPages - 1;
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  async function loadPdf(file) {
+    clearError();
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('result').style.display = 'none';
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+
+      const doc = PdfDoc.open(bytes);
+      currentDoc = doc;
+      currentPage = 0;
+      totalPages = doc.pageCount();
+
+      document.getElementById('file-name').textContent = file.name;
+      document.getElementById('page-count').textContent = totalPages;
+      renderMetadata(doc);
+      renderPageText(doc, 0);
+      document.getElementById('pdfa-result').innerHTML = '';
+      document.getElementById('result').style.display = 'block';
+    } catch (e) {
+      showError(`Failed to open PDF: ${e}`);
+    } finally {
+      document.getElementById('loading').style.display = 'none';
+    }
+  }
+
+  // File input
+  document.getElementById('file-input').addEventListener('change', e => {
+    if (e.target.files[0]) loadPdf(e.target.files[0]);
+  });
+
+  // Drag and drop
+  const zone = document.getElementById('drop-zone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type === 'application/pdf') loadPdf(file);
+    else showError('Please drop a PDF file.');
+  });
+
+  // Page navigation
+  document.getElementById('prev-btn').addEventListener('click', () => {
+    if (currentPage > 0) { currentPage--; renderPageText(currentDoc, currentPage); }
+  });
+  document.getElementById('next-btn').addEventListener('click', () => {
+    if (currentPage < totalPages - 1) { currentPage++; renderPageText(currentDoc, currentPage); }
+  });
+
+  // PDF/A validation
+  document.getElementById('validate-btn').addEventListener('click', () => {
+    if (!currentDoc) return;
+    const level = document.getElementById('pdfa-level').value;
+    try {
+      const raw = currentDoc.validatePdfA(level);
+      const report = JSON.parse(raw);
+      const badge = report.compliant
+        ? `<span class="badge pass">Compliant</span>`
+        : `<span class="badge fail">Not compliant — ${report.errors} error${report.errors !== 1 ? 's' : ''}</span>`;
+
+      let issues = '';
+      if (report.issues && report.issues.length) {
+        const rows = report.issues.slice(0, 20).map(i =>
+          `<tr><td style="padding:0.25rem 0.5rem;color:#555;white-space:nowrap">${escapeHtml(i.rule)}</td>` +
+          `<td style="padding:0.25rem 0.5rem;color:#888;white-space:nowrap">${escapeHtml(i.severity)}</td>` +
+          `<td style="padding:0.25rem 0.5rem;font-size:0.85rem">${escapeHtml(i.message)}</td></tr>`
+        ).join('');
+        const more = report.issues.length > 20
+          ? `<tr><td colspan="3" style="padding:0.25rem 0.5rem;color:#888;font-size:0.85rem">… and ${report.issues.length - 20} more</td></tr>`
+          : '';
+        issues = `<table style="width:100%;border-collapse:collapse;margin-top:0.75rem;font-size:0.85rem">` +
+          `<thead><tr style="border-bottom:1px solid #e0e0e0">` +
+          `<th style="text-align:left;padding:0.25rem 0.5rem;color:#666;font-weight:500">Rule</th>` +
+          `<th style="text-align:left;padding:0.25rem 0.5rem;color:#666;font-weight:500">Severity</th>` +
+          `<th style="text-align:left;padding:0.25rem 0.5rem;color:#666;font-weight:500">Message</th></tr></thead>` +
+          `<tbody>${rows}${more}</tbody></table>`;
+      }
+
+      document.getElementById('pdfa-result').innerHTML = badge + issues;
+    } catch (e) {
+      document.getElementById('pdfa-result').innerHTML =
+        `<span style="color:#721c24">Validation failed: ${escapeHtml(String(e))}</span>`;
+    }
+  });
+</script>
+
+</body>
+</html>
