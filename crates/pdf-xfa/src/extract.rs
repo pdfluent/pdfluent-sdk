@@ -226,4 +226,44 @@ mod tests {
         let p = parse_xfa_xml(r#"<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"></xdp:xdp>"#);
         assert_eq!(p.packets.len(), 0);
     }
+
+    #[test]
+    fn get_packet_missing_returns_none() {
+        let p = parse_xfa_xml(r#"<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"></xdp:xdp>"#);
+        assert!(p.get_packet("template").is_none());
+        assert!(p.get_packet("nonexistent").is_none());
+        assert!(p.config().is_none());
+        assert!(p.locale_set().is_none());
+    }
+
+    #[test]
+    fn full_xml_preserved() {
+        // full_xml should always capture the entire input string.
+        let xml =
+            r#"<?xml version="1.0"?><xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"></xdp:xdp>"#;
+        let p = parse_xfa_xml(xml);
+        let stored = p.full_xml.as_deref().unwrap_or("");
+        assert!(stored.contains("xdp:xdp"));
+    }
+
+    #[test]
+    fn config_packet_parsed() {
+        let xml = r#"<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><config xmlns="http://www.xfa.org/schema/xci/3.1/"><present><xdp><packets>*</packets></xdp></present></config></xdp:xdp>"#;
+        let p = parse_xfa_xml(xml);
+        assert_eq!(p.packets.len(), 1);
+        assert!(p.config().is_some());
+        assert!(p.template().is_none());
+    }
+
+    #[test]
+    fn multiple_packets_order_preserved() {
+        // template must come before datasets — order matches the XDP source order.
+        let xml = r#"<?xml version="1.0"?><xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="root"/></template><xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data/></xfa:datasets></xdp:xdp>"#;
+        let p = parse_xfa_xml(xml);
+        assert_eq!(p.packets.len(), 2);
+        assert_eq!(p.packets[0].0, "template");
+        assert_eq!(p.packets[1].0, "datasets");
+        assert!(p.template().is_some());
+        assert!(p.datasets().is_some());
+    }
 }

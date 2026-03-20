@@ -2,7 +2,9 @@ pub mod annot_create;
 pub mod annotations;
 pub mod bookmarks;
 pub mod compliance;
+pub mod compress_roundtrip;
 pub mod content_roundtrip;
+pub mod encrypt_roundtrip;
 pub mod form_fields;
 pub mod form_write;
 pub mod geometry;
@@ -18,6 +20,7 @@ pub mod redact;
 pub mod render;
 #[cfg(feature = "pdfium-oracle")]
 pub mod render_oracle;
+pub mod rotate_roundtrip;
 pub mod search;
 pub mod sign_roundtrip;
 pub mod sign_verify;
@@ -25,6 +28,9 @@ pub mod signatures;
 pub mod text_extract;
 pub mod text_oracle;
 pub mod text_replace;
+pub mod watermark_roundtrip;
+pub mod xfa_extract;
+pub mod xfa_flatten;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -119,6 +125,12 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(pdfa_convert),
         Box::new(sign_roundtrip::SignRoundtripTest),
         Box::new(ocr::OcrTest),
+        Box::new(rotate_roundtrip::RotateRoundtripTest),
+        Box::new(encrypt_roundtrip::EncryptRoundtripTest),
+        Box::new(watermark_roundtrip::WatermarkRoundtripTest),
+        Box::new(compress_roundtrip::CompressRoundtripTest),
+        Box::new(xfa_extract::XfaExtractTest),
+        Box::new(xfa_flatten::XfaFlattenTest),
     ];
 
     #[cfg(feature = "pdfium-oracle")]
