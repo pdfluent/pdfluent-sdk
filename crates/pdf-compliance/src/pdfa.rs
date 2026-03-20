@@ -2737,9 +2737,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // CIDSet / CharSet for subset fonts
             // PDF/A-1: §6.3.5, PDF/A-2/3: §6.2.11.5
             (2..=3, "6.3.5") => Some("6.2.11.5"),
-            // PDF/A-4: §6.3.5 → §6.2.10.5 (font program width consistency
-            //   and CIDSet requirements share the same clause in ISO 19005-4)
-            (4, "6.3.5") => Some("6.2.10.5"),
+            // PDF/A-4: §6.3.5 → §6.2.10.4.1 (CIDFont embedding/CIDSet requirements,
+            //   ISO 19005-4 §6.2.10.4.1). veraPDF fires §6.2.10.4.1, not §6.2.10.5.
+            //   (#FN-6.2.10.4.1)
+            (4, "6.3.5") => Some("6.2.10.4.1"),
 
             // Font program width consistency (internal rule "6.3.5-fw")
             // PDF/A-1: §6.3.6 (ISO 19005-1 — veraPDF uses §6.3.6 for width consistency)
