@@ -51,6 +51,8 @@ pub struct ComplianceComparison {
 pub struct VeraPdfOracle {
     binary_path: PathBuf,
     db: Option<std::sync::Arc<Database>>,
+    /// Standalone oracle DB for pre-generated results (oracle-generate).
+    oracle_db: Option<std::sync::Arc<std::sync::Mutex<crate::oracle_db::OracleDb>>>,
 }
 
 impl std::fmt::Debug for VeraPdfOracle {
@@ -66,11 +68,20 @@ impl VeraPdfOracle {
         Self {
             binary_path,
             db: None,
+            oracle_db: None,
         }
     }
 
     pub fn with_cache(mut self, db: std::sync::Arc<Database>) -> Self {
         self.db = Some(db);
+        self
+    }
+
+    pub fn with_oracle_db(
+        mut self,
+        odb: std::sync::Arc<std::sync::Mutex<crate::oracle_db::OracleDb>>,
+    ) -> Self {
+        self.oracle_db = Some(odb);
         self
     }
 
@@ -84,7 +95,19 @@ impl VeraPdfOracle {
 
     /// Validate a PDF with veraPDF. Returns cached result if available.
     pub fn validate(&self, pdf_path: &Path, pdf_hash: &str) -> Result<VeraPdfResult, String> {
-        // Check cache first
+        // Check standalone oracle DB first (pre-generated results).
+        // The oracle DB stores parsed VeraPdfResult as JSON (same format as run-local cache).
+        if let Some(odb) = &self.oracle_db {
+            if let Ok(db) = odb.lock() {
+                // Look up with tool="verapdf-parsed" (stored by oracle-generate post-processing)
+                if let Some(cached) = db.lookup(pdf_hash, "verapdf-parsed", "any") {
+                    return serde_json::from_str(&cached)
+                        .map_err(|e| format!("oracle db deserialize: {e}"));
+                }
+            }
+        }
+
+        // Check run-local cache
         if let Some(db) = &self.db {
             if let Some(cached) = db.get_oracle_cache("verapdf", pdf_hash) {
                 return serde_json::from_str(&cached)
@@ -92,12 +115,22 @@ impl VeraPdfOracle {
             }
         }
 
+        // Cache miss — run veraPDF live
         let result = self.run_verapdf(pdf_path)?;
 
-        // Store in cache
+        // Store in run-local cache
         if let Some(db) = &self.db {
             if let Ok(json) = serde_json::to_string(&result) {
                 let _ = db.set_oracle_cache("verapdf", pdf_hash, &json);
+            }
+        }
+
+        // Also store in oracle DB if available
+        if let Some(odb) = &self.oracle_db {
+            if let Ok(db) = odb.lock() {
+                if let Ok(json) = serde_json::to_string(&result) {
+                    db.store(pdf_hash, "verapdf", "live", None, &json);
+                }
             }
         }
 
