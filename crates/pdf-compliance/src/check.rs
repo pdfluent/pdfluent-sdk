@@ -13348,37 +13348,37 @@ pub fn check_embedded_files_in_names_tree(pdf: &Pdf, part: u8, report: &mut Comp
 
 // ─── §6.1.6 — Hex string validation ──────────────────────────────────────────
 
-/// Check hex strings for validity (§6.1.6 / §6.1.5).
+/// Scan `data` for invalid hex strings `<...>`.
 ///
-/// Hex strings must contain only valid hex characters (0-9, a-f, A-F)
-/// and whitespace. Also checks for odd-length hex strings.
-/// PDF/A-4 renumbers this as §6.1.5; all other parts use §6.1.6.
-pub fn check_hex_strings(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    // §6.1.5 in ISO 19005-4 (PDF/A-4), §6.1.6 in ISO 19005-1/2/3.
-    let rule = if level.part() >= 4 { "6.1.5" } else { "6.1.6" };
-    let data = pdf.data().as_ref();
+/// Returns `Some((odd_count, is_invalid_char))` describing the first violation
+/// found, or `None` if all hex strings in `data` are valid.
+/// `skip_streams`: when true, bytes between `stream\n/\r` and `endstream` are
+/// skipped (used for raw PDF bytes where streams may contain binary data).
+fn scan_for_invalid_hex_string(data: &[u8], skip_streams: bool) -> Option<(bool, bool)> {
     let len = data.len();
     let mut pos = 0;
     let mut in_stream = false;
 
     while pos < len {
-        // Track stream/endstream to skip binary content
-        if !in_stream && pos + 6 < len && &data[pos..pos + 6] == b"stream" {
-            let next = data.get(pos + 6).copied().unwrap_or(0);
-            if next == b'\n' || next == b'\r' {
-                in_stream = true;
-                pos += 7;
+        if skip_streams {
+            // Track stream/endstream to skip binary content
+            if !in_stream && pos + 6 < len && &data[pos..pos + 6] == b"stream" {
+                let next = data.get(pos + 6).copied().unwrap_or(0);
+                if next == b'\n' || next == b'\r' {
+                    in_stream = true;
+                    pos += 7;
+                    continue;
+                }
+            }
+            if in_stream {
+                if pos + 9 < len && &data[pos..pos + 9] == b"endstream" {
+                    in_stream = false;
+                    pos += 9;
+                } else {
+                    pos += 1;
+                }
                 continue;
             }
-        }
-        if in_stream {
-            if pos + 9 < len && &data[pos..pos + 9] == b"endstream" {
-                in_stream = false;
-                pos += 9;
-            } else {
-                pos += 1;
-            }
-            continue;
         }
         if data[pos] != b'<' {
             pos += 1;
@@ -13414,23 +13414,51 @@ pub fn check_hex_strings(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRep
 
         // Only check if we actually found a closing >
         if data[end] == b'>' && !invalid_char && hex_count > 0 && hex_count % 2 != 0 {
-            error(
-                report,
-                rule,
-                format!("Hexadecimal string contains odd number ({hex_count}) of non-whitespace characters"),
-            );
-            return;
+            return Some((true, false));
         }
         if invalid_char && hex_count > 0 {
-            error(
-                report,
-                rule,
-                "Hexadecimal string contains non-hex characters",
-            );
-            return;
+            return Some((false, true));
         }
 
         pos = end + 1;
+    }
+    None
+}
+
+/// Check hex strings for validity (§6.1.6 / §6.1.5).
+///
+/// Hex strings must contain only valid hex characters (0-9, a-f, A-F)
+/// and whitespace. Also checks for odd-length hex strings.
+/// PDF/A-4 renumbers this as §6.1.5; all other parts use §6.1.6.
+pub fn check_hex_strings(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // §6.1.5 in ISO 19005-4 (PDF/A-4), §6.1.6 in ISO 19005-1/2/3.
+    let rule = if level.part() >= 4 { "6.1.5" } else { "6.1.6" };
+
+    // Scan structural (non-stream) PDF bytes first.
+    if let Some((odd, invalid)) = scan_for_invalid_hex_string(pdf.data().as_ref(), true) {
+        if odd {
+            error(report, rule, "Hexadecimal string contains odd number of non-whitespace characters");
+        } else if invalid {
+            error(report, rule, "Hexadecimal string contains non-hex characters");
+        }
+        return;
+    }
+
+    // Also scan decoded page content streams — hex strings used as text operands
+    // (e.g. `<48455> Tj`) are subject to §6.1.6/§6.1.5 too. Content streams are
+    // decoded here so we avoid FPs from binary/compressed stream data.
+    for page in pdf.pages().iter() {
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        if let Some((odd, invalid)) = scan_for_invalid_hex_string(content, false) {
+            if odd {
+                error(report, rule, "Hexadecimal string in content stream contains odd number of non-whitespace characters");
+            } else if invalid {
+                error(report, rule, "Hexadecimal string in content stream contains non-hex characters");
+            }
+            return;
+        }
     }
 }
 
