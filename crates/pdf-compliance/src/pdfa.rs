@@ -2457,8 +2457,23 @@ fn check_object_syntax(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRepor
 }
 
 /// §6.7.8 — XMP extension schema validation.
+///
+/// Also cascades §6.7.9 when §6.7.8 fires, because a malformed extension schema
+/// means properties in that namespace have undefined/invalid type — veraPDF fires
+/// §6.7.9 alongside §6.7.8. Fixes §6.7.9 FN on tagged-isartor-6-7-8-t02-fail-b/d.pdf.
 fn check_xmp_extension_schema_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
+    let before = report.issues.len();
     check::check_xmp_extension_schema(pdf, report);
+    // Cascade: §6.7.8 → §6.7.9 (only if §6.7.9 not already reported by other checks)
+    if report.issues[before..].iter().any(|i| i.rule == "6.7.8")
+        && !report.issues[..before].iter().any(|i| i.rule.starts_with("6.7.9"))
+    {
+        check::error(
+            report,
+            "6.7.9",
+            "Extension namespace properties have undefined or invalid value type due to malformed extension schema",
+        );
+    }
 }
 
 /// §6.2.5/6.2.9 — Image XObject rendering intent.
@@ -2555,7 +2570,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
 
             // Rendering intents: check.rs emits "6.2.6" (ISO 19005-2 §6.2.6).
             // PDF/A-1: veraPDF uses §6.2.9 for rendering intent violations.
-            (1, "6.2.6") => Some("6.2.9"),
+            // PDF/A-4: veraPDF uses §6.2.9 for rendering intent violations (§6.2.9 covers
+            //   rendering intents in ISO 19005-4, same as §6.2.9 in ISO 19005-1). (#FN-6.2.9)
+            (1, "6.2.6") | (4, "6.2.6") => Some("6.2.9"),
 
             // Optional content restrictions
             // PDF/A-1: veraPDF uses §6.1.11 for OCProperties violations.
