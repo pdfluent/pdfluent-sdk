@@ -45,6 +45,18 @@ impl PdfTest for XfaExtractTest {
                     metadata: HashMap::new(),
                 }
             }
+            // PDFs exceeding object/page limits are rejected to prevent OOM. (#497)
+            Err(pdf_syntax::LoadPdfError::TooLarge(obj, pg)) => {
+                return TestResult {
+                    status: TestStatus::Skip,
+                    error_message: Some(format!(
+                        "PDF too large ({obj} objects, {pg} pages) — skipping"
+                    )),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                }
+            }
         };
 
         match pdf_xfa::extract::extract_xfa(&pdf) {

@@ -10,9 +10,11 @@ pub(crate) mod flate {
     use crate::filter::lzw_flate::{PredictorParams, apply_predictor};
     use crate::object::Dict;
 
-    /// Maximum decompressed stream size (64 MB). Prevents zip-bomb style
+    /// Maximum decompressed stream size (100 MB). Prevents zip-bomb style
     /// attacks and corrupt length values from consuming all available memory.
-    const MAX_DECODE_SIZE: u64 = 64 * 1024 * 1024;
+    /// Raised from 64 MB to accommodate large image/content streams in
+    /// high-resolution PDFs while remaining well below typical RSS budgets. (#498)
+    const MAX_DECODE_SIZE: u64 = 100 * 1024 * 1024;
 
     #[cfg(feature = "std")]
     pub(crate) fn decode(data: &[u8], params: Dict<'_>) -> Option<Vec<u8>> {
@@ -55,6 +57,12 @@ pub(crate) mod flate {
         use alloc::vec;
         use alloc::vec::Vec;
         use log::warn;
+
+        /// Maximum decompressed output from the no-std fallback flate decoder.
+        /// The `std` path uses `flate2::Read::take`, which already enforces
+        /// `MAX_DECODE_SIZE`. The fallback previously had no bound at all and
+        /// could grow without limit on zip-bomb or corrupt streams. (#498)
+        const MAX_FALLBACK_DECODE_SIZE: usize = 100 * 1024 * 1024; // 100 MB
 
         pub(crate) fn decode(data: &[u8]) -> Option<Vec<u8>> {
             flate_decode(data)
@@ -101,6 +109,14 @@ pub(crate) mod flate {
 
             fn decode(&mut self) -> Option<Vec<u8>> {
                 while !self.eof && self.pos < self.data.len() {
+                    // Abort if the output has grown beyond the budget. (#498)
+                    if self.output.len() > MAX_FALLBACK_DECODE_SIZE {
+                        warn!(
+                            "fallback flate output exceeds {} bytes, aborting",
+                            MAX_FALLBACK_DECODE_SIZE
+                        );
+                        return None;
+                    }
                     self.read_block();
                 }
 
