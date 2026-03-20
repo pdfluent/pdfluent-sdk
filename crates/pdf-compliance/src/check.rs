@@ -4730,6 +4730,7 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
         b"ccedilla",
         b"cedilla",
         b"cent",
+        b"circumflex",
         b"colon",
         b"comma",
         b"copyright",
@@ -4814,6 +4815,7 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
         b"multiply",
         b"n",
         b"nacute",
+        b"nbspace",
         b"ncaron",
         b"ncommaaccent",
         b"nine",
@@ -4875,6 +4877,7 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
         b"section",
         b"semicolon",
         b"seven",
+        b"sfthyphen",
         b"six",
         b"slash",
         b"space",
@@ -12896,12 +12899,17 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         } else if eol_start < len && data[eol_start] == b'\n' {
             eol_start + 1
         } else {
-            // No EOL after 'stream' keyword (with or without whitespace) — genuine violation
-            error(
-                report,
-                "6.1.7.1",
-                "Stream keyword not followed by required CR LF or LF end-of-line",
-            );
+            // No EOL after 'stream' (with or without whitespace).
+            // Guard: a real stream keyword always has /Length in the preceding dict.
+            // If /Length is absent, 'stream' is inside a string literal or comment
+            // — not a keyword — so skip without error. (#FP-6.1.7)
+            if find_length_value(data, abs_stream).is_some() {
+                error(
+                    report,
+                    "6.1.7.1",
+                    "Stream keyword not followed by required CR LF or LF end-of-line",
+                );
+            }
             pos = after_keyword;
             continue;
         };
