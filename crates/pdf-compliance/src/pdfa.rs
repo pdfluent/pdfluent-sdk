@@ -1878,8 +1878,7 @@ fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                 let current_dict_start = before
                     .windows(2)
                     .enumerate()
-                    .filter(|(_, w)| *w == b"<<")
-                    .last()
+                    .rfind(|(_, w)| *w == b"<<")
                     .map(|(idx, _)| idx)
                     .unwrap_or(0);
                 let current_dict_ctx = &before[current_dict_start..];
