@@ -2553,7 +2553,7 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-4: OPI/Alternates/Interpolate checks use §6.2.7.x
             // ISO 19005-4 renumbered: §6.2.8.1 (Interpolate) → §6.2.7.1 (#FN-6.2.7.1)
             (4, "6.2.8.1") => Some("6.2.7.1"), // Interpolate=true forbidden
-            (4, "6.2.8.3") => Some("6.2.7.1"), // OPI key forbidden (#467)
+            (4, "6.2.8.3") => Some("6.2.8.1"), // OPI key forbidden (veraPDF §6.2.8.1 for PDF/A-4)
 
             // Implementation limits
             // PDF/A-1: §6.1.12, PDF/A-2/3/4: §6.1.13
