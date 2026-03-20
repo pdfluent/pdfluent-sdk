@@ -583,25 +583,32 @@ fn check_extension_schema_structure(
             );
         }
 
-        // §6.6.2.3.3: validate property valueTypes
+        // §6.6.2.3.3 / §6.7.9.3: validate property valueTypes
         for prop in &schema.properties {
             if prop.value_type.is_empty() {
+                // PDF/A-1 uses §6.7.9 numbering; PDF/A-4 uses §6.5.2; others §6.6.2.3.x
+                // Fixes §6.7.9 FN: we were always emitting 6.6.2.3.3 regardless of level.
+                let (rule_t3, rule_t2) = match level.part() {
+                    1 => ("6.7.9.3", "6.7.9.2"),
+                    4 => ("6.5.2", "6.5.2"),
+                    _ => ("6.6.2.3.3", "6.6.2.3.1"),
+                };
                 error(
                     report,
-                    "6.6.2.3.3",
+                    rule_t3,
                     format!(
                         "Extension property '{}:{}' missing required pdfaProperty:valueType",
                         schema.prefix, prop.name
                     ),
                 );
-                // veraPDF also fires §6.6.2.3.1 T2 ("isValueTypeCorrect == false")
+                // veraPDF also fires T2 ("isValueTypeCorrect == false")
                 // when a property with null/missing valueType is actually present in
-                // the XMP packet (type is "null" → T2 violation). (#FN-6.6.2.3.1)
+                // the XMP packet (type is "null" → T2 violation).
                 let qualified = format!("{}:{}", schema.prefix, prop.name);
                 if xmp.contains(&qualified) {
                     error(
                         report,
-                        "6.6.2.3.1",
+                        rule_t2,
                         format!(
                             "Extension property '{}' used with undefined (null) valueType",
                             qualified
