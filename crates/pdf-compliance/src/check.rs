@@ -9394,7 +9394,11 @@ fn extract_cids_from_token(tok: &[u8]) -> Vec<u32> {
         let mut i = 0;
         while i < bytes.len() {
             let hi = bytes[i];
-            let lo = if i + 1 < bytes.len() { bytes[i + 1] } else { 0xFF };
+            let lo = if i + 1 < bytes.len() {
+                bytes[i + 1]
+            } else {
+                0xFF
+            };
             cids.push((hi as u32) << 8 | lo as u32);
             i += 2;
         }
