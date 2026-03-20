@@ -1825,15 +1825,18 @@ fn check_devicen_separation_alternate(pdf: &Pdf, report: &mut ComplianceReport) 
     check::check_separation_consistency(pdf, report);
 }
 
-/// Raw byte scan for /FFilter and /FDecodeParms in stream object dicts.
-/// Catches Length=0 streams that the ObjectCache may skip.
+/// Raw byte scan for /F, /FFilter, /FDecodeParms in stream object dicts.
+/// Catches Length=0 streams that the ObjectCache may skip, and /F keys
+/// with indirect reference values that the cached check misses. (#FN-6.1.7.1)
 fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
     let data = pdf.data().as_ref();
+    // Already reported?
+    if report.issues.iter().any(|i| i.rule == "6.1.7.1") {
+        return;
+    }
     for key in [b"/FFilter" as &[u8], b"/FDecodeParms"] {
         for i in 0..data.len().saturating_sub(key.len()) {
             if &data[i..i + key.len()] == key {
-                // Verify we're inside an object dict (not a string or stream content)
-                // Look backward for "obj" and "<<", forward for ">>" before "endobj"
                 let before = &data[i.saturating_sub(200)..i];
                 let has_obj = before.windows(3).any(|w| w == b"obj");
                 let has_dict = before.windows(2).any(|w| w == b"<<");
@@ -1848,6 +1851,55 @@ fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             }
         }
+    }
+    // Scan for bare `/F` key (file specification) in stream dicts.
+    // `/F` must be followed by whitespace or digit (not a letter like `/Font`).
+    // Must appear between `<<` and `>>stream` — i.e. inside a stream dict, not
+    // an annotation dict or file spec dict. (#FN-6.1.7.1 veraPDF-6-1-7-1-t04-a)
+    let mut i = 0;
+    while i + 2 < data.len() {
+        if data[i] == b'/' && data[i + 1] == b'F' {
+            // Next byte must NOT be alphanumeric (reject /Font, /Filter, /First, etc.)
+            let next = data.get(i + 2).copied().unwrap_or(0);
+            if !next.is_ascii_alphanumeric() && next != b'_' {
+                // Check if this /F is inside a stream dict: look forward for
+                // `>>` followed soon by `stream`, and backward for `<<`.
+                let before = &data[i.saturating_sub(300)..i];
+                let after_end = data.len().min(i + 200);
+                let after = &data[i..after_end];
+                let has_dict_start = before.windows(2).any(|w| w == b"<<");
+                let has_stream_ahead = after.windows(6).any(|w| w == b"stream");
+                // Restrict /Filespec and /EmbeddedFile guards to the CURRENT dict
+                // context (bytes after the last '<<' before this /F).
+                // The 300-byte window can spill into preceding objects, causing a
+                // false-negative when a prior object is /Type /Filespec while the
+                // CURRENT stream dict has /F as an indirect file reference.
+                // (#FN-6.1.7 isartor-6-1-7-t04-fail-a, #FN-6.1.7.1 verapdf-6-1-7-1-t04-a)
+                let current_dict_start = before
+                    .windows(2)
+                    .enumerate()
+                    .filter(|(_, w)| *w == b"<<")
+                    .last()
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0);
+                let current_dict_ctx = &before[current_dict_start..];
+                let is_filespec = current_dict_ctx
+                    .windows(9)
+                    .any(|w| w == b"/Filespec" as &[u8]);
+                let is_embedded = current_dict_ctx
+                    .windows(13)
+                    .any(|w| w == b"/EmbeddedFile" as &[u8]);
+                if has_dict_start && has_stream_ahead && !is_filespec && !is_embedded {
+                    check::error(
+                        report,
+                        "6.1.7.1",
+                        "Stream dictionary contains /F file specification (external file reference)",
+                    );
+                    return;
+                }
+            }
+        }
+        i += 1;
     }
 }
 
