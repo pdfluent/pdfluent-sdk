@@ -6,7 +6,7 @@
 //! and potential future use in tests or tooling.
 #![allow(dead_code)]
 
-use crate::{ComplianceIssue, ComplianceReport, Severity};
+use crate::{ComplianceIssue, ComplianceReport, PdfALevel, Severity};
 use pdf_syntax::object::dict::keys;
 use pdf_syntax::object::{Array, Dict, Name, ObjRef, Object, Stream};
 use pdf_syntax::page::Resources;
@@ -4477,6 +4477,22 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
         return true;
     }
 
+    // Zapf Dingbats names: a1–a202 (AGL 2.0 Appendix D)
+    if let Some(rest) = name.strip_prefix(b"a") {
+        if !rest.is_empty()
+            && rest.iter().all(|b| b.is_ascii_digit())
+            && rest.len() <= 3
+        {
+            let n: u32 = std::str::from_utf8(rest)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            if (1..=202).contains(&n) {
+                return true;
+            }
+        }
+    }
+
     // Unicode naming convention: uni[0-9A-Fa-f]{4}+
     if let Some(rest) = name.strip_prefix(b"uni") {
         if rest.len() >= 4 && rest.len() % 4 == 0 && rest.iter().all(|b| b.is_ascii_hexdigit()) {
@@ -5009,6 +5025,115 @@ fn is_valid_agl_glyph_name(name: &[u8]) -> bool {
             | b"notelement"
             | b"element"
             | b"emptyset"
+            | b"negationslash"
+            | b"angbracketleft"
+            | b"angbracketright"
+            | b"lessmuch"
+            | b"greatermuch"
+            | b"lessequivlnt"
+            | b"greaterequivlnt"
+            | b"equalorfollows"
+            | b"equalorprecedes"
+            | b"follows"
+            | b"precedes"
+            | b"turnstileleft"
+            | b"turnstileright"
+            | b"forcesbar"
+            | b"forces"
+            | b"rho1"
+            | b"vector"
+            // CMEx / TeX math extension bracket names (veraPDF accepts these)
+            | b"parenleftbig"
+            | b"parenrightbig"
+            | b"parenleftBig"
+            | b"parenrightBig"
+            | b"parenleftbigg"
+            | b"parenrightbigg"
+            | b"parenleftBigg"
+            | b"parenrightBigg"
+            | b"bracketleftbig"
+            | b"bracketrightbig"
+            | b"bracketleftBig"
+            | b"bracketrightBig"
+            | b"bracketleftbigg"
+            | b"bracketrightbigg"
+            | b"bracketleftBigg"
+            | b"bracketrightBigg"
+            | b"braceleftbig"
+            | b"bracerightbig"
+            | b"braceleftBig"
+            | b"bracerightBig"
+            | b"braceleftbigg"
+            | b"bracerightbigg"
+            | b"braceleftBigg"
+            | b"bracerightBigg"
+            | b"arrowvertex"
+            | b"arrowvertexdbl"
+            | b"braceex"
+            | b"bracerightmid"
+            | b"braceleftmid"
+            | b"bracelefttp"
+            | b"bracerightbt"
+            | b"braceleftbt"
+            | b"bracerightex"
+            | b"braceleftex"
+            | b"bracerighttp"
+            | b"ceilingleft"
+            | b"ceilingright"
+            | b"floorleft"
+            | b"floorright"
+            | b"hatwide"
+            | b"hatwider"
+            | b"hatwideest"
+            | b"tildewide"
+            | b"tildewider"
+            | b"tildewideest"
+            | b"widehat"
+            | b"widetilde"
+            | b"radical"
+            | b"radicalBig"
+            | b"radicalBigg"
+            | b"radicalbt"
+            | b"radicalex"
+            | b"radicaltp"
+            | b"radicalbig"
+            | b"radicalbigg"
+            | b"slashbig"
+            | b"slashBig"
+            | b"slashbigg"
+            | b"slashBigg"
+            | b"backslashbig"
+            | b"backslashBig"
+            | b"backslashbigg"
+            | b"backslashBigg"
+            | b"summationdisplay"
+            | b"summationtext"
+            | b"productdisplay"
+            | b"producttext"
+            | b"coproductdisplay"
+            | b"coproducttext"
+            | b"integraldisplay"
+            | b"integraltext"
+            | b"uniondisplay"
+            | b"uniontext"
+            | b"intersectiondisplay"
+            | b"intersectiontext"
+            | b"unionmultidisplay"
+            | b"unionmultitext"
+            | b"logicalordisplay"
+            | b"logicalortext"
+            | b"logicalanddisplay"
+            | b"logicalandtext"
+            | b"integralmultidisplay"
+            | b"integralmultitext"
+            | b"circledotdisplay"
+            | b"circledottext"
+            | b"circleplusdisplay"
+            | b"circleplustext"
+            | b"circlemultiplydisplay"
+            | b"circlemultiplytext"
+            | b"contintegraldisplay"
+            | b"contintegraltext"
     )
 }
 
@@ -10011,8 +10136,11 @@ pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport
                 );
             }
 
-            // §6.3.7 t03: symbolic TrueType must have exactly one cmap subtable.
-            // Fixes FN where font (e.g. Wingdings) has 2 subtables (Mac + Win). (#467)
+            // §6.3.7 t03 (PDF/A-1 only): symbolic TrueType must have exactly one
+            // cmap subtable. Fixes FN where font (e.g. Wingdings) has 2 subtables
+            // (Mac + Win). Use internal rule "6.3.7-cmap" so it is only active in
+            // PDF/A-1 (mapped in pdfa.rs); PDF/A-2/3/4 do not have this requirement
+            // and veraPDF does not fire for it there. (#467, #FP-6.2.11.6)
             let ff2_data = desc
                 .get::<Stream<'_>>(keys::FONT_FILE2)
                 .and_then(|s| s.decoded().ok())
@@ -10026,7 +10154,7 @@ pub fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport
                     if n != 1 {
                         error_at(
                             report,
-                            "6.3.7-se",
+                            "6.3.7-cmap",
                             format!(
                                 "Symbolic TrueType font {name} has {n} cmap subtables; exactly 1 required"
                             ),
@@ -13220,11 +13348,14 @@ pub fn check_embedded_files_in_names_tree(pdf: &Pdf, part: u8, report: &mut Comp
 
 // ─── §6.1.6 — Hex string validation ──────────────────────────────────────────
 
-/// Check hex strings for validity (§6.1.6).
+/// Check hex strings for validity (§6.1.6 / §6.1.5).
 ///
 /// Hex strings must contain only valid hex characters (0-9, a-f, A-F)
 /// and whitespace. Also checks for odd-length hex strings.
-pub fn check_hex_strings(pdf: &Pdf, report: &mut ComplianceReport) {
+/// PDF/A-4 renumbers this as §6.1.5; all other parts use §6.1.6.
+pub fn check_hex_strings(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    // §6.1.5 in ISO 19005-4 (PDF/A-4), §6.1.6 in ISO 19005-1/2/3.
+    let rule = if level.part() >= 4 { "6.1.5" } else { "6.1.6" };
     let data = pdf.data().as_ref();
     let len = data.len();
     let mut pos = 0;
@@ -13285,7 +13416,7 @@ pub fn check_hex_strings(pdf: &Pdf, report: &mut ComplianceReport) {
         if data[end] == b'>' && !invalid_char && hex_count > 0 && hex_count % 2 != 0 {
             error(
                 report,
-                "6.1.6",
+                rule,
                 format!("Hexadecimal string contains odd number ({hex_count}) of non-whitespace characters"),
             );
             return;
@@ -13293,7 +13424,7 @@ pub fn check_hex_strings(pdf: &Pdf, report: &mut ComplianceReport) {
         if invalid_char && hex_count > 0 {
             error(
                 report,
-                "6.1.6",
+                rule,
                 "Hexadecimal string contains non-hex characters",
             );
             return;

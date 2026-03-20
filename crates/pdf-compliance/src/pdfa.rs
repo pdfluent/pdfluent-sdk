@@ -224,7 +224,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check::check_catalog_needs_rendering(pdf, &mut report);
     }
     check::check_output_intent_profile_class(pdf, &mut report);
-    check::check_hex_strings(pdf, &mut report);
+    check::check_hex_strings(pdf, level, &mut report);
     check::check_output_intent_destref(pdf, &mut report);
 
     // Post-process: remap clause numbers per PDF/A part.
@@ -686,7 +686,7 @@ pub fn validate_with_progress(
     );
     tracked!(
         "check_hex_strings",
-        check::check_hex_strings(pdf, &mut report)
+        check::check_hex_strings(pdf, level, &mut report)
     );
     tracked!(
         "check_output_intent_destref",
@@ -1108,7 +1108,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     );
     timed!(
         "check_hex_strings",
-        check::check_hex_strings(pdf, &mut report)
+        check::check_hex_strings(pdf, level, &mut report)
     );
     timed!(
         "check_output_intent_destref",
@@ -2650,6 +2650,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.3.7; PDF/A-2/3: §6.2.11.6 (TrueType encoding). (#483)
             (1, "6.3.7-se") => Some("6.3.7"),
             (2..=3, "6.3.7-se") => Some("6.2.11.6"),
+            // Symbolic TrueType cmap subtable count (PDF/A-1 §6.3.7 t03 only).
+            // PDF/A-2/3/4 do not have this requirement; veraPDF does not fire for it.
+            // Mapped to "6.3.7" for PDF/A-1; suppressed for all other parts. (#FP-6.2.11.6)
+            (1, "6.3.7-cmap") => Some("6.3.7"),
+            (_, "6.3.7-cmap") => Some("SUPPRESS"),
 
             // CIDToGIDMap must be /Identity or a stream (internal rule "6.3.7").
             // PDF/A-1: veraPDF uses §6.3.7 directly — no remap needed.
@@ -2821,6 +2826,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             issue.rule = r.to_string();
         }
     }
+    // Drop any issues that were explicitly suppressed by the remap above.
+    report.issues.retain(|issue| issue.rule != "SUPPRESS");
 }
 
 #[cfg(test)]
