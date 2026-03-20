@@ -76,7 +76,6 @@ const PREDEFINED_PREFIXES: &[&str] = &[
     "pdf:",
     "pdfaid:",
     "pdfuaid:",
-    "pdfx:",
     "pdfxid:",
     "pdfa:",
     "pdfaExtension:",
@@ -84,6 +83,9 @@ const PREDEFINED_PREFIXES: &[&str] = &[
     "pdfaProperty:",
     "pdfaType:",
     "pdfaField:",
+    // Note: "pdfx:" is intentionally NOT in this list. pdfx: (Adobe pdfX metadata) is
+    // not a standard XMP namespace for PDF/A; it requires a pdfaExtension schema registration.
+    // Fixes §6.7.9 FN on gen-136_136915.pdf (pdfx:Company without extension schema).
     "photoshop:",
     "tiff:",
     "exif:",
