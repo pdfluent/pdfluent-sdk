@@ -8460,15 +8460,18 @@ dependencies = [
  "num_cpus",
  "pdf-annot",
  "pdf-compliance",
+ "pdf-docx",
  "pdf-engine",
  "pdf-extract",
  "pdf-forms",
+ "pdf-invoice",
  "pdf-manip",
  "pdf-ocr",
  "pdf-redact",
  "pdf-sign",
  "pdf-syntax",
  "pdf-xfa",
+ "pdf-xlsx",
  "pdfium-ffi-bridge",
  "rayon",
  "regex-lite",
@@ -8479,6 +8482,7 @@ dependencies = [
  "strsim",
  "tikv-jemallocator",
  "walkdir",
+ "zip 2.4.2",
 ]
 
 [[package]]
