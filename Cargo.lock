@@ -8468,6 +8468,7 @@ dependencies = [
  "pdf-redact",
  "pdf-sign",
  "pdf-syntax",
+ "pdf-xfa",
  "pdfium-ffi-bridge",
  "rayon",
  "regex-lite",

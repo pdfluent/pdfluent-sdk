@@ -163,7 +163,10 @@ impl PdfTest for ImageExtractVerifyTest {
         let mut metadata = HashMap::new();
         metadata.insert("image_count".to_string(), total_images.to_string());
         metadata.insert("pages_checked".to_string(), pages_to_check.to_string());
-        metadata.insert("invalid_count".to_string(), invalid_images.len().to_string());
+        metadata.insert(
+            "invalid_count".to_string(),
+            invalid_images.len().to_string(),
+        );
 
         if invalid_images.is_empty() {
             TestResult {
