@@ -854,10 +854,17 @@ fn check_property_namespaces(
                                 let undeclared =
                                     prefix != "xml:" && !declared_prefixes.contains(prefix);
 
-                                if unknown_prefix || undeclared {
-                                    // Deprecated aliases (xap:, xapMM:, etc.) get §6.7.9.2;
-                                    // completely unknown/undeclared prefixes get §6.7.9.1. (#467)
-                                    let is_deprecated = DEPRECATED_XMP_PREFIXES.contains(&prefix);
+                                // Deprecated aliases (xap:, xapMM:, etc.) that are
+                                // explicitly xmlns-declared are accepted by veraPDF — the
+                                // document author registered the old URI on purpose. Only fire
+                                // for deprecated prefixes that are NOT declared with xmlns:.
+                                // (#FP-6.7.9-deprecated-xmlns)
+                                let is_deprecated = DEPRECATED_XMP_PREFIXES.contains(&prefix);
+                                let deprecated_but_declared =
+                                    is_deprecated && declared_prefixes.contains(prefix);
+
+                                if !deprecated_but_declared && (unknown_prefix || undeclared) {
+                                    // Unknown/undeclared: §6.7.9.1; deprecated undeclared: §6.7.9.2
                                     let violation_rule = if is_deprecated {
                                         rule_deprecated
                                     } else {
@@ -989,8 +996,10 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     }
 
     // /Creator ↔ xmp:CreatorTool (§6.7.3.6)
+    // Also accept legacy xap: alias. (#FP-6.7.3)
     if let Some(ref creator) = metadata.creator {
-        let xmp_creator = extract_nested_value(xmp, "xmp:CreatorTool");
+        let xmp_creator = extract_nested_value(xmp, "xmp:CreatorTool")
+            .or_else(|| extract_nested_value(xmp, "xap:CreatorTool"));
         match xmp_creator {
             None => {
                 error(
@@ -1044,7 +1053,9 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
 
     // /ModDate ↔ xmp:ModifyDate (§6.7.3.8) — fire when Info has date but XMP doesn't,
     // or when both are present but the local-time values differ. (#FN-6.7.3)
-    let xmp_mod_date = extract_nested_value(xmp, "xmp:ModifyDate");
+    // Also accept legacy xap: alias (xap: was renamed to xmp: in XMP spec 2008). (#FP-6.7.3)
+    let xmp_mod_date = extract_nested_value(xmp, "xmp:ModifyDate")
+        .or_else(|| extract_nested_value(xmp, "xap:ModifyDate"));
     match (&metadata.modification_date, &xmp_mod_date) {
         (Some(_), None) => {
             error(
@@ -1072,7 +1083,9 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     }
 
     // /CreationDate ↔ xmp:CreateDate (§6.7.3.1)
-    let xmp_create_date = extract_nested_value(xmp, "xmp:CreateDate");
+    // Also accept legacy xap: alias. (#FP-6.7.3)
+    let xmp_create_date = extract_nested_value(xmp, "xmp:CreateDate")
+        .or_else(|| extract_nested_value(xmp, "xap:CreateDate"));
     match (&metadata.creation_date, &xmp_create_date) {
         (Some(_), None) => {
             error(

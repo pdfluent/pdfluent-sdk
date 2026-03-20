@@ -43,6 +43,31 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 
     check_xmp_metadata(pdf, level, &mut report);
     crate::xmp::validate_xmp(pdf, level, &mut report);
+    // §6.7.11 FN: when XMP has broken RDF structure (§6.7.3 fired), veraPDF also fires
+    // §6.7.11. Fire pdfaid rule if 6.7.3 is in report, pdfaid rule isn't, and XMP exists.
+    // (#FN-6.7.11 isartor-6-7-2-t02-fail-a)
+    {
+        let missing_rule = match level.part() {
+            1 => "6.7.2",
+            4 => "6.5.2",
+            _ => "6.6.2.1",
+        };
+        let pdfa_id_rule = match level.part() {
+            1 => "6.7.11",
+            4 => "6.5.2",
+            _ => "6.6.4",
+        };
+        let has_broken_rdf = report.issues.iter().any(|i| i.rule == "6.7.3");
+        let has_pdfa_id = report.issues.iter().any(|i| i.rule == pdfa_id_rule);
+        let xmp_missing = report.issues.iter().any(|i| i.rule == missing_rule);
+        if has_broken_rdf && !has_pdfa_id && !xmp_missing {
+            check::error(
+                &mut report,
+                pdfa_id_rule,
+                "PDF/A identification schema unreadable due to broken XMP/RDF structure",
+            );
+        }
+    }
     check_encryption(pdf, &obj_cache, &mut report);
     check_file_header(pdf, level, &mut report);
     check_xref_format(pdf, &mut report);
@@ -289,6 +314,32 @@ pub fn validate_with_progress(
         "validate_xmp",
         crate::xmp::validate_xmp(pdf, level, &mut report)
     );
+    // §6.7.11 FN: when XMP has broken RDF structure (§6.7.3 fired), veraPDF also fires
+    // §6.7.11 (pdfaid schema unreadable). Fire pdfaid rule if 6.7.3 is in the report
+    // but the pdfaid rule isn't, and the XMP stream exists (6.7.2 / 6.6.2.1 not fired).
+    // (#FN-6.7.11 isartor-6-7-2-t02-fail-a)
+    {
+        let missing_rule = match level.part() {
+            1 => "6.7.2",
+            4 => "6.5.2",
+            _ => "6.6.2.1",
+        };
+        let pdfa_id_rule = match level.part() {
+            1 => "6.7.11",
+            4 => "6.5.2",
+            _ => "6.6.4",
+        };
+        let has_broken_rdf = report.issues.iter().any(|i| i.rule == "6.7.3");
+        let has_pdfa_id = report.issues.iter().any(|i| i.rule == pdfa_id_rule);
+        let xmp_missing = report.issues.iter().any(|i| i.rule == missing_rule);
+        if has_broken_rdf && !has_pdfa_id && !xmp_missing {
+            check::error(
+                &mut report,
+                pdfa_id_rule,
+                "PDF/A identification schema unreadable due to broken XMP/RDF structure",
+            );
+        }
+    }
     tracked!(
         "check_encryption",
         check_encryption(pdf, &obj_cache, &mut report)
@@ -745,6 +796,32 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         "validate_xmp",
         crate::xmp::validate_xmp(pdf, level, &mut report)
     );
+    // §6.7.11 FN: when XMP has broken RDF structure (§6.7.3 fired), veraPDF also fires
+    // §6.7.11 (pdfaid schema unreadable). Fire pdfaid rule if 6.7.3 is in the report
+    // but the pdfaid rule isn't, and the XMP stream exists (6.7.2 / 6.6.2.1 not fired).
+    // (#FN-6.7.11 isartor-6-7-2-t02-fail-a)
+    {
+        let missing_rule = match level.part() {
+            1 => "6.7.2",
+            4 => "6.5.2",
+            _ => "6.6.2.1",
+        };
+        let pdfa_id_rule = match level.part() {
+            1 => "6.7.11",
+            4 => "6.5.2",
+            _ => "6.6.4",
+        };
+        let has_broken_rdf = report.issues.iter().any(|i| i.rule == "6.7.3");
+        let has_pdfa_id = report.issues.iter().any(|i| i.rule == pdfa_id_rule);
+        let xmp_missing = report.issues.iter().any(|i| i.rule == missing_rule);
+        if has_broken_rdf && !has_pdfa_id && !xmp_missing {
+            check::error(
+                &mut report,
+                pdfa_id_rule,
+                "PDF/A identification schema unreadable due to broken XMP/RDF structure",
+            );
+        }
+    }
     timed!(
         "check_encryption",
         check_encryption(pdf, &obj_cache, &mut report)
@@ -1137,16 +1214,42 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
     // PDF/A-1 §6.7.2: missing XMP stream → "the file shall contain a metadata stream" violation.
     // §6.7.11 applies only when XMP exists but lacks the pdfaid identification schema.
     // veraPDF fires §6.7.2 (not §6.7.11) when the catalog has no /Metadata stream. Fixes #FP-6.7.11.
+    // For PDF/A-2/3: veraPDF fires §6.6.2.1 (required XMP properties absent) when no XMP stream,
+    // not §6.6.4. (#FP-6.6.4, #FN-6.6.2.1 isartor-6-7-2-t01-fail-a)
     let missing_xmp_rule = match level.part() {
         1 => "6.7.2",
         4 => "6.5.2",
-        _ => "6.6.4",
+        _ => "6.6.2.1",
     };
     let rule = match level.part() {
         1 => "6.7.11",
         4 => "6.5.2",
         _ => "6.6.4",
     };
+
+    // §6.7.2 (PDF/A-1) / §6.6.2.1 (PDF/A-2/3) / §6.5.x (PDF/A-4):
+    // The metadata stream dictionary shall NOT contain a /Filter key.
+    // veraPDF fires §6.7.2 testNumber=2 for this. (#FN-6.7.2)
+    {
+        use pdf_syntax::object::dict::keys;
+        if let Some(cat) = check::catalog(pdf) {
+            if let Some(xmp_stream) = cat.get::<pdf_syntax::object::Stream<'_>>(keys::METADATA) {
+                let xmp_dict = xmp_stream.dict();
+                if xmp_dict.contains_key(b"Filter" as &[u8]) {
+                    let filter_rule = match level.part() {
+                        1 => "6.7.2",
+                        4 => "6.5.2",
+                        _ => "6.6.2.1",
+                    };
+                    check::error(
+                        report,
+                        filter_rule,
+                        "XMP metadata stream dictionary contains /Filter key (not permitted)",
+                    );
+                }
+            }
+        }
+    }
 
     let Some(xmp) = check::get_xmp_metadata(pdf) else {
         check::error(
@@ -2603,9 +2706,6 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: §6.3.3 → §6.3.4 (veraPDF uses 6.3.4 for font embedding in PDF/A-1)
             (1, "6.3.3") => Some("6.3.4"),
             (1, "6.3.3-nd") => Some("6.3.4"), // no-FontDescriptor case, same clause in PDF/A-1
-            // PDF/A-1: corrupt/null TrueType/CID font program — veraPDF fires §6.3.2
-            // (TrueType font requirements) for this case. Confirmed by isartor-6-3-2-t01-fail-c.
-            (1, "6.3.2-null") => Some("6.3.2"),
             // PDF/A-2/3: §6.3.4 → §6.2.11.4.1 (font program not embedded)
             (2..=3, "6.3.4") => Some("6.2.11.4.1"),
             (2..=3, "6.3.3") => Some("6.2.11.4.1"),
