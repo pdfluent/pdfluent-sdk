@@ -21,8 +21,15 @@ signature = "2.2"
 thiserror = { workspace = true }
 p12 = "0.6"
 pkcs8 = "0.10"
-lopdf = { workspace = true }
 ureq = { version = "2", optional = true }
+
+# lopdf: full-featured on native, wasm_js backend (no rayon) on wasm32.
+# Direct path used (not workspace = true) to allow default-features = false override.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lopdf = { path = "../lopdf" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"] }
 
 [features]
 default = []

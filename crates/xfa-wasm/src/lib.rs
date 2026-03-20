@@ -409,21 +409,36 @@ fn set_field_value_by_path(tree: &mut FormTree, root: FormNodeId, path: &str, va
 #[wasm_bindgen]
 pub struct PdfDoc {
     pdf: pdf_syntax::Pdf,
+    /// Raw bytes kept for lopdf-based text extraction.
+    raw: Vec<u8>,
 }
 
 #[wasm_bindgen]
 impl PdfDoc {
     /// Open a PDF from raw bytes.
     pub fn open(data: &[u8]) -> Result<PdfDoc, JsError> {
+        let raw = data.to_vec();
         let pdf =
-            pdf_syntax::Pdf::new(data.to_vec()).map_err(|e| JsError::new(&format!("{e:?}")))?;
-        Ok(PdfDoc { pdf })
+            pdf_syntax::Pdf::new(raw.clone()).map_err(|e| JsError::new(&format!("{e:?}")))?;
+        Ok(PdfDoc { pdf, raw })
     }
 
     /// Number of pages.
     #[wasm_bindgen(js_name = "pageCount")]
     pub fn page_count(&self) -> usize {
         self.pdf.pages().len()
+    }
+
+    /// Extract plain text from a page (0-based index).
+    ///
+    /// Returns an empty string if the page index is out of range or text
+    /// extraction fails.
+    pub fn text(&self, page_index: usize) -> String {
+        let doc = match lopdf::Document::load_mem(&self.raw) {
+            Ok(d) => d,
+            Err(_) => return String::new(),
+        };
+        pdf_extract::extract_page_text(&doc, (page_index + 1) as u32).unwrap_or_default()
     }
 
     /// Document metadata as JSON.

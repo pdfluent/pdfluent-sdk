@@ -13,6 +13,7 @@ use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
 use pdf_render::pdf_syntax::object::Dict;
 use pdf_render::pdf_syntax::page::Page;
 use pdf_render::pdf_syntax::Pdf;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use kurbo::Rect;
@@ -101,11 +102,16 @@ impl PdfDocument {
         Ok(render::render_page(page, options, &self.settings))
     }
 
-    /// Render all pages in parallel using rayon.
+    /// Render all pages, in parallel when the `parallel` feature is enabled.
     pub fn render_all(&self, options: &RenderOptions) -> Vec<RenderedPage> {
         let pages = self.pdf.pages();
-        (0..pages.len())
+        #[cfg(feature = "parallel")]
+        return (0..pages.len())
             .into_par_iter()
+            .map(|i| render::render_page(&pages[i], options, &self.settings))
+            .collect();
+        #[cfg(not(feature = "parallel"))]
+        (0..pages.len())
             .map(|i| render::render_page(&pages[i], options, &self.settings))
             .collect()
     }
@@ -120,11 +126,16 @@ impl PdfDocument {
         ))
     }
 
-    /// Generate thumbnails for all pages in parallel.
+    /// Generate thumbnails for all pages, in parallel when the `parallel` feature is enabled.
     pub fn thumbnails_all(&self, options: &ThumbnailOptions) -> Vec<RenderedPage> {
         let pages = self.pdf.pages();
-        (0..pages.len())
+        #[cfg(feature = "parallel")]
+        return (0..pages.len())
             .into_par_iter()
+            .map(|i| render::render_thumbnail(&pages[i], options.max_dimension, &self.settings))
+            .collect();
+        #[cfg(not(feature = "parallel"))]
+        (0..pages.len())
             .map(|i| render::render_thumbnail(&pages[i], options.max_dimension, &self.settings))
             .collect()
     }
@@ -151,32 +162,31 @@ impl PdfDocument {
     pub fn search_text(&self, query: &str) -> Vec<usize> {
         let pages = self.pdf.pages();
         let query_lower = query.to_lowercase();
-
-        (0..pages.len())
-            .into_par_iter()
-            .filter_map(|i| {
-                let page = &pages[i];
-                let mut device = TextExtractionDevice::new();
-                let mut ctx = Context::new(
-                    page.initial_transform(false),
-                    Rect::new(
-                        0.0,
-                        0.0,
-                        page.render_dimensions().0 as f64,
-                        page.render_dimensions().1 as f64,
-                    ),
-                    page.xref(),
-                    self.settings.clone(),
-                );
-                interpret_page(page, &mut ctx, &mut device);
-                let text = device.into_text().to_lowercase();
-                if text.contains(&query_lower) {
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let page_contains = |i: usize| -> Option<usize> {
+            let page = &pages[i];
+            let mut device = TextExtractionDevice::new();
+            let mut ctx = Context::new(
+                page.initial_transform(false),
+                Rect::new(
+                    0.0,
+                    0.0,
+                    page.render_dimensions().0 as f64,
+                    page.render_dimensions().1 as f64,
+                ),
+                page.xref(),
+                self.settings.clone(),
+            );
+            interpret_page(page, &mut ctx, &mut device);
+            if device.into_text().to_lowercase().contains(&query_lower) {
+                Some(i)
+            } else {
+                None
+            }
+        };
+        #[cfg(feature = "parallel")]
+        return (0..pages.len()).into_par_iter().filter_map(page_contains).collect();
+        #[cfg(not(feature = "parallel"))]
+        (0..pages.len()).filter_map(page_contains).collect()
     }
 
     /// Extract document metadata.

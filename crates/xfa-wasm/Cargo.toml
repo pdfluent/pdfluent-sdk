@@ -17,19 +17,32 @@ xfa-json.workspace = true
 pdf-syntax.workspace = true
 pdf-sign.workspace = true
 pdf-compliance.workspace = true
+pdf-extract.workspace = true
 pdf-render = { path = "../pdf-render", optional = true }
 pdf-annot = { path = "../pdf-annot", optional = true }
-lopdf = { workspace = true, optional = true }
 wasm-bindgen = "0.2"
 serde.workspace = true
 serde_json.workspace = true
 indexmap.workspace = true
 js-sys = "0.3"
 
+# lopdf: required for text extraction; annotate uses lopdf for mutation.
+# Direct path (not workspace = true) to allow per-target default-features override.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lopdf = { path = "../lopdf" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+lopdf = { path = "../lopdf", default-features = false, features = ["wasm_js"] }
+# getrandom v0.2 (transitively via p12/pdf-sign) needs "js" feature on wasm32.
+getrandom = { version = "0.2", features = ["js"] }
+
 [features]
 default = ["render", "annotate"]
 render = ["dep:pdf-render"]
-annotate = ["dep:pdf-annot", "dep:lopdf"]
+annotate = ["dep:pdf-annot"]
+# wasm: core bindings only — no render (PDFium) or annotate (native-only features).
+# Use: cargo build -p xfa-wasm --target wasm32-unknown-unknown --no-default-features --features wasm
+wasm = []
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
