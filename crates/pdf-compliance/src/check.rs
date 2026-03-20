@@ -2991,9 +2991,14 @@ pub fn check_form_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
 
             let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
             let loc = format!("page {}", page_idx + 1);
-            // PDF/A-4 §6.2.8.1 covers OPI/PS/Ref on Form XObjects; PDF/A-1/2/3 use §6.2.9.
+            // PDF/A-4 §6.2.8.1 covers OPI on Form XObjects; PDF/A-1/2/3 use §6.2.9.
             // Internal rule "6.2.9-form-opi" remaps to "6.2.8.1" for part=4. (#FN-6.2.8.1)
             let opi_rule = if part == 4 { "6.2.9-form-opi" } else { "6.2.9" };
+            // PS/Subtype2=PS violations: veraPDF fires "6.2.5" for PDF/A-1 (not "6.2.6").
+            // "6.2.9-form-ps" remaps to "6.2.5" for part=1, "6.2.8.1" for part=4. (#FN-6.2.5)
+            let ps_rule = "6.2.9-form-ps";
+            // /Ref key: veraPDF fires "6.2.8.2" for PDF/A-4 (not "6.2.8.1"). (#FN-6.2.8.2)
+            let ref_rule = "6.2.9-form-ref";
 
             if dict.contains_key(keys::OPI) {
                 error_at(
@@ -3006,7 +3011,7 @@ pub fn check_form_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
             if dict.contains_key(keys::PS) {
                 error_at(
                     report,
-                    opi_rule,
+                    ps_rule,
                     format!("Form XObject {xobj_name} contains forbidden /PS key"),
                     loc.clone(),
                 );
@@ -3015,7 +3020,7 @@ pub fn check_form_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
                 if sub2.as_ref() == keys::PS {
                     error_at(
                         report,
-                        opi_rule,
+                        ps_rule,
                         format!("Form XObject {xobj_name} has Subtype2=PS"),
                         loc.clone(),
                     );
@@ -3024,7 +3029,7 @@ pub fn check_form_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
             if dict.contains_key(b"Ref" as &[u8]) {
                 error_at(
                     report,
-                    opi_rule,
+                    ref_rule,
                     format!("Form XObject {xobj_name} is a reference XObject (contains /Ref)"),
                     loc,
                 );
@@ -8731,58 +8736,70 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                 })
                 .collect();
 
-            // Destination is the 2nd token in bfchar, 3rd token in bfrange.
-            let dst_idx = if in_bfchar { 1 } else { 2 };
-            if let Some(&dstlo) = tokens.get(dst_idx) {
-                // For bfrange, the range maps srclo..=srchi → dstlo..=dstlo+(srchi-srclo).
-                // We must check if EITHER end of the destination range is in PUA/forbidden,
-                // not just dstlo. (#FN-6.2.11.7.3)
-                let dsthi = if in_bfrange {
-                    tokens
+            // Helper: check one destination value for forbidden/PUA codepoints.
+            // Returns true if an error was emitted (caller should return).
+            let mut check_dst = |val: u32| -> bool {
+                // §6.2.11.7.3: U+FFFF forbidden
+                if val == 0xFFFF {
+                    error_at(
+                        report,
+                        "6.2.11.7.3",
+                        format!("Font {name} ToUnicode CMap contains forbidden U+FFFF"),
+                        format!("page {}", page_idx + 1),
+                    );
+                    return true;
+                }
+                // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE forbidden
+                if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
+                    error_at(
+                        report,
+                        "6.2.11.7.2",
+                        format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
+                        format!("page {}", page_idx + 1),
+                    );
+                    return true;
+                }
+                // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF, Supplementary PUA U+F0000+).
+                let is_pua = (0xE000u32..=0xF8FFu32).contains(&val) || val >= 0xF_0000;
+                if is_pua {
+                    error_at(
+                        report,
+                        "6.2.11.7.3",
+                        format!("Font {name} ToUnicode CMap maps to PUA codepoint U+{val:04X}"),
+                        format!("page {}", page_idx + 1),
+                    );
+                    return true;
+                }
+                false
+            };
+
+            if in_bfchar {
+                // A bfchar section can have multiple <src> <dst> pairs on one line.
+                // Destinations are at odd indices: 1, 3, 5, ...
+                // Previously only index 1 was checked, missing later pairs. (#FN-6.2.11.7.3)
+                let mut idx = 1usize;
+                while let Some(&val) = tokens.get(idx) {
+                    if check_dst(val) {
+                        return; // one error per font is enough
+                    }
+                    idx += 2;
+                }
+            } else {
+                // bfrange: <srclo> <srchi> <dststart> — one entry per line.
+                // Check both ends of the destination range. (#FN-6.2.11.7.3)
+                if let Some(&dstlo) = tokens.get(2) {
+                    let dsthi = tokens
                         .get(1)
                         .and_then(|&srchi| {
                             tokens
                                 .first()
                                 .map(|&srclo| dstlo.saturating_add(srchi.saturating_sub(srclo)))
                         })
-                        .unwrap_or(dstlo)
-                } else {
-                    dstlo
-                };
-
-                // Check both ends of the destination range for violations.
-                for val in [dstlo, dsthi] {
-                    // §6.2.11.7.3: U+FFFF forbidden
-                    if val == 0xFFFF {
-                        error_at(
-                            report,
-                            "6.2.11.7.3",
-                            format!("Font {name} ToUnicode CMap contains forbidden U+FFFF"),
-                            format!("page {}", page_idx + 1),
-                        );
-                        return; // one error per font is enough
-                    }
-                    // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE forbidden
-                    if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
-                        error_at(
-                            report,
-                            "6.2.11.7.2",
-                            format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
-                            format!("page {}", page_idx + 1),
-                        );
-                        return; // one error per font is enough
-                    }
-                    // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF, Supplementary PUA U+F0000+).
-                    // Ranges that START before PUA but END inside PUA are also violations. (#FN-6.2.11.7.3)
-                    let is_pua = (0xE000u32..=0xF8FFu32).contains(&val) || val >= 0xF_0000;
-                    if is_pua {
-                        error_at(
-                            report,
-                            "6.2.11.7.3",
-                            format!("Font {name} ToUnicode CMap maps to PUA codepoint U+{val:04X}"),
-                            format!("page {}", page_idx + 1),
-                        );
-                        return; // one error per font is enough
+                        .unwrap_or(dstlo);
+                    for val in [dstlo, dsthi] {
+                        if check_dst(val) {
+                            return; // one error per font is enough
+                        }
                     }
                 }
             }
@@ -12969,17 +12986,15 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
 
-        // stream keyword must be followed by \r\n or \n (§6.1.7.1). (#467)
-        // veraPDF is lenient about optional spaces/tabs between 'stream' and the EOL
-        // marker — skip them before checking.
+        // stream keyword must be followed IMMEDIATELY by \r\n or \n (§6.1.7.1).
+        // Spaces between 'stream' and the EOL are a violation — veraPDF counts them
+        // as stream data, causing a Length mismatch AND an EOL-compliance failure.
+        // Do NOT skip spaces: any non-EOL character after 'stream' is an error. (#FN-6.1.7)
         let after_keyword = abs_stream + 6; // skip "stream"
         if after_keyword >= len {
             break;
         }
-        let mut eol_start = after_keyword;
-        while eol_start < len && (data[eol_start] == b' ' || data[eol_start] == b'\t') {
-            eol_start += 1;
-        }
+        let eol_start = after_keyword;
         let data_start = if eol_start < len
             && data[eol_start] == b'\r'
             && eol_start + 1 < len
