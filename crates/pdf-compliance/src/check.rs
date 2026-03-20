@@ -12038,24 +12038,50 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         };
         let abs_stream = pos + stream_off;
 
+        // Guard: 'stream' must be a standalone keyword, not part of a longer word
+        // (e.g. avoid matching 'stream' inside '/InputStream' or binary data).
+        // A valid stream keyword is preceded by whitespace or '>' (end of dict '>>').
+        if abs_stream > 0 {
+            let prev = data[abs_stream - 1];
+            if prev != b'\n'
+                && prev != b'\r'
+                && prev != b' '
+                && prev != b'\t'
+                && prev != b'>'
+            {
+                pos = abs_stream + 6;
+                continue;
+            }
+        }
+
         // stream keyword must be followed by \r\n or \n (§6.1.7.1). (#467)
-        let data_start = abs_stream + 6; // skip "stream"
-        if data_start >= len {
+        // veraPDF is lenient about optional spaces/tabs between 'stream' and the EOL
+        // marker — skip them before checking.
+        let after_keyword = abs_stream + 6; // skip "stream"
+        if after_keyword >= len {
             break;
         }
+        let mut eol_start = after_keyword;
+        while eol_start < len && (data[eol_start] == b' ' || data[eol_start] == b'\t') {
+            eol_start += 1;
+        }
         let data_start =
-            if data[data_start] == b'\r' && data_start + 1 < len && data[data_start + 1] == b'\n' {
-                data_start + 2
-            } else if data[data_start] == b'\n' {
-                data_start + 1
+            if eol_start < len
+                && data[eol_start] == b'\r'
+                && eol_start + 1 < len
+                && data[eol_start + 1] == b'\n'
+            {
+                eol_start + 2
+            } else if eol_start < len && data[eol_start] == b'\n' {
+                eol_start + 1
             } else {
-                // Extra whitespace or wrong EOL after 'stream' keyword
+                // No EOL after 'stream' keyword (with or without whitespace) — genuine violation
                 error(
                     report,
                     "6.1.7.1",
                     "Stream keyword not followed by required CR LF or LF end-of-line",
                 );
-                pos = abs_stream + 6;
+                pos = after_keyword;
                 continue;
             };
 
@@ -13040,13 +13066,23 @@ pub fn check_cidsysteminfo_compat(pdf: &Pdf, report: &mut ComplianceReport) {
                     (None, None)
                 }
             } else if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
-                // Predefined CMap: "Registry-Ordering-Supplement" e.g. "Adobe-Japan1-2"
-                let s = std::str::from_utf8(enc_name.as_ref()).unwrap_or("");
-                let parts: Vec<&str> = s.splitn(3, '-').collect();
-                if parts.len() >= 2 {
-                    (Some(parts[0].to_string()), Some(parts[1].to_string()))
-                } else {
+                // Identity-H/V CMaps are exempt from Registry/Ordering compatibility
+                // per ISO 32000-1 §9.10.3: "For CIDFont dictionaries with a CMap that
+                // is not an Identity CMap, the Registry and Ordering values shall be
+                // the same." Skip the comparison for Identity CMaps. (#FP-6.2.11.3.1)
+                if enc_name.as_ref() == keys::IDENTITY_H
+                    || enc_name.as_ref() == keys::IDENTITY_V
+                {
                     (None, None)
+                } else {
+                    // Predefined CMap: "Registry-Ordering-Supplement" e.g. "Adobe-Japan1-2"
+                    let s = std::str::from_utf8(enc_name.as_ref()).unwrap_or("");
+                    let parts: Vec<&str> = s.splitn(3, '-').collect();
+                    if parts.len() >= 2 {
+                        (Some(parts[0].to_string()), Some(parts[1].to_string()))
+                    } else {
+                        (None, None)
+                    }
                 }
             } else {
                 (None, None)
@@ -14673,5 +14709,134 @@ fn t1_standard_encoding_name(code: u8) -> Option<&'static str> {
         250 => Some("oe"),
         251 => Some("germandbls"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── .notdef hex scan ──
+
+    #[test]
+    fn notdef_scan_detects_null_byte_in_tj() {
+        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <00> Tj ET"));
+    }
+
+    #[test]
+    fn notdef_scan_detects_null_in_multi_byte_hex() {
+        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <0041> Tj ET"));
+    }
+
+    #[test]
+    fn notdef_scan_skips_nonzero_hex() {
+        assert!(!scan_for_notdef_in_content(b"BT /F1 12 Tf <41> Tj ET"));
+    }
+
+    #[test]
+    fn notdef_scan_skips_non_text_operators() {
+        assert!(!scan_for_notdef_in_content(b"<00> Do"));
+    }
+
+    // ── hex_contains_null_byte ──
+
+    #[test]
+    fn hex_null_byte_pair_00() {
+        assert!(hex_contains_null_byte(b"00"));
+    }
+
+    #[test]
+    fn hex_null_byte_in_middle() {
+        assert!(hex_contains_null_byte(b"410042"));
+    }
+
+    #[test]
+    fn hex_no_null_byte() {
+        assert!(!hex_contains_null_byte(b"4142"));
+    }
+
+    // ── BCP 47 lang tag validation ──
+
+    #[test]
+    fn valid_lang_tags() {
+        assert!(is_valid_lang_tag("en"));
+        assert!(is_valid_lang_tag("en-US"));
+        assert!(is_valid_lang_tag("zh-Hant"));
+        assert!(is_valid_lang_tag("de-DE"));
+        assert!(is_valid_lang_tag("sr-Latn-RS"));
+    }
+
+    #[test]
+    fn invalid_lang_tags() {
+        assert!(!is_valid_lang_tag(""));
+        assert!(!is_valid_lang_tag("en-12"));
+        assert!(!is_valid_lang_tag("english"));
+        assert!(!is_valid_lang_tag("e"));
+    }
+
+    // ── is_standard_cmap ──
+
+    #[test]
+    fn standard_cmaps_recognized() {
+        assert!(is_standard_cmap(b"Identity-H"));
+        assert!(is_standard_cmap(b"Identity-V"));
+        // Note: is_standard_cmap only checks Identity-H/V.
+        // Non-Identity predefined CMaps are handled separately in check_cmap_embedding.
+    }
+
+    #[test]
+    fn custom_cmaps_rejected() {
+        assert!(!is_standard_cmap(b"Adobe-Custom-1"));
+        assert!(!is_standard_cmap(b"MyFont-CMap"));
+    }
+
+    // ── WinAnsi glyph name mapping ──
+
+    #[test]
+    fn winansi_glyph_names() {
+        assert_eq!(t1_winansi_glyph_name(32), Some("space"));
+        assert_eq!(t1_winansi_glyph_name(65), Some("A"));
+        assert_eq!(t1_winansi_glyph_name(97), Some("a"));
+        assert_eq!(t1_winansi_glyph_name(48), Some("zero"));
+        assert_eq!(t1_winansi_glyph_name(46), Some("period"));
+        assert_eq!(t1_winansi_glyph_name(0), None);
+    }
+
+    // ── xref header spacing ──
+
+    #[test]
+    fn xref_header_double_space_detected() {
+        let mut report = ComplianceReport::default();
+        check_xref_header_spacing(b"\n0  14\n0000000000 65535 f \r\n", &mut report);
+        assert!(report.issues.iter().any(|i| i.rule == "6.1.4"));
+    }
+
+    #[test]
+    fn xref_header_single_space_ok() {
+        let mut report = ComplianceReport::default();
+        check_xref_header_spacing(b"\n0 14\n0000000000 65535 f \r\n", &mut report);
+        assert!(!report.issues.iter().any(|i| i.rule == "6.1.4"));
+    }
+
+    // ── ICC profile checksum ──
+
+    #[test]
+    fn icc_checksum_ignores_profile_id() {
+        let mut a = vec![0u8; 200];
+        let mut b = vec![0u8; 200];
+        // Set different Profile ID bytes (84-99)
+        for i in 84..100 {
+            a[i] = 0xAA;
+            b[i] = 0xBB;
+        }
+        assert_eq!(icc_profile_checksum(&a), icc_profile_checksum(&b));
+    }
+
+    #[test]
+    fn icc_checksum_differs_for_different_content() {
+        let a = vec![1u8; 200];
+        let mut b = vec![1u8; 200];
+        b[0] = 2;
+        assert_ne!(icc_profile_checksum(&a), icc_profile_checksum(&b));
     }
 }
