@@ -183,7 +183,6 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check_figure_alt(pdf, &mut report);
         check_role_mapping_pdfa(pdf, &mut report);
         check::check_mark_info(pdf, &mut report);
-        check_lang_presence(pdf, &mut report);
     }
 
     match level.part() {
@@ -2086,19 +2085,6 @@ fn check_lang(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_lang_values(pdf, rule, report);
 }
 
-/// Check that tagged PDFs have a /Lang entry in the catalog.
-/// veraPDF §6.8.4 requires this for conformance levels that mandate tagging.
-fn check_lang_presence(pdf: &Pdf, report: &mut ComplianceReport) {
-    if let Some(cat) = check::catalog(pdf) {
-        if cat.get::<pdf_syntax::object::String>(keys::LANG).is_none() {
-            check::error(
-                report,
-                "6.8.4",
-                "Catalog does not have a /Lang entry (required for tagged PDF)",
-            );
-        }
-    }
-}
 
 /// §6.9 — NeedAppearances and field appearances.
 fn check_need_appearances_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
