@@ -6418,14 +6418,16 @@ pub fn check_stream_external_refs_cached(cache: &ObjectCache<'_>, report: &mut C
             let is_embedded = dict
                 .get::<Name>(keys::TYPE)
                 .is_some_and(|t| t.as_ref() == b"EmbeddedFile");
-            if !is_embedded {
-                if let Some(Object::String(_)) = dict.get::<Object<'_>>(keys::F) {
-                    error(
-                        report,
-                        "6.1.7.1",
-                        "Stream dictionary contains /F file specification (external file reference)",
-                    );
-                }
+            // /F in a stream dict = external file specification, regardless of
+            // value type (string path, file spec dict, or indirect reference).
+            // Fixes FN on veraPDF 6-1-7-1-t04-fail-a where /F is an indirect
+            // reference to a file spec dict. (#FN-6.1.7.1)
+            if !is_embedded && dict.contains_key(keys::F) {
+                error(
+                    report,
+                    "6.1.7.1",
+                    "Stream dictionary contains /F file specification (external file reference)",
+                );
             }
         }
     }
@@ -9250,8 +9252,12 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
             }
 
             // Tj / ' / " — the preceding token is the string argument.
+            // Handle both hex strings (<...>) and literal strings ((...)) because
+            // some test PDFs use literal strings for single-byte CID codes. For
+            // Identity-H an odd-length literal string is padded with 0xFF, giving
+            // e.g. byte 0x23 → CID 0x23FF. Fixes §6.2.11.4.1 FN for literal Tj.
             if matches!(tok, b"Tj" | b"'" | b"\"") && i >= 1 {
-                for cid in extract_cids_from_hex(tokens[i - 1].as_slice()) {
+                for cid in extract_cids_from_token(tokens[i - 1].as_slice()) {
                     // CID 0 = .notdef by definition; handled separately.
                     if cid == 0 {
                         continue;
@@ -9293,8 +9299,8 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
                     if t == b"[" {
                         break;
                     }
-                    if t.starts_with(b"<") {
-                        for cid in extract_cids_from_hex(t) {
+                    if t.starts_with(b"<") || t.starts_with(b"(") {
+                        for cid in extract_cids_from_token(t) {
                             if cid == 0 {
                                 continue;
                             }
@@ -9365,6 +9371,89 @@ fn cid_in_cidset(cid: u32, cidset: &[u8]) -> bool {
         .get(byte_idx)
         .map(|&b| (b >> bit_pos) & 1 == 1)
         .unwrap_or(false)
+}
+
+/// Extract 2-byte big-endian CID values from either a hex-string (`<XXYY...>`) or
+/// a literal-string (`(...)`) token for Type0/Identity-encoded CIDFonts.
+///
+/// For hex strings each group of 4 hex digits encodes one CID.
+/// For literal strings the raw bytes are paired as big-endian 2-byte CIDs; an
+/// odd trailing byte is padded with 0xFF (matches how veraPDF processes
+/// single-byte literal strings in Identity-H fonts).
+fn extract_cids_from_token(tok: &[u8]) -> Vec<u32> {
+    if tok.starts_with(b"<") {
+        return extract_cids_from_hex(tok);
+    }
+    if tok.starts_with(b"(") && tok.ends_with(b")") && tok.len() >= 2 {
+        // Decode PDF literal string escape sequences into raw bytes.
+        let inner = &tok[1..tok.len() - 1];
+        let bytes = decode_literal_string_bytes(inner);
+        // Pair bytes into 2-byte big-endian CIDs; pad odd trailing byte with 0xFF.
+        // This matches how PDF processors handle 1-byte strings in Identity-H fonts.
+        let mut cids = Vec::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            let hi = bytes[i];
+            let lo = if i + 1 < bytes.len() { bytes[i + 1] } else { 0xFF };
+            cids.push((hi as u32) << 8 | lo as u32);
+            i += 2;
+        }
+        return cids;
+    }
+    vec![]
+}
+
+/// Decode PDF literal string escape sequences into a raw byte vector.
+fn decode_literal_string_bytes(inner: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(inner.len());
+    let mut i = 0;
+    while i < inner.len() {
+        if inner[i] == b'\\' {
+            i += 1;
+            if i >= inner.len() {
+                break;
+            }
+            match inner[i] {
+                b'n' => {
+                    out.push(b'\n');
+                    i += 1;
+                }
+                b'r' => {
+                    out.push(b'\r');
+                    i += 1;
+                }
+                b't' => {
+                    out.push(b'\t');
+                    i += 1;
+                }
+                b'(' | b')' | b'\\' => {
+                    out.push(inner[i]);
+                    i += 1;
+                }
+                b'0'..=b'7' => {
+                    // Octal escape: up to 3 digits.
+                    let start = i;
+                    let end = (start + 3).min(inner.len());
+                    let mut k = start;
+                    while k < end && inner[k].is_ascii() && inner[k] >= b'0' && inner[k] <= b'7' {
+                        k += 1;
+                    }
+                    let octal = std::str::from_utf8(&inner[start..k]).unwrap_or("0");
+                    let val = u16::from_str_radix(octal, 8).unwrap_or(0);
+                    out.push(val as u8);
+                    i = k;
+                }
+                _ => {
+                    out.push(inner[i]);
+                    i += 1;
+                }
+            }
+        } else {
+            out.push(inner[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Extract 2-byte big-endian CID values from a PDF hex-string token (`<XXYY...>`).
