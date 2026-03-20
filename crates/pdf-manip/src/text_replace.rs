@@ -644,31 +644,41 @@ fn build_replacement_ops_with_fallback(
     let prefix_char_count = decoded[..search_byte_pos].chars().count();
     let suffix_char_start = prefix_char_count + search.chars().count();
 
-    // Validate bytes-per-character. CID fonts use 2 bytes per char;
-    // single-byte fonts require a 1:1 mapping.
-    let bytes_per_char: usize = if is_cid {
+    let replacement_bytes = encode_latin1(replacement).ok()?;
+
+    // Compute prefix/suffix byte ranges.  CID fonts use 2 bytes per code
+    // but a single code may decode to multiple Unicode chars (ligatures,
+    // surrogate pairs); the strict orig_bytes.len()/2 == char_count guard
+    // that was here before would reject such fonts.  Use the CMap-aware
+    // helper instead.  Single-byte fonts keep the strict 1:1 check.
+    let (prefix_bytes, suffix_bytes) = if is_cid {
         if orig_bytes.len() % 2 != 0 {
             return None;
         }
-        let total_chars = decoded.chars().count();
-        if total_chars == 0 || orig_bytes.len() / 2 != total_chars {
-            return None;
-        }
-        2
+        let prefix_end =
+            fonts.cid_byte_offset_for_chars(font_name, &orig_bytes, prefix_char_count);
+        let suffix_start =
+            fonts.cid_byte_offset_for_chars(font_name, &orig_bytes, suffix_char_start);
+        (
+            orig_bytes[..prefix_end].to_vec(),
+            if suffix_start <= orig_bytes.len() {
+                orig_bytes[suffix_start..].to_vec()
+            } else {
+                vec![]
+            },
+        )
     } else {
         if orig_bytes.len() != decoded.chars().count() {
             return None;
         }
-        1
-    };
-
-    let replacement_bytes = encode_latin1(replacement).ok()?;
-    let prefix_bytes = orig_bytes[..prefix_char_count * bytes_per_char].to_vec();
-    let suffix_start = suffix_char_start * bytes_per_char;
-    let suffix_bytes = if suffix_start <= orig_bytes.len() {
-        orig_bytes[suffix_start..].to_vec()
-    } else {
-        vec![]
+        (
+            orig_bytes[..prefix_char_count].to_vec(),
+            if suffix_char_start <= orig_bytes.len() {
+                orig_bytes[suffix_char_start..].to_vec()
+            } else {
+                vec![]
+            },
+        )
     };
 
     let mut ops: Vec<Operation> = Vec::new();
@@ -860,7 +870,126 @@ fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::content::{Content, Operation};
     use lopdf::{dictionary, Document, Object, Stream};
+
+    /// Build a minimal document with a Type0 (CID/Identity-H) font whose
+    /// ToUnicode CMap covers the printable ASCII range (0x0020–0x007E).
+    /// The character codes equal the Unicode codepoints, so e.g. 'H' is
+    /// encoded as the 2-byte CID code [0x00, 0x48].
+    fn make_doc_with_cid_font(content_bytes: Vec<u8>) -> Document {
+        let mut doc = Document::with_version("1.7");
+
+        // ToUnicode CMap: maps CID = Unicode for printable ASCII.
+        let to_unicode_data = b"/CIDInit /ProcSet findresource begin\n\
+            12 dict begin\n\
+            begincmap\n\
+            /CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n\
+            /CMapName /Adobe-Identity-UCS def\n\
+            /CMapType 2 def\n\
+            1 begincodespacerange\n\
+            <0000> <FFFF>\n\
+            endcodespacerange\n\
+            1 beginbfrange\n\
+            <0020> <007E> <0020>\n\
+            endbfrange\n\
+            endcmap\n\
+            CMapName currentdict /CMap defineresource pop\n\
+            end\n\
+            end\n";
+        let to_unicode_stream = Stream::new(dictionary! {}, to_unicode_data.to_vec());
+        let to_unicode_id = doc.add_object(Object::Stream(to_unicode_stream));
+
+        let cid_font = dictionary! {
+            "Type" => Object::Name(b"Font".to_vec()),
+            "Subtype" => Object::Name(b"CIDFontType2".to_vec()),
+            "BaseFont" => Object::Name(b"TestCIDFont".to_vec()),
+            "CIDSystemInfo" => Object::Dictionary(dictionary! {
+                "Registry" => Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal),
+                "Ordering" => Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal),
+                "Supplement" => Object::Integer(0),
+            }),
+            "DW" => Object::Integer(1000),
+        };
+        let cid_font_id = doc.add_object(Object::Dictionary(cid_font));
+
+        let type0_font = dictionary! {
+            "Type" => Object::Name(b"Font".to_vec()),
+            "Subtype" => Object::Name(b"Type0".to_vec()),
+            "BaseFont" => Object::Name(b"TestCIDFont".to_vec()),
+            "Encoding" => Object::Name(b"Identity-H".to_vec()),
+            "DescendantFonts" => Object::Array(vec![Object::Reference(cid_font_id)]),
+            "ToUnicode" => Object::Reference(to_unicode_id),
+        };
+        let type0_font_id = doc.add_object(Object::Dictionary(type0_font));
+
+        let font_resources = dictionary! {
+            "F1" => Object::Reference(type0_font_id),
+        };
+        let resources = dictionary! {
+            "Font" => Object::Dictionary(font_resources),
+        };
+
+        let content_stream = Stream::new(dictionary! {}, content_bytes);
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let page_dict = dictionary! {
+            "Type" => Object::Name(b"Page".to_vec()),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(resources),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => Object::Name(b"Pages".to_vec()),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+            "Count" => Object::Integer(1),
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => Object::Name(b"Catalog".to_vec()),
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc
+    }
+
+    /// Encode "Hello" as Identity-H CID bytes: each char's code = Unicode codepoint.
+    fn hello_cid_content() -> Vec<u8> {
+        // CID codes: H=0x0048, e=0x0065, l=0x006C, l=0x006C, o=0x006F
+        let cid_bytes = vec![0x00u8, 0x48, 0x00, 0x65, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x6F];
+        Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new(
+                    "Tf",
+                    vec![Object::Name(b"F1".to_vec()), Object::Real(12.0)],
+                ),
+                Operation::new(
+                    "Td",
+                    vec![Object::Real(100.0), Object::Real(700.0)],
+                ),
+                Operation::new(
+                    "Tj",
+                    vec![Object::String(cid_bytes, lopdf::StringFormat::Hexadecimal)],
+                ),
+                Operation::new("ET", vec![]),
+            ],
+        }
+        .encode()
+        .unwrap()
+    }
 
     fn make_doc_with_text(content: &[u8]) -> Document {
         let mut doc = Document::with_version("1.7");
@@ -1074,5 +1203,72 @@ mod tests {
         let editor = editor_for_page(&doc, 1).unwrap();
         let runs = extract_text_runs(&editor, &fonts);
         assert_eq!(runs[0].text, "Hallo World");
+    }
+
+    // ── CID font tests ────────────────────────────────────────────────────────
+
+    #[test]
+    fn replace_cid_font_chars_in_cmap() {
+        // CID/Identity-H font whose ToUnicode CMap covers printable ASCII.
+        // "Hallo" uses the same chars as "Hello" — all in the CMap — so
+        // encode_cid_text should succeed without Helvetica injection.
+        let mut doc = make_doc_with_cid_font(hello_cid_content());
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+
+        assert!(fonts.is_cid_font("F1"), "F1 must be recognized as CID font");
+
+        let count = replace_text(&mut doc, 1, "Hello", "Hallo", &fonts).unwrap();
+        assert_eq!(count, 1);
+
+        // Decode the result and verify the replacement.
+        let fonts_after = FontMap::from_page(&doc, 1).unwrap();
+        let editor = editor_for_page(&doc, 1).unwrap();
+        let runs = extract_text_runs(&editor, &fonts_after);
+        let combined: String = runs.iter().map(|r| r.text.as_str()).collect();
+        assert!(
+            combined.contains("Hallo"),
+            "expected 'Hallo' in '{combined}'"
+        );
+        assert!(
+            !combined.contains("Hello"),
+            "old text 'Hello' should be gone"
+        );
+    }
+
+    #[test]
+    fn replace_cid_font_no_match() {
+        let mut doc = make_doc_with_cid_font(hello_cid_content());
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        let count = replace_text(&mut doc, 1, "World", "Earth", &fonts).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn replace_cid_font_fallback_chars_not_in_cmap() {
+        // Replacement text contains chars outside the CID font's CMap range
+        // (e.g. Japanese kana).  encode_cid_text will fail and the Helvetica
+        // fallback path is used instead.  Verify that a replacement still
+        // happens (count == 1) — the exact font used is secondary.
+        let mut doc = make_doc_with_cid_font(hello_cid_content());
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        // '\u{3053}' = 'こ', not in the ASCII-only CMap → fallback needed.
+        let count = replace_text(&mut doc, 1, "Hello", "Hal\u{3053}", &fonts).unwrap();
+        // Non-Latin replacement cannot be encoded in either CID font or Helvetica
+        // (Helvetica/WinAnsi only covers Latin-1).  Expect 0 replacements.
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn replace_cid_font_latin_fallback() {
+        // Replacement is ASCII but NOT in the CID font's CMap (the CMap only
+        // covers 0x0020-0x007E and 'ê' is U+00EA = outside that range).
+        // encode_cid_text fails, but the Helvetica fallback should handle
+        // pure-Latin-1 chars.  Verify count == 1.
+        let mut doc = make_doc_with_cid_font(hello_cid_content());
+        let fonts = FontMap::from_page(&doc, 1).unwrap();
+        // Replace prefix + out-of-CMap char + suffix so fallback is exercised.
+        // "Hêllo" → 'ê' (U+00EA) is Latin-1 but outside the bfrange 0x0020-0x007E.
+        let count = replace_text(&mut doc, 1, "Hello", "Hêllo", &fonts).unwrap();
+        assert_eq!(count, 1);
     }
 }
