@@ -6,8 +6,8 @@
 //!
 //! - Non-empty bytes
 //! - Starts with an XML declaration or CII root element
-//! - Contains the UN/CEFACT Cross-Industry Invoice namespace (mandatory for all
-//!   ZUGFeRD profiles)
+//! - Contains the UN/CEFACT CII namespace (ZUGFeRD 2.x / Factur-X) or the
+//!   legacy FERD namespace (ZUGFeRD 1.0)
 //!
 //! Skip policy:
 //! - lopdf cannot load the PDF → Skip
@@ -16,7 +16,7 @@
 //! Fail conditions:
 //! - Embedded file is empty
 //! - Content is not recognisable as XML
-//! - Missing CII namespace (embedded file is not ZUGFeRD-conformant)
+//! - Neither CII nor ZUGFeRD v1 namespace found (not ZUGFeRD-conformant)
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -30,8 +30,10 @@ const ZUGFERD_FILENAMES: &[&str] = &[
     "xrechnung.xml",       // XRechnung (DE national profile)
 ];
 
-/// CII namespace prefix present in every ZUGFeRD-conformant XML.
+/// CII namespace present in ZUGFeRD 2.x / Factur-X.
 const CII_NS_PREFIX: &[u8] = b"urn:un:unece:uncefact:data:standard:CrossIndustryInvoice";
+/// ZUGFeRD 1.0 used a different namespace (FERD schema, pre-CII alignment).
+const ZUGFERD_V1_NS_PREFIX: &[u8] = b"urn:ferd:pdfa:CrossIndustryDocument:invoice:";
 
 pub struct ZugferdRoundtripTest;
 
@@ -142,12 +144,17 @@ fn verify_xml(xml_bytes: Vec<u8>, filename: &str, duration_ms: u64) -> TestResul
         };
     }
 
-    // All ZUGFeRD profiles must reference the CII namespace.
-    let has_cii_ns = xml_bytes
+    // ZUGFeRD 2.x / Factur-X uses the UN/CEFACT CII namespace.
+    // ZUGFeRD 1.0 used urn:ferd:pdfa:CrossIndustryDocument:invoice:... (pre-CII alignment).
+    // Both are valid ZUGFeRD XML; accept either namespace.
+    let has_known_ns = xml_bytes
         .windows(CII_NS_PREFIX.len())
-        .any(|w| w == CII_NS_PREFIX);
+        .any(|w| w == CII_NS_PREFIX)
+        || xml_bytes
+            .windows(ZUGFERD_V1_NS_PREFIX.len())
+            .any(|w| w == ZUGFERD_V1_NS_PREFIX);
 
-    if !has_cii_ns {
+    if !has_known_ns {
         return TestResult {
             status: TestStatus::Fail,
             error_message: Some(format!(
