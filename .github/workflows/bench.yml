@@ -1,6 +1,17 @@
 name: Benchmarks
 
 on:
+  push:
+    branches: [master]
+    paths:
+      - 'crates/pdf-syntax/**'
+      - 'crates/pdf-interpret/**'
+      - 'crates/pdf-font/**'
+      - 'crates/pdfium-ffi-bridge/**'
+      - 'crates/formcalc-interpreter/**'
+      - 'crates/xfa-dom-resolver/**'
+      - 'crates/xfa-layout-engine/**'
+      - 'crates/pdf-bench/**'
   pull_request:
     branches: [master]
     paths:
@@ -32,45 +43,110 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Restore baseline
-        uses: actions/cache@v4
+      # On PRs: restore the latest master baseline so criterion can compare.
+      # Cache key targets master saves; falls back to any master baseline on miss.
+      - name: Restore baseline (PR only)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
         with:
           path: target/criterion
-          key: bench-criterion-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: bench-baseline-${{ runner.os }}-master-${{ github.base_sha }}
           restore-keys: |
-            bench-criterion-${{ runner.os }}-
+            bench-baseline-${{ runner.os }}-master-
 
       - name: Run benchmarks
         run: |
           cargo bench -p pdf-bench 2>&1 | tee bench-output.txt
 
-      - name: Check for regressions
-        if: github.event_name == 'pull_request'
-        run: |
-          # Parse criterion output for regressions (>10% slower)
-          if grep -q "regressed" bench-output.txt; then
-            echo "## Benchmark Regressions Detected" > bench-comment.md
-            echo "" >> bench-comment.md
-            echo '```' >> bench-comment.md
-            grep -A2 "regressed" bench-output.txt >> bench-comment.md
-            echo '```' >> bench-comment.md
-            echo "" >> bench-comment.md
-            echo "Please investigate performance regressions before merging." >> bench-comment.md
-          else
-            echo "## Benchmarks: No Regressions" > bench-comment.md
-            echo "" >> bench-comment.md
-            echo "All benchmarks within acceptable range." >> bench-comment.md
-          fi
+      # On master merges: save a new baseline keyed by SHA so the next PR always
+      # gets the most recent master result.
+      - name: Save baseline (master only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@v4
+        with:
+          path: target/criterion
+          key: bench-baseline-${{ runner.os }}-master-${{ github.sha }}
 
-      - name: Comment PR
+      # Detect >10% regressions and write a markdown table for the PR comment.
+      # Criterion outputs: change: [+lo% +mid% +hi%] — we use the median (mid).
+      - name: Detect regressions and generate comment
         if: github.event_name == 'pull_request'
+        id: detect
+        run: |
+          python3 - << 'PYEOF'
+          import re, sys
+
+          regressions = []
+          rows = []
+          current_bench = ""
+
+          with open("bench-output.txt") as f:
+              for line in f:
+                  # Capture benchmark name from lines like: "bench_name   time: ..."
+                  m = re.match(r'^(\S.*?)\s{2,}time:', line)
+                  if m:
+                      current_bench = m.group(1).strip()
+
+                  # Parse: change: [+X% +Y% +Z%] (p = ...)
+                  c = re.search(
+                      r'change:\s*\[([+-][0-9.]+%)\s+([+-][0-9.]+%)\s+([+-][0-9.]+%)\]',
+                      line
+                  )
+                  if c and current_bench:
+                      lo, mid, hi = c.group(1), c.group(2), c.group(3)
+                      try:
+                          pct = float(mid.rstrip('%'))
+                          if pct > 10.0:
+                              status = "❌"
+                              regressions.append(f"`{current_bench}`: {mid}")
+                          elif pct > 0:
+                              status = "⚠️"
+                          else:
+                              status = "✅"
+                          rows.append(
+                              f"| `{current_bench}` | {mid} | {lo} … {hi} | {status} |"
+                          )
+                      except ValueError:
+                          pass
+
+          with open("bench-comment.md", "w") as f:
+              if regressions:
+                  f.write("## ❌ Benchmark Regressions Detected (>10%)\n\n")
+                  for r in regressions:
+                      f.write(f"- {r}\n")
+                  f.write("\nPlease investigate before merging.\n\n")
+              else:
+                  f.write("## ✅ Benchmarks: No Regressions\n\n")
+
+              if rows:
+                  f.write("| Benchmark | Median change | Range | Status |\n")
+                  f.write("|-----------|--------------|-------|--------|\n")
+                  f.write("\n".join(rows) + "\n")
+                  f.write(
+                      "\n> ❌ regression >10% &nbsp; ⚠️ slower ≤10% &nbsp; ✅ improvement or neutral\n"
+                  )
+              else:
+                  f.write(
+                      "_No comparison data available (first run or no baseline found)._\n"
+                  )
+
+          if regressions:
+              for r in regressions:
+                  print(f"::error::Performance regression: {r}")
+              sys.exit(1)
+          else:
+              print("No regressions >10% detected.")
+          PYEOF
+
+      # Post or update a single comment on the PR (runs even if detect step failed).
+      - name: Comment PR
+        if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             if (!fs.existsSync('bench-comment.md')) return;
             const body = fs.readFileSync('bench-comment.md', 'utf8');
-
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -97,8 +173,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-results
+          name: benchmark-results-${{ github.sha }}
           path: |
             target/criterion/
             bench-output.txt
-          retention-days: 30
+          retention-days: 90
