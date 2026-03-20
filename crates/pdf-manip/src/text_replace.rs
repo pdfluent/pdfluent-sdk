@@ -47,12 +47,6 @@ pub fn replace_text(
                 match build_replacement_ops(&op, search, replacement, &run.font_name, fonts) {
                     Ok(ops) => ops,
                     Err(_) => {
-                        // CID fonts are handled by build_replacement_ops_with_fallback
-                        // returning None, so skip injection entirely to avoid
-                        // unnecessary Resources modifications.
-                        if fonts.is_cid_font(&run.font_name) {
-                            continue;
-                        }
                         let fallback =
                             find_or_inject_fallback_font(doc, page_num, &run.font_name, fonts);
                         match fallback {
@@ -603,6 +597,7 @@ fn encode_latin1(text: &str) -> Result<Vec<u8>> {
 ///
 /// Emits the unchanged prefix/suffix bytes in the original font and wraps the
 /// replacement string in `Tf` / `Tj` operators that switch to `fallback_name`.
+/// Handles Tj, ', and TJ operators, and both single-byte and CID (2-byte) fonts.
 /// Returns `None` when the byte layout is too complex to split safely.
 fn build_replacement_ops_with_fallback(
     original_op: &Operation,
@@ -613,35 +608,65 @@ fn build_replacement_ops_with_fallback(
     fallback_name: &str,
     fonts: &FontMap,
 ) -> Option<Vec<Operation>> {
-    // Only handle single-byte Tj / ' operators; TJ arrays are too complex.
-    if fonts.is_cid_font(font_name) {
-        return None;
-    }
-    if !matches!(original_op.operator.as_str(), "Tj" | "'") {
-        return None;
-    }
+    let is_cid = fonts.is_cid_font(font_name);
 
-    let orig_bytes = match original_op.operands.first() {
-        Some(Object::String(ref b, _)) => b.clone(),
+    // Extract raw bytes and decoded text. For TJ arrays, concatenate all
+    // string elements (dropping spacing adjustments — they're discarded when
+    // we rewrite the operator as individual Tj ops).
+    let (orig_bytes, decoded): (Vec<u8>, String) = match original_op.operator.as_str() {
+        "Tj" | "'" => {
+            let bytes = match original_op.operands.first() {
+                Some(Object::String(ref b, _)) => b.clone(),
+                _ => return None,
+            };
+            let decoded = fonts.decode_string(font_name, &bytes);
+            (bytes, decoded)
+        }
+        "TJ" => {
+            let arr = match original_op.operands.first() {
+                Some(Object::Array(ref a)) => a,
+                _ => return None,
+            };
+            let mut all_bytes = Vec::new();
+            let mut full_decoded = String::new();
+            for item in arr {
+                if let Object::String(ref bytes, _) = item {
+                    full_decoded.push_str(&fonts.decode_string(font_name, bytes));
+                    all_bytes.extend_from_slice(bytes);
+                }
+            }
+            (all_bytes, full_decoded)
+        }
         _ => return None,
     };
 
-    let decoded = fonts.decode_string(font_name, &orig_bytes);
     let search_byte_pos = decoded.find(search)?;
+    let prefix_char_count = decoded[..search_byte_pos].chars().count();
+    let suffix_char_start = prefix_char_count + search.chars().count();
 
-    // Require a 1:1 byte-to-char mapping so splitting by char index is safe.
-    if orig_bytes.len() != decoded.chars().count() {
-        return None;
-    }
+    // Validate bytes-per-character. CID fonts use 2 bytes per char;
+    // single-byte fonts require a 1:1 mapping.
+    let bytes_per_char: usize = if is_cid {
+        if orig_bytes.len() % 2 != 0 {
+            return None;
+        }
+        let total_chars = decoded.chars().count();
+        if total_chars == 0 || orig_bytes.len() / 2 != total_chars {
+            return None;
+        }
+        2
+    } else {
+        if orig_bytes.len() != decoded.chars().count() {
+            return None;
+        }
+        1
+    };
 
     let replacement_bytes = encode_latin1(replacement).ok()?;
-
-    let prefix_char_count = decoded[..search_byte_pos].chars().count();
-    let suffix_byte_start = prefix_char_count + search.chars().count();
-
-    let prefix_bytes = orig_bytes[..prefix_char_count].to_vec();
-    let suffix_bytes = if suffix_byte_start <= orig_bytes.len() {
-        orig_bytes[suffix_byte_start..].to_vec()
+    let prefix_bytes = orig_bytes[..prefix_char_count * bytes_per_char].to_vec();
+    let suffix_start = suffix_char_start * bytes_per_char;
+    let suffix_bytes = if suffix_start <= orig_bytes.len() {
+        orig_bytes[suffix_start..].to_vec()
     } else {
         vec![]
     };
