@@ -2068,11 +2068,17 @@ fn check_figure_alt(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_figure_alt_text(pdf, report);
 }
 
-/// §6.7.4 (PDF/A-2/3) / §6.8.4 (PDF/A-1/4) — Lang values must be valid BCP-47.
+/// §6.7.4 (PDF/A-2/3) / §6.8.4 (PDF/A-4) — Lang values must be valid BCP-47.
 ///
-/// veraPDF uses §6.7.4 for PDF/A-2/3 Lang validation, §6.8.4 for others.
+/// ISO 19005-1 §6.7.4 only requires the /Lang key to be PRESENT (not that its
+/// value is a valid tag), so we skip content validation for PDF/A-1.
+/// veraPDF uses §6.7.4 for PDF/A-2/3 Lang validation, §6.8.4 for PDF/A-4.
+/// (#FP-6.8.4)
 fn check_lang(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    // PDF/A-2/3: veraPDF uses §6.7.4 for Lang entry validation.
+    // PDF/A-1: lang tag format is not validated (only presence is required).
+    if level.part() == 1 {
+        return;
+    }
     let rule = match level.part() {
         2 | 3 => "6.7.4",
         _ => "6.8.4",
@@ -2460,7 +2466,7 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             //   PDF/A-2/3 §6.1.7 (streams) → PDF/A-4 §6.1.6
             //   PDF/A-2/3 §6.1.8 (stream filters) → PDF/A-4 §6.1.6.2
             //   PDF/A-2/3 §6.1.13 (impl limits) → PDF/A-4 §6.1.13 (same, no remap)
-            (4, "6.1.6") => Some("6.1.5"),    // hex strings
+            // (4, "6.1.6"): veraPDF uses §6.1.6 for hex strings in PDF/A-4 too — no remap.
             (4, "6.1.8") => Some("6.1.6.2"),  // stream filters (LZWDecode etc.)
             (4, "6.1.10") => Some("6.1.6.2"), // PDF/A-1 filter rule → PDF/A-4
             // PDF/A-2/3: check_stream_filters emits "6.1.8" for LZW/JBIG2 filter
