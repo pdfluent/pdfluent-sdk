@@ -32,6 +32,7 @@ pub struct SinglePdfResult {
 pub struct SinglePdfOutput {
     pub pdf_path: String,
     pub pdf_size: u64,
+    pub binary_commit: String,
     pub results: Vec<SinglePdfResult>,
 }
 
@@ -177,6 +178,7 @@ pub fn run_single_pdf(
     Ok(SinglePdfOutput {
         pdf_path: path_str,
         pdf_size,
+        binary_commit: env!("GIT_HASH").to_string(),
         results,
     })
 }
