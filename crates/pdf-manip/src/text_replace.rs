@@ -47,6 +47,12 @@ pub fn replace_text(
                 match build_replacement_ops(&op, search, replacement, &run.font_name, fonts) {
                     Ok(ops) => ops,
                     Err(_) => {
+                        // CID fonts are handled by build_replacement_ops_with_fallback
+                        // returning None, so skip injection entirely to avoid
+                        // unnecessary Resources modifications.
+                        if fonts.is_cid_font(&run.font_name) {
+                            continue;
+                        }
                         let fallback =
                             find_or_inject_fallback_font(doc, page_num, &run.font_name, fonts);
                         match fallback {
@@ -707,6 +713,9 @@ fn find_or_inject_fallback_font(
 
 /// Inject a Helvetica/WinAnsiEncoding font resource named `"F__Helv"` into
 /// the page's Resources/Font dictionary, creating sub-dictionaries as needed.
+///
+/// Returns `None` if the injection could not be confirmed (e.g. Resources dict
+/// is not writable), so callers can avoid referencing an unknown font.
 fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
     const FALLBACK: &str = "F__Helv";
 
@@ -730,7 +739,13 @@ fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
         }
     });
 
-    match resources_entry {
+    // Track whether F__Helv was actually inserted into the Resources/Font dict.
+    // If insertion fails (e.g. because the target object isn't a mutable dict),
+    // we return None so callers don't emit Tf operators for an unknown font.
+    // Fixes: fallback injection was silently failing on some PDFs, leaving the
+    // content stream referencing F__Helv that wasn't in Resources — causing
+    // PDFium to fail text extraction ("cannot extract text after roundtrip").
+    let inserted = match resources_entry {
         Some(Object::Reference(res_id)) => {
             let font_entry = doc.get_object(res_id).ok().and_then(|obj| {
                 if let Object::Dictionary(ref d) = obj {
@@ -743,6 +758,9 @@ fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
                 Some(Object::Reference(fd_id)) => {
                     if let Ok(Object::Dictionary(ref mut fd)) = doc.get_object_mut(fd_id) {
                         fd.set(FALLBACK, Object::Reference(helv_id));
+                        true
+                    } else {
+                        false
                     }
                 }
                 font_val => {
@@ -753,6 +771,9 @@ fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
                     new_font.set(FALLBACK, Object::Reference(helv_id));
                     if let Ok(Object::Dictionary(ref mut rd)) = doc.get_object_mut(res_id) {
                         rd.set("Font", Object::Dictionary(new_font));
+                        true
+                    } else {
+                        false
                     }
                 }
             }
@@ -763,6 +784,9 @@ fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
                 Some(Object::Reference(fd_id)) => {
                     if let Ok(Object::Dictionary(ref mut fd)) = doc.get_object_mut(fd_id) {
                         fd.set(FALLBACK, Object::Reference(helv_id));
+                        true
+                    } else {
+                        false
                     }
                 }
                 font_val => {
@@ -775,22 +799,37 @@ fn inject_fallback_font(doc: &mut Document, page_num: u32) -> Option<String> {
                     new_res.set("Font", Object::Dictionary(new_font));
                     if let Ok(Object::Dictionary(ref mut pd)) = doc.get_object_mut(page_id) {
                         pd.set("Resources", Object::Dictionary(new_res));
+                        true
+                    } else {
+                        false
                     }
                 }
             }
         }
         _ => {
+            // Page has no direct Resources — create a minimal dict with only
+            // F__Helv. Note: any fonts from an inherited parent Resources are
+            // not copied here, but since get_page_font_dict also doesn't walk
+            // the parent chain, the FontMap would be empty for this page and
+            // no replacement would have been attempted in the first place.
             let mut new_font = lopdf::Dictionary::new();
             new_font.set(FALLBACK, Object::Reference(helv_id));
             let mut new_res = lopdf::Dictionary::new();
             new_res.set("Font", Object::Dictionary(new_font));
             if let Ok(Object::Dictionary(ref mut pd)) = doc.get_object_mut(page_id) {
                 pd.set("Resources", Object::Dictionary(new_res));
+                true
+            } else {
+                false
             }
         }
-    }
+    };
 
-    Some(FALLBACK.to_string())
+    if inserted {
+        Some(FALLBACK.to_string())
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
