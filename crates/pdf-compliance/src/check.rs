@@ -2923,7 +2923,7 @@ pub fn check_annotation_color_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
 ///
 /// Form XObjects must not contain OPI key, PS key, or Subtype2=PS.
 /// Reference XObjects (Ref key) are also forbidden.
-pub fn check_form_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
+pub fn check_form_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
@@ -2954,39 +2954,43 @@ pub fn check_form_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
             }
 
             let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
+            let loc = format!("page {}", page_idx + 1);
+            // PDF/A-4 §6.2.8.1 covers OPI/PS/Ref on Form XObjects; PDF/A-1/2/3 use §6.2.9.
+            // Internal rule "6.2.9-form-opi" remaps to "6.2.8.1" for part=4. (#FN-6.2.8.1)
+            let opi_rule = if part == 4 { "6.2.9-form-opi" } else { "6.2.9" };
 
             if dict.contains_key(keys::OPI) {
                 error_at(
                     report,
-                    "6.2.9",
+                    opi_rule,
                     format!("Form XObject {xobj_name} contains forbidden /OPI key"),
-                    format!("page {}", page_idx + 1),
+                    loc.clone(),
                 );
             }
             if dict.contains_key(keys::PS) {
                 error_at(
                     report,
-                    "6.2.9",
+                    opi_rule,
                     format!("Form XObject {xobj_name} contains forbidden /PS key"),
-                    format!("page {}", page_idx + 1),
+                    loc.clone(),
                 );
             }
             if let Some(sub2) = dict.get::<Name>(b"Subtype2" as &[u8]) {
                 if sub2.as_ref() == keys::PS {
                     error_at(
                         report,
-                        "6.2.9",
+                        opi_rule,
                         format!("Form XObject {xobj_name} has Subtype2=PS"),
-                        format!("page {}", page_idx + 1),
+                        loc.clone(),
                     );
                 }
             }
             if dict.contains_key(b"Ref" as &[u8]) {
                 error_at(
                     report,
-                    "6.2.9",
+                    opi_rule,
                     format!("Form XObject {xobj_name} is a reference XObject (contains /Ref)"),
-                    format!("page {}", page_idx + 1),
+                    loc,
                 );
             }
         }
@@ -3864,6 +3868,18 @@ fn check_image_restrictions_in_res(
             );
         }
 
+        // OPI 1.3 keys embedded directly in Image XObject dictionaries (§6.2.9 / §6.2.6).
+        // /XDPI and /YDPI are OPI 1.3 metadata keys. Internal rule "6.2.6" remaps to
+        // "6.2.9" for PDF/A-1, stays "6.2.6" otherwise. (#FN-6.2.9 6-2-4-t04-fail-a)
+        if dict.contains_key(b"XDPI" as &[u8]) || dict.contains_key(b"YDPI" as &[u8]) {
+            error_at(
+                report,
+                "6.2.6",
+                format!("Image XObject {xobj_name} contains forbidden OPI 1.3 keys (XDPI/YDPI)"),
+                location,
+            );
+        }
+
         // §6.2.8.3 — JPEG2000 (JPXDecode) images must have a valid 'colr' box.
         // Valid METH values: 1 (enumerated CS), 2 (sRGB), 3 (restricted ICC).
         // METH=4 (enumerated with restricted ICC) and others are forbidden. (#467)
@@ -4310,9 +4326,12 @@ pub fn check_cidfont_embedding(pdf: &Pdf, report: &mut ComplianceReport) {
             }
 
             if desc_font.get::<Object<'_>>(keys::CID_TO_GID_MAP).is_none() {
+                // PDF/A-4 §6.2.10.3.2 requires CIDToGIDMap to be explicitly /Identity
+                // or a stream — absent counts as a violation. Internal rule "6.3.7-absent"
+                // remaps to "6.2.10.3.2" for PDF/A-4, suppressed for other parts. (#FN-6.2.10.3.2)
                 error_at(
                     report,
-                    "6.2.11",
+                    "6.3.7-absent",
                     format!("CIDFont Type2 '{name}' missing /CIDToGIDMap"),
                     format!("page {}", page_idx + 1),
                 );
@@ -7681,6 +7700,29 @@ fn page_fonts_use_transparency(res: &Resources<'_>) -> bool {
                     return true;
                 }
             }
+            // Check XObjects in Type3 font resources: Form XObjects with /Group /S
+            // /Transparency introduce a transparency group. (#FN-6.2.9 t04-fail-e)
+            if let Some(xobj_dict) = font_res.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xo_name, _) in xobj_dict.entries() {
+                    let Some(xo_stream) = xobj_dict.get::<Stream<'_>>(xo_name.as_ref()) else {
+                        continue;
+                    };
+                    let xo_dict = xo_stream.dict();
+                    if xo_dict
+                        .get::<Name>(keys::SUBTYPE)
+                        .is_some_and(|s| s.as_ref() == b"Form")
+                    {
+                        if let Some(group) = xo_dict.get::<Dict<'_>>(keys::GROUP) {
+                            if group
+                                .get::<Name>(keys::S)
+                                .is_some_and(|s| s.as_ref() == b"Transparency")
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
         }
         // Check CharProcs for embedded resources
         if let Some(char_procs) = font_dict.get::<Dict<'_>>(b"CharProcs" as &[u8]) {
@@ -8469,9 +8511,11 @@ pub fn check_tounicode_cmap(
     for_each_font(pdf, |name, font_dict, _page_idx| {
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
 
-        // Type3 fonts define their own glyph shapes via CharProcs (no Unicode encoding).
-        // veraPDF does not require ToUnicode for Type3 fonts under §6.2.11.7.2 / §6.3.8.
-        if subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type3") {
+        // For non-Unicode levels (PDF/A-b), Type3 fonts are exempt from ToUnicode.
+        // For Unicode conformance (PDF/A-u, requires_unicode=true), Type3 fonts must also
+        // have ToUnicode when their glyph names are not all AGL-mappable. veraPDF fires
+        // §6.2.11.7.2 for Type3 fonts without ToUnicode in PDF/A-2u/3u. (#FN-6.2.11.7.2)
+        if subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type3") && !requires_unicode {
             return;
         }
 
@@ -8549,8 +8593,13 @@ pub fn check_tounicode_cmap(
                     .as_ref()
                     .and_then(|d| d.get::<Name>(b"BaseEncoding" as &[u8]))
                     .is_some_and(|n| is_predefined_enc_name(n.as_ref()));
-            // Exempt if: predefined encoding OR no encoding at all (built-in).
-            if uses_predefined_encoding || encoding_name.is_none() && encoding_dict.is_none() {
+            // Exempt if: predefined encoding OR (non-Unicode level AND no encoding, meaning
+            // built-in StandardEncoding whose glyph names are AGL-compatible).
+            // For PDF/A-u (requires_unicode=true), "no explicit encoding" is NOT exempt:
+            // fonts like TeX CM fonts have built-in non-AGL names (e.g. integraldisplay)
+            // and veraPDF fires §6.2.11.7.2 for them. (#FN-6.2.11.7.2)
+            let no_enc_exempt = !requires_unicode && encoding_name.is_none() && encoding_dict.is_none();
+            if uses_predefined_encoding || no_enc_exempt {
                 // Exempt: predefined or built-in encoding — Unicode mapping known.
             } else if part == 4 {
                 // §6.2.10.7: ToUnicode required for all fonts in PDF/A-4. (#483)

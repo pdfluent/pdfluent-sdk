@@ -107,7 +107,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_device_color_vs_output_intent(pdf, &mut report);
     check_page_dimensions(pdf, &obj_cache, level, &mut report);
     check_annotation_color_arrays(pdf, &mut report);
-    check_form_xobjects(pdf, &mut report);
+    check_form_xobjects(pdf, level, &mut report);
     check_page_boundary_sizes(pdf, &mut report);
 
     // Color space & graphics state validation (§6.2.x)
@@ -417,7 +417,7 @@ pub fn validate_with_progress(
         "check_annotation_color_arrays",
         check_annotation_color_arrays(pdf, &mut report)
     );
-    tracked!("check_form_xobjects", check_form_xobjects(pdf, &mut report));
+    tracked!("check_form_xobjects", check_form_xobjects(pdf, level, &mut report));
     tracked!(
         "check_page_boundary_sizes",
         check_page_boundary_sizes(pdf, &mut report)
@@ -863,7 +863,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         "check_annotation_color_arrays",
         check_annotation_color_arrays(pdf, &mut report)
     );
-    timed!("check_form_xobjects", check_form_xobjects(pdf, &mut report));
+    timed!("check_form_xobjects", check_form_xobjects(pdf, level, &mut report));
     timed!(
         "check_page_boundary_sizes",
         check_page_boundary_sizes(pdf, &mut report)
@@ -1686,9 +1686,9 @@ fn check_annotation_color_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_annotation_color_arrays(pdf, report);
 }
 
-/// §6.2.9 — Form XObjects must not contain OPI/PS/Ref keys.
-fn check_form_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_form_xobjects(pdf, report);
+/// §6.2.9 / §6.2.8.1 — Form XObjects must not contain OPI/PS/Ref keys.
+fn check_form_xobjects(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_form_xobjects(pdf, level.part(), report);
 }
 
 /// §6.1.13 — Page boundaries must be 3-14400 units.
@@ -2673,6 +2673,17 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // CIDToGIDMap must be /Identity or a stream
             // PDF/A-4: §6.2.10.3.2 (non-Identity Name value)
             (4, "6.3.7") => Some("6.2.10.3.2"),
+
+            // CIDToGIDMap absent for CIDFontType2 (internal rule "6.3.7-absent").
+            // PDF/A-4 §6.2.10.3.2 requires explicit /Identity or stream — absent = violation.
+            // Other parts: absent defaults to /Identity per PDF spec → suppressed. (#FN-6.2.10.3.2)
+            (4, "6.3.7-absent") => Some("6.2.10.3.2"),
+            (_, "6.3.7-absent") => Some("SUPPRESS"),
+
+            // Form XObject OPI/PS/Ref violations (internal rule "6.2.9-form-opi").
+            // PDF/A-4 §6.2.8.1 covers these; PDF/A-1/2/3 use §6.2.9. (#FN-6.2.8.1)
+            (4, "6.2.9-form-opi") => Some("6.2.8.1"),
+            (_, "6.2.9-form-opi") => Some("6.2.9"),
 
             // Name UTF-8 validation.
             // PDF/A-2/3: veraPDF uses §6.1.8 (isValidUtf8). (#FN-6.1.8)
