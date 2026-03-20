@@ -1273,12 +1273,31 @@ fn is_valid_lang_tag(tag: &str) -> bool {
 ///
 /// `rule` is the clause to emit: "6.7.4" for PDF/A-2/3 (veraPDF numbers it there),
 /// "6.8.4" for PDF/A-1/4.
+/// Decode a PDF string as text: try UTF-8 first, then UTF-16BE (with BOM `\xFE\xFF`).
+/// Returns None if the bytes cannot be decoded as either.
+fn decode_pdf_string(bytes: &[u8]) -> Option<String> {
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return Some(s.to_string());
+    }
+    // Try UTF-16BE with BOM (0xFE 0xFF)
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        let pairs: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16(&pairs).ok();
+    }
+    None
+}
+
 pub fn check_lang_values(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
     // Check catalog /Lang
     if let Some(cat) = catalog(pdf) {
         if let Some(lang_str) = cat.get::<pdf_syntax::object::String>(keys::LANG) {
-            if let Ok(tag) = std::str::from_utf8(lang_str.as_bytes()) {
-                if !is_valid_lang_tag(tag) {
+            // /Lang may be a UTF-16BE string (hex-encoded with BOM 0xFE 0xFF).
+            // (#FN-6.8.4 / #FN-6.7.4)
+            if let Some(tag) = decode_pdf_string(lang_str.as_bytes()) {
+                if !is_valid_lang_tag(&tag) {
                     error(
                         report,
                         rule,
@@ -1290,6 +1309,23 @@ pub fn check_lang_values(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
         // Check structure tree /Lang entries
         if let Some(struct_root) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) {
             check_struct_elem_lang(&struct_root, rule, report);
+        }
+    }
+    // Check /Lang in BDC inline property dicts in page content streams.
+    // §6.7.4 / §6.8.4: all /Lang occurrences must be valid BCP-47. (#FN-6.8.4 / #FN-6.7.4)
+    for page in pdf.pages().iter() {
+        if let Some(content) = page.page_stream() {
+            if content.len() <= MAX_CONTENT_STREAM_SCAN_SIZE {
+                for tag in scan_bdc_lang_values(content) {
+                    if !is_valid_lang_tag(&tag) {
+                        error(
+                            report,
+                            rule,
+                            format!("BDC /Lang value '{tag}' is not a valid Language-Tag"),
+                        );
+                    }
+                }
+            }
         }
     }
 }
@@ -1314,8 +1350,8 @@ fn check_struct_elem_lang_bounded(
     *visited += 1;
 
     if let Some(lang_str) = elem.get::<pdf_syntax::object::String>(keys::LANG) {
-        if let Ok(tag) = std::str::from_utf8(lang_str.as_bytes()) {
-            if !is_valid_lang_tag(tag) {
+        if let Some(tag) = decode_pdf_string(lang_str.as_bytes()) {
+            if !is_valid_lang_tag(&tag) {
                 error(
                     report,
                     rule,
@@ -8595,13 +8631,16 @@ pub fn check_tounicode_cmap(
                     .as_ref()
                     .and_then(|d| d.get::<Name>(b"BaseEncoding" as &[u8]))
                     .is_some_and(|n| is_predefined_enc_name(n.as_ref()));
-            // Exempt if: predefined encoding OR (non-Unicode level AND no encoding, meaning
-            // built-in StandardEncoding whose glyph names are AGL-compatible).
-            // For PDF/A-u (requires_unicode=true), "no explicit encoding" is NOT exempt:
-            // fonts like TeX CM fonts have built-in non-AGL names (e.g. integraldisplay)
-            // and veraPDF fires §6.2.11.7.2 for them. (#FN-6.2.11.7.2)
-            let no_enc_exempt =
-                !requires_unicode && encoding_name.is_none() && encoding_dict.is_none();
+            // Exempt if: predefined encoding OR (non-Unicode level AND no encoding).
+            // "No encoding" means built-in encoding (e.g. StandardEncoding for Type1).
+            // For PDF/A-u (requires_unicode=true), this exemption does not apply.
+            // For PDF/A-1 (part=1), only TYPE1 fonts are exempt with no encoding:
+            // symbolic TrueType fonts have non-AGL built-in encodings and veraPDF
+            // fires §6.3.8 for them. (#FN-6.3.8, #FN-6.2.11.7.2)
+            let no_enc_exempt = !requires_unicode
+                && encoding_name.is_none()
+                && encoding_dict.is_none()
+                && (part != 1 || is_type1);
             if uses_predefined_encoding || no_enc_exempt {
                 // Exempt: predefined or built-in encoding — Unicode mapping known.
             } else if part == 4 {
@@ -14316,6 +14355,109 @@ fn scan_bdc_actualtext_pua(content: &[u8]) -> bool {
     false
 }
 
+/// Decode a sequence of hex-digit bytes (e.g. from a PDF `<hexstring>`) into raw bytes.
+/// Whitespace inside the hex data is ignored (valid per PDF spec).
+fn decode_hex_to_bytes(hex: &[u8]) -> Vec<u8> {
+    let nibbles: Vec<u8> = hex
+        .iter()
+        .filter(|&&b| !b.is_ascii_whitespace())
+        .cloned()
+        .collect();
+    let mut out = Vec::with_capacity(nibbles.len() / 2);
+    let mut k = 0;
+    while k + 1 < nibbles.len() {
+        let hi = (nibbles[k] as char).to_digit(16);
+        let lo = (nibbles[k + 1] as char).to_digit(16);
+        if let (Some(h), Some(l)) = (hi, lo) {
+            out.push((h * 16 + l) as u8);
+        }
+        k += 2;
+    }
+    out
+}
+
+/// Scan a content stream for `/Lang` values in BDC inline property dicts and return
+/// the decoded language tags found (UTF-8 or UTF-16BE strings).
+///
+/// Pattern: `/Lang <hexstring>` or `/Lang (literal)` inside `<< … >> BDC`.
+/// Used to fix §6.7.4 / §6.8.4 FNs where /Lang is in a content-stream BDC property
+/// dict instead of in the catalog or structure tree. (#FN-6.8.4 / #FN-6.7.4)
+fn scan_bdc_lang_values(content: &[u8]) -> Vec<String> {
+    let needle = b"/Lang";
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i + needle.len() <= content.len() {
+        if !content[i..].starts_with(needle) {
+            i += 1;
+            continue;
+        }
+        // Verify it's a complete PDF name token — not /Language or similar.
+        // PDF name ends at whitespace or any of the delimiter characters.
+        let after = i + needle.len();
+        let is_name_end = after >= content.len() || {
+            let b = content[after];
+            b.is_ascii_whitespace()
+                || matches!(b, b'<' | b'>' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'/' | b'%')
+        };
+        if !is_name_end {
+            i += 1;
+            continue;
+        }
+        // Skip whitespace after the name
+        let mut j = after;
+        while j < content.len() && content[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j >= content.len() {
+            break;
+        }
+        if content[j] == b'<' && content.get(j + 1).copied() != Some(b'<') {
+            // Hex string: <hexdigits>
+            let start = j + 1;
+            if let Some(rel) = content[start..].iter().position(|&b| b == b'>') {
+                let hex = &content[start..start + rel];
+                let bytes = decode_hex_to_bytes(hex);
+                if let Some(tag) = decode_pdf_string(&bytes) {
+                    result.push(tag);
+                }
+                i = start + rel + 1;
+            } else {
+                i = j + 1;
+            }
+        } else if content[j] == b'(' {
+            // Literal string — scan for balanced closing paren, honouring backslash escapes.
+            let start = j + 1;
+            let mut depth = 1usize;
+            let mut k = start;
+            while k < content.len() {
+                match content[k] {
+                    b'\\' => k += 2, // skip escaped character
+                    b'(' => {
+                        depth += 1;
+                        k += 1;
+                    }
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        k += 1;
+                    }
+                    _ => k += 1,
+                }
+            }
+            let bytes = content[start..k].to_vec();
+            if let Some(tag) = decode_pdf_string(&bytes) {
+                result.push(tag);
+            }
+            i = k + 1;
+        } else {
+            i = j + 1;
+        }
+    }
+    result
+}
+
 /// Decode a PDF hex string as UTF-16BE and return true if any codepoint is in the PUA.
 fn contains_pua_in_utf16be_hex(hex: &[u8]) -> bool {
     // Collect hex nibbles (skip whitespace)
@@ -15797,5 +15939,38 @@ mod tests {
         let mut b = vec![1u8; 200];
         b[0] = 2;
         assert_ne!(icc_profile_checksum(&a), icc_profile_checksum(&b));
+    }
+
+    // ── BDC /Lang content-stream scan ──
+
+    #[test]
+    fn scan_bdc_lang_utf16be_hex() {
+        // `<feff0430043d002d00430041>` = UTF-16BE "ан-CA" (Cyrillic primary = invalid BCP-47)
+        // This is the exact pattern from 6-8-4-t01-fail-c.pdf.
+        let content = b"/Lang <feff0430043d002d00430041>>>BDC";
+        let tags = scan_bdc_lang_values(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0], "\u{0430}\u{043D}-CA"); // "ан-CA"
+    }
+
+    #[test]
+    fn scan_bdc_lang_ascii_literal() {
+        let content = b"<</Lang (en-US)>>BDC";
+        let tags = scan_bdc_lang_values(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0], "en-US");
+    }
+
+    #[test]
+    fn scan_bdc_lang_not_matched_for_language_name() {
+        // /Language should NOT be matched as /Lang
+        let content = b"/Language <feff0065006e> BDC";
+        let tags = scan_bdc_lang_values(content);
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn decode_hex_to_bytes_basic() {
+        assert_eq!(decode_hex_to_bytes(b"feff0065006e"), vec![0xFE, 0xFF, 0x00, 0x65, 0x00, 0x6E]);
     }
 }

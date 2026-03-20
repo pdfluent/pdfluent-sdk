@@ -2189,10 +2189,8 @@ fn check_figure_alt(pdf: &Pdf, report: &mut ComplianceReport) {
 /// veraPDF uses §6.7.4 for PDF/A-2/3 Lang validation, §6.8.4 for PDF/A-4.
 /// (#FP-6.8.4)
 fn check_lang(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    // PDF/A-1: lang tag format is not validated (only presence is required).
-    if level.part() == 1 {
-        return;
-    }
+    // veraPDF validates /Lang tag FORMAT for all PDF/A parts.
+    // PDF/A-1 uses §6.8.4, PDF/A-2/3 use §6.7.4, PDF/A-4 uses §6.8.4. (#FN-6.8.4)
     let rule = match level.part() {
         2 | 3 => "6.7.4",
         _ => "6.8.4",
