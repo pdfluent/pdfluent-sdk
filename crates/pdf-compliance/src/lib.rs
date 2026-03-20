@@ -97,7 +97,8 @@ impl PdfALevel {
 
     /// Whether this level requires tagged PDF (level "a").
     pub fn requires_tagged(self) -> bool {
-        matches!(self, Self::A1a | Self::A2a | Self::A3a)
+        // PDF/A-4 base does NOT require tagged PDF — only 4e and 4f do. (#FP-6.6.1)
+        matches!(self, Self::A1a | Self::A2a | Self::A3a | Self::A4e | Self::A4f)
     }
 
     /// Detect PDF/A level from part number and conformance letter.

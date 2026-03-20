@@ -272,11 +272,12 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
         report,
     );
     // PDF/A-1 pdfaid: namespace only defines `part` and `conformance`.
+    // PDF/A-4 adds `pdfaid:rev` as a valid property (ISO 19005-4). (#FP-6.7.9)
     // veraPDF maps ALL pdfaid: namespace violations to §6.7.9 regardless of level. (#FN-6.7.9-6-7-3-t01)
-    let pdfaid_valid = if level.part() == 1 {
-        VALID_PDFAID_PROPERTIES_V1
-    } else {
-        VALID_PDFAID_PROPERTIES
+    let pdfaid_valid = match level.part() {
+        1 => VALID_PDFAID_PROPERTIES_V1,
+        4 => VALID_PDFAID_PROPERTIES_V4,
+        _ => VALID_PDFAID_PROPERTIES,
     };
     check_closed_namespace_properties(
         xmp_text,
@@ -2128,6 +2129,14 @@ const VALID_PDFAID_PROPERTIES: &[&str] = &[
     "pdfaid:amd",
     "pdfaid:corr",
 ];
+// PDF/A-4 (ISO 19005-4) adds pdfaid:rev as a valid property. (#FP-6.7.9)
+const VALID_PDFAID_PROPERTIES_V4: &[&str] = &[
+    "pdfaid:part",
+    "pdfaid:conformance",
+    "pdfaid:amd",
+    "pdfaid:corr",
+    "pdfaid:rev",
+];
 
 /// Properties that are NOT predefined in XMP 2004 per veraPDF's strict internal list.
 ///
@@ -3329,6 +3338,9 @@ fn check_role_map_no_cycles(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 
     // DFS cycle detection: for each key, walk the chain and check for repetition.
+    // Self-referencing entries (e.g. /Document /Document) are NOT flagged: they are
+    // identity mappings to standard PDF roles and veraPDF accepts them. Only multi-hop
+    // cycles (A → B → A) are violations. (#FP-6.7.3.4)
     for start in map.keys() {
         let mut visited: HashSet<Vec<u8>> = HashSet::new();
         let mut current = start.clone();
@@ -3345,6 +3357,8 @@ fn check_role_map_no_cycles(pdf: &Pdf, report: &mut ComplianceReport) {
                 break;
             }
             match map.get(&current) {
+                // Self-reference (A → A): identity mapping to a standard role — not a cycle.
+                Some(next) if next == &current => break,
                 Some(next) => current = next.clone(),
                 None => break,
             }

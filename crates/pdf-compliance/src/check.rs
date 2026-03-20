@@ -4374,11 +4374,14 @@ pub fn check_cidfont_w_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
 pub fn check_font_base_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
     let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, page_idx| {
-        // Only applies to simple fonts (not Type0 CIDFont wrappers)
+        // Only applies to simple fonts (not Type0 CIDFont wrappers or Type3 fonts).
+        // Type3 fonts define glyphs via /CharProcs — names in /Differences refer to
+        // procedure names, not AGL glyph names. (#FP-6.2.11.6)
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
         let is_truetype = subtype.as_ref().is_some_and(|s| s.as_ref() == b"TrueType");
         let is_type0 = subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type0");
-        if is_type0 {
+        let is_type3 = subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type3");
+        if is_type0 || is_type3 {
             return;
         }
 
@@ -12855,10 +12858,21 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
 
         // Guard: 'stream' must be a standalone keyword, not part of a longer word
         // (e.g. avoid matching 'stream' inside '/InputStream' or binary data).
-        // A valid stream keyword is preceded by whitespace or '>' (end of dict '>>').
-        if abs_stream > 0 {
-            let prev = data[abs_stream - 1];
-            if prev != b'\n' && prev != b'\r' && prev != b' ' && prev != b'\t' && prev != b'>' {
+        // A valid stream keyword is ALWAYS preceded by '>>' (end of stream dict),
+        // possibly with whitespace between the '>>' and 'stream'. The word "stream"
+        // appearing inside a string literal (e.g. bookmark title text) is preceded
+        // only by spaces/letters and has no '>' behind the whitespace. (#FP-6.1.7.1)
+        {
+            let mut scan = abs_stream;
+            while scan > 0
+                && (data[scan - 1] == b' '
+                    || data[scan - 1] == b'\t'
+                    || data[scan - 1] == b'\r'
+                    || data[scan - 1] == b'\n')
+            {
+                scan -= 1;
+            }
+            if scan == 0 || data[scan - 1] != b'>' {
                 pos = abs_stream + 6;
                 continue;
             }
@@ -14185,7 +14199,12 @@ fn check_bmc_emc_nesting(content: &[u8], page_idx: usize, report: &mut Complianc
 
     let mut depth: i32 = 0;
     for tok in &tokens {
-        match *tok {
+        // After splitting on ">>" a hex-string close followed by a dict close produces
+        // ">>>BDC" → ["<hexdata>", ">BDC"]. The residual leading '>' is from the odd
+        // number of consecutive '>' characters. Strip it before matching operators.
+        // PDF operators never start with '>'. (#FP-6.8.3.4)
+        let tok = tok.trim_start_matches('>');
+        match tok {
             "BMC" | "BDC" => depth += 1,
             "EMC" => depth -= 1,
             _ => {}
