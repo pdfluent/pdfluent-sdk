@@ -108,7 +108,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // §6.3.5: CID referenced in content stream not present in CIDFont's CIDSet.
     // Complements check_type1_charset_coverage (which covers Type1/CFF) for Type0
     // (composite CIDFont) fonts. Fixes FN on isartor §6.3.5 and veraPDF §6.3.5 tests.
-    check::check_cidset_content_coverage(pdf, 1, &mut report);
+    check::check_cidset_content_coverage(pdf, level.part(), &mut report);
 
     // File structure, actions, streams (§6.1.x, §6.6.1)
     check_all_page_boundaries(pdf, &mut report);

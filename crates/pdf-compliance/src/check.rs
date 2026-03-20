@@ -1081,6 +1081,43 @@ pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>,
                     }
                 }
             }
+            // Fonts in Type3 CharProcs /Resources — §6.3.4 applies to fonts used
+            // inside Type3 glyph programs too.  isartor-6-3-4-t01-fail-g: page uses
+            // a Type3 font whose CharProcs reference Helvetica via /Resources, and
+            // Helvetica has no FontFile → not embedded.  Fixes §6.3.4 FN.
+            if let Some(page_font_dict) = res.get::<Dict<'_>>(keys::FONT) {
+                for (fname, _) in page_font_dict.entries() {
+                    let fd: Option<Dict<'a>> =
+                        page_font_dict.get::<Dict<'a>>(fname.as_ref()).or_else(|| {
+                            page_font_dict
+                                .get_ref(fname.as_ref())
+                                .and_then(|r| xref.get::<Dict<'a>>(r.into()))
+                        });
+                    if let Some(fd) = fd {
+                        if fd
+                            .get::<Name>(keys::SUBTYPE)
+                            .is_some_and(|s| s.as_ref() == b"Type3")
+                        {
+                            let t3_res: Option<Dict<'a>> =
+                                fd.get::<Dict<'a>>(keys::RESOURCES).or_else(|| {
+                                    fd.get_ref(keys::RESOURCES)
+                                        .and_then(|r| xref.get::<Dict<'a>>(r.into()))
+                                });
+                            if let Some(t3_res) = t3_res {
+                                if let Some(t3_fonts) =
+                                    t3_res.get::<Dict<'a>>(keys::FONT).or_else(|| {
+                                        t3_res
+                                            .get_ref(keys::FONT)
+                                            .and_then(|r| xref.get::<Dict<'a>>(r.into()))
+                                    })
+                                {
+                                    visit_fonts(&t3_fonts);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -8104,8 +8141,9 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                     if let Ok(data) = ff.decoded() {
                         let is_corrupt = is_font_program_corrupt(&data, is_truetype, is_cff);
                         if is_corrupt {
-                            // PDF/A-1 §6.3.2: glyphs must be present; corrupt font = absent
-                            // PDF/A-2/3/4 §6.3.4: font embedding violation
+                            // PDF/A-1 §6.3.2: glyphs must be present; corrupt font = absent.
+                            // veraPDF also fires §6.3.4 for all PDF/A parts for this case.
+                            // PDF/A-2/3/4: §6.3.4 (remapped from "6.3.4" directly).
                             let rule = if part == 1 { "6.3.2-null" } else { "6.3.4" };
                             error_at(
                                 report,
@@ -8115,6 +8153,18 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                                 ),
                                 format!("page {}", page_idx + 1),
                             );
+                            // veraPDF emits §6.3.4 for PDF/A-1 corrupt fonts too. (#FN-6.3.4)
+                            // "6.3.3" is remapped to "6.3.4" for PDF/A-1.
+                            if part == 1 {
+                                error_at(
+                                    report,
+                                    "6.3.3",
+                                    format!(
+                                        "Font {font_name} has corrupt/null font program (invalid or empty stream)"
+                                    ),
+                                    format!("page {}", page_idx + 1),
+                                );
+                            }
                         }
                     }
                 }
@@ -8242,9 +8292,9 @@ fn check_cidfont_descriptor_deep(
     if let Some(ff) = ff_stream {
         if let Ok(data) = ff.decoded() {
             if is_font_program_corrupt(&data, is_truetype, is_cff) {
-                // PDF/A-1 §6.3.4: glyphs must be present; corrupt font = absent
-                // PDF/A-2/3/4 §6.3.4: font embedding violation
-                // veraPDF maps this to §6.3.4 for all PDF/A parts. (#467)
+                // PDF/A-1 §6.3.2: TrueType font with invalid program; corrupt font = absent.
+                // veraPDF also fires §6.3.4 for all PDF/A parts for this case. (#467)
+                // PDF/A-2/3/4: §6.3.4 (remapped from "6.3.4" directly).
                 let rule = if part == 1 { "6.3.2-null" } else { "6.3.4" };
                 error_at(
                     report,
@@ -8254,6 +8304,18 @@ fn check_cidfont_descriptor_deep(
                     ),
                     format!("page {}", page_idx + 1),
                 );
+                // veraPDF emits §6.3.4 for PDF/A-1 corrupt CIDFont programs too. (#FN-6.3.4)
+                // "6.3.3" is remapped to "6.3.4" for PDF/A-1.
+                if part == 1 {
+                    error_at(
+                        report,
+                        "6.3.3",
+                        format!(
+                            "CIDFont {cid_name} has corrupt/null font program (invalid or empty stream)"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
                 // A corrupt font program means glyph metrics cannot be verified — §6.3.5. (#467)
                 error_at(
                     report,
