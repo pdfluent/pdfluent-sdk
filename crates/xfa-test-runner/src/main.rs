@@ -14,6 +14,7 @@ mod dashboard;
 mod db;
 #[allow(dead_code)]
 mod github_issues;
+mod oracle_db;
 mod oracles;
 mod pool;
 mod runner;
@@ -269,6 +270,10 @@ enum Command {
         /// Path to veraPDF binary
         #[arg(long, default_value = "/usr/local/bin/verapdf")]
         verapdf_path: PathBuf,
+
+        /// Path to pre-generated oracle database (uses cached results instead of live veraPDF)
+        #[arg(long)]
+        oracle_db: Option<PathBuf>,
     },
 
     /// Run corpus using a pool of N child processes (one process per PDF).
@@ -334,6 +339,32 @@ enum Command {
         /// Resolution in DPI
         #[arg(long, default_value_t = 150.0_f64)]
         dpi: f64,
+    },
+
+    /// Pre-generate oracle results (veraPDF) for a corpus.
+    ///
+    /// Populates a standalone oracle database with veraPDF results for each PDF.
+    /// Subsequent test runs can read from this DB instead of re-running veraPDF.
+    OracleGenerate {
+        /// Directory containing PDF files
+        #[arg(long)]
+        corpus: PathBuf,
+
+        /// Path to the oracle SQLite database
+        #[arg(long)]
+        oracle_db: PathBuf,
+
+        /// Path to veraPDF binary
+        #[arg(long, default_value = "/usr/local/bin/verapdf")]
+        verapdf_path: PathBuf,
+
+        /// Number of parallel workers
+        #[arg(short = 'j', long, default_value_t = 6)]
+        workers: usize,
+
+        /// Skip PDFs already in the oracle DB
+        #[arg(long)]
+        skip_existing: bool,
     },
 
     /// Check for regression between two runs (exit code 1 = regression)
@@ -746,13 +777,21 @@ fn main() {
             tier,
             no_verapdf,
             verapdf_path,
+            oracle_db: oracle_db_path,
         } => {
-            // Set up veraPDF oracle (same as batch mode, but errors go to stderr).
+            // Set up veraPDF oracle.
+            // If --oracle-db is provided, wrap oracle with the pre-generated DB.
             let verapdf_oracle = if no_verapdf {
                 None
             } else {
-                let oracle = VeraPdfOracle::new(verapdf_path);
-                if oracle.is_available() {
+                let mut oracle = VeraPdfOracle::new(verapdf_path);
+                // Attach oracle DB for cache lookups
+                if let Some(ref odb_path) = oracle_db_path {
+                    if let Ok(odb) = oracle_db::OracleDb::open(odb_path) {
+                        oracle = oracle.with_oracle_db(Arc::new(std::sync::Mutex::new(odb)));
+                    }
+                }
+                if oracle.is_available() || oracle_db_path.is_some() {
                     Some(std::sync::Arc::new(oracle))
                 } else {
                     None
@@ -943,6 +982,134 @@ fn main() {
                 eprintln!("render-page: cannot save {}: {e}", output.display());
                 std::process::exit(1);
             }
+        }
+
+        Command::OracleGenerate {
+            corpus,
+            oracle_db,
+            verapdf_path,
+            workers,
+            skip_existing,
+        } => {
+            use oracle_db::OracleDb;
+            use sha2::{Digest, Sha256};
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            let odb = OracleDb::open(&oracle_db).expect("Failed to open oracle DB");
+
+            // Detect veraPDF version
+            let ver_output = std::process::Command::new(&verapdf_path)
+                .arg("--version")
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            let verapdf_version = ver_output
+                .lines()
+                .find(|l| l.contains("veraPDF") || l.chars().any(|c| c.is_ascii_digit()))
+                .unwrap_or(&ver_output)
+                .trim()
+                .to_string();
+            eprintln!("veraPDF version: {verapdf_version}");
+
+            // Collect PDFs
+            let mut pdfs: Vec<PathBuf> = Vec::new();
+            for entry in walkdir::WalkDir::new(&corpus)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                if entry.path().extension().is_some_and(|e| e == "pdf") {
+                    pdfs.push(entry.into_path());
+                }
+            }
+            let total = pdfs.len();
+            eprintln!("[oracle-generate] {total} PDFs, {workers} workers, skip_existing={skip_existing}");
+            eprintln!("Existing cache entries: {}", odb.count_for("verapdf", &verapdf_version));
+
+            // Shared state
+            let done = Arc::new(AtomicUsize::new(0));
+            let skipped = Arc::new(AtomicUsize::new(0));
+            let failed = Arc::new(AtomicUsize::new(0));
+            let odb = Arc::new(std::sync::Mutex::new(odb));
+
+            // Thread pool
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .build()
+                .expect("Failed to build thread pool");
+
+            pool.scope(|s| {
+                for pdf_path in &pdfs {
+                    let done = Arc::clone(&done);
+                    let skipped = Arc::clone(&skipped);
+                    let failed = Arc::clone(&failed);
+                    let odb = Arc::clone(&odb);
+                    let verapdf_path = verapdf_path.clone();
+                    let verapdf_version = verapdf_version.clone();
+
+                    s.spawn(move |_| {
+                        // Compute hash
+                        let data = match std::fs::read(pdf_path) {
+                            Ok(d) => d,
+                            Err(_) => { failed.fetch_add(1, Ordering::Relaxed); return; }
+                        };
+                        let hash = {
+                            let mut hasher = Sha256::new();
+                            hasher.update(&data);
+                            format!("{:x}", hasher.finalize())
+                        };
+
+                        // Skip if already cached
+                        if skip_existing {
+                            let db = odb.lock().unwrap();
+                            if db.lookup(&hash, "verapdf", &verapdf_version).is_some() {
+                                skipped.fetch_add(1, Ordering::Relaxed);
+                                let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n % 100 == 0 {
+                                    eprintln!("[{n}/{total}] (skipped: {})", skipped.load(Ordering::Relaxed));
+                                }
+                                return;
+                            }
+                        }
+
+                        // Run veraPDF
+                        let result = std::process::Command::new(&verapdf_path)
+                            .arg("--format")
+                            .arg("json")
+                            .arg(pdf_path)
+                            .output();
+
+                        match result {
+                            Ok(output) if output.status.success() || !output.stdout.is_empty() => {
+                                let json = String::from_utf8_lossy(&output.stdout).to_string();
+                                let db = odb.lock().unwrap();
+                                db.store(&hash, "verapdf", &verapdf_version, None, &json);
+                            }
+                            _ => {
+                                failed.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+
+                        let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        if n % 100 == 0 {
+                            eprintln!(
+                                "[{n}/{total}] skipped={} failed={}",
+                                skipped.load(Ordering::Relaxed),
+                                failed.load(Ordering::Relaxed)
+                            );
+                        }
+                    });
+                }
+            });
+
+            let final_count = odb.lock().unwrap().count_for("verapdf", &verapdf_version);
+            eprintln!(
+                "Done: {} processed, {} skipped, {} failed. Oracle DB has {} entries for veraPDF {}",
+                done.load(Ordering::Relaxed),
+                skipped.load(Ordering::Relaxed),
+                failed.load(Ordering::Relaxed),
+                final_count,
+                verapdf_version
+            );
         }
 
         Command::CheckRegression { db, run_a, run_b } => {
