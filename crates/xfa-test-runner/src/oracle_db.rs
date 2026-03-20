@@ -68,6 +68,7 @@ impl OracleDb {
     }
 
     /// Count total cached entries.
+    #[allow(dead_code)]
     pub fn count(&self) -> usize {
         self.conn
             .query_row("SELECT COUNT(*) FROM oracle_results", [], |row| row.get(0))
@@ -96,7 +97,13 @@ mod tests {
         assert_eq!(db.count(), 0);
         assert!(db.lookup("abc123", "verapdf", "1.28").is_none());
 
-        db.store("abc123", "verapdf", "1.28", Some("PDF/A-2B"), r#"{"compliant":false}"#);
+        db.store(
+            "abc123",
+            "verapdf",
+            "1.28",
+            Some("PDF/A-2B"),
+            r#"{"compliant":false}"#,
+        );
         assert_eq!(db.count(), 1);
 
         let result = db.lookup("abc123", "verapdf", "1.28").unwrap();

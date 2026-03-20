@@ -1071,7 +1071,7 @@ fn main() {
             );
             eprintln!(
                 "Existing cache entries: {}",
-                odb.count_for("verapdf", &verapdf_version)
+                odb.count_for("verapdf-parsed", "any")
             );
 
             // Shared state
@@ -1093,51 +1093,107 @@ fn main() {
                     let failed = Arc::clone(&failed);
                     let odb = Arc::clone(&odb);
                     let verapdf_path = verapdf_path.clone();
-                    let verapdf_version = verapdf_version.clone();
 
                     s.spawn(move |_| {
-                        // Compute hash
-                        let data = match std::fs::read(pdf_path) {
+                        // Read input PDF.
+                        let input_data = match std::fs::read(pdf_path) {
                             Ok(d) => d,
                             Err(_) => {
                                 failed.fetch_add(1, Ordering::Relaxed);
+                                let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n.is_multiple_of(100) {
+                                    eprintln!("[{n}/{total}] skipped={} failed={}", skipped.load(Ordering::Relaxed), failed.load(Ordering::Relaxed));
+                                }
                                 return;
                             }
                         };
+
+                        // Run our full PDF/A conversion pipeline.
+                        // Hash the CONVERTED bytes — must match what PdfAConvertTest::run()
+                        // hashes when it calls verapdf.validate(). (Bug 1 + Bug 2 fix)
+                        let converted = match tests::pdfa_convert::convert_to_pdfa_bytes(&input_data, pdf_path) {
+                            Some(c) => c,
+                            None => {
+                                // Not a PDF, already PDF/A, or conversion failed — skip.
+                                skipped.fetch_add(1, Ordering::Relaxed);
+                                let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n.is_multiple_of(100) {
+                                    eprintln!("[{n}/{total}] skipped={} failed={}", skipped.load(Ordering::Relaxed), failed.load(Ordering::Relaxed));
+                                }
+                                return;
+                            }
+                        };
+
                         let hash = {
                             let mut hasher = Sha256::new();
-                            hasher.update(&data);
+                            hasher.update(&converted);
                             format!("{:x}", hasher.finalize())
                         };
 
-                        // Skip if already cached
+                        // Skip if already cached.
+                        // Bug 3 fix: key is ("verapdf-parsed", "any"), matching the lookup
+                        // in VeraPdfOracle::validate().
                         if skip_existing {
                             let db = odb.lock().unwrap();
-                            if db.lookup(&hash, "verapdf", &verapdf_version).is_some() {
+                            if db.lookup(&hash, "verapdf-parsed", "any").is_some() {
                                 skipped.fetch_add(1, Ordering::Relaxed);
                                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                                if n % 100 == 0 {
-                                    eprintln!(
-                                        "[{n}/{total}] (skipped: {})",
-                                        skipped.load(Ordering::Relaxed)
-                                    );
+                                if n.is_multiple_of(100) {
+                                    eprintln!("[{n}/{total}] (skipped: {})", skipped.load(Ordering::Relaxed));
                                 }
                                 return;
                             }
                         }
 
-                        // Run veraPDF
-                        let result = std::process::Command::new(&verapdf_path)
-                            .arg("--format")
-                            .arg("json")
-                            .arg(pdf_path)
-                            .output();
+                        // Write converted PDF to a temp file for veraPDF.
+                        let hash_prefix = &hash[..16];
+                        let tmp_path = std::env::temp_dir()
+                            .join(format!("{hash_prefix}_oracle_gen.pdf"));
+                        if std::fs::write(&tmp_path, &converted).is_err() {
+                            failed.fetch_add(1, Ordering::Relaxed);
+                            let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                            if n.is_multiple_of(100) {
+                                eprintln!("[{n}/{total}] skipped={} failed={}", skipped.load(Ordering::Relaxed), failed.load(Ordering::Relaxed));
+                            }
+                            return;
+                        }
 
-                        match result {
+                        // Run veraPDF on the converted PDF.
+                        let mut cmd = std::process::Command::new(&verapdf_path);
+                        cmd.args(["--format", "json", "--flavour", "0"]);
+                        cmd.arg(&tmp_path);
+                        if std::env::var("JAVA_HOME").is_err() {
+                            for java_dir in [
+                                "/usr/lib/jvm/java-21-openjdk-amd64",
+                                "/usr/lib/jvm/java-17-openjdk-amd64",
+                            ] {
+                                if std::path::Path::new(java_dir).is_dir() {
+                                    cmd.env("JAVA_HOME", java_dir);
+                                    break;
+                                }
+                            }
+                        }
+                        let verapdf_output = cmd.output();
+                        let _ = std::fs::remove_file(&tmp_path);
+
+                        match verapdf_output {
                             Ok(output) if output.status.success() || !output.stdout.is_empty() => {
-                                let json = String::from_utf8_lossy(&output.stdout).to_string();
-                                let db = odb.lock().unwrap();
-                                db.store(&hash, "verapdf", &verapdf_version, None, &json);
+                                let duration_ms = 0u64; // not meaningful for pre-generated cache
+                                // Bug 4 fix: parse raw JSON into VeraPdfResult, then serialize
+                                // to the same format used by the run-local cache.
+                                match oracles::verapdf::parse_verapdf_json_output(&output.stdout, duration_ms) {
+                                    Ok(result) => {
+                                        if let Ok(json) = serde_json::to_string(&result) {
+                                            let db = odb.lock().unwrap();
+                                            db.store(&hash, "verapdf-parsed", "any", None, &json);
+                                        } else {
+                                            failed.fetch_add(1, Ordering::Relaxed);
+                                        }
+                                    }
+                                    Err(_) => {
+                                        failed.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
                             }
                             _ => {
                                 failed.fetch_add(1, Ordering::Relaxed);
@@ -1145,7 +1201,7 @@ fn main() {
                         }
 
                         let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                        if n % 100 == 0 {
+                        if n.is_multiple_of(100) {
                             eprintln!(
                                 "[{n}/{total}] skipped={} failed={}",
                                 skipped.load(Ordering::Relaxed),
@@ -1156,14 +1212,13 @@ fn main() {
                 }
             });
 
-            let final_count = odb.lock().unwrap().count_for("verapdf", &verapdf_version);
+            let final_count = odb.lock().unwrap().count_for("verapdf-parsed", "any");
             eprintln!(
-                "Done: {} processed, {} skipped, {} failed. Oracle DB has {} entries for veraPDF {}",
+                "Done: {} processed, {} skipped, {} failed. Oracle DB has {} entries (verapdf-parsed/any)",
                 done.load(Ordering::Relaxed),
                 skipped.load(Ordering::Relaxed),
                 failed.load(Ordering::Relaxed),
                 final_count,
-                verapdf_version
             );
         }
 
