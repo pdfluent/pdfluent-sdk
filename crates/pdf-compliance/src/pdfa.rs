@@ -170,7 +170,6 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_font_widths(pdf, &mut report);
     check_font_program_widths(pdf, &mut report);
     if level.part() == 4 {
-        check_truetype_cmap_pdfa4(pdf, &mut report);
         // §6.2.10.7/§6.2.10.9: ToUnicode CMap must cover all glyphs. (#467)
         check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report);
         // §6.2.10.9: no .notdef glyph (CID 0x0000) in text operators. (#496)
@@ -179,6 +178,8 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         check::check_tounicode_c0_forbidden(pdf, &mut report);
         // §6.2.10.9: every rendered Type0 CID must be in the ToUnicode CMap.
         check::check_type0_cid_tounicode_coverage(pdf, &mut report);
+        // §6.2.10.8: StructElem /ActualText must not contain PUA codepoints.
+        check::check_struct_elem_actualtext_pua(pdf, &mut report);
     }
     // §6.2.11.8: content stream references .notdef glyph (PDF/A-2/3).
     // Not called for PDF/A-1 (no §6.2.11.8 clause) or PDF/A-4 (uses §6.2.10.9 above).
@@ -231,7 +232,11 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_name_length_cached(pdf, &obj_cache, &mut report);
     check_real_value_range_cached(&obj_cache, level, &mut report);
     check_font_file_format_cached(&obj_cache, level, &mut report);
-    check_explicit_resources(pdf, &mut report);
+    // §6.2.2 explicit resources only applies to PDF/A-2/3/4.
+    // In PDF/A-1, §6.2.2 is OutputIntents (checked elsewhere). (#FP-6.2.2)
+    if level.part() >= 2 {
+        check_explicit_resources(pdf, &mut report);
+    }
     check::check_name_utf8_cached(&obj_cache, &mut report);
 
     // Info/XMP consistency, stream/syntax, XMP extension, image intent
@@ -570,10 +575,6 @@ pub fn validate_with_progress(
     );
     if level.part() == 4 {
         tracked!(
-            "check_truetype_cmap_pdfa4",
-            check_truetype_cmap_pdfa4(pdf, &mut report)
-        );
-        tracked!(
             "check_tounicode_glyph_coverage",
             check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report)
         );
@@ -591,6 +592,11 @@ pub fn validate_with_progress(
         tracked!(
             "check_type0_cid_tounicode_coverage",
             check::check_type0_cid_tounicode_coverage(pdf, &mut report)
+        );
+        // §6.2.10.8: StructElem /ActualText must not contain PUA codepoints.
+        tracked!(
+            "check_struct_elem_actualtext_pua",
+            check::check_struct_elem_actualtext_pua(pdf, &mut report)
         );
     }
     // §6.2.11.8: content stream references .notdef glyph (PDF/A-2/3). (#FN-6.2.11.8)
@@ -702,10 +708,12 @@ pub fn validate_with_progress(
         "check_font_file_format",
         check_font_file_format_cached(&obj_cache, level, &mut report)
     );
-    tracked!(
-        "check_explicit_resources",
-        check_explicit_resources(pdf, &mut report)
-    );
+    if level.part() >= 2 {
+        tracked!(
+            "check_explicit_resources",
+            check_explicit_resources(pdf, &mut report)
+        );
+    }
     tracked!(
         "check_name_utf8",
         check::check_name_utf8_cached(&obj_cache, &mut report)
@@ -735,6 +743,12 @@ pub fn validate_with_progress(
     tracked!(
         "check_stream_external_refs",
         check::check_stream_external_refs_cached(&obj_cache, &mut report)
+    );
+    // Raw byte scan catches Length=0 streams skipped by the ObjectCache parser.
+    // Fixes FN=6.1.6.1 (PDF/A-4) and FN=6.1.7 (PDF/A-1) for external-file streams. (#FN-6.1.6.1)
+    tracked!(
+        "check_stream_external_refs_raw",
+        check_stream_external_refs_raw(pdf, &mut report)
     );
     tracked!(
         "check_widget_no_action",
@@ -1028,10 +1042,6 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     );
     if level.part() == 4 {
         timed!(
-            "check_truetype_cmap_pdfa4",
-            check_truetype_cmap_pdfa4(pdf, &mut report)
-        );
-        timed!(
             "check_tounicode_glyph_coverage",
             check::check_tounicode_glyph_coverage(pdf, level.part(), &mut report)
         );
@@ -1039,6 +1049,11 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         timed!(
             "check_notdef_glyph_usage",
             check::check_notdef_glyph_usage(pdf, &mut report)
+        );
+        // §6.2.10.8: StructElem /ActualText must not contain PUA codepoints.
+        timed!(
+            "check_struct_elem_actualtext_pua",
+            check::check_struct_elem_actualtext_pua(pdf, &mut report)
         );
     }
     // §6.2.11.8: content stream references .notdef glyph (PDF/A-2/3). (#FN-6.2.11.8)
@@ -1149,10 +1164,12 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
         "check_font_file_format",
         check_font_file_format_cached(&obj_cache, level, &mut report)
     );
-    timed!(
-        "check_explicit_resources",
-        check_explicit_resources(pdf, &mut report)
-    );
+    if level.part() >= 2 {
+        timed!(
+            "check_explicit_resources",
+            check_explicit_resources(pdf, &mut report)
+        );
+    }
     timed!(
         "check_name_utf8",
         check::check_name_utf8_cached(&obj_cache, &mut report)
@@ -1192,6 +1209,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     timed!(
         "check_stream_external_refs",
         check::check_stream_external_refs_cached(&obj_cache, &mut report)
+    );
+    timed!(
+        "check_stream_external_refs_raw",
+        check_stream_external_refs_raw(pdf, &mut report)
     );
     timed!(
         "check_no_data_after_eof",
@@ -2139,11 +2160,6 @@ fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_font_program_widths(pdf, report);
 }
 
-/// §6.2.10.4.1 — TrueType simple-font Mac Roman cmap validity (PDF/A-4 only).
-fn check_truetype_cmap_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_truetype_cmap_pdfa4(pdf, report);
-}
-
 /// §6.3.6 — Symbolic TrueType encoding.
 fn check_symbolic_truetype_encoding(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_symbolic_truetype_encoding(pdf, report);
@@ -2241,9 +2257,11 @@ fn check_document_structure_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_document_structure(pdf, report);
 }
 
-/// §6.12 — Role mapping check.
+/// §6.12 — Role mapping check + §6.7.3.4 circular RoleMap detection.
 fn check_role_mapping_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_role_mapping(pdf, report);
+    // §6.7.3.4: "A circular mapping shall not exist in the RoleMap." (#FN-6.7.3.4)
+    check::check_rolemap_circular(pdf, report);
 }
 
 /// PDF/A-1 and PDF/A-2 forbid embedded files.
@@ -2466,7 +2484,9 @@ fn check_xmp_extension_schema_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_xmp_extension_schema(pdf, report);
     // Cascade: §6.7.8 → §6.7.9 (only if §6.7.9 not already reported by other checks)
     if report.issues[before..].iter().any(|i| i.rule == "6.7.8")
-        && !report.issues[..before].iter().any(|i| i.rule.starts_with("6.7.9"))
+        && !report.issues[..before]
+            .iter()
+            .any(|i| i.rule.starts_with("6.7.9"))
     {
         check::error(
             report,
@@ -2587,7 +2607,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-4: OPI/Alternates/Interpolate checks use §6.2.7.x
             // ISO 19005-4 renumbered: §6.2.8.1 (Interpolate) → §6.2.7.1 (#FN-6.2.7.1)
             (4, "6.2.8.1") => Some("6.2.7.1"), // Interpolate=true forbidden
-            (4, "6.2.8.3") => Some("6.2.8.1"), // OPI key forbidden (veraPDF §6.2.8.1 for PDF/A-4)
+            // OPI key on Image XObjects → §6.2.7.1 for PDF/A-4 (veraPDF uses §6.2.7.1,
+            // NOT §6.2.8.1 for OPI). Previous remap to "6.2.8.1" caused FN+FP. (#FN-6.2.7.1)
+            (4, "6.2.8.3") => Some("6.2.7.1"), // OPI key forbidden → §6.2.7.1
 
             // Implementation limits
             // PDF/A-1: §6.1.12, PDF/A-2/3/4: §6.1.13
@@ -2624,6 +2646,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // which is only emitted by check_stream_length, so no collision. (#496)
             (1, "6.1.7.1") => Some("6.1.7"),
             (1, "6.1.7.1-len") => Some("6.1.7"),
+            // PDF/A-2/3: stream Length mismatch → §6.1.7.1 (veraPDF uses the sub-clause).
+            // "6.1.7.1-len" is the internal ID for stream Length errors; remap to match
+            // veraPDF's output. Fixes FN=6.1.7.1 + FP=6.1.7.1-len for 6-1-7-1-t03 PDFs.
+            // (#FN-6.1.7.1)
+            (2..=3, "6.1.7.1-len") => Some("6.1.7.1"),
             // PDF/A-4: stream rules reorganised in ISO 19005-4:
             //   §6.1.7.1 (EOL/external-file/empty-keys) → §6.1.6.1
             //   §6.1.7.1-len (Length mismatch) → §6.1.6.1 (same clause, different internal ID)

@@ -6319,8 +6319,12 @@ pub fn check_output_intent_consistency_pdfa(pdf: &Pdf, part: u8, report: &mut Co
             .iter()
             .any(|(len, pfx)| *len != len0 || pfx != pfx0)
         {
-            // §6.6.1 in PDF/A-1, §6.2.2 in PDF/A-2/3
-            let rule = if part == 1 { "6.6.1" } else { "6.2.2" };
+            // §6.6.1 in PDF/A-1, §6.2.2 in PDF/A-2/3, §6.2.3 in PDF/A-4
+            let rule = match part {
+                1 => "6.6.1",
+                4 => "6.2.3",
+                _ => "6.2.2",
+            };
             error(
                 report,
                 rule,
@@ -7715,9 +7719,23 @@ fn page_annots_use_transparency(page_dict: &Dict<'_>) -> bool {
                 return true;
             }
         }
-        // Check appearance stream resources for transparency
+        // Check appearance stream resources for transparency.
+        // /AP /N may be a direct stream OR a dict of appearance states
+        // (e.g. /On and /Off for checkboxes). Check both cases.
         if let Some(ap) = annot.get::<Dict<'_>>(keys::AP) {
+            // Collect all AP /N streams to check: direct stream or each state in dict.
+            let mut ap_streams: Vec<Stream<'_>> = Vec::new();
             if let Some(n_stream) = ap.get::<Stream<'_>>(keys::N) {
+                ap_streams.push(n_stream);
+            } else if let Some(n_dict) = ap.get::<Dict<'_>>(keys::N) {
+                // Appearance state dict: /On, /Off, /Yes, /No, etc.
+                for (state, _) in n_dict.entries() {
+                    if let Some(s) = n_dict.get::<Stream<'_>>(state.as_ref()) {
+                        ap_streams.push(s);
+                    }
+                }
+            }
+            for n_stream in ap_streams {
                 let ap_dict = n_stream.dict();
                 if let Some(res) = ap_dict.get::<Dict<'_>>(keys::RESOURCES) {
                     if let Some(gs) = res.get::<Dict<'_>>(keys::EXT_G_STATE) {
@@ -11974,12 +11992,7 @@ pub fn check_role_mapping(pdf: &Pdf, report: &mut ComplianceReport) {
             continue;
         }
 
-        // Non-standard type must be in RoleMap
-        let mapped = role_map
-            .as_ref()
-            .and_then(|rm| rm.get::<Name>(t.as_slice()));
-
-        if mapped.is_none() {
+        let Some(rm) = role_map.as_ref() else {
             let type_str = std::str::from_utf8(t).unwrap_or("?");
             error(
                 report,
@@ -11988,6 +12001,55 @@ pub fn check_role_mapping(pdf: &Pdf, report: &mut ComplianceReport) {
                     "Structure element type '{type_str}' has no role mapping to a standard type"
                 ),
             );
+            continue;
+        };
+
+        // Non-standard type must be in RoleMap AND the chain must eventually
+        // resolve to a standard structure type. A chain that ends at a
+        // non-standard type without further mapping is a §6.7.3.4 violation.
+        // Cycles are already caught by check_role_map_no_cycles. (#FN-6.7.3.4)
+        let Some(first_target) = rm.get::<Name>(t.as_slice()) else {
+            let type_str = std::str::from_utf8(t).unwrap_or("?");
+            error(
+                report,
+                "6.12",
+                format!(
+                    "Structure element type '{type_str}' has no role mapping to a standard type"
+                ),
+            );
+            continue;
+        };
+
+        // Follow chain until standard type, cycle, or dead end.
+        let mut current = first_target.as_ref().to_vec();
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(t.clone());
+        loop {
+            if standard_types.contains(&current.as_slice()) {
+                break; // resolved to standard — OK
+            }
+            if !visited.insert(current.clone()) {
+                break; // cycle — handled by check_role_map_no_cycles
+            }
+            match rm.get::<Name>(current.as_slice()) {
+                Some(next) => {
+                    current = next.as_ref().to_vec();
+                }
+                None => {
+                    // Dead end: maps to non-standard type not in RoleMap
+                    let type_str = std::str::from_utf8(t).unwrap_or("?");
+                    let target_str = std::str::from_utf8(&current).unwrap_or("?");
+                    error(
+                        report,
+                        "6.12",
+                        format!(
+                            "Structure element type '{type_str}' maps to '{target_str}' \
+                             which is not a standard structure type and has no further mapping"
+                        ),
+                    );
+                    break;
+                }
+            }
         }
     }
 }
@@ -12009,6 +12071,118 @@ fn collect_struct_types(elem: &Dict<'_>, types: &mut Vec<Vec<u8>>, depth: usize)
     } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
         collect_struct_types(&kid, types, depth + 1);
     }
+}
+
+/// §6.7.3.4 — RoleMap must not contain circular mappings.
+///
+/// ISO 19005-2/3 §6.7.3.4: "A circular mapping shall not exist in the RoleMap."
+/// For example: A → B → A or A → B → C → A are circular. Walk the mapping chain
+/// from each key and detect if any path revisits a key. (#FN-6.7.3.4)
+pub fn check_rolemap_circular(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else { return };
+    let Some(struct_tree) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) else {
+        return;
+    };
+    let Some(role_map) = struct_tree.get::<Dict<'_>>(keys::ROLE_MAP) else {
+        return;
+    };
+    // Collect all keys as byte vecs
+    let keys_list: Vec<Vec<u8>> = role_map
+        .entries()
+        .map(|(k, _)| k.as_ref().to_vec())
+        .collect();
+    'outer: for start in &keys_list {
+        let mut visited: Vec<Vec<u8>> = vec![start.clone()];
+        let mut current = start.clone();
+        loop {
+            let next = match role_map.get::<Name>(current.as_slice()) {
+                Some(n) => n.as_ref().to_vec(),
+                None => break,
+            };
+            if visited.contains(&next) {
+                // Cycle detected
+                error(report, "6.7.3.4", "RoleMap contains a circular mapping");
+                break 'outer;
+            }
+            visited.push(next.clone());
+            current = next;
+        }
+    }
+}
+
+/// §6.2.10.8 (PDF/A-4) — StructElement /ActualText must not contain PUA codepoints.
+///
+/// ISO 19005-4 §6.2.10.8: The value of the ActualText entry in a structure element
+/// dictionary shall not contain Unicode Private Use Area codepoints (U+E000–U+F8FF,
+/// U+F0000–U+FFFFF, U+100000–U+10FFFF). Walks the structure tree and checks every
+/// StructElem /ActualText hex or literal string. (#FN-6.2.10.8)
+pub fn check_struct_elem_actualtext_pua(pdf: &Pdf, report: &mut ComplianceReport) {
+    let Some(cat) = catalog(pdf) else { return };
+    let Some(struct_tree) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) else {
+        return;
+    };
+    check_struct_elem_actualtext_pua_recursive(&struct_tree, report, 0);
+}
+
+fn check_struct_elem_actualtext_pua_recursive(
+    elem: &Dict<'_>,
+    report: &mut ComplianceReport,
+    depth: usize,
+) {
+    if depth > 200 {
+        return;
+    }
+    // Check /ActualText on this element
+    if let Some(Object::String(s)) = elem.get::<Object<'_>>(b"ActualText" as &[u8]) {
+        // String may be a raw byte sequence; check for UTF-16BE BOM (0xFE 0xFF)
+        let bytes = s.as_ref();
+        if bytes.len() >= 2
+            && bytes[0] == 0xFE
+            && bytes[1] == 0xFF
+            && utf16be_bytes_contain_pua(&bytes[2..])
+        {
+            error(
+                report,
+                "6.2.10.8",
+                "StructElem /ActualText contains Private Use Area (PUA) codepoint",
+            );
+            return;
+        }
+    }
+    // Recurse into kids
+    if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
+        for kid in kids.iter::<Dict<'_>>() {
+            check_struct_elem_actualtext_pua_recursive(&kid, report, depth + 1);
+        }
+    } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
+        check_struct_elem_actualtext_pua_recursive(&kid, report, depth + 1);
+    }
+}
+
+/// Check if a raw UTF-16BE byte sequence (BOM already stripped) contains PUA codepoints.
+fn utf16be_bytes_contain_pua(bytes: &[u8]) -> bool {
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        let hi = bytes[i] as u32;
+        let lo = bytes[i + 1] as u32;
+        let cp = (hi << 8) | lo;
+        if (0xE000..=0xF8FF).contains(&cp) {
+            return true;
+        }
+        // Surrogate pair → supplementary PUA
+        if (0xD800..=0xDBFF).contains(&cp) && i + 3 < bytes.len() {
+            let lo2 = (bytes[i + 2] as u32) << 8 | bytes[i + 3] as u32;
+            if (0xDC00..=0xDFFF).contains(&lo2) {
+                let full = 0x10000 + ((cp - 0xD800) << 10) + (lo2 - 0xDC00);
+                if full >= 0xF0000 {
+                    return true;
+                }
+                i += 2;
+            }
+        }
+        i += 2;
+    }
+    false
 }
 
 // ─── §6.1.13 — Name length limit ────────────────────────────────────────────
@@ -12719,11 +12893,19 @@ fn check_do_tf_refs_in_stream(
 
         match tok {
             "Do" => {
-                // /Name Do — XObject invocation; name is 1 token before
+                // /Name Do — XObject invocation; name is 1 token before.
+                // Use contains_key rather than get_x_object (which returns Option<Stream>
+                // and returns None for streams with /F <indirect-ref> that pdf-syntax
+                // can't parse as a Stream, even though the entry exists). Fixes FP=6.2.2
+                // on PDFs where a Form XObject has an external file reference (/F n 0 R).
                 if i >= 1 {
                     if let Some(name) = tokens[i - 1].strip_prefix('/') {
-                        // Use the parent-chain-aware accessor (traverses inherited Resources)
-                        if res.get_x_object(Name::new(name.as_bytes())).is_none() {
+                        let in_own = res.x_objects.contains_key(name.as_bytes());
+                        let in_parent = !in_own
+                            && res
+                                .parent()
+                                .is_some_and(|p| p.x_objects.contains_key(name.as_bytes()));
+                        if !in_own && !in_parent {
                             error_at(
                                 report,
                                 "6.2.2",
@@ -12735,11 +12917,16 @@ fn check_do_tf_refs_in_stream(
                 }
             }
             "Tf" => {
-                // /Name size Tf — font selection; name is 2 tokens before
+                // /Name size Tf — font selection; name is 2 tokens before.
+                // Use contains_key for the same reason as Do above.
                 if i >= 2 {
                     if let Some(name) = tokens[i - 2].strip_prefix('/') {
-                        // Use the parent-chain-aware accessor (traverses inherited Resources)
-                        if res.get_font(Name::new(name.as_bytes())).is_none() {
+                        let in_own = res.fonts.contains_key(name.as_bytes());
+                        let in_parent = !in_own
+                            && res
+                                .parent()
+                                .is_some_and(|p| p.fonts.contains_key(name.as_bytes()));
+                        if !in_own && !in_parent {
                             error_at(
                                 report,
                                 "6.2.2",
@@ -13035,7 +13222,9 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
             // Guard: a real stream keyword always has /Length in the preceding dict.
             // If /Length is absent, 'stream' is inside a string literal or comment
             // — not a keyword — so skip without error. (#FP-6.1.7)
-            if find_length_value(data, abs_stream).is_some() {
+            // Use has_length_key (not find_length_value) so indirect /Length refs
+            // like `/Length 5 0 R` are also detected. (#FN-6.1.7, #FN-6.1.7.1)
+            if has_length_key(data, abs_stream) {
                 error(
                     report,
                     "6.1.7.1",
@@ -13208,6 +13397,37 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
         }
     }
     std::str::from_utf8(&after[..end]).ok()?.parse().ok()
+}
+
+/// Check if `/Length` key (followed by a non-alphanumeric character) exists in
+/// the 500 bytes preceding `stream_pos`. Unlike `find_length_value`, this
+/// returns true even when `/Length` has an indirect-reference value like
+/// `/Length 5 0 R`. Fixes #FN-6.1.7 on streams with indirect /Length.
+fn has_length_key(data: &[u8], stream_pos: usize) -> bool {
+    let start = stream_pos.saturating_sub(500);
+    let region = &data[start..stream_pos];
+    let needle = b"/Length";
+    let mut search = 0;
+    while search + needle.len() <= region.len() {
+        if let Some(off) = region[search..]
+            .windows(needle.len())
+            .position(|w| w == needle)
+        {
+            let next_pos = search + off + needle.len();
+            // Reject `/Length1`, `/Length2`, etc. — only accept `/Length` followed
+            // by whitespace, digit, or end-of-region.
+            let next_is_name_char = region
+                .get(next_pos)
+                .is_some_and(|b| b.is_ascii_alphanumeric());
+            if !next_is_name_char {
+                return true;
+            }
+            search = next_pos;
+        } else {
+            break;
+        }
+    }
+    false
 }
 
 // ─── §6.1.8 / §6.1.9 — Object syntax spacing checks ────────────────────────
@@ -16029,5 +16249,37 @@ mod tests {
             decode_hex_to_bytes(b"feff0065006e"),
             vec![0xFE, 0xFF, 0x00, 0x65, 0x00, 0x6E]
         );
+    }
+
+    // ── has_length_key ──
+
+    #[test]
+    fn has_length_key_direct_integer() {
+        let data = b"<< /Type /XObject /Length 42 >>stream\n";
+        // stream_pos = position of "stream" = 32
+        let stream_pos = data.windows(6).position(|w| w == b"stream").unwrap();
+        assert!(has_length_key(data, stream_pos));
+    }
+
+    #[test]
+    fn has_length_key_indirect_ref() {
+        let data = b"<< /Type /XObject /Length 5 0 R >>stream\n";
+        let stream_pos = data.windows(6).position(|w| w == b"stream").unwrap();
+        assert!(has_length_key(data, stream_pos));
+    }
+
+    #[test]
+    fn has_length_key_rejects_length1() {
+        // /Length1 is a different key — should NOT match as /Length
+        let data = b"<< /Length1 15312 >>stream\n";
+        let stream_pos = data.windows(6).position(|w| w == b"stream").unwrap();
+        assert!(!has_length_key(data, stream_pos));
+    }
+
+    #[test]
+    fn has_length_key_absent() {
+        let data = b"<< /Type /XObject >>stream\n";
+        let stream_pos = data.windows(6).position(|w| w == b"stream").unwrap();
+        assert!(!has_length_key(data, stream_pos));
     }
 }
