@@ -17,6 +17,7 @@ mod github_issues;
 mod oracle_db;
 mod oracles;
 mod pool;
+mod retest;
 mod runner;
 mod tests;
 
@@ -369,6 +370,40 @@ enum Command {
         /// Skip PDFs already in the oracle DB
         #[arg(long)]
         skip_existing: bool,
+    },
+
+    /// Retest compliance failures from a previous run with the current binary.
+    ///
+    /// Reads failing PDF paths from the source DB and re-runs the compliance
+    /// test, reporting what changed (fixed vs still failing, FN/FP breakdown).
+    RetestFailures {
+        /// Source database with previous run results
+        #[arg(long)]
+        source_db: PathBuf,
+
+        /// Run ID in the source database
+        #[arg(long)]
+        source_run: String,
+
+        /// Path to veraPDF binary
+        #[arg(long, default_value = "/usr/local/bin/verapdf")]
+        verapdf_path: PathBuf,
+
+        /// Path to pre-generated oracle database
+        #[arg(long)]
+        oracle_db: Option<PathBuf>,
+
+        /// Only run specific tests (comma-separated, default: compliance)
+        #[arg(long)]
+        tests: Option<String>,
+
+        /// Timeout per PDF in seconds
+        #[arg(short, long, default_value_t = 120)]
+        timeout: u64,
+
+        /// Number of parallel workers
+        #[arg(short = 'j', long, default_value_t = 6)]
+        workers: usize,
     },
 
     /// Check for regression between two runs (exit code 1 = regression)
@@ -1031,8 +1066,13 @@ fn main() {
                 }
             }
             let total = pdfs.len();
-            eprintln!("[oracle-generate] {total} PDFs, {workers} workers, skip_existing={skip_existing}");
-            eprintln!("Existing cache entries: {}", odb.count_for("verapdf", &verapdf_version));
+            eprintln!(
+                "[oracle-generate] {total} PDFs, {workers} workers, skip_existing={skip_existing}"
+            );
+            eprintln!(
+                "Existing cache entries: {}",
+                odb.count_for("verapdf", &verapdf_version)
+            );
 
             // Shared state
             let done = Arc::new(AtomicUsize::new(0));
@@ -1059,7 +1099,10 @@ fn main() {
                         // Compute hash
                         let data = match std::fs::read(pdf_path) {
                             Ok(d) => d,
-                            Err(_) => { failed.fetch_add(1, Ordering::Relaxed); return; }
+                            Err(_) => {
+                                failed.fetch_add(1, Ordering::Relaxed);
+                                return;
+                            }
                         };
                         let hash = {
                             let mut hasher = Sha256::new();
@@ -1074,7 +1117,10 @@ fn main() {
                                 skipped.fetch_add(1, Ordering::Relaxed);
                                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                                 if n % 100 == 0 {
-                                    eprintln!("[{n}/{total}] (skipped: {})", skipped.load(Ordering::Relaxed));
+                                    eprintln!(
+                                        "[{n}/{total}] (skipped: {})",
+                                        skipped.load(Ordering::Relaxed)
+                                    );
                                 }
                                 return;
                             }
@@ -1118,6 +1164,26 @@ fn main() {
                 failed.load(Ordering::Relaxed),
                 final_count,
                 verapdf_version
+            );
+        }
+
+        Command::RetestFailures {
+            source_db,
+            source_run,
+            verapdf_path,
+            oracle_db: oracle_db_path,
+            tests: test_filter,
+            timeout,
+            workers,
+        } => {
+            retest::retest_failures(
+                &source_db,
+                &source_run,
+                &verapdf_path,
+                oracle_db_path.as_deref(),
+                test_filter.as_deref(),
+                timeout,
+                workers,
             );
         }
 
