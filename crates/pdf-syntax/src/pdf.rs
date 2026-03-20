@@ -19,6 +19,19 @@ pub struct Pdf {
     data: PdfData,
 }
 
+/// Maximum number of xref entries (indirect objects) allowed in a single PDF.
+///
+/// PDFs exceeding this limit are rejected with [`LoadPdfError::TooLarge`] to
+/// prevent unbounded memory growth. Corpus data shows legitimate documents
+/// rarely exceed 50 K objects; 500 K is a safe, generous upper bound. (#497)
+pub const MAX_OBJECTS: usize = 500_000;
+
+/// Maximum number of pages allowed in a single PDF.
+///
+/// Traversal of the page tree is capped at this value and documents that
+/// exceed it are rejected with [`LoadPdfError::TooLarge`]. (#497)
+pub const MAX_PAGES: usize = 50_000;
+
 /// An error that occurred while loading a PDF file.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum LoadPdfError {
@@ -26,6 +39,11 @@ pub enum LoadPdfError {
     Decryption(DecryptionError),
     /// The PDF was invalid or could not be parsed due to some other unknown reason.
     Invalid,
+    /// The PDF exceeds a configured size limit (object count or page count).
+    ///
+    /// The first field is the number of xref objects; the second is the page
+    /// count. Either or both may have triggered the limit. (#497)
+    TooLarge(usize, usize),
 }
 
 #[allow(clippy::len_without_is_empty)]
@@ -58,7 +76,24 @@ impl Pdf {
         };
         let xref = Arc::new(xref);
 
+        // Reject documents whose xref table exceeds the object limit.
+        // This fires before we decode any object data, so the cost is minimal.
+        // The limit prevents unbounded memory growth on adversarially large PDFs. (#497)
+        let object_count = xref.len();
+        if object_count > MAX_OBJECTS {
+            return Err(LoadPdfError::TooLarge(object_count, 0));
+        }
+
         let pages = CachedPages::new(xref.clone()).ok_or(LoadPdfError::Invalid)?;
+
+        // Reject documents whose page tree resolves to more pages than allowed.
+        // resolve_pages already caps traversal at MAX_PAGE_COUNT (100 K); checking
+        // against our stricter MAX_PAGES (50 K) here gives a clean error instead
+        // of silently truncating. (#497)
+        let page_count = pages.get().len();
+        if page_count > MAX_PAGES {
+            return Err(LoadPdfError::TooLarge(object_count, page_count));
+        }
 
         Ok(Self {
             xref,
