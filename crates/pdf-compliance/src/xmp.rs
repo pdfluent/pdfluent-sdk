@@ -1026,7 +1026,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         (Some(info_dt), Some(xmp_dt)) => {
             let n_info = datetime_to_local_str(info_dt);
             if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
-                if n_info != n_xmp {
+                if !dates_match(&n_info, &n_xmp) {
                     error(
                         report,
                         "6.7.3",
@@ -1054,7 +1054,7 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         (Some(info_dt), Some(xmp_dt)) => {
             let n_info = datetime_to_local_str(info_dt);
             if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
-                if n_info != n_xmp {
+                if !dates_match(&n_info, &n_xmp) {
                     error(
                         report,
                         "6.7.3",
@@ -1092,11 +1092,20 @@ fn xmp_date_to_comparable(xmp_date: &str) -> Option<String> {
     if digits.len() < 8 {
         return None;
     }
-    let mut d = digits;
-    while d.len() < 14 {
-        d.push('0');
-    }
-    Some(d)
+    // Return the digit string as-is without zero-padding. Callers compare using the
+    // minimum precision available (see dates_match): a date-only XMP value like
+    // "2011-11-22" (8 digits) compares against only the first 8 digits of the Info date.
+    Some(digits)
+}
+
+/// Compare two normalized date strings produced by [`datetime_to_local_str`] and
+/// [`xmp_date_to_comparable`], using the shorter string's length as the precision.
+///
+/// A date-only XMP `"20111122"` matches Info `"20111122095126"` because XMP simply
+/// omits the time component — veraPDF considers this consistent.
+fn dates_match(info_str: &str, xmp_str: &str) -> bool {
+    let len = info_str.len().min(xmp_str.len());
+    info_str[..len] == xmp_str[..len]
 }
 
 /// Decode a PDF string (which may be UTF-16BE with BOM, or PDFDocEncoding).
