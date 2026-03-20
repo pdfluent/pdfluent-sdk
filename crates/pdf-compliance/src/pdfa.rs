@@ -105,6 +105,10 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // high-bytes in 2-byte CID strings). Fixes #FP-6.2.11.8.
     // §6.2.11.4.1: content stream renders glyph not defined in Type1 subset font.
     check::check_type1_charset_coverage(pdf, &mut report);
+    // §6.3.5: CID referenced in content stream not present in CIDFont's CIDSet.
+    // Complements check_type1_charset_coverage (which covers Type1/CFF) for Type0
+    // (composite CIDFont) fonts. Fixes FN on isartor §6.3.5 and veraPDF §6.3.5 tests.
+    check::check_cidset_content_coverage(pdf, 1, &mut report);
 
     // File structure, actions, streams (§6.1.x, §6.6.1)
     check_all_page_boundaries(pdf, &mut report);
@@ -422,6 +426,10 @@ pub fn validate_with_progress(
     tracked!(
         "check_type1_charset_coverage",
         check::check_type1_charset_coverage(pdf, &mut report)
+    );
+    tracked!(
+        "check_cidset_content_coverage",
+        check::check_cidset_content_coverage(pdf, level.part(), &mut report)
     );
     tracked!(
         "check_all_page_boundaries",
@@ -836,6 +844,10 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     timed!(
         "check_type1_charset_coverage",
         check::check_type1_charset_coverage(pdf, &mut report)
+    );
+    timed!(
+        "check_cidset_content_coverage",
+        check::check_cidset_content_coverage(pdf, level.part(), &mut report)
     );
 
     // Batch 3
@@ -2085,7 +2097,6 @@ fn check_lang(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     check::check_lang_values(pdf, rule, report);
 }
 
-
 /// §6.9 — NeedAppearances and field appearances.
 fn check_need_appearances_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_need_appearances(pdf, report);
@@ -2453,7 +2464,7 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             //   PDF/A-2/3 §6.1.8 (stream filters) → PDF/A-4 §6.1.6.2
             //   PDF/A-2/3 §6.1.13 (impl limits) → PDF/A-4 §6.1.13 (same, no remap)
             // (4, "6.1.6"): veraPDF uses §6.1.6 for hex strings in PDF/A-4 too — no remap.
-            (4, "6.1.8") => Some("6.1.6.2"),  // stream filters (LZWDecode etc.)
+            (4, "6.1.8") => Some("6.1.6.2"), // stream filters (LZWDecode etc.)
             (4, "6.1.10") => Some("6.1.6.2"), // PDF/A-1 filter rule → PDF/A-4
             // PDF/A-2/3: check_stream_filters emits "6.1.8" for LZW/JBIG2 filter
             // violations; veraPDF uses the sub-clause "6.1.6.2" (§6.1.6.2 of ISO
