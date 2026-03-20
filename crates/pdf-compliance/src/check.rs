@@ -2325,8 +2325,11 @@ fn decode_pdf_info_string(bytes: &[u8]) -> Option<String> {
     } else if let Ok(s) = std::str::from_utf8(bytes) {
         Some(s.to_string())
     } else {
-        // PDFDocEncoding with non-ASCII bytes — skip value comparison
-        None
+        // PDFDocEncoding: decode non-ASCII bytes as Latin-1 (ISO 8859-1).
+        // PDFDocEncoding ≈ Latin-1 for 0x80-0xFF (minor differences in 0x80-0x9F range).
+        // We decode anyway so that mismatches with XMP (which uses UTF-8) are detected.
+        // Fixes §6.7.3 FN on 6-1-5-t01-fail-d (Keywords with \xe5 byte vs XMP "Test keywords").
+        Some(bytes.iter().map(|&b| b as char).collect())
     }
 }
 
