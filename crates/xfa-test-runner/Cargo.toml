@@ -17,6 +17,7 @@ paddle-ocr = ["dep:pdf-ocr"]
 [dependencies]
 # Workspace crates
 pdf-syntax = { path = "../pdf-syntax" }
+pdf-xfa = { path = "../pdf-xfa" }
 pdf-engine = { path = "../pdf-engine" }
 pdf-forms = { path = "../pdf-forms" }
 pdf-annot = { path = "../pdf-annot" }
