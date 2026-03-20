@@ -146,7 +146,9 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
 
     // Deeper 6.2.x / 6.6.x fixes
     check_image_xobject_colorspaces(pdf, &mut report);
-    check_output_intent_consistency(pdf, &mut report);
+    // check_output_intent_consistency (simpler hash) removed: it hardcodes "6.2.2",
+    // causing FP for PDF/A-4 where veraPDF uses "6.2.3". The pdfa variant below
+    // handles all parts correctly with per-part rule selection. (#FN-6.2.3)
     check::check_output_intent_consistency_pdfa(pdf, level.part(), &mut report);
     check_transparency_vs_output_intent(pdf, level, &mut report);
     check::check_transparency_blending_vs_output_intent(pdf, level.part(), &mut report);
@@ -523,10 +525,6 @@ pub fn validate_with_progress(
     tracked!(
         "check_image_xobject_colorspaces",
         check_image_xobject_colorspaces(pdf, &mut report)
-    );
-    tracked!(
-        "check_output_intent_consistency",
-        check_output_intent_consistency(pdf, &mut report)
     );
     tracked!(
         "check_output_intent_consistency_pdfa",
@@ -995,10 +993,6 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     timed!(
         "check_image_xobject_colorspaces",
         check_image_xobject_colorspaces(pdf, &mut report)
-    );
-    timed!(
-        "check_output_intent_consistency",
-        check_output_intent_consistency(pdf, &mut report)
     );
     timed!(
         "check_output_intent_consistency_pdfa",
@@ -2120,11 +2114,6 @@ fn check_embedded_files_a3(
 fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport) {
     check::check_image_xobject_colorspaces(pdf, report);
     check::check_page_group_colorspaces(pdf, report);
-}
-
-/// §6.2.2 — Multiple OutputIntents must have identical profiles.
-fn check_output_intent_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_output_intent_consistency(pdf, report);
 }
 
 /// §6.2.9/6.2.10 — Transparency groups vs OutputIntent.
