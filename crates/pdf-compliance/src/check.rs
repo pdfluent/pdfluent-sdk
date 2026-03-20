@@ -6302,23 +6302,22 @@ pub fn check_output_intent_consistency_pdfa(pdf: &Pdf, part: u8, report: &mut Co
         return;
     };
 
-    // Collect (length, first-64-bytes) for each profile
-    let mut fingerprints: Vec<(usize, Vec<u8>)> = Vec::new();
+    // ISO 19005 requires all OutputIntents to use the SAME indirect object for
+    // DestOutputProfile. veraPDF checks `sameOutputProfileIndirect == true`, meaning
+    // the object numbers must match — content comparison is insufficient because
+    // `get::<Stream>()` returns None for indirect refs. Use get_ref() instead.
+    // (#FN-6.2.3)
+    let mut refs: Vec<Option<ObjRef>> = Vec::new();
     for intent in intents.iter::<Dict<'_>>() {
-        if let Some(profile_stream) = intent.get::<Stream<'_>>(keys::DEST_OUTPUT_PROFILE) {
-            if let Ok(data) = profile_stream.decoded() {
-                let prefix = data[..data.len().min(64)].to_vec();
-                fingerprints.push((data.len(), prefix));
-            }
+        if intent.contains_key(keys::DEST_OUTPUT_PROFILE) {
+            // get_ref() returns the indirect object reference without resolving it
+            refs.push(intent.get_ref(keys::DEST_OUTPUT_PROFILE));
         }
     }
 
-    if fingerprints.len() > 1 {
-        let (len0, ref pfx0) = fingerprints[0];
-        if fingerprints
-            .iter()
-            .any(|(len, pfx)| *len != len0 || pfx != pfx0)
-        {
+    if refs.len() > 1 {
+        let first = refs[0];
+        if refs.iter().any(|r| *r != first) {
             // §6.6.1 in PDF/A-1, §6.2.2 in PDF/A-2/3, §6.2.3 in PDF/A-4
             let rule = match part {
                 1 => "6.6.1",
@@ -6328,7 +6327,7 @@ pub fn check_output_intent_consistency_pdfa(pdf: &Pdf, part: u8, report: &mut Co
             error(
                 report,
                 rule,
-                "Multiple OutputIntents have different DestOutputProfile ICC profiles",
+                "Multiple OutputIntents have different DestOutputProfile indirect objects",
             );
         }
     }
@@ -7869,10 +7868,44 @@ pub fn check_postscript_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceRep
 /// Scans page content streams for Tj/TJ operators using hex strings that
 /// encode character code 0 (simple fonts) or CID 0 (CID fonts).
 /// Code/CID 0 always maps to the .notdef glyph.
+///
+/// For pages that contain Type0 (CID) fonts, 2-byte hex strings like <0041>
+/// represent a single CID (65 = 'A'), not two 1-byte codes. In that mode
+/// only <0000> counts as notdef. Pages with only simple fonts use 1-byte logic
+/// where any 0x00 byte is code 0 = notdef. (#FP-6.2.11.8)
 pub fn check_notdef_glyph_reference(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
+        // Determine if any font on this page is a Type0 (CID) font. Type0 fonts use
+        // 2-byte character codes; a 0x00 high byte does NOT mean notdef unless the
+        // full 2-byte CID is 0x0000. Collect names first to avoid borrow conflicts.
+        // (#FP-6.2.11.8)
+        let font_names: Vec<Vec<u8>> = page
+            .resources()
+            .fonts
+            .entries()
+            .map(|(n, _)| n.as_ref().to_vec())
+            .collect();
+        let has_type0_font = font_names.iter().any(|name| {
+            let name_slice: &[u8] = name.as_slice();
+            let font_dict = page
+                .resources()
+                .fonts
+                .get::<Dict<'_>>(name_slice)
+                .or_else(|| {
+                    page.resources()
+                        .fonts
+                        .get_ref(name_slice)
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            font_dict.is_some_and(|fd| {
+                fd.get::<Name>(keys::SUBTYPE)
+                    .is_some_and(|s| s.as_ref() == b"Type0")
+            })
+        });
+
         if let Some(content) = page.page_stream() {
-            if scan_for_notdef_in_content(content) {
+            if scan_for_notdef_in_content(content, has_type0_font) {
                 error_at(
                     report,
                     "6.2.11.8",
@@ -7890,7 +7923,10 @@ pub fn check_notdef_glyph_reference(pdf: &Pdf, report: &mut ComplianceReport) {
 /// Detects byte value 0x00 in hex strings used by text operators. For simple fonts
 /// (1-byte encoding), ANY 0x00 byte is character code 0 = .notdef. For CID fonts
 /// (2-byte Identity-H), 0x0000 = CID 0 = .notdef.
-fn scan_for_notdef_in_content(content: &[u8]) -> bool {
+///
+/// `cid_mode`: if true (page has Type0 fonts), only flag hex strings that decode
+/// to exactly 0x0000 (2-byte null CID). If false, any 0x00 byte = notdef.
+fn scan_for_notdef_in_content(content: &[u8], cid_mode: bool) -> bool {
     let mut i = 0;
     while i + 3 < content.len() {
         if content[i] == b'<' && content.get(i + 1).is_some_and(|b| b.is_ascii_hexdigit()) {
@@ -7901,8 +7937,15 @@ fn scan_for_notdef_in_content(content: &[u8]) -> bool {
             }
             if end < content.len() {
                 let hex = &content[start..end];
-                // Decode hex pairs and check for any 0x00 byte
-                let has_null = hex_contains_null_byte(hex);
+                // In CID mode (page has Type0 fonts), a hex string like <0041>
+                // means CID 65, not two 1-byte codes. Only flag if ALL decoded bytes
+                // are 0x00 (i.e. CID 0 = notdef). In simple-font mode, any 0x00 byte
+                // is character code 0 = notdef. (#FP-6.2.11.8)
+                let has_null = if cid_mode {
+                    hex_is_all_null(hex) // only <0000> or <000000> etc.
+                } else {
+                    hex_contains_null_byte(hex) // any 0x00 byte
+                };
                 if has_null {
                     // Check context: must be near a Tj or inside TJ array
                     let after = &content[end + 1..content.len().min(end + 10)];
@@ -7963,6 +8006,29 @@ fn hex_contains_null_byte(hex: &[u8]) -> bool {
         j += 2;
     }
     false
+}
+
+/// Returns true only if ALL decoded bytes in the hex string are 0x00.
+/// Used in CID mode where a single hex pair like 0x00 0x41 = CID 65, NOT notdef.
+fn hex_is_all_null(hex: &[u8]) -> bool {
+    let digits: Vec<u8> = hex
+        .iter()
+        .copied()
+        .filter(|b| b.is_ascii_hexdigit())
+        .collect();
+    if digits.is_empty() {
+        return false;
+    }
+    let mut j = 0;
+    while j + 1 < digits.len() {
+        let hi = hex_val(digits[j]);
+        let lo = hex_val(digits[j + 1]);
+        if hi != 0 || lo != 0 {
+            return false;
+        }
+        j += 2;
+    }
+    true
 }
 
 fn hex_val(b: u8) -> u8 {
@@ -10017,12 +10083,24 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
         let Some(widths_arr) = font_dict.get::<Array<'_>>(keys::WIDTHS) else {
             return;
         };
-        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) else {
+        // FontDescriptor is almost always an indirect reference. Add xref fallback
+        // to ensure resolution succeeds even when get::<Dict>() can't follow refs.
+        // (#FN-6.2.10.5)
+        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+            font_dict
+                .get_ref(keys::FONT_DESC)
+                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+        }) else {
             return;
         };
 
-        // Handle TrueType simple fonts (FontFile2).
-        if let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2) {
+        // Handle TrueType simple fonts (FontFile2). FontFile2 is also typically
+        // an indirect ref — apply the same xref fallback. (#FN-6.2.10.5)
+        let ff2_opt = desc.get::<Stream<'_>>(keys::FONT_FILE2).or_else(|| {
+            desc.get_ref(keys::FONT_FILE2)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        });
+        if let Some(ff2) = ff2_opt {
             if let Ok(font_data) = ff2.decoded() {
                 let pdf_widths: Vec<i32> = widths_arr.iter::<i32>().collect();
                 check_truetype_simple_widths(
@@ -10242,11 +10320,13 @@ fn parse_type3_charproc_width(data: &[u8]) -> Option<i32> {
     None
 }
 
-/// §6.3.5-fw — Check CIDFontType2 (TrueType) /W widths against font program.
+/// §6.3.5-fw — Check CIDFontType2 (TrueType) and CIDFontType0 (CFF) /W widths
+/// against the embedded font program.
 ///
-/// For Type0 fonts, inspect each CIDFontType2 descendant that has FontFile2.
-/// Parse /W array and compare declared CID widths against actual TrueType
-/// glyph advance widths (assuming CIDToGIDMap = /Identity). (#467)
+/// For Type0 fonts, inspect each CIDFont descendant:
+/// - CIDFontType2: parse FontFile2 (TrueType) with ttf_parser
+/// - CIDFontType0: parse FontFile3 (CFF) with cff_parser (#FN-6.2.11.5)
+/// Compare declared CID widths in /W against actual glyph advance widths.
 fn check_cidfont_type2_widths(
     type0_dict: &Dict<'_>,
     name: &str,
@@ -10257,8 +10337,12 @@ fn check_cidfont_type2_widths(
         return;
     };
     for cid_font in descendants.iter::<Dict<'_>>() {
-        let subtype = cid_font.get::<Name>(keys::SUBTYPE);
-        if subtype.as_ref().map(|s| s.as_ref()) != Some(b"CIDFontType2") {
+        let subtype_bytes = cid_font
+            .get::<Name>(keys::SUBTYPE)
+            .map(|s| s.as_ref().to_vec());
+        let is_type2 = subtype_bytes.as_deref() == Some(b"CIDFontType2");
+        let is_type0 = subtype_bytes.as_deref() == Some(b"CIDFontType0");
+        if !is_type2 && !is_type0 {
             continue;
         }
         let cid_name: String = cid_font
@@ -10269,6 +10353,52 @@ fn check_cidfont_type2_widths(
         let Some(desc) = cid_font.get::<Dict<'_>>(keys::FONT_DESC) else {
             continue;
         };
+
+        // CIDFontType0 (CFF): use FontFile3 + cff_parser. (#FN-6.2.11.5)
+        if is_type0 {
+            let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3) else {
+                continue;
+            };
+            let Ok(cff_data) = ff3.decoded() else {
+                continue;
+            };
+            let Some(table) = cff_parser::Table::parse(&cff_data) else {
+                continue;
+            };
+            let loc = format!("page {}", page_idx + 1);
+            let w_map: std::collections::HashMap<u32, i32> =
+                if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
+                    parse_cidfont_w_array(&w_arr)
+                } else {
+                    std::collections::HashMap::new()
+                };
+            for (cid, pdf_w) in &w_map {
+                if *pdf_w == 0 {
+                    continue;
+                }
+                // For CID-keyed CFF fonts, GID == CID (direct mapping).
+                let Some(cff_w) = table.glyph_width(cff_parser::GlyphId(*cid as u16)) else {
+                    continue;
+                };
+                let cff_w_i32 = cff_w as i32;
+                // Allow ±1 for CFF rounding.
+                if (cff_w_i32 - pdf_w).abs() > 1 {
+                    error_at(
+                        report,
+                        "6.3.5-fw",
+                        format!(
+                            "Font {cid_name} CID {cid}: CFF width {cff_w_i32} \
+                             != PDF /W entry {pdf_w}"
+                        ),
+                        loc.clone(),
+                    );
+                    return; // First mismatch per font only
+                }
+            }
+            continue; // Done with CIDFontType0
+        }
+
+        // CIDFontType2 (TrueType): use FontFile2 + ttf_parser.
         let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2) else {
             continue;
         };
@@ -16188,22 +16318,36 @@ mod tests {
 
     #[test]
     fn notdef_scan_detects_null_byte_in_tj() {
-        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <00> Tj ET"));
+        // Simple font mode: <00> = code 0 = notdef
+        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <00> Tj ET", false));
     }
 
     #[test]
-    fn notdef_scan_detects_null_in_multi_byte_hex() {
-        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <0041> Tj ET"));
+    fn notdef_scan_detects_null_in_multi_byte_hex_simple() {
+        // Simple font mode: <0041> = codes 0 and 65; 0 = notdef
+        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <0041> Tj ET", false));
+    }
+
+    #[test]
+    fn notdef_scan_skips_null_in_multi_byte_hex_cid() {
+        // CID mode: <0041> = CID 65 = 'A', NOT notdef — only <0000> would be notdef
+        assert!(!scan_for_notdef_in_content(b"BT /F1 12 Tf <0041> Tj ET", true));
+    }
+
+    #[test]
+    fn notdef_scan_detects_cid_zero_in_cid_mode() {
+        // CID mode: <0000> = CID 0 = notdef
+        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <0000> Tj ET", true));
     }
 
     #[test]
     fn notdef_scan_skips_nonzero_hex() {
-        assert!(!scan_for_notdef_in_content(b"BT /F1 12 Tf <41> Tj ET"));
+        assert!(!scan_for_notdef_in_content(b"BT /F1 12 Tf <41> Tj ET", false));
     }
 
     #[test]
     fn notdef_scan_skips_non_text_operators() {
-        assert!(!scan_for_notdef_in_content(b"<00> Do"));
+        assert!(!scan_for_notdef_in_content(b"<00> Do", false));
     }
 
     // ── hex_contains_null_byte ──
