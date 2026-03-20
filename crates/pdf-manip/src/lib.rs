@@ -12,22 +12,27 @@
 //! ```no_run
 //! use lopdf::Document;
 //! use pdf_manip::pages;
-//! use pdf_manip::encrypt::{EncryptionAlgorithm, encrypt_document, Permissions};
+//! use pdf_manip::encrypt::{EncryptionAlgorithm, encrypt_and_save, EncryptConfig, Permissions};
 //!
 //! // Merge two PDFs.
-//! let merged = pages::merge(&["a.pdf", "b.pdf"]).unwrap();
+//! let mut merged = pages::merge(&["a.pdf", "b.pdf"]).unwrap();
 //! merged.save("merged.pdf").unwrap();
 //!
 //! // Extract pages 1–3 from a document.
 //! let doc = Document::load("report.pdf").unwrap();
-//! let subset = pages::extract_pages(&doc, &[1, 2, 3]).unwrap();
+//! let mut subset = pages::extract_pages(&doc, &[1, 2, 3]).unwrap();
 //! subset.save("pages_1_to_3.pdf").unwrap();
 //!
 //! // Encrypt with AES-256.
 //! let mut doc = Document::load("sensitive.pdf").unwrap();
-//! let perms = Permissions::all();
-//! encrypt_document(&mut doc, "owner_pw", "user_pw", EncryptionAlgorithm::Aes256, perms).unwrap();
-//! doc.save("sensitive_enc.pdf").unwrap();
+//! let cfg = EncryptConfig {
+//!     owner_password: b"owner_pw".to_vec(),
+//!     user_password: b"user_pw".to_vec(),
+//!     algorithm: EncryptionAlgorithm::Aes256,
+//!     permissions: Permissions::allow_all(),
+//! };
+//! let out = std::fs::File::create("sensitive_enc.pdf").unwrap();
+//! encrypt_and_save(&mut doc, &cfg, out).unwrap();
 //! ```
 //!
 //! # Modules
