@@ -14,6 +14,7 @@
 //! | `compliance`     | pdf-compliance| PDF/A-2b and PDF/UA-1 validation        |
 //! | `forms`          | pdf-forms     | AcroForm parse + field iteration        |
 //! | `images`         | pdf-extract   | Raster image extraction                 |
+//! | `render`         | pdf-engine    | First-page render at 72 dpi             |
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::path::PathBuf;
@@ -400,6 +401,47 @@ fn bench_images(c: &mut Criterion) {
 }
 
 // ---------------------------------------------------------------------------
+// Group 8: First-page render  — pdf_engine
+// ---------------------------------------------------------------------------
+
+fn bench_render(c: &mut Criterion) {
+    let fixtures = load_fixtures();
+    if fixtures.is_empty() {
+        eprintln!("bench_render: corpus-mini not found, skipping");
+        return;
+    }
+
+    let mut g = c.benchmark_group("render");
+    g.sample_size(10);
+
+    let opts = pdf_engine::RenderOptions {
+        dpi: 72.0,
+        ..Default::default()
+    };
+
+    for (name, data) in &fixtures {
+        let doc = match pdf_engine::PdfDocument::open(data.clone()) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        if doc.page_count() == 0 {
+            continue;
+        }
+        g.throughput(Throughput::Bytes(data.len() as u64));
+        g.bench_with_input(
+            BenchmarkId::new("page_1/72dpi", name),
+            &(),
+            |b, _| {
+                b.iter(|| {
+                    let _ = doc.render_page(0, &opts);
+                });
+            },
+        );
+    }
+    g.finish();
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -412,5 +454,6 @@ criterion_group!(
     bench_compliance,
     bench_forms,
     bench_images,
+    bench_render,
 );
 criterion_main!(benches);
