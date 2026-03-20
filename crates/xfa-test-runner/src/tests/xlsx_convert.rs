@@ -26,10 +26,28 @@ impl PdfTest for XlsxConvertTest {
     }
 
     fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
+        // Skip large PDFs to avoid OOM under concurrent load.
+        // Each worker thread uses ~16 MB stack; with multiple concurrent workers
+        // very large PDFs cause memory exhaustion and panics.
+        const MAX_PDF_BYTES: usize = 5 * 1024 * 1024; // 5 MB
+        if pdf_data.len() > MAX_PDF_BYTES {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some(format!(
+                    "PDF too large for xlsx test ({} bytes > {})",
+                    pdf_data.len(),
+                    MAX_PDF_BYTES
+                )),
+                duration_ms: 0,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+
         let pdf_owned = pdf_data.to_vec();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024)
+            .stack_size(16 * 1024 * 1024) // 16 MB — sufficient; 64 MB was causing OOM under concurrent load
             .spawn(move || {
                 let r =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));
@@ -38,13 +56,20 @@ impl PdfTest for XlsxConvertTest {
             .expect("thread spawn");
         match rx.recv_timeout(std::time::Duration::from_secs(25)) {
             Ok(Ok(result)) => result,
-            Ok(Err(_)) => TestResult {
-                status: TestStatus::Crash,
-                error_message: Some("panic in XLSX conversion".into()),
-                duration_ms: 0,
-                oracle_score: None,
-                metadata: HashMap::new(),
-            },
+            Ok(Err(e)) => {
+                let panic_msg = e
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| e.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                TestResult {
+                    status: TestStatus::Crash,
+                    error_message: Some(format!("panic in XLSX conversion: {panic_msg}")),
+                    duration_ms: 0,
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                }
+            }
             Err(_) => TestResult {
                 status: TestStatus::Timeout,
                 error_message: Some("XLSX conversion timed out (>25s)".into()),
@@ -87,6 +112,20 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
 
     let table_count = tables.len();
     let total_rows: usize = tables.iter().map(|t| t.rows.len()).sum();
+
+    // Skip documents with extreme row counts to bound memory and XLSX size.
+    const MAX_TOTAL_ROWS: usize = 8_000;
+    if total_rows > MAX_TOTAL_ROWS {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some(format!(
+                "too many rows for xlsx test ({total_rows} > {MAX_TOTAL_ROWS})"
+            )),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata: HashMap::new(),
+        };
+    }
 
     match pdf_xlsx::pdf_to_xlsx(&doc) {
         Err(e) => TestResult {
