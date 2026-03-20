@@ -14412,7 +14412,10 @@ fn scan_bdc_lang_values(content: &[u8]) -> Vec<String> {
         let is_name_end = after >= content.len() || {
             let b = content[after];
             b.is_ascii_whitespace()
-                || matches!(b, b'<' | b'>' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'/' | b'%')
+                || matches!(
+                    b,
+                    b'<' | b'>' | b'(' | b')' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+                )
         };
         if !is_name_end {
             i += 1;
@@ -15986,6 +15989,9 @@ mod tests {
 
     #[test]
     fn decode_hex_to_bytes_basic() {
-        assert_eq!(decode_hex_to_bytes(b"feff0065006e"), vec![0xFE, 0xFF, 0x00, 0x65, 0x00, 0x6E]);
+        assert_eq!(
+            decode_hex_to_bytes(b"feff0065006e"),
+            vec![0xFE, 0xFF, 0x00, 0x65, 0x00, 0x6E]
+        );
     }
 }
