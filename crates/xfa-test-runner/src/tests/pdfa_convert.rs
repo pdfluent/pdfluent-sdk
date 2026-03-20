@@ -720,6 +720,256 @@ impl PdfTest for PdfAConvertTest {
     }
 }
 
+/// Convert a PDF to PDF/A-2b and return the converted bytes.
+///
+/// Used by `oracle-generate` to produce the same converted output that
+/// `PdfAConvertTest::run` would validate, so the oracle cache is keyed on
+/// the *converted* hash instead of the input hash.
+///
+/// Returns `None` when the PDF cannot be converted (not a PDF, load failure,
+/// save failure, panic in a required step). All purely cosmetic / font-fixup
+/// steps that wrap their work in `catch_unwind` are best-effort and do not
+/// cause `None` to be returned.
+pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
+    // Reject non-PDFs immediately.
+    if !pdf_data.windows(5).any(|w| w == b"%PDF-") {
+        return None;
+    }
+
+    // Already PDF/A — nothing to convert; oracle-generate can skip these
+    // because PdfAConvertTest::run() returns Pass without calling veraPDF.
+    match pdf_syntax::Pdf::new(pdf_data.to_vec()) {
+        Ok(pdf) if pdf_compliance::detect_pdfa_level(&pdf).is_some() => return None,
+        _ => {}
+    }
+
+    // Load via lopdf.
+    let mut doc = match lopdf::Document::load_mem(pdf_data) {
+        Ok(d) if !d.objects.is_empty() => d,
+        Ok(_) | Err(_) => try_qpdf_repair_for_lopdf(pdf_data, path)
+            .or_else(|| try_repair_for_lopdf(pdf_data))?,
+    };
+
+    // Hash-name sanitization fallback.
+    if doc.get_pages().is_empty() && raw_has_hash_names(pdf_data) {
+        let sanitized = sanitize_hash_names_raw(pdf_data);
+        if let Ok(d2) = lopdf::Document::load_mem(&sanitized) {
+            if !d2.get_pages().is_empty() {
+                doc = d2;
+            }
+        }
+    }
+
+    fix_wrong_root(&mut doc);
+    let _ = normalize_page_tree_types(&mut doc);
+    strip_null_page_kids(&mut doc);
+
+    if doc.get_pages().is_empty() {
+        try_fix_missing_page_types(&mut doc);
+        if doc.get_pages().is_empty() {
+            if let Some(mut rebuilt) = try_rebuild_xref_from_objects(pdf_data) {
+                fix_wrong_root(&mut rebuilt);
+                let _ = normalize_page_tree_types(&mut rebuilt);
+                strip_null_page_kids(&mut rebuilt);
+                let _ = try_fix_missing_page_types(&mut rebuilt);
+                doc = rebuilt;
+            }
+        }
+        if doc.get_pages().is_empty() {
+            let _ = ensure_placeholder_page_tree(&mut doc);
+        }
+    }
+
+    // Decrypt if needed.
+    if doc.trailer.get(b"Encrypt").is_ok() {
+        match doc.decrypt("") {
+            Ok(()) => {
+                doc.trailer.remove(b"Encrypt");
+            }
+            Err(_) => {
+                if let Some(mut repaired) = try_qpdf_repair_for_lopdf(pdf_data, path) {
+                    fix_wrong_root(&mut repaired);
+                    doc = repaired;
+                    if doc.trailer.get(b"Encrypt").is_ok() {
+                        if doc.decrypt("").is_ok() {
+                            doc.trailer.remove(b"Encrypt");
+                        } else {
+                            return None;
+                        }
+                    }
+                } else {
+                    return None;
+                }
+            }
+        }
+    }
+
+    // Cleanup (required step — panic or error → abort).
+    let cleanup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false)
+    }));
+    match cleanup_result {
+        Ok(Ok(_)) => {}
+        Ok(Err(_)) | Err(_) => return None,
+    }
+
+    let _ = normalize_page_tree_types(&mut doc);
+    strip_null_page_kids(&mut doc);
+    if doc.get_pages().is_empty() {
+        try_fix_missing_page_types(&mut doc);
+        if doc.get_pages().is_empty() {
+            if let Some(mut rebuilt) = try_rebuild_xref_from_objects(pdf_data) {
+                fix_wrong_root(&mut rebuilt);
+                let _ = normalize_page_tree_types(&mut rebuilt);
+                strip_null_page_kids(&mut rebuilt);
+                let _ = try_fix_missing_page_types(&mut rebuilt);
+                doc = rebuilt;
+            }
+        }
+        if doc.get_pages().is_empty() {
+            let _ = ensure_placeholder_page_tree(&mut doc);
+        }
+    }
+
+    // Font fixes (best-effort, all wrapped in catch_unwind).
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::embed_fonts(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::strip_control_chars_from_streams(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_cidset(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc)
+    }));
+
+    // Color space normalization (required — error → abort).
+    fix_wrong_root(&mut doc);
+    let cs_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc)
+    }));
+    match cs_result {
+        Ok(Ok(_)) => {}
+        Ok(Err(_)) | Err(_) => return None,
+    }
+
+    // Supplementary fixups.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fixups::run_fixups(&mut doc)
+    }));
+
+    // Post-fixup color space normalization.
+    fix_wrong_root(&mut doc);
+    let cs2_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc)
+    }));
+    match cs2_result {
+        Ok(Ok(_)) => {}
+        Ok(Err(_)) | Err(_) => return None,
+    }
+
+    // XMP metadata repair.
+    let xmp_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_xmp::repair_xmp_metadata(
+            &mut doc,
+            pdf_manip::pdfa_xmp::PdfAConformance::A2b,
+            None,
+        )
+    }));
+    match xmp_result {
+        Ok(Ok(_)) => {}
+        Ok(Err(_)) | Err(_) => return None,
+    }
+
+    // Save.
+    let mut saved = Vec::new();
+    if doc.save_to(&mut saved).is_err() {
+        return None;
+    }
+
+    pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+    pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
+
+    Some(saved)
+}
+
 /// Write bytes to a temp file next to the original PDF.
 fn write_temp_pdf(data: &[u8], original: &Path) -> Option<std::path::PathBuf> {
     let stem = original

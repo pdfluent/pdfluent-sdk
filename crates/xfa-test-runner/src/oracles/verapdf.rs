@@ -166,62 +166,71 @@ impl VeraPdfOracle {
             return Err(format!("veraPDF failed: {stderr}"));
         }
 
-        let report: VeraPdfReport = serde_json::from_slice(&output.stdout)
-            .map_err(|e| format!("failed to parse veraPDF JSON: {e}"))?;
-
-        let job = report
-            .report
-            .jobs
-            .into_iter()
-            .next()
-            .ok_or("veraPDF returned no jobs")?;
-
-        let vr = match job.validation_result {
-            Some(ValidationResultWrapper::Array(mut arr)) => {
-                if arr.is_empty() {
-                    return Err("veraPDF returned empty validation result array".to_string());
-                }
-                arr.remove(0)
-            }
-            Some(ValidationResultWrapper::Single(vr)) => vr,
-            None => {
-                let msg = if let Some(exc) = job.task_exception {
-                    let detail = exc.exception_message.as_deref().unwrap_or(&exc.message);
-                    format!(
-                        "veraPDF taskException: {}",
-                        detail.chars().take(200).collect::<String>()
-                    )
-                } else {
-                    "veraPDF returned no validation result".to_string()
-                };
-                return Err(msg);
-            }
-        };
-
-        let rule_failures: Vec<RuleFailure> = vr
-            .details
-            .rule_summaries
-            .into_iter()
-            .filter(|r| r.status == "failed")
-            .map(|r| RuleFailure {
-                specification: r.specification,
-                clause: r.clause,
-                test_number: r.test_number,
-                description: r.description,
-            })
-            .collect();
-
-        Ok(VeraPdfResult {
-            is_compliant: vr.compliant,
-            profile_name: vr.profile_name,
-            passed_rules: vr.details.passed_rules,
-            failed_rules: vr.details.failed_rules,
-            passed_checks: vr.details.passed_checks,
-            failed_checks: vr.details.failed_checks,
-            rule_failures,
-            duration_ms,
-        })
+        parse_verapdf_json_output(&output.stdout, duration_ms)
     }
+}
+
+/// Parse raw veraPDF JSON CLI output into a [`VeraPdfResult`].
+///
+/// Extracted as a standalone function so oracle-generate can reuse it without
+/// spawning a live veraPDF process (it stores the raw JSON, then later converts
+/// it to the same struct format used by the run-local cache).
+pub fn parse_verapdf_json_output(stdout: &[u8], duration_ms: u64) -> Result<VeraPdfResult, String> {
+    let report: VeraPdfReport = serde_json::from_slice(stdout)
+        .map_err(|e| format!("failed to parse veraPDF JSON: {e}"))?;
+
+    let job = report
+        .report
+        .jobs
+        .into_iter()
+        .next()
+        .ok_or("veraPDF returned no jobs")?;
+
+    let vr = match job.validation_result {
+        Some(ValidationResultWrapper::Array(mut arr)) => {
+            if arr.is_empty() {
+                return Err("veraPDF returned empty validation result array".to_string());
+            }
+            arr.remove(0)
+        }
+        Some(ValidationResultWrapper::Single(vr)) => vr,
+        None => {
+            let msg = if let Some(exc) = job.task_exception {
+                let detail = exc.exception_message.as_deref().unwrap_or(&exc.message);
+                format!(
+                    "veraPDF taskException: {}",
+                    detail.chars().take(200).collect::<String>()
+                )
+            } else {
+                "veraPDF returned no validation result".to_string()
+            };
+            return Err(msg);
+        }
+    };
+
+    let rule_failures: Vec<RuleFailure> = vr
+        .details
+        .rule_summaries
+        .into_iter()
+        .filter(|r| r.status == "failed")
+        .map(|r| RuleFailure {
+            specification: r.specification,
+            clause: r.clause,
+            test_number: r.test_number,
+            description: r.description,
+        })
+        .collect();
+
+    Ok(VeraPdfResult {
+        is_compliant: vr.compliant,
+        profile_name: vr.profile_name,
+        passed_rules: vr.details.passed_rules,
+        failed_rules: vr.details.failed_rules,
+        passed_checks: vr.details.passed_checks,
+        failed_checks: vr.details.failed_checks,
+        rule_failures,
+        duration_ms,
+    })
 }
 
 /// Compare our compliance report with veraPDF's result.

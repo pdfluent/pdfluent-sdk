@@ -71,7 +71,7 @@ pub fn retest_failures(
                 .par_iter()
                 .map(|path| {
                     let n = counter.fetch_add(1, Ordering::Relaxed) + 1;
-                    if n % 20 == 0 {
+                    if n.is_multiple_of(20) {
                         eprintln!("[{n}/{total}]");
                     }
                     run_one(path, &oracle, test_filter, timeout)
