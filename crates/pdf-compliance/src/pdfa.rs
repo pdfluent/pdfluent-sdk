@@ -206,7 +206,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // Lang validation applies to all PDF/A levels (not just tagged)
     check_lang(pdf, level, &mut report);
 
-    if level.requires_tagged() || level.part() == 4 {
+    if level.requires_tagged() {
         check_tagged_requirements(pdf, level, &mut report);
         check_table_structure_pdfa(pdf, &mut report);
         check_figure_alt(pdf, &mut report);
@@ -645,7 +645,7 @@ pub fn validate_with_progress(
         check::check_stream_empty_keys_cached(&obj_cache, &mut report)
     );
     tracked!("check_lang", check_lang(pdf, level, &mut report));
-    if level.requires_tagged() || level.part() == 4 {
+    if level.requires_tagged() {
         tracked!(
             "check_tagged_requirements",
             check_tagged_requirements(pdf, level, &mut report)
@@ -1491,50 +1491,44 @@ fn check_page_dimensions(
     // but does NOT flag the key's absence. PDF/A-4 §6.1.12 requires Version to be present.
     // Add a supplementary required-presence check. (#FN-6.1.12)
     if level.part() == 4 {
+        // Validate /Version format if present; absence is NOT a violation
+        // (veraPDF §6.1.12 for PDF/A-4 only checks the format, not presence). (#FP-6.1.12)
         check::check_catalog_version_pdfa4(pdf, report);
-        // Supplement: Version key must be present in the catalog for PDF/A-4.
-        if let Some(cat) = check::catalog(pdf) {
-            if cat
-                .get::<pdf_syntax::object::Object<'_>>(b"Version" as &[u8])
-                .is_none()
-            {
-                check::error(
-                    report,
-                    "6.1.12",
-                    "Catalog dictionary missing required /Version key (PDF/A-4 §6.1.12)",
-                );
-            }
-        }
     }
-    // PDF/A-2/3/4 §6.1.13: string literals used as content-stream operands must
-    // not exceed 32767 bytes (decoded). check.rs only enforces the 65535-byte
-    // object-level limit via check_string_lengths_cached. (#496)
-    if level.part() >= 2 {
-        for (page_idx, page) in pdf.pages().iter().enumerate() {
-            if let Some(content) = page.page_stream() {
-                if content_stream_has_long_string(content) {
-                    check::error_at(
-                        report,
-                        "6.1.13",
-                        "Content stream contains string literal exceeding 32767 bytes",
-                        format!("page {}", page_idx + 1),
-                    );
-                }
+    // PDF/A-1 §6.1.12: string literals in content streams must not exceed 65535 bytes.
+    // PDF/A-2/3/4 §6.1.13: string literals must not exceed 32767 bytes.
+    // check.rs checks object-level strings via check_string_lengths_cached (65535 limit)
+    // but misses strings embedded in content stream operands. (#FN-6.1.12, #496)
+    let (cs_rule, cs_limit) = match level.part() {
+        1 => ("6.1.12", 65535usize),
+        _ => ("6.1.13", 32767usize),
+    };
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        if let Some(content) = page.page_stream() {
+            if content_stream_has_long_string(content, cs_limit) {
+                check::error_at(
+                    report,
+                    cs_rule,
+                    format!(
+                        "Content stream contains string literal exceeding {} bytes",
+                        cs_limit
+                    ),
+                    format!("page {}", page_idx + 1),
+                );
             }
         }
     }
 }
 
-/// Scan a decoded content-stream byte slice for string literals > 32767 bytes.
+/// Scan a decoded content-stream byte slice for string literals exceeding `limit` bytes.
 ///
 /// Both literal `(...)` and hex `<...>` string forms are checked. Returns true
 /// on the first offending string so callers can report and bail out quickly.
-fn content_stream_has_long_string(data: &[u8]) -> bool {
-    const LIMIT: usize = 32767;
+fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
     let mut pos = 0;
     let len = data.len();
     // Fast path: if the entire stream is shorter than the limit, no string can exceed it.
-    if len <= LIMIT {
+    if len <= limit {
         return false;
     }
     while pos < len {
@@ -1600,7 +1594,7 @@ fn content_stream_has_long_string(data: &[u8]) -> bool {
                             pos += 1;
                         }
                     }
-                    if decoded > LIMIT {
+                    if decoded > limit {
                         return true;
                     }
                 }
@@ -1615,7 +1609,7 @@ fn content_stream_has_long_string(data: &[u8]) -> bool {
                     }
                     pos += 1;
                 }
-                if hex_count.div_ceil(2) > LIMIT {
+                if hex_count.div_ceil(2) > limit {
                     return true;
                 }
                 if pos < len {
