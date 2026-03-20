@@ -1080,9 +1080,11 @@ fn main() {
             let failed = Arc::new(AtomicUsize::new(0));
             let odb = Arc::new(std::sync::Mutex::new(odb));
 
-            // Thread pool
+            // Thread pool — 64 MB stack matches per-test spawns; prevents stack
+            // overflows on deeply recursive PDFs processed by verapdf parsing. (#oracle-gen-crash)
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(workers)
+                .stack_size(64 * 1024 * 1024)
                 .build()
                 .expect("Failed to build thread pool");
 
@@ -1102,7 +1104,11 @@ fn main() {
                                 failed.fetch_add(1, Ordering::Relaxed);
                                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                                 if n.is_multiple_of(100) {
-                                    eprintln!("[{n}/{total}] skipped={} failed={}", skipped.load(Ordering::Relaxed), failed.load(Ordering::Relaxed));
+                                    eprintln!(
+                                        "[{n}/{total}] skipped={} failed={}",
+                                        skipped.load(Ordering::Relaxed),
+                                        failed.load(Ordering::Relaxed)
+                                    );
                                 }
                                 return;
                             }
@@ -1111,18 +1117,24 @@ fn main() {
                         // Run our full PDF/A conversion pipeline.
                         // Hash the CONVERTED bytes — must match what PdfAConvertTest::run()
                         // hashes when it calls verapdf.validate(). (Bug 1 + Bug 2 fix)
-                        let converted = match tests::pdfa_convert::convert_to_pdfa_bytes(&input_data, pdf_path) {
-                            Some(c) => c,
-                            None => {
-                                // Not a PDF, already PDF/A, or conversion failed — skip.
-                                skipped.fetch_add(1, Ordering::Relaxed);
-                                let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                                if n.is_multiple_of(100) {
-                                    eprintln!("[{n}/{total}] skipped={} failed={}", skipped.load(Ordering::Relaxed), failed.load(Ordering::Relaxed));
+                        let converted =
+                            match tests::pdfa_convert::convert_to_pdfa_bytes(&input_data, pdf_path)
+                            {
+                                Some(c) => c,
+                                None => {
+                                    // Not a PDF, already PDF/A, or conversion failed — skip.
+                                    skipped.fetch_add(1, Ordering::Relaxed);
+                                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                                    if n.is_multiple_of(100) {
+                                        eprintln!(
+                                            "[{n}/{total}] skipped={} failed={}",
+                                            skipped.load(Ordering::Relaxed),
+                                            failed.load(Ordering::Relaxed)
+                                        );
+                                    }
+                                    return;
                                 }
-                                return;
-                            }
-                        };
+                            };
 
                         let hash = {
                             let mut hasher = Sha256::new();
@@ -1139,7 +1151,10 @@ fn main() {
                                 skipped.fetch_add(1, Ordering::Relaxed);
                                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                                 if n.is_multiple_of(100) {
-                                    eprintln!("[{n}/{total}] (skipped: {})", skipped.load(Ordering::Relaxed));
+                                    eprintln!(
+                                        "[{n}/{total}] (skipped: {})",
+                                        skipped.load(Ordering::Relaxed)
+                                    );
                                 }
                                 return;
                             }
@@ -1147,13 +1162,17 @@ fn main() {
 
                         // Write converted PDF to a temp file for veraPDF.
                         let hash_prefix = &hash[..16];
-                        let tmp_path = std::env::temp_dir()
-                            .join(format!("{hash_prefix}_oracle_gen.pdf"));
+                        let tmp_path =
+                            std::env::temp_dir().join(format!("{hash_prefix}_oracle_gen.pdf"));
                         if std::fs::write(&tmp_path, &converted).is_err() {
                             failed.fetch_add(1, Ordering::Relaxed);
                             let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                             if n.is_multiple_of(100) {
-                                eprintln!("[{n}/{total}] skipped={} failed={}", skipped.load(Ordering::Relaxed), failed.load(Ordering::Relaxed));
+                                eprintln!(
+                                    "[{n}/{total}] skipped={} failed={}",
+                                    skipped.load(Ordering::Relaxed),
+                                    failed.load(Ordering::Relaxed)
+                                );
                             }
                             return;
                         }
@@ -1179,9 +1198,12 @@ fn main() {
                         match verapdf_output {
                             Ok(output) if output.status.success() || !output.stdout.is_empty() => {
                                 let duration_ms = 0u64; // not meaningful for pre-generated cache
-                                // Bug 4 fix: parse raw JSON into VeraPdfResult, then serialize
-                                // to the same format used by the run-local cache.
-                                match oracles::verapdf::parse_verapdf_json_output(&output.stdout, duration_ms) {
+                                                        // Bug 4 fix: parse raw JSON into VeraPdfResult, then serialize
+                                                        // to the same format used by the run-local cache.
+                                match oracles::verapdf::parse_verapdf_json_output(
+                                    &output.stdout,
+                                    duration_ms,
+                                ) {
                                     Ok(result) => {
                                         if let Ok(json) = serde_json::to_string(&result) {
                                             let db = odb.lock().unwrap();
