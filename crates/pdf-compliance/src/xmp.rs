@@ -146,8 +146,8 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     check_mark_info_required(pdf, level, report);
     // §6.7.3.3 (PDF/A-2/3/4): StructTreeRoot required for tagged conformance.
     check_struct_tree_root_required(pdf, level, report);
-    // §6.7.3.4: RoleMap must not contain cycles.
-    check_role_map_no_cycles(pdf, report);
+    // §6.7.3.4 (PDF/A-2/3/4) / §6.8.3.4 (PDF/A-1): RoleMap must not contain cycles.
+    check_role_map_no_cycles(pdf, level.part(), report);
 
     let Some(xmp_data) = check::get_xmp_metadata(pdf) else {
         return; // Missing XMP is caught by check_xmp_metadata
@@ -1684,6 +1684,23 @@ enum PropValueKind {
     SeqInteger,
 }
 
+/// Level-aware wrapper around `predefined_prop_kind`.
+///
+/// Some properties are treated differently by veraPDF depending on the PDF/A part.
+/// This function applies per-part overrides before falling through to the generic table.
+fn predefined_prop_kind_for_part(qualified_name: &str, part: u8) -> Option<PropValueKind> {
+    use PropValueKind::*;
+    match (qualified_name, part) {
+        // photoshop:SupplementalCategories:
+        //   PDF/A-1 (§6.7.9.3): veraPDF expects rdf:Seq — fires when rdf:Bag used. (#FN-6.7.9-t13)
+        //   PDF/A-2/3/4 (§6.6.2.3.1): veraPDF expects rdf:Bag — fires when rdf:Seq used. (#FN-6.6.2.3.1-t13)
+        //   The XMP spec defines it as "bag Text", but veraPDF's PDF/A-1 implementation deviates.
+        ("photoshop:SupplementalCategories", 1) => Some(Seq),
+        ("photoshop:SupplementalCategories", _) => Some(Bag),
+        _ => predefined_prop_kind(qualified_name),
+    }
+}
+
 /// Look up the expected value kind for a well-known predefined XMP property.
 ///
 /// Returns `None` for properties not in our table (we don't flag those).
@@ -1868,8 +1885,8 @@ fn predefined_prop_kind(qualified_name: &str) -> Option<PropValueKind> {
         "photoshop:SidecarForExtension" => Some(Scalar),
         "photoshop:Source" => Some(Scalar),
         "photoshop:State" => Some(Scalar),
-        // veraPDF expects Seq, not Bag, for SupplementalCategories. (#FN-6.7.9-t13)
-        "photoshop:SupplementalCategories" => Some(Seq),
+        // Handled by predefined_prop_kind_for_part (level-specific Seq vs Bag). (#FN-6.7.9-t13, #FN-6.6.2.3.1-t13)
+        "photoshop:SupplementalCategories" => Some(Bag),
         "photoshop:TextLayers" => Some(Seq),
         "photoshop:TransmissionReference" => Some(Scalar),
         "photoshop:Urgency" => Some(Integer),
@@ -2373,8 +2390,8 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
             .unwrap_or(xmp.len());
         let tag_name = &xmp[name_start..name_end];
 
-        // Only process known predefined properties
-        if let Some(kind) = predefined_prop_kind(tag_name) {
+        // Only process known predefined properties (use level-aware override where needed).
+        if let Some(kind) = predefined_prop_kind_for_part(tag_name, level.part()) {
             // Properties in VERAPDF_NOT_PREDEFINED_PROPS are handled by
             // check_not_predefined_properties (T2), not here (T3). (#489)
             if VERAPDF_NOT_PREDEFINED_PROPS.contains(&tag_name) {
@@ -3318,7 +3335,7 @@ fn check_struct_tree_root_required(pdf: &Pdf, level: PdfALevel, report: &mut Com
 ///
 /// Cycles in the RoleMap prevent role resolution and are a §6.7.3.4 violation.
 /// Fixes #FN-6.7.3.4.
-fn check_role_map_no_cycles(pdf: &Pdf, report: &mut ComplianceReport) {
+fn check_role_map_no_cycles(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let Some(cat) = check::catalog(pdf) else {
         return;
     };
@@ -3329,6 +3346,9 @@ fn check_role_map_no_cycles(pdf: &Pdf, report: &mut ComplianceReport) {
         return;
     };
 
+    // PDF/A-1 uses §6.8.3.4 for role-map cycles; PDF/A-2/3/4 use §6.7.3.4.
+    let rule = if part == 1 { "6.8.3.4" } else { "6.7.3.4" };
+
     // Build a name→name mapping from the RoleMap.
     let mut map: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
     for (key, val_ref) in role_map.entries() {
@@ -3338,9 +3358,9 @@ fn check_role_map_no_cycles(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 
     // DFS cycle detection: for each key, walk the chain and check for repetition.
-    // Self-referencing entries (e.g. /Document /Document) are NOT flagged: they are
-    // identity mappings to standard PDF roles and veraPDF accepts them. Only multi-hop
-    // cycles (A → B → A) are violations. (#FP-6.7.3.4)
+    // Self-referencing entries (A → A) are cycles in PDF/A-1 (veraPDF fires §6.8.3.4
+    // for them). For PDF/A-2/3/4, self-references to standard roles are accepted.
+    // (#FN-6.8.3.4, #FP-6.7.3.4)
     for start in map.keys() {
         let mut visited: HashSet<Vec<u8>> = HashSet::new();
         let mut current = start.clone();
@@ -3348,7 +3368,7 @@ fn check_role_map_no_cycles(pdf: &Pdf, report: &mut ComplianceReport) {
             if !visited.insert(current.clone()) {
                 error(
                     report,
-                    "6.7.3.4",
+                    rule,
                     format!(
                         "RoleMap contains a cycle involving role '{}'",
                         String::from_utf8_lossy(&current)
@@ -3357,8 +3377,20 @@ fn check_role_map_no_cycles(pdf: &Pdf, report: &mut ComplianceReport) {
                 break;
             }
             match map.get(&current) {
-                // Self-reference (A → A): identity mapping to a standard role — not a cycle.
-                Some(next) if next == &current => break,
+                Some(next) if next == &current => {
+                    // Self-reference (A → A): cycle in PDF/A-1, accepted in PDF/A-2/3/4.
+                    if part == 1 {
+                        error(
+                            report,
+                            rule,
+                            format!(
+                                "RoleMap contains a self-referencing cycle for role '{}'",
+                                String::from_utf8_lossy(&current)
+                            ),
+                        );
+                    }
+                    break;
+                }
                 Some(next) => current = next.clone(),
                 None => break,
             }
