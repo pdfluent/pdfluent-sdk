@@ -8511,11 +8511,13 @@ pub fn check_tounicode_cmap(
     for_each_font(pdf, |name, font_dict, _page_idx| {
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
 
-        // For non-Unicode levels (PDF/A-b), Type3 fonts are exempt from ToUnicode.
-        // For Unicode conformance (PDF/A-u, requires_unicode=true), Type3 fonts must also
-        // have ToUnicode when their glyph names are not all AGL-mappable. veraPDF fires
-        // §6.2.11.7.2 for Type3 fonts without ToUnicode in PDF/A-2u/3u. (#FN-6.2.11.7.2)
-        if subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type3") && !requires_unicode {
+        // Type3 fonts are exempt from the ToUnicode requirement EXCEPT for PDF/A-2u and
+        // PDF/A-3u (part 2 or 3 with Unicode conformance). veraPDF fires §6.2.11.7.2 for
+        // Type3 fonts without ToUnicode in PDF/A-2u/3u, but does NOT fire §6.2.10.7 for
+        // Type3 fonts in PDF/A-4 (veraPDF exempts them there). (#FN-6.2.11.7.2)
+        let type3_exempt = subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type3")
+            && !(requires_unicode && part < 4);
+        if type3_exempt {
             return;
         }
 
