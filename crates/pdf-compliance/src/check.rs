@@ -13656,13 +13656,20 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
             return; // one violation is enough
         }
 
-        // Actual length is bytes between data_start and endstream
-        // endstream may be preceded by EOL (\r\n or \n or \r)
+        // Actual length is bytes between data_start and endstream.
+        // The EOL before endstream (\r\n, \n, or \r) is NOT included in /Length.
+        // Track whether we stripped a \r after stripping \n: if so, the \r might
+        // be the last byte of the content rather than part of a \r\n EOL.
+        // (e.g. lopdf always writes just \n before endstream; if the content
+        // ends in \r the byte sequence is ...\r\nendstream and we must not count
+        // the \r as part of the EOL.) (#FP-6.1.7.1-len)
         let mut actual_end = abs_endstream;
+        let mut stripped_cr_after_lf = false;
         if actual_end > data_start && data[actual_end - 1] == b'\n' {
             actual_end -= 1;
             if actual_end > data_start && data[actual_end - 1] == b'\r' {
                 actual_end -= 1;
+                stripped_cr_after_lf = true;
             }
         } else if actual_end > data_start && data[actual_end - 1] == b'\r' {
             actual_end -= 1;
@@ -13673,6 +13680,14 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         let declared = find_length_value(data, abs_stream);
         if let Some(declared_len) = declared {
             if declared_len != actual_len {
+                // If we stripped \r\n as the EOL and declared == actual+1, the \r
+                // is actually the last byte of the content (not part of the EOL).
+                // The writer (lopdf) added \n as EOL; /Length correctly includes the
+                // \r. This is not a mismatch — avoid the FP. (#FP-6.1.7.1-len)
+                if stripped_cr_after_lf && declared_len == actual_len + 1 {
+                    pos = abs_endstream + 9;
+                    continue;
+                }
                 // Use "6.1.7.1-len" (distinct from stream-EOL "6.1.7.1") so
                 // remap_clause_numbers can map this specifically to §6.1.6.1 for PDF/A-4.
                 error(
