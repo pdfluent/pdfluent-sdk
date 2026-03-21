@@ -8144,15 +8144,16 @@ fn compute_cff_type1_width_corrections(
 
         let Some(frac_w) = frac_w else { continue };
 
-        // Use >= 0.95 threshold (slightly below 1.0) to account for two sources
-        // of imprecision in the raw CFF path:
-        // 1. cff_parser returns integer widths (u16) — a 1-unit diff in the integer
-        //    may correspond to a >1 fractional diff that veraPDF catches.
-        // 2. The FontMatrix scale is stored as f32 in cff_parser; f32→f64 widening
-        //    can underestimate the true scale, making our computed width slightly
-        //    lower than veraPDF's (e.g. 414.97 vs 415.03 for Georgia0150). (#479)
-        if (pdf_w - frac_w).abs() >= 0.95 {
-            corrections.push((i, frac_w.round() as i64));
+        // Apply correction when the CFF-derived integer width (after rounding)
+        // differs from the PDF Widths entry. veraPDF rounds the CFF advance to
+        // an integer (thousandths of em) and compares to the /Widths value, so
+        // only integer mismatches are violations. This threshold (rounded ≠ pdf_w)
+        // is equivalent to |frac_w - pdf_w| >= 0.5. The prior threshold of 0.95
+        // was too conservative — it missed cases like 280.77 vs 280 (diff 0.77)
+        // that veraPDF flags as a violation (rounds 280.77 → 281 ≠ 280). (#772)
+        let rounded_w = frac_w.round() as i64;
+        if rounded_w != pdf_w as i64 {
+            corrections.push((i, rounded_w));
         }
     }
 
@@ -8394,7 +8395,7 @@ fn extract_cff_from_otf(font_data: &[u8]) -> Option<cff_parser::Table<'_>> {
 /// Like find_cff_glyph_width_by_name but returns f64 (unrounded) for fractional comparison.
 fn find_cff_glyph_width_by_name_fractional(
     cff: &cff_parser::Table,
-    font_data: &[u8],
+    _font_data: &[u8],
     glyph_name: &str,
     scale: f64,
 ) -> Option<f64> {
@@ -8479,7 +8480,7 @@ fn compute_cff_single_width(
         return cff
             .glyph_index(code as u8)
             .and_then(|g| cff.glyph_width(g))
-            .map(|w| w as f64);
+            .map(|w| w as f64 * scale); // scale must be applied; raw CFF units ≠ PDF units
     }
 
     None
@@ -8605,309 +8606,6 @@ fn cff_width_for_code(
 
     // Cannot positively determine the glyph — return None to avoid
     // overwriting a correct existing width with .notdef width.
-    None
-}
-
-fn cff_type2_endchar_default_width(
-    font_data: &[u8],
-    glyph_id: cff_parser::GlyphId,
-    scale: f64,
-) -> Option<f64> {
-    let (charstrings_offset, private_range) = parse_cff_top_dict_offsets(font_data)?;
-    let (default_width, nominal_width) = parse_cff_private_widths(font_data, private_range)?;
-    let charstring = read_cff_index_entry(font_data, charstrings_offset, glyph_id.0 as usize)?;
-    parse_type2_endchar_width(charstring, default_width, nominal_width).map(|w| w * scale)
-}
-
-fn parse_cff_top_dict_offsets(data: &[u8]) -> Option<(usize, (usize, usize))> {
-    if data.len() < 4 {
-        return None;
-    }
-
-    let header_size = data[2] as usize;
-    let after_name = skip_cff_index(data, header_size)?;
-    let (top_dict_data, _) = read_cff_index_first(data, after_name)?;
-
-    let mut i = 0;
-    let mut operand_stack: Vec<i64> = Vec::new();
-    let mut charstrings_offset: Option<usize> = None;
-    let mut private_size: Option<usize> = None;
-    let mut private_offset: Option<usize> = None;
-
-    while i < top_dict_data.len() {
-        let b0 = top_dict_data[i];
-        match b0 {
-            0..=21 => {
-                match b0 {
-                    17 => {
-                        charstrings_offset = operand_stack.last().copied().map(|v| v as usize);
-                    }
-                    18 => {
-                        if operand_stack.len() >= 2 {
-                            private_size = Some(operand_stack[operand_stack.len() - 2] as usize);
-                            private_offset = operand_stack.last().copied().map(|v| v as usize);
-                        }
-                    }
-                    _ => {}
-                }
-                operand_stack.clear();
-                i += 1;
-            }
-            28 => {
-                if i + 2 >= top_dict_data.len() {
-                    return None;
-                }
-                operand_stack
-                    .push(i16::from_be_bytes([top_dict_data[i + 1], top_dict_data[i + 2]]) as i64);
-                i += 3;
-            }
-            29 => {
-                if i + 4 >= top_dict_data.len() {
-                    return None;
-                }
-                operand_stack.push(i32::from_be_bytes([
-                    top_dict_data[i + 1],
-                    top_dict_data[i + 2],
-                    top_dict_data[i + 3],
-                    top_dict_data[i + 4],
-                ]) as i64);
-                i += 5;
-            }
-            30 => {
-                i += 1;
-                while i < top_dict_data.len() {
-                    let nibbles = top_dict_data[i];
-                    i += 1;
-                    if nibbles & 0x0F == 0x0F || nibbles >> 4 == 0x0F {
-                        break;
-                    }
-                }
-                operand_stack.push(0);
-            }
-            32..=246 => {
-                operand_stack.push(b0 as i64 - 139);
-                i += 1;
-            }
-            247..=250 => {
-                if i + 1 >= top_dict_data.len() {
-                    return None;
-                }
-                operand_stack.push((b0 as i64 - 247) * 256 + top_dict_data[i + 1] as i64 + 108);
-                i += 2;
-            }
-            251..=254 => {
-                if i + 1 >= top_dict_data.len() {
-                    return None;
-                }
-                operand_stack.push(-(b0 as i64 - 251) * 256 - top_dict_data[i + 1] as i64 - 108);
-                i += 2;
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-
-    let charstrings_offset = charstrings_offset?;
-    let private_size = private_size?;
-    let private_offset = private_offset?;
-    let private_end = private_offset.checked_add(private_size)?;
-    if private_end > data.len() {
-        return None;
-    }
-
-    Some((charstrings_offset, (private_offset, private_end)))
-}
-
-fn parse_cff_private_widths(data: &[u8], private_range: (usize, usize)) -> Option<(f64, f64)> {
-    let private_data = data.get(private_range.0..private_range.1)?;
-    let mut i = 0;
-    let mut operand_stack: Vec<f64> = Vec::new();
-    let mut default_width = 0.0;
-    let mut nominal_width = 0.0;
-
-    while i < private_data.len() {
-        let b0 = private_data[i];
-        match b0 {
-            0..=21 => {
-                match b0 {
-                    20 => {
-                        if let Some(value) = operand_stack.last().copied() {
-                            default_width = value;
-                        }
-                    }
-                    21 => {
-                        if let Some(value) = operand_stack.last().copied() {
-                            nominal_width = value;
-                        }
-                    }
-                    _ => {}
-                }
-                operand_stack.clear();
-                i += 1;
-            }
-            28 => {
-                if i + 2 >= private_data.len() {
-                    return None;
-                }
-                operand_stack
-                    .push(i16::from_be_bytes([private_data[i + 1], private_data[i + 2]]) as f64);
-                i += 3;
-            }
-            29 => {
-                if i + 4 >= private_data.len() {
-                    return None;
-                }
-                operand_stack.push(i32::from_be_bytes([
-                    private_data[i + 1],
-                    private_data[i + 2],
-                    private_data[i + 3],
-                    private_data[i + 4],
-                ]) as f64);
-                i += 5;
-            }
-            30 => {
-                let (value, next_i) = parse_cff_real_number(private_data, i + 1)?;
-                operand_stack.push(value);
-                i = next_i;
-            }
-            32..=246 => {
-                operand_stack.push((b0 as i64 - 139) as f64);
-                i += 1;
-            }
-            247..=250 => {
-                if i + 1 >= private_data.len() {
-                    return None;
-                }
-                operand_stack
-                    .push(((b0 as i64 - 247) * 256 + private_data[i + 1] as i64 + 108) as f64);
-                i += 2;
-            }
-            251..=254 => {
-                if i + 1 >= private_data.len() {
-                    return None;
-                }
-                operand_stack
-                    .push((-(b0 as i64 - 251) * 256 - private_data[i + 1] as i64 - 108) as f64);
-                i += 2;
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-
-    Some((default_width, nominal_width))
-}
-
-fn parse_cff_real_number(data: &[u8], mut i: usize) -> Option<(f64, usize)> {
-    let mut buf = String::new();
-    while i < data.len() {
-        let byte = data[i];
-        i += 1;
-        for nibble in [byte >> 4, byte & 0x0F] {
-            match nibble {
-                0..=9 => buf.push(char::from(b'0' + nibble)),
-                0xA => buf.push('.'),
-                0xB => buf.push('E'),
-                0xC => buf.push_str("E-"),
-                0xE => buf.push('-'),
-                0xF => {
-                    return buf.parse::<f64>().ok().map(|value| (value, i));
-                }
-                _ => {}
-            }
-        }
-    }
-    None
-}
-
-fn read_cff_index_entry(data: &[u8], start: usize, index: usize) -> Option<&[u8]> {
-    if start + 2 > data.len() {
-        return None;
-    }
-    let count = u16::from_be_bytes([data[start], data[start + 1]]) as usize;
-    if index >= count || count == 0 || start + 3 > data.len() {
-        return None;
-    }
-    let off_size = data[start + 2] as usize;
-    if !(1..=4).contains(&off_size) {
-        return None;
-    }
-    let offsets_start = start + 3;
-    let entry_off = read_cff_offset(data, offsets_start + index * off_size, off_size)?;
-    let next_off = read_cff_offset(data, offsets_start + (index + 1) * off_size, off_size)?;
-    let data_start = offsets_start + (count + 1) * off_size;
-    let entry_start = data_start + entry_off.checked_sub(1)?;
-    let entry_end = data_start + next_off.checked_sub(1)?;
-    data.get(entry_start..entry_end)
-}
-
-fn parse_type2_endchar_width(
-    charstring: &[u8],
-    default_width: f64,
-    nominal_width: f64,
-) -> Option<f64> {
-    let mut i = 0;
-    let mut stack: Vec<f64> = Vec::new();
-
-    while i < charstring.len() {
-        let b0 = charstring[i];
-        match b0 {
-            14 => {
-                return match stack.len() {
-                    4 => Some(default_width),
-                    5 => Some(nominal_width + stack[0]),
-                    _ => None,
-                };
-            }
-            28 => {
-                if i + 2 >= charstring.len() {
-                    return None;
-                }
-                stack.push(i16::from_be_bytes([charstring[i + 1], charstring[i + 2]]) as f64);
-                i += 3;
-            }
-            32..=246 => {
-                stack.push((b0 as i64 - 139) as f64);
-                i += 1;
-            }
-            247..=250 => {
-                if i + 1 >= charstring.len() {
-                    return None;
-                }
-                stack.push(((b0 as i64 - 247) * 256 + charstring[i + 1] as i64 + 108) as f64);
-                i += 2;
-            }
-            251..=254 => {
-                if i + 1 >= charstring.len() {
-                    return None;
-                }
-                stack.push((-(b0 as i64 - 251) * 256 - charstring[i + 1] as i64 - 108) as f64);
-                i += 2;
-            }
-            255 => {
-                if i + 4 >= charstring.len() {
-                    return None;
-                }
-                let raw = i32::from_be_bytes([
-                    charstring[i + 1],
-                    charstring[i + 2],
-                    charstring[i + 3],
-                    charstring[i + 4],
-                ]);
-                stack.push(raw as f64 / 65536.0);
-                i += 5;
-            }
-            // Any operator other than endchar means this is not the narrow
-            // composite-glyph case we are correcting here.
-            _ if b0 <= 31 => return None,
-            _ => {
-                return None;
-            }
-        }
-    }
-
     None
 }
 
