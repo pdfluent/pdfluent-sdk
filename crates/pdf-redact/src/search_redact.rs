@@ -427,7 +427,7 @@ fn apply_per_bbox_combined_fallback(
                 let before = combined.len(); // byte offset before push
                 combined.push_str(&raw);
                 // Each byte in the appended slice belongs to this op.
-                byte_to_op.extend(std::iter::repeat(idx).take(combined.len() - before));
+                byte_to_op.extend(std::iter::repeat_n(idx, combined.len() - before));
             }
         }
 

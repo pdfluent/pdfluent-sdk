@@ -1254,10 +1254,29 @@ pub fn is_marked(pdf: &Pdf) -> bool {
 }
 
 /// Get the document language from the catalog /Lang entry.
+///
+/// PDF strings may be encoded as UTF-16BE (hex string with `\xFE\xFF` BOM)
+/// or as PDFDocEncoding/UTF-8 (literal string).  `from_utf8` fails on the
+/// BOM bytes, causing a false "missing /Lang" report for perfectly valid
+/// documents (e.g. veraPDF test suite `cs-7.1-t02-pass-a.pdf`).
 pub fn document_lang(pdf: &Pdf) -> Option<String> {
     let cat = catalog(pdf)?;
     let lang = cat.get::<pdf_syntax::object::String>(keys::LANG)?;
-    std::string::String::from_utf8(lang.as_bytes().to_vec()).ok()
+    let bytes = lang.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
+        // UTF-16BE with BOM
+        let u16s: Vec<u16> = bytes[2..]
+            .chunks(2)
+            .filter(|c| c.len() == 2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        Some(std::string::String::from_utf16_lossy(&u16s))
+    } else {
+        // PDFDocEncoding / UTF-8 literal string
+        std::string::String::from_utf8(bytes.to_vec())
+            .ok()
+            .or_else(|| Some(bytes.iter().map(|&b| b as char).collect()))
+    }
 }
 
 /// Validate that a language tag follows basic BCP-47 format.
