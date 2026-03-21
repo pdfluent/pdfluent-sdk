@@ -10,9 +10,15 @@ fn debug_redact_137208_united() {
     let doc_lopdf = lopdf::Document::load_mem(&data).unwrap();
     let chars = pdf_extract::extract_positioned_chars(&doc_lopdf, 1).unwrap();
     let pos_text: String = chars.iter().map(|c| c.ch).collect();
-    println!("Positioned text (first 200): {:?}", &pos_text[..200.min(pos_text.len())]);
+    println!(
+        "Positioned text (first 200): {:?}",
+        &pos_text[..200.min(pos_text.len())]
+    );
     let pos_count = pos_text.matches(word).count();
-    println!("'{}' in positioned text (page 1): {} occurrences", word, pos_count);
+    println!(
+        "'{}' in positioned text (page 1): {} occurrences",
+        word, pos_count
+    );
 
     // Step 2: what pages have this word via positioned_chars?
     let page_count = doc_lopdf.get_pages().len();
@@ -21,7 +27,9 @@ fn debug_redact_137208_united() {
         if let Ok(chars) = pdf_extract::extract_positioned_chars(&doc_lopdf, p) {
             let t: String = chars.iter().map(|c| c.ch).collect();
             let n = t.matches(word).count();
-            if n > 0 { println!("  Page {}: {} occurrences via positioned_chars", p, n); }
+            if n > 0 {
+                println!("  Page {}: {} occurrences via positioned_chars", p, n);
+            }
         }
     }
 
@@ -29,7 +37,10 @@ fn debug_redact_137208_united() {
     let mut doc2 = lopdf::Document::load_mem(&data).unwrap();
     let opts = RedactSearchOptions::default();
     let report = search_and_redact(&mut doc2, word, &opts).unwrap();
-    println!("search_and_redact: areas_redacted={} ops_removed={}", report.areas_redacted, report.operations_removed);
+    println!(
+        "search_and_redact: areas_redacted={} ops_removed={}",
+        report.areas_redacted, report.operations_removed
+    );
 
     let mut saved = Vec::new();
     doc2.save_to(&mut saved).unwrap();
@@ -37,7 +48,10 @@ fn debug_redact_137208_united() {
     let chars_after = pdf_extract::extract_positioned_chars(&doc3, 1).unwrap();
     let text_after: String = chars_after.iter().map(|c| c.ch).collect();
     let remaining = text_after.matches(word).count();
-    println!("After redact: '{}' on page 1 via positioned_chars: {} occurrences", word, remaining);
+    println!(
+        "After redact: '{}' on page 1 via positioned_chars: {} occurrences",
+        word, remaining
+    );
 }
 
 #[test]

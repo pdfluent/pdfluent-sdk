@@ -2747,23 +2747,38 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
             .map(str::trim)
             .unwrap_or("")
             .is_empty();
-        // §6.7.3.4: only fire when BOTH /Info Subject and dc:description exist and differ.
-        // veraPDF does NOT fire when dc:description is absent — only when it exists
-        // with a conflicting value. (#FP-6.7.3.4-absence)
+        // §6.7.3.4: fire when /Info Subject is non-empty and dc:description exists but
+        // (a) is not a valid Lang Alt (type violation — veraPDF fires §6.7.3:4 even when
+        //     the plain-text value matches /Subject, because the type is wrong), or
+        // (b) is a valid Lang Alt but the extracted value differs from /Subject.
+        // veraPDF does NOT fire when dc:description is absent — only when it exists.
+        // (#FP-6.7.3.4-absence, #FP-6.7.3-lang-alt: isartor-6-7-2-t02-fail-c)
         if subject_non_empty && xmp_text.contains("dc:description") {
             let xmp_desc = extract_rdf_alt_value(xmp_text, "dc:description");
-            if let Some(xmp_val) = &xmp_desc {
-                if let Some(info_decoded) = &subject_str {
-                    if info_decoded.trim() != xmp_val.trim() {
-                        error(
-                            report,
-                            "6.7.3.4",
-                            format!(
-                                "Subject mismatch: Info='{}' vs XMP='{}'",
-                                info_decoded.chars().take(50).collect::<String>(),
-                                xmp_val.chars().take(50).collect::<String>()
-                            ),
-                        );
+            match &xmp_desc {
+                None => {
+                    // dc:description is present but not a valid Lang Alt — type violation
+                    // triggers §6.7.3.4 (veraPDF fires §6.7.3:4 in this case).
+                    error(
+                        report,
+                        "6.7.3.4",
+                        "dc:description is present but not a valid Lang Alt (rdf:Alt) — \
+                         required for /Info Subject equivalence (§6.7.3.4)",
+                    );
+                }
+                Some(xmp_val) => {
+                    if let Some(info_decoded) = &subject_str {
+                        if info_decoded.trim() != xmp_val.trim() {
+                            error(
+                                report,
+                                "6.7.3.4",
+                                format!(
+                                    "Subject mismatch: Info='{}' vs XMP='{}'",
+                                    info_decoded.chars().take(50).collect::<String>(),
+                                    xmp_val.chars().take(50).collect::<String>()
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -4121,7 +4136,14 @@ fn check_image_restrictions_in_res(
         // OPI 1.3 keys embedded directly in Image XObject dictionaries (§6.2.9 / §6.2.6).
         // /XDPI and /YDPI are OPI 1.3 metadata keys. Internal rule "6.2.6" remaps to
         // "6.2.9" for PDF/A-1, stays "6.2.6" otherwise. (#FN-6.2.9 6-2-4-t04-fail-a)
-        if dict.contains_key(b"XDPI" as &[u8]) || dict.contains_key(b"YDPI" as &[u8]) {
+        //
+        // Skip when /Alternates is also present: veraPDF fires §6.2.4:1 for /Alternates
+        // and does NOT separately fire §6.2.9 for XDPI/YDPI in that case.
+        // (#FP-6.2.9 isartor-6-2-4-t01-fail-a: /Alternates + XDPI/YDPI → only §6.2.4:1)
+        let has_alternates = dict.contains_key(b"Alternates" as &[u8]);
+        if !has_alternates
+            && (dict.contains_key(b"XDPI" as &[u8]) || dict.contains_key(b"YDPI" as &[u8]))
+        {
             error_at(
                 report,
                 "6.2.6",

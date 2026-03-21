@@ -2963,24 +2963,70 @@ fn debug_gen698_font_inspect() {
 
     for (id, obj) in &doc.objects {
         if let Object::Dictionary(dict) = obj {
-            let base = dict.get(b"BaseFont").ok()
-                .and_then(|o| if let Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None })
+            let base = dict
+                .get(b"BaseFont")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(String::from_utf8_lossy(n).to_string())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_default();
-            if !base.contains("HFGEBB") { continue; }
-            let st = dict.get(b"Subtype").ok()
-                .and_then(|o| if let Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None })
+            if !base.contains("HFGEBB") {
+                continue;
+            }
+            let st = dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(String::from_utf8_lossy(n).to_string())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_default();
-            let fc = dict.get(b"FirstChar").ok().and_then(|o| if let Object::Integer(i) = o { Some(*i) } else { None }).unwrap_or(-1);
-            let lc = dict.get(b"LastChar").ok().and_then(|o| if let Object::Integer(i) = o { Some(*i) } else { None }).unwrap_or(-1);
+            let fc = dict
+                .get(b"FirstChar")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(-1);
+            let lc = dict
+                .get(b"LastChar")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(-1);
             let widths_info = match dict.get(b"Widths").ok() {
                 Some(Object::Array(ws)) => {
-                    let w32 = if fc <= 32 && lc >= 32 { format!("{:?}", ws.get((32-fc) as usize)) } else { "(32 out)".into() };
+                    let w32 = if fc <= 32 && lc >= 32 {
+                        format!("{:?}", ws.get((32 - fc) as usize))
+                    } else {
+                        "(32 out)".into()
+                    };
                     format!("len={} W[32]={}", ws.len(), w32)
                 }
                 Some(Object::Reference(r)) => format!("ref={r:?}"),
                 _ => "none".into(),
             };
-            let enc = dict.get(b"Encoding").ok().map(|o| format!("{o:?}")).unwrap_or_default();
+            let enc = dict
+                .get(b"Encoding")
+                .ok()
+                .map(|o| format!("{o:?}"))
+                .unwrap_or_default();
             println!("{id:?} {st} {base}: FC={fc} LC={lc} {widths_info}");
             println!("   enc: {enc}");
         }
@@ -3026,19 +3072,51 @@ fn debug_gen698_width_trace() {
     println!("=== HFGEBB+TimesNewRoman BEFORE fix_font_width_mismatches ===");
     for (id, obj) in &doc.objects {
         if let Object::Dictionary(dict) = obj {
-            let base = dict.get(b"BaseFont").ok()
-                .and_then(|o| if let Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None })
+            let base = dict
+                .get(b"BaseFont")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(String::from_utf8_lossy(n).to_string())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_default();
-            if !base.contains("HFGEBB") { continue; }
-            let fc = dict.get(b"FirstChar").ok().and_then(|o| if let Object::Integer(i) = o { Some(*i) } else { None }).unwrap_or(-1);
-            let lc = dict.get(b"LastChar").ok().and_then(|o| if let Object::Integer(i) = o { Some(*i) } else { None }).unwrap_or(-1);
+            if !base.contains("HFGEBB") {
+                continue;
+            }
+            let fc = dict
+                .get(b"FirstChar")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(-1);
+            let lc = dict
+                .get(b"LastChar")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(-1);
             let w32 = if fc <= 32 && lc >= 32 {
                 let idx = (32 - fc) as usize;
                 match dict.get(b"Widths").ok() {
                     Some(Object::Array(ws)) => format!("{:?}", ws.get(idx)),
                     _ => "?".into(),
                 }
-            } else { format!("(32 outside FC={fc}..LC={lc})") };
+            } else {
+                format!("(32 outside FC={fc}..LC={lc})")
+            };
             println!("  {id:?} {base}: FC={fc} LC={lc} W[32]={w32}");
         }
     }
@@ -3048,18 +3126,50 @@ fn debug_gen698_width_trace() {
     println!("=== HFGEBB+TimesNewRoman AFTER fix_font_width_mismatches ===");
     for (id, obj) in &doc.objects {
         if let Object::Dictionary(dict) = obj {
-            let base = dict.get(b"BaseFont").ok()
-                .and_then(|o| if let Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None })
+            let base = dict
+                .get(b"BaseFont")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(String::from_utf8_lossy(n).to_string())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_default();
-            if !base.contains("HFGEBB") { continue; }
-            let fc = dict.get(b"FirstChar").ok().and_then(|o| if let Object::Integer(i) = o { Some(*i) } else { None }).unwrap_or(-1);
-            let lc = dict.get(b"LastChar").ok().and_then(|o| if let Object::Integer(i) = o { Some(*i) } else { None }).unwrap_or(-1);
+            if !base.contains("HFGEBB") {
+                continue;
+            }
+            let fc = dict
+                .get(b"FirstChar")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(-1);
+            let lc = dict
+                .get(b"LastChar")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(-1);
             let w32 = if fc <= 32 && lc >= 32 {
                 let idx = (32 - fc) as usize;
                 match dict.get(b"Widths").ok() {
                     Some(Object::Array(ws)) => {
                         // Check for any huge values in the array
-                        let huge: Vec<_> = ws.iter().enumerate()
+                        let huge: Vec<_> = ws
+                            .iter()
+                            .enumerate()
                             .filter(|(_, o)| matches!(o, Object::Integer(v) if v.abs() > 32767))
                             .map(|(i, o)| (fc + i as i64, o))
                             .collect();
@@ -3070,7 +3180,9 @@ fn debug_gen698_width_trace() {
                     }
                     _ => "?".into(),
                 }
-            } else { format!("(32 outside FC={fc}..LC={lc})") };
+            } else {
+                format!("(32 outside FC={fc}..LC={lc})")
+            };
             println!("  {id:?} {base}: FC={fc} LC={lc} W[32]={w32}");
         }
     }
@@ -3087,10 +3199,20 @@ fn debug_gen698_cff_charset() {
     // Find HFGEBB+TimesNewRoman FontFile3 data
     for (id, obj) in &doc.objects {
         if let Object::Dictionary(dict) = obj {
-            let base = dict.get(b"BaseFont").ok()
-                .and_then(|o| if let Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None })
+            let base = dict
+                .get(b"BaseFont")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(String::from_utf8_lossy(n).to_string())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_default();
-            if !base.contains("HFGEBB") { continue; }
+            if !base.contains("HFGEBB") {
+                continue;
+            }
 
             let fd_ref = match dict.get(b"FontDescriptor").ok() {
                 Some(Object::Reference(r)) => *r,
@@ -3099,16 +3221,20 @@ fn debug_gen698_cff_charset() {
             let ff3_ref = match doc.objects.get(&fd_ref) {
                 Some(Object::Dictionary(fd)) => match fd.get(b"FontFile3").ok() {
                     Some(Object::Reference(r)) => *r,
-                    _ => { println!("{id:?} no FontFile3"); continue; }
+                    _ => {
+                        println!("{id:?} no FontFile3");
+                        continue;
+                    }
                 },
                 _ => continue,
             };
 
             let font_data = match doc.objects.get(&ff3_ref) {
-                Some(Object::Stream(stream)) => {
-                    stream.decompressed_content().unwrap_or_default()
+                Some(Object::Stream(stream)) => stream.decompressed_content().unwrap_or_default(),
+                _ => {
+                    println!("{id:?} not a stream");
+                    continue;
                 }
-                _ => { println!("{id:?} not a stream"); continue; }
             };
 
             let Some(cff) = cff_parser::Table::parse(&font_data) else {
@@ -3124,7 +3250,9 @@ fn debug_gen698_cff_charset() {
                 let w = cff.glyph_width(gid);
                 if name == Some("space") || name == Some(".notdef") {
                     println!("  GID={} name={:?} width={:?}", gid.0, name, w);
-                    if name == Some("space") { has_space = true; }
+                    if name == Some("space") {
+                        has_space = true;
+                    }
                 }
             }
             if !has_space {
@@ -3132,7 +3260,11 @@ fn debug_gen698_cff_charset() {
             }
             // Check CFF encoding for code 32
             if let Some(gid32) = cff.glyph_index(32) {
-                println!("  CFF encoding[32] -> GID {} name={:?}", gid32.0, cff.glyph_name(gid32));
+                println!(
+                    "  CFF encoding[32] -> GID {} name={:?}",
+                    gid32.0,
+                    cff.glyph_name(gid32)
+                );
             } else {
                 println!("  CFF encoding[32] -> None (code 32 not encoded)");
             }
@@ -3151,8 +3283,15 @@ fn debug_gen698_encoding() {
 
     // Encoding object is (165, 0)
     if let Some(Object::Dictionary(enc)) = doc.objects.get(&(165u32, 0u16).into()) {
-        println!("Encoding (165,0) keys: {:?}", enc.iter().map(|(k,_)| String::from_utf8_lossy(k).to_string()).collect::<Vec<_>>());
-        if let Ok(base) = enc.get(b"BaseEncoding") { println!("  BaseEncoding: {base:?}"); }
+        println!(
+            "Encoding (165,0) keys: {:?}",
+            enc.iter()
+                .map(|(k, _)| String::from_utf8_lossy(k).to_string())
+                .collect::<Vec<_>>()
+        );
+        if let Ok(base) = enc.get(b"BaseEncoding") {
+            println!("  BaseEncoding: {base:?}");
+        }
         if let Ok(diffs) = enc.get(b"Differences") {
             println!("  Differences: {diffs:?}");
         }
@@ -3164,15 +3303,33 @@ fn debug_gen698_encoding() {
     // Find font (168,0) encoding after conversion
     for (id, obj) in &doc2.objects {
         if let Object::Dictionary(dict) = obj {
-            let base = dict.get(b"BaseFont").ok()
-                .and_then(|o| if let Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None })
+            let base = dict
+                .get(b"BaseFont")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(String::from_utf8_lossy(n).to_string())
+                    } else {
+                        None
+                    }
+                })
                 .unwrap_or_default();
-            if !base.contains("HFGEBB") { continue; }
-            let enc = dict.get(b"Encoding").ok().map(|o| format!("{o:?}")).unwrap_or_default();
+            if !base.contains("HFGEBB") {
+                continue;
+            }
+            let enc = dict
+                .get(b"Encoding")
+                .ok()
+                .map(|o| format!("{o:?}"))
+                .unwrap_or_default();
             println!("converted {id:?} {base}: enc={enc}");
             if let Ok(Object::Reference(enc_ref)) = dict.get(b"Encoding") {
                 if let Some(Object::Dictionary(enc_dict)) = doc2.objects.get(enc_ref) {
-                    let diffs = enc_dict.get(b"Differences").ok().map(|o| format!("{o:?}")).unwrap_or_default();
+                    let diffs = enc_dict
+                        .get(b"Differences")
+                        .ok()
+                        .map(|o| format!("{o:?}"))
+                        .unwrap_or_default();
                     println!("  Differences: {diffs}");
                 }
             }
@@ -3193,14 +3350,23 @@ fn debug_gen698_font_desc() {
     for oid in [(168u32, 0u16), (172, 0), (183, 0)] {
         let id = lopdf::ObjectId::from(oid);
         if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
-            println!("Object {id:?} keys: {:?}",
-                dict.iter().map(|(k, _)| String::from_utf8_lossy(k).to_string()).collect::<Vec<_>>());
+            println!(
+                "Object {id:?} keys: {:?}",
+                dict.iter()
+                    .map(|(k, _)| String::from_utf8_lossy(k).to_string())
+                    .collect::<Vec<_>>()
+            );
             if let Ok(fd) = dict.get(b"FontDescriptor") {
                 println!("  FontDescriptor: {fd:?}");
                 if let Object::Reference(fd_ref) = fd {
                     if let Some(Object::Dictionary(fd_dict)) = doc.objects.get(fd_ref) {
-                        println!("  FD keys: {:?}",
-                            fd_dict.iter().map(|(k,_)| String::from_utf8_lossy(k).to_string()).collect::<Vec<_>>());
+                        println!(
+                            "  FD keys: {:?}",
+                            fd_dict
+                                .iter()
+                                .map(|(k, _)| String::from_utf8_lossy(k).to_string())
+                                .collect::<Vec<_>>()
+                        );
                         if let Ok(ff3) = fd_dict.get(b"FontFile3") {
                             println!("  FontFile3: {ff3:?}");
                             if let Object::Reference(ff3_ref) = ff3 {
@@ -3219,7 +3385,11 @@ fn debug_gen698_font_desc() {
                                         println!("    GID={} name={:?} width={:?}", gid.0, name, w);
                                     }
                                     if let Some(gid32) = cff.glyph_index(32) {
-                                        println!("  CFF encoding[32]->GID{} name={:?}", gid32.0, cff.glyph_name(gid32));
+                                        println!(
+                                            "  CFF encoding[32]->GID{} name={:?}",
+                                            gid32.0,
+                                            cff.glyph_name(gid32)
+                                        );
                                     } else {
                                         println!("  CFF encoding[32]->None");
                                     }
@@ -3308,6 +3478,60 @@ fn debug_gen152_find_corruption() {
     println!("Run: for f in /tmp/gen152_step*.pdf; do echo -n \"$f: \"; verapdf --flavour 2b $f 2>/dev/null | grep -o 'failedChecks=\"[0-9]*\"' | head -1; done");
 }
 
+/// Full pipeline conversion for gen-152.
+#[test]
+#[ignore]
+fn debug_gen152_full_convert() {
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+    let data = std::fs::read("/tmp/gen-152_152696.pdf").unwrap();
+    let mut doc = lopdf::Document::load_mem(&data).unwrap();
+
+    pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false).unwrap();
+    pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc);
+    pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::strip_control_chars_from_streams(&mut doc);
+    pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc);
+    pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc);
+    pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc).unwrap();
+    pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+    pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None).unwrap();
+
+    let mut saved = Vec::new();
+    doc.save_to(&mut saved).unwrap();
+    pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+    pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
+
+    std::fs::write("/tmp/gen152_full_converted.pdf", &saved).unwrap();
+    println!(
+        "Saved {} bytes to /tmp/gen152_full_converted.pdf",
+        saved.len()
+    );
+}
+
 /// Check if fix_ascii85_inline_images actually modifies the gen-152 content stream.
 #[test]
 #[ignore]
@@ -3322,7 +3546,9 @@ fn debug_gen152_ascii85_fix() {
 
     // Find content stream object 1 0
     let stream_data = match doc.objects.get(&(1, 0)) {
-        Some(Object::Stream(s)) => s.decompressed_content().unwrap_or_else(|_| s.content.clone()),
+        Some(Object::Stream(s)) => s
+            .decompressed_content()
+            .unwrap_or_else(|_| s.content.clone()),
         _ => panic!("object (1,0) not found or not a stream"),
     };
 
@@ -3351,7 +3577,10 @@ fn debug_gen152_ascii85_fix() {
             if has_a85 {
                 a85_count += 1;
             }
-            println!("BI at {i}: has_a85={has_a85}, dict[..80]={:?}", &dict_bytes[..dict_bytes.len().min(80)]);
+            println!(
+                "BI at {i}: has_a85={has_a85}, dict[..80]={:?}",
+                &dict_bytes[..dict_bytes.len().min(80)]
+            );
         }
         i += 1;
     }
@@ -3362,4 +3591,798 @@ fn debug_gen152_ascii85_fix() {
     doc.clone().save_to(&mut saved).unwrap();
     std::fs::write("/tmp/gen152_ascii85_fixed.pdf", &saved).unwrap();
     println!("Saved to /tmp/gen152_ascii85_fixed.pdf");
+}
+
+#[test]
+#[ignore]
+fn debug_gen698_charset() {
+    let data = std::fs::read("/tmp/gen-698_698323-converted.pdf").unwrap();
+    let pdf = pdf_syntax::Pdf::new(data).unwrap();
+
+    // Validate at A2b and show 6.2.11.4.1 issues
+    let report = pdf_compliance::validate_pdfa(&pdf, pdf_compliance::PdfALevel::A2b);
+    println!(
+        "Compliant: {} | Issues: {}",
+        report.compliant,
+        report.issues.len()
+    );
+    for issue in &report.issues {
+        if issue.rule.contains("6.2.11.4") || issue.rule.contains("6.3.5") {
+            println!(
+                "  CHARSET: {} {}",
+                issue.rule,
+                &issue.message[..issue.message.len().min(120)]
+            );
+        }
+    }
+    println!("--- all issues ---");
+    for issue in &report.issues {
+        println!(
+            "  [{}] {}: {}",
+            issue.severity as u8,
+            issue.rule,
+            &issue.message[..issue.message.len().min(100)]
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn debug_gen698_original_charset() {
+    // Check the ORIGINAL (unconverted) gen-698 for charset violations
+    let data = std::fs::read("/tmp/gen-698_698323.pdf").unwrap();
+    let pdf = pdf_syntax::Pdf::new(data).unwrap();
+    let report = pdf_compliance::validate_pdfa(&pdf, pdf_compliance::PdfALevel::A2b);
+    println!(
+        "Original gen-698 | Compliant: {} | Issues: {}",
+        report.compliant,
+        report.issues.len()
+    );
+    for issue in &report.issues {
+        println!(
+            "  [{}] {}: {}",
+            issue.severity as u8,
+            issue.rule,
+            &issue.message[..issue.message.len().min(120)]
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn debug_gen152_oi_trace() {
+    // Trace exactly why §6.2.2 doesn't fire for gen-152.
+    use lopdf::Object;
+    let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
+    let doc = lopdf::Document::load_mem(&data).unwrap();
+
+    // Check via pdf-syntax: can it find the OutputIntent?
+    let pdf = pdf_syntax::Pdf::new(data.clone()).unwrap();
+    use pdf_syntax::object::{Array, Dict, Name, Stream};
+
+    let xref = pdf.xref();
+    let root_id = xref.root_id();
+    println!("Root id: {:?}", root_id);
+
+    // Get catalog
+    let cat_opt: Option<Dict<'_>> = xref.get::<Dict<'_>>(root_id);
+    if cat_opt.is_none() {
+        println!("Could not get Catalog as Dict!");
+    }
+
+    if let Some(cat) = cat_opt {
+        let has_oi_key = cat.contains_key(b"OutputIntents" as &[u8]);
+        println!("Catalog has OutputIntents key: {}", has_oi_key);
+
+        if let Some(intents) = cat.get::<Array<'_>>(b"OutputIntents" as &[u8]) {
+            println!("OutputIntents array len: {}", intents.data().len());
+            for dict in intents.iter::<Dict<'_>>() {
+                let s = dict
+                    .get::<Name>(b"S" as &[u8])
+                    .map(|n| String::from_utf8_lossy(n.as_ref()).to_string())
+                    .unwrap_or_else(|| "(none)".to_string());
+                let has_dest = dict.contains_key(b"DestOutputProfile" as &[u8]);
+                println!("  OutputIntent: S={} has_DestOutputProfile={}", s, has_dest);
+                if let Some(stream) = dict.get::<Stream<'_>>(b"DestOutputProfile" as &[u8]) {
+                    let decoded = stream.decoded();
+                    println!(
+                        "  DestOutputProfile decoded: {:?} bytes",
+                        decoded.as_ref().map(|d| d.len())
+                    );
+                } else {
+                    println!("  DestOutputProfile: can't get as Stream (returns None)");
+                    // Try to get the raw ref
+                    // Check the ICC stream (object 40,0) via lopdf
+                    let icc_id: lopdf::ObjectId = (40u32, 0u16).into();
+                    if let Some(Object::Stream(stream)) = doc.objects.get(&icc_id) {
+                        let bytes = stream.decompressed_content().unwrap_or_default();
+                        println!("  lopdf ICC (40,0) bytes: {}", bytes.len());
+                        println!("  lopdf raw stream len: {}", stream.content.len());
+                        let keys: Vec<_> = stream
+                            .dict
+                            .iter()
+                            .map(|(k, _)| String::from_utf8_lossy(k).to_string())
+                            .collect();
+                        println!("  lopdf stream dict keys: {:?}", keys);
+                    }
+                }
+            }
+        } else {
+            println!("Could not get OutputIntents as Array!");
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn debug_gen152_outputintent() {
+    // Check OutputIntent in converted gen-152 to investigate §6.2.2 FN.
+    use lopdf::Object;
+
+    let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
+    let doc = lopdf::Document::load_mem(&data).unwrap();
+
+    // Find Catalog
+    let catalog_ref = doc.trailer.get(b"Root").ok().and_then(|o| {
+        if let Object::Reference(r) = o {
+            Some(*r)
+        } else {
+            None
+        }
+    });
+    println!("Root ref: {:?}", catalog_ref);
+
+    if let Some(root_id) = catalog_ref {
+        if let Some(Object::Dictionary(catalog)) = doc.objects.get(&root_id) {
+            // Find OutputIntents
+            let oi = catalog
+                .get(b"OutputIntents")
+                .ok()
+                .map(|o| format!("{o:?}"))
+                .unwrap_or_else(|| "(none)".to_string());
+            println!("OutputIntents: {}", &oi[..oi.len().min(200)]);
+
+            // Get the actual OutputIntents array
+            if let Ok(Object::Array(oi_arr)) = catalog.get(b"OutputIntents") {
+                println!("OutputIntents count: {}", oi_arr.len());
+                for (i, item) in oi_arr.iter().enumerate() {
+                    let oi_dict = match item {
+                        Object::Dictionary(d) => Some(d.clone()),
+                        Object::Reference(r) => {
+                            if let Some(Object::Dictionary(d)) = doc.objects.get(r) {
+                                Some(d.clone())
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(dict) = oi_dict {
+                        let s = dict
+                            .get(b"S")
+                            .ok()
+                            .map(|o| format!("{o:?}"))
+                            .unwrap_or_default();
+                        let icc_ref = dict
+                            .get(b"DestOutputProfile")
+                            .ok()
+                            .map(|o| format!("{o:?}"))
+                            .unwrap_or_default();
+                        println!(
+                            "  OutputIntent[{}]: S={} DestOutputProfile={}",
+                            i, s, icc_ref
+                        );
+                        // Check ICC profile
+                        if let Ok(Object::Reference(icc_r)) = dict.get(b"DestOutputProfile") {
+                            if let Some(Object::Stream(stream)) = doc.objects.get(icc_r) {
+                                let bytes = stream.decompressed_content().unwrap_or_default();
+                                println!("    ICC bytes: {}", bytes.len());
+                                if bytes.len() >= 36 {
+                                    let sig = &bytes[36..40];
+                                    println!("    ICC signature: {:?}", std::str::from_utf8(sig));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Also run our checker specifically for OutputIntent
+    let pdf = pdf_syntax::Pdf::new(data).unwrap();
+    let report = pdf_compliance::validate_pdfa(&pdf, pdf_compliance::PdfALevel::A2b);
+    let oi_issues: Vec<_> = report
+        .issues
+        .iter()
+        .filter(|i| i.rule.contains("6.2.2") || i.rule.contains("6.2.3"))
+        .collect();
+    println!("\nOur §6.2.2/6.2.3 issues: {}", oi_issues.len());
+    for issue in &oi_issues {
+        println!(
+            "  [{}] {}: {}",
+            issue.rule,
+            issue.severity as u8,
+            &issue.message[..issue.message.len().min(100)]
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn debug_gen152_resources() {
+    // Deep inspection of gen-152 resources to find §6.2.2 source.
+    use lopdf::Object;
+
+    let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
+    let pdf = pdf_syntax::Pdf::new(data.clone()).unwrap();
+    let doc = lopdf::Document::load_mem(&data).unwrap();
+
+    // Check all pages for explicit /Resources
+    println!("=== Page resources check ===");
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let page_dict = page.raw();
+        let has_resources = page_dict.contains_key(b"Resources" as &[u8]);
+        let n_fonts = page.resources().fonts.entries().count();
+        let n_xobjs = page.resources().x_objects.entries().count();
+        println!(
+            "Page {}: has_Resources={} fonts={} xobjs={}",
+            page_idx + 1,
+            has_resources,
+            n_fonts,
+            n_xobjs
+        );
+    }
+
+    // Check all Form XObjects in the document
+    println!("\n=== Form XObjects check ===");
+    for (oid, obj) in &doc.objects {
+        let Object::Stream(stream) = obj else {
+            continue;
+        };
+        let subtype = stream.dict.get(b"Subtype").ok().and_then(|o| {
+            if let Object::Name(n) = o {
+                Some(n.clone())
+            } else {
+                None
+            }
+        });
+        if subtype.as_deref() != Some(b"Form") {
+            continue;
+        }
+        let has_resources = stream.dict.get(b"Resources").is_ok();
+        let bytes = stream.decompressed_content().unwrap_or_default();
+        let text = String::from_utf8_lossy(&bytes);
+        let uses_tf = text.contains("Tf");
+        let uses_do = text.contains(" Do");
+        println!(
+            "Form XObj {:?}: has_Resources={} uses_Tf={} uses_Do={} len={}",
+            oid,
+            has_resources,
+            uses_tf,
+            uses_do,
+            bytes.len()
+        );
+        if !has_resources && (uses_tf || uses_do) {
+            println!("  ** VIOLATION: uses resources but no /Resources dict **");
+            // Show first 200 bytes of content
+            println!("  Content: {}", &text.chars().take(200).collect::<String>());
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn debug_gen152_annots() {
+    // Inspect annotation appearances in converted gen-152 to find §6.2.2 source.
+    use lopdf::Object;
+
+    let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
+    let doc = lopdf::Document::load_mem(&data).unwrap();
+
+    println!("=== Annotation appearances in gen-152 ===");
+    let mut annot_count = 0;
+    for (oid, obj) in &doc.objects {
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        let has_rect = dict.get(b"Rect").is_ok();
+        let subtype = dict.get(b"Subtype").ok().and_then(|o| {
+            if let Object::Name(n) = o {
+                Some(String::from_utf8_lossy(n).to_string())
+            } else {
+                None
+            }
+        });
+        if !has_rect || subtype.is_none() {
+            continue;
+        }
+        annot_count += 1;
+        println!(
+            "Annot {:?}: Subtype={}",
+            oid,
+            subtype.as_deref().unwrap_or("?")
+        );
+        // Check AP entry
+        if let Ok(Object::Dictionary(ap_dict)) = dict.get(b"AP") {
+            for (ap_key, ap_obj) in ap_dict.iter() {
+                let stream_ref = match ap_obj {
+                    Object::Reference(r) => Some(*r),
+                    _ => None,
+                };
+                if let Some(r) = stream_ref {
+                    if let Some(Object::Stream(stream)) = doc.objects.get(&r) {
+                        let has_res = stream.dict.get(b"Resources").is_ok();
+                        println!(
+                            "  AP/{}: ref={:?} has_Resources={}",
+                            String::from_utf8_lossy(ap_key),
+                            r,
+                            has_res
+                        );
+                        if !has_res {
+                            let decoded = stream.decompressed_content().unwrap_or_default();
+                            // Check if content uses any resource operators
+                            let text = String::from_utf8_lossy(&decoded);
+                            let has_tf = text.contains(" Tf") || text.contains("\nTf");
+                            let has_do = text.contains(" Do") || text.contains("\nDo");
+                            println!(
+                                "    content: has_Tf={} has_Do={} len={}",
+                                has_tf,
+                                has_do,
+                                decoded.len()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("Total annotations found: {}", annot_count);
+}
+
+#[test]
+#[ignore]
+fn debug_gen698_charset_trace() {
+    // Trace what check_type1_charset_coverage sees for gen-698 pages 16 and 21.
+    // Find what codes are used with HFNCFP+Arial-Bold and HFNCEN+Swis721BT-Bold.
+    let data = std::fs::read("/tmp/gen-698_698323-converted.pdf").unwrap();
+    let pdf = pdf_syntax::Pdf::new(data).unwrap();
+    let target_bases = ["HFNCFP+Arial-Bold", "HFNCEN+Swis721BT-Bold"];
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let fonts = &page.resources().fonts;
+        // Find target font resource names on this page
+        let mut target_rnames: Vec<(Vec<u8>, String)> = Vec::new();
+        for (rname, _) in fonts.entries() {
+            if let Some(fd) = fonts.get::<pdf_syntax::object::Dict<'_>>(rname.as_ref()) {
+                let base = fd
+                    .get::<pdf_syntax::object::Name>(b"BaseFont" as &[u8])
+                    .map(|n| String::from_utf8_lossy(n.as_ref()).to_string())
+                    .unwrap_or_default();
+                if target_bases.iter().any(|t| base == *t) {
+                    target_rnames.push((rname.as_ref().to_vec(), base.clone()));
+                    println!(
+                        "Page {}: font {} = {}",
+                        page_idx + 1,
+                        String::from_utf8_lossy(rname.as_ref()),
+                        base
+                    );
+                }
+            }
+        }
+        if target_rnames.is_empty() {
+            continue;
+        }
+
+        // Now scan the content stream for text operators using these fonts
+        let Some(content) = page.page_stream() else {
+            continue;
+        };
+        let tokens: Vec<Vec<u8>> = {
+            let mut result = Vec::new();
+            let mut i = 0;
+            let bytes = content;
+            while i < bytes.len() {
+                // skip whitespace
+                while i < bytes.len()
+                    && (bytes[i] == b' '
+                        || bytes[i] == b'\n'
+                        || bytes[i] == b'\r'
+                        || bytes[i] == b'\t')
+                {
+                    i += 1;
+                }
+                if i >= bytes.len() {
+                    break;
+                }
+                // read token (simple split)
+                let start = i;
+                while i < bytes.len()
+                    && bytes[i] != b' '
+                    && bytes[i] != b'\n'
+                    && bytes[i] != b'\r'
+                    && bytes[i] != b'\t'
+                {
+                    i += 1;
+                }
+                if start < i {
+                    result.push(bytes[start..i].to_vec());
+                }
+            }
+            result
+        };
+
+        let mut active_font: Option<&str> = None;
+        for (i, tok) in tokens.iter().enumerate() {
+            if tok == b"Tf" && i >= 2 {
+                let rname = tokens[i - 2].as_slice();
+                if let Some(name_bytes) = rname.strip_prefix(b"/") {
+                    let fname = std::str::from_utf8(name_bytes).unwrap_or("");
+                    if target_rnames.iter().any(|(r, _)| r == name_bytes) {
+                        let base = target_rnames
+                            .iter()
+                            .find(|(r, _)| r == name_bytes)
+                            .map(|(_, b)| b.as_str())
+                            .unwrap_or("");
+                        active_font = Some(base);
+                        println!(
+                            "  Page {}: activated {} = {} at token {}",
+                            page_idx + 1,
+                            fname,
+                            base,
+                            i
+                        );
+                    } else {
+                        active_font = None;
+                    }
+                }
+            }
+            if active_font.is_some() && (tok == b"Tj" || tok == b"'" || tok == b"\"") && i >= 1 {
+                let stok = &tokens[i - 1];
+                println!(
+                    "  Page {}: {:?} {:?} -> codes: {:?}",
+                    page_idx + 1,
+                    tok,
+                    String::from_utf8_lossy(stok),
+                    stok.iter()
+                        .filter(|&&b| b >= 32)
+                        .copied()
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn debug_gen698_page_font_resources() {
+    // Check whether Type1 subset fonts appear in page resources or inherited from parent.
+    // Diagnosis for §6.2.11.4.1 FN: if fonts are only in parent node, check_type1_charset_coverage
+    // may iterate an empty page.resources().fonts dict.
+    let data = std::fs::read("/tmp/gen-698_698323-converted.pdf").unwrap();
+    let pdf = pdf_syntax::Pdf::new(data).unwrap();
+    let target_fonts = ["HFNCFP+Arial-Bold", "HFNCEN+Swis721BT-Bold"];
+
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let fonts = &page.resources().fonts;
+        let entries: Vec<String> = fonts
+            .entries()
+            .filter_map(|(k, _)| {
+                let font = fonts.get::<pdf_syntax::object::Dict<'_>>(k.as_ref())?;
+                let base = font
+                    .get::<pdf_syntax::object::Name>(b"BaseFont" as &[u8])
+                    .map(|n| String::from_utf8_lossy(n.as_ref()).to_string())
+                    .unwrap_or_default();
+                if target_fonts.iter().any(|t| base.contains(&t[7..])) {
+                    Some(format!("{}={}", String::from_utf8_lossy(k.as_ref()), base))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !entries.is_empty() {
+            println!("Page {}: {:?}", page_idx + 1, entries);
+        }
+        // Also check entry count
+        let n_entries = fonts.entries().count();
+        let n_target = entries.len();
+        if n_target > 0 || n_entries > 0 {
+            println!(
+                "  page {} has {} fonts total, {} target fonts in OWN resources",
+                page_idx + 1,
+                n_entries,
+                n_target
+            );
+        }
+    }
+    println!("Done checking pages");
+}
+
+#[test]
+#[ignore]
+fn debug_gen698_type1_fonts_converted() {
+    // Inspect all Type1 subset fonts in the converted gen-698 PDF.
+    // Helps diagnose §6.2.11.4.1 FN: find what encoding each font uses,
+    // what the CFF glyph set is, and what content codes are used.
+    use lopdf::Object;
+
+    let data = std::fs::read("/tmp/gen-698_698323-converted.pdf").unwrap();
+    let doc = lopdf::Document::load_mem(&data).unwrap();
+
+    println!("=== Type1 subset fonts in converted gen-698 ===");
+    let mut found = false;
+    for (oid, obj) in &doc.objects {
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        let Ok(Object::Name(stype)) = dict.get(b"Subtype") else {
+            continue;
+        };
+        if stype != b"Type1" {
+            continue;
+        }
+        let base = match dict.get(b"BaseFont") {
+            Ok(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
+            _ => continue,
+        };
+        // Only subset fonts (ABCDEF+ prefix)
+        let bytes = base.as_bytes();
+        if bytes.len() < 7 || bytes[6] != b'+' {
+            continue;
+        }
+        found = true;
+        println!("\n--- Font {:?}: {} ---", oid, base);
+
+        // Encoding
+        let enc = dict.get(b"Encoding").ok();
+        match enc {
+            Some(Object::Name(n)) => println!("  Encoding: Name({})", String::from_utf8_lossy(n)),
+            Some(Object::Reference(r)) => {
+                println!("  Encoding: Reference({:?})", r);
+                if let Some(Object::Dictionary(enc_dict)) = doc.objects.get(r) {
+                    let base_enc = enc_dict
+                        .get(b"BaseEncoding")
+                        .ok()
+                        .map(|o| format!("{o:?}"))
+                        .unwrap_or_default();
+                    println!("    BaseEncoding: {base_enc}");
+                    if let Ok(Object::Array(diffs)) = enc_dict.get(b"Differences") {
+                        println!("    Differences[..20]: {:?}", &diffs[..diffs.len().min(20)]);
+                    }
+                }
+            }
+            Some(o) => println!("  Encoding: {o:?}"),
+            None => println!("  Encoding: (none)"),
+        }
+
+        // CharSet
+        let charset = dict.get(b"CharSet").ok().or_else(|| {
+            // Try FontDescriptor for CharSet
+            if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
+                if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
+                    return fd.get(b"CharSet").ok();
+                }
+            }
+            None
+        });
+        match charset {
+            Some(Object::String(s, _)) => println!("  CharSet: {}", String::from_utf8_lossy(s)),
+            _ => println!("  CharSet: (none or other type)"),
+        }
+
+        // FontDescriptor + CFF
+        if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor") {
+            if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
+                if let Ok(Object::Reference(ff3_ref)) = fd.get(b"FontFile3") {
+                    if let Some(Object::Stream(stream)) = doc.objects.get(ff3_ref) {
+                        let bytes = stream.decompressed_content().unwrap_or_default();
+                        println!("  CFF bytes: {}", bytes.len());
+                        if let Some(cff) = cff_parser::Table::parse(&bytes) {
+                            println!("  CFF nGlyphs: {}", cff.number_of_glyphs());
+                            for gid in 0..cff.number_of_glyphs() {
+                                let gid = cff_parser::GlyphId(gid);
+                                println!("    GID={} name={:?}", gid.0, cff.glyph_name(gid));
+                            }
+                        } else {
+                            println!("  CFF parse failed");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !found {
+        println!("No Type1 subset fonts found in converted PDF");
+    }
+}
+
+/// Verify §6.7.3.5 fix: /Info /Keywords → XMP pdf:Keywords.
+/// Verify §6.1.7.1 fix: no /F in non-EmbeddedFile stream dicts after conversion.
+#[test]
+#[ignore]
+fn debug_gen698_converter_fixes() {
+    use lopdf::Object;
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+
+    let data = std::fs::read("/tmp/gen-698_698323.pdf").expect("gen-698 not found in /tmp");
+    let mut doc = lopdf::Document::load_mem(&data).unwrap();
+
+    // Check /Info keywords before conversion
+    let info_keywords = {
+        if let Some(Object::Reference(iid)) = doc.trailer.get(b"Info").ok().cloned() {
+            if let Some(Object::Dictionary(info)) = doc.objects.get(&iid) {
+                if let Ok(Object::String(kw, _)) = info.get(b"Keywords") {
+                    Some(String::from_utf8_lossy(kw).to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    println!("Source /Info Keywords: {:?}", info_keywords);
+
+    pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false).unwrap();
+    let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+    pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+    pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+    pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc).unwrap();
+    pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+    pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None).unwrap();
+
+    let mut saved = Vec::new();
+    doc.save_to(&mut saved).unwrap();
+    pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+    pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
+
+    // Check XMP contains pdf:Keywords
+    let doc2 = lopdf::Document::load_mem(&saved).unwrap();
+    let catalog_id = match doc2.trailer.get(b"Root").ok().cloned() {
+        Some(Object::Reference(id)) => id,
+        _ => panic!("no catalog"),
+    };
+    if let Some(Object::Dictionary(cat)) = doc2.objects.get(&catalog_id) {
+        if let Ok(Object::Reference(mid)) = cat.get(b"Metadata") {
+            if let Some(Object::Stream(ms)) = doc2.objects.get(mid) {
+                let xmp = String::from_utf8_lossy(&ms.content);
+                let has_keywords = xmp.contains("pdf:Keywords") || xmp.contains("<pdf:Keywords>");
+                println!("XMP has pdf:Keywords: {has_keywords}");
+                if info_keywords.is_some() {
+                    assert!(
+                        has_keywords,
+                        "pdf:Keywords must be in XMP when /Info has Keywords"
+                    );
+                }
+            }
+        }
+    }
+
+    // Check no /F in non-EmbeddedFile stream dicts
+    let mut f_violations = 0usize;
+    for (_id, obj) in &doc2.objects {
+        if let Object::Stream(s) = obj {
+            let is_ef = matches!(
+                s.dict.get(b"Type").ok(),
+                Some(Object::Name(ref n)) if n == b"EmbeddedFile"
+            );
+            if !is_ef && s.dict.has(b"F") {
+                f_violations += 1;
+                println!("  Stream with /F: {:?}", _id);
+            }
+        }
+    }
+    println!("§6.1.7.1 /F violations in converted PDF: {f_violations}");
+    assert_eq!(
+        f_violations, 0,
+        "No /F in non-EmbeddedFile stream dicts after conversion"
+    );
+
+    std::fs::write("/tmp/gen-698-converted-fixed.pdf", &saved).unwrap();
+    println!("Saved converted PDF to /tmp/gen-698-converted-fixed.pdf");
+}
+
+/// Bisect which pipeline step introduces the §6.1.7.1 /F violation in gen-698.
+#[test]
+#[ignore]
+fn debug_gen698_bisect_f_violation() {
+    use lopdf::Object;
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+
+    fn count_f_violations(doc: &lopdf::Document) -> usize {
+        let mut count = 0;
+        for (id, obj) in &doc.objects {
+            if let Object::Stream(s) = obj {
+                let is_ef = matches!(
+                    s.dict.get(b"Type").ok(),
+                    Some(Object::Name(ref n)) if n == b"EmbeddedFile"
+                );
+                if !is_ef && s.dict.has(b"F") {
+                    println!("  Stream {:?} has /F: {:?}", id, s.dict.get(b"F").ok());
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    let data = std::fs::read("/tmp/gen-698_698323.pdf").expect("gen-698 not found");
+    let mut doc = lopdf::Document::load_mem(&data).unwrap();
+    println!("After load: {} /F violations", count_f_violations(&doc));
+
+    pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false).unwrap();
+    println!("After cleanup: {} /F violations", count_f_violations(&doc));
+
+    let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+    println!(
+        "After embed_fonts: {} /F violations",
+        count_f_violations(&doc)
+    );
+
+    pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+    println!(
+        "After font fixes 1: {} /F violations",
+        count_f_violations(&doc)
+    );
+
+    let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+    pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+    pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+    println!(
+        "After font fixes 2: {} /F violations",
+        count_f_violations(&doc)
+    );
+
+    pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc).unwrap();
+    println!(
+        "After normalize_colorspaces: {} /F violations",
+        count_f_violations(&doc)
+    );
+
+    pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+    println!(
+        "After run_fixups: {} /F violations",
+        count_f_violations(&doc)
+    );
+
+    pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None).unwrap();
+    println!(
+        "After repair_xmp: {} /F violations",
+        count_f_violations(&doc)
+    );
+
+    let mut saved = Vec::new();
+    doc.save_to(&mut saved).unwrap();
+    let doc2 = lopdf::Document::load_mem(&saved).unwrap();
+    println!(
+        "After save+reload: {} /F violations",
+        count_f_violations(&doc2)
+    );
 }
