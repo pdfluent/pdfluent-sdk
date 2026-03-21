@@ -42,6 +42,11 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let odd_hex_strings_fixed = fix_odd_hex_strings_in_streams(doc);
     let non_ascii_names_fixed = fix_non_ascii_pdf_names(doc);
     let inline_image_interpolate_fixed = fix_inline_image_interpolate(doc);
+    // Re-encode ASCII85 inline images as FlateDecode-only before stripping unknown operators.
+    // veraPDF uses strict EI detection and can find false EI markers within ASCII85-encoded
+    // data (printable ASCII), causing it to treat subsequent bytes as content stream operators.
+    // Converting to FlateDecode (binary) eliminates the false EI detection. (#fix-ascii85-inline)
+    let ascii85_inline_images_fixed = fix_ascii85_inline_images(doc);
     let concatenated_operators_fixed = fix_concatenated_operators(doc);
     let unknown_operators_stripped = strip_unknown_content_stream_operators(doc);
     let page_boundary_fixed = fix_page_boundary_sizes(doc);
@@ -77,6 +82,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         odd_hex_strings_fixed,
         non_ascii_names_fixed,
         inline_image_interpolate_fixed,
+        ascii85_inline_images_fixed,
         jpx_colorspace_fixed,
         concatenated_operators_fixed,
         unknown_operators_stripped,
@@ -112,6 +118,7 @@ pub struct FixupReport {
     pub odd_hex_strings_fixed: usize,
     pub non_ascii_names_fixed: usize,
     pub inline_image_interpolate_fixed: usize,
+    pub ascii85_inline_images_fixed: usize,
     pub jpx_colorspace_fixed: usize,
     pub concatenated_operators_fixed: usize,
     pub unknown_operators_stripped: usize,
@@ -5078,6 +5085,297 @@ const ISO32000_OPERATORS: &[&[u8]] = &[
     b"BX", b"EX",
 ];
 
+// ---------------------------------------------------------------------------
+// Inline image ASCII85 re-encoding (§6.2.2 / §8.9.7)
+//
+// Inline images that use ASCII85Decode as the outer filter (`/F [/A85 /Fl]`)
+// contain printable-ASCII-encoded image data. That data can include byte
+// sequences such as `\nEI ` which certain PDF validators (veraPDF) mistake
+// for the inline-image end marker, causing bytes from the ASCII85 payload to
+// be parsed as content-stream operators (e.g., `#`, `?T`). PDF/A §6.2.2 then
+// flags those as undefined operators.
+//
+// This pass re-encodes such inline images: we strip the ASCII85 layer (the
+// data between ID and `~>` is ASCII85-decoded, revealing raw FlateDecode-
+// compressed pixels) and update the filter to `/Fl` only. The resulting
+// binary FlateDecode stream is parsed reliably by all validators.
+// ---------------------------------------------------------------------------
+
+fn fix_ascii85_inline_images(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let decoded = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: must have both BI and A85 in the stream
+        if !decoded.windows(2).any(|w| w == b"BI") {
+            continue;
+        }
+        if !decoded.windows(3).any(|w| w == b"A85") {
+            continue;
+        }
+
+        if let Some(new_content) = reencode_ascii85_inline_images_in_stream(&decoded) {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.set_plain_content(new_content);
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Scans a decompressed content stream for BI blocks that use ASCII85Decode
+/// filter, strips the ASCII85 layer, and returns the modified stream.
+/// Returns `None` if no ASCII85 inline images are found.
+fn reencode_ascii85_inline_images_in_stream(data: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    let mut modified = false;
+
+    while i < data.len() {
+        // Look for "BI" preceded by a PDF delimiter/whitespace (or at start).
+        // Must also be followed by whitespace so we don't match e.g. "BIG".
+        if i + 2 <= data.len()
+            && &data[i..i + 2] == b"BI"
+            && (i == 0 || is_pdf_delimiter_or_ws(data[i - 1]))
+            && (i + 2 >= data.len() || data[i + 2].is_ascii_whitespace())
+        {
+            let bi_content_start = i + 2; // right after "BI"
+
+            // Scan for " ID " (whitespace + "ID" + whitespace) without writing
+            let mut id_at = None;
+            let mut j = bi_content_start;
+            while j < data.len() {
+                if j + 3 <= data.len()
+                    && data[j].is_ascii_whitespace()
+                    && &data[j + 1..j + 3] == b"ID"
+                    && (j + 3 >= data.len() || data[j + 3].is_ascii_whitespace())
+                {
+                    id_at = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+
+            let Some(id_pos) = id_at else {
+                // No ID found — write "BI" and continue from bi_content_start
+                out.extend_from_slice(b"BI");
+                i = bi_content_start;
+                continue;
+            };
+
+            let dict_bytes = &data[bi_content_start..id_pos];
+
+            // Check if this inline image uses ASCII85 filter
+            let has_a85 = dict_bytes.windows(3).any(|w| w == b"A85")
+                || dict_bytes.windows(11).any(|w| w == b"ASCII85D");
+
+            if !has_a85 {
+                // Not ASCII85: copy verbatim BI…EI block with normal EI detection
+                out.extend_from_slice(b"BI");
+                out.extend_from_slice(dict_bytes);
+                // include " ID"
+                out.extend_from_slice(&data[id_pos..id_pos + 3]);
+                i = id_pos + 3; // skip past " ID"
+                // Skip single space/newline after "ID" (§8.9.7: single WS after ID)
+                if i < data.len() && data[i].is_ascii_whitespace() {
+                    out.push(data[i]);
+                    i += 1;
+                }
+                // Copy image data until whitespace+EI+(whitespace|Q)
+                while i < data.len() {
+                    if data[i].is_ascii_whitespace()
+                        && i + 3 <= data.len()
+                        && &data[i + 1..i + 3] == b"EI"
+                        && (i + 3 >= data.len()
+                            || data[i + 3].is_ascii_whitespace()
+                            || data[i + 3] == b'Q')
+                    {
+                        out.extend_from_slice(&data[i..i + 3]);
+                        i += 3;
+                        break;
+                    }
+                    out.push(data[i]);
+                    i += 1;
+                }
+                continue;
+            }
+
+            // ASCII85 inline image — re-encode to FlateDecode only.
+            // After " ID" there is one mandatory space (§8.9.7), then the A85 data.
+            let mut data_start = id_pos + 3;
+            if data_start < data.len() && data[data_start].is_ascii_whitespace() {
+                data_start += 1; // skip the single mandatory space after ID
+            }
+
+            // Find ~> (ASCII85 end-of-stream marker)
+            let mut tilde_pos = None;
+            let mut k = data_start;
+            while k + 1 < data.len() {
+                if data[k] == b'~' && data[k + 1] == b'>' {
+                    tilde_pos = Some(k);
+                    break;
+                }
+                k += 1;
+            }
+
+            let Some(tp) = tilde_pos else {
+                // No ~> found — malformed; copy verbatim and fall through
+                out.extend_from_slice(b"BI");
+                out.extend_from_slice(dict_bytes);
+                out.extend_from_slice(&data[id_pos..data_start]);
+                i = data_start;
+                while i < data.len() {
+                    if data[i].is_ascii_whitespace()
+                        && i + 3 <= data.len()
+                        && &data[i + 1..i + 3] == b"EI"
+                        && (i + 3 >= data.len()
+                            || data[i + 3].is_ascii_whitespace()
+                            || data[i + 3] == b'Q')
+                    {
+                        out.extend_from_slice(&data[i..i + 3]);
+                        i += 3;
+                        break;
+                    }
+                    out.push(data[i]);
+                    i += 1;
+                }
+                continue;
+            };
+
+            // ASCII85-decode the data (data_start..tp, the ~> is the terminator)
+            let a85_bytes = &data[data_start..tp + 2]; // include ~> for the decoder
+            let fl_compressed = decode_ascii85(a85_bytes);
+
+            // Skip past ~> and any whitespace/newlines before EI
+            i = tp + 2;
+            while i < data.len() && data[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i + 2 <= data.len() && &data[i..i + 2] == b"EI" {
+                i += 2;
+            }
+
+            // Build new dict: replace A85 from the filter key
+            let new_dict = remove_a85_from_inline_image_dict(dict_bytes);
+
+            // Write new inline image block: BI + updated_dict + \nID + fl_data + \nEI
+            out.extend_from_slice(b"BI");
+            out.extend_from_slice(&new_dict);
+            out.extend_from_slice(b"\nID ");
+            out.extend_from_slice(&fl_compressed);
+            out.extend_from_slice(b"\nEI");
+            modified = true;
+            continue;
+        }
+
+        out.push(data[i]);
+        i += 1;
+    }
+
+    if modified { Some(out) } else { None }
+}
+
+/// Decodes ASCII85-encoded data. The input may include the `~>` end marker.
+/// Returns the decoded binary bytes.
+fn decode_ascii85(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut group = [0u8; 5];
+    let mut glen = 0usize;
+    let mut i = 0;
+
+    while i < data.len() {
+        let b = data[i];
+        i += 1;
+
+        if b == b'~' {
+            // End marker ~>; flush partial group if any
+            if glen > 0 && i < data.len() && data[i] == b'>' {
+                group[glen..5].fill(b'u'); // pad with 'u' (value 84 in base-85)
+                let v: u32 = (0..5).fold(0u32, |acc, k| acc * 85 + (group[k] - 33) as u32);
+                let bytes = v.to_be_bytes();
+                for byte in bytes.iter().take(glen - 1) {
+                    out.push(*byte);
+                }
+            }
+            break;
+        }
+
+        if b.is_ascii_whitespace() {
+            continue;
+        }
+
+        if b == b'z' {
+            // Special: 4 zero bytes
+            out.extend_from_slice(&[0u8; 4]);
+            continue;
+        }
+
+        if (b'!'..=b'u').contains(&b) {
+            group[glen] = b;
+            glen += 1;
+            if glen == 5 {
+                let v: u32 = (0..5).fold(0u32, |acc, k| acc * 85 + (group[k] - 33) as u32);
+                out.extend_from_slice(&v.to_be_bytes());
+                glen = 0;
+            }
+        }
+        // Bytes outside valid range are ignored (malformed input)
+    }
+
+    out
+}
+
+/// Removes ASCII85Decode (`/A85` or `/ASCII85Decode`) from the inline image
+/// dict bytes, keeping FlateDecode (`/Fl` or `/FlateDecode`).
+///
+/// Handles common patterns: `/F [/A85 /Fl]` → `/F /Fl`, etc.
+/// If a pattern is not recognised, returns the dict unchanged (safe fallback).
+fn remove_a85_from_inline_image_dict(dict: &[u8]) -> Vec<u8> {
+    // Common filter array forms to simplify
+    const REPLACEMENTS: &[(&[u8], &[u8])] = &[
+        (b"[/A85 /Fl]", b"/Fl"),
+        (b"[/A85  /Fl]", b"/Fl"),
+        (b"[ /A85 /Fl]", b"/Fl"),
+        (b"[ /A85 /Fl ]", b"/Fl"),
+        (b"[/A85 /FlateDecode]", b"/FlateDecode"),
+        (b"[/ASCII85Decode /Fl]", b"/Fl"),
+        (b"[/ASCII85Decode /FlateDecode]", b"/FlateDecode"),
+        // Reversed order (rare but possible)
+        (b"[/Fl /A85]", b"/Fl"),
+        (b"[/FlateDecode /A85]", b"/FlateDecode"),
+        (b"[/Fl /ASCII85Decode]", b"/Fl"),
+        (b"[/FlateDecode /ASCII85Decode]", b"/FlateDecode"),
+    ];
+
+    let mut result = dict.to_vec();
+    for (pattern, replacement) in REPLACEMENTS {
+        if let Some(pos) = result.windows(pattern.len()).position(|w| w == *pattern) {
+            let mut new = Vec::with_capacity(result.len() - pattern.len() + replacement.len());
+            new.extend_from_slice(&result[..pos]);
+            new.extend_from_slice(replacement);
+            new.extend_from_slice(&result[pos + pattern.len()..]);
+            result = new;
+            return result; // only one filter key per dict
+        }
+    }
+    result // no recognised pattern — return unchanged
+}
+
+#[inline]
+fn is_pdf_delimiter_or_ws(b: u8) -> bool {
+    is_pdf_delimiter(b) || b.is_ascii_whitespace()
+}
+
 fn strip_unknown_content_stream_operators(doc: &mut Document) -> usize {
     let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
     let mut count = 0;
@@ -5309,8 +5607,11 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
             out.extend_from_slice(&pending);
             pending.clear();
             out.extend_from_slice(b"BI");
-            // Scan to ID marker (whitespace-preceded).
-            let mut found_ei = false;
+            // Scan to ID marker (whitespace-preceded) — do NOT push dict bytes
+            // one-by-one here; write the full range at once when ID is found to
+            // avoid double-writing the dict. (#fix-bi-handler-double-write)
+            let bi_dict_start = i; // right after "BI"
+            let mut id_found = false;
             while i < data.len() {
                 // Look for whitespace + "ID"
                 if (data[i] == b' ' || data[i] == b'\n' || data[i] == b'\r' || data[i] == b'\t')
@@ -5321,25 +5622,31 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
                         || data[i + 3] == b'\n'
                         || data[i + 3] == b'\r')
                 {
-                    out.extend_from_slice(&data[tok_start + 2..i + 3]); // dict + "ID"
+                    out.extend_from_slice(&data[bi_dict_start..i + 3]); // dict + "ID"
                     i += 3;
-                    // Now scan binary data until EI
-                    while i < data.len() {
-                        if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
-                            && i + 3 <= data.len()
-                            && &data[i + 1..i + 3] == b"EI"
-                            && (i + 3 >= data.len()
-                                || data[i + 3].is_ascii_whitespace()
-                                || data[i + 3] == b'Q')
-                        {
-                            out.extend_from_slice(&data[i..i + 3]);
-                            i += 3;
-                            found_ei = true;
-                            break;
-                        }
-                        out.push(data[i]);
-                        i += 1;
-                    }
+                    id_found = true;
+                    break;
+                }
+                i += 1; // advance without writing — written as one range above
+            }
+            if !id_found {
+                // Malformed: no ID found; write what we scanned and continue.
+                out.extend_from_slice(&data[bi_dict_start..i]);
+                continue;
+            }
+            // Now scan binary data until EI
+            let mut found_ei = false;
+            while i < data.len() {
+                if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
+                    && i + 3 <= data.len()
+                    && &data[i + 1..i + 3] == b"EI"
+                    && (i + 3 >= data.len()
+                        || data[i + 3].is_ascii_whitespace()
+                        || data[i + 3] == b'Q')
+                {
+                    out.extend_from_slice(&data[i..i + 3]);
+                    i += 3;
+                    found_ei = true;
                     break;
                 }
                 out.push(data[i]);
