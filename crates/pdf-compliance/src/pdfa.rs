@@ -1833,7 +1833,7 @@ mod string_scan_tests {
         use pdf_syntax::Pdf;
         let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
         let pdf = Pdf::new(data).unwrap();
-        let page = pdf.pages().first().unwrap().clone();
+        let page = pdf.pages().first().unwrap();
         let content = page.page_stream().unwrap().to_vec();
         let len = content.len();
         eprintln!("Content stream length: {}", len);
@@ -1910,7 +1910,7 @@ mod string_scan_tests {
                 b'<' if pos + 1 < len && content[pos + 1] != b'<' => {
                     tok_start = None;
                     pos += 1;
-                    let mut hex_count = 0usize;
+                    let hex_count = 0usize;
                     while pos < len && content[pos] != b'>' {
                         pos += 1;
                     }
@@ -2011,8 +2011,8 @@ mod string_scan_tests {
 
         // Test the zlib skip directly on the first BI block
         let id_pos = 431usize;
-        let bi_dict = &content[..id_pos]; // rough approximation of BI dict
-                                          // Find the whitespace-separator position after ID: ID is at [431..433], separator at 433
+        let _bi_dict = &content[..id_pos]; // rough approximation of BI dict
+                                           // Find the whitespace-separator position after ID: ID is at [431..433], separator at 433
         let sep_pos = 433usize;
         let data_start_pos = sep_pos + 1; // skip \r, point to \n
                                           // Skip the \n too
@@ -2044,7 +2044,7 @@ mod string_scan_tests {
         // Debug: try flate2 directly with more info
         {
             use flate2::read::ZlibDecoder;
-            use std::io::{self, Read};
+            use std::io;
             let mut d = ZlibDecoder::new(&content[ds2..]);
             let mut sink = io::sink();
             let copy_result = io::copy(&mut d, &mut sink);

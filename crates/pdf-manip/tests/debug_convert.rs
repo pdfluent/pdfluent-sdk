@@ -4447,7 +4447,7 @@ fn debug_gen152_long_string_location() {
 
     let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
     let pdf = Pdf::new(data).unwrap();
-    let page = pdf.pages().first().unwrap().clone();
+    let page = pdf.pages().first().unwrap();
     let content = page.page_stream().unwrap().to_vec();
     println!("Decoded content stream length: {}", content.len());
 
