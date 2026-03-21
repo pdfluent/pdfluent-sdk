@@ -102,10 +102,7 @@ fn struct_has_any_lang(pdf: &Pdf) -> bool {
             return false;
         }
         // /Lang present on this element?
-        if elem
-            .get::<pdf_syntax::object::String>(keys::LANG)
-            .is_some()
-        {
+        if elem.get::<pdf_syntax::object::String>(keys::LANG).is_some() {
             return true;
         }
         // Recurse into kids.

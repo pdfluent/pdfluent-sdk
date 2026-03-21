@@ -6218,9 +6218,15 @@ fn check_single_filter(
     if filter_name == keys::JPX_DECODE && pdfa_part == 1 {
         error(report, "6.1.9", "JPXDecode (JPEG2000) forbidden in PDF/A-1");
     }
-    // §6.1.6.2 (PDF/A-4) / §6.1.8 (PDF/A-2/3) — non-standard stream filter names.
+    // Non-standard (unknown) stream filter names.
     // PDF filter names are case-sensitive; /Flatedecode ≠ /FlateDecode.
-    // Any name not in the standard set is a violation. (#FN-6.1.6.2)
+    // Any name not in the standard set is a violation.
+    // - PDF/A-1: §6.1.10 (forbidden filter / non-PDF standard)
+    // - PDF/A-2/3: §6.1.7.2 (veraPDF: "Unknown or not permitted Stream filter")
+    //   Note: LZW uses "6.1.8" (→ §6.1.6.2 via remap) because it is a *standard* but
+    //   *forbidden* filter. Unknown/non-standard filters are a distinct violation §6.1.7.2.
+    // - PDF/A-4: §6.1.6.2 (via remap from "6.1.8")
+    // (#FN-6.1.7.2, pdfa2-6-1-7-2-bfo-t01-fail.pdf)
     const STANDARD_FILTERS: &[&[u8]] = &[
         b"ASCIIHexDecode",
         b"ASCII85Decode",
@@ -6243,11 +6249,18 @@ fn check_single_filter(
     ];
     if !STANDARD_FILTERS.contains(&filter_name) {
         let name_str = std::str::from_utf8(filter_name).unwrap_or("?");
-        let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.8" };
+        // PDF/A-2/3 uses §6.1.7.2 for unknown filters (distinct from LZW §6.1.6.2);
+        // PDF/A-4 uses §6.1.8 (remapped to §6.1.6.2 in pdfa.rs);
+        // PDF/A-1 uses §6.1.10.
+        let rule = match pdfa_part {
+            1 => "6.1.10",
+            4 => "6.1.8",
+            _ => "6.1.7.2",
+        };
         error(
             report,
             rule,
-            format!("Non-standard stream filter /{name_str} (§6.1.6.2)"),
+            format!("Non-standard stream filter /{name_str}"),
         );
     }
 }
@@ -9088,10 +9101,18 @@ fn check_cidfont_descriptor_deep(
         // CIDSet is almost always an indirect stream ref. Check both direct and indirect.
         // Missing the ref causes FP §6.3.5 (we fire "CIDSet missing" when it's present
         // as an indirect ref that get::<Stream> doesn't resolve). (#FP-6.3.5)
-        let cidset_opt: Option<Stream<'_>> = desc.get::<Stream<'_>>(keys::CID_SET).or_else(|| {
-            desc.get_ref(keys::CID_SET)
-                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
-        });
+        let cidset_opt: Option<Stream<'_>> = desc
+            .get::<Stream<'_>>(keys::CID_SET)
+            .or_else(|| {
+                desc.get_ref(keys::CID_SET)
+                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+            })
+            .or_else(|| {
+                // /XIDSet is a non-standard key used by BFO's PDF library as a substitute
+                // for /CIDSet. veraPDF accepts it as equivalent for §6.2.11.5. (#FP-6.2.11.5-xidset)
+                desc.get_ref(b"XIDSet".as_ref())
+                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+            });
         match cidset_opt {
             None => {
                 error_at(
@@ -9138,8 +9159,15 @@ fn check_cidfont_descriptor_deep(
                         match &raw_w[wi] {
                             // Array form: c1 [w1 w2 ...] — individually declared CIDs
                             MaybeRef::NotRef(Object::Array(inner)) => {
-                                for (j, _) in inner.iter::<i32>().enumerate() {
+                                let widths: Vec<i32> = inner.iter::<i32>().collect();
+                                for (j, w) in widths.iter().enumerate() {
                                     let cid = c1 + j as u32;
+                                    // CID 0 is .notdef; CIDs with declared width 0 are
+                                    // "absent" placeholders — veraPDF skips them for
+                                    // CIDSet coverage checks. (#FP-6.2.11.4.2-cid0)
+                                    if cid == 0 || *w == 0 {
+                                        continue;
+                                    }
                                     let byte_idx = (cid / 8) as usize;
                                     let bit_pos = 7 - (cid % 8);
                                     let is_set = cidset_bits
@@ -11305,7 +11333,9 @@ fn check_cidfont_type2_widths(
             let loc = format!("page {}", page_idx + 1);
             let w_map: std::collections::HashMap<u32, i32> =
                 if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
-                    parse_cidfont_w_array(&w_arr)
+                    // Range entries (c1 c2 w) cover CIDs not in the subset — skip them
+                    // for width consistency checks to avoid FPs. (#FP-6.2.11.5-range)
+                    parse_cidfont_w_array(&w_arr, false)
                 } else {
                     std::collections::HashMap::new()
                 };
@@ -11334,7 +11364,8 @@ fn check_cidfont_type2_widths(
             }
             // Check /DW (DefaultWidth) against CFF glyph widths for CIDs not in /W.
             // §6.2.11.5 requires /DW to be consistent with the font program. (#FN-6.2.11.5)
-            if let Some(dw) = cid_font.get::<i32>(keys::DW) {
+            // Skip DW=0: degenerate default, checking every glyph causes FPs. (#FP-6.2.11.5-dw0)
+            if let Some(dw) = cid_font.get::<i32>(keys::DW).filter(|&d| d > 0) {
                 let num_glyphs = table.number_of_glyphs() as u32;
                 for gid in 1..num_glyphs {
                     let cid = gid; // CID == GID for CID-keyed CFF
@@ -11403,15 +11434,27 @@ fn check_cidfont_type2_widths(
         let loc = format!("page {}", page_idx + 1);
 
         // Parse /W array: [c1 [w1 w2 ...] c2 c3 w ...] (optional).
-        let w_map: std::collections::HashMap<u32, i32> =
-            if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
-                parse_cidfont_w_array(&w_arr)
-            } else {
-                std::collections::HashMap::new()
-            };
+        // w_map_all: all entries including ranges — used for DW "already covered" check.
+        // w_map_individual: only array-form entries — used for per-CID width check.
+        // Range entries (c1 c2 w) cover CIDs not in the subset; checking them against
+        // the font program causes FPs. (#FP-6.2.11.5-range)
+        let (w_map, w_map_individual): (
+            std::collections::HashMap<u32, i32>,
+            std::collections::HashMap<u32, i32>,
+        ) = if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
+            (
+                parse_cidfont_w_array(&w_arr, true),
+                parse_cidfont_w_array(&w_arr, false),
+            )
+        } else {
+            (
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+            )
+        };
 
-        // Check each explicit /W entry against the font program.
-        for (cid, pdf_w) in &w_map {
+        // Check each individually-declared /W entry against the font program.
+        for (cid, pdf_w) in &w_map_individual {
             if *pdf_w == 0 {
                 // Skip entries that are explicitly 0 — this means "glyph absent/unused".
                 continue;
@@ -11445,7 +11488,10 @@ fn check_cidfont_type2_widths(
         // declared in the PDF to be consistent with the font program.
         // Fixes FN for cs-isartor-6-3-5-t01-fail-b where DW=1000 but GID 1674
         // has advance=750 and is not listed in /W.
-        if let Some(dw) = cid_font.get::<i32>(keys::DW) {
+        // Skip DW=0: it's a degenerate default meaning "absent/notdef" — checking every
+        // glyph against DW=0 causes FPs since subset glyphs always have non-zero advances.
+        // veraPDF does not fire §6.2.11.5 for DW=0 mismatches. (#FP-6.2.11.5-dw0)
+        if let Some(dw) = cid_font.get::<i32>(keys::DW).filter(|&d| d > 0) {
             let num_glyphs = face.number_of_glyphs() as u32;
             for gid_u32 in 0..num_glyphs {
                 if gid_u32 == 0 {
@@ -11484,7 +11530,14 @@ fn check_cidfont_type2_widths(
 /// /W format: [c1 [w1 w2 ...] c2 c3 w ...]
 /// First form: c1 followed by an array gives individual widths starting at c1.
 /// Second form: c2 c3 w gives the same width w for CIDs c2..=c3.
-fn parse_cidfont_w_array(w_arr: &Array<'_>) -> std::collections::HashMap<u32, i32> {
+///
+/// `include_ranges`: when false, range entries (c2 c3 w form) are ignored.
+/// Use false for width consistency checks — range entries cover CIDs not in
+/// the subset, so checking them against the font program causes FPs. (#FP-6.2.11.5-range)
+fn parse_cidfont_w_array(
+    w_arr: &Array<'_>,
+    include_ranges: bool,
+) -> std::collections::HashMap<u32, i32> {
     use pdf_syntax::object::MaybeRef;
 
     let mut map = std::collections::HashMap::new();
@@ -11526,8 +11579,10 @@ fn parse_cidfont_w_array(w_arr: &Array<'_>) -> std::collections::HashMap<u32, i3
                     }
                 };
                 i += 1;
-                for cid in c1..=c3 {
-                    map.insert(cid, w);
+                if include_ranges {
+                    for cid in c1..=c3 {
+                        map.insert(cid, w);
+                    }
                 }
             }
             _ => {
@@ -14391,10 +14446,24 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
 
 /// §6.1.3 t4: If a linearized PDF has /ID in multiple trailers, all must match.
 ///
+/// Only applies to LINEARIZED PDFs (those with a /Linearized key in the first object).
+/// Non-linearized PDFs may have multiple trailer appearances in the raw bytes (e.g.
+/// from embedded file streams that contain their own sub-PDF), and those should not
+/// be counted. (#FP-6.1.3-embedded-trailer, pdfa2-68-bfo)
+///
 /// Operates on raw bytes (not str) to avoid char-boundary panics on non-UTF-8
 /// content (e.g. binary comment `%PDF-1.x%\xE2\xE3...`). Fixes crash on
 /// linearized PDFs with high-byte binary content. (#panic-6.1.3)
 fn check_linearized_id_mismatch(data: &[u8], report: &mut ComplianceReport) {
+    // Only check linearized PDFs — the /Linearized key appears in the first
+    // object dictionary of a linearized file (within the first ~1 KB).
+    let is_linearized = {
+        let window = &data[..data.len().min(2048)];
+        window.windows(11).any(|w| w == b"/Linearized")
+    };
+    if !is_linearized {
+        return;
+    }
     let mut id_values: Vec<Vec<u8>> = Vec::new();
     let mut search = 0;
     while let Some(rel) = data[search..].windows(7).position(|w| w == b"trailer") {
@@ -14640,6 +14709,20 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
                 if stripped_cr_after_lf && declared_len == actual_len + 1 {
                     pos = abs_endstream + 9;
                     continue;
+                }
+                // EmbeddedFile streams may contain nested PDFs with their own
+                // stream/endstream markers. Our raw-byte scan can mistake an inner
+                // endstream for the outer one, making actual_len appear much smaller
+                // than declared_len. Skip the length check for streams whose dict
+                // contains /EmbeddedFile — veraPDF doesn't validate embedded file
+                // stream lengths as §6.1.7.1 violations. (#FP-6.1.7.1-embedded)
+                {
+                    let dict_start = abs_stream.saturating_sub(4096);
+                    let dict_region = &data[dict_start..abs_stream];
+                    if dict_region.windows(13).any(|w| w == b"/EmbeddedFile") {
+                        pos = abs_stream + 6;
+                        continue;
+                    }
                 }
                 // Use "6.1.7.1-len" (distinct from stream-EOL "6.1.7.1") so
                 // remap_clause_numbers can map this specifically to §6.1.6.1 for PDF/A-4.
