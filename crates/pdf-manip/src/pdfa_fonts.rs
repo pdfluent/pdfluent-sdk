@@ -6201,7 +6201,17 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             // typically wrong code->glyph matches. When no_pdf_encoding is true,
             // corrections are computed from CFF internal encoding (same as
             // veraPDF) and are definitively correct — skip this filter.
+            //
+            // Exceptions to the 50-unit cap:
+            // - Low-byte codes (≤127): AGL glyph name lookups are reliable for
+            //   ASCII range codes (e.g. code 39 "quotesingle"→"quoteright"). (#FN-6.2.11.5-agl-alt)
+            // - Explicit /Differences entries: deterministic glyph name → CFF width
+            //   mappings are correct regardless of delta size.
             corrections.retain(|(idx, new_w)| {
+                let code = first_char + *idx as u32;
+                if code <= 127 || enc_info.1.contains_key(&code) {
+                    return true;
+                }
                 let Some(pdf_w) = existing_widths.get(*idx).and_then(object_to_f64) else {
                     return false;
                 };
