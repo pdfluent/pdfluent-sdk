@@ -3854,12 +3854,13 @@ fn check_ri_in_extgstate(
 ///
 /// Scans page resources and annotation appearance resources.
 pub fn check_image_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let loc = format!("page {}", page_idx + 1);
 
         if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
-            check_image_restrictions_in_res(&res_dict, &loc, report);
+            check_image_restrictions_in_res(&res_dict, xref, &loc, report);
         }
 
         // Check inline images for /Interpolate true (§6.2.8.1)
@@ -3876,7 +3877,7 @@ pub fn check_image_xobjects(pdf: &Pdf, report: &mut ComplianceReport) {
                             let ap_dict = stream.dict();
                             if let Some(ap_res) = ap_dict.get::<Dict<'_>>(keys::RESOURCES) {
                                 let ap_loc = format!("{loc}/Annot/AP");
-                                check_image_restrictions_in_res(&ap_res, &ap_loc, report);
+                                check_image_restrictions_in_res(&ap_res, xref, &ap_loc, report);
                             }
                         }
                     }
@@ -3927,6 +3928,7 @@ fn check_inline_image_interpolate(content: &[u8], location: &str, report: &mut C
 /// Check image XObject restrictions within a resource dict.
 fn check_image_restrictions_in_res(
     res_dict: &Dict<'_>,
+    xref: &pdf_syntax::xref::XRef,
     location: &str,
     report: &mut ComplianceReport,
 ) {
@@ -3934,7 +3936,14 @@ fn check_image_restrictions_in_res(
         return;
     };
     for (name, _) in xobj_dict.entries() {
-        let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
+        // XObjects are almost always indirect references — add xref fallback so we
+        // can inspect images defined outside the resources dict. (#FN-6.2.7.1)
+        let stream_opt = xobj_dict.get::<Stream<'_>>(name.as_ref()).or_else(|| {
+            xobj_dict
+                .get_ref(name.as_ref())
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        });
+        let Some(stream) = stream_opt else {
             continue;
         };
         let dict = stream.dict();
@@ -5972,6 +5981,25 @@ fn check_single_filter(
     }
     if filter_name == keys::JPX_DECODE && pdfa_part == 1 {
         error(report, "6.1.9", "JPXDecode (JPEG2000) forbidden in PDF/A-1");
+    }
+    // §6.1.6.2 (PDF/A-4) / §6.1.8 (PDF/A-2/3) — non-standard stream filter names.
+    // PDF filter names are case-sensitive; /Flatedecode ≠ /FlateDecode.
+    // Any name not in the standard set is a violation. (#FN-6.1.6.2)
+    const STANDARD_FILTERS: &[&[u8]] = &[
+        b"ASCIIHexDecode", b"ASCII85Decode", b"LZWDecode", b"FlateDecode",
+        b"RunLengthDecode", b"CCITTFaxDecode", b"JBIG2Decode", b"DCTDecode",
+        b"JPXDecode", b"Crypt",
+        // Inline image abbreviations also appear in stream filters in some PDFs:
+        b"AHx", b"A85", b"LZW", b"Fl", b"RL", b"CCF", b"DCT",
+    ];
+    if !STANDARD_FILTERS.contains(&filter_name) {
+        let name_str = std::str::from_utf8(filter_name).unwrap_or("?");
+        let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.8" };
+        error(
+            report,
+            rule,
+            format!("Non-standard stream filter /{name_str} (§6.1.6.2)"),
+        );
     }
 }
 
@@ -10305,6 +10333,11 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
             return;
         }
 
+        // §6.2.10.5: skip codes whose /Widths entry equals /MissingWidth — those are
+        // "unused" sentinel entries, not declared zero-widths. Same logic as the TrueType
+        // check. (#FN-6.2.10.5-cff)
+        let missing_width: Option<i32> = desc.get::<i32>(keys::MISSING_WIDTH);
+
         let loc = format!("page {}", page_idx + 1);
 
         // For each character code in [FirstChar..LastChar], compare the CFF
@@ -10312,8 +10345,10 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
         for code in first..=last {
             let idx = code - first;
             let pdf_w = pdf_widths[idx];
-            if pdf_w == 0 {
-                // Width 0 often means "glyph not present/used" — skip.
+            // §6.2.10.5: pdf_w=0 is a declared width — skip only if it equals
+            // MissingWidth (unused-code sentinel). DO NOT skip 0-width entries here.
+            // (#FN-6.2.10.5-cff)
+            if missing_width.is_some_and(|mw| mw == pdf_w) {
                 continue;
             }
 
@@ -12147,6 +12182,36 @@ fn check_sig_fields(fields: &Array<'_>, report: &mut ComplianceReport, depth: us
         }
         if let Some(kids) = field.get::<Array<'_>>(keys::KIDS) {
             check_sig_fields(&kids, report, depth + 1);
+        }
+    }
+}
+
+/// Check Perms dictionary validity (§6.1.11 for PDF/A-4).
+///
+/// In PDF/A-4, the /Perms catalog entry may only contain /DocMDP. Any other
+/// key (including /UR3 which is for usage rights signatures) is forbidden.
+/// Reports "6.1.11" when non-DocMDP keys are found. (#FN-6.1.11)
+pub fn check_perms_dict(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceReport) {
+    if pdfa_part < 2 {
+        return;
+    }
+    let Some(cat) = catalog(pdf) else {
+        return;
+    };
+    let Some(perms) = cat.get::<Dict<'_>>(b"Perms" as &[u8]) else {
+        return;
+    };
+    // /Perms may only contain /DocMDP. Any other key is a violation.
+    for (key, _) in perms.entries() {
+        if key.as_ref() != b"DocMDP" {
+            let ks = std::str::from_utf8(key.as_ref()).unwrap_or("?");
+            // PDF/A-4 §6.1.11; PDF/A-2/3 uses §6.1.12 for Perms restrictions.
+            let rule = if pdfa_part == 4 { "6.1.11" } else { "6.1.12" };
+            error(
+                report,
+                rule,
+                format!("Catalog /Perms contains invalid key /{ks} (only /DocMDP allowed)"),
+            );
         }
     }
 }
@@ -14028,9 +14093,56 @@ pub fn check_xmp_extension_schema(pdf: &Pdf, report: &mut ComplianceReport) {
     };
     let xmp_str = String::from_utf8_lossy(&xmp);
 
-    // Check if extension schemas are present
-    if !xmp_str.contains("pdfaExtension:schemas") && !xmp_str.contains("pdfaSchema:") {
-        return; // No extension schemas — nothing to validate
+    // §6.6.2.3.1 — Check for non-predefined namespace usage without extension schema.
+    // The XMP Dynamic Media namespace (xmpDM:) is defined in XMP Part 3 and is NOT
+    // listed as a predefined namespace in ISO 19005-2 (which only references XMP Part 1).
+    // When xmpDM: properties are used without a pdfaExtension:schemas declaration, it
+    // violates §6.6.2.3.1. (#FN-6.6.2.3.1)
+    let has_extension_schemas =
+        xmp_str.contains("pdfaExtension:schemas") || xmp_str.contains("pdfaSchema:");
+    if !has_extension_schemas {
+        // Detect xmpDM: property usage (element names or attribute values using xmpDM:
+        // prefix, but NOT xmlns: declarations which are just namespace bindings).
+        let has_xmpdm_property = xmp_str
+            .split("xmlns:")
+            .skip(1) // skip the first chunk before any xmlns:
+            .fold(xmp_str.as_ref(), |_, _| ""); // trick: just check below
+        let _ = has_xmpdm_property; // suppress unused warning
+        // Simpler: check if the XMP text contains xmpDM: USED as element/attribute
+        // (i.e. appears as <xmpDM: or ` xmpDM:` but not just in xmlns: declarations).
+        let has_xmpdm = {
+            let mut found = false;
+            let bytes = xmp_str.as_bytes();
+            for i in 0..bytes.len().saturating_sub(6) {
+                if &bytes[i..i + 6] == b"xmpDM:" {
+                    // Check it's NOT inside an xmlns: declaration (xmlns:xmpDM)
+                    let before_end = i.saturating_sub(7);
+                    let prefix_before = if i >= 7 {
+                        &xmp_str[before_end..i]
+                    } else {
+                        ""
+                    };
+                    if !prefix_before.ends_with("xmlns:") {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            found
+        };
+        if has_xmpdm {
+            error(
+                report,
+                "6.6.2.3.1",
+                "XMP uses xmpDM: (Dynamic Media) namespace without pdfaExtension:schemas \
+                 declaration (xmpDM: is not a predefined namespace in ISO 19005-2)",
+            );
+        }
+    }
+
+    // Check if extension schemas are present (for format validation below)
+    if !has_extension_schemas {
+        return; // No extension schemas — nothing more to validate
     }
 
     // Use string-based parsing for extension schema validation

@@ -8469,6 +8469,7 @@ dependencies = [
  "pdf-invoice",
  "pdf-manip",
  "pdf-ocr",
+ "pdf-pptx",
  "pdf-redact",
  "pdf-sign",
  "pdf-syntax",

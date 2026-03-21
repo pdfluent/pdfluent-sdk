@@ -78,6 +78,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_need_appearances(doc);
     remove_forbidden_actions(doc);
     fix_image_interpolate(doc);
+    fix_image_alternates(doc);
     report.cidtogidmap_added = fix_cidtogidmap(doc);
     report.ap_fixes = fix_annotation_ap(doc);
     strip_ap_non_normal(doc);
@@ -1282,6 +1283,28 @@ fn fix_image_interpolate(doc: &mut Document) {
         if needs_fix {
             if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
                 stream.dict.set("Interpolate", Object::Boolean(false));
+            }
+        }
+    }
+}
+
+/// Remove /Alternates from Image XObjects (§6.2.7.1).
+///
+/// /Alternates lists alternate image representations — forbidden in PDF/A.
+fn fix_image_alternates(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let needs_fix = if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+            matches!(
+                stream.dict.get(b"Subtype").ok(),
+                Some(Object::Name(ref n)) if n == b"Image"
+            ) && stream.dict.get(b"Alternates").is_ok()
+        } else {
+            false
+        };
+        if needs_fix {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.dict.remove(b"Alternates");
             }
         }
     }
