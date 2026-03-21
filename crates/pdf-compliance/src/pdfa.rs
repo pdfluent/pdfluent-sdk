@@ -168,7 +168,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_font_type_key(pdf, &mut report);
     check_font_embedding_deep(pdf, level, &mut report);
     check_tounicode_cmap(pdf, level, &mut report);
-    check::check_tounicode_values(pdf, &mut report);
+    check::check_tounicode_values(pdf, level, &mut report);
     check_font_widths(pdf, &mut report);
     check_font_program_widths(pdf, &mut report);
     if level.part() == 4 {
@@ -564,7 +564,7 @@ pub fn validate_with_progress(
     );
     tracked!(
         "check_tounicode_values",
-        check::check_tounicode_values(pdf, &mut report)
+        check::check_tounicode_values(pdf, level, &mut report)
     );
     tracked!("check_font_widths", check_font_widths(pdf, &mut report));
     tracked!(
@@ -1027,7 +1027,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     );
     timed!(
         "check_tounicode_values",
-        check::check_tounicode_values(pdf, &mut report)
+        check::check_tounicode_values(pdf, level, &mut report)
     );
     timed!("check_font_widths", check_font_widths(pdf, &mut report));
     timed!(

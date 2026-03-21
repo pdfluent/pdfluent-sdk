@@ -2738,7 +2738,11 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         // veraPDF does not flag §6.7.3.4 when /Subject is an empty string.
         // (#FP-6.7.3.4)
         let subject_str = decode_pdf_info_string(subject);
-        let subject_non_empty = !subject_str.as_deref().map(str::trim).unwrap_or("").is_empty();
+        let subject_non_empty = !subject_str
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty();
         if subject_non_empty {
             if !xmp_text.contains("dc:description") {
                 error(
@@ -9114,49 +9118,6 @@ pub fn check_tounicode_cmap(
     });
 }
 
-/// Returns true if any page content stream or structure tree element in the PDF
-/// contains an /ActualText entry. veraPDF does not fire §6.2.11.7.3 for PUA
-/// codepoints when ActualText is present (the glyph has an explicit Unicode
-/// override), so we suppress PUA violations in that case. (#FP-6.2.11.7.3)
-fn pdf_has_any_actual_text(pdf: &Pdf) -> bool {
-    // 1. Page content streams: BDC property-list /ActualText
-    for page in pdf.pages().iter() {
-        if let Some(content) = page.page_stream() {
-            if content.windows(11).any(|w| w == b"/ActualText") {
-                return true;
-            }
-        }
-    }
-    // 2. StructTree elements with /ActualText key
-    if let Some(struct_tree) = struct_tree_root(pdf) {
-        if struct_dict_has_actual_text_key(&struct_tree, 0) {
-            return true;
-        }
-    }
-    false
-}
-
-fn struct_dict_has_actual_text_key(elem: &Dict<'_>, depth: usize) -> bool {
-    if depth > 200 {
-        return false;
-    }
-    if elem.get::<Object<'_>>(b"ActualText" as &[u8]).is_some() {
-        return true;
-    }
-    if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
-        for kid in kids.iter::<Dict<'_>>() {
-            if struct_dict_has_actual_text_key(&kid, depth + 1) {
-                return true;
-            }
-        }
-    } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
-        if struct_dict_has_actual_text_key(&kid, depth + 1) {
-            return true;
-        }
-    }
-    false
-}
-
 /// Check ToUnicode CMap values for forbidden Unicode code points.
 ///
 /// §6.2.11.7.2: U+0000, U+FEFF (BOM), and U+FFFE are forbidden.
@@ -9165,10 +9126,11 @@ fn struct_dict_has_actual_text_key(elem: &Dict<'_>, depth: usize) -> bool {
 /// Only destination values in beginbfchar/beginbfrange sections are checked.
 /// Codespace range bounds (e.g. `<0000> <FFFF>`) are NOT destinations and
 /// must not be flagged as violations.
-pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
-    // PUA (U+E000-U+F8FF) is only a §6.2.11.7.3 violation when no ActualText
-    // is present; skip PUA errors for documents that have ActualText. (#FP-6.2.11.7.3)
-    let skip_pua = pdf_has_any_actual_text(pdf);
+pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut ComplianceReport) {
+    // §6.2.11.7.3 BMP PUA (U+E000-U+F8FF) is only forbidden for Level A conformance
+    // (PDF/A-1A/2A/3A). Level B and U documents are not required to have ActualText,
+    // so veraPDF doesn't fire the PUA rule for them. (#FP-6.2.11.7.3)
+    let skip_pua = !level.requires_tagged();
 
     // Collect decoded bytes of direct font ToUnicode streams so check_cmap_streams_for_ffff
     // (second pass) can skip them — they are already fully handled by the first pass below,
@@ -9184,14 +9146,11 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
         // ToUnicode may be an indirect reference (e.g. `ToUnicode 25 0 R`).
         // Fall back to xref lookup so indirect refs are not silently skipped.
         // Fixes FN §6.2.11.7.3 for cs-veraPDF 6-2-11-7-3-t01-fail-e.pdf.
-        let Some(cmap_stream) = font_dict
-            .get::<Stream<'_>>(keys::TO_UNICODE)
-            .or_else(|| {
-                font_dict
-                    .get_ref(keys::TO_UNICODE)
-                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
-            })
-        else {
+        let Some(cmap_stream) = font_dict.get::<Stream<'_>>(keys::TO_UNICODE).or_else(|| {
+            font_dict
+                .get_ref(keys::TO_UNICODE)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        }) else {
             return;
         };
         let Ok(data) = cmap_stream.decoded() else {
@@ -9213,6 +9172,8 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
             })
             .and_then(|d| d.get::<i32>(keys::FLAGS))
             .is_some_and(|f| f & 0x04 != 0);
+        // Skip PUA check for symbolic fonts (Webdings/Wingdings etc.) — veraPDF exempts them
+        // regardless of conformance level. (#FP-6.2.11.7.3)
         let skip_pua_for_font = skip_pua || font_is_symbolic;
 
         // Parse line by line, tracking which section we are in.
