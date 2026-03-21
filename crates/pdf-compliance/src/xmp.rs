@@ -2740,17 +2740,13 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
                 };
 
                 if let Some(msg) = violation {
-                    // PDF/A-1 LangAlt violations (dc:description, dc:rights…) fire BOTH:
-                    //   §6.7.3  — via "6.7.9.3-la" remap (veraPDF confirmed by isartor-6-7-2-t02-fail-c)
-                    //   §6.7.9  — via "6.7.9.3" remap (property value type violation)
-                    // veraPDF fires both rules. All other violations stay on `rule`.
-                    // (#FN-6.7.3, #FN-6.7.9 isartor-6-7-2-t02-fail-c)
-                    if level.part() == 1 && kind == PropValueKind::LangAlt {
-                        error(report, "6.7.9.3-la", msg.clone()); // → §6.7.3
-                        error(report, rule, msg); // → §6.7.9 (rule = "6.7.9.3" for PDF/A-1)
-                    } else {
-                        error(report, rule, msg);
-                    }
+                    // Always emit the level-specific §6.7.9.x / §6.6.2.3.1 rule only.
+                    // §6.7.3 for dc:description / dc:title violations is already emitted by
+                    // check_xmp_lang_alt_properties (check.rs). Emitting "6.7.9.3-la" here
+                    // caused §6.7.3 FP for exif:UserComment, tiff:ImageDescription,
+                    // xmpRights:UsageTerms (veraPDF fires §6.7.9 only for those).
+                    // (#FP-6.7.3-langalt-nondc, #FN-6.7.9-t15-t08-t14)
+                    error(report, rule, msg);
                     reported.insert(tag_name);
                 }
             }
@@ -3665,4 +3661,5 @@ mod tests {
         assert!(report2.error_count() > 0);
         assert!(report2.issues[0].rule == "6.7.2");
     }
+
 }
