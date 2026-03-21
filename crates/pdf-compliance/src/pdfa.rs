@@ -3587,6 +3587,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-1: veraPDF uses §6.2.7. Our remap (1,"6.2.9")=>"6.2.5" already exists
             // but veraPDF uses "6.2.7" for PS XObjects (not "6.2.5" which is rendering intent).
             // Fix: specific remap for PS XObject rule.
+            // "6.7.11-rdf" = non-canonical RDF namespace (distinct from pdfaid cascade "6.7.11").
+            // Both map to "6.7.11" in the final output but are handled differently by guards.
+            (_, "6.7.11-rdf") => Some("6.7.11"),
+
             _ => None,
         };
         if let Some(r) = new_rule {
