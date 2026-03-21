@@ -2108,9 +2108,18 @@ fn remove_pressteps(doc: &mut Document) {
     let ids: Vec<lopdf::ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
         if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
-            if dict.get(b"Type").ok().and_then(|o| {
-                if let Object::Name(n) = o { Some(n.as_slice() == b"Page") } else { None }
-            }).unwrap_or(false) {
+            if dict
+                .get(b"Type")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(n.as_slice() == b"Page")
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false)
+            {
                 dict.remove(b"PresSteps");
             }
         }

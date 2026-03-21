@@ -376,7 +376,9 @@ fn sync_info_dict(doc: &mut Document, meta: &PdfMetadata) {
         // (#FIX-6.7.3.6-whitespace-creator)
         match &meta.creator_tool {
             Some(tool) => info.set("Creator", to_pdf_string(tool)),
-            None => { info.remove(b"Creator"); }
+            None => {
+                info.remove(b"Creator");
+            }
         }
     }
 }

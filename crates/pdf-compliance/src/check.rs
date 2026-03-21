@@ -4360,10 +4360,14 @@ fn check_halftone_in_extgstate(
                     }
                     // Resolve sub-halftone: direct dict, stream dict, or indirect reference.
                     // Sub-halftones can be Dict (Type 1/5) or Stream (Type 10/16).
-                    let sub_ht_opt: Option<Dict<'_>> =
-                        ht_dict.get::<Dict<'_>>(key_bytes).or_else(|| {
-                            ht_dict.get::<Stream<'_>>(key_bytes).map(|s| s.dict().clone())
-                        }).or_else(|| {
+                    let sub_ht_opt: Option<Dict<'_>> = ht_dict
+                        .get::<Dict<'_>>(key_bytes)
+                        .or_else(|| {
+                            ht_dict
+                                .get::<Stream<'_>>(key_bytes)
+                                .map(|s| s.dict().clone())
+                        })
+                        .or_else(|| {
                             ht_dict.get_ref(key_bytes).and_then(|r| {
                                 xref.get::<Dict<'_>>(r.into()).or_else(|| {
                                     xref.get::<Stream<'_>>(r.into()).map(|s| s.dict().clone())
@@ -9471,7 +9475,9 @@ pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut C
                         return;
                     }
                     // PUA range overlap (Level A only; check_dst respects skip_pua_for_font)
-                    if !skip_pua_for_font && dstlo <= 0xF8FF && 0xE000 <= dsthi
+                    if !skip_pua_for_font
+                        && dstlo <= 0xF8FF
+                        && 0xE000 <= dsthi
                         && check_dst(dstlo.max(0xE000))
                     {
                         return;
@@ -13107,14 +13113,55 @@ pub fn check_rolemap_circular(pdf: &Pdf, report: &mut ComplianceReport) {
 
     // Standard structure types (PDF 1.7 Table 333) — same list as check_role_mapping.
     let standard_types: &[&[u8]] = &[
-        b"Document", b"Part", b"Art", b"Sect", b"Div", b"BlockQuote", b"Caption",
-        b"TOC", b"TOCI", b"Index", b"NonStruct", b"Private",
-        b"H", b"H1", b"H2", b"H3", b"H4", b"H5", b"H6",
-        b"P", b"L", b"LI", b"Lbl", b"LBody",
-        b"Table", b"TR", b"TH", b"TD", b"THead", b"TBody", b"TFoot",
-        b"Span", b"Quote", b"Note", b"Reference", b"BibEntry", b"Code",
-        b"Link", b"Annot", b"Ruby", b"Warichu", b"RB", b"RT", b"RP", b"WT", b"WP",
-        b"Figure", b"Formula", b"Form",
+        b"Document",
+        b"Part",
+        b"Art",
+        b"Sect",
+        b"Div",
+        b"BlockQuote",
+        b"Caption",
+        b"TOC",
+        b"TOCI",
+        b"Index",
+        b"NonStruct",
+        b"Private",
+        b"H",
+        b"H1",
+        b"H2",
+        b"H3",
+        b"H4",
+        b"H5",
+        b"H6",
+        b"P",
+        b"L",
+        b"LI",
+        b"Lbl",
+        b"LBody",
+        b"Table",
+        b"TR",
+        b"TH",
+        b"TD",
+        b"THead",
+        b"TBody",
+        b"TFoot",
+        b"Span",
+        b"Quote",
+        b"Note",
+        b"Reference",
+        b"BibEntry",
+        b"Code",
+        b"Link",
+        b"Annot",
+        b"Ruby",
+        b"Warichu",
+        b"RB",
+        b"RT",
+        b"RP",
+        b"WT",
+        b"WP",
+        b"Figure",
+        b"Formula",
+        b"Form",
     ];
 
     // Collect non-standard structure types actually used in the tree. veraPDF only

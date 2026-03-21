@@ -5368,7 +5368,11 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
         }
 
         // ── Operator: check validity ──────────────────────────────────────────
-        let is_valid = bx_depth > 0 || ISO32000_OPERATORS.contains(&token);
+        // PDF/A §6.2.2 forbids undefined operators even inside BX/EX compatibility
+        // blocks ("even if such operators are bracketed by the BX/EX compatibility
+        // operators"). Do NOT treat bx_depth > 0 as a validity shield. (#FN-6.2.2)
+        let _ = bx_depth; // tracked above but not used for validity in PDF/A mode
+        let is_valid = ISO32000_OPERATORS.contains(&token);
 
         if is_valid {
             out.extend_from_slice(&pending);
