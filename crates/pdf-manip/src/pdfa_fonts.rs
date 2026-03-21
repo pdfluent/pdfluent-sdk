@@ -6208,9 +6208,24 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             //   ASCII range codes (e.g. code 39 "quotesingle"→"quoteright"). (#FN-6.2.11.5-agl-alt)
             // - Explicit /Differences entries: deterministic glyph name → CFF width
             //   mappings are correct regardless of delta size.
+            // - CFF-internal encoding maps code to a valid non-.notdef glyph: the CFF
+            //   encoding is authoritative when no PDF BaseEncoding is present, even if
+            //   some Differences exist for other codes. This matches veraPDF's fallback
+            //   path and avoids blocking corrections like Times-Roman code 177 (±, delta=64)
+            //   that exceed the 50-unit cap but are definitively correct. (#504)
+            let cff_enc_early: Option<std::collections::HashMap<u8, u16>> =
+                if has_ff3 && enc_info.0.is_empty() && !is_subset_font {
+                    Some(parse_cff_encoding_map(&font_data))
+                } else {
+                    None
+                };
             corrections.retain(|(idx, new_w)| {
                 let code = first_char + *idx as u32;
                 if code <= 127 || enc_info.1.contains_key(&code) {
+                    return true;
+                }
+                // Allow when CFF encoding maps this code to a valid (non-.notdef) GID.
+                if matches!(&cff_enc_early, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0) {
                     return true;
                 }
                 let Some(pdf_w) = existing_widths.get(*idx).and_then(object_to_f64) else {

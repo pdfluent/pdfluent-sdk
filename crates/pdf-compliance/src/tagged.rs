@@ -105,10 +105,13 @@ impl StructureTree {
     }
 
     /// Find all Figure elements that lack alt text.
+    ///
+    /// PDF/UA-1 §7.3 requires figures to have /Alt OR /ActualText.
+    /// Both satisfy the text-equivalent requirement. (#FP-7.3-actualtext)
     pub fn figures_without_alt(&self) -> Vec<&StructElement> {
         self.reading_order()
             .into_iter()
-            .filter(|e| e.is_figure() && e.alt.is_none())
+            .filter(|e| e.is_figure() && e.alt.is_none() && e.actual_text.is_none())
             .collect()
     }
 
