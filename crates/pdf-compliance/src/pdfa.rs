@@ -1709,6 +1709,10 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
 /// - If the BI dict contains `/Fl` or `FlateDecode` (FlateDecode filter), attempt to
 ///   decompress the zlib stream to find its exact end (robust against spurious `EI`
 ///   patterns in binary data).
+/// - If the zlib stream is corrupt/truncated, use the number of bytes consumed before
+///   the error as a minimum skip offset, then continue scanning for `EI` from there.
+///   This handles inline images whose compressed data contains false `EI` patterns
+///   before the corrupt/truncated zlib stream ends. (#FP-6.1.13-zlib-partial)
 /// - Otherwise, fall back to scanning for `EI` surrounded by whitespace.
 fn skip_inline_image_data(data: &[u8], start: usize, bi_dict: &[u8]) -> usize {
     let len = data.len();
@@ -1725,10 +1729,11 @@ fn skip_inline_image_data(data: &[u8], start: usize, bi_dict: &[u8]) -> usize {
         {
             data_start += 1;
         }
-        if let Some(after_zlib) = try_skip_zlib(data, data_start) {
-            // after_zlib points to the first byte after the zlib stream.
+        let (zlib_ok, after_zlib_or_partial) = try_skip_zlib_partial(data, data_start);
+        if zlib_ok {
+            // Decompression succeeded: after_zlib_or_partial is right after the zlib stream.
             // Skip whitespace then 'EI'.
-            let mut pos = after_zlib;
+            let mut pos = after_zlib_or_partial;
             while pos < len && matches!(data[pos], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C') {
                 pos += 1;
             }
@@ -1737,7 +1742,28 @@ fn skip_inline_image_data(data: &[u8], start: usize, bi_dict: &[u8]) -> usize {
             }
             return pos;
         }
-        // Zlib decode failed — fall through to whitespace-bounded EI scan
+        // Zlib decode failed (corrupt/truncated image data). Use the consumed-byte count
+        // as a minimum skip: we know the image data extends at least this far, so any EI
+        // found before this point is a false positive. Search from after_zlib_or_partial.
+        // (#FP-6.1.13-zlib-partial)
+        let min_skip = after_zlib_or_partial;
+        if min_skip > start {
+            let mut pos = min_skip;
+            let mut prev_was_ws = true;
+            while pos + 1 < len {
+                let cur = data[pos];
+                let nxt = data[pos + 1];
+                let after_ws = pos + 2 >= len
+                    || matches!(data[pos + 2], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
+                if prev_was_ws && cur == b'E' && nxt == b'I' && after_ws {
+                    return pos + 2;
+                }
+                prev_was_ws = matches!(cur, b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
+                pos += 1;
+            }
+            return len;
+        }
+        // Zlib failed with no progress — fall through to whitespace-bounded EI scan
     }
 
     // Fallback: scan for whitespace-bounded EI.
@@ -1758,19 +1784,31 @@ fn skip_inline_image_data(data: &[u8], start: usize, bi_dict: &[u8]) -> usize {
 }
 
 /// Attempt to consume one zlib (RFC 1950) stream from `data[start..]`.
-/// Returns `Some(end)` where `end` is the byte position just after the zlib stream,
-/// or `None` if the data at `start` is not a valid zlib stream.
-fn try_skip_zlib(data: &[u8], start: usize) -> Option<usize> {
+/// Returns `(true, end)` where `end` is the byte position just after the zlib stream
+/// on success, or `(false, start + consumed)` if decompression failed — the second
+/// element still indicates how many bytes of valid compressed data were consumed before
+/// the failure, which callers can use as a minimum skip offset.
+fn try_skip_zlib_partial(data: &[u8], start: usize) -> (bool, usize) {
     use flate2::read::ZlibDecoder;
     use std::io;
     let mut d = ZlibDecoder::new(&data[start..]);
     // Discard decompressed output; we only care about d.total_in().
-    io::copy(&mut d, &mut io::sink()).ok()?;
+    let ok = io::copy(&mut d, &mut io::sink()).is_ok();
     let consumed = d.total_in() as usize;
-    if consumed == 0 {
-        return None;
+    (ok && consumed > 0, start + consumed)
+}
+
+/// Attempt to consume one zlib (RFC 1950) stream from `data[start..]`.
+/// Returns `Some(end)` where `end` is the byte position just after the zlib stream,
+/// or `None` if the data at `start` is not a valid zlib stream.
+#[cfg(test)]
+fn try_skip_zlib(data: &[u8], start: usize) -> Option<usize> {
+    let (ok, end) = try_skip_zlib_partial(data, start);
+    if ok {
+        Some(end)
+    } else {
+        None
     }
-    Some(start + consumed)
 }
 
 #[cfg(test)]
