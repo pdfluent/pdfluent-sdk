@@ -2929,12 +2929,11 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-2/3: §6.3.3. (#483)
             (2..=3, "6.5.3") => Some("6.3.3"),
 
-            // Undefined content-stream operators.
-            // PDF/A-2/3: veraPDF uses §6.2.10. (#483)
-            (2..=3, "6.2.7.1") => Some("6.2.10"),
-
             // Image Alternates key prohibited.
-            // PDF/A-2/3: §6.2.7.1. (#483)
+            // PDF/A-2/3: veraPDF uses §6.2.7.1. check_image_xobjects emits "6.2.7.1" directly.
+            // No remap needed — "6.2.7.1" is the correct rule for PDF/A-2/3.
+            // Undefined operators now emit "6.2.2" directly so no remap needed there either.
+            // (#FN-6.2.2 / old wrong remap (2..=3,"6.2.7.1")=>"6.2.10" removed)
             (2..=3, "6.2.8.2") => Some("6.2.7.1"),
 
             // Image Interpolate=true prohibited.

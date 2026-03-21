@@ -15274,13 +15274,11 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
     .copied()
     .collect();
 
-    // PDF/A-1: §6.2.10; PDF/A-2/3: §6.2.7.1 (remapped to §6.2.10 by remap_clause_numbers);
-    // PDF/A-4: §6.2.2 (ISO 19005-4 renumbering — veraPDF confirmed by cs-6-2-2-fail-b.pdf).
-    // (#FN-6.2.2 / #FP-6.2.7.1)
+    // PDF/A-1: §6.2.10; PDF/A-2/3: §6.2.2 (veraPDF confirmed by cs-veraPDF-6-2-2-t01-fail-a/b/c);
+    // PDF/A-4: §6.2.2 (ISO 19005-4 renumbering). (#FN-6.2.2)
     let undef_op_rule = match pdfa_part {
         1 => "6.2.10",
-        4 => "6.2.2",
-        _ => "6.2.7.1",
+        _ => "6.2.2",
     };
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
