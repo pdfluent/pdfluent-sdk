@@ -1891,10 +1891,13 @@ fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                 // /F inside an /OPI sub-dict is NOT a stream external file ref.
                 // Isartor §6.2.5 test: Form XObject has /OPI << /1.3 << /F (image.tif) >>,
                 // the /F here is OPI metadata, not an external file reference. (#FP-6.1.7)
-                let is_opi_subdict = current_dict_ctx
-                    .windows(4)
-                    .any(|w| w == b"/OPI" as &[u8]);
-                if has_dict_start && has_stream_ahead && !is_filespec && !is_embedded && !is_opi_subdict {
+                let is_opi_subdict = current_dict_ctx.windows(4).any(|w| w == b"/OPI" as &[u8]);
+                if has_dict_start
+                    && has_stream_ahead
+                    && !is_filespec
+                    && !is_embedded
+                    && !is_opi_subdict
+                {
                     check::error(
                         report,
                         "6.1.7.1",
