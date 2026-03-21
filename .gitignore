@@ -6,6 +6,7 @@
 !/tests/fixtures/*.pdf
 !/tests/corpus-mini/*.pdf
 !/corpus/*.pdf
+!/crates/pdf-java/src/test/resources/*.pdf
 metadata.sqlite
 /reports/
 /renders/

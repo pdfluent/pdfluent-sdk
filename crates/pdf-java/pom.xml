@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- =========================================================== -->
+  <!-- Coordinates                                                  -->
+  <!-- =========================================================== -->
+  <groupId>com.xfa</groupId>
+  <artifactId>pdf-sdk</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <name>XFA PDF SDK</name>
+  <description>
+    Enterprise PDF SDK — rendering, text extraction, forms, annotations,
+    redaction, encryption, and PDF/A compliance via a native Rust engine
+    accessed through JNI.
+  </description>
+  <url>https://github.com/jasperdew/xfa-native-rust</url>
+
+  <!-- =========================================================== -->
+  <!-- License                                                      -->
+  <!-- =========================================================== -->
+  <licenses>
+    <license>
+      <name>MIT License</name>
+      <url>https://opensource.org/licenses/MIT</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <!-- =========================================================== -->
+  <!-- Developers                                                   -->
+  <!-- =========================================================== -->
+  <developers>
+    <developer>
+      <id>jasperdew</id>
+      <name>Jasper de Winter</name>
+      <url>https://github.com/jasperdew</url>
+    </developer>
+  </developers>
+
+  <!-- =========================================================== -->
+  <!-- Source control                                               -->
+  <!-- =========================================================== -->
+  <scm>
+    <connection>scm:git:git://github.com/jasperdew/xfa-native-rust.git</connection>
+    <developerConnection>scm:git:ssh://github.com/jasperdew/xfa-native-rust.git</developerConnection>
+    <url>https://github.com/jasperdew/xfa-native-rust</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <!-- =========================================================== -->
+  <!-- Properties                                                   -->
+  <!-- =========================================================== -->
+  <properties>
+    <java.version>11</java.version>
+    <maven.compiler.source>${java.version}</maven.compiler.source>
+    <maven.compiler.target>${java.version}</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <!-- Path to the compiled Rust dylib / .so used in tests -->
+    <native.lib.dir>${project.basedir}/../../target/release</native.lib.dir>
+  </properties>
+
+  <!-- =========================================================== -->
+  <!-- Dependencies                                                 -->
+  <!-- =========================================================== -->
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.10.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <!-- =========================================================== -->
+  <!-- Build                                                        -->
+  <!-- =========================================================== -->
+  <build>
+    <!--
+      Java sources live at crates/pdf-java/java/ rather than the Maven
+      default src/main/java/.
+    -->
+    <sourceDirectory>java</sourceDirectory>
+
+    <plugins>
+
+      <!-- Compiler -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.12.1</version>
+        <configuration>
+          <source>${java.version}</source>
+          <target>${java.version}</target>
+          <encoding>UTF-8</encoding>
+        </configuration>
+      </plugin>
+
+      <!-- Surefire — JUnit 5 runner with native library path -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+        <configuration>
+          <argLine>-Djava.library.path=${native.lib.dir}</argLine>
+        </configuration>
+      </plugin>
+
+      <!-- Sources JAR (required by Maven Central) -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-source-plugin</artifactId>
+        <version>3.3.0</version>
+        <executions>
+          <execution>
+            <id>attach-sources</id>
+            <goals>
+              <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Javadoc JAR (required by Maven Central) -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-javadoc-plugin</artifactId>
+        <version>3.6.3</version>
+        <configuration>
+          <encoding>UTF-8</encoding>
+          <doclint>none</doclint>
+        </configuration>
+        <executions>
+          <execution>
+            <id>attach-javadocs</id>
+            <goals>
+              <goal>jar</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- GPG signing (required by Maven Central) -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-gpg-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>sign-artifacts</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>sign</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Sonatype OSSRH staging (Maven Central publish) -->
+      <plugin>
+        <groupId>org.sonatype.plugins</groupId>
+        <artifactId>nexus-staging-maven-plugin</artifactId>
+        <version>1.6.13</version>
+        <extensions>true</extensions>
+        <configuration>
+          <serverId>ossrh</serverId>
+          <nexusUrl>https://s01.oss.sonatype.org/</nexusUrl>
+          <!--
+            Set to true to release automatically after a successful close.
+            Leave false to inspect in the staging repository first.
+          -->
+          <autoReleaseAfterClose>false</autoReleaseAfterClose>
+        </configuration>
+      </plugin>
+
+    </plugins>
+  </build>
+
+  <!-- =========================================================== -->
+  <!-- Distribution management (OSSRH / Maven Central)             -->
+  <!-- =========================================================== -->
+  <distributionManagement>
+    <snapshotRepository>
+      <id>ossrh</id>
+      <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+    </snapshotRepository>
+    <repository>
+      <id>ossrh</id>
+      <url>https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+    </repository>
+  </distributionManagement>
+
+</project>
