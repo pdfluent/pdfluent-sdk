@@ -59,14 +59,15 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@xfa-engine/pdf-node-darwin-x64": "0.1.0",
     "@xfa-engine/pdf-node-darwin-arm64": "0.1.0",
+    "@xfa-engine/pdf-node-darwin-x64": "0.1.0",
+    "@xfa-engine/pdf-node-linux-arm64-gnu": "0.1.0",
     "@xfa-engine/pdf-node-linux-x64-gnu": "0.1.0",
     "@xfa-engine/pdf-node-linux-x64-musl": "0.1.0",
-    "@xfa-engine/pdf-node-linux-arm64-gnu": "0.1.0",
     "@xfa-engine/pdf-node-win32-x64-msvc": "0.1.0"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^2.18.0"
+    "@napi-rs/cli": "^2.18.0",
+    "jest": "^30.3.0"
   }
 }
