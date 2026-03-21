@@ -94,9 +94,9 @@ impl<'a> Dict<'a> {
     pub fn entries(&self) -> impl Iterator<Item = (Name, MaybeRef<Object<'a>>)> + '_ {
         let mut sorted_keys = self.keys().collect::<Vec<_>>();
         sorted_keys.sort_by(|n1, n2| n1.as_ref().cmp(n2.as_ref()));
-        sorted_keys.into_iter().map(|k| {
-            let obj = self.get_raw(k.deref()).unwrap();
-            (k, obj)
+        sorted_keys.into_iter().filter_map(|k| {
+            let obj = self.get_raw(k.deref())?;
+            Some((k, obj))
         })
     }
 
@@ -128,11 +128,11 @@ impl Debug for Dict<'_> {
 
         for (key, val) in &self.0.offsets {
             r.jump(*val);
-            debug_struct.field(
-                &format!("{:?}", key.as_str()),
-                &r.read_with_context::<MaybeRef<Object<'_>>>(&ReaderContext::dummy())
-                    .unwrap(),
-            );
+            let key_str = format!("{:?}", key.as_str());
+            match r.read_with_context::<MaybeRef<Object<'_>>>(&ReaderContext::dummy()) {
+                Some(obj) => debug_struct.field(&key_str, &obj),
+                None => debug_struct.field(&key_str, &"<parse error>"),
+            };
         }
         Ok(())
     }

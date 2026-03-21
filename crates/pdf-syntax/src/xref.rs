@@ -199,13 +199,15 @@ fn fallback_xref_map_inner<'a>(
         // a decryptor. Therefore, we were unable to decrypt any of the object streams and missed
         // all objects that are inside of such a stream. Therefore, we need to redo the process
         // using a `ReaderContext` that does have the ability to decrypt.
-        if let Ok(xref) = XRef::new(
-            data.clone(),
-            xref_map.clone(),
-            XRefInput::TrailerDictData(trailer_dict.as_ref().map(|d| d.data()).unwrap()),
-            true,
-            password,
-        ) {
+        if let Some(Ok(xref)) = trailer_dict.as_ref().map(|d| {
+            XRef::new(
+                data.clone(),
+                xref_map.clone(),
+                XRefInput::TrailerDictData(d.data()),
+                true,
+                password,
+            )
+        }) {
             let ctx = ReaderContext::new(&xref, false);
             let (patched_map, _) = fallback_xref_map_inner(data, ctx, false, password);
             xref_map = patched_map;
@@ -439,7 +441,10 @@ impl XRef {
             unreachable!();
         };
 
-        let mut locked = r.map.try_put().unwrap();
+        let mut locked = r
+            .map
+            .try_put()
+            .expect("xref repair: map lock not contended");
         assert!(!locked.repaired);
 
         let (xref_map, _) = fallback_xref_map(r.data.get(), &r.password);
@@ -498,7 +503,7 @@ impl XRef {
             return None;
         };
 
-        let locked = repr.map.try_get().unwrap();
+        let locked = repr.map.try_get()?;
 
         let mut r = Reader::new(repr.data.get().as_ref());
 

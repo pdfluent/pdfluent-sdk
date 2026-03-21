@@ -938,7 +938,7 @@ fn apply<'a, T: Predictor>(
         prev_col = {
             let out_data = writer.get_data();
             let mut reader = BitReader::new_with(out_data, old_pos);
-            BitChunk::from_reader(&mut reader, bit_size, chunk_len).unwrap()
+            BitChunk::from_reader(&mut reader, bit_size, chunk_len)?
         };
 
         top_left = prev_row;
