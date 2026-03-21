@@ -938,27 +938,31 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
 
     // /Author ↔ dc:creator (§6.7.3.3)
     if let Some(ref author) = metadata.author {
-        let dc_creator = extract_rdf_seq_value(xmp, "dc:creator")
-            .or_else(|| extract_nested_value(xmp, "dc:creator"));
-        match dc_creator {
-            None => {
-                error(
-                    report,
-                    "6.7.3.3",
-                    "/Info has Author but XMP is missing dc:creator",
-                );
-            }
-            Some(ref xmp_val) => {
-                let info_str = decode_pdf_string(author);
-                if !values_match(&info_str, xmp_val) {
+        let info_str = decode_pdf_string(author);
+        // Empty /Author is trivially consistent with no dc:creator.
+        // veraPDF does not flag 6.7.3.3 for /Author () with no dc:creator.
+        if !info_str.trim().is_empty() {
+            let dc_creator = extract_rdf_seq_value(xmp, "dc:creator")
+                .or_else(|| extract_nested_value(xmp, "dc:creator"));
+            match dc_creator {
+                None => {
                     error(
                         report,
                         "6.7.3.3",
-                        format!(
-                            "Info /Author '{}' does not match XMP dc:creator '{}'",
-                            info_str, xmp_val
-                        ),
+                        "/Info has Author but XMP is missing dc:creator",
                     );
+                }
+                Some(ref xmp_val) => {
+                    if !values_match(&info_str, xmp_val) {
+                        error(
+                            report,
+                            "6.7.3.3",
+                            format!(
+                                "Info /Author '{}' does not match XMP dc:creator '{}'",
+                                info_str, xmp_val
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -1029,26 +1033,30 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
 
     // /Producer ↔ pdf:Producer (§6.7.3.7)
     if let Some(ref producer) = metadata.producer {
-        let xmp_producer = extract_nested_value(xmp, "pdf:Producer");
-        match xmp_producer {
-            None => {
-                error(
-                    report,
-                    "6.7.3.7",
-                    "/Info has Producer but XMP is missing pdf:Producer",
-                );
-            }
-            Some(ref xmp_val) => {
-                let info_str = decode_pdf_string(producer);
-                if !values_match(&info_str, xmp_val) {
+        let info_str = decode_pdf_string(producer);
+        // Empty /Producer is trivially consistent with no pdf:Producer.
+        // veraPDF does not flag 6.7.3.7 for /Producer () with no pdf:Producer.
+        if !info_str.trim().is_empty() {
+            let xmp_producer = extract_nested_value(xmp, "pdf:Producer");
+            match xmp_producer {
+                None => {
                     error(
                         report,
                         "6.7.3.7",
-                        format!(
-                            "Info /Producer '{}' does not match XMP pdf:Producer '{}'",
-                            info_str, xmp_val
-                        ),
+                        "/Info has Producer but XMP is missing pdf:Producer",
                     );
+                }
+                Some(ref xmp_val) => {
+                    if !values_match(&info_str, xmp_val) {
+                        error(
+                            report,
+                            "6.7.3.7",
+                            format!(
+                                "Info /Producer '{}' does not match XMP pdf:Producer '{}'",
+                                info_str, xmp_val
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -1170,11 +1178,25 @@ fn decode_pdf_string(bytes: &[u8]) -> String {
     }
 }
 
+/// Decode the five predefined XML character entities in an XMP text value.
+///
+/// XMP content is XML: apostrophes, ampersands, etc. are entity-escaped.
+/// Before comparing with Info dict values (which have no entity escaping),
+/// we must decode them. (#FIX-6.7.3-xml-entities)
+fn decode_xml_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+}
+
 /// Compare Info dict value with XMP value, allowing for encoding differences.
 fn values_match(info_val: &str, xmp_val: &str) -> bool {
     let info_trimmed = info_val.trim();
     let xmp_trimmed = xmp_val.trim();
-    info_trimmed == xmp_trimmed
+    // Decode XML entities in XMP value (e.g. &apos; → ') before comparing.
+    info_trimmed == xmp_trimmed || info_trimmed == decode_xml_entities(xmp_trimmed)
 }
 
 /// Extract a value from an rdf:Alt container (used for dc:title, dc:description).
@@ -1194,7 +1216,9 @@ fn extract_rdf_alt_value(xmp: &str, property: &str) -> Option<String> {
             if let Some(val_end) = block[val_start..].find("</rdf:li>") {
                 let value = block[val_start..val_start + val_end].trim();
                 if !value.is_empty() {
-                    return Some(value.to_string());
+                    // Decode XML entities (e.g. &apos; → ') before returning.
+                    // (#FIX-6.7.3-xml-entities)
+                    return Some(decode_xml_entities(value));
                 }
             }
         }
@@ -1218,7 +1242,9 @@ fn extract_rdf_seq_value(xmp: &str, property: &str) -> Option<String> {
             if let Some(val_end) = block[val_start..].find("</rdf:li>") {
                 let value = block[val_start..val_start + val_end].trim();
                 if !value.is_empty() {
-                    return Some(value.to_string());
+                    // Decode XML entities (e.g. &apos; → ') before returning.
+                    // (#FIX-6.7.3-xml-entities)
+                    return Some(decode_xml_entities(value));
                 }
             }
         }
