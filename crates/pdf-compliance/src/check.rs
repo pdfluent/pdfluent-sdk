@@ -3248,6 +3248,7 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
             // indirect refs automatically, so Object::Stream matches regardless of
             // whether the stream is direct or indirect. (#FN-6.2.3.2)
             // Extract owned values immediately to avoid lifetime conflicts.
+            #[allow(clippy::type_complexity)]
             let icc_props: Option<(bool, Option<i32>, Option<Vec<u8>>, Option<Vec<u8>>)> =
                 items.next().and_then(|o| match o {
                     Object::Stream(s) => {
@@ -9464,8 +9465,10 @@ pub fn check_notdef_glyph_usage(pdf: &Pdf, report: &mut ComplianceReport) {
 /// rendering but not in the CIDSet means the font program cannot supply the glyph
 /// → §6.3.5 (PDF/A-1) or §6.2.11.4.1 (PDF/A-2+).
 ///
-/// Because a CID absent from the CIDSet renders as .notdef, this simultaneously
-/// triggers §6.2.11.8 (PDF/A-2+): "reference to the .notdef glyph".
+/// Only §6.2.11.4.1 / §6.3.5 is emitted here; §6.2.11.8 ("renders as .notdef")
+/// is NOT emitted because CIDSet absence alone doesn't guarantee the glyph is
+/// absent from the font program — the CIDSet may be incomplete. §6.2.11.8 is
+/// handled by check_notdef_glyph_reference. (#FP-6.2.11.8)
 ///
 /// This check only fires for subset fonts (ABCDEF+ prefix) that already have a
 /// CIDSet; missing/empty CIDSet is handled by check_font_embedding_deep.
