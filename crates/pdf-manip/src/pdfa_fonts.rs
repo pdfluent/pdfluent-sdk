@@ -2040,9 +2040,11 @@ fn fix_cid_widths_from_cff(
         if let Some(ex_dw) = existing_dw {
             if ex_dw > 0 && dw > 0 {
                 let ratio = dw as f64 / ex_dw as f64;
-                // If our computed DW is 500×–2000× larger than the existing DW
+                // If our computed DW is 500× or more larger than the existing DW
                 // the FD matrix scale is clearly wrong — leave the /W untouched.
-                if ratio > 500.0 && ratio < 2000.0 {
+                // No upper bound: e.g. MCQKME+SymbolMT reaches ratio ≈ 2400
+                // (existing DW=250, computed DW=600000). (#FP-6.2.11.5-cid)
+                if ratio > 500.0 {
                     return false;
                 }
             }
