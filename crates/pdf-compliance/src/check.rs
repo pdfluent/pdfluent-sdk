@@ -5928,16 +5928,25 @@ fn check_single_filter(
         // §6.1.6.2 / §6.1.8 / §6.1.10 — JBIG2Decode with global segments (/JBIG2Globals)
         // is forbidden. /JBIG2Globals is almost always an indirect stream ref, so we must
         // check get_ref() in addition to direct stream (the direct case is extremely rare).
-        // (#FN-6.1.6.2)
-        if let Some(params) = dict.get::<Dict<'_>>(keys::DECODE_PARMS) {
-            let has_globals = params.get::<Stream<'_>>(keys::JBIG2_GLOBALS).is_some()
-                || params.get_ref(keys::JBIG2_GLOBALS).is_some();
-            if has_globals {
-                // PDF/A-1: §6.1.10 (forbidden filters), PDF/A-2/3/4: §6.1.8
-                // (remapped to §6.1.6.2 for parts 2-4 in pdfa.rs)
-                let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.8" };
-                error(report, rule, "JBIG2Decode with global segments");
-            }
+        // When multiple filters are used, /DecodeParms is an array instead of a dict; scan
+        // all elements of the array to find JBIG2Globals. (#FN-6.1.6.2)
+        let has_globals = if let Some(params) = dict.get::<Dict<'_>>(keys::DECODE_PARMS) {
+            params.get::<Stream<'_>>(keys::JBIG2_GLOBALS).is_some()
+                || params.get_ref(keys::JBIG2_GLOBALS).is_some()
+        } else if let Some(params_arr) = dict.get::<Array<'_>>(keys::DECODE_PARMS) {
+            // Multi-filter stream: DecodeParms is an array of dicts (or nulls).
+            params_arr.iter::<Dict<'_>>().any(|p| {
+                p.get::<Stream<'_>>(keys::JBIG2_GLOBALS).is_some()
+                    || p.get_ref(keys::JBIG2_GLOBALS).is_some()
+            })
+        } else {
+            false
+        };
+        if has_globals {
+            // PDF/A-1: §6.1.10 (forbidden filters), PDF/A-2/3/4: §6.1.8
+            // (remapped to §6.1.6.2 for parts 2-4 in pdfa.rs)
+            let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.8" };
+            error(report, rule, "JBIG2Decode with global segments");
         }
     }
     if filter_name == keys::JPX_DECODE && pdfa_part == 1 {
@@ -8502,7 +8511,7 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                         );
                     }
                 }
-                check_cidfont_descriptor_deep(&desc_font, name, page_idx, part, report);
+                check_cidfont_descriptor_deep(&desc_font, name, page_idx, part, xref, report);
             }
         }
     });
@@ -8513,9 +8522,17 @@ fn check_cidfont_descriptor_deep(
     name: &str,
     page_idx: usize,
     part: u8,
+    xref: &pdf_syntax::xref::XRef,
     report: &mut ComplianceReport,
 ) {
-    let Some(desc) = cid_font.get::<Dict<'_>>(keys::FONT_DESC) else {
+    // FontDescriptor is almost always an indirect ref. Use get_ref fallback like
+    // check_font_embedding_deep does for the same reason. (#FN-6.3.5)
+    let desc_opt: Option<Dict<'_>> = cid_font.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+        cid_font
+            .get_ref(keys::FONT_DESC)
+            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+    });
+    let Some(desc) = desc_opt else {
         return;
     };
     // Use BaseFont name for subset detection
@@ -8569,7 +8586,14 @@ fn check_cidfont_descriptor_deep(
     check_fontfile_subtype_match(&desc, cid_name, page_idx, report);
 
     if is_subset_font(cid_name) {
-        match desc.get::<Stream<'_>>(keys::CID_SET) {
+        // CIDSet is almost always an indirect stream ref. Check both direct and indirect.
+        // Missing the ref causes FP §6.3.5 (we fire "CIDSet missing" when it's present
+        // as an indirect ref that get::<Stream> doesn't resolve). (#FP-6.3.5)
+        let cidset_opt: Option<Stream<'_>> = desc.get::<Stream<'_>>(keys::CID_SET).or_else(|| {
+            desc.get_ref(keys::CID_SET)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        });
+        match cidset_opt {
             None => {
                 error_at(
                     report,
