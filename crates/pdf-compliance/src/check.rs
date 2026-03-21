@@ -8339,6 +8339,7 @@ pub fn check_font_type_key(pdf: &Pdf, report: &mut ComplianceReport) {
 /// - Subset fonts (ABCDEF+Name) have CIDSet or CharSet
 /// - FontFile3 subtype matches font type
 pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, page_idx| {
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
         let subtype_bytes = subtype.as_ref().map(|s| s.as_ref());
@@ -8354,8 +8355,14 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
             .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or(name).to_string());
         let font_name = base_font_name.as_deref().unwrap_or(name);
 
-        // Check direct font descriptor
-        if let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) {
+        // Check font descriptor — may be a direct dict or an indirect ref.
+        // FontDescriptor is almost always indirect; resolve via xref. (#FN-6.3.4)
+        let desc_opt: Option<Dict<'_>> = font_dict.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+            font_dict
+                .get_ref(keys::FONT_DESC)
+                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+        });
+        if let Some(desc) = desc_opt {
             // Check font program is actually embedded (§6.3.4 test 1)
             // PDF/A requires ALL fonts to be embedded — no standard-14 exemption
             if !font_has_embedding(&desc) {
@@ -8478,8 +8485,14 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
         // Check CIDFont descendants
         if let Some(descendants) = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS) {
             for desc_font in descendants.iter::<Dict<'_>>() {
-                // Also check CIDFont embedding
-                if let Some(cid_desc) = desc_font.get::<Dict<'_>>(keys::FONT_DESC) {
+                // Also check CIDFont embedding; FontDescriptor is typically indirect.
+                let cid_desc_opt: Option<Dict<'_>> =
+                    desc_font.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+                        desc_font
+                            .get_ref(keys::FONT_DESC)
+                            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                    });
+                if let Some(cid_desc) = cid_desc_opt {
                     if !font_has_embedding(&cid_desc) {
                         error_at(
                             report,
@@ -10197,7 +10210,12 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
         }
 
         // Check raw Type1 (FontFile) embeddings (#467, §6.3.6 for PDF/A-1).
-        if let Some(ff) = desc.get::<Stream<'_>>(keys::FONT_FILE) {
+        // FontFile may be an indirect ref — apply xref fallback. (#FN-6.3.6)
+        let ff_opt = desc.get::<Stream<'_>>(keys::FONT_FILE).or_else(|| {
+            desc.get_ref(keys::FONT_FILE)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        });
+        if let Some(ff) = ff_opt {
             if let Ok(font_data) = ff.decoded() {
                 let pdf_widths: Vec<i32> = widths_arr.iter::<i32>().collect();
                 let missing_width = desc.get::<i32>(keys::MISSING_WIDTH);
@@ -10219,7 +10237,11 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
 
         // Only check FontFile3 (CFF) embeddings — Type1 charstring parsing is
         // done separately and is unreliable for non-subset fonts (see memory).
-        let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3) else {
+        // FontFile3 may be an indirect ref — apply xref fallback. (#FN-6.3.6-cff)
+        let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3).or_else(|| {
+            desc.get_ref(keys::FONT_FILE3)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        }) else {
             return;
         };
         let Ok(cff_data) = ff3.decoded() else {
