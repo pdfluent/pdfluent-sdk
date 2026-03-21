@@ -1564,42 +1564,31 @@ fn check_page_dimensions(
 ///
 /// Both literal `(...)` and hex `<...>` string forms are checked. Returns true
 /// on the first offending string so callers can report and bail out quickly.
+///
+/// Inline image data (BI … ID <data> EI) is skipped: FlateDecode images are
+/// decompressed via flate2 to find the exact end of the zlib stream; other
+/// images fall back to whitespace-bounded `EI` detection. (#FP-6.1.13)
 fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
     let mut pos = 0;
     let len = data.len();
-    // Fast path: if the entire stream is shorter than the limit, no string can exceed it.
     if len <= limit {
         return false;
     }
-    // Track the start of the current whitespace-delimited token so we can detect the
-    // 'ID' operator that introduces inline image data (BI … ID <data> EI). Binary image
-    // data between ID and EI contains arbitrary bytes (including '(' and '<') that must
-    // not be treated as string literals. (#FP-6.1.13)
+    // Track current operator token (for ID/BI detection) and last BI dict start.
     let mut tok_start: Option<usize> = None;
+    let mut last_bi_start: usize = 0;
     while pos < len {
         match data[pos] {
-            // Whitespace terminates an operator token.
             b' ' | b'\t' | b'\n' | b'\r' | b'\x0C' => {
                 if let Some(start) = tok_start.take() {
-                    if &data[start..pos] == b"ID" {
-                        // Skip the mandatory single whitespace byte after 'ID', then skip
-                        // all bytes until 'EI' followed by whitespace or end-of-stream.
-                        pos += 1; // skip separator
-                                  // EI must be preceded AND followed by whitespace per PDF spec
-                                  // §8.9.6.  Require both to reduce false matches in binary data.
-                        let mut prev_was_ws = true; // the separator we just skipped counts
-                        while pos + 1 < len {
-                            let cur = data[pos];
-                            let nxt = data[pos + 1];
-                            let after_ws = pos + 2 >= len
-                                || matches!(data[pos + 2], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
-                            if prev_was_ws && cur == b'E' && nxt == b'I' && after_ws {
-                                pos += 2; // skip 'EI'
-                                break;
-                            }
-                            prev_was_ws = matches!(cur, b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
-                            pos += 1;
-                        }
+                    if &data[start..pos] == b"BI" {
+                        last_bi_start = start;
+                    } else if &data[start..pos] == b"ID" {
+                        // Skip the mandatory whitespace separator after 'ID'
+                        pos += 1;
+                        // Choose skip strategy based on the BI dict content
+                        let bi_dict = &data[last_bi_start..start];
+                        pos = skip_inline_image_data(data, pos, bi_dict);
                         continue;
                     }
                 }
@@ -1607,11 +1596,17 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
             }
             b'(' => {
                 tok_start = None;
-                // Literal string: scan to matching ')' counting nesting and escapes;
-                // accumulate decoded byte count.
+                // Guard: in valid PDF operator streams every '(' is preceded by an ASCII
+                // byte (whitespace, '[', ')' etc.).  Non-ASCII (> 0x7E) means we are still
+                // inside binary image data that slipped past the ID/EI scanner.
+                if pos > 0 && data[pos - 1] > 0x7E {
+                    pos += 1;
+                    continue;
+                }
+                // Literal string: scan to matching ')' counting nesting and escapes.
                 let mut depth: i32 = 1;
                 let mut decoded: usize = 0;
-                pos += 1; // skip opening '('
+                pos += 1;
                 while pos < len && depth > 0 {
                     match data[pos] {
                         b'\\' => {
@@ -1633,18 +1628,15 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
                                     decoded += 1;
                                 }
                                 b'\n' => {
-                                    // \<LF> — line continuation, 0 decoded bytes
                                     pos += 1;
                                 }
                                 b'\r' => {
-                                    // \<CR> or \<CRLF> — line continuation, 0 decoded bytes
                                     pos += 1;
                                     if pos < len && data[pos] == b'\n' {
                                         pos += 1;
                                     }
                                 }
                                 _ => {
-                                    // \n, \t, \\, \(, \), \b, \f, etc. → 1 decoded byte
                                     pos += 1;
                                     decoded += 1;
                                 }
@@ -1670,9 +1662,7 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
                     if decoded > limit {
                         return true;
                     }
-                    // Depth > 32 means many unbalanced '(' — binary data, not a real
-                    // string literal.  Real PDF text strings keep depth ≤ a handful.
-                    // Bail out without flagging. (#FP-6.1.13-binary)
+                    // High depth signals binary data, not a real nested string.
                     if depth > 32 {
                         break;
                     }
@@ -1680,8 +1670,7 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
             }
             b'<' if pos + 1 < len && data[pos + 1] != b'<' => {
                 tok_start = None;
-                // Hex string <hexdigits>: decoded length = ceil(hex_digit_count / 2)
-                pos += 1; // skip '<'
+                pos += 1;
                 let mut hex_count: usize = 0;
                 while pos < len && data[pos] != b'>' {
                     if data[pos].is_ascii_hexdigit() {
@@ -1693,18 +1682,16 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
                     return true;
                 }
                 if pos < len {
-                    pos += 1; // skip '>'
+                    pos += 1;
                 }
             }
             b'%' => {
                 tok_start = None;
-                // Comment — skip to end of line
                 while pos < len && data[pos] != b'\n' && data[pos] != b'\r' {
                     pos += 1;
                 }
             }
             _ => {
-                // Non-whitespace, non-string, non-comment byte: part of an operator token.
                 if tok_start.is_none() {
                     tok_start = Some(pos);
                 }
@@ -1713,6 +1700,78 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
         }
     }
     false
+}
+
+/// Skip inline image data starting at `start` (the byte after the whitespace separator
+/// following the `ID` keyword).  Returns the position after the `EI` keyword.
+///
+/// Strategy:
+/// - If the BI dict contains `/Fl` or `FlateDecode` (FlateDecode filter), attempt to
+///   decompress the zlib stream to find its exact end (robust against spurious `EI`
+///   patterns in binary data).
+/// - Otherwise, fall back to scanning for `EI` surrounded by whitespace.
+fn skip_inline_image_data(data: &[u8], start: usize, bi_dict: &[u8]) -> usize {
+    let len = data.len();
+    // Detect FlateDecode filter (abbreviated /Fl or full /FlateDecode)
+    let has_flate = bi_dict.windows(3).any(|w| w == b"/Fl")
+        || bi_dict.windows(13).any(|w| w == b"FlateDecode");
+
+    if has_flate {
+        // Skip any additional whitespace between the ID separator and the zlib header.
+        // The PDF spec mandates one whitespace byte after ID, but CRLF line endings
+        // produce two (\r was already consumed as the separator; \n may remain).
+        let mut data_start = start;
+        while data_start < len
+            && matches!(data[data_start], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C')
+        {
+            data_start += 1;
+        }
+        if let Some(after_zlib) = try_skip_zlib(data, data_start) {
+            // after_zlib points to the first byte after the zlib stream.
+            // Skip whitespace then 'EI'.
+            let mut pos = after_zlib;
+            while pos < len && matches!(data[pos], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C') {
+                pos += 1;
+            }
+            if pos + 1 < len && data[pos] == b'E' && data[pos + 1] == b'I' {
+                pos += 2;
+            }
+            return pos;
+        }
+        // Zlib decode failed — fall through to whitespace-bounded EI scan
+    }
+
+    // Fallback: scan for whitespace-bounded EI.
+    let mut pos = start;
+    let mut prev_was_ws = true;
+    while pos + 1 < len {
+        let cur = data[pos];
+        let nxt = data[pos + 1];
+        let after_ws =
+            pos + 2 >= len || matches!(data[pos + 2], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
+        if prev_was_ws && cur == b'E' && nxt == b'I' && after_ws {
+            return pos + 2;
+        }
+        prev_was_ws = matches!(cur, b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
+        pos += 1;
+    }
+    len
+}
+
+/// Attempt to consume one zlib (RFC 1950) stream from `data[start..]`.
+/// Returns `Some(end)` where `end` is the byte position just after the zlib stream,
+/// or `None` if the data at `start` is not a valid zlib stream.
+fn try_skip_zlib(data: &[u8], start: usize) -> Option<usize> {
+    use flate2::read::ZlibDecoder;
+    use std::io;
+    let mut d = ZlibDecoder::new(&data[start..]);
+    // Discard decompressed output; we only care about d.total_in().
+    io::copy(&mut d, &mut io::sink()).ok()?;
+    let consumed = d.total_in() as usize;
+    if consumed == 0 {
+        return None;
+    }
+    Some(start + consumed)
 }
 
 #[cfg(test)]
@@ -1839,14 +1898,62 @@ mod string_scan_tests {
             &ei_detected_at[..ei_detected_at.len().min(5)]
         );
         if let Some(lp) = first_long_paren {
-            eprintln!("First long '(' at: {}", lp);
+            let pred = if lp > 0 { content[lp - 1] } else { 0 };
             eprintln!(
-                "Bytes [-20..+20]: {:?}",
-                &content[lp.saturating_sub(20)..len.min(lp + 20)]
+                "First long '(' at: {}, preceded by 0x{:02X} (ascii={})",
+                lp,
+                pred,
+                pred <= 0x7E
             );
         } else {
-            eprintln!("No long '(' found (correctly)");
+            eprintln!("No long '(' found by sim");
         }
+
+        // Scan ALL long-string '(' positions (brute-force, no inline-image awareness)
+        {
+            let mut p = 0usize;
+            let mut count = 0usize;
+            while p < len && count < 10 {
+                if content[p] == b'(' {
+                    let sp = p;
+                    let pred = if p > 0 { content[p - 1] } else { 0 };
+                    let mut depth: i32 = 1;
+                    let mut decoded = 0usize;
+                    p += 1;
+                    while p < len && depth > 0 && decoded <= 32767 && depth <= 32 {
+                        match content[p] {
+                            b'\\' => { p = (p + 2).min(len); decoded += 1; }
+                            b'(' => { depth += 1; p += 1; decoded += 1; }
+                            b')' => { depth -= 1; if depth > 0 { decoded += 1; } p += 1; }
+                            _ => { decoded += 1; p += 1; }
+                        }
+                    }
+                    if decoded > 32767 {
+                        eprintln!(
+                            "  Long '(' #{}: offset {}, pred=0x{:02X}(ascii={}), depth={}",
+                            count + 1, sp, pred, pred <= 0x7E, depth
+                        );
+                        count += 1;
+                    }
+                } else {
+                    p += 1;
+                }
+            }
+        }
+
+        // Test the zlib skip directly on the first BI block
+        let id_pos = 431usize;
+        let bi_dict = &content[..id_pos]; // rough approximation of BI dict
+        // Find the whitespace-separator position after ID: ID is at [431..433], separator at 433
+        let sep_pos = 433usize;
+        let data_start_pos = sep_pos + 1; // skip \r, point to \n
+        // Skip the \n too
+        let mut ds = data_start_pos;
+        while ds < len && matches!(content[ds], b' '|b'\t'|b'\n'|b'\r'|b'\x0C') { ds += 1; }
+        eprintln!("Zlib data starts at: {}", ds);
+        eprintln!("First 4 bytes of zlib data: {:02X?}", &content[ds..ds.min(len).min(ds+4)]);
+        let zlib_skip = super::try_skip_zlib(&content, ds);
+        eprintln!("try_skip_zlib result: {:?}", zlib_skip);
 
         let result = content_stream_has_long_string(&content, 32767);
         eprintln!("content_stream_has_long_string result: {}", result);
