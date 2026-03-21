@@ -1571,9 +1571,42 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
     if len <= limit {
         return false;
     }
+    // Track the start of the current whitespace-delimited token so we can detect the
+    // 'ID' operator that introduces inline image data (BI … ID <data> EI). Binary image
+    // data between ID and EI contains arbitrary bytes (including '(' and '<') that must
+    // not be treated as string literals. (#FP-6.1.13)
+    let mut tok_start: Option<usize> = None;
     while pos < len {
         match data[pos] {
+            // Whitespace terminates an operator token.
+            b' ' | b'\t' | b'\n' | b'\r' | b'\x0C' => {
+                if let Some(start) = tok_start.take() {
+                    if &data[start..pos] == b"ID" {
+                        // Skip the mandatory single whitespace byte after 'ID', then skip
+                        // all bytes until 'EI' followed by whitespace or end-of-stream.
+                        pos += 1; // skip separator
+                                  // EI must be preceded AND followed by whitespace per PDF spec
+                                  // §8.9.6.  Require both to reduce false matches in binary data.
+                        let mut prev_was_ws = true; // the separator we just skipped counts
+                        while pos + 1 < len {
+                            let cur = data[pos];
+                            let nxt = data[pos + 1];
+                            let after_ws = pos + 2 >= len
+                                || matches!(data[pos + 2], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
+                            if prev_was_ws && cur == b'E' && nxt == b'I' && after_ws {
+                                pos += 2; // skip 'EI'
+                                break;
+                            }
+                            prev_was_ws = matches!(cur, b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
+                            pos += 1;
+                        }
+                        continue;
+                    }
+                }
+                pos += 1;
+            }
             b'(' => {
+                tok_start = None;
                 // Literal string: scan to matching ')' counting nesting and escapes;
                 // accumulate decoded byte count.
                 let mut depth: i32 = 1;
@@ -1637,9 +1670,16 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
                     if decoded > limit {
                         return true;
                     }
+                    // Depth > 32 means many unbalanced '(' — binary data, not a real
+                    // string literal.  Real PDF text strings keep depth ≤ a handful.
+                    // Bail out without flagging. (#FP-6.1.13-binary)
+                    if depth > 32 {
+                        break;
+                    }
                 }
             }
             b'<' if pos + 1 < len && data[pos + 1] != b'<' => {
+                tok_start = None;
                 // Hex string <hexdigits>: decoded length = ceil(hex_digit_count / 2)
                 pos += 1; // skip '<'
                 let mut hex_count: usize = 0;
@@ -1657,17 +1697,192 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
                 }
             }
             b'%' => {
+                tok_start = None;
                 // Comment — skip to end of line
                 while pos < len && data[pos] != b'\n' && data[pos] != b'\r' {
                     pos += 1;
                 }
             }
             _ => {
+                // Non-whitespace, non-string, non-comment byte: part of an operator token.
+                if tok_start.is_none() {
+                    tok_start = Some(pos);
+                }
                 pos += 1;
             }
         }
     }
     false
+}
+
+#[cfg(test)]
+mod string_scan_tests {
+    use super::content_stream_has_long_string;
+
+    #[test]
+    #[ignore]
+    fn gen152_content_stream_not_flagged() {
+        // Direct test + debug trace of content_stream_has_long_string on actual gen-152.
+        use pdf_syntax::Pdf;
+        let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
+        let pdf = Pdf::new(data).unwrap();
+        let page = pdf.pages().first().unwrap().clone();
+        let content = page.page_stream().unwrap().to_vec();
+        let len = content.len();
+        eprintln!("Content stream length: {}", len);
+
+        // Debug: trace ID detection manually using the same logic as content_stream_has_long_string
+        let is_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b'\x0C');
+        let mut tok_start: Option<usize> = None;
+        let mut pos = 0usize;
+        let limit = 32767usize;
+        let mut first_long_paren: Option<usize> = None;
+        let mut id_detected_at: Vec<usize> = vec![];
+        let mut ei_detected_at: Vec<usize> = vec![];
+
+        'outer: while pos < len {
+            match content[pos] {
+                b' ' | b'\t' | b'\n' | b'\r' | b'\x0C' => {
+                    if let Some(start) = tok_start.take() {
+                        if &content[start..pos] == b"ID" {
+                            id_detected_at.push(start);
+                            pos += 1;
+                            let mut prev_was_ws = true;
+                            while pos + 1 < len {
+                                let cur = content[pos];
+                                let nxt = content[pos + 1];
+                                let after_ws = pos + 2 >= len || is_ws(content[pos + 2]);
+                                if prev_was_ws && cur == b'E' && nxt == b'I' && after_ws {
+                                    ei_detected_at.push(pos);
+                                    pos += 2;
+                                    break;
+                                }
+                                prev_was_ws = is_ws(cur);
+                                pos += 1;
+                            }
+                            continue 'outer;
+                        }
+                    }
+                    pos += 1;
+                }
+                b'(' => {
+                    tok_start = None;
+                    let paren_start = pos;
+                    let mut depth: i32 = 1;
+                    let mut decoded = 0usize;
+                    pos += 1;
+                    while pos < len && depth > 0 {
+                        match content[pos] {
+                            b'\\' => {
+                                pos += 2;
+                                decoded += 1;
+                            }
+                            b'(' => {
+                                depth += 1;
+                                pos += 1;
+                                decoded += 1;
+                            }
+                            b')' => {
+                                depth -= 1;
+                                if depth > 0 {
+                                    decoded += 1;
+                                }
+                                pos += 1;
+                            }
+                            _ => {
+                                decoded += 1;
+                                pos += 1;
+                            }
+                        }
+                        if decoded > limit {
+                            first_long_paren = Some(paren_start);
+                            break 'outer;
+                        }
+                    }
+                }
+                b'<' if pos + 1 < len && content[pos + 1] != b'<' => {
+                    tok_start = None;
+                    pos += 1;
+                    let mut hex_count = 0usize;
+                    while pos < len && content[pos] != b'>' {
+                        pos += 1;
+                    }
+                    if hex_count.div_ceil(2) > limit {
+                        break;
+                    }
+                    if pos < len {
+                        pos += 1;
+                    }
+                    let _ = hex_count;
+                }
+                b'%' => {
+                    tok_start = None;
+                    while pos < len && content[pos] != b'\n' && content[pos] != b'\r' {
+                        pos += 1;
+                    }
+                }
+                _ => {
+                    if tok_start.is_none() {
+                        tok_start = Some(pos);
+                    }
+                    pos += 1;
+                }
+            }
+        }
+
+        eprintln!(
+            "ID detected at: {:?}",
+            &id_detected_at[..id_detected_at.len().min(5)]
+        );
+        eprintln!(
+            "EI detected at: {:?}",
+            &ei_detected_at[..ei_detected_at.len().min(5)]
+        );
+        if let Some(lp) = first_long_paren {
+            eprintln!("First long '(' at: {}", lp);
+            eprintln!(
+                "Bytes [-20..+20]: {:?}",
+                &content[lp.saturating_sub(20)..len.min(lp + 20)]
+            );
+        } else {
+            eprintln!("No long '(' found (correctly)");
+        }
+
+        let result = content_stream_has_long_string(&content, 32767);
+        eprintln!("content_stream_has_long_string result: {}", result);
+        assert!(
+            !result,
+            "gen-152 content stream should not have long string (inline image binary)"
+        );
+    }
+
+    #[test]
+    fn inline_image_binary_not_flagged() {
+        // Simulate a content stream with a FlateDecode inline image whose binary
+        // data (between ID and EI) contains many '(' bytes — must not be flagged.
+        let image_data: Vec<u8> = (0..40_000u32)
+            .map(|i| [b'(', b'x', b'\x80', b'\xFF'][i as usize % 4])
+            .collect();
+        let mut stream = b"q\r\nBI\r\n  /W 100\r\n  /H 100\r\n>>\r\nID\r\n".to_vec();
+        stream.extend_from_slice(&image_data);
+        stream.extend_from_slice(b"\r\nEI\r\nQ\r\n");
+        assert!(
+            !content_stream_has_long_string(&stream, 32767),
+            "binary inline image data must not trigger string-length check"
+        );
+    }
+
+    #[test]
+    fn real_long_string_flagged() {
+        let long_str: Vec<u8> = std::iter::repeat(b'A').take(33_000).collect();
+        let mut stream = b"BT\r\n(".to_vec();
+        stream.extend_from_slice(&long_str);
+        stream.extend_from_slice(b") Tj\r\nET\r\n");
+        assert!(
+            content_stream_has_long_string(&stream, 32767),
+            "real long string literal must be flagged"
+        );
+    }
 }
 
 /// §6.3.2 — Annotations must have /F key with correct flags.
@@ -3083,6 +3298,8 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // Font glyph presence check emits "6.2.11.4.1" (PDF/A-2/3 numbering).
             // PDF/A-1: veraPDF uses §6.3.5 for embedded font glyph violations. (#FN-6.3.5)
             (1, "6.2.11.4.1") => Some("6.3.5"),
+            // PDF/A-4: §6.2.11.4.1 → §6.2.10.4.1 (different clause numbering in ISO 19005-4).
+            (4, "6.2.11.4.1") => Some("6.2.10.4.1"),
 
             // Image XObject rendering intent: previously emitted "6.2.5" remapped to
             // "6.2.6" — now uses "6.2.8.1" directly (remapped to "6.2.4"/"6.2.8"/"6.2.7.1"
