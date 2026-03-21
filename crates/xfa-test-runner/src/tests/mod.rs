@@ -9,6 +9,7 @@ pub mod encrypt_roundtrip;
 pub mod form_fields;
 pub mod form_write;
 pub mod geometry;
+pub mod header_footer;
 pub mod image_extract_verify;
 pub mod images;
 pub mod manipulation;
@@ -19,6 +20,7 @@ pub mod parse;
 pub mod pdfa_convert;
 pub mod pdfua_validate;
 pub mod pdfx_validate;
+pub mod pptx_convert;
 pub mod redact;
 pub mod render;
 #[cfg(feature = "pdfium-oracle")]
@@ -36,6 +38,7 @@ pub mod xfa_extract;
 pub mod xfa_flatten;
 pub mod xlsx_convert;
 pub mod zugferd_roundtrip;
+pub mod zugferd_validate;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -139,8 +142,11 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(docx_convert::DocxConvertTest),
         Box::new(xlsx_convert::XlsxConvertTest),
         Box::new(zugferd_roundtrip::ZugferdRoundtripTest),
+        Box::new(zugferd_validate::ZugferdValidateTest),
         Box::new(pdfua_validate::PdfUaValidateTest),
         Box::new(pdfx_validate::PdfXValidateTest),
+        Box::new(pptx_convert::PptxConvertTest),
+        Box::new(header_footer::HeaderFooterTest),
     ];
 
     #[cfg(feature = "pdfium-oracle")]

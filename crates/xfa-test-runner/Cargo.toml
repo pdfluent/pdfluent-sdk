@@ -19,6 +19,7 @@ paddle-ocr = ["dep:pdf-ocr"]
 pdf-syntax = { path = "../pdf-syntax" }
 pdf-xfa = { path = "../pdf-xfa" }
 pdf-docx = { path = "../pdf-docx" }
+pdf-pptx = { path = "../pdf-pptx" }
 pdf-xlsx = { path = "../pdf-xlsx" }
 pdf-invoice = { path = "../pdf-invoice" }
 zip = { version = "2", default-features = false, features = ["deflate"] }
