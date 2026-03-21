@@ -2869,13 +2869,14 @@ pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
     };
 
     // Properties that must be Lang Alt (rdf:Alt), not plain strings.
-    // dc:title is required to be Lang Alt by the XMP spec and veraPDF checks it.
-    // (#FN-6.7.3 isartor-6-7-2-t02-fail-c tests dc:title as plain string)
+    // Only dc: properties that map to /Info dict entries (§6.7.3) are included here.
+    // xmpRights:UsageTerms violations are caught by check_predefined_property_types
+    // → §6.7.9 (not §6.7.3): veraPDF fires §6.7.9 only, not §6.7.3, for xmpRights:.
+    // (#FP-6.7.3-xmpRights, #FN-6.7.9-t08-fail-d)
     let lang_alt_props = [
         "dc:title",
         "dc:description",
         "dc:rights",
-        "xmpRights:UsageTerms",
     ];
 
     for prop in lang_alt_props {
@@ -8451,10 +8452,11 @@ fn hex_val(b: u8) -> u8 {
 pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
     let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
-        // Build resource-name → (charset_names, winansi) for Type1 subset fonts.
+        // Build resource-name → (glyph_names, code_to_glyph_map) for Type1 subset fonts.
+        // code_to_glyph_map: character code → AGL glyph name (via the font's /Encoding).
         let mut type1_charsets: std::collections::HashMap<
             Vec<u8>,
-            (std::collections::HashSet<String>, bool),
+            (std::collections::HashSet<String>, std::collections::HashMap<u8, String>),
         > = std::collections::HashMap::new();
         let fonts = &page.resources().fonts;
         for (rname, _) in fonts.entries() {
@@ -8476,27 +8478,82 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
             if !is_subset_font(&base) {
                 continue;
             }
-            let Some(desc) = fd.get::<Dict<'_>>(keys::FONT_DESC) else {
+            // FontDescriptor is almost always an indirect reference — follow it.
+            // (#FN-6.2.11.4.1 gen-698: fd.get::<Dict> returns None for indirect refs)
+            let desc_opt: Option<Dict<'_>> =
+                fd.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+                    fd.get_ref(keys::FONT_DESC)
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+            let Some(desc) = desc_opt else {
                 continue;
             };
-            let cs_opt = desc
-                .get::<pdf_syntax::object::String>(keys::CHAR_SET)
-                .map(|s| s.as_bytes().to_vec());
-            let Some(cs_bytes) = cs_opt else { continue };
-            if cs_bytes.is_empty() {
-                continue;
-            }
-            let ct = std::str::from_utf8(&cs_bytes).unwrap_or("");
-            let names: std::collections::HashSet<String> = ct
-                .split('/')
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string())
+            // For CFF (FontFile3) fonts, use the actual glyphs from the font program
+            // rather than the /CharSet string. Our fixer (fix_type1_charset) may have
+            // incorrectly extended CharSet to include glyph names not in the CFF, e.g.,
+            // preserving the original wrong CharSet entry while adding new ones. veraPDF
+            // checks the font program directly, not CharSet. (#FN-6.2.11.4.1 gen-698)
+            let cff_glyph_names: Option<std::collections::HashSet<String>> =
+                desc.get::<Stream<'_>>(keys::FONT_FILE3).and_then(|ff3| {
+                    let data = ff3.decoded().ok()?;
+                    let cff = cff_parser::Table::parse(&data)?;
+                    let mut names = std::collections::HashSet::new();
+                    for gid in 1..cff.number_of_glyphs() {
+                        if let Some(gname) = cff.glyph_name(cff_parser::GlyphId(gid)) {
+                            if gname != ".notdef" {
+                                names.insert(gname.to_string());
+                            }
+                        }
+                    }
+                    if names.is_empty() { None } else { Some(names) }
+                });
+
+            // Fall back to /CharSet if CFF parsing failed or font is not CFF.
+            let names: std::collections::HashSet<String> = if let Some(cff_names) = cff_glyph_names {
+                cff_names
+            } else {
+                let cs_opt = desc
+                    .get::<pdf_syntax::object::String>(keys::CHAR_SET)
+                    .map(|s| s.as_bytes().to_vec());
+                let Some(cs_bytes) = cs_opt else { continue };
+                if cs_bytes.is_empty() {
+                    continue;
+                }
+                let ct = std::str::from_utf8(&cs_bytes).unwrap_or("");
+                ct.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
+            };
+            // Build a code→glyph name map from the font's /Encoding.
+            // WinAnsi/MacRoman/StandardEncoding all agree for ASCII 32-127; we use
+            // t1_winansi_glyph_name as the baseline for all standard encodings.
+            // For /Encoding dicts with /Differences, the differences override the base.
+            // (#FN-6.2.11.4.1 gen-698: font used non-WinAnsi encoding, check was skipped)
+            let mut code_to_glyph: std::collections::HashMap<u8, String> = (0u8..=255u8)
+                .filter_map(|c| t1_winansi_glyph_name(c).map(|n| (c, n.to_string())))
                 .collect();
-            // WinAnsiEncoding or Encoding dict with WinAnsi base
-            let winansi = fd
-                .get::<Name>(keys::ENCODING)
-                .is_some_and(|e| e.as_ref() == b"WinAnsiEncoding");
-            type1_charsets.insert(rname.as_ref().to_vec(), (names, winansi));
+            // Override with /Differences if the encoding is a dict.
+            // Also handle indirect Encoding refs via xref fallback.
+            let enc_dict_opt: Option<Dict<'_>> = fd.get::<Dict<'_>>(keys::ENCODING).or_else(|| {
+                fd.get_ref(keys::ENCODING)
+                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+            });
+            if let Some(enc_dict) = enc_dict_opt {
+                if let Some(diffs) = enc_dict.get::<Array<'_>>(b"Differences" as &[u8]) {
+                    let mut current_code = 0u8;
+                    for item in diffs.iter::<Object<'_>>() {
+                        match item {
+                            Object::Number(n) => current_code = n.as_i64() as u8,
+                            Object::Name(n) => {
+                                if let Ok(s) = std::str::from_utf8(n.as_ref()) {
+                                    code_to_glyph.insert(current_code, s.to_string());
+                                }
+                                current_code = current_code.saturating_add(1);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            type1_charsets.insert(rname.as_ref().to_vec(), (names, code_to_glyph));
         }
         if type1_charsets.is_empty() {
             continue;
@@ -8512,7 +8569,10 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
         let tokens = tokenize_pdf_content(content);
         let n = tokens.len();
         let loc = format!("page {}", page_idx + 1);
-        let mut active: Option<&(std::collections::HashSet<String>, bool)> = None;
+        let mut active: Option<&(
+            std::collections::HashSet<String>,
+            std::collections::HashMap<u8, String>,
+        )> = None;
 
         'tokens: for i in 0..n {
             let tok = tokens[i].as_slice();
@@ -8525,7 +8585,7 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                     active = None;
                 }
             }
-            let Some((charset, winansi)) = active else {
+            let Some((charset, code_to_glyph)) = active else {
                 continue;
             };
             // Text show operators: preceding token is the string
@@ -8544,13 +8604,9 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                     if code == 0 {
                         continue;
                     } // .notdef handled elsewhere
-                    if let Some(gname) = if *winansi {
-                        t1_winansi_glyph_name(code)
-                    } else {
-                        None
-                    } {
-                        if !charset.contains(gname) {
-                            return Some(gname.to_string());
+                    if let Some(gname) = code_to_glyph.get(&code) {
+                        if !charset.contains(gname.as_str()) {
+                            return Some(gname.clone());
                         }
                     }
                 }
