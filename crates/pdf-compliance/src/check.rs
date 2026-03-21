@@ -1105,6 +1105,34 @@ pub fn for_each_font<'a>(pdf: &'a Pdf, mut callback: impl FnMut(&str, &Dict<'a>,
                     }
                 }
             }
+            // Fonts in annotation appearance streams — §6.3.4 applies to fonts used
+            // in widget/annotation AP (appearance) streams too.
+            // isartor-6-3-4-t01-fail-f: ZapfDingbats in Widget annotation AP/N stream.
+            // (#FN-6.3.4)
+            for annot in page.annots() {
+                let ap_opt: Option<Dict<'a>> = annot.get::<Dict<'_>>(keys::AP).or_else(|| {
+                    annot
+                        .get_ref(keys::AP)
+                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                });
+                if let Some(ap) = ap_opt {
+                    for (ap_key, _) in ap.entries() {
+                        let ap_stream: Option<Stream<'a>> =
+                            ap.get::<Stream<'_>>(ap_key.as_ref()).or_else(|| {
+                                ap.get_ref(ap_key.as_ref())
+                                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                            });
+                        if let Some(stream) = ap_stream {
+                            if let Some(ap_res) = stream.dict().get::<Dict<'_>>(keys::RESOURCES) {
+                                if let Some(ap_fonts) = ap_res.get::<Dict<'_>>(keys::FONT) {
+                                    visit_fonts(&ap_fonts);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Fonts in Type3 CharProcs /Resources — §6.3.4 applies to fonts used
             // inside Type3 glyph programs too.  isartor-6-3-4-t01-fail-g: page uses
             // a Type3 font whose CharProcs reference Helvetica via /Resources, and
