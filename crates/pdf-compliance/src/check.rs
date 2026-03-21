@@ -10139,7 +10139,7 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
 
         // Type0 fonts: check CIDFontType2 (TrueType) descendant widths. (#467)
         if subtype_bytes == Some(b"Type0") {
-            check_cidfont_type2_widths(font_dict, name, page_idx, report);
+            check_cidfont_type2_widths(font_dict, xref, name, page_idx, report);
             return;
         }
 
@@ -10407,6 +10407,7 @@ fn parse_type3_charproc_width(data: &[u8]) -> Option<i32> {
 /// Compare declared CID widths in /W against actual glyph advance widths.
 fn check_cidfont_type2_widths(
     type0_dict: &Dict<'_>,
+    xref: &pdf_syntax::xref::XRef,
     name: &str,
     page_idx: usize,
     report: &mut ComplianceReport,
@@ -10428,13 +10429,22 @@ fn check_cidfont_type2_widths(
             .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or(name).to_string())
             .unwrap_or_else(|| name.to_string());
 
-        let Some(desc) = cid_font.get::<Dict<'_>>(keys::FONT_DESC) else {
+        // FontDescriptor is almost always an indirect ref in CIDFont dicts. (#FN-6.2.11.5)
+        let Some(desc) = cid_font.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+            cid_font
+                .get_ref(keys::FONT_DESC)
+                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+        }) else {
             continue;
         };
 
         // CIDFontType0 (CFF): use FontFile3 + cff_parser. (#FN-6.2.11.5)
         if is_type0 {
-            let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3) else {
+            // FontFile3 may also be an indirect ref.
+            let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3).or_else(|| {
+                desc.get_ref(keys::FONT_FILE3)
+                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+            }) else {
                 continue;
             };
             let Ok(cff_data) = ff3.decoded() else {
@@ -10477,7 +10487,11 @@ fn check_cidfont_type2_widths(
         }
 
         // CIDFontType2 (TrueType): use FontFile2 + ttf_parser.
-        let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2) else {
+        // FontFile2 may be an indirect ref. (#FN-6.2.11.5)
+        let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2).or_else(|| {
+            desc.get_ref(keys::FONT_FILE2)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        }) else {
             continue;
         };
         let Ok(font_data) = ff2.decoded() else {
@@ -10493,9 +10507,13 @@ fn check_cidfont_type2_widths(
 
         // Per PDF spec, absent CIDToGIDMap defaults to /Identity (CID == GID).
         // Stream CIDToGIDMap entries are custom non-Identity mappings — skip those.
-        // Fixes §6.3.6 FNs where veraPDF detects width violations we missed because
-        // many PDFs don't include an explicit /CIDToGIDMap /Identity entry. (#FN-6.3.6)
-        if cid_font.get::<Stream<'_>>(keys::CID_TO_GID_MAP).is_some() {
+        // Check both direct and indirect stream refs. (#FN-6.3.6)
+        let has_cidtogid_stream = cid_font.get::<Stream<'_>>(keys::CID_TO_GID_MAP).is_some()
+            || cid_font
+                .get_ref(keys::CID_TO_GID_MAP)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                .is_some();
+        if has_cidtogid_stream {
             continue; // Custom CID→GID stream — CID ≠ GID in general; skip
         }
         let cidtogid_is_identity = cid_font
@@ -10703,7 +10721,13 @@ fn check_truetype_simple_widths(
         .unwrap_or_default();
 
     // Only handle well-known named encodings (no /Differences dict support for TrueType).
-    let use_winansi = enc_bytes == b"WinAnsiEncoding";
+    // For non-symbolic TrueType fonts with NO explicit /Encoding key, the PDF spec
+    // defaults to WinAnsiEncoding — treat absent encoding as WinAnsi. (#FN-6.3.5)
+    let is_symbolic = {
+        let flags: Option<i32> = desc.get(keys::FLAGS);
+        flags.is_some_and(|f| f & 0x04 != 0)
+    };
+    let use_winansi = enc_bytes == b"WinAnsiEncoding" || (enc_bytes.is_empty() && !is_symbolic);
     let use_macroman = enc_bytes == b"MacRomanEncoding";
     if !use_winansi && !use_macroman {
         return;
@@ -15169,6 +15193,7 @@ fn check_inline_images_in_content(
 /// We emit rule `"6.2.10.4.1-tt"` which `remap_clause_numbers` in pdfa.rs
 /// translates to `"6.2.10.4.1"` for PDF/A-4. (#467)
 pub fn check_truetype_cmap_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, page_idx| {
         // Only simple (non-CID, non-Type0) TrueType fonts
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
@@ -15180,10 +15205,19 @@ pub fn check_truetype_cmap_pdfa4(pdf: &Pdf, report: &mut ComplianceReport) {
             return;
         }
 
-        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC) else {
+        // FontDescriptor is almost always an indirect ref. (#FN-6.2.10.4.1)
+        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+            font_dict
+                .get_ref(keys::FONT_DESC)
+                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+        }) else {
             return;
         };
-        let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2) else {
+        // FontFile2 may also be an indirect ref.
+        let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2).or_else(|| {
+            desc.get_ref(keys::FONT_FILE2)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        }) else {
             return;
         };
         let Ok(font_data) = ff2.decoded() else {
