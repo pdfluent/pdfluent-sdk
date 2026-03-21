@@ -5814,9 +5814,9 @@ pub fn check_page_dimensions_with_cache(
     }
 
     // Name objects must not exceed 127 bytes.
-    // Use both approaches: cache (for top-level objects) and raw scan
-    // (for inline dicts/nested name tokens not in the xref). (#467)
-    check_name_lengths_cached(cache, rule, report);
+    // Use raw scan: catches all names including inline dicts and nested
+    // tokens not in the xref. Structured cache scan is skipped here to
+    // avoid double-reporting with check_name_length_limit_cached. (#467, #FP-6.1.12-duplicate)
     check_name_lengths_raw(pdf, rule, report);
 
     // String objects must not exceed 65535 bytes
@@ -5851,6 +5851,7 @@ fn check_name_lengths(pdf: &Pdf, rule: &str, report: &mut ComplianceReport) {
     check_name_lengths_cached(&ObjectCache::new(pdf), rule, report);
 }
 
+#[allow(dead_code)]
 fn check_name_lengths_cached(cache: &ObjectCache<'_>, rule: &str, report: &mut ComplianceReport) {
     for obj in cache.iter() {
         if let Object::Dict(d) = obj {
@@ -13535,55 +13536,17 @@ pub fn check_name_length_limit(pdf: &Pdf, report: &mut ComplianceReport) {
 }
 
 /// Cached version that uses pre-collected objects.
+///
+/// Only checks STRING length (> 32767 bytes) — name length is checked via raw byte
+/// scan in check_name_lengths_raw (called from check_page_dimensions_with_cache),
+/// which also covers inline dicts. Running a second structured name check here
+/// would double-report the same violation. (#FP-6.1.12-duplicate, PDFIUM-610-0)
 pub fn check_name_length_limit_cached(cache: &ObjectCache<'_>, report: &mut ComplianceReport) {
-    let mut long_name = false;
-    let mut long_string = false;
     for obj in cache.iter() {
-        if !long_name && check_name_length_obj(obj) {
-            long_name = true;
-        }
-        if !long_string && check_string_length_obj(obj) {
-            long_string = true;
-        }
-        if long_name && long_string {
+        if check_string_length_obj(obj) {
+            error(report, "6.1.13", "String length exceeded 32767");
             break;
         }
-    }
-    if long_name {
-        error(report, "6.1.13", "Name length exceeded 127");
-    }
-    if long_string {
-        error(report, "6.1.13", "String length exceeded 32767");
-    }
-}
-
-fn check_name_length_obj(obj: &Object<'_>) -> bool {
-    use pdf_syntax::object::MaybeRef;
-    match obj {
-        Object::Name(n) => n.as_ref().len() > 127,
-        Object::Dict(dict) => {
-            for (key, val) in dict.entries() {
-                if key.as_ref().len() > 127 {
-                    return true;
-                }
-                // Check direct name values without resolving indirect refs
-                if let MaybeRef::NotRef(Object::Name(n)) = val {
-                    if n.as_ref().len() > 127 {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        Object::Stream(s) => {
-            for (key, _) in s.dict().entries() {
-                if key.as_ref().len() > 127 {
-                    return true;
-                }
-            }
-            false
-        }
-        _ => false,
     }
 }
 

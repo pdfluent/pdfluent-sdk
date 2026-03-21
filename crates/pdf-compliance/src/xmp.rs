@@ -1579,16 +1579,22 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
         4 => "6.5.2",
         _ => "6.6.4",
     };
-    // Wrong pdfaid namespace URI — veraPDF always fires §6.7.9 for this
-    // (pdfaid: properties in an unrecognized namespace), not §6.7.11. (#FN-6.7.9-6-7-3-t01)
+    // Wrong pdfaid namespace URI — for PDF/A-1 veraPDF fires §6.7.9 (pdfaid: properties in
+    // unrecognized namespace). For PDF/A-2/3/4, veraPDF fires §6.6.4 (wrong pdfaid schema),
+    // which is already emitted by check::parse_xmp_pdfa returning None in pdfa.rs.
+    // (#FN-6.7.9-6-7-3-t01, #FP-6.7.9-pdfaid-ns-pdf/a-2, GHOSTSCRIPT-688790-4)
     let has_correct_pdfaid_ns = xmp.contains("http://www.aiim.org/pdfa/ns/id/");
     let has_pdfaid_part = xmp.contains("pdfaid:part");
     if has_pdfaid_part && !has_correct_pdfaid_ns {
-        error(
-            report,
-            "6.7.9",
-            "XMP pdfaid namespace URI is wrong or missing (must be 'http://www.aiim.org/pdfa/ns/id/')",
-        );
+        if level.part() == 1 {
+            error(
+                report,
+                "6.7.9",
+                "XMP pdfaid namespace URI is wrong or missing (must be 'http://www.aiim.org/pdfa/ns/id/')",
+            );
+        }
+        // For PDF/A-2/3/4: §6.6.4 is fired by parse_xmp_pdfa in pdfa.rs; return without
+        // additional violation here to avoid the FP.
         return;
     }
     if !has_pdfaid_part {
