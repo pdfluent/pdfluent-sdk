@@ -2667,7 +2667,9 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                 );
             } else if let Some(xmp_val) = xmp_vals.first() {
                 if let Some(info_decoded) = decode_pdf_info_string(author) {
-                    if info_decoded.as_str() != xmp_val.as_str() {
+                    // Trim both sides: Info dict strings may have leading/trailing
+                    // whitespace that gets stripped when written to XMP. (#FP-6.7.3.3)
+                    if info_decoded.trim() != xmp_val.trim() {
                         error(
                             report,
                             "6.7.3.3",
@@ -3292,8 +3294,14 @@ fn icc_based_profile_ref(cs_arr: &Array<'_>) -> Option<ObjRef> {
 }
 
 /// Compute a checksum of ICC profile bytes, ignoring the Profile ID field
-/// (16 bytes at offset 84-99). veraPDF considers profiles identical even if
-/// one has a zero Profile ID and the other has a computed one.
+/// (16 bytes at offset 84-99).
+///
+/// NOT used: veraPDF checks §6.2.4.2 by object-reference identity only, not
+/// content identity. Our converter creates two separate ICC objects with the
+/// same sRGB bytes (OutputIntent DestOutputProfile + DefaultRGB ICCBased), so
+/// a checksum-based check would produce false positives. Keep this helper for
+/// potential future use, but it is not called by the §6.2.4.2 checker. (#FP-6.2.4.2)
+#[allow(dead_code)]
 fn icc_profile_checksum(data: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -3316,35 +3324,20 @@ fn icc_profile_checksum(data: &[u8]) -> u64 {
 pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut ComplianceReport) {
     let xref = pdf.xref();
 
-    // ── 1. Collect forbidden ICC profile object references and checksums ─────
+    // ── 1. Collect forbidden ICC profile object references ───────────────────
+    // veraPDF checks §6.2.4.2 by object-reference identity only — two different
+    // ICC stream objects with identical bytes are NOT a violation. Content-hash
+    // comparison produced FPs because our converter creates separate sRGB objects
+    // for OutputIntent and DefaultRGB. (#FP-6.2.4.2)
     let mut forbidden_refs: std::collections::HashSet<ObjRef> = std::collections::HashSet::new();
-    let mut forbidden_checksums: std::collections::HashSet<u64> = std::collections::HashSet::new();
-
-    /// Helper: record a forbidden ICC profile stream (by ref and by decoded bytes)
-    fn record_forbidden_stream(
-        r: ObjRef,
-        xref: &pdf_syntax::xref::XRef,
-        refs: &mut std::collections::HashSet<ObjRef>,
-        checksums: &mut std::collections::HashSet<u64>,
-    ) {
-        refs.insert(r);
-        if let Some(s) = xref.get::<Stream<'_>>(r.into()) {
-            if let Ok(data) = s.decoded() {
-                if !data.is_empty() {
-                    checksums.insert(icc_profile_checksum(&data));
-                }
-            }
-        }
-    }
 
     // (a) OutputIntent DestOutputProfile — Catalog level and Page level.
     // PDF/A-4 allows OutputIntents at the page level (§6.2.4). Collect from both.
-    // (#FN-6.2.4.2)
     let mut collect_output_intents = |dict: &Dict<'_>| {
         if let Some(intents) = dict.get::<Array<'_>>(keys::OUTPUT_INTENTS) {
             for intent in intents.iter::<Dict<'_>>() {
                 if let Some(r) = intent.get_ref(keys::DEST_OUTPUT_PROFILE) {
-                    record_forbidden_stream(r, xref, &mut forbidden_refs, &mut forbidden_checksums);
+                    forbidden_refs.insert(r);
                 }
             }
         }
@@ -3371,16 +3364,16 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
         let Some(group_dict) = group else { continue };
         if let Some(cs_arr) = group_dict.get::<Array<'_>>(keys::CS) {
             if let Some(r) = icc_based_profile_ref(&cs_arr) {
-                record_forbidden_stream(r, xref, &mut forbidden_refs, &mut forbidden_checksums);
+                forbidden_refs.insert(r);
             }
         }
     }
 
-    if forbidden_refs.is_empty() && forbidden_checksums.is_empty() {
+    if forbidden_refs.is_empty() {
         return; // nothing to compare against
     }
 
-    // ── 2. Scan all objects for ICCBased CMYK colorspaces ───────────────────
+    // ── 2. Scan all objects for ICCBased colorspaces ─────────────────────────
     'outer: for (obj_idx, obj) in pdf.objects().into_iter().enumerate() {
         let cs_dict = match &obj {
             Object::Dict(d) => {
@@ -3413,36 +3406,21 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
             let Some(cs_arr) = cs_dict.get::<Array<'_>>(cs_name.as_ref()) else {
                 continue;
             };
-            // Extract ICCBased CMYK profile ref — either top-level or nested
+            // Extract ICCBased profile ref — either top-level or nested
             // in DeviceN/Separation alternate colorspace.
-            let prof_ref = extract_iccbased_cmyk_ref(&cs_arr);
-            let Some(prof_ref) = prof_ref else {
+            let Some(prof_ref) = extract_iccbased_cmyk_ref(&cs_arr) else {
                 continue;
             };
-            let icc_stream: Option<Stream<'_>> = xref.get::<Stream<'_>>(prof_ref.into());
-            // Check 1: same object reference
-            let ref_match = forbidden_refs.contains(&prof_ref);
-            // Check 2: same decoded bytes (MD5-equivalent)
-            let checksum_match = if !forbidden_checksums.is_empty() {
-                icc_stream
-                    .as_ref()
-                    .and_then(|s| s.decoded().ok())
-                    .map(|data| {
-                        !data.is_empty()
-                            && forbidden_checksums.contains(&icc_profile_checksum(&data))
-                    })
-                    .unwrap_or(false)
-            } else {
-                false
-            };
-            if ref_match || checksum_match {
+            // Only check object-reference identity (same indirect object number).
+            if forbidden_refs.contains(&prof_ref) {
                 let name_str = std::str::from_utf8(cs_name.as_ref()).unwrap_or("?");
                 error(
                     report,
                     "6.2.4.2",
                     format!(
-                        "ICCBased CMYK colorspace '{name_str}' (obj {obj_idx}) uses the same \
-                         ICC profile as the OutputIntent or transparency blending colorspace"
+                        "ICCBased colorspace '{name_str}' (obj {obj_idx}) reuses the same \
+                         ICC profile object as the OutputIntent DestOutputProfile or \
+                         transparency group color space"
                     ),
                 );
                 break 'outer; // one error per document is sufficient
@@ -8996,12 +8974,16 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
             // Helper: check one destination value for forbidden/PUA codepoints.
             // Returns true if an error was emitted (caller should return).
             let mut check_dst = |val: u32| -> bool {
-                // §6.2.11.7.3: U+FFFF forbidden
-                if val == 0xFFFF {
+                // §6.2.11.7.3: non-character code positions U+FFFF and U+FFFE forbidden.
+                // PUA range (U+E000–U+F8FF) is NOT forbidden by §6.2.11.7.3 — many
+                // legitimate fonts (Symbol, Wingdings, etc.) use PUA in ToUnicode.
+                // veraPDF does not flag PUA codepoints as §6.2.11.7.3 violations.
+                // (#FP-6.2.11.7.3)
+                if val == 0xFFFF || val == 0xFFFE {
                     error_at(
                         report,
                         "6.2.11.7.3",
-                        format!("Font {name} ToUnicode CMap contains forbidden U+FFFF"),
+                        format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
                         format!("page {}", page_idx + 1),
                     );
                     return true;
@@ -9012,17 +8994,6 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                         report,
                         "6.2.11.7.2",
                         format!("Font {name} ToUnicode CMap contains forbidden U+{val:04X}"),
-                        format!("page {}", page_idx + 1),
-                    );
-                    return true;
-                }
-                // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF, Supplementary PUA U+F0000+).
-                let is_pua = (0xE000u32..=0xF8FFu32).contains(&val) || val >= 0xF_0000;
-                if is_pua {
-                    error_at(
-                        report,
-                        "6.2.11.7.3",
-                        format!("Font {name} ToUnicode CMap maps to PUA codepoint U+{val:04X}"),
                         format!("page {}", page_idx + 1),
                     );
                     return true;
@@ -9131,23 +9102,14 @@ fn check_cmap_streams_for_ffff(pdf: &Pdf, report: &mut ComplianceReport) {
                     dstlo
                 };
                 for val in [dstlo, dsthi] {
-                    if val == 0xFFFF {
+                    // §6.2.11.7.3: non-character positions U+FFFF and U+FFFE are forbidden.
+                    // PUA (U+E000–U+F8FF) is NOT forbidden — veraPDF does not flag it.
+                    // (#FP-6.2.11.7.3)
+                    if val == 0xFFFF || val == 0xFFFE {
                         error(
                             report,
                             "6.2.11.7.3",
-                            "ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+FFFF",
-                        );
-                        return; // one error per document is enough
-                    }
-                    // §6.2.11.7.3: PUA codepoints (U+E000–U+F8FF, Supplementary PUA). (#483)
-                    let is_pua = (0xE000u32..=0xF8FFu32).contains(&val) || val >= 0xF_0000;
-                    if is_pua {
-                        error(
-                            report,
-                            "6.2.11.7.3",
-                            format!(
-                                "ToUnicode CMap (via UseCMap chain) maps to PUA codepoint U+{val:04X}"
-                            ),
+                            format!("ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+{val:04X}"),
                         );
                         return; // one error per document is enough
                     }
