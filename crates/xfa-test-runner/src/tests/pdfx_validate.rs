@@ -105,10 +105,10 @@ fn detect_pdfx_level(pdf_data: &[u8]) -> pdf_compliance::PdfXLevel {
     // Fast byte scan for common version strings.
     let data = pdf_data;
 
-    if data.windows(14).any(|w| w == b"PDF/X-1a:2003\"" || w == b"PDF/X-1a:2003 ")
-        || data
-            .windows(13)
-            .any(|w| w == b"PDF/X-1a:2003")
+    if data
+        .windows(14)
+        .any(|w| w == b"PDF/X-1a:2003\"" || w == b"PDF/X-1a:2003 ")
+        || data.windows(13).any(|w| w == b"PDF/X-1a:2003")
     {
         return pdf_compliance::PdfXLevel::X1a2003;
     }

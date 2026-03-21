@@ -93,7 +93,5 @@ impl PdfTest for PdfUaValidateTest {
 /// Checks for `pdfuaid:part` in XMP (the canonical marker) as a fast
 /// byte-level scan.
 fn claims_pdfua(pdf_data: &[u8]) -> bool {
-    pdf_data
-        .windows(12)
-        .any(|w| w == b"pdfuaid:part")
+    pdf_data.windows(12).any(|w| w == b"pdfuaid:part")
 }

@@ -8,11 +8,17 @@ fn debug_redact_gen419_hydrate() {
 
     let chars_before = pdf_extract::extract_positioned_chars(&doc, 1).unwrap();
     let text_before: String = chars_before.iter().map(|c| c.ch).collect();
-    println!("Before: {} 'Hydrate' occurrences", text_before.matches("Hydrate").count());
+    println!(
+        "Before: {} 'Hydrate' occurrences",
+        text_before.matches("Hydrate").count()
+    );
 
     let opts = RedactSearchOptions::exact("Hydrate");
     let report = search_and_redact(&mut doc, "Hydrate", &opts).unwrap();
-    println!("areas_redacted={} ops_removed={}", report.areas_redacted, report.operations_removed);
+    println!(
+        "areas_redacted={} ops_removed={}",
+        report.areas_redacted, report.operations_removed
+    );
 
     let mut saved = Vec::new();
     doc.save_to(&mut saved).unwrap();
@@ -33,7 +39,10 @@ fn debug_redact_gen881_are() {
     // Check initial "are" count
     let chars_before = pdf_extract::extract_positioned_chars(&doc, 1).unwrap();
     let text_before: String = chars_before.iter().map(|c| c.ch).collect();
-    println!("Before: {} 'are' occurrences", text_before.matches("are").count());
+    println!(
+        "Before: {} 'are' occurrences",
+        text_before.matches("are").count()
+    );
     // Show first 5 contexts
     for (i, (pos, _)) in text_before.match_indices("are").enumerate().take(5) {
         let s = pos.saturating_sub(8);
@@ -43,7 +52,10 @@ fn debug_redact_gen881_are() {
 
     let opts = RedactSearchOptions::exact("are");
     let report = search_and_redact(&mut doc, "are", &opts).unwrap();
-    println!("areas_redacted={} ops_removed={}", report.areas_redacted, report.operations_removed);
+    println!(
+        "areas_redacted={} ops_removed={}",
+        report.areas_redacted, report.operations_removed
+    );
 
     let mut saved = Vec::new();
     doc.save_to(&mut saved).unwrap();
@@ -67,8 +79,14 @@ fn debug_redact_r3_501_are() {
     let mut doc = lopdf::Document::load_mem(&data).unwrap();
     let chars_before = pdf_extract::extract_positioned_chars(&doc, 1).unwrap();
     let text_before: String = chars_before.iter().map(|c| c.ch).collect();
-    println!("Page 1 text (first 200): {:?}", &text_before[..200.min(text_before.len())]);
-    println!("Before: {} 'Are' occurrences", text_before.matches("Are").count());
+    println!(
+        "Page 1 text (first 200): {:?}",
+        &text_before[..200.min(text_before.len())]
+    );
+    println!(
+        "Before: {} 'Are' occurrences",
+        text_before.matches("Are").count()
+    );
 }
 
 #[test]
@@ -81,26 +99,31 @@ fn debug_redact_r3_501_full() {
 
     let chars_before = pdf_extract::extract_positioned_chars(&doc, 1).unwrap();
     let text_before: String = chars_before.iter().map(|c| c.ch).collect();
-    let are_before: Vec<usize> = text_before.match_indices("Are").map(|(i,_)| i).collect();
+    let are_before: Vec<usize> = text_before.match_indices("Are").map(|(i, _)| i).collect();
     println!("Before: {} 'Are' occurrences", are_before.len());
     for pos in &are_before {
-        let s = pos.saturating_sub(10); let e = (pos+20).min(text_before.len());
+        let s = pos.saturating_sub(10);
+        let e = (pos + 20).min(text_before.len());
         println!("  {:?}", &text_before[s..e]);
     }
 
     let opts = RedactSearchOptions::exact("Are");
     let report = search_and_redact(&mut doc, "Are", &opts).unwrap();
-    println!("areas_redacted={} ops_removed={}", report.areas_redacted, report.operations_removed);
+    println!(
+        "areas_redacted={} ops_removed={}",
+        report.areas_redacted, report.operations_removed
+    );
 
     let mut saved = Vec::new();
     doc.save_to(&mut saved).unwrap();
     let doc2 = lopdf::Document::load_mem(&saved).unwrap();
     let chars_after = pdf_extract::extract_positioned_chars(&doc2, 1).unwrap();
     let text_after: String = chars_after.iter().map(|c| c.ch).collect();
-    let are_after: Vec<usize> = text_after.match_indices("Are").map(|(i,_)| i).collect();
+    let are_after: Vec<usize> = text_after.match_indices("Are").map(|(i, _)| i).collect();
     println!("After: {} 'Are' occurrences remain", are_after.len());
     for pos in &are_after {
-        let s = pos.saturating_sub(10); let e = (pos+25).min(text_after.len());
+        let s = pos.saturating_sub(10);
+        let e = (pos + 25).min(text_after.len());
         println!("  {:?}", &text_after[s..e]);
     }
     // Check page count to see if "Are" might be on a different page
@@ -145,7 +168,12 @@ fn debug_r3_501_page_structure() {
 
     // Check if "Are" appears in the raw content stream bytes
     let page_stream = doc.get_page_content(*page_id).unwrap();
-    let text_preview: Vec<u8> = page_stream.iter().copied().filter(|b| *b >= 32 && *b < 127).take(500).collect();
+    let text_preview: Vec<u8> = page_stream
+        .iter()
+        .copied()
+        .filter(|b| *b >= 32 && *b < 127)
+        .take(500)
+        .collect();
     let s = String::from_utf8_lossy(&text_preview);
     // Find "Are" in the raw stream
     if s.contains("Are") {
@@ -176,14 +204,16 @@ fn debug_r3_501_text_runs_vs_positioned() {
     println!("Text length: {}", text.len());
     for (pos, _) in text.match_indices("Are") {
         let ch_start = pos; // byte offset in text
-        // Find which char_index this corresponds to
+                            // Find which char_index this corresponds to
         let char_idx = text[..pos].chars().count();
         if char_idx + 3 <= chars.len() {
             let a = &chars[char_idx];
             let r = &chars[char_idx + 1];
             let e = &chars[char_idx + 2];
-            println!("'Are' positioned chars: A=({:.1},{:.1}) R=({:.1},{:.1}) E=({:.1},{:.1})",
-                a.bbox[0], a.bbox[1], r.bbox[0], r.bbox[1], e.bbox[0], e.bbox[1]);
+            println!(
+                "'Are' positioned chars: A=({:.1},{:.1}) R=({:.1},{:.1}) E=({:.1},{:.1})",
+                a.bbox[0], a.bbox[1], r.bbox[0], r.bbox[1], e.bbox[0], e.bbox[1]
+            );
         }
     }
 
@@ -195,8 +225,14 @@ fn debug_r3_501_text_runs_vs_positioned() {
     // Print runs that contain "Are", are short, OR are near y≈59.2 (second occurrence)
     for (i, run) in runs.iter().enumerate() {
         if run.text.contains("Are") || run.text.len() < 20 || (run.y - 59.2).abs() < 10.0 {
-            println!("  run[{i}] y={:.1} x={:.1} w={:.1} text={:?} ops={:?}",
-                run.y, run.x, run.width, &run.text[..30.min(run.text.len())], run.ops_range);
+            println!(
+                "  run[{i}] y={:.1} x={:.1} w={:.1} text={:?} ops={:?}",
+                run.y,
+                run.x,
+                run.width,
+                &run.text[..30.min(run.text.len())],
+                run.ops_range
+            );
         }
     }
     println!("--- CTM at second Are position ---");

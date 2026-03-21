@@ -176,8 +176,8 @@ impl VeraPdfOracle {
 /// spawning a live veraPDF process (it stores the raw JSON, then later converts
 /// it to the same struct format used by the run-local cache).
 pub fn parse_verapdf_json_output(stdout: &[u8], duration_ms: u64) -> Result<VeraPdfResult, String> {
-    let report: VeraPdfReport = serde_json::from_slice(stdout)
-        .map_err(|e| format!("failed to parse veraPDF JSON: {e}"))?;
+    let report: VeraPdfReport =
+        serde_json::from_slice(stdout).map_err(|e| format!("failed to parse veraPDF JSON: {e}"))?;
 
     let job = report
         .report
