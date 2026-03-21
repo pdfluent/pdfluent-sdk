@@ -50,6 +50,8 @@ pub struct PdfMetadata {
     pub creator_tool: Option<String>,
     pub create_date: Option<String>,
     pub modify_date: Option<String>,
+    /// Keywords from /Info /Keywords — written as pdf:Keywords in XMP (§6.7.3.5).
+    pub keywords: Option<String>,
 }
 
 /// Report from XMP metadata repair.
@@ -173,6 +175,12 @@ fn generate_xmp(meta: &PdfMetadata, conformance: PdfAConformance) -> Vec<u8> {
     if let Some(ref producer) = meta.producer {
         writer.producer(producer);
     }
+    // Sync /Info Keywords → pdf:Keywords (§6.7.3.5).
+    if let Some(ref kw) = meta.keywords {
+        if !kw.trim().is_empty() {
+            writer.pdf_keywords(kw);
+        }
+    }
 
     // PDF/A extension schema declarations (6.6.2.3.1).
     // Properties not in XMP 2004 core need extension schema descriptions.
@@ -258,6 +266,8 @@ fn read_info_dict(doc: &Document) -> PdfMetadata {
     meta.description = get_string_value(info, b"Subject");
     meta.create_date = get_string_value(info, b"CreationDate");
     meta.modify_date = get_string_value(info, b"ModDate");
+    // Sync /Keywords → pdf:Keywords (§6.7.3.5).
+    meta.keywords = get_string_value(info, b"Keywords");
 
     meta
 }
@@ -339,6 +349,7 @@ fn merge_metadata(user: Option<&PdfMetadata>, existing: &PdfMetadata) -> PdfMeta
                 .modify_date
                 .clone()
                 .or_else(|| existing.modify_date.clone()),
+            keywords: user.keywords.clone().or_else(|| existing.keywords.clone()),
         }
     } else {
         existing.clone()
