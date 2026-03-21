@@ -105,6 +105,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     remove_forbidden_annotations(doc);
     fix_file_spec_keys(doc);
     strip_ef_from_file_specs(doc);
+    strip_stream_external_ref_keys(doc);
     remove_ocg_as_key(doc);
     strip_signatures(doc);
     strip_non_catalog_metadata(doc);
@@ -2291,6 +2292,34 @@ fn strip_ef_from_file_specs(doc: &mut Document) {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.remove(b"EF");
             }
+        }
+    }
+}
+
+/// Strip /F, /FFilter, /FDecodeParms from non-EmbeddedFile stream dicts (§6.1.7.1).
+///
+/// These keys reference external files and are forbidden in PDF/A streams.
+/// EmbeddedFile streams are exempt (they need /F for the file spec link).
+fn strip_stream_external_ref_keys(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let is_embedded = {
+            if let Some(Object::Stream(ref s)) = doc.objects.get(&id) {
+                matches!(
+                    s.dict.get(b"Type").ok(),
+                    Some(Object::Name(ref n)) if n == b"EmbeddedFile"
+                )
+            } else {
+                false
+            }
+        };
+        if is_embedded {
+            continue;
+        }
+        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            s.dict.remove(b"F");
+            s.dict.remove(b"FFilter");
+            s.dict.remove(b"FDecodeParms");
         }
     }
 }
