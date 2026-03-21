@@ -9051,10 +9051,7 @@ pub fn check_tounicode_cmap(
                     .as_ref()
                     .and_then(|d| d.get::<Name>(b"BaseEncoding" as &[u8]))
                     .is_some_and(|n| is_predefined_enc_name(n.as_ref()));
-            // Symbolic font check: symbolic fonts have non-AGL built-in encodings
-            // (e.g. CMSY8/TeX math). Even Type1 symbolic fonts with no /Encoding
-            // cannot have Unicode derived from their built-in encoding — veraPDF fires
-            // §6.3.8/§6.2.11.7.2 for them. Resolve FontDescriptor indirect ref. (#FN-6.3.8)
+            // Symbolic font check: resolve FontDescriptor (may be an indirect ref).
             let is_symbolic = {
                 let desc: Option<Dict<'_>> =
                     font_dict.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
@@ -9066,14 +9063,16 @@ pub fn check_tounicode_cmap(
                     .is_some_and(|f| f & 0x04 != 0)
             };
             // Exempt if: predefined encoding OR (non-Unicode level AND no encoding AND
-            // not symbolic). "No encoding" means built-in encoding — for non-symbolic Type1
-            // fonts this is StandardEncoding, whose Unicode mapping is derivable. For
-            // symbolic fonts there is no derivable mapping, so they are not exempt.
-            // (#FN-6.3.8, #FN-6.2.11.7.2)
+            // built-in-encoding is derivable). For non-symbolic fonts the built-in
+            // encoding is StandardEncoding (AGL-mappable). For Type1 symbolic fonts
+            // with no /Encoding (e.g. CMSY8, TeX monospace), veraPDF does NOT fire
+            // §6.2.11.7.2 for PDF/A-2/3 — exempt them there too. Keep PDF/A-1 §6.3.8
+            // strict for Type1 symbolic (no evidence veraPDF exempts them in PDF/A-1).
+            // (#FN-6.3.8, #FN-6.2.11.7.2, #FP-6.2.11.7.2)
             let no_enc_exempt = !requires_unicode
                 && encoding_name.is_none()
                 && encoding_dict.is_none()
-                && !is_symbolic
+                && (!is_symbolic || (is_type1 && part >= 2))
                 && (part != 1 || is_type1);
             if uses_predefined_encoding || no_enc_exempt {
                 // Exempt: predefined or built-in encoding — Unicode mapping known.
@@ -13676,26 +13675,35 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
         } else {
             // Cross-reference stream (PDF 1.5+): /ID is embedded in the XRef stream dict.
             // The XRef stream object itself is NOT listed in its own /Index, so pdf.objects()
-            // does not yield it. Scan raw bytes instead: look for "/Type /XRef" within a 2 KB
-            // window that also contains "/ID". (#FP-6.1.3)
+            // does not yield it. Scan raw bytes instead: look for "/Type /XRef" or "/Type/XRef"
+            // (both forms are valid) within a 2 KB window that also contains "/ID".
+            // Fixes FP: lopdf writes "/Type/XRef" (no space) so the previous "/Type /XRef"
+            // needle never matched. (#FP-6.1.3)
             let found = {
-                let needle_xref = b"/Type /XRef";
+                // Match "/Type" followed by optional whitespace, then "/XRef"
                 let needle_id = b"/ID";
                 let mut ok = false;
                 let mut search = 0;
-                while let Some(off) = data[search..]
-                    .windows(needle_xref.len())
-                    .position(|w| w == needle_xref)
-                {
+                while let Some(off) = data[search..].windows(5).position(|w| w == b"/Type") {
                     let abs = search + off;
-                    let window_start = abs.saturating_sub(512);
-                    let window_end = (abs + 2048).min(data.len());
-                    let window = &data[window_start..window_end];
-                    if window.windows(needle_id.len()).any(|w| w == needle_id) {
-                        ok = true;
-                        break;
+                    // Skip optional whitespace after /Type
+                    let mut after = abs + 5;
+                    while after < data.len()
+                        && (data[after] == b' ' || data[after] == b'\r' || data[after] == b'\n')
+                    {
+                        after += 1;
                     }
-                    search = abs + needle_xref.len();
+                    // Check for /XRef at this position
+                    if data.get(after..after + 5) == Some(b"/XRef") {
+                        let window_start = abs.saturating_sub(512);
+                        let window_end = (abs + 2048).min(data.len());
+                        let window = &data[window_start..window_end];
+                        if window.windows(needle_id.len()).any(|w| w == needle_id) {
+                            ok = true;
+                            break;
+                        }
+                    }
+                    search = abs + 5;
                 }
                 ok
             };
