@@ -11445,10 +11445,8 @@ fn check_truetype_simple_widths(
                 None => continue, // Not in (3,1) — skip, no violation
             }
         } else {
-            // When the glyph is absent from the subset font, the renderer falls back to
-            // the notdef glyph (GID 0). veraPDF uses the notdef advance as
-            // "widthFromFontProgram" and compares it with the PDF /Widths entry.
-            // (#FN-6.3.5/6.3.6 isartor-6-3-5-t01-fail-d)
+            // When the glyph is absent from the font subset, veraPDF uses the notdef
+            // advance as widthFromFontProgram and compares it against the /Widths entry.
             face.glyph_index(ch)
         };
         // Use notdef (GID 0) when glyph is absent; skip only when glyph is explicitly
