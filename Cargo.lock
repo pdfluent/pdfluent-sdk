@@ -4055,6 +4055,7 @@ name = "pdf-compliance"
 version = "1.0.0-beta.1"
 dependencies = [
  "cff-parser",
+ "flate2",
  "log",
  "lopdf",
  "pdf-syntax",

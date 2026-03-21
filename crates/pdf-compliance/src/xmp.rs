@@ -913,11 +913,16 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     // (PDF/A-1). PDFIUM-610-0 style: §6.7.11 from broken RDF namespace but pdfaid IS
     // present — those sub-rules SHOULD fire, so we only gate on pdfaid absence.
     // (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4)
-    if !xmp.contains("pdfaid:part") {
-        return;
-    }
-    // Skip when generic §6.7.3 was already emitted by check_xmp_rdf_structure.
-    if report.issues.iter().any(|i| i.rule == "6.7.3") {
+    // When the pdfaid identification is invalid (absent, wrong namespace URI, or broken
+    // RDF structure), veraPDF does NOT fire §6.7.3 consistency sub-rules.
+    // Cases: "6.6.4" = PDF/A-2/3 pdfaid invalid; "6.7.11" = PDF/A-1 pdfaid invalid
+    // (incl. wrong RDF namespace); "6.5.2" = PDF/A-4; "6.7.3" = generic from broken RDF.
+    // (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4, PDFIUM-610-0, isartor-6-7-2-t02-fail-a)
+    let pdfaid_invalid = report
+        .issues
+        .iter()
+        .any(|i| matches!(i.rule.as_str(), "6.6.4" | "6.7.11" | "6.5.2" | "6.7.3"));
+    if pdfaid_invalid {
         return;
     }
     let metadata = pdf.metadata();
