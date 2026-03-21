@@ -6256,8 +6256,13 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 // is authoritative. Pre-compute the CFF encoding map so the filter can
                 // allow corrections where the CFF maps the code to a valid (non-.notdef)
                 // GID — those corrections are definitively correct. (#479)
+                // Compute CFF encoding map for both subset and non-subset fonts.
+                // For subset fonts, the CFF encoding maps codes to GIDs directly and
+                // veraPDF uses it as a fallback when name-based lookup fails (e.g. for
+                // glyphs with GID-based or non-standard names). Applying corrections for
+                // these codes is safe because they are definitively mapped. (#504)
                 let cff_enc_for_filter: Option<std::collections::HashMap<u8, u16>> =
-                    if !is_subset && enc_info.0.is_empty() {
+                    if enc_info.0.is_empty() || is_subset {
                         Some(parse_cff_encoding_map(&font_data))
                     } else {
                         None
@@ -6296,8 +6301,10 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                     if is_subset {
                         // High-byte subset remaps are often validated through
                         // CFF internal encoding. Keep low-byte edits, explicit
-                        // /space fixes, and standard-encoding high-byte codes
-                        // that resolve to an actual glyph name in the subset.
+                        // /space fixes, standard-encoding high-byte codes that
+                        // resolve to an actual glyph name in the subset, and
+                        // codes where the CFF encoding maps to a valid GID
+                        // (veraPDF's fallback when name lookup fails). (#504)
                         code <= 127
                             || matches!(enc_info.1.get(&code), Some(name) if name == "space")
                             || subset_standard_cff_code_is_safe(
@@ -6306,6 +6313,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                                 &enc_info.0,
                                 &enc_info.1,
                             )
+                            || matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0)
                     } else {
                         // Explicit Differences entries are deterministic mappings, so
                         // high-byte corrections remain safe on non-subset fonts.
@@ -8733,11 +8741,21 @@ fn subset_standard_cff_code_is_safe(
         return name != "space" && cff_font_has_named_glyph(font_data, name);
     }
 
-    if !matches!(enc_name, "WinAnsiEncoding" | "MacRomanEncoding") {
+    // Empty enc_name with no BaseEncoding: encoding_to_char() falls back to
+    // WinAnsiEncoding for codes ≥128, so treat it as WinAnsiEncoding here too.
+    // This matches the width computation path used by get_otf_width_via_encoding
+    // and cff_width_for_code. (#504)
+    let effective_enc = if enc_name.is_empty() && code >= 128 {
+        "WinAnsiEncoding"
+    } else {
+        enc_name
+    };
+
+    if !matches!(effective_enc, "WinAnsiEncoding" | "MacRomanEncoding") {
         return false;
     }
 
-    let ch = encoding_to_char(code, enc_name);
+    let ch = encoding_to_char(code, effective_enc);
     if let Some(agl_name) = unicode_to_agl_name(ch) {
         if cff_font_has_named_glyph(font_data, &agl_name) {
             return true;
@@ -13460,16 +13478,11 @@ fn fix_notdef_in_truetype(
             &base_encoding,
         ));
         if glyph_name == "space" {
-            // If "space" exists in the font, remap to it for both subset and
-            // non-subset fonts to avoid .notdef references.
-            let has_space = face.glyph_index(' ').is_some_and(|gid| {
-                if is_subset {
-                    tt_glyph_has_data(&face, gid)
-                } else {
-                    true
-                }
-            });
-            if has_space {
+            // Space is intentionally a blank glyph (no outline data in loca),
+            // so tt_glyph_has_data returns false for it — but the glyph IS
+            // valid and accessible via cmap. Only check that U+0020 is reachable;
+            // outline presence is irrelevant for blank-by-design glyphs. (#504)
+            if face.glyph_index(' ').is_some() {
                 new_diffs.push((code, "space".to_string()));
             }
         } else {
