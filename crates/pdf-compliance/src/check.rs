@@ -9166,15 +9166,50 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
     // is present; skip PUA errors for documents that have ActualText. (#FP-6.2.11.7.3)
     let skip_pua = pdf_has_any_actual_text(pdf);
 
-    // First pass: scan fonts and their direct ToUnicode streams.
+    // Collect decoded bytes of direct font ToUnicode streams so check_cmap_streams_for_ffff
+    // (second pass) can skip them — they are already fully handled by the first pass below,
+    // including the per-font symbolic exemption. Without this, symbolic font CMap streams
+    // that the first pass correctly exempts would still be re-scanned (and FP-fired) by the
+    // second pass, which has no per-font context. (#FP-6.2.11.7.3)
+    let mut direct_tounicode_bytes: std::collections::HashSet<Vec<u8>> =
+        std::collections::HashSet::new();
+
+    // First pass: scan fonts and their direct or indirect ToUnicode streams.
+    let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, page_idx| {
-        let Some(cmap_stream) = font_dict.get::<Stream<'_>>(keys::TO_UNICODE) else {
+        // ToUnicode may be an indirect reference (e.g. `ToUnicode 25 0 R`).
+        // Fall back to xref lookup so indirect refs are not silently skipped.
+        // Fixes FN §6.2.11.7.3 for cs-veraPDF 6-2-11-7-3-t01-fail-e.pdf.
+        let Some(cmap_stream) = font_dict
+            .get::<Stream<'_>>(keys::TO_UNICODE)
+            .or_else(|| {
+                font_dict
+                    .get_ref(keys::TO_UNICODE)
+                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+            })
+        else {
             return;
         };
         let Ok(data) = cmap_stream.decoded() else {
             return;
         };
+        direct_tounicode_bytes.insert(data.clone());
         let text = String::from_utf8_lossy(&data);
+
+        // Symbolic fonts (Flags bit 2 set) use PUA by design (Webdings, Wingdings etc.).
+        // veraPDF does not fire §6.2.11.7.3 for symbolic fonts. Resolve FontDescriptor
+        // via both direct dict and indirect ref (FontDescriptor may be on the CIDFont).
+        // (#FP-6.2.11.7.3)
+        let font_is_symbolic = font_dict
+            .get::<Dict<'_>>(keys::FONT_DESC)
+            .or_else(|| {
+                font_dict
+                    .get_ref(keys::FONT_DESC)
+                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+            })
+            .and_then(|d| d.get::<i32>(keys::FLAGS))
+            .is_some_and(|f| f & 0x04 != 0);
+        let skip_pua_for_font = skip_pua || font_is_symbolic;
 
         // Parse line by line, tracking which section we are in.
         // beginbfchar: each line is  <srccode> <dstcode>  — check dstcode (2nd token)
@@ -9256,9 +9291,9 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                     return true;
                 }
                 // §6.2.11.7.3: BMP Private Use Area U+E000-U+F8FF forbidden UNLESS
-                // ActualText is present (veraPDF exempts PUA when ActualText covers
-                // the glyph). (#FN-6.2.11.7.3 / #FP-6.2.11.7.3)
-                if !skip_pua && (0xE000u32..=0xF8FF).contains(&val) {
+                // ActualText is present OR the font is symbolic (Webdings, Wingdings etc.
+                // use PUA by design). veraPDF exempts both cases. (#FP-6.2.11.7.3)
+                if !skip_pua_for_font && (0xE000u32..=0xF8FF).contains(&val) {
                     error_at(
                         report,
                         "6.2.11.7.3",
@@ -9267,8 +9302,10 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                     return true;
                 }
-                // §6.2.11.7.3: non-character positions U+FFFE and U+FFFF.
-                if val == 0xFFFF || val == 0xFFFE {
+                // §6.2.11.7.3: non-character position U+FFFF only.
+                // U+FFFE belongs to §6.2.11.7.2 (BOM / reverse-BOM), not here.
+                // Fixes FP §6.2.10.9 / FN §6.2.10.7 for PDF/A-4 test 6-2-10-7-t01-fail-b.pdf.
+                if val == 0xFFFF {
                     error_at(
                         report,
                         "6.2.11.7.3",
@@ -9277,7 +9314,7 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                     return true;
                 }
-                // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE forbidden
+                // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE (reverse-BOM) forbidden
                 if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
                     error_at(
                         report,
@@ -9326,11 +9363,20 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
     // Second pass: scan all CMap streams in the PDF for §6.2.11.7.3 violations.
     // ToUnicode CMaps may chain via /UseCMap to resource streams that are not
     // directly linked as font ToUnicode — those must also be checked. (#467)
-    check_cmap_streams_for_ffff(pdf, skip_pua, report);
+    check_cmap_streams_for_ffff(pdf, skip_pua, &direct_tounicode_bytes, report);
 }
 
 /// Scan all stream objects that look like CMap programs for U+FFFF destination values.
-fn check_cmap_streams_for_ffff(pdf: &Pdf, skip_pua: bool, report: &mut ComplianceReport) {
+///
+/// `direct_streams` contains the decoded bytes of all ToUnicode streams already checked
+/// by the per-font first pass; those streams are skipped here to avoid double-firing and
+/// to preserve the per-font symbolic exemption applied there. (#FP-6.2.11.7.3)
+fn check_cmap_streams_for_ffff(
+    pdf: &Pdf,
+    skip_pua: bool,
+    direct_streams: &std::collections::HashSet<Vec<u8>>,
+    report: &mut ComplianceReport,
+) {
     for obj in pdf.objects() {
         let stream = match &obj {
             Object::Stream(s) => s,
@@ -9339,6 +9385,10 @@ fn check_cmap_streams_for_ffff(pdf: &Pdf, skip_pua: bool, report: &mut Complianc
         let Ok(data) = stream.decoded() else {
             continue;
         };
+        // Skip streams already fully checked in the per-font first pass.
+        if direct_streams.contains(&data) {
+            continue;
+        }
         let text = String::from_utf8_lossy(&data);
         if !text.contains("beginbfchar") && !text.contains("beginbfrange") {
             continue;

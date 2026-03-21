@@ -8176,7 +8176,7 @@ fn compute_otf_cff_corrections(
     differences: &std::collections::HashMap<u32, String>,
     has_pdf_encoding: bool,
     scale: f64,
-    _is_subset: bool,
+    is_subset: bool,
 ) -> Vec<(usize, i64)> {
     // If no PDF encoding, extract CFF table and its FontMatrix scale.
     // We use CFF charstring widths (not hmtx) to match veraPDF §6.2.11.5. (#FP-6.2.11.5)
@@ -8190,13 +8190,19 @@ fn compute_otf_cff_corrections(
         None
     };
 
-    // For fonts with PDF encoding AND custom CFF encoding, extract CFF for
-    // verification. veraPDF uses the CFF internal encoding for width comparison
-    // (rule 6.2.11.5:1), which may map codes to different GIDs than the PDF
-    // encoding. We use CFF charstring widths * FontMatrix (not hmtx) since
-    // veraPDF uses the CFF program widths.
+    // For non-subset fonts with PDF encoding AND custom CFF encoding, extract
+    // CFF for verification. veraPDF uses the CFF internal encoding for width
+    // comparison (rule 6.2.11.5:1) for non-subset fonts where the CFF encoding
+    // codes correspond to the PDF encoding codes.
+    //
+    // IMPORTANT: do NOT use this for subset fonts. During subsetting, the CFF
+    // encoding is rewritten with sequential arbitrary codes (GID 1 → code 1,
+    // GID 2 → code 2, …), which have NO relation to the PDF encoding codes
+    // (e.g. WinAnsiEncoding code 32 = 'space'). Using the CFF encoding for a
+    // subset font causes catastrophic wrong corrections (e.g. space 280→1543).
+    // For subset fonts, always use the PDF encoding → cmap → hmtx path. (#772)
     let custom_cff_info: Option<(cff_parser::Table, std::collections::HashMap<u8, u16>, f64)> =
-        if has_pdf_encoding {
+        if has_pdf_encoding && !is_subset {
             extract_cff_bytes_from_otf(font_data).and_then(|cff_bytes| {
                 if !cff_has_custom_encoding(cff_bytes) {
                     return None;
@@ -8223,9 +8229,10 @@ fn compute_otf_cff_corrections(
         let code = first_char + i as u32;
 
         let frac_w = if has_pdf_encoding {
-            // For custom CFF encoding, use CFF encoding → GID → CFF charstring
-            // width. This takes priority over PDF encoding because veraPDF uses
-            // the CFF internal encoding for width comparison.
+            // For non-subset fonts with custom CFF encoding, use CFF encoding
+            // → GID → CFF charstring width (veraPDF uses the CFF internal
+            // encoding for width comparison for non-subset fonts).
+            // For subset fonts, custom_cff_info is always None (see above).
             if let Some((ref cff, ref enc_map, cff_scale)) = custom_cff_info {
                 if code <= 255 {
                     if let Some(&gid) = enc_map.get(&(code as u8)) {
@@ -8270,12 +8277,14 @@ fn compute_otf_cff_corrections(
         // Codes not found in the font program map to .notdef (GID 0).
         // veraPDF validates the Widths entry against GID 0's advance for such
         // codes. Restrict to high-byte codes (128-255) where absent glyphs are
-        // expected in subsets or encoding gaps. (#479)
+        // expected in encoding gaps. (#479)
+        // For subset fonts, a missing cmap entry means the glyph is not in the
+        // subset — veraPDF does not validate widths for absent glyphs. (#772)
         // For CFF path (no PDF encoding), this fallback is unreachable (the
         // CFF branch uses `continue` when glyph_index returns None/0). For
         // the PDF-encoding path, use hmtx since that's the available fallback.
         let frac_w = frac_w.or_else(|| {
-            if (128..=255).contains(&code) {
+            if (128..=255).contains(&code) && !is_subset {
                 face.glyph_hor_advance(ttf_parser::GlyphId(0))
                     .map(|w| w as f64 * scale)
             } else {
@@ -8394,9 +8403,12 @@ fn find_cff_glyph_width_by_name_fractional(
         let gid = cff_parser::GlyphId(gid_raw);
         if let Some(name) = cff.glyph_name(gid) {
             if name == glyph_name {
-                if let Some(width) = cff_type2_endchar_default_width(font_data, gid, scale) {
-                    return Some(width);
-                }
+                // Do NOT call cff_type2_endchar_default_width here. That function
+                // fires whenever the charstring stack has exactly 4 items before
+                // endchar (old seac composite detection), which is also true for
+                // perfectly normal glyphs in subset CFF fonts, returning a wrong
+                // defaultWidthX value instead of the glyph's actual advance.
+                // Use cff.glyph_width directly; it parses the charstring correctly.
                 return cff.glyph_width(gid).map(|w| w as f64 * scale);
             }
         }
@@ -8526,6 +8538,17 @@ fn cff_width_for_code(
                             cff, font_data, &agl_name, scale,
                         ) {
                             return Some(w);
+                        }
+                        // Also try alternatives of the AGL name. For example,
+                        // unicode_to_glyph_name(U+0027) = "'" but AGL name is
+                        // "quotesingle"; the CFF subset may store it as "quoteright".
+                        // (#FN-6.2.11.5-agl-alt)
+                        for alt in cff_glyph_name_alternatives(&agl_name) {
+                            if let Some(w) = find_cff_glyph_width_by_name_fractional(
+                                cff, font_data, alt, scale,
+                            ) {
+                                return Some(w);
+                            }
                         }
                     }
                 }
