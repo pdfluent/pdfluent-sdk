@@ -9104,6 +9104,49 @@ pub fn check_tounicode_cmap(
     });
 }
 
+/// Returns true if any page content stream or structure tree element in the PDF
+/// contains an /ActualText entry. veraPDF does not fire §6.2.11.7.3 for PUA
+/// codepoints when ActualText is present (the glyph has an explicit Unicode
+/// override), so we suppress PUA violations in that case. (#FP-6.2.11.7.3)
+fn pdf_has_any_actual_text(pdf: &Pdf) -> bool {
+    // 1. Page content streams: BDC property-list /ActualText
+    for page in pdf.pages().iter() {
+        if let Some(content) = page.page_stream() {
+            if content.windows(11).any(|w| w == b"/ActualText") {
+                return true;
+            }
+        }
+    }
+    // 2. StructTree elements with /ActualText key
+    if let Some(struct_tree) = struct_tree_root(pdf) {
+        if struct_dict_has_actual_text_key(&struct_tree, 0) {
+            return true;
+        }
+    }
+    false
+}
+
+fn struct_dict_has_actual_text_key(elem: &Dict<'_>, depth: usize) -> bool {
+    if depth > 200 {
+        return false;
+    }
+    if elem.get::<Object<'_>>(b"ActualText" as &[u8]).is_some() {
+        return true;
+    }
+    if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
+        for kid in kids.iter::<Dict<'_>>() {
+            if struct_dict_has_actual_text_key(&kid, depth + 1) {
+                return true;
+            }
+        }
+    } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
+        if struct_dict_has_actual_text_key(&kid, depth + 1) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check ToUnicode CMap values for forbidden Unicode code points.
 ///
 /// §6.2.11.7.2: U+0000, U+FEFF (BOM), and U+FFFE are forbidden.
@@ -9113,6 +9156,10 @@ pub fn check_tounicode_cmap(
 /// Codespace range bounds (e.g. `<0000> <FFFF>`) are NOT destinations and
 /// must not be flagged as violations.
 pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
+    // PUA (U+E000-U+F8FF) is only a §6.2.11.7.3 violation when no ActualText
+    // is present; skip PUA errors for documents that have ActualText. (#FP-6.2.11.7.3)
+    let skip_pua = pdf_has_any_actual_text(pdf);
+
     // First pass: scan fonts and their direct ToUnicode streams.
     for_each_font(pdf, |name, font_dict, page_idx| {
         let Some(cmap_stream) = font_dict.get::<Stream<'_>>(keys::TO_UNICODE) else {
@@ -9202,9 +9249,10 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
                     );
                     return true;
                 }
-                // §6.2.11.7.3: BMP Private Use Area U+E000-U+F8FF forbidden.
-                // (#FN-6.2.11.7.3)
-                if (0xE000u32..=0xF8FF).contains(&val) {
+                // §6.2.11.7.3: BMP Private Use Area U+E000-U+F8FF forbidden UNLESS
+                // ActualText is present (veraPDF exempts PUA when ActualText covers
+                // the glyph). (#FN-6.2.11.7.3 / #FP-6.2.11.7.3)
+                if !skip_pua && (0xE000u32..=0xF8FF).contains(&val) {
                     error_at(
                         report,
                         "6.2.11.7.3",
@@ -9272,11 +9320,11 @@ pub fn check_tounicode_values(pdf: &Pdf, report: &mut ComplianceReport) {
     // Second pass: scan all CMap streams in the PDF for §6.2.11.7.3 violations.
     // ToUnicode CMaps may chain via /UseCMap to resource streams that are not
     // directly linked as font ToUnicode — those must also be checked. (#467)
-    check_cmap_streams_for_ffff(pdf, report);
+    check_cmap_streams_for_ffff(pdf, skip_pua, report);
 }
 
 /// Scan all stream objects that look like CMap programs for U+FFFF destination values.
-fn check_cmap_streams_for_ffff(pdf: &Pdf, report: &mut ComplianceReport) {
+fn check_cmap_streams_for_ffff(pdf: &Pdf, skip_pua: bool, report: &mut ComplianceReport) {
     for obj in pdf.objects() {
         let stream = match &obj {
             Object::Stream(s) => s,
@@ -9337,14 +9385,15 @@ fn check_cmap_streams_for_ffff(pdf: &Pdf, report: &mut ComplianceReport) {
                     dstlo
                 };
                 for val in [dstlo, dsthi] {
-                    // §6.2.11.7.3: surrogates (D800-DFFF), BMP PUA (E000-F8FF),
-                    // U+FFFE, U+FFFF; plus 4-byte surrogate pair encodings.
+                    // §6.2.11.7.3: surrogates (D800-DFFF), BMP PUA (E000-F8FF,
+                    // unless ActualText present), U+FFFE, U+FFFF; plus 4-byte
+                    // surrogate pair encodings.
                     let is_violation = if val > 0xFFFF {
                         let high = (val >> 16) as u16;
                         (0xD800u16..=0xDFFF).contains(&high)
                     } else {
                         (0xD800u32..=0xDFFF).contains(&val)
-                            || (0xE000u32..=0xF8FF).contains(&val)
+                            || (!skip_pua && (0xE000u32..=0xF8FF).contains(&val))
                             || val == 0xFFFF
                             || val == 0xFFFE
                     };
@@ -15812,30 +15861,40 @@ fn check_type1_simple_widths(
         let pdf_w = pdf_widths[idx];
 
         // Look up glyph name by priority:
-        // 1. /Differences entry for this code (highest priority — PDF spec §9.6.6.1)
-        // 2. Internal Type1 encoding (dup…put entries in the font program) — only when
-        //    the PDF explicitly declares /Encoding. Symbol fonts (CMSY8 etc.) have
-        //    non-AGL built-in encodings; using them for width checking causes FP §6.3.6.
+        // 1. /Differences entry for this code (highest — PDF spec §9.6.6.1)
+        // 2. Predefined BaseEncoding (WinAnsiEncoding). veraPDF follows the PDF
+        //    encoding dict to resolve glyph names, not the internal Type1 encoding.
+        //    When BaseEncoding=WinAnsiEncoding is declared, use WinAnsiEncoding names
+        //    for width comparison. (#FP-6.2.11.5-enc-priority)
+        // 3. Internal Type1 encoding (dup…put entries) — only when no predefined
+        //    encoding is declared. Symbol fonts (CMSY8 etc.) have non-AGL built-in
+        //    encodings; using them for width checking without this guard causes FPs.
         //    (#FP-6.3.6)
-        // 3. BaseEncoding (WinAnsiEncoding / StandardEncoding) from the PDF dict
         // 4. StandardEncoding as final fallback (Type1 default)
         let has_explicit_encoding = direct_enc_name.is_some() || enc_dict_opt.is_some();
+        let base_enc = base_enc_name.as_deref().unwrap_or(b"");
         let glyph_name: Option<String> = differences
             .get(&(code as u8))
             .cloned()
             .or_else(|| {
-                if has_explicit_encoding {
+                // Predefined BaseEncoding takes priority over internal font encoding.
+                if base_enc == b"WinAnsiEncoding" {
+                    t1_winansi_glyph_name(code as u8).map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                // Internal Type1 encoding: only when no predefined encoding overrides it.
+                if has_explicit_encoding && base_enc != b"WinAnsiEncoding" {
                     parsed.encoding.get(&(code as u8)).cloned()
                 } else {
                     None
                 }
             })
             .or_else(|| {
-                let enc_name = base_enc_name.as_deref().unwrap_or(b"");
-                if enc_name.is_empty() || enc_name == b"StandardEncoding" {
+                if base_enc.is_empty() || base_enc == b"StandardEncoding" {
                     t1_standard_encoding_name(code as u8).map(str::to_string)
-                } else if enc_name == b"WinAnsiEncoding" {
-                    t1_winansi_glyph_name(code as u8).map(str::to_string)
                 } else {
                     None
                 }
