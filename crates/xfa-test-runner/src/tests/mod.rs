@@ -17,6 +17,8 @@ pub mod metadata_oracle;
 pub mod ocr;
 pub mod parse;
 pub mod pdfa_convert;
+pub mod pdfua_validate;
+pub mod pdfx_validate;
 pub mod redact;
 pub mod render;
 #[cfg(feature = "pdfium-oracle")]
@@ -34,8 +36,6 @@ pub mod xfa_extract;
 pub mod xfa_flatten;
 pub mod xlsx_convert;
 pub mod zugferd_roundtrip;
-pub mod pdfua_validate;
-pub mod pdfx_validate;
 
 use std::collections::HashMap;
 use std::path::Path;

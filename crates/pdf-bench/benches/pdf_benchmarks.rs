@@ -428,15 +428,11 @@ fn bench_render(c: &mut Criterion) {
             continue;
         }
         g.throughput(Throughput::Bytes(data.len() as u64));
-        g.bench_with_input(
-            BenchmarkId::new("page_1/72dpi", name),
-            &(),
-            |b, _| {
-                b.iter(|| {
-                    let _ = doc.render_page(0, &opts);
-                });
-            },
-        );
+        g.bench_with_input(BenchmarkId::new("page_1/72dpi", name), &(), |b, _| {
+            b.iter(|| {
+                let _ = doc.render_page(0, &opts);
+            });
+        });
     }
     g.finish();
 }

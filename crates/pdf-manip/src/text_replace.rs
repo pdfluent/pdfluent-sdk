@@ -655,8 +655,7 @@ fn build_replacement_ops_with_fallback(
         if orig_bytes.len() % 2 != 0 {
             return None;
         }
-        let prefix_end =
-            fonts.cid_byte_offset_for_chars(font_name, &orig_bytes, prefix_char_count);
+        let prefix_end = fonts.cid_byte_offset_for_chars(font_name, &orig_bytes, prefix_char_count);
         let suffix_start =
             fonts.cid_byte_offset_for_chars(font_name, &orig_bytes, suffix_char_start);
         (
@@ -972,14 +971,8 @@ mod tests {
         Content {
             operations: vec![
                 Operation::new("BT", vec![]),
-                Operation::new(
-                    "Tf",
-                    vec![Object::Name(b"F1".to_vec()), Object::Real(12.0)],
-                ),
-                Operation::new(
-                    "Td",
-                    vec![Object::Real(100.0), Object::Real(700.0)],
-                ),
+                Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), Object::Real(12.0)]),
+                Operation::new("Td", vec![Object::Real(100.0), Object::Real(700.0)]),
                 Operation::new(
                     "Tj",
                     vec![Object::String(cid_bytes, lopdf::StringFormat::Hexadecimal)],

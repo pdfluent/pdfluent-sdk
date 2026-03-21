@@ -746,8 +746,9 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     // Load via lopdf.
     let mut doc = match lopdf::Document::load_mem(pdf_data) {
         Ok(d) if !d.objects.is_empty() => d,
-        Ok(_) | Err(_) => try_qpdf_repair_for_lopdf(pdf_data, path)
-            .or_else(|| try_repair_for_lopdf(pdf_data))?,
+        Ok(_) | Err(_) => {
+            try_qpdf_repair_for_lopdf(pdf_data, path).or_else(|| try_repair_for_lopdf(pdf_data))?
+        }
     };
 
     // Hash-name sanitization fallback.

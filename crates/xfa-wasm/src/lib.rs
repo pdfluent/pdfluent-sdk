@@ -418,8 +418,7 @@ impl PdfDoc {
     /// Open a PDF from raw bytes.
     pub fn open(data: &[u8]) -> Result<PdfDoc, JsError> {
         let raw = data.to_vec();
-        let pdf =
-            pdf_syntax::Pdf::new(raw.clone()).map_err(|e| JsError::new(&format!("{e:?}")))?;
+        let pdf = pdf_syntax::Pdf::new(raw.clone()).map_err(|e| JsError::new(&format!("{e:?}")))?;
         Ok(PdfDoc { pdf, raw })
     }
 

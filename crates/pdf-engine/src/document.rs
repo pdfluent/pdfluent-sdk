@@ -184,7 +184,10 @@ impl PdfDocument {
             }
         };
         #[cfg(feature = "parallel")]
-        return (0..pages.len()).into_par_iter().filter_map(page_contains).collect();
+        return (0..pages.len())
+            .into_par_iter()
+            .filter_map(page_contains)
+            .collect();
         #[cfg(not(feature = "parallel"))]
         (0..pages.len()).filter_map(page_contains).collect()
     }
