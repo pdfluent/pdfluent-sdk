@@ -1,0 +1,62 @@
+name: Node.js Bindings
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'crates/pdf-node/**'
+      - 'crates/pdf-engine/**'
+      - 'crates/pdf-forms/**'
+      - 'crates/pdf-annot/**'
+      - 'crates/pdf-sign/**'
+      - 'crates/pdf-compliance/**'
+      - 'crates/pdf-syntax/**'
+      - 'crates/pdf-manip/**'
+      - 'crates/pdf-redact/**'
+      - '.github/workflows/node-bindings.yml'
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    name: Node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [18, 20]
+    defaults:
+      run:
+        working-directory: crates/pdf-node
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build native binding
+        run: npm run build
+
+      - name: Run smoke tests
+        run: npm test
+
+      - name: Upload native binding
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdf-node-${{ matrix.os }}-node${{ matrix.node }}
+          path: crates/pdf-node/index.*.node
+          if-no-files-found: error
