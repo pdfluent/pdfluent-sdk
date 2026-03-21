@@ -3145,16 +3145,31 @@ pub fn check_icc_profile_version(pdf: &Pdf, part: u8, report: &mut ComplianceRep
 /// Also checks that the required /N key is present in each ICCBased stream
 /// dict (§6.2.3.2 for all PDF/A parts). Fixes #467.
 pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
+    let xref = pdf.xref();
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
-        let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) else {
+        // Resources may be a direct dict or an indirect ref. (#FN-6.2.3.2)
+        let res_dict_opt: Option<Dict<'_>> =
+            page_dict.get::<Dict<'_>>(keys::RESOURCES).or_else(|| {
+                page_dict
+                    .get_ref(keys::RESOURCES)
+                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+            });
+        let Some(res_dict) = res_dict_opt else {
             continue;
         };
         let Some(cs_dict) = res_dict.get::<Dict<'_>>(keys::COLORSPACE) else {
             continue;
         };
         for (name, _) in cs_dict.entries() {
-            let Some(cs_arr) = cs_dict.get::<Array<'_>>(name.as_ref()) else {
+            // The colorspace value may be a direct array or an indirect array ref.
+            let cs_arr_opt: Option<Array<'_>> =
+                cs_dict.get::<Array<'_>>(name.as_ref()).or_else(|| {
+                    cs_dict
+                        .get_ref(name.as_ref())
+                        .and_then(|r| xref.get::<Array<'_>>(r.into()))
+                });
+            let Some(cs_arr) = cs_arr_opt else {
                 continue;
             };
             let mut items = cs_arr.iter::<Object<'_>>();
@@ -3164,19 +3179,30 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
             if cs_type.as_ref() != keys::ICC_BASED {
                 continue;
             }
-            // Second item in array is the ICC stream
-            let Some(icc_stream) = items.next().and_then(|o| match o {
-                Object::Stream(s) => Some(s),
-                _ => None,
-            }) else {
+            // Second element is the ICCBased stream. Array::iter::<Object> resolves
+            // indirect refs automatically, so Object::Stream matches regardless of
+            // whether the stream is direct or indirect. (#FN-6.2.3.2)
+            // Extract owned values immediately to avoid lifetime conflicts.
+            let icc_props: Option<(bool, Option<i32>, Option<Vec<u8>>)> =
+                items.next().and_then(|o| match o {
+                    Object::Stream(s) => {
+                        let d = s.dict();
+                        Some((
+                            d.contains_key(keys::N),
+                            d.get::<i32>(keys::N),
+                            d.get::<Name>(keys::ALTERNATE).map(|n| n.as_ref().to_vec()),
+                        ))
+                    }
+                    _ => None,
+                });
+            let Some((icc_has_n, n_components, alt_name_bytes)) = icc_props else {
                 continue;
             };
-            let icc_dict = icc_stream.dict();
             let cs_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
 
             // §6.2.3.2: /N is required in ICCBased streams.
             // veraPDF emits "6.2.3.2" for ALL PDF/A parts — no remap needed. (#467)
-            if !icc_dict.contains_key(keys::N) {
+            if !icc_has_n {
                 error_at(
                     report,
                     "6.2.3.2",
@@ -3184,10 +3210,8 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
                     format!("page {}", page_idx + 1),
                 );
             }
-            let n_components: Option<i32> = icc_dict.get(keys::N);
 
-            if let Some(alt_name) = icc_dict.get::<Name>(keys::ALTERNATE) {
-                let alt = alt_name.as_ref();
+            if let Some(alt) = alt_name_bytes.as_deref() {
                 if let Some(n) = n_components {
                     let expected = if alt == keys::DEVICE_RGB {
                         3
@@ -3913,9 +3937,10 @@ fn check_image_restrictions_in_res(
         }
 
         if dict.contains_key(b"Alternates" as &[u8]) {
+            // §6.2.7.1 — Image XObjects must not contain /Alternates key. (#FN-6.2.7.1)
             error_at(
                 report,
-                "6.2.8.2",
+                "6.2.7.1",
                 format!("Image XObject {xobj_name} contains forbidden /Alternates key"),
                 location,
             );
@@ -5900,9 +5925,16 @@ fn check_single_filter(
         error(report, rule, "LZWDecode filter is forbidden in PDF/A");
     }
     if filter_name == keys::JBIG2_DECODE {
+        // §6.1.6.2 / §6.1.8 / §6.1.10 — JBIG2Decode with global segments (/JBIG2Globals)
+        // is forbidden. /JBIG2Globals is almost always an indirect stream ref, so we must
+        // check get_ref() in addition to direct stream (the direct case is extremely rare).
+        // (#FN-6.1.6.2)
         if let Some(params) = dict.get::<Dict<'_>>(keys::DECODE_PARMS) {
-            if params.get::<Stream<'_>>(keys::JBIG2_GLOBALS).is_some() {
-                // PDF/A-1: §6.1.10 (forbidden filters), PDF/A-2/3: §6.1.8
+            let has_globals = params.get::<Stream<'_>>(keys::JBIG2_GLOBALS).is_some()
+                || params.get_ref(keys::JBIG2_GLOBALS).is_some();
+            if has_globals {
+                // PDF/A-1: §6.1.10 (forbidden filters), PDF/A-2/3/4: §6.1.8
+                // (remapped to §6.1.6.2 for parts 2-4 in pdfa.rs)
                 let rule = if pdfa_part == 1 { "6.1.10" } else { "6.1.8" };
                 error(report, rule, "JBIG2Decode with global segments");
             }
@@ -8545,31 +8577,62 @@ fn check_cidfont_descriptor_deep(
                         format!("page {}", page_idx + 1),
                     );
                 }
-                // §6.2.11.4.2: if a CIDSet is present, it must identify ALL CIDs that are
-                // present in the font program.  Use the /W array as the authoritative set of
-                // CIDs that the font declares; every CID listed in /W must have its bit set
-                // in the CIDSet bitstream (bit 7 of byte 0 = CID 0, MSB-first). Fixes #496.
+                // §6.2.11.4.2: if a CIDSet is present, it must identify ALL CIDs present
+                // in the font program. Check only individually-declared CIDs (array form:
+                // `c [w1 w2 ...]`) against the CIDSet. Range entries (`c1 c2 w`) are bulk
+                // width defaults that often cover CIDs not in the font subset — using them
+                // causes FP §6.3.5 (isartor-6-3-3-2-t01). (#FP-6.3.5)
                 let cidset_bits = cidset_stream.decoded().unwrap_or_else(|_| raw.to_vec());
                 if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
-                    let w_cids = parse_cidfont_w_array(&w_arr);
-                    for &cid in w_cids.keys() {
-                        let byte_idx = (cid / 8) as usize;
-                        let bit_pos = 7 - (cid % 8);
-                        let is_set = cidset_bits
-                            .get(byte_idx)
-                            .map(|&b| (b >> bit_pos) & 1 == 1)
-                            .unwrap_or(false);
-                        if !is_set {
-                            error_at(
-                                report,
-                                "6.2.11.4.2",
-                                format!(
-                                    "CIDFont {cid_name}: CIDSet missing CID {cid} \
-                                     (present in /W array)"
-                                ),
-                                format!("page {}", page_idx + 1),
-                            );
-                            break; // one error per font is sufficient
+                    use pdf_syntax::object::MaybeRef;
+                    let raw_w: Vec<_> = w_arr.raw_iter().collect();
+                    let mut wi = 0usize;
+                    'w_check: while wi < raw_w.len() {
+                        let c1 = match &raw_w[wi] {
+                            MaybeRef::NotRef(Object::Number(n)) => n.as_f64() as u32,
+                            _ => {
+                                wi += 1;
+                                continue;
+                            }
+                        };
+                        wi += 1;
+                        if wi >= raw_w.len() {
+                            break;
+                        }
+                        match &raw_w[wi] {
+                            // Array form: c1 [w1 w2 ...] — individually declared CIDs
+                            MaybeRef::NotRef(Object::Array(inner)) => {
+                                for (j, _) in inner.iter::<i32>().enumerate() {
+                                    let cid = c1 + j as u32;
+                                    let byte_idx = (cid / 8) as usize;
+                                    let bit_pos = 7 - (cid % 8);
+                                    let is_set = cidset_bits
+                                        .get(byte_idx)
+                                        .map(|&b| (b >> bit_pos) & 1 == 1)
+                                        .unwrap_or(false);
+                                    if !is_set {
+                                        error_at(
+                                            report,
+                                            "6.2.11.4.2",
+                                            format!(
+                                                "CIDFont {cid_name}: CIDSet missing CID {cid} \
+                                                 (individually declared in /W array)"
+                                            ),
+                                            format!("page {}", page_idx + 1),
+                                        );
+                                        break 'w_check;
+                                    }
+                                }
+                                wi += 1;
+                            }
+                            // Range form: c1 c2 w — skip; range covers nominal CIDs,
+                            // many of which may not be in the font subset. (#FP-6.3.5)
+                            MaybeRef::NotRef(Object::Number(_)) => {
+                                wi += 2;
+                            }
+                            _ => {
+                                wi += 1;
+                            }
                         }
                     }
                 }
@@ -8749,15 +8812,29 @@ pub fn check_tounicode_cmap(
                     .as_ref()
                     .and_then(|d| d.get::<Name>(b"BaseEncoding" as &[u8]))
                     .is_some_and(|n| is_predefined_enc_name(n.as_ref()));
-            // Exempt if: predefined encoding OR (non-Unicode level AND no encoding).
-            // "No encoding" means built-in encoding (e.g. StandardEncoding for Type1).
-            // For PDF/A-u (requires_unicode=true), this exemption does not apply.
-            // For PDF/A-1 (part=1), only TYPE1 fonts are exempt with no encoding:
-            // symbolic TrueType fonts have non-AGL built-in encodings and veraPDF
-            // fires §6.3.8 for them. (#FN-6.3.8, #FN-6.2.11.7.2)
+            // Symbolic font check: symbolic fonts have non-AGL built-in encodings
+            // (e.g. CMSY8/TeX math). Even Type1 symbolic fonts with no /Encoding
+            // cannot have Unicode derived from their built-in encoding — veraPDF fires
+            // §6.3.8/§6.2.11.7.2 for them. Resolve FontDescriptor indirect ref. (#FN-6.3.8)
+            let is_symbolic = {
+                let desc: Option<Dict<'_>> =
+                    font_dict.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+                        font_dict
+                            .get_ref(keys::FONT_DESC)
+                            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                    });
+                desc.and_then(|d| d.get::<i32>(keys::FLAGS))
+                    .is_some_and(|f| f & 0x04 != 0)
+            };
+            // Exempt if: predefined encoding OR (non-Unicode level AND no encoding AND
+            // not symbolic). "No encoding" means built-in encoding — for non-symbolic Type1
+            // fonts this is StandardEncoding, whose Unicode mapping is derivable. For
+            // symbolic fonts there is no derivable mapping, so they are not exempt.
+            // (#FN-6.3.8, #FN-6.2.11.7.2)
             let no_enc_exempt = !requires_unicode
                 && encoding_name.is_none()
                 && encoding_dict.is_none()
+                && !is_symbolic
                 && (part != 1 || is_type1);
             if uses_predefined_encoding || no_enc_exempt {
                 // Exempt: predefined or built-in encoding — Unicode mapping known.
@@ -15309,7 +15386,7 @@ fn check_type1_simple_widths(
         .as_ref()
         .and_then(|d| d.get::<Name>(keys::BASE_ENCODING))
         .map(|n| n.as_ref().to_vec())
-        .or(direct_enc_name);
+        .or_else(|| direct_enc_name.clone());
 
     // /Differences from the encoding dict: maps specific codes to glyph names.
     // These take highest priority and override both BaseEncoding and the font's
@@ -15341,13 +15418,23 @@ fn check_type1_simple_widths(
 
         // Look up glyph name by priority:
         // 1. /Differences entry for this code (highest priority — PDF spec §9.6.6.1)
-        // 2. Internal Type1 encoding (dup…put entries in the font program)
+        // 2. Internal Type1 encoding (dup…put entries in the font program) — only when
+        //    the PDF explicitly declares /Encoding. Symbol fonts (CMSY8 etc.) have
+        //    non-AGL built-in encodings; using them for width checking causes FP §6.3.6.
+        //    (#FP-6.3.6)
         // 3. BaseEncoding (WinAnsiEncoding / StandardEncoding) from the PDF dict
         // 4. StandardEncoding as final fallback (Type1 default)
+        let has_explicit_encoding = direct_enc_name.is_some() || enc_dict_opt.is_some();
         let glyph_name: Option<String> = differences
             .get(&(code as u8))
             .cloned()
-            .or_else(|| parsed.encoding.get(&(code as u8)).cloned())
+            .or_else(|| {
+                if has_explicit_encoding {
+                    parsed.encoding.get(&(code as u8)).cloned()
+                } else {
+                    None
+                }
+            })
             .or_else(|| {
                 let enc_name = base_enc_name.as_deref().unwrap_or(b"");
                 if enc_name.is_empty() || enc_name == b"StandardEncoding" {
@@ -16319,30 +16406,45 @@ mod tests {
     #[test]
     fn notdef_scan_detects_null_byte_in_tj() {
         // Simple font mode: <00> = code 0 = notdef
-        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <00> Tj ET", false));
+        assert!(scan_for_notdef_in_content(
+            b"BT /F1 12 Tf <00> Tj ET",
+            false
+        ));
     }
 
     #[test]
     fn notdef_scan_detects_null_in_multi_byte_hex_simple() {
         // Simple font mode: <0041> = codes 0 and 65; 0 = notdef
-        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <0041> Tj ET", false));
+        assert!(scan_for_notdef_in_content(
+            b"BT /F1 12 Tf <0041> Tj ET",
+            false
+        ));
     }
 
     #[test]
     fn notdef_scan_skips_null_in_multi_byte_hex_cid() {
         // CID mode: <0041> = CID 65 = 'A', NOT notdef — only <0000> would be notdef
-        assert!(!scan_for_notdef_in_content(b"BT /F1 12 Tf <0041> Tj ET", true));
+        assert!(!scan_for_notdef_in_content(
+            b"BT /F1 12 Tf <0041> Tj ET",
+            true
+        ));
     }
 
     #[test]
     fn notdef_scan_detects_cid_zero_in_cid_mode() {
         // CID mode: <0000> = CID 0 = notdef
-        assert!(scan_for_notdef_in_content(b"BT /F1 12 Tf <0000> Tj ET", true));
+        assert!(scan_for_notdef_in_content(
+            b"BT /F1 12 Tf <0000> Tj ET",
+            true
+        ));
     }
 
     #[test]
     fn notdef_scan_skips_nonzero_hex() {
-        assert!(!scan_for_notdef_in_content(b"BT /F1 12 Tf <41> Tj ET", false));
+        assert!(!scan_for_notdef_in_content(
+            b"BT /F1 12 Tf <41> Tj ET",
+            false
+        ));
     }
 
     #[test]

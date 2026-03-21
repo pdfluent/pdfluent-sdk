@@ -2786,10 +2786,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.3.7") => Some("6.2.10.3.2"),
 
             // CIDToGIDMap absent for CIDFontType2 (internal rule "6.3.7-absent").
-            // PDF/A-4 §6.2.10.3.2 requires explicit /Identity or stream — absent = violation.
-            // Other parts: absent defaults to /Identity per PDF spec → suppressed. (#FN-6.2.10.3.2)
+            // PDF/A-1 §6.3.3.2: CIDFontType2 must have CIDToGIDMap (Identity or stream).
+            // PDF/A-2/3 §6.2.11.3.2: same requirement. PDF/A-4 §6.2.10.3.2: same.
+            // Fixes §6.3.3.2 / §6.2.11.3.2 FNs. (#FN-6.3.3.2, #FN-6.2.11.3.2)
+            (1, "6.3.7-absent") => Some("6.3.3.2"),
+            (2..=3, "6.3.7-absent") => Some("6.2.11.3.2"),
             (4, "6.3.7-absent") => Some("6.2.10.3.2"),
-            (_, "6.3.7-absent") => Some("SUPPRESS"),
 
             // Form XObject OPI violations (internal rule "6.2.9-form-opi").
             // PDF/A-4 §6.2.8.1 covers OPI on Form XObjects; PDF/A-1/2/3 use §6.2.9.
