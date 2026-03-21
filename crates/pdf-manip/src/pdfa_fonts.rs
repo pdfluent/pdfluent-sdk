@@ -2012,6 +2012,35 @@ fn fix_cid_widths_from_cff(
         .unwrap_or(1000);
     let dw = notdef_dw.unwrap_or(mode_dw);
 
+    // Sanity check: if the computed DW/widths are systematically ~1000× larger
+    // than the existing /W values, our FD-matrix scale factor is wrong for this
+    // font.  This happens when `cff_parser::glyph_fd_matrix` returns sx=1.0
+    // (unit matrix) instead of the standard 0.001 for a CFF whose charstring
+    // units are already at the standard scale, causing scale = 1.0 * 1000 =
+    // 1000 and inflating every width by a factor of 1000.
+    // In that case the existing /W (which veraPDF accepts) is already correct;
+    // overwriting it would introduce a §6.2.11.5 regression. (#FP-6.2.11.5-cid)
+    {
+        let existing_dw: Option<i64> = doc.objects.get(&cid_font_id).and_then(|o| {
+            if let Object::Dictionary(d) = o {
+                if let Ok(Object::Integer(v)) = d.get(b"DW") {
+                    return Some(*v);
+                }
+            }
+            None
+        });
+        if let Some(ex_dw) = existing_dw {
+            if ex_dw > 0 && dw > 0 {
+                let ratio = dw as f64 / ex_dw as f64;
+                // If our computed DW is 500×–2000× larger than the existing DW
+                // the FD matrix scale is clearly wrong — leave the /W untouched.
+                if ratio > 500.0 && ratio < 2000.0 {
+                    return false;
+                }
+            }
+        }
+    }
+
     // Build /W array: consecutive runs of widths that differ from DW.
     // Format: [cid [w1 w2 ...] cid2 [w3 w4 ...] ...]
     let mut w_array: Vec<Object> = Vec::new();
