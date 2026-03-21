@@ -65,12 +65,34 @@ fn check_document_title(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Returns true when the catalog /Outlines tree has at least one visible entry.
+///
+/// ISO 14289-1 §7.2 requires catalog-level /Lang for outline entries
+/// (`gContainsCatalogLang == true` for PDOutline objects).  An /Outlines dict
+/// with /Count 0 has no visible bookmark text and does NOT trigger the rule.
+/// (#FP-7.2-element-lang, cs-7.2-t02-fail-a)
+fn catalog_has_nonempty_outlines(pdf: &Pdf) -> bool {
+    use pdf_syntax::object::Dict;
+    let Some(cat) = check::catalog(pdf) else {
+        return false;
+    };
+    let Some(outlines) = cat.get::<Dict<'_>>(keys::OUTLINES) else {
+        return false;
+    };
+    // /Count 0 means empty outline tree — no actual bookmark entries to display.
+    outlines
+        .get::<i32>(b"Count" as &[u8])
+        .map(|c| c != 0)
+        .unwrap_or(true) // absent /Count -> assume entries exist
+}
+
 /// Returns true if any structure element in the StructTreeRoot has a /Lang entry.
 ///
 /// ISO 14289-1 §7.2 allows omitting catalog /Lang when natural language is
 /// provided for all text through structure element /Lang entries.  VeraPDF
 /// considers a document conformant when every element that requires language
 /// carries its own /Lang, even without a catalog-level entry.
+/// This exemption does NOT apply when the document has non-empty /Outlines.
 /// (#FP-7.2-element-lang)
 fn struct_has_any_lang(pdf: &Pdf) -> bool {
     use pdf_syntax::object::{Array, Dict};
@@ -80,7 +102,10 @@ fn struct_has_any_lang(pdf: &Pdf) -> bool {
             return false;
         }
         // /Lang present on this element?
-        if elem.get::<pdf_syntax::object::String>(keys::LANG).is_some() {
+        if elem
+            .get::<pdf_syntax::object::String>(keys::LANG)
+            .is_some()
+        {
             return true;
         }
         // Recurse into kids.
@@ -114,10 +139,30 @@ fn struct_has_any_lang(pdf: &Pdf) -> bool {
 /// Check that the document has a /Lang entry on the catalog.
 ///
 /// ISO 14289-1 §7.2 allows element-level /Lang as an alternative to catalog
-/// /Lang when all text has language specified via structure elements.  We only
-/// report an error when BOTH the catalog and the structure tree have no /Lang.
+/// /Lang when all text has language specified via structure elements — but ONLY
+/// when the document has no non-empty /Outlines.  Bookmark entries require
+/// `gContainsCatalogLang == true`, so catalog /Lang is needed whenever visible
+/// bookmarks are present.
+///
+/// Error when catalog /Lang is absent AND EITHER:
+/// (a) the document has a non-empty /Outlines tree (bookmarks always need it), OR
+/// (b) no structure element carries /Lang (no language determined at all).
 fn check_document_language(pdf: &Pdf, report: &mut ComplianceReport) {
-    if check::document_lang(pdf).is_none() && !struct_has_any_lang(pdf) {
+    if check::document_lang(pdf).is_some() {
+        return; // Catalog /Lang present — no error.
+    }
+    // No catalog /Lang.  Bookmark entries inherit language from the catalog, so
+    // if there are visible bookmarks we must always require catalog /Lang.
+    if catalog_has_nonempty_outlines(pdf) {
+        check::error(
+            report,
+            "7.2",
+            "Document catalog missing /Lang entry; required when /Outlines entries are present",
+        );
+        return;
+    }
+    // No outlines: element-level /Lang in the structure tree is sufficient.
+    if !struct_has_any_lang(pdf) {
         check::error(
             report,
             "7.2",
