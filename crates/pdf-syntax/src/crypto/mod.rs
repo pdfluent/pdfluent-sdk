@@ -187,11 +187,11 @@ pub(crate) fn get(
         }),
         DecryptorTag::Aes128 => Ok(Decryptor::Aes128 {
             key: decryption_key,
-            dict: data.unwrap(),
+            dict: data.ok_or(InvalidEncryption)?,
         }),
         DecryptorTag::Aes256 => Ok(Decryptor::Aes256 {
             key: decryption_key,
-            dict: data.unwrap(),
+            dict: data.ok_or(InvalidEncryption)?,
         }),
     }
 }
@@ -396,7 +396,7 @@ fn compute_hash_rev56(
         // initialization vector. The result of this encryption is E.
         let e = {
             let aes = AES128Cipher::new(&k[..16]).ok_or(InvalidEncryption)?;
-            let mut res = aes.encrypt_cbc(&k1, &k[16..32].try_into().unwrap());
+            let mut res = aes.encrypt_cbc(&k1, &k[16..32].try_into().expect("k is ≥32 bytes"));
 
             // Remove padding that was added by `encrypt_cbc`.
             res.truncate(k1.len());
@@ -408,7 +408,7 @@ fn compute_hash_rev56(
         // compute the remainder, modulo 3. If the result is 0, the next hash used is
         // SHA-256, if the result is 1, the next hash used is SHA-384, if the result is
         // 2, the next hash used is SHA-512.
-        let num = u128::from_be_bytes(e[..16].try_into().unwrap()) % 3;
+        let num = u128::from_be_bytes(e[..16].try_into().expect("AES output is ≥16 bytes")) % 3;
 
         // d) Using the hash algorithm determined in step c, take the hash of E.
         // The result is a new value of K, which will be 32, 48, or 64 bytes in length.
@@ -428,7 +428,7 @@ fn compute_hash_rev56(
             // e) Look at the very last byte of E. If the value of that byte
             // (taken as an unsigned integer) is greater than the round number - 32,
             // repeat steps (a-d) again.
-            let last_byte = *e.last().unwrap();
+            let last_byte = *e.last().expect("AES output is non-empty");
 
             // f) Repeat from steps (a-e) until the value of the last byte
             // is < (round number) - 32.

@@ -31,7 +31,7 @@ pub(crate) fn decode(
     decoder.decode_headers().ok()?;
 
     let color_transform = params.get::<u8>(COLOR_TRANSFORM);
-    let input_color_space = decoder.input_colorspace().unwrap();
+    let input_color_space = decoder.input_colorspace()?;
 
     let mut out_colorspace = if let Some(num_components) = image_params.num_components
         && !matches!(num_components, 1 | 3 | 4)
@@ -56,7 +56,7 @@ pub(crate) fn decode(
     };
 
     // In case image had APP14 marker, we might have to override the colorspace.
-    if input_color_space == CMYK && decoder.info().unwrap().components == 3 {
+    if input_color_space == CMYK && decoder.info()?.components == 3 {
         out_colorspace = ColorSpace::RGB;
     }
 
@@ -75,8 +75,9 @@ pub(crate) fn decode(
         }
     }
 
-    let width = decoder.dimensions().unwrap().0 as u32;
-    let height = decoder.dimensions().unwrap().1 as u32;
+    let (w, h) = decoder.dimensions()?;
+    let width = w as u32;
+    let height = h as u32;
 
     let image_data = ImageData {
         alpha: None,

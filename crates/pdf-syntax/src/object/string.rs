@@ -170,10 +170,12 @@ fn read_literal(r: &mut Reader<'_>) -> Option<StringInner> {
                         _ => [b'0', b'0', next],
                     };
 
-                    let str = core::str::from_utf8(&bytes).unwrap();
-
-                    if let Ok(num) = u8::from_str_radix(str, 8) {
-                        result.push(num);
+                    // All bytes are octal digits (b'0'..=b'7'): compute value directly.
+                    let value = bytes
+                        .iter()
+                        .fold(0u16, |acc, &b| acc * 8 + (b - b'0') as u16);
+                    if value <= 255 {
+                        result.push(value as u8);
                     } else {
                         warn!("overflow occurred while parsing octal literal string");
                     }
