@@ -6679,6 +6679,21 @@ pub fn check_actions_deep(pdf: &Pdf, part: u8, rule: &str, report: &mut Complian
         if let Some(outlines) = cat.get::<Dict<'_>>(keys::OUTLINES) {
             check_outline_actions(&outlines, &forbidden, rule, report, 0);
         }
+        // §6.6.2.3.1 / §6.5.1 — check catalog /Names/JavaScript name tree.
+        // A document may define named JavaScript scripts in the catalog's /Names
+        // dict even without referencing them from actions. veraPDF flags ANY
+        // JavaScript presence under §6.6.2.3.1 regardless of where it appears.
+        // ("fail-c" variant of the veraPDF test suite tests this location.) (#FN-6.6.2.3.1)
+        if let Some(names) = cat.get::<Dict<'_>>(keys::NAMES) {
+            if names.get::<Object<'_>>(keys::JAVA_SCRIPT).is_some() {
+                error_at(
+                    report,
+                    rule,
+                    "Catalog /Names/JavaScript present (named JavaScript objects forbidden)",
+                    "catalog Names".to_string(),
+                );
+            }
+        }
     }
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
