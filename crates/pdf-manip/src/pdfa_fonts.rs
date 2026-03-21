@@ -7979,8 +7979,12 @@ fn compute_cff_type1_width_corrections(
         // High-byte codes not found in the font map to .notdef (GID 0).
         // veraPDF validates the Widths entry against GID 0's advance in that case.
         // Restrict to codes 128-255 where absent glyphs are expected. (#479)
+        // For subset fonts the CFF encoding covers only used glyphs and a missing
+        // code entry does NOT imply .notdef — the code may map to a real glyph
+        // whose CFF encoding entry we cannot recover.  Applying .notdef width
+        // would overwrite the correct existing width. (#626)
         let frac_w = frac_w.or_else(|| {
-            if (128..=255).contains(&code) {
+            if (128..=255).contains(&code) && !is_subset {
                 cff.glyph_width(cff_parser::GlyphId(0))
                     .map(|w| w as f64 * scale)
             } else {
@@ -8373,8 +8377,15 @@ fn cff_width_for_code(
                     .map(|w| w as f64 * scale);
             }
         }
+        // cff.glyph_index falls back to StandardEncoding for codes not in the
+        // CFF encoding table, and StandardEncoding maps many codes to SID 0
+        // (→ GID 0 = .notdef).  Using .notdef width as the "expected width" for
+        // an unmapped code would incorrectly overwrite a correct existing width
+        // (e.g. code 1 width 411 → 250 for ABDHHO+Symbol). (#626)
         if let Some(gid) = cff.glyph_index(code as u8) {
-            return cff.glyph_width(gid).map(|w| w as f64 * scale);
+            if gid.0 != 0 {
+                return cff.glyph_width(gid).map(|w| w as f64 * scale);
+            }
         }
     }
 
