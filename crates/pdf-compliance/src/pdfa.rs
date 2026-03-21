@@ -2289,6 +2289,9 @@ fn check_signature_restrictions_pdfa(pdf: &Pdf, level: PdfALevel, report: &mut C
     // Fixes #FP-6.1.12 (pdfbox-3017.pdf fires FP for PDF/A-1).
     if level.part() >= 2 {
         check::check_docmdp_signature_restriction(pdf, report);
+        // §6.1.11 (PDF/A-4) / §6.1.12 (PDF/A-2/3): Perms dict must only contain /DocMDP.
+        // (#FN-6.1.11 tagged-veraPDF-6-1-11-t01-fail-a)
+        check::check_perms_dict(pdf, level.part(), report);
     }
 }
 
@@ -2982,10 +2985,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.2.3.3") => Some("6.2.4.3"),
             (4, "6.2.3.3") => Some("6.2.4.3"),
 
-            // Undefined operators: veraPDF uses §6.2.10 for PDF/A-1, §6.2.2 for PDF/A-4.
-            // Our check_page_content_streams emits "6.2.10" for PDF/A-1 (direct),
-            // "6.2.7.1" for PDF/A-2+. PDF/A-4 needs remap to §6.2.2.
-            (4, "6.2.7.1") => Some("6.2.2"),
+            // Note: check_undefined_operators already emits "6.2.2" directly for all parts.
+            // check_image_xobjects emits "6.2.7.1" for /Alternates (PDF/A-4 also uses 6.2.7.1).
+            // No remap needed for "6.2.7.1" → veraPDF reports 6.2.7.1 for PDF/A-4 too.
 
             // TrueType encoding requirements.
             // PDF/A-1: check.rs emits "6.2.11.6" (PDF/A-2/3 clause numbering); remap to

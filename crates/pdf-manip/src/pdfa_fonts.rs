@@ -1889,6 +1889,14 @@ pub fn fix_width_mismatches(doc: &mut Document) -> usize {
                 if fix_cid_widths_from_cff(doc, cid_font_id, &cff) {
                     fixed += 1;
                 }
+            } else if subtype != "CIDFontType2" {
+                // Simple font with FontFile3 (CFF) — fix /Widths to match CFF encoding
+                // widths so §6.2.11.5 is satisfied. The compliance checker maps each code
+                // via cff.glyph_index(code) and compares with /Widths; we apply the same
+                // mapping here and update any mismatched entries. (#6.2.11.5-simple-cff)
+                if fix_simple_cff_widths(doc, font_id, &cff) {
+                    fixed += 1;
+                }
             }
         }
     }
@@ -2085,6 +2093,89 @@ fn fix_cid_widths_from_cff(
         if !w_array.is_empty() {
             dict.set("W", Object::Array(w_array));
         }
+        true
+    } else {
+        false
+    }
+}
+
+/// Fix /Widths for a simple (non-CID) font with a FontFile3 (CFF) embedding.
+///
+/// veraPDF §6.2.11.5 validates simple CFF fonts by mapping each character code
+/// through the CFF internal encoding (`cff.glyph_index(code)`) and comparing
+/// the resulting charstring advance width with the /Widths array entry. This
+/// function applies the same mapping and updates any mismatched /Widths entries
+/// in-place, ensuring the PDF dict and the embedded font program agree.
+///
+/// Codes where the CFF encoding has no glyph (glyph_index returns None) are
+/// skipped — veraPDF also skips those. Codes with pdf_w == 0 are skipped as
+/// "unused/placeholder" entries. (#6.2.11.5-simple-cff)
+fn fix_simple_cff_widths(
+    doc: &mut Document,
+    font_id: ObjectId,
+    cff: &cff_parser::Table<'_>,
+) -> bool {
+    let (fc, lc, existing_widths) = {
+        let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+            return false;
+        };
+        let fc = match font.get(b"FirstChar").ok() {
+            Some(Object::Integer(i)) => *i as usize,
+            _ => return false,
+        };
+        let lc = match font.get(b"LastChar").ok() {
+            Some(Object::Integer(i)) => *i as usize,
+            _ => return false,
+        };
+        let widths = match font.get(b"Widths").ok() {
+            Some(Object::Array(arr)) => arr.clone(),
+            _ => return false,
+        };
+        (fc, lc, widths)
+    };
+
+    if lc < fc {
+        return false;
+    }
+    let expected_len = lc - fc + 1;
+    if existing_widths.len() < expected_len {
+        return false;
+    }
+
+    // Walk codes [fc..=lc] and collect corrected widths.
+    let mut new_widths = existing_widths.clone();
+    let mut changed = false;
+
+    for code in fc..=lc {
+        let idx = code - fc;
+        let pdf_w = match &existing_widths[idx] {
+            Object::Integer(w) => *w,
+            Object::Real(r) => *r as i64,
+            _ => continue,
+        };
+        if pdf_w == 0 {
+            continue; // placeholder/unused — skip as veraPDF does
+        }
+        // Map code → GID via CFF encoding (same mapping the compliance checker uses).
+        let Some(gid) = cff.glyph_index(code as u8) else {
+            continue;
+        };
+        let Some(cff_w) = cff.glyph_width(gid) else {
+            continue;
+        };
+        let cff_w_i64 = cff_w as i64;
+        if (cff_w_i64 - pdf_w).abs() > 1 {
+            new_widths[idx] = Object::Integer(cff_w_i64);
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return false;
+    }
+
+    if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
+        font.set("Widths", Object::Array(new_widths));
         true
     } else {
         false
@@ -5938,7 +6029,13 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                             | "Dingbats"
                             | "MTExtra"
                     );
-                    if has_ff2 || (has_ff3 && is_classic_symbol) {
+                    // Subset symbolic CFF fonts (ABCDEF+ prefix) are NOT skipped:
+                    // the CFF internal encoding in a subset is authoritative and
+                    // veraPDF uses it directly for §6.2.11.5 width comparison.
+                    // Non-subset symbolic fonts are handled by dedicated passes.
+                    // (#6.2.11.5-symbol-subset)
+                    let is_sym_subset = name.len() > 7 && name.as_bytes()[6] == b'+';
+                    if !is_sym_subset && (has_ff2 || (has_ff3 && is_classic_symbol)) {
                         continue;
                     }
                 }
@@ -6033,6 +6130,12 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             && (subtype == "Type1" || subtype == "MMType1")
             && enc_info.0.is_empty()
             && !is_subset_font;
+        // When no PDF encoding exists at all (neither BaseEncoding nor Differences),
+        // the CFF internal encoding is the sole code→GID mapping, which is exactly
+        // what veraPDF uses for §6.2.11.5. Corrections via cff_width_for_code in
+        // this case are computed with the same mapping and are definitively correct;
+        // the conservative 50-unit filter is not needed. (#6.2.11.5-simple-cff)
+        let no_pdf_encoding = enc_info.0.is_empty() && enc_info.1.is_empty();
 
         let font_data = read_embedded_font_data(doc, fd_id);
         let Some(font_data) = font_data else {
@@ -6092,9 +6195,12 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             continue;
         }
 
-        if ambiguous_cff_base_encoding {
+        if ambiguous_cff_base_encoding && !no_pdf_encoding {
             // Keep only conservative deltas for ambiguous CFF base-encoding
-            // mappings; large jumps are typically wrong code->glyph matches.
+            // mappings where some PDF encoding context exists; large jumps are
+            // typically wrong code->glyph matches. When no_pdf_encoding is true,
+            // corrections are computed from CFF internal encoding (same as
+            // veraPDF) and are definitively correct — skip this filter.
             corrections.retain(|(idx, new_w)| {
                 let Some(pdf_w) = existing_widths.get(*idx).and_then(object_to_f64) else {
                     return false;
@@ -8001,17 +8107,39 @@ fn compute_cff_type1_width_corrections(
 
         let code = first_char + i as u32;
 
-        // Try PDF encoding → glyph name → CFF lookup, with CFF internal
-        // encoding fallback (e.g. StandardEncoding maps code 173 → "hyphen").
-        let frac_w = cff_width_for_code(&cff, font_data, code, enc_name, differences, scale);
+        // Primary: CFF encoding → GID → width. This exactly mirrors what
+        // veraPDF §6.2.11.5 does: map each character code through the CFF
+        // internal encoding to a GID, then read the charstring advance width.
+        //
+        // Do NOT filter out GID 0: veraPDF does not filter .notdef either.
+        // When glyph_index(code) returns GID 0 (code is unmapped in the CFF
+        // encoding — StandardEncoding fallback maps it to SID 0 → GID 0),
+        // veraPDF uses glyph_width(GID 0) = .notdef width as the expected
+        // value and fires if PDF /Widths differs.
+        //
+        // Previously we filtered GID 0 and fell back to the name-based path,
+        // which found a glyph by WinAnsi name (e.g. "quoteright" for code 146)
+        // at a *different* GID with a different width — causing false corrections
+        // that introduced new violations. (#6.2.11.5, #626)
+        let frac_w = if code <= 255 {
+            cff.glyph_index(code as u8)
+                .and_then(|g| cff.glyph_width(g))
+                .map(|w| w as f64 * scale)
+        } else {
+            None
+        };
 
-        // High-byte codes not found in the font map to .notdef (GID 0).
-        // veraPDF validates the Widths entry against GID 0's advance in that case.
-        // Restrict to codes 128-255 where absent glyphs are expected. (#479)
-        // For subset fonts the CFF encoding covers only used glyphs and a missing
-        // code entry does NOT imply .notdef — the code may map to a real glyph
-        // whose CFF encoding entry we cannot recover.  Applying .notdef width
-        // would overwrite the correct existing width. (#626)
+        // Fallback: PDF encoding → glyph name → CFF charset lookup.
+        // Only reached when glyph_index returns None (glyph is absent from
+        // the subset's charset/encoding).
+        let frac_w = frac_w.or_else(|| {
+            cff_width_for_code(&cff, font_data, code, enc_name, differences, scale)
+        });
+
+        // Last-resort: for high-byte codes on non-subset fonts where glyph_index
+        // returned None (genuine no-mapping), use .notdef width.  This only
+        // triggers when the CFF encoding has a genuine gap (no entry AND no
+        // StandardEncoding fallback), which is rare. (#479)
         let frac_w = frac_w.or_else(|| {
             if (128..=255).contains(&code) && !is_subset {
                 cff.glyph_width(cff_parser::GlyphId(0))
@@ -8330,7 +8458,26 @@ fn compute_cff_single_width(
     let matrix = cff.matrix();
     let scale = cff_matrix_scale(matrix.sx);
 
-    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale)
+    // Primary: name-based lookup via PDF encoding → glyph name → CFF charset.
+    if let Some(w) = cff_width_for_code(&cff, font_data, code, enc_name, differences, scale) {
+        return Some(w);
+    }
+
+    // Secondary: CFF internal encoding → GID → width. Mirrors the compliance
+    // checker (check_font_program_widths) which uses glyph_index() directly,
+    // including GID 0 (.notdef). This ensures that for codes where name-based
+    // lookup fails (glyph not in the subset's charset), we return the .notdef
+    // width — the same value the compliance checker uses. Without this, we'd
+    // leave /Widths entries at 0 for extended codes, causing violations.
+    // (#6.2.11.5-extensions)
+    if code <= 255 {
+        return cff
+            .glyph_index(code as u8)
+            .and_then(|g| cff.glyph_width(g))
+            .map(|w| w as f64);
+    }
+
+    None
 }
 
 /// Look up the CFF glyph width for a character code, trying multiple strategies:
@@ -10710,6 +10857,16 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
             )
         } else {
             if !has_ff3 {
+                continue;
+            }
+            // Subset classic Symbol/ZapfDingbats CFF fonts (ABCDEF+Name prefix) are
+            // handled by fix_font_width_mismatches via the CFF internal encoding path,
+            // which exactly mirrors veraPDF §6.2.11.5. Running fix_symbolic_font_widths
+            // on these fonts would re-apply PDF Encoding Differences-based widths (e.g.
+            // code 1 → "second" → charstring 411), overwriting the correct CFF-encoding
+            // widths (code 1 → StandardEncoding fallback → .notdef → 250). Skip them.
+            // (#6.2.11.5-sym-subset-skip)
+            if is_classic_symbol && is_subset {
                 continue;
             }
             if is_classic_symbol {
