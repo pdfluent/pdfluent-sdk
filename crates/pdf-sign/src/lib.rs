@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! PDF digital signature validation and signing.
 //!
 //! Provides PAdES baseline signature validation, CMS/PKCS#7 parsing,
