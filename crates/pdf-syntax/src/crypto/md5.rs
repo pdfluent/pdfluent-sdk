@@ -40,7 +40,7 @@ pub(crate) fn calculate(data: &[u8]) -> [u8; 16] {
     for chunk in message.chunks_exact(64) {
         let words: Vec<u32> = chunk
             .chunks_exact(4)
-            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("chunks_exact(4) guarantees 4 bytes")))
             .collect();
 
         let mut working_vars = state;

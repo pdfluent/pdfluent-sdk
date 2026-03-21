@@ -118,16 +118,17 @@ impl<'a> Stream<'a> {
                 .map(|t| t.as_ref() != b"XRef")
                 .unwrap_or(true)
         {
-            Cow::Owned(
-                ctx.xref()
-                    .decrypt(
-                        self.0.dict.obj_id().unwrap(),
-                        self.0.data,
-                        DecryptionTarget::Stream,
-                    )
-                    // TODO: MAybe an error would be better?
-                    .unwrap_or_default(),
-            )
+            // Streams are always indirect objects and therefore always have an obj_id.
+            // If somehow absent (corrupt PDF), fall back to raw data.
+            if let Some(obj_id) = self.0.dict.obj_id() {
+                Cow::Owned(
+                    ctx.xref()
+                        .decrypt(obj_id, self.0.data, DecryptionTarget::Stream)
+                        .unwrap_or_default(),
+                )
+            } else {
+                Cow::Borrowed(self.0.data)
+            }
         } else {
             Cow::Borrowed(self.0.data)
         }
@@ -140,7 +141,7 @@ impl<'a> Stream<'a> {
 
     /// Return the object identifier of the stream.
     pub fn obj_id(&self) -> ObjectIdentifier {
-        self.0.dict.obj_id().unwrap()
+        self.0.dict.obj_id().expect("streams are always indirect objects")
     }
 
     /// Return the filters that are applied to the stream.

@@ -60,7 +60,7 @@ pub(crate) trait MutexExt<T> {
 #[cfg(feature = "std")]
 impl<T> MutexExt<T> for Mutex<T> {
     fn get(&self) -> MutexGuard<'_, T> {
-        self.lock().unwrap()
+        self.lock().expect("mutex not poisoned")
     }
 }
 
@@ -80,7 +80,7 @@ pub(crate) trait RwLockExt<T> {
 #[cfg(feature = "std")]
 impl<T> RwLockExt<T> for RwLock<T> {
     fn get(&self) -> RwLockReadGuard<'_, T> {
-        self.read().unwrap()
+        self.read().expect("rwlock not poisoned")
     }
 
     fn try_get(&self) -> Option<RwLockReadGuard<'_, T>> {
