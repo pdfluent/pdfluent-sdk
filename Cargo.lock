@@ -4041,7 +4041,13 @@ dependencies = [
 name = "pdf-capi"
 version = "1.0.0-beta.1"
 dependencies = [
+ "lopdf",
+ "pdf-compliance",
  "pdf-engine",
+ "pdf-forms",
+ "pdf-manip",
+ "pdf-redact",
+ "pdf-sign",
 ]
 
 [[package]]

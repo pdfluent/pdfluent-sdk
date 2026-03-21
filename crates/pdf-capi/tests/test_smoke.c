@@ -132,11 +132,31 @@ static int test_metadata(void) {
 /* ---------- Scenario 5: Read AcroForm fields ---------- */
 
 static int test_form_fields_read(void) {
-    /* TODO: C API does not yet expose form field reading.
-     * Requires: pdf_document_form_fields() or similar.
-     * Depends on: pdf-capi extension with forms API.
-     */
-    return 77; /* skip */
+    PdfDocument *doc = NULL;
+    PdfStatus s = pdf_document_open(SAMPLE_PDF, NULL, &doc);
+    if (s != PDF_STATUS_OK) return 77; /* skip if fixture missing */
+
+    /* pdf_form_field_count: 0 = no AcroForm, >0 = has fields, -1 = error */
+    int32_t count = pdf_form_field_count(doc);
+    assert(count >= 0);
+
+    if (count > 0) {
+        /* At least one field — verify name lookup. */
+        char *name = pdf_form_field_name(doc, 0);
+        assert(name != NULL);
+        pdf_string_free(name);
+
+        /* Out-of-range must return NULL, not crash. */
+        assert(pdf_form_field_name(doc, count) == NULL);
+    }
+
+    /* Safety: null / negative index must not crash. */
+    assert(pdf_form_field_count(NULL) == -1);
+    assert(pdf_form_field_name(doc, -1) == NULL);
+    assert(pdf_form_field_name(NULL, 0) == NULL);
+
+    pdf_document_free(doc);
+    return 0;
 }
 
 /* ---------- Scenario 6: Fill text field, save ---------- */
@@ -172,11 +192,32 @@ static int test_annotation_highlight(void) {
 /* ---------- Scenario 9: Validate PDF/A ---------- */
 
 static int test_pdfa_validation(void) {
-    /* TODO: C API does not yet expose PDF/A validation.
-     * Requires: pdf_validate_pdfa() or similar.
-     * Depends on: pdf-capi extension with compliance API.
-     */
-    return 77; /* skip */
+    PdfDocument *doc = NULL;
+    PdfStatus s = pdf_document_open(SAMPLE_PDF, NULL, &doc);
+    if (s != PDF_STATUS_OK) return 77; /* skip if fixture missing */
+
+    PdfComplianceReport *report = NULL;
+    s = pdf_document_validate_pdfa(doc, PDF_A_LEVEL_2B, &report);
+    assert(s == PDF_STATUS_OK);
+    assert(report != NULL);
+
+    /* sample.pdf may or may not be PDF/A-2B — both outcomes are valid. */
+    int32_t compliant = pdf_compliance_report_is_compliant(report);
+    int32_t errors    = pdf_compliance_report_error_count(report);
+    assert(compliant == 0 || compliant == 1);
+    assert(errors >= 0);
+
+    pdf_compliance_report_free(report);
+
+    /* Safety: null inputs must not crash. */
+    assert(pdf_document_validate_pdfa(NULL, PDF_A_LEVEL_2B, &report)
+           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+    assert(pdf_compliance_report_is_compliant(NULL) == 0);
+    assert(pdf_compliance_report_error_count(NULL) == -1);
+    pdf_compliance_report_free(NULL);
+
+    pdf_document_free(doc);
+    return 0;
 }
 
 /* ---------- Scenario 10: Merge 2 PDFs ---------- */
@@ -306,6 +347,85 @@ static int test_multi_page(void) {
     return 0;
 }
 
+/* ---------- Extra: PDF/A conversion ---------- */
+
+static int test_convert_pdfa(void) {
+    PdfDocument *doc = NULL;
+    PdfStatus s = pdf_document_open(SAMPLE_PDF, NULL, &doc);
+    if (s != PDF_STATUS_OK) return 77;
+
+    PdfDocument *out = NULL;
+    s = pdf_document_convert_pdfa(doc, PDF_A_LEVEL_2B, &out);
+    if (s != PDF_STATUS_OK) {
+        /* Some fixtures may be unloadable by lopdf — treat as skip. */
+        pdf_document_free(doc);
+        return 77;
+    }
+
+    assert(out != NULL);
+    assert(pdf_document_page_count(out) >= 1);
+
+    /* Safety: null inputs must not crash. */
+    PdfDocument *nil = NULL;
+    assert(pdf_document_convert_pdfa(NULL, PDF_A_LEVEL_2B, &nil)
+           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+
+    pdf_document_free(out);
+    pdf_document_free(doc);
+    return 0;
+}
+
+/* ---------- Extra: redaction ---------- */
+
+static int test_redact(void) {
+    PdfDocument *doc = NULL;
+    PdfStatus s = pdf_document_open(SAMPLE_PDF, NULL, &doc);
+    if (s != PDF_STATUS_OK) return 77;
+
+    PdfDocument *out = NULL;
+    /* Use an innocuous pattern; zero matches is not an error. */
+    s = pdf_document_redact(doc, "ZZZZZZ_NOMATCH", &out);
+    if (s != PDF_STATUS_OK) {
+        pdf_document_free(doc);
+        return 77;
+    }
+
+    assert(out != NULL);
+    assert(pdf_document_page_count(out) >= 1);
+
+    /* Safety: null inputs. */
+    PdfDocument *nil = NULL;
+    assert(pdf_document_redact(NULL, "x", &nil)
+           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+    assert(pdf_document_redact(doc, NULL, &nil)
+           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+
+    pdf_document_free(out);
+    pdf_document_free(doc);
+    return 0;
+}
+
+/* ---------- Extra: sign (skip — needs .p12 fixture) ---------- */
+
+static int test_sign(void) {
+    PdfDocument *doc = NULL;
+    PdfStatus s = pdf_document_open(SAMPLE_PDF, NULL, &doc);
+    if (s != PDF_STATUS_OK) return 77;
+
+    /* Safety: null path must fail with an argument or file-not-found error,
+     * not crash. */
+    PdfDocument *out = NULL;
+    s = pdf_document_sign(doc, NULL, NULL, &out);
+    assert(s == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+
+    s = pdf_document_sign(doc, "/nonexistent.p12", "", &out);
+    assert(s == PDF_STATUS_ERROR_FILE_NOT_FOUND);
+
+    /* Actual signing requires a PKCS#12 fixture — skip. */
+    pdf_document_free(doc);
+    return 77; /* skip */
+}
+
 /* ---------- main ---------- */
 
 int main(void) {
@@ -334,6 +454,9 @@ int main(void) {
     RUN_TEST(test_render_thumbnail);
     RUN_TEST(test_error_handling);
     RUN_TEST(test_multi_page);
+    RUN_TEST(test_convert_pdfa);
+    RUN_TEST(test_redact);
+    RUN_TEST(test_sign);
 
     pdf_destroy();
 

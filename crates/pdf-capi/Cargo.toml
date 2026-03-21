@@ -10,3 +10,9 @@ crate-type = ["cdylib", "staticlib", "lib"]
 
 [dependencies]
 pdf-engine = { path = "../pdf-engine" }
+pdf-compliance = { path = "../pdf-compliance" }
+pdf-forms = { path = "../pdf-forms" }
+pdf-manip = { path = "../pdf-manip" }
+pdf-redact = { path = "../pdf-redact" }
+pdf-sign = { path = "../pdf-sign" }
+lopdf = { path = "../lopdf" }

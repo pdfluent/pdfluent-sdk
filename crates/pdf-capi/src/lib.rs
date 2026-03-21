@@ -467,6 +467,309 @@ unsafe fn get_box(
     }
 }
 
+// ---- PDF/A compliance ----------------------------------------------------
+
+/// Validate a document against a PDF/A conformance level.
+///
+/// On success writes a `PdfComplianceReport` pointer to `*out`. The caller
+/// owns the report and must free it with `pdf_compliance_report_free`.
+/// The report is written even when the document is non-compliant — a
+/// `PDF_STATUS_OK` return only means the validation ran, not that it passed.
+///
+/// # Safety
+/// `doc` must be valid. `out` must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_validate_pdfa(
+    doc: *const PdfDocument,
+    level: PdfALevel,
+    out: *mut *mut PdfComplianceReport,
+) -> PdfStatus {
+    if doc.is_null() || out.is_null() {
+        error::set_last_error("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let pdf = unsafe { &*doc }.0.pdf();
+    let report = pdf_compliance::validate_pdfa(pdf, level.to_compliance_level());
+    unsafe { *out = Box::into_raw(Box::new(PdfComplianceReport(report))) };
+    PdfStatus::Ok
+}
+
+/// Returns 1 if the compliance report indicates full conformance, 0 otherwise.
+/// Returns 0 when `report` is null.
+///
+/// # Safety
+/// `report` must have been returned by `pdf_document_validate_pdfa`, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_compliance_report_is_compliant(
+    report: *const PdfComplianceReport,
+) -> i32 {
+    if report.is_null() {
+        return 0;
+    }
+    unsafe { &*report }.0.is_compliant() as i32
+}
+
+/// Number of conformance errors in the report, or -1 if `report` is null.
+///
+/// # Safety
+/// `report` must have been returned by `pdf_document_validate_pdfa`, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_compliance_report_error_count(
+    report: *const PdfComplianceReport,
+) -> i32 {
+    if report.is_null() {
+        return -1;
+    }
+    unsafe { &*report }.0.error_count() as i32
+}
+
+/// Free a compliance report. Null is safe (no-op).
+///
+/// # Safety
+/// `report` must have been returned by `pdf_document_validate_pdfa` and not yet freed, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_compliance_report_free(report: *mut PdfComplianceReport) {
+    if !report.is_null() {
+        drop(unsafe { Box::from_raw(report) });
+    }
+}
+
+// ---- PDF/A conversion ----------------------------------------------------
+
+/// Convert a document to PDF/A and return the result as a new document.
+///
+/// The caller owns the returned document and must free it with `pdf_document_free`.
+///
+/// # Safety
+/// `doc` and `out` must be valid non-null pointers.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_convert_pdfa(
+    doc: *const PdfDocument,
+    level: PdfALevel,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || out.is_null() {
+        error::set_last_error("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&format!("lopdf load: {e}"));
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    // cleanup_for_pdfa applies PDF/A-incompatible element removal; is_pdfa1
+    // enables stricter PDF/A-1 rules (e.g. no transparency at all).
+    if let Err(e) =
+        pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut lopdf_doc, level.is_part1())
+    {
+        error::set_last_error(&e.to_string());
+        return PdfStatus::ErrorConvert;
+    }
+    let mut buf = Vec::new();
+    if let Err(e) = lopdf_doc.save_to(&mut buf) {
+        error::set_last_error(&format!("save: {e}"));
+        return PdfStatus::ErrorConvert;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            PdfStatus::ErrorConvert
+        }
+    }
+}
+
+// ---- Redaction -----------------------------------------------------------
+
+/// Redact all text occurrences of `pattern` in the document.
+///
+/// Returns a new document with the redactions applied. The caller owns the
+/// returned document and must free it with `pdf_document_free`.
+/// If no text matches `pattern`, the document is returned unchanged (no error).
+///
+/// # Safety
+/// `doc`, `pattern`, and `out` must be valid non-null pointers.
+/// `pattern` must be a null-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_redact(
+    doc: *const PdfDocument,
+    pattern: *const c_char,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || pattern.is_null() || out.is_null() {
+        error::set_last_error("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let pat = match unsafe { CStr::from_ptr(pattern) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error("invalid UTF-8 in pattern");
+            return PdfStatus::ErrorInvalidArgument;
+        }
+    };
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&format!("lopdf load: {e}"));
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    let opts = pdf_redact::RedactSearchOptions::default();
+    if let Err(e) = pdf_redact::search_and_redact(&mut lopdf_doc, pat, &opts) {
+        error::set_last_error(&e.to_string());
+        return PdfStatus::ErrorRedact;
+    }
+    let mut buf = Vec::new();
+    if let Err(e) = lopdf_doc.save_to(&mut buf) {
+        error::set_last_error(&format!("save: {e}"));
+        return PdfStatus::ErrorRedact;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            PdfStatus::ErrorRedact
+        }
+    }
+}
+
+// ---- Signing -------------------------------------------------------------
+
+/// Sign a document using a PKCS#12 identity and return the signed document.
+///
+/// `pkcs12_path` is the filesystem path to the .p12 / .pfx bundle.
+/// `pkcs12_password` unlocks the bundle; pass `NULL` or an empty string for
+/// password-less bundles.
+/// The caller owns the returned document and must free it with `pdf_document_free`.
+///
+/// # Safety
+/// `doc`, `pkcs12_path`, and `out` must be valid non-null pointers.
+/// Both C strings must be null-terminated UTF-8. `pkcs12_password` may be null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_sign(
+    doc: *const PdfDocument,
+    pkcs12_path: *const c_char,
+    pkcs12_password: *const c_char,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || pkcs12_path.is_null() || out.is_null() {
+        error::set_last_error("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let path_str = match unsafe { CStr::from_ptr(pkcs12_path) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error("invalid UTF-8 in pkcs12_path");
+            return PdfStatus::ErrorInvalidArgument;
+        }
+    };
+    let password = if pkcs12_password.is_null() {
+        ""
+    } else {
+        match unsafe { CStr::from_ptr(pkcs12_password) }.to_str() {
+            Ok(s) => s,
+            Err(_) => {
+                error::set_last_error("invalid UTF-8 in pkcs12_password");
+                return PdfStatus::ErrorInvalidArgument;
+            }
+        }
+    };
+    let pkcs12_bytes = match std::fs::read(path_str) {
+        Ok(b) => b,
+        Err(e) => {
+            error::set_last_error(&format!("failed to read PKCS#12: {e}"));
+            return PdfStatus::ErrorFileNotFound;
+        }
+    };
+    let signer = match pdf_sign::Pkcs12Signer::from_pkcs12(&pkcs12_bytes, password) {
+        Ok(s) => s,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorSign;
+        }
+    };
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref();
+    let signed_bytes =
+        match pdf_sign::sign_pdf(raw_bytes, &signer, &pdf_sign::SignOptions::default()) {
+            Ok(b) => b,
+            Err(e) => {
+                error::set_last_error(&e.to_string());
+                return PdfStatus::ErrorSign;
+            }
+        };
+    match pdf_engine::PdfDocument::open(signed_bytes) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            PdfStatus::ErrorSign
+        }
+    }
+}
+
+// ---- Form fields ---------------------------------------------------------
+
+/// Number of terminal (leaf-widget) AcroForm fields. Returns -1 if `doc` is
+/// null; returns 0 if the document has no AcroForm or no terminal fields.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_form_field_count(doc: *const PdfDocument) -> i32 {
+    if doc.is_null() {
+        error::set_last_error("null document pointer");
+        return -1;
+    }
+    let pdf = unsafe { &*doc }.0.pdf();
+    match pdf_forms::parse_acroform(pdf) {
+        Some(tree) => tree.terminal_fields().len() as i32,
+        None => 0,
+    }
+}
+
+/// Return the fully qualified name of the AcroForm field at zero-based `index`.
+/// Returns null if `doc` is null, `index` is negative or out of range, or the
+/// document has no AcroForm. Free the returned string with `pdf_string_free`.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_form_field_name(
+    doc: *const PdfDocument,
+    index: i32,
+) -> *mut c_char {
+    if doc.is_null() || index < 0 {
+        return ptr::null_mut();
+    }
+    let pdf = unsafe { &*doc }.0.pdf();
+    let tree = match pdf_forms::parse_acroform(pdf) {
+        Some(t) => t,
+        None => return ptr::null_mut(),
+    };
+    let terminals = tree.terminal_fields();
+    let idx = index as usize;
+    if idx >= terminals.len() {
+        return ptr::null_mut();
+    }
+    let name = tree.fully_qualified_name(terminals[idx]);
+    match std::ffi::CString::new(name) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 // ---- Tests ---------------------------------------------------------------
 
 #[cfg(test)]

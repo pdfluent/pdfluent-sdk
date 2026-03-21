@@ -27,10 +27,40 @@ else
   DYLIB_VAR := LD_LIBRARY_PATH
 endif
 
-# Try target-specific dir first, fall back to generic release dir
-TARGET_DIR := $(wildcard ../../../target/$(TARGET_TRIPLE)/release)
-ifeq ($(TARGET_DIR),)
-  TARGET_DIR := ../../../target/release
+# Resolve TARGET_DIR to the directory that contains the built dylib.
+# Prefer the triple-specific path; fall back to the generic release dir.
+# This handles mixed toolchain setups where the active Rust toolchain
+# targets a different architecture than the host (e.g. x86_64 toolchain
+# on an arm64 Mac produces binaries in target/release/, not
+# target/aarch64-apple-darwin/release/).
+TARGET_DIR_TRIPLE  := ../../../target/$(TARGET_TRIPLE)/release
+TARGET_DIR_GENERIC := ../../../target/release
+
+HAS_DYLIB_TRIPLE  := $(wildcard $(TARGET_DIR_TRIPLE)/libpdf_capi.dylib \
+                                $(TARGET_DIR_TRIPLE)/libpdf_capi.so)
+HAS_DYLIB_GENERIC := $(wildcard $(TARGET_DIR_GENERIC)/libpdf_capi.dylib \
+                                $(TARGET_DIR_GENERIC)/libpdf_capi.so)
+
+ifneq ($(HAS_DYLIB_TRIPLE),)
+  TARGET_DIR := $(TARGET_DIR_TRIPLE)
+else ifneq ($(HAS_DYLIB_GENERIC),)
+  TARGET_DIR := $(TARGET_DIR_GENERIC)
+else
+  # No dylib found yet — default to triple-specific so error message is clear.
+  TARGET_DIR := $(TARGET_DIR_TRIPLE)
+endif
+
+# Compile C to match the dylib's architecture so the linker can resolve
+# symbols (important when the Rust toolchain targets a different arch than
+# the host compiler's default, e.g. x86_64 toolchain on arm64 macOS).
+DYLIB_ARCH_RAW := $(shell file $(TARGET_DIR)/libpdf_capi.dylib \
+                               $(TARGET_DIR)/libpdf_capi.so 2>/dev/null \
+                  | grep -o 'x86_64\|arm64\|aarch64' | head -1)
+# Normalise aarch64 → arm64 for -arch flag (clang uses arm64, not aarch64).
+ifeq ($(DYLIB_ARCH_RAW),aarch64)
+  CFLAGS += -arch arm64
+else ifneq ($(DYLIB_ARCH_RAW),)
+  CFLAGS += -arch $(DYLIB_ARCH_RAW)
 endif
 
 LDFLAGS  := -L$(TARGET_DIR)
