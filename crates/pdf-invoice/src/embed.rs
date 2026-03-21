@@ -269,7 +269,11 @@ fn add_to_embedded_files_nametree(
             Ok(Object::Reference(id)) => *id,
             Ok(Object::Dictionary(_)) => {
                 // Inline dict — need to externalize it.
-                let d = catalog.get(b"Names").unwrap().as_dict().unwrap().clone();
+                let d = catalog
+                    .get(b"Names")
+                    .and_then(|o| o.as_dict())
+                    .cloned()
+                    .map_err(|_| InvoiceError::Parse("Names not a dict".into()))?;
                 let id = doc.add_object(d);
                 let catalog = doc
                     .get_object_mut(catalog_id)?
