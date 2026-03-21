@@ -2687,7 +2687,15 @@ fn check_predefined_property_types(xmp: &str, level: PdfALevel, report: &mut Com
                 };
 
                 if let Some(msg) = violation {
-                    error(report, rule, msg);
+                    // PDF/A-1 LangAlt violations (dc:description, dc:rights…) → §6.7.3.
+                    // veraPDF confirmed by isartor-6-7-2-t02-fail-c. (#FN-6.7.3)
+                    // All other property type violations stay on `rule` ("6.7.9.3" for PDF/A-1).
+                    let emit_rule = if level.part() == 1 && kind == PropValueKind::LangAlt {
+                        "6.7.9.3-la"
+                    } else {
+                        rule
+                    };
+                    error(report, emit_rule, msg);
                     reported.insert(tag_name);
                 }
             }

@@ -2991,6 +2991,15 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.7.9.2") => Some("6.6.2.3.1"),
             (2..=3, "6.7.9.3") => Some("6.6.2.3.1"),
 
+            // Lang Alt property type violations (dc:description, dc:rights, xmpRights:UsageTerms).
+            // check_xmp_lang_alt_properties emits "6.7.9.3-la" for type-specific violations.
+            // PDF/A-1: veraPDF uses §6.7.3 (confirmed by isartor-6-7-2-t02-fail-c). (#FN-6.7.3)
+            // PDF/A-2/3: §6.6.2.3.1 (same as other property type violations).
+            // PDF/A-4: §6.5.2 (predefined property value type violations).
+            (1, "6.7.9.3-la") => Some("6.7.3"),
+            (2..=3, "6.7.9.3-la") => Some("6.6.2.3.1"),
+            (4, "6.7.9.3-la") => Some("6.5.2"),
+
             // ── 6.2.x color/font rule remaps ──
 
             // Device color vs OutputIntent: veraPDF uses §6.2.4.3 for PDF/A-2/3/4.

@@ -2851,10 +2851,12 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
 ///
 /// Properties dc:description, dc:rights, and xmpRights:UsageTerms must be Lang Alt
 /// type (rdf:Alt with xml:lang-tagged rdf:li entries), not plain strings or attribute
-/// values. veraPDF flags this as §6.7.9.3 (isValueTypeCorrect == true).
+/// values.
 ///
-/// XMP Specification Part 1, §8.2.2: dc:description and dc:rights are "Lang Alt" type.
-/// XMP Rights Management Schema: xmpRights:UsageTerms is "Lang Alt" type.
+/// Internal rule: "6.7.9.3-la" (Lang Alt-specific). Remapped by remap_clause_numbers:
+/// - PDF/A-1: §6.7.3 (veraPDF confirmed by isartor-6-7-2-t02-fail-c). (#FN-6.7.3)
+/// - PDF/A-2/3: §6.6.2.3.1 (XMP extension schema value-type rule).
+/// - PDF/A-4: §6.5.2 (predefined property value type violations).
 pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(xmp_data) = get_xmp_metadata(pdf) else {
         return;
@@ -2883,9 +2885,11 @@ pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
             let region = &xmp_text[start..region_end];
             if !region.contains("<rdf:Alt") {
                 // No rdf:Alt container — plain string, not a valid Lang Alt.
+                // Use "6.7.9.3-la" so remap_clause_numbers can emit the correct
+                // rule per PDF/A part (§6.7.3 for PDF/A-1, §6.6.2.3.1 for PDF/A-2/3).
                 error(
                     report,
-                    "6.7.9.3",
+                    "6.7.9.3-la",
                     format!(
                         "XMP property '{prop}' must be Lang Alt (rdf:Alt) type, not a plain string"
                     ),
@@ -2900,7 +2904,7 @@ pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
                 if !region[abs..=tag_end].contains("xml:lang") {
                     error(
                         report,
-                        "6.7.9.3",
+                        "6.7.9.3-la",
                         format!(
                             "XMP property '{prop}' has rdf:Alt but rdf:li is missing xml:lang attribute"
                         ),
@@ -2915,7 +2919,7 @@ pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
             // Attribute form is always a plain scalar, never rdf:Alt — violation.
             error(
                 report,
-                "6.7.9.3",
+                "6.7.9.3-la",
                 format!(
                     "XMP property '{prop}' must be Lang Alt (rdf:Alt) type, not an attribute value"
                 ),
