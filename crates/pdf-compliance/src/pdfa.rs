@@ -2646,6 +2646,15 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             //   rendering intents in ISO 19005-4, same as §6.2.9 in ISO 19005-1). (#FN-6.2.9)
             (1, "6.2.6") | (4, "6.2.6") => Some("6.2.9"),
 
+            // Image XObject /Intent checks use internal rule "6.2.6-img" (separate from
+            // content-stream ri operators) so PDF/A-1 can be suppressed independently.
+            // PDF/A-1: veraPDF does not report §6.2.9 for /Intent on Image XObjects
+            // (isartor-6-2-4-t01-fail-a has §6.2.4 violation; /Intent fires FP=6.2.9).
+            // PDF/A-4: §6.2.9. PDF/A-2/3: §6.2.6. (#FP-6.2.9 isartor-6-2-4-t01-fail-a)
+            (1, "6.2.6-img") => Some("SUPPRESS"),
+            (4, "6.2.6-img") => Some("6.2.9"),
+            (_, "6.2.6-img") => Some("6.2.6"),
+
             // Optional content restrictions
             // PDF/A-1 §6.1.13: OCProperties in Catalog is forbidden.
             // check.rs emits "6.1.13-ocprops" to avoid the (1,"6.1.13")→"6.1.12" remap.
@@ -2658,6 +2667,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.8.1") => Some("6.2.4"),
             (1, "6.2.8.2") => Some("6.2.4"),
             (1, "6.2.8.3") => Some("6.2.4"),
+            // /Alternates key on Image XObjects emits "6.2.7.1" (PDF/A-2/3/4 numbering).
+            // For PDF/A-1, veraPDF uses §6.2.4 (same as OPI/Interpolate restrictions).
+            // (#FN-6.2.4 #FP-6.2.7.1 isartor-6-2-4-t01-fail-a)
+            (1, "6.2.7.1") => Some("6.2.4"),
             // PDF/A-4: OPI/Alternates/Interpolate checks use §6.2.7.x
             // ISO 19005-4 renumbered: §6.2.8.1 (Interpolate) → §6.2.7.1 (#FN-6.2.7.1)
             (4, "6.2.8.1") => Some("6.2.7.1"), // Interpolate=true forbidden
@@ -2930,11 +2943,12 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (2..=3, "6.5.3") => Some("6.3.3"),
 
             // Image Alternates key prohibited.
-            // PDF/A-2/3: veraPDF uses §6.2.7.1. check_image_xobjects emits "6.2.7.1" directly.
-            // No remap needed — "6.2.7.1" is the correct rule for PDF/A-2/3.
-            // Undefined operators now emit "6.2.2" directly so no remap needed there either.
-            // (#FN-6.2.2 / old wrong remap (2..=3,"6.2.7.1")=>"6.2.10" removed)
-            (2..=3, "6.2.8.2") => Some("6.2.7.1"),
+            // PDF/A-2/3: veraPDF uses §6.2.8 (testNumber 1) for /Alternates on Image XObjects.
+            // check_image_xobjects emits "6.2.7.1" directly (correct for PDF/A-4); remap to
+            // "6.2.8" for PDF/A-2/3. PDFA-2B.xml profile confirms: clause="6.2.8" testNumber="1".
+            // (#FP-6.2.7.1 veraPDF-6-2-2-t01-fail-a/b/c isartor-6-2-4-t01-fail-a)
+            (2..=3, "6.2.7.1") => Some("6.2.8"),
+            (2..=3, "6.2.8.2") => Some("6.2.8"),
 
             // Image Interpolate=true prohibited.
             // PDF/A-2/3: §6.2.8. (#483)
