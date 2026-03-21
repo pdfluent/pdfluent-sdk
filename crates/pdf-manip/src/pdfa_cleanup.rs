@@ -100,6 +100,8 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_soft_mask_colorspace(doc);
     remove_halftone_names(doc);
     remove_needs_rendering(doc);
+    remove_pressteps(doc);
+    remove_alternate_presentations(doc);
     remove_forbidden_annotations(doc);
     fix_file_spec_keys(doc);
     strip_ef_from_file_specs(doc);
@@ -2096,6 +2098,51 @@ fn remove_needs_rendering(doc: &mut Document) {
     };
     if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
         catalog.remove(b"NeedsRendering");
+    }
+}
+
+/// Remove /PresSteps from all page dictionaries (§6.10 T2 / §6.11 T2).
+///
+/// PDF/A-2/3 §6.10 and PDF/A-4 §6.11 forbid /PresSteps in page dicts.
+fn remove_pressteps(doc: &mut Document) {
+    let ids: Vec<lopdf::ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+            if dict.get(b"Type").ok().and_then(|o| {
+                if let Object::Name(n) = o { Some(n.as_slice() == b"Page") } else { None }
+            }).unwrap_or(false) {
+                dict.remove(b"PresSteps");
+            }
+        }
+    }
+}
+
+/// Remove /AlternatePresentations from the catalog /Names dictionary (§6.10 T1 / §6.11 T1).
+fn remove_alternate_presentations(doc: &mut Document) {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return,
+    };
+    // Names may be inline or a reference.
+    let names_ref = {
+        if let Some(Object::Dictionary(ref cat)) = doc.objects.get(&catalog_id) {
+            match cat.get(b"Names").ok() {
+                Some(Object::Reference(r)) => Some(*r),
+                Some(Object::Dictionary(_)) => None, // handle inline below
+                _ => return,
+            }
+        } else {
+            return;
+        }
+    };
+    if let Some(ref_id) = names_ref {
+        if let Some(Object::Dictionary(ref mut names)) = doc.objects.get_mut(&ref_id) {
+            names.remove(b"AlternatePresentations");
+        }
+    } else if let Some(Object::Dictionary(ref mut cat)) = doc.objects.get_mut(&catalog_id) {
+        if let Ok(Object::Dictionary(ref mut names)) = cat.get_mut(b"Names") {
+            names.remove(b"AlternatePresentations");
+        }
     }
 }
 

@@ -9442,7 +9442,11 @@ pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut C
                 }
             } else {
                 // bfrange: <srclo> <srchi> <dststart> — one entry per line.
-                // Check both ends of the destination range. (#FN-6.2.11.7.3)
+                // Check both endpoints AND specific forbidden values that may fall in the
+                // INTERIOR of the destination range. Without this, a range like
+                // <0001><FFFF><0001> maps codes to U+0001..U+FFFF — the endpoint check
+                // would fire §6.2.11.7.3 for dsthi=FFFF but miss U+FFFE (§6.2.11.7.2)
+                // which is only in the interior. (#FN-6.2.11.7.2 veraPDF-6-2-11-7-2-t02-fail-b)
                 if let Some(&dstlo) = tokens.get(2) {
                     let dsthi = tokens
                         .get(1)
@@ -9452,6 +9456,32 @@ pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut C
                                 .map(|&srclo| dstlo.saturating_add(srchi.saturating_sub(srclo)))
                         })
                         .unwrap_or(dstlo);
+                    // Check the specific forbidden values that might fall in [dstlo, dsthi].
+                    // §6.2.11.7.2 points: U+0000, U+FEFF, U+FFFE.
+                    // §6.2.11.7.3 points: U+FFFF, surrogates D800-DFFF, PUA E000-F8FF.
+                    // Check §6.2.11.7.2 values FIRST so they take priority over §6.2.11.7.3
+                    // when both overlap (e.g., a range spanning both U+FFFE and U+FFFF).
+                    for &point in &[0x0000u32, 0xFEFF, 0xFFFE] {
+                        if dstlo <= point && point <= dsthi && check_dst(point) {
+                            return;
+                        }
+                    }
+                    // Surrogate range overlap
+                    if dstlo <= 0xDFFF && 0xD800 <= dsthi && check_dst(dstlo.max(0xD800)) {
+                        return;
+                    }
+                    // PUA range overlap (Level A only; check_dst respects skip_pua_for_font)
+                    if !skip_pua_for_font && dstlo <= 0xF8FF && 0xE000 <= dsthi
+                        && check_dst(dstlo.max(0xE000))
+                    {
+                        return;
+                    }
+                    // §6.2.11.7.3 U+FFFF sentinel
+                    if dstlo <= 0xFFFF && 0xFFFF <= dsthi && check_dst(0xFFFF) {
+                        return;
+                    }
+                    // Also check the explicit endpoints (catches single-entry ranges and
+                    // non-standard ranges where the destination isn't a simple increment).
                     for val in [dstlo, dsthi] {
                         if check_dst(val) {
                             return; // one error per font is enough
@@ -9529,7 +9559,6 @@ fn check_cmap_streams_for_ffff(
                 .collect();
             let dst_idx = if in_bfchar { 1 } else { 2 };
             if let Some(&dstlo) = tokens.get(dst_idx) {
-                // Check both start and end of bfrange destination. (#FN-6.2.11.7.3)
                 let dsthi = if in_bfrange {
                     tokens
                         .get(1)
@@ -9542,21 +9571,18 @@ fn check_cmap_streams_for_ffff(
                 } else {
                     dstlo
                 };
-                for val in [dstlo, dsthi] {
-                    // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE (reverse-BOM) forbidden.
-                    // These belong to §6.2.11.7.2, NOT §6.2.11.7.3. (#FN-6.2.11.7.2)
+
+                // Helper to check a single value in this pass.
+                let mut check_val = |val: u32| -> bool {
                     if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
                         error(
                             report,
                             "6.2.11.7.2",
                             format!("ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+{val:04X}"),
                         );
-                        return;
+                        return true;
                     }
-                    // §6.2.11.7.3: surrogates (D800-DFFF), BMP PUA (E000-F8FF,
-                    // unless symbolic), U+FFFF; plus 4-byte surrogate pair encodings.
-                    // Note: U+FFFE is §6.2.11.7.2 (handled above). (#FP-6.2.11.7.3)
-                    let is_violation = if val > 0xFFFF {
+                    let is_viol = if val > 0xFFFF {
                         let high = (val >> 16) as u16;
                         (0xD800u16..=0xDFFF).contains(&high)
                     } else {
@@ -9564,13 +9590,52 @@ fn check_cmap_streams_for_ffff(
                             || (!skip_pua && (0xE000u32..=0xF8FF).contains(&val))
                             || val == 0xFFFF
                     };
-                    if is_violation {
+                    if is_viol {
                         error(
                             report,
                             "6.2.11.7.3",
                             format!("ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+{val:04X}"),
                         );
-                        return; // one error per document is enough
+                        return true;
+                    }
+                    false
+                };
+
+                // For bfrange: also check forbidden values that may fall in the INTERIOR
+                // of [dstlo, dsthi] — not just the endpoints. A range spanning from some
+                // valid code to U+FFFF will have U+FFFE in the middle (§6.2.11.7.2), which
+                // endpoint checking alone would miss. (#FN-6.2.11.7.2 6-2-11-7-2-t02-fail-b)
+                if in_bfrange && dstlo != dsthi {
+                    // §6.2.11.7.2 interior points (check first so they take priority)
+                    for &pt in &[0x0000u32, 0xFEFF, 0xFFFE] {
+                        if dstlo < pt && pt < dsthi && check_val(pt) {
+                            return;
+                        }
+                    }
+                    // §6.2.11.7.3: surrogates interior overlap
+                    if dstlo < 0xDFFF && 0xD800 < dsthi {
+                        let probe = dstlo.max(0xD801);
+                        if probe <= 0xDFFF && check_val(probe) {
+                            return;
+                        }
+                    }
+                    // §6.2.11.7.3: PUA interior overlap
+                    if !skip_pua && dstlo < 0xF8FF && 0xE000 < dsthi {
+                        let probe = dstlo.max(0xE001);
+                        if probe <= 0xF8FF && check_val(probe) {
+                            return;
+                        }
+                    }
+                    // §6.2.11.7.3: U+FFFF in interior
+                    if dstlo < 0xFFFF && 0xFFFF < dsthi && check_val(0xFFFF) {
+                        return;
+                    }
+                }
+
+                // Always check the explicit endpoints
+                for val in [dstlo, dsthi] {
+                    if check_val(val) {
+                        return;
                     }
                 }
             }
@@ -10811,11 +10876,10 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                 }
             } else {
                 // No PDF /Encoding for this code — fall back to CFF internal encoding.
-                let g = match table.glyph_index(code as u8) {
+                match table.glyph_index(code as u8) {
                     Some(g) if g.0 != 0 => g,
                     _ => continue,
-                };
-                g
+                }
             };
 
             let Some(cff_w) = table.glyph_width(gid) else {
