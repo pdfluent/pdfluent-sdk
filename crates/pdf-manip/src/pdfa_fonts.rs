@@ -8493,6 +8493,11 @@ fn cff_width_for_code(
     // CFF (e.g. because the subset uses GID-based names like G80) does it
     // fall back to the CFF internal encoding.
     let mut name_found = false;
+    // True when the PDF encoding does not define a glyph for this code
+    // (e.g. WinAnsiEncoding code 127 = DEL = undefined). In that case veraPDF
+    // falls back to the CFF internal encoding for width comparison, so we must
+    // do the same. (#FN-6.2.11.5-undefined-code)
+    let mut name_is_undefined = false;
     if has_pdf_encoding {
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.clone()
@@ -8500,7 +8505,10 @@ fn cff_width_for_code(
             let ch = encoding_to_char(code, enc_name);
             unicode_to_glyph_name(ch).unwrap_or_default()
         };
-        if !glyph_name.is_empty() && glyph_name != ".notdef" {
+        if glyph_name.is_empty() || glyph_name == ".notdef" {
+            // PDF encoding has no glyph for this code — allow CFF encoding fallback.
+            name_is_undefined = true;
+        } else if !glyph_name.is_empty() && glyph_name != ".notdef" {
             if let Some(w) =
                 find_cff_glyph_width_by_name_fractional(cff, font_data, &glyph_name, scale)
             {
@@ -8534,17 +8542,22 @@ fn cff_width_for_code(
     }
 
     // Fallback: CFF internal encoding → GID → width.
-    // Used when (a) no PDF encoding exists, or (b) PDF encoding name lookup
+    // Used when (a) no PDF encoding exists, (b) PDF encoding name lookup
     // failed AND the CFF uses GID-based names (G80, G32, etc.) where name
-    // lookup will never succeed. For fonts with standard glyph names, a
-    // failed name lookup means the glyph isn't in the subset — veraPDF
-    // skips the width check in that case, so we return None.
+    // lookup will never succeed, or (c) the PDF encoding doesn't define a
+    // glyph for this code (undefined codes like WinAnsiEncoding code 127=DEL).
+    // For fonts with standard glyph names and a defined code that isn't in the
+    // CFF charset, a failed name lookup means the glyph isn't in the subset —
+    // veraPDF skips the width check in that case, so we return None.
     let allow_cff_encoding_fallback = !has_pdf_encoding
         || cff_has_gid_based_names(cff)
         // Encoding dictionary with Differences but without BaseEncoding:
         // for codes not explicitly listed in Differences, use CFF internal
         // encoding as the authoritative mapping.
-        || (enc_name.is_empty() && !has_explicit_difference);
+        || (enc_name.is_empty() && !has_explicit_difference)
+        // PDF encoding doesn't define a glyph name for this code — veraPDF
+        // uses CFF encoding directly for width comparison. (#FN-6.2.11.5)
+        || name_is_undefined;
 
     if !name_found && code <= 255 && allow_cff_encoding_fallback {
         let enc_map = parse_cff_encoding_map(font_data);
@@ -9306,6 +9319,10 @@ fn cff_glyph_name_alternatives(name: &str) -> &'static [&'static str] {
         "uni00AD" | "softhyphen" => &["hyphen", "sfthyphen"],
         "uni00A0" | "nbspace" => &["space"],
         "uni2010" => &["hyphen"],
+        // "quotesingle" (U+0027 apostrophe, WinAnsiEncoding code 39) is often
+        // stored as "quoteright" in Type1 subset CFF fonts. veraPDF resolves via
+        // AGL and accepts "quoteright" as equivalent for §6.2.11.5. (#FN-6.2.11.5)
+        "quotesingle" => &["quoteright"],
         _ => &[],
     }
 }
