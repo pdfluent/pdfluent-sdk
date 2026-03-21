@@ -910,18 +910,43 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     // When the pdfaid identification is invalid (absent, wrong namespace URI, or broken
     // RDF structure), veraPDF does NOT fire §6.7.3 consistency sub-rules.
     // Cases: "6.6.4" = PDF/A-2/3 pdfaid invalid; "6.7.11" = PDF/A-1 pdfaid invalid
-    // (incl. wrong RDF namespace); "6.5.2" = PDF/A-4; "6.7.3" = generic from broken RDF.
+    // (pdfaid cascade); "6.5.2" = PDF/A-4; "6.7.3" = generic from broken RDF.
+    // Note: "6.7.11-rdf" (non-canonical RDF namespace) is intentionally NOT included
+    // here — veraPDF fires §6.7.3.7 even when the RDF namespace is broken, because it
+    // sees pdf:Producer as null/undeclared. (#FN-6.7.3.7-PDFIUM-610)
     // We also check the namespace URI directly: the §6.7.11 cascade fires *after*
     // check_info_xmp_deep, so we can't rely on §6.7.11 being in the report yet when
     // the pdfaid namespace is wrong. (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4)
     const CORRECT_PDFAID_NS: &str = "http://www.aiim.org/pdfa/ns/id/";
     let pdfaid_wrong_ns = xmp.contains("xmlns:pdfaid") && !xmp.contains(CORRECT_PDFAID_NS);
+    // "6.7.11-rdf" = broken RDF namespace — keep §6.7.3 checks running for this case.
     let pdfaid_invalid = pdfaid_wrong_ns
         || report
             .issues
             .iter()
             .any(|i| matches!(i.rule.as_str(), "6.6.4" | "6.7.11" | "6.5.2" | "6.7.3"));
+    // When the RDF namespace is broken, veraPDF treats all pdf:X properties as null.
+    // Fire §6.7.3.7 if /Producer is non-empty and pdf:Producer appears missing.
+    let rdf_ns_broken = report.issues.iter().any(|i| i.rule == "6.7.11-rdf");
     if pdfaid_invalid {
+        if rdf_ns_broken {
+            // Broken RDF namespace: pdf:Producer is unreadable → §6.7.3.7 if /Producer set.
+            let metadata = pdf.metadata();
+            if let Some(ref producer) = metadata.producer {
+                let producer_str = decode_pdf_string(producer);
+                if !producer_str.trim().is_empty() {
+                    error(
+                        report,
+                        "6.7.3.7",
+                        format!(
+                            "Info /Producer '{}' is set but XMP pdf:Producer is unreadable \
+                             (non-canonical RDF namespace makes properties undeclared)",
+                            producer_str
+                        ),
+                    );
+                }
+            }
+        }
         return;
     }
     let metadata = pdf.metadata();
@@ -1555,9 +1580,13 @@ fn check_xmp_rdf_structure(xmp: &str, level: PdfALevel, report: &mut ComplianceR
         };
         if let Some(uri) = uri {
             if uri != CANONICAL_RDF_NS {
+                // Use "6.7.11-rdf" (distinct from "6.7.11" pdfaid cascade) so that
+                // check_info_xmp_deep can handle it differently: the broken RDF namespace
+                // makes pdf:Producer appear null to veraPDF → §6.7.3.7 still fires.
+                // "6.7.11-rdf" is remapped to "6.7.11" in the output. (#FN-6.7.3.7-PDFIUM-610)
                 error(
                     report,
-                    "6.7.11",
+                    "6.7.11-rdf",
                     format!(
                         "XMP uses non-canonical RDF namespace URI '{}' (expected '{}')",
                         uri, CANONICAL_RDF_NS
