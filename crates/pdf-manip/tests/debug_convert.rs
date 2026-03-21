@@ -4386,3 +4386,101 @@ fn debug_gen698_bisect_f_violation() {
         count_f_violations(&doc2)
     );
 }
+
+#[test]
+#[ignore]
+fn debug_gen152_check_622() {
+    // Analyze the converted gen-152 PDF to understand §6.2.2 violation
+    use pdf_syntax::Pdf;
+
+    let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
+    let pdf = Pdf::new(data.clone()).unwrap();
+    let level = pdf_compliance::detect_pdfa_level(&pdf).unwrap();
+    let report = pdf_compliance::validate_pdfa(&pdf, level);
+    println!("=== Compliance results for converted gen-152 (level={level:?}) ===");
+    println!("Compliant: {}", report.is_compliant());
+    println!("Issues ({}):", report.issues.len());
+    for e in &report.issues {
+        println!("  [{:?}] [{}] {} at {:?}", e.severity, e.rule, e.message, e.location);
+    }
+    println!();
+
+    // Also check resource dict details
+    for (page_idx, page) in pdf.pages().iter().enumerate() {
+        let res = page.resources();
+        println!("Page {} resources:", page_idx + 1);
+        let fonts: Vec<_> = res.fonts.entries().map(|(n, _)| String::from_utf8_lossy(n.as_ref()).to_string()).collect();
+        println!("  Fonts ({}): {:?}", fonts.len(), fonts);
+        let xobjs: Vec<_> = res.x_objects.entries().map(|(n, _)| String::from_utf8_lossy(n.as_ref()).to_string()).collect();
+        println!("  XObjects ({}): {:?}", xobjs.len(), xobjs);
+        let props: Vec<_> = res.properties.entries().map(|(n, _)| String::from_utf8_lossy(n.as_ref()).to_string()).collect();
+        println!("  Properties ({}): {:?}", props.len(), props);
+        // Check page dict for own /Resources key
+        let page_dict = page.raw();
+        println!("  Page has own /Resources: {}", page_dict.contains_key(b"Resources" as &[u8]));
+    }
+}
+
+#[test]
+#[ignore]
+fn debug_gen152_long_string_location() {
+    // Find exactly where in the decoded content stream the "long string" FP is detected.
+    use pdf_syntax::Pdf;
+
+    let data = std::fs::read("/tmp/gen-152_152696-converted.pdf").unwrap();
+    let pdf = Pdf::new(data).unwrap();
+    let page = pdf.pages().first().unwrap().clone();
+    let content = page.page_stream().unwrap().to_vec();
+    println!("Decoded content stream length: {}", content.len());
+
+    // Find all 'ID' and 'EI' keyword positions (whitespace-delimited)
+    let mut id_positions = vec![];
+    let mut ei_positions = vec![];
+    let len = content.len();
+    let is_ws = |b: u8| matches!(b, b' '|b'\t'|b'\n'|b'\r'|b'\x0C');
+    for i in 0..len.saturating_sub(1) {
+        let pre = if i == 0 { true } else { is_ws(content[i-1]) };
+        let post = if i+2 >= len { true } else { is_ws(content[i+2]) };
+        if content[i] == b'I' && content[i+1] == b'D' && pre && post {
+            id_positions.push(i);
+        }
+        if content[i] == b'E' && content[i+1] == b'I' && pre && post {
+            ei_positions.push(i);
+        }
+    }
+    println!("ID positions (ws-delimited): {:?}", &id_positions[..id_positions.len().min(10)]);
+    println!("EI positions (ws-delimited, first 20): {:?}", &ei_positions[..ei_positions.len().min(20)]);
+
+    // Find first '(' that starts a string > 32767 bytes
+    let mut pos = 0usize;
+    while pos < len {
+        if content[pos] == b'(' {
+            let start = pos;
+            let mut depth: i32 = 1;
+            let mut decoded = 0usize;
+            pos += 1;
+            while pos < len && depth > 0 {
+                match content[pos] {
+                    b'\\' => { pos += 2; decoded += 1; }
+                    b'(' => { depth += 1; pos += 1; decoded += 1; }
+                    b')' => { depth -= 1; if depth > 0 { decoded += 1; } pos += 1; }
+                    _ => { decoded += 1; pos += 1; }
+                }
+                if decoded > 32767 { break; }
+            }
+            if decoded > 32767 {
+                println!("Long string at offset {}: decoded {} bytes, depth={}", start, decoded, depth);
+                println!("Bytes around start: {:?}", &content[start.saturating_sub(20)..start.min(len)]);
+                // Print context before
+                let ctx_start = start.saturating_sub(100);
+                let ctx: Vec<u8> = content[ctx_start..start].iter()
+                    .map(|&b| if b.is_ascii_graphic() || b == b' ' { b } else { b'.' })
+                    .collect();
+                println!("Context before (100 bytes): {}", String::from_utf8_lossy(&ctx));
+                break;
+            }
+        } else {
+            pos += 1;
+        }
+    }
+}

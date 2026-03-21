@@ -558,6 +558,32 @@ pub fn has_output_intent(pdf: &Pdf) -> bool {
     false
 }
 
+/// Returns true when any OutputIntent has a DestOutputProfile with an invalid
+/// device class (not 'prtr' or 'mntr').  veraPDF skips §6.2.3.x checks entirely
+/// for such invalid profiles. (#FP-6.2.3.2, #FP-6.2.3.3, PDFBOX-3105-1)
+fn output_intent_has_invalid_device_class(pdf: &Pdf) -> bool {
+    let Some(cat) = catalog(pdf) else {
+        return false;
+    };
+    let Some(intents) = cat.get::<Array<'_>>(keys::OUTPUT_INTENTS) else {
+        return false;
+    };
+    for dict in intents.iter::<Dict<'_>>() {
+        let Some(stream) = dict.get::<Stream<'_>>(keys::DEST_OUTPUT_PROFILE) else {
+            continue;
+        };
+        let Ok(data) = stream.decoded() else { continue };
+        if data.len() < 16 {
+            continue;
+        }
+        let class = &data[12..16];
+        if class != b"prtr" && class != b"mntr" {
+            return true;
+        }
+    }
+    false
+}
+
 /// Determine the number of components in the OutputIntent's DestOutputProfile ICC profile.
 /// Returns None if no GTS_PDFA1 OutputIntent or no parseable profile.
 pub fn output_intent_profile_components(pdf: &Pdf) -> Option<u32> {
@@ -595,6 +621,12 @@ pub fn output_intent_profile_components(pdf: &Pdf) -> Option<u32> {
 /// count (PDF/A-2 §6.2.3.3, PDF Reference §4.5.4).
 /// Note: Default* does NOT apply to Image XObject /ColorSpace entries.
 pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceReport) {
+    // When the OutputIntent ICC profile has an invalid device class (not 'prtr'/'mntr'),
+    // veraPDF does NOT fire §6.2.3.3 device CS mismatch checks. Skip to avoid FPs.
+    // (#FP-6.2.3.3, PDFBOX-3105-1)
+    if output_intent_has_invalid_device_class(pdf) {
+        return;
+    }
     // 0 = no OutputIntent; device color spaces are forbidden without a matching profile.
     // Using 0 here causes all device-CS checks below to fire (since 0 ≠ 1/3/4). (#467)
     let profile_components = output_intent_profile_components(pdf).unwrap_or(0);
@@ -3439,6 +3471,12 @@ fn icc_profiles_identical(a: &[u8], b: &[u8]) -> bool {
 ///       deliberately create two separate sRGB ICC objects for OutputIntent and
 ///       DefaultRGB, and veraPDF does not flag that as a violation. (#FP-6.2.4.2)
 pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut ComplianceReport) {
+    // When the OutputIntent ICC profile has an invalid device class (not 'prtr'/'mntr'),
+    // veraPDF does NOT fire §6.2.3.2/§6.2.4.2 ICC profile reuse checks. Skip to avoid FPs.
+    // (#FP-6.2.3.2, PDFBOX-3105-1)
+    if output_intent_has_invalid_device_class(pdf) {
+        return;
+    }
     let xref = pdf.xref();
 
     // ── 1. Collect forbidden ICC profile refs and, for CMYK profiles, their

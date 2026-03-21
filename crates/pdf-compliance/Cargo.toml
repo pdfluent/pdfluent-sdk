@@ -11,6 +11,7 @@ thiserror = "2"
 log = "0.4"
 cff-parser.workspace = true
 ttf-parser.workspace = true
+flate2 = "1"
 
 # lopdf: full-featured on native (default features = rayon/chrono/jiff/time),
 # wasm_js backend only (no rayon) on wasm32. Cannot use workspace = true here
