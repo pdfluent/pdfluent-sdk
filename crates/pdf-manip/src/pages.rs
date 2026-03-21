@@ -22,8 +22,12 @@ pub fn extract_pages(doc: &Document, pages: &[u32]) -> Result<Document> {
     let mut new_doc = doc.clone();
     let to_delete: Vec<u32> = (1..=total).filter(|p| !pages.contains(p)).collect();
 
-    for &page_num in to_delete.iter().rev() {
-        new_doc.delete_pages(&[page_num]);
+    // Delete all unwanted pages in one call instead of one-by-one.
+    // The per-page loop was O(n²): each delete re-traversed the page tree,
+    // causing 126 s for a 91-page PDF. Bulk delete rebuilds the tree once.
+    // (#manipulation-timeout)
+    if !to_delete.is_empty() {
+        new_doc.delete_pages(&to_delete);
     }
     Ok(new_doc)
 }
