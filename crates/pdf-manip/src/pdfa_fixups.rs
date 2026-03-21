@@ -3805,7 +3805,7 @@ fn fix_unreadable_content_streams(doc: &mut Document) -> usize {
                     if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                         s.dict.remove(b"Filter");
                         s.dict.remove(b"DecodeParms");
-                        s.content = inner;
+                        s.set_content(inner); // also updates /Length (#FP-6.1.7.1-len)
                         let _ = s.compress();
                         count += 1;
                     }
@@ -3895,7 +3895,7 @@ fn fix_invalid_operator_preamble(doc: &mut Document) -> usize {
         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
             s.dict.remove(b"Filter");
             s.dict.remove(b"DecodeParms");
-            s.content = new_content;
+            s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
             let _ = s.compress();
             count += 1;
         }
@@ -4039,7 +4039,7 @@ fn fix_page_content_stream_nesting(doc: &mut Document) -> usize {
                 if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(id) {
                     s.dict.remove(b"Filter");
                     s.dict.remove(b"DecodeParms");
-                    s.content = new_content;
+                    s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
                     let _ = s.compress();
                 }
             }
@@ -4125,7 +4125,7 @@ fn fix_graphics_state_nesting_limit(doc: &mut Document) -> usize {
         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
             s.dict.remove(b"Filter");
             s.dict.remove(b"DecodeParms");
-            s.content = new_content;
+            s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
             let _ = s.compress();
         }
     }
@@ -4390,8 +4390,8 @@ fn fix_content_stream_operator_spacing(doc: &mut Document) -> usize {
         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
             s.dict.remove(b"Filter");
             s.dict.remove(b"DecodeParms");
-            s.content = new_content;
-            // Re-compress for smaller output.
+            s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
+                                        // Re-compress for smaller output.
             let _ = s.compress();
         }
     }
@@ -4471,7 +4471,7 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
-                s.content = new_content;
+                s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
                 let _ = s.compress();
             }
         }
@@ -4604,7 +4604,7 @@ fn fix_non_finite_numbers_in_streams(doc: &mut Document) -> usize {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
-                s.content = new_content;
+                s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
                 let _ = s.compress();
             }
         }
@@ -4728,7 +4728,7 @@ fn replace_invalid_jpx_with_placeholder(stream: &mut lopdf::Stream) {
     stream.dict.remove(b"DecodeParms");
     stream.dict.remove(b"ImageMask");
     stream.dict.remove(b"Filter");
-    stream.content = vec![255u8];
+    stream.set_content(vec![255u8]); // also updates /Length (#FP-6.1.7.1-len)
 }
 
 fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
@@ -4970,7 +4970,7 @@ fn fix_odd_hex_strings_in_streams(doc: &mut Document) -> usize {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
-                s.content = new_content;
+                s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
                 let _ = s.compress();
             }
         }
@@ -5034,7 +5034,7 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
-                s.content = new_content;
+                s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
                 let _ = s.compress();
             }
         }
@@ -5096,7 +5096,7 @@ fn strip_unknown_content_stream_operators(doc: &mut Document) -> usize {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
-                s.content = new_content;
+                s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
                 let _ = s.compress();
                 count += 1;
             }
