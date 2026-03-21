@@ -8176,17 +8176,21 @@ pub fn check_notdef_glyph_reference(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
-/// Scan a content stream for Tj/TJ operators with hex-encoded .notdef references.
+/// Scan a content stream for Tj/TJ operators with hex-encoded or literal .notdef references.
 ///
-/// Detects byte value 0x00 in hex strings used by text operators. For simple fonts
-/// (1-byte encoding), ANY 0x00 byte is character code 0 = .notdef. For CID fonts
-/// (2-byte Identity-H), 0x0000 = CID 0 = .notdef.
+/// Detects byte value 0x00 in:
+/// - `<hex>` strings used by text operators
+/// - `(...)` parenthesized literal strings with `\000` octal escape or literal 0x00 byte
 ///
-/// `cid_mode`: if true (page has Type0 fonts), only flag hex strings that decode
-/// to exactly 0x0000 (2-byte null CID). If false, any 0x00 byte = notdef.
+/// For simple fonts (1-byte encoding), ANY 0x00 character code = .notdef.
+/// For CID fonts (2-byte Identity-H), 0x0000 = CID 0 = .notdef.
+///
+/// `cid_mode`: if true (page has Type0 fonts), only flag hex strings with all-zero bytes
+/// (CID 0). Parenthesized strings are always simple-font encoded. (#FP-6.2.11.8)
 fn scan_for_notdef_in_content(content: &[u8], cid_mode: bool) -> bool {
     let mut i = 0;
     while i + 3 < content.len() {
+        // --- Hex string <...> ---
         if content[i] == b'<' && content.get(i + 1).is_some_and(|b| b.is_ascii_hexdigit()) {
             let start = i + 1;
             let mut end = start;
@@ -8195,51 +8199,103 @@ fn scan_for_notdef_in_content(content: &[u8], cid_mode: bool) -> bool {
             }
             if end < content.len() {
                 let hex = &content[start..end];
-                // In CID mode (page has Type0 fonts), a hex string like <0041>
-                // means CID 65, not two 1-byte codes. Only flag if ALL decoded bytes
-                // are 0x00 (i.e. CID 0 = notdef). In simple-font mode, any 0x00 byte
-                // is character code 0 = notdef. (#FP-6.2.11.8)
+                // CID mode: only <0000> (all-zero); simple mode: any 0x00 byte. (#FP-6.2.11.8)
                 let has_null = if cid_mode {
-                    hex_is_all_null(hex) // only <0000> or <000000> etc.
+                    hex_is_all_null(hex)
                 } else {
-                    hex_contains_null_byte(hex) // any 0x00 byte
+                    hex_contains_null_byte(hex)
                 };
-                if has_null {
-                    // Check context: must be near a Tj or inside TJ array
-                    let after = &content[end + 1..content.len().min(end + 10)];
-                    let after_trimmed: Vec<u8> = after
-                        .iter()
-                        .copied()
-                        .skip_while(|b| b.is_ascii_whitespace())
-                        .take(3)
-                        .collect();
-                    if after_trimmed.starts_with(b"Tj") || after_trimmed.starts_with(b"TJ") {
-                        return true;
-                    }
-                    // Also detect inside [...] TJ: look backward for '['
-                    let before_start = i.saturating_sub(200);
-                    let before = &content[before_start..i];
-                    if before.iter().rev().any(|&b| b == b'[') {
-                        // Inside an array — check if the array is followed by TJ
-                        if let Some(close) = content[end..].iter().position(|&b| b == b']') {
-                            let after_arr =
-                                &content[end + close + 1..content.len().min(end + close + 10)];
-                            let trimmed: Vec<u8> = after_arr
-                                .iter()
-                                .copied()
-                                .skip_while(|b| b.is_ascii_whitespace())
-                                .take(3)
-                                .collect();
-                            if trimmed.starts_with(b"TJ") {
-                                return true;
-                            }
-                        }
-                    }
+                if has_null && is_in_text_operator(content, i, end) {
+                    return true;
                 }
             }
             i = end + 1;
+        // --- Parenthesized string (...) — simple fonts only, not CID mode ---
+        } else if !cid_mode && content[i] == b'(' {
+            // Find the matching ')' while handling backslash escapes and nested parens.
+            let str_start = i;
+            let mut j = i + 1;
+            let mut depth: i32 = 1;
+            let mut has_null = false;
+            while j < content.len() && depth > 0 {
+                match content[j] {
+                    b'\\' => {
+                        // Octal escape \NNN: \000 = null byte
+                        if j + 3 < content.len()
+                            && content[j + 1].is_ascii_digit()
+                            && content[j + 2].is_ascii_digit()
+                            && content[j + 3].is_ascii_digit()
+                        {
+                            let octal_val = (content[j + 1] - b'0') as u32 * 64
+                                + (content[j + 2] - b'0') as u32 * 8
+                                + (content[j + 3] - b'0') as u32;
+                            if octal_val == 0 {
+                                has_null = true;
+                            }
+                            j += 4;
+                        } else {
+                            j += 2; // skip the escape sequence
+                        }
+                    }
+                    b'(' => {
+                        depth += 1;
+                        j += 1;
+                    }
+                    b')' => {
+                        depth -= 1;
+                        j += 1;
+                    }
+                    0x00 => {
+                        // Literal null byte inside the string
+                        has_null = true;
+                        j += 1;
+                    }
+                    _ => {
+                        j += 1;
+                    }
+                }
+            }
+            let str_end = j - 1; // position of closing ')'
+            if has_null && is_in_text_operator(content, str_start, str_end) {
+                return true;
+            }
+            i = j;
         } else {
             i += 1;
+        }
+    }
+    false
+}
+
+/// Returns true if the string at [str_start..str_end] in content is used by a Tj/TJ operator —
+/// either followed directly by Tj/TJ, or inside a [...] array that is followed by TJ.
+fn is_in_text_operator(content: &[u8], str_start: usize, str_end: usize) -> bool {
+    // Check if immediately followed by Tj or TJ
+    let after = &content[str_end + 1..content.len().min(str_end + 10)];
+    let after_trimmed: Vec<u8> = after
+        .iter()
+        .copied()
+        .skip_while(|b| b.is_ascii_whitespace())
+        .take(3)
+        .collect();
+    if after_trimmed.starts_with(b"Tj") || after_trimmed.starts_with(b"TJ") {
+        return true;
+    }
+    // Check if inside [...] TJ array: scan backward for '[' (up to 500 bytes)
+    let before_start = str_start.saturating_sub(500);
+    let before = &content[before_start..str_start];
+    if before.iter().rev().any(|&b| b == b'[') {
+        if let Some(close) = content[str_end..].iter().position(|&b| b == b']') {
+            let after_arr = &content[str_end + close + 1..content.len().min(str_end + close + 10)];
+            let trimmed: Vec<u8> = after_arr
+                .iter()
+                .copied()
+                .skip_while(|b| b.is_ascii_whitespace())
+                .take(3)
+                .collect();
+            if trimmed.starts_with(b"TJ") {
+                return true;
+            }
         }
     }
     false
