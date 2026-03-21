@@ -21,12 +21,32 @@ typedef enum {
     PDF_STATUS_ERROR_CORRUPT_PDF = 4,
     PDF_STATUS_ERROR_PAGE_RANGE = 5,
     PDF_STATUS_ERROR_RENDER = 6,
+    PDF_STATUS_ERROR_CONVERT = 7,
+    PDF_STATUS_ERROR_REDACT = 8,
+    PDF_STATUS_ERROR_SIGN = 9,
     PDF_STATUS_ERROR_UNKNOWN = 99,
 } PdfStatus;
 
-// ---- Opaque handle ----
+// ---- PDF/A level ----
+
+typedef enum {
+    PDF_A_LEVEL_1B  = 0,
+    PDF_A_LEVEL_1A  = 1,
+    PDF_A_LEVEL_2B  = 2,
+    PDF_A_LEVEL_2U  = 3,
+    PDF_A_LEVEL_2A  = 4,
+    PDF_A_LEVEL_3B  = 5,
+    PDF_A_LEVEL_3U  = 6,
+    PDF_A_LEVEL_3A  = 7,
+    PDF_A_LEVEL_4   = 8,
+    PDF_A_LEVEL_4F  = 9,
+    PDF_A_LEVEL_4E  = 10,
+} PdfALevel;
+
+// ---- Opaque handles ----
 
 typedef struct PdfDocument PdfDocument;
+typedef struct PdfComplianceReport PdfComplianceReport;
 
 // ---- Library lifecycle ----
 
@@ -98,6 +118,60 @@ PdfStatus pdf_page_crop_box(
     int32_t page_index,
     double *out_x0, double *out_y0,
     double *out_x1, double *out_y1);
+
+// ---- PDF/A compliance ----
+
+// Validate a document against a PDF/A conformance level.
+// Writes an opaque PdfComplianceReport to *out on success.
+// Returns PDF_STATUS_OK even when the document is non-compliant —
+// check pdf_compliance_report_is_compliant() on the report.
+PdfStatus pdf_document_validate_pdfa(
+    const PdfDocument *doc,
+    PdfALevel level,
+    PdfComplianceReport **out);
+
+int32_t pdf_compliance_report_is_compliant(const PdfComplianceReport *report);
+int32_t pdf_compliance_report_error_count(const PdfComplianceReport *report);
+void    pdf_compliance_report_free(PdfComplianceReport *report);
+
+// ---- PDF/A conversion ----
+
+// Convert a document to PDF/A. Returns a new document on success.
+// The caller must free the output document with pdf_document_free.
+PdfStatus pdf_document_convert_pdfa(
+    const PdfDocument *doc,
+    PdfALevel level,
+    PdfDocument **out);
+
+// ---- Redaction ----
+
+// Redact all occurrences of pattern from the document.
+// Returns a new document (caller must free with pdf_document_free).
+// PDF_STATUS_OK is returned even if pattern has zero matches.
+PdfStatus pdf_document_redact(
+    const PdfDocument *doc,
+    const char *pattern,
+    PdfDocument **out);
+
+// ---- Signing ----
+
+// Sign a document using a PKCS#12 identity (.p12 / .pfx).
+// pkcs12_password may be NULL for password-less bundles.
+// Returns a new signed document (caller must free with pdf_document_free).
+PdfStatus pdf_document_sign(
+    const PdfDocument *doc,
+    const char *pkcs12_path,
+    const char *pkcs12_password,  // may be NULL
+    PdfDocument **out);
+
+// ---- Form fields ----
+
+// Number of terminal AcroForm fields; 0 if no AcroForm; -1 on null doc.
+int32_t pdf_form_field_count(const PdfDocument *doc);
+
+// Fully qualified name of field at zero-based index.
+// Returns NULL for out-of-range index or no AcroForm. Free with pdf_string_free.
+char *pdf_form_field_name(const PdfDocument *doc, int32_t index);
 
 // ---- Error state ----
 
