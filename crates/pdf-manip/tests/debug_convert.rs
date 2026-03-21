@@ -1142,6 +1142,7 @@ fn debug_round23_failures() {
     use pdf_syntax::Pdf;
 
     let pdfs: &[(&str, &str)] = &[
+        ("/tmp/gen-582_582444.pdf", "gen-582 §6.2.11.5:1"),
         ("/tmp/gen-319_319905.pdf", "gen-319 §6.2.11.5:1"),
         ("/tmp/gen-698_698323.pdf", "gen-698 §6.2.11.4.1:2"),
         ("/tmp/gen-152_152696.pdf", "gen-152 §6.2.2:1"),
@@ -4545,4 +4546,229 @@ fn debug_gen152_long_string_location() {
             pos += 1;
         }
     }
+}
+
+/// Convert isartor-6-3-5 through the full pipeline and validate with veraPDF.
+/// Verifies fix for tt_glyph_has_data false-negative for space glyph (#504).
+#[test]
+#[ignore]
+fn debug_isartor635_convert() {
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+    use pdf_syntax::Pdf;
+
+    let path = "/tmp/isartor-6-3-5.pdf";
+    if !std::path::Path::new(path).exists() {
+        println!("SKIP: {path} not found");
+        return;
+    }
+
+    let data = std::fs::read(path).unwrap();
+    let mut doc = lopdf::Document::load_mem(&data).unwrap();
+
+    let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false);
+    let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc);
+    pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc);
+    pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc);
+    pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc);
+    let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc);
+    pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+    let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None);
+
+    let mut saved = Vec::new();
+    doc.save_to(&mut saved).unwrap();
+    pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+    pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
+
+    let out = "/tmp/isartor-6-3-5-converted.pdf";
+    std::fs::write(out, &saved).unwrap();
+    println!("Saved to {out}");
+
+    // Validate with own checker
+    match Pdf::new(saved.clone()) {
+        Ok(pdf) => {
+            let report = pdf_compliance::validate_pdfa(&pdf, pdf_compliance::PdfALevel::A2b);
+            println!(
+                "Own checker: compliant={} errors={} warnings={}",
+                report.compliant,
+                report.error_count(),
+                report.warning_count()
+            );
+            for issue in report.issues.iter().take(20) {
+                println!("  [{:?}] {}: {}", issue.severity, issue.rule, issue.message);
+            }
+        }
+        Err(e) => println!("Pdf::new failed: {e:?}"),
+    }
+
+    // Validate with veraPDF if available
+    let verapdf = std::path::Path::new("/Users/jasperdewinter/verapdf/verapdf");
+    if verapdf.exists() {
+        let result = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(format!(
+                "/Users/jasperdewinter/verapdf/verapdf --format mrr --flavour 2b {out} 2>/dev/null | grep -o 'failedChecks=\"[0-9]*\"'"
+            ))
+            .output();
+        match result {
+            Ok(out) => println!(
+                "veraPDF failedChecks: {}",
+                String::from_utf8_lossy(&out.stdout).trim()
+            ),
+            Err(e) => println!("veraPDF error: {e}"),
+        }
+    }
+}
+
+/// Convert all 8 pdfa_fails PDFs and validate each with veraPDF.
+/// Regression test for issue #504.
+#[test]
+#[ignore]
+fn debug_pdfa_fails_all_convert() {
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+
+    fn run_pipeline(data: &[u8], conformance: PdfAConformance) -> Vec<u8> {
+        let mut doc = lopdf::Document::load_mem(data).unwrap();
+        let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false);
+        let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
+        pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+        pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+        pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+        pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+        pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc);
+        pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+        pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+        pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc);
+        pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+        pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc);
+        pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
+        pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+        pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+        pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc);
+        let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc);
+        pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+        let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, conformance, None);
+        let mut saved = Vec::new();
+        doc.save_to(&mut saved).unwrap();
+        pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+        pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
+        saved
+    }
+
+    let pdfs: &[(&str, PdfAConformance, &str)] = &[
+        (
+            "cs-isartor-6-3-4-t01-fail-f.pdf",
+            PdfAConformance::A2b,
+            "2b",
+        ),
+        (
+            "cs-isartor-6-3-5-t01-fail-d.pdf",
+            PdfAConformance::A2b,
+            "2b",
+        ),
+        (
+            "cs-veraPDF test suite 6-1-6-2-t01-fail-b.pdf",
+            PdfAConformance::A2b,
+            "2b",
+        ),
+        (
+            "cs-veraPDF test suite 6-2-10-4-1-t02-fail-a.pdf",
+            PdfAConformance::A2b,
+            "2b",
+        ),
+        (
+            "cs-veraPDF test suite 6-2-7-1-t01-fail-a.pdf",
+            PdfAConformance::A2b,
+            "2b",
+        ),
+        (
+            "cs-veraPDF test suite 6-6-2-3-1-t01-fail-c.pdf",
+            PdfAConformance::A2b,
+            "2b",
+        ),
+        (
+            "tagged-isartor-6-1-13-t01-fail-a.pdf",
+            PdfAConformance::A2b,
+            "2b",
+        ),
+        (
+            "tagged-veraPDF test suite 6-1-11-t01-fail-a.pdf",
+            PdfAConformance::A2b,
+            "2b",
+        ),
+    ];
+
+    let verapdf_bin = "/Users/jasperdewinter/verapdf/verapdf";
+    let mut all_pass = true;
+
+    for (name, conformance, flavour) in pdfs {
+        let path = format!("/tmp/pdfa_fails/{name}");
+        if !std::path::Path::new(&path).exists() {
+            println!("{name}: SKIP (not found)");
+            continue;
+        }
+        let data = std::fs::read(&path).unwrap();
+        let converted = run_pipeline(&data, *conformance);
+        let out = format!("/tmp/{name}-converted.pdf");
+        std::fs::write(&out, &converted).unwrap();
+
+        if std::path::Path::new(verapdf_bin).exists() {
+            let result = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(format!(
+                    "{verapdf_bin} --format mrr --flavour {flavour} \"{out}\" 2>/dev/null | grep -o 'failedChecks=\"[0-9]*\"'"
+                ))
+                .output();
+            match result {
+                Ok(o) => {
+                    let s = String::from_utf8_lossy(&o.stdout);
+                    let s = s.trim();
+                    let pass = s == "failedChecks=\"0\"";
+                    println!("{}: {} {}", name, if pass { "PASS" } else { "FAIL" }, s);
+                    if !pass {
+                        all_pass = false;
+                    }
+                }
+                Err(e) => println!("{name}: veraPDF error {e}"),
+            }
+        } else {
+            println!("{name}: veraPDF not found");
+        }
+    }
+
+    assert!(all_pass, "Some PDFs failed veraPDF validation");
 }
