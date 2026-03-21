@@ -8107,41 +8107,34 @@ fn compute_cff_type1_width_corrections(
 
         let code = first_char + i as u32;
 
-        // Primary: CFF encoding → GID → width. This exactly mirrors what
-        // veraPDF §6.2.11.5 does: map each character code through the CFF
-        // internal encoding to a GID, then read the charstring advance width.
+        // Primary: PDF encoding → glyph name → CFF charset lookup (matches veraPDF).
+        // veraPDF §6.2.11.5 maps each code through the PDF /Encoding to a glyph
+        // name, looks up that name in the CFF charset, and compares the charstring
+        // advance width to the PDF /Widths entry.
         //
-        // Do NOT filter out GID 0: veraPDF does not filter .notdef either.
-        // When glyph_index(code) returns GID 0 (code is unmapped in the CFF
-        // encoding — StandardEncoding fallback maps it to SID 0 → GID 0),
-        // veraPDF uses glyph_width(GID 0) = .notdef width as the expected
-        // value and fires if PDF /Widths differs.
+        // For fonts without PDF-level encoding, cff_width_for_code falls back to
+        // the CFF internal encoding, which is the sole authoritative mapping.
         //
-        // Previously we filtered GID 0 and fell back to the name-based path,
-        // which found a glyph by WinAnsi name (e.g. "quoteright" for code 146)
-        // at a *different* GID with a different width — causing false corrections
-        // that introduced new violations. (#6.2.11.5, #626)
+        // Do NOT use cff.glyph_index() as the primary path: for codes present in
+        // WinAnsiEncoding/MacRomanEncoding but absent from the CFF Format0 table,
+        // glyph_index() falls back to StandardEncoding → SID 0 → GID 0 (.notdef),
+        // returning the notdef width. But veraPDF resolves these codes via the PDF
+        // encoding → glyph name → CFF charset and finds the actual glyph (e.g.
+        // code 151 WinAnsiEncoding→emdash→1000). Using .notdef (278) as the
+        // expected width then introduces a false correction 1000→278. (#6.2.11.5)
         let frac_w = if code <= 255 {
-            cff.glyph_index(code as u8)
-                .and_then(|g| cff.glyph_width(g))
-                .map(|w| w as f64 * scale)
+            cff_width_for_code(&cff, font_data, code, enc_name, differences, scale)
         } else {
             None
         };
 
-        // Fallback: PDF encoding → glyph name → CFF charset lookup.
-        // Only reached when glyph_index returns None (glyph is absent from
-        // the subset's charset/encoding).
+        // Fallback: for high-byte codes on non-subset fonts without PDF-level
+        // encoding, veraPDF uses .notdef width for codes absent from the CFF
+        // encoding table. Only applies when there is no PDF /Encoding key at all
+        // (neither BaseEncoding nor Differences), i.e. the CFF internal encoding
+        // is the sole code→glyph mapping. (#479)
         let frac_w = frac_w.or_else(|| {
-            cff_width_for_code(&cff, font_data, code, enc_name, differences, scale)
-        });
-
-        // Last-resort: for high-byte codes on non-subset fonts where glyph_index
-        // returned None (genuine no-mapping), use .notdef width.  This only
-        // triggers when the CFF encoding has a genuine gap (no entry AND no
-        // StandardEncoding fallback), which is rare. (#479)
-        let frac_w = frac_w.or_else(|| {
-            if (128..=255).contains(&code) && !is_subset {
+            if (128..=255).contains(&code) && !is_subset && !has_pdf_encoding {
                 cff.glyph_width(cff_parser::GlyphId(0))
                     .map(|w| w as f64 * scale)
             } else {

@@ -1888,7 +1888,13 @@ fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                 let is_embedded = current_dict_ctx
                     .windows(13)
                     .any(|w| w == b"/EmbeddedFile" as &[u8]);
-                if has_dict_start && has_stream_ahead && !is_filespec && !is_embedded {
+                // /F inside an /OPI sub-dict is NOT a stream external file ref.
+                // Isartor §6.2.5 test: Form XObject has /OPI << /1.3 << /F (image.tif) >>,
+                // the /F here is OPI metadata, not an external file reference. (#FP-6.1.7)
+                let is_opi_subdict = current_dict_ctx
+                    .windows(4)
+                    .any(|w| w == b"/OPI" as &[u8]);
+                if has_dict_start && has_stream_ahead && !is_filespec && !is_embedded && !is_opi_subdict {
                     check::error(
                         report,
                         "6.1.7.1",
@@ -2638,8 +2644,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (1, "6.2.6") | (4, "6.2.6") => Some("6.2.9"),
 
             // Optional content restrictions
-            // PDF/A-1: veraPDF uses §6.1.11 for OCProperties violations.
-            // check.rs emits "6.1.11" — no remap needed (matches veraPDF).
+            // PDF/A-1 §6.1.13: OCProperties in Catalog is forbidden.
+            // check.rs emits "6.1.13-ocprops" to avoid the (1,"6.1.13")→"6.1.12" remap.
+            // (#FN-6.1.13 isartor-6-1-13-t01-fail-a)
+            (1, "6.1.13-ocprops") => Some("6.1.13"),
             // PDF/A-2/3 OC checks emit "6.6.4"; no remap needed (correct already)
 
             // Image XObject restrictions (OPI, Alternates, Interpolate)
@@ -2797,7 +2805,9 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             (4, "6.3.7-absent") => Some("6.2.10.3.2"),
 
             // Form XObject OPI violations (internal rule "6.2.9-form-opi").
-            // PDF/A-4 §6.2.8.1 covers OPI on Form XObjects; PDF/A-1/2/3 use §6.2.9.
+            // PDF/A-1 §6.2.4: OPI in XObject dict forbidden. veraPDF fires §6.2.4. (#FN-6.2.4)
+            // PDF/A-4 §6.2.8.1 covers OPI on Form XObjects; PDF/A-2/3 use §6.2.9.
+            (1, "6.2.9-form-opi") => Some("6.2.4"),
             (4, "6.2.9-form-opi") => Some("6.2.8.1"),
             (_, "6.2.9-form-opi") => Some("6.2.9"),
 
@@ -3007,6 +3017,10 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // PDF/A-4: §6.2.10.4.2.
             (1, "6.2.11.4.2") => Some("6.3.5"),
             (4, "6.2.11.4.2") => Some("6.2.10.4.2"),
+
+            // Font glyph presence check emits "6.2.11.4.1" (PDF/A-2/3 numbering).
+            // PDF/A-1: veraPDF uses §6.3.5 for embedded font glyph violations. (#FN-6.3.5)
+            (1, "6.2.11.4.1") => Some("6.3.5"),
 
             // Image XObject rendering intent: previously emitted "6.2.5" remapped to
             // "6.2.6" — now uses "6.2.8.1" directly (remapped to "6.2.4"/"6.2.8"/"6.2.7.1"

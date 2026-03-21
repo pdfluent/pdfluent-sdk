@@ -3044,7 +3044,7 @@ pub fn check_annotation_color_arrays(pdf: &Pdf, report: &mut ComplianceReport) {
 ///
 /// Form XObjects must not contain OPI key, PS key, or Subtype2=PS.
 /// Reference XObjects (Ref key) are also forbidden.
-pub fn check_form_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
+pub fn check_form_xobjects(pdf: &Pdf, _part: u8, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
         let res_dict = page_dict.get::<Dict<'_>>(keys::RESOURCES);
@@ -3076,9 +3076,10 @@ pub fn check_form_xobjects(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
 
             let xobj_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
             let loc = format!("page {}", page_idx + 1);
-            // PDF/A-4 §6.2.8.1 covers OPI on Form XObjects; PDF/A-1/2/3 use §6.2.9.
-            // Internal rule "6.2.9-form-opi" remaps to "6.2.8.1" for part=4. (#FN-6.2.8.1)
-            let opi_rule = if part == 4 { "6.2.9-form-opi" } else { "6.2.9" };
+            // "6.2.9-form-opi" remaps per part: PDF/A-1 → §6.2.4, PDF/A-4 → §6.2.8.1,
+            // PDF/A-2/3 → §6.2.9. Use this internal rule for ALL parts so the remap
+            // table can handle each case. (#FN-6.2.4 isartor-6-2-5-t01-fail-a)
+            let opi_rule = "6.2.9-form-opi";
             // PS/Subtype2=PS violations: veraPDF fires "6.2.5" for PDF/A-1 (not "6.2.6").
             // "6.2.9-form-ps" remaps to "6.2.5" for part=1, "6.2.8.1" for part=4. (#FN-6.2.5)
             let ps_rule = "6.2.9-form-ps";
@@ -3247,7 +3248,7 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
             // indirect refs automatically, so Object::Stream matches regardless of
             // whether the stream is direct or indirect. (#FN-6.2.3.2)
             // Extract owned values immediately to avoid lifetime conflicts.
-            let icc_props: Option<(bool, Option<i32>, Option<Vec<u8>>)> =
+            let icc_props: Option<(bool, Option<i32>, Option<Vec<u8>>, Option<Vec<u8>>)> =
                 items.next().and_then(|o| match o {
                     Object::Stream(s) => {
                         let d = s.dict();
@@ -3255,11 +3256,12 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
                             d.contains_key(keys::N),
                             d.get::<i32>(keys::N),
                             d.get::<Name>(keys::ALTERNATE).map(|n| n.as_ref().to_vec()),
+                            s.decoded().ok(),
                         ))
                     }
                     _ => None,
                 });
-            let Some((icc_has_n, n_components, alt_name_bytes)) = icc_props else {
+            let Some((icc_has_n, n_components, alt_name_bytes, icc_data)) = icc_props else {
                 continue;
             };
             let cs_name = std::str::from_utf8(name.as_ref()).unwrap_or("?");
@@ -3273,6 +3275,35 @@ pub fn check_iccbased_alternate(pdf: &Pdf, report: &mut ComplianceReport) {
                     format!("ICCBased CS '{cs_name}' missing required /N key"),
                     format!("page {}", page_idx + 1),
                 );
+            }
+
+            // §6.2.3.2: N must match the actual ICC profile color space signature.
+            // ICC header bytes 16-19 = color space signature (GRAY/RGB /Lab /CMYK).
+            // veraPDF fires "6.2.3.2" when N does not match. (#FN-6.2.3.2)
+            if let (Some(n), Some(data)) = (n_components, icc_data.as_deref()) {
+                if data.len() >= 20 {
+                    let cs_sig = &data[16..20];
+                    let expected_n: Option<i32> = match cs_sig {
+                        b"GRAY" => Some(1),
+                        b"RGB " | b"Lab " => Some(3),
+                        b"CMYK" => Some(4),
+                        _ => None,
+                    };
+                    if let Some(expected) = expected_n {
+                        if n != expected {
+                            let sig = std::str::from_utf8(cs_sig).unwrap_or("?");
+                            error_at(
+                                report,
+                                "6.2.3.2",
+                                format!(
+                                    "ICCBased CS '{cs_name}' has /N {n} but ICC profile \
+                                     color space is '{sig}' (expects N={expected})"
+                                ),
+                                format!("page {}", page_idx + 1),
+                            );
+                        }
+                    }
+                }
             }
 
             if let Some(alt) = alt_name_bytes.as_deref() {
@@ -6960,9 +6991,12 @@ pub fn check_optional_content(pdf: &Pdf, pdfa_part: u8, report: &mut ComplianceR
         return;
     };
     if pdfa_part == 1 {
+        // §6.1.13 (ISO 19005-1) forbids OCProperties in the catalog.
+        // Internal rule "6.1.13-ocprops" is remapped to "6.1.13" for PDF/A-1 so it
+        // doesn't get caught by the general (1,"6.1.13")=>"6.1.12" remap. (#FN-6.1.13)
         error(
             report,
-            "6.1.11",
+            "6.1.13-ocprops",
             "Optional content (OCProperties) forbidden in PDF/A-1",
         );
         return;
@@ -9483,11 +9517,14 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
         let loc = format!("page {}", page_idx + 1);
         let n = tokens.len();
         let mut active_cidset: Option<&Vec<u8>> = None;
-        // Report at most one glyph-rule and one notdef-rule violation per page
-        // to match veraPDF's single-check-per-rule behaviour.
-        let mut reported_glyph = false;
-        let mut reported_notdef = false;
-
+        // Report at most one glyph-rule violation per page to match veraPDF's
+        // single-check-per-rule behaviour.
+        // §6.2.11.8 ("renders as .notdef") is NOT emitted here: whether a CID
+        // absent from the CIDSet actually renders as .notdef depends on the font
+        // program, not just the CIDSet metadata. Emitting §6.2.11.8 based on
+        // CIDSet absence alone produces FPs when the CIDSet is wrong/incomplete but
+        // the glyph IS in the font. §6.2.11.8 is detected by
+        // check_notdef_glyph_reference (literal <0000> codes). (#FP-6.2.11.8)
         'page: for i in 0..n {
             let tok = tokens[i].as_slice();
 
@@ -9503,10 +9540,6 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
                 continue;
             };
 
-            if reported_glyph && reported_notdef {
-                break 'page;
-            }
-
             // Tj / ' / " — the preceding token is the string argument.
             // Handle both hex strings (<...>) and literal strings ((...)) because
             // some test PDFs use literal strings for single-byte CID codes. For
@@ -9519,30 +9552,15 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
                         continue;
                     }
                     if !cid_in_cidset(cid, cidset) {
-                        if !reported_glyph {
-                            error_at(
-                                report,
-                                glyph_rule,
-                                format!(
-                                    "CID 0x{cid:04X} used in content stream but absent from CIDSet"
-                                ),
-                                loc.clone(),
-                            );
-                            reported_glyph = true;
-                        }
-                        // Missing glyph renders as .notdef → §6.2.11.8 (PDF/A-2+).
-                        if part >= 2 && !reported_notdef {
-                            error_at(
-                                report,
-                                "6.2.11.8",
-                                format!("CID 0x{cid:04X} absent from CIDSet renders as .notdef"),
-                                loc.clone(),
-                            );
-                            reported_notdef = true;
-                        }
-                        if reported_glyph && (part < 2 || reported_notdef) {
-                            break 'page;
-                        }
+                        error_at(
+                            report,
+                            glyph_rule,
+                            format!(
+                                "CID 0x{cid:04X} used in content stream but absent from CIDSet"
+                            ),
+                            loc.clone(),
+                        );
+                        break 'page;
                     }
                 }
             }
@@ -9561,31 +9579,15 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
                                 continue;
                             }
                             if !cid_in_cidset(cid, cidset) {
-                                if !reported_glyph {
-                                    error_at(
-                                        report,
-                                        glyph_rule,
-                                        format!(
-                                            "CID 0x{cid:04X} used in content stream but absent from CIDSet"
-                                        ),
-                                        loc.clone(),
-                                    );
-                                    reported_glyph = true;
-                                }
-                                if part >= 2 && !reported_notdef {
-                                    error_at(
-                                        report,
-                                        "6.2.11.8",
-                                        format!(
-                                            "CID 0x{cid:04X} absent from CIDSet renders as .notdef"
-                                        ),
-                                        loc.clone(),
-                                    );
-                                    reported_notdef = true;
-                                }
-                                if reported_glyph && (part < 2 || reported_notdef) {
-                                    break 'page;
-                                }
+                                error_at(
+                                    report,
+                                    glyph_rule,
+                                    format!(
+                                        "CID 0x{cid:04X} used in content stream but absent from CIDSet"
+                                    ),
+                                    loc.clone(),
+                                );
+                                break 'page;
                             }
                         }
                     }
@@ -10701,6 +10703,9 @@ fn check_cidfont_type2_widths(
         if let Some(dw) = cid_font.get::<i32>(keys::DW) {
             let num_glyphs = face.number_of_glyphs() as u32;
             for gid_u32 in 0..num_glyphs {
+                if gid_u32 == 0 {
+                    continue; // GID 0 is always .notdef — never a document character; skip
+                }
                 if w_map.contains_key(&gid_u32) {
                     continue; // Covered by /W — already checked above
                 }
@@ -10709,7 +10714,7 @@ fn check_cidfont_type2_widths(
                     continue;
                 };
                 if advance == 0 {
-                    continue; // Skip .notdef or genuinely 0-width glyphs
+                    continue; // Skip genuinely 0-width glyphs (e.g. space variants)
                 }
                 let font_w = (advance as f64 * 1000.0 / upem).round() as i32;
                 if (font_w - dw).abs() > 2 {
@@ -10888,11 +10893,15 @@ fn check_truetype_simple_widths(
             continue; // Code not defined in encoding
         };
 
-        let Some(gid) = face.glyph_index(ch) else {
-            continue; // Glyph not in font
-        };
-        // Skip .notdef (GID 0)
-        if gid.0 == 0 {
+        // When the glyph is absent from the subset font, the renderer falls back to
+        // the notdef glyph (GID 0). veraPDF uses the notdef advance as
+        // "widthFromFontProgram" and compares it with the PDF /Widths entry.
+        // (#FN-6.3.5/6.3.6 isartor-6-3-5-t01-fail-d)
+        let explicit_gid = face.glyph_index(ch);
+        // Use notdef (GID 0) when glyph is absent; skip only when glyph is explicitly
+        // mapped to notdef inside the font (the font program maps it to notdef deliberately).
+        let gid = explicit_gid.unwrap_or(ttf_parser::GlyphId(0));
+        if gid.0 == 0 && explicit_gid.is_some() {
             continue;
         }
         let Some(advance) = face.glyph_hor_advance(gid) else {
