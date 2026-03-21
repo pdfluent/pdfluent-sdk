@@ -2585,26 +2585,39 @@ fn check_transparency_a1(pdf: &Pdf, report: &mut ComplianceReport) {
 /// maps "6.6.1" → "6.8.1" so both sides of the comparison agree. Fixes #482.
 fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     // PDF/A-4: ISO 19005-4 §6.6.1 covers tagged PDF. normalize_pdfa4_clause("6.6.1")="6.8.1".
-    // PDF/A-1/2/3: §6.8 for MarkInfo, §6.8.3.3 for StructTreeRoot. Fixes #482.
+    // PDF/A-1/2/3: §6.8 for MarkInfo. Fixes #482.
     let mark_rule = if level.part() == 4 { "6.6.1" } else { "6.8" };
-    // veraPDF uses §6.8.3.3 specifically for missing StructTreeRoot in PDF/A-1/2/3.
-    // PDF/A-4: still §6.6.1 (single clause for all tagged requirements).
-    let struct_rule = if level.part() == 4 {
-        "6.6.1"
-    } else {
-        "6.8.3.3"
-    };
-    if !check::is_marked(pdf) {
+
+    let has_struct_tree = check::struct_tree_root(pdf).is_some();
+
+    // PDF/A-4 fires §6.6.1 for all missing-structure violations.
+    if level.part() == 4 {
+        if !check::is_marked(pdf) {
+            check::error(
+                report,
+                mark_rule,
+                "Document is not marked (MarkInfo/Marked missing or false)",
+            );
+        }
+        if !has_struct_tree {
+            check::error(report, mark_rule, "No StructTreeRoot found");
+        }
+        return;
+    }
+
+    // For PDF/A-1/2/3: when the document has no StructTreeRoot, veraPDF fires only §6.7.3.3
+    // (emitted by check_struct_tree_root_required). Firing §6.8 here too would be a FP.
+    // Only fire §6.8 when the document HAS a StructTreeRoot but MarkInfo is wrong.
+    // (#FP-6.8, c4k-poppler-106863-0)
+    if has_struct_tree && !check::is_marked(pdf) {
         check::error(
             report,
             mark_rule,
             "Document is not marked (MarkInfo/Marked missing or false)",
         );
     }
-
-    if check::struct_tree_root(pdf).is_none() {
-        check::error(report, struct_rule, "No StructTreeRoot found");
-    }
+    // §6.8.3.3 (missing StructTreeRoot) is handled by check_struct_tree_root_required which
+    // emits §6.7.3.3 — the rule veraPDF actually uses. (#FP-6.8.3.3)
 }
 
 /// PDF/A-3 allows embedded files; check they have proper AF relationships.

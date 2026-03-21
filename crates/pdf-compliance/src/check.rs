@@ -329,23 +329,23 @@ pub fn check_stream_empty_keys_cached(cache: &ObjectCache<'_>, report: &mut Comp
 }
 
 /// Check MarkInfo/Marked is present and true (§6.8.2.2).
+///
+/// Only fires when the MarkInfo dict EXISTS but has wrong/missing Marked flag.
+/// When MarkInfo is entirely absent, veraPDF fires §6.7.3.3 (missing StructTreeRoot)
+/// rather than §6.8.2.2, so we skip that case to avoid FPs.
+/// (#FP-6.8.2.2, c4k-poppler-106863-0)
 pub fn check_mark_info(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else {
         return;
     };
-    match cat.get::<Dict<'_>>(keys::MARK_INFO) {
-        Some(mark_info) => match mark_info.get::<Object<'_>>(b"Marked" as &[u8]) {
-            Some(Object::Boolean(true)) => {}
-            _ => {
-                error(report, "6.8.2.2", "MarkInfo /Marked is not set to true");
-            }
-        },
-        None => {
-            error(
-                report,
-                "6.8.2.2",
-                "MarkInfo dictionary missing from catalog",
-            );
+    let Some(mark_info) = cat.get::<Dict<'_>>(keys::MARK_INFO) else {
+        // MarkInfo absent — §6.7.3.3 (check_struct_tree_root_required) covers this.
+        return;
+    };
+    match mark_info.get::<Object<'_>>(b"Marked" as &[u8]) {
+        Some(Object::Boolean(true)) => {}
+        _ => {
+            error(report, "6.8.2.2", "MarkInfo /Marked is not set to true");
         }
     }
 }
@@ -9452,6 +9452,10 @@ pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut C
     let mut direct_tounicode_bytes: std::collections::HashSet<Vec<u8>> =
         std::collections::HashSet::new();
 
+    // Whether the level requires full Unicode mapping (conformance 'U' or PDF/A-4).
+    // Consistent with the exemption in check_tounicode_cmap.
+    let requires_unicode = level.conformance() == "U" || level.part() == 4;
+
     // First pass: scan fonts and their direct or indirect ToUnicode streams.
     let xref = pdf.xref();
     for_each_font(pdf, |name, font_dict, page_idx| {
@@ -9469,6 +9473,19 @@ pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut C
             return;
         };
         direct_tounicode_bytes.insert(data.clone());
+
+        // Type0 (composite) fonts are exempt from ToUnicode content checks when the
+        // conformance level does not require full Unicode mapping. veraPDF does not
+        // fire §6.2.11.7.2 for Type0 ToUnicode content at non-Unicode levels.
+        // The stream bytes are still collected above to prevent the second pass from
+        // re-scanning them. Consistent with check_tounicode_cmap Type0 exemption.
+        // (#FP-6.2.11.7.2-type0, c4k-poppler-106863-0)
+        if !requires_unicode {
+            let subtype = font_dict.get::<Name>(keys::SUBTYPE);
+            if subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type0") {
+                return;
+            }
+        }
         let text = String::from_utf8_lossy(&data);
 
         // PUA exemption is document-level (see skip_pua above), not per-font.
