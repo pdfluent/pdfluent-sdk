@@ -43,31 +43,82 @@ impl Document {
 
     /// Delete pages.
     pub fn delete_pages(&mut self, page_numbers: &[u32]) {
+        // Collect ObjectIds for all pages-to-delete in one pass through get_pages().
+        // Then remove page references from Kids arrays and update Count — all in a
+        // single object traversal rather than calling delete_object() (which calls
+        // traverse_objects()) once per page.  The original O(n_pages × n_objects)
+        // loop caused 126 s for a 91-page PDF. (#manipulation-timeout)
+        use std::collections::HashSet;
+
         let pages = self.get_pages();
-        for page_number in page_numbers {
-            if let Some(page) = pages
-                .get(page_number)
-                .and_then(|page_id| self.delete_object(*page_id))
-            {
-                let mut page_tree_ref = page
+        let ids_to_delete: HashSet<ObjectId> = page_numbers
+            .iter()
+            .filter_map(|pn| pages.get(pn).copied())
+            .collect();
+
+        if ids_to_delete.is_empty() {
+            return;
+        }
+
+        // Track which page-tree nodes need their Count decremented and by how much.
+        let mut count_delta: BTreeMap<ObjectId, i64> = BTreeMap::new();
+
+        for &page_id in &ids_to_delete {
+            // Walk up the Parent chain and record count decrements.
+            if let Some(page_obj) = self.objects.get(&page_id) {
+                let parent_ref = page_obj
                     .as_dict()
-                    .and_then(|dict| dict.get(b"Parent"))
-                    .and_then(Object::as_reference);
-                while let Ok(page_tree_id) = page_tree_ref {
-                    if let Some(page_tree) = self
+                    .ok()
+                    .and_then(|d| d.get(b"Parent").ok())
+                    .and_then(|o| o.as_reference().ok());
+                let mut cur = parent_ref;
+                while let Some(tree_id) = cur {
+                    *count_delta.entry(tree_id).or_insert(0) += 1;
+                    cur = self
                         .objects
-                        .get_mut(&page_tree_id)
-                        .and_then(|pt| pt.as_dict_mut().ok())
-                    {
-                        if let Ok(count) = page_tree.get(b"Count").and_then(Object::as_i64) {
-                            page_tree.set("Count", count - 1);
-                        }
-                        page_tree_ref = page_tree.get(b"Parent").and_then(Object::as_reference);
-                    } else {
-                        break;
+                        .get(&tree_id)
+                        .and_then(|o| o.as_dict().ok())
+                        .and_then(|d| d.get(b"Parent").ok())
+                        .and_then(|o| o.as_reference().ok());
+                }
+            }
+        }
+
+        // Remove deleted page references from all Kids arrays in a single pass.
+        for obj in self.objects.values_mut() {
+            match obj {
+                Object::Array(arr) => {
+                    arr.retain(|item| match item {
+                        Object::Reference(r) => !ids_to_delete.contains(r),
+                        _ => true,
+                    });
+                }
+                Object::Dictionary(dict) => {
+                    if let Ok(Object::Array(arr)) = dict.get_mut(b"Kids") {
+                        arr.retain(|item| match item {
+                            Object::Reference(r) => !ids_to_delete.contains(r),
+                            _ => true,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Apply Count decrements to page-tree nodes.
+        for (tree_id, delta) in count_delta {
+            if let Some(obj) = self.objects.get_mut(&tree_id) {
+                if let Ok(dict) = obj.as_dict_mut() {
+                    if let Ok(count) = dict.get(b"Count").and_then(Object::as_i64) {
+                        dict.set("Count", (count - delta).max(0));
                     }
                 }
             }
+        }
+
+        // Remove the page objects themselves.
+        for page_id in ids_to_delete {
+            self.objects.remove(&page_id);
         }
     }
 

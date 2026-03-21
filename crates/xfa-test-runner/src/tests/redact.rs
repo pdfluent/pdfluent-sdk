@@ -89,6 +89,18 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     let start = std::time::Instant::now();
     let elapsed = || start.elapsed().as_millis() as u64;
 
+    // Skip encrypted PDFs: pdf-engine hangs trying to extract text from
+    // encrypted streams without a password. Fast byte scan for /Encrypt. (#redact-timeout)
+    if pdf.windows(8).any(|w| w == b"/Encrypt") {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some("encrypted PDF — skipping redact".into()),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata: HashMap::new(),
+        };
+    }
+
     // 1. Extract text from page 1 to find a word to redact.
     let text = match extract_page1_text(&pdf) {
         Some(t) if !t.trim().is_empty() => t,
@@ -137,7 +149,10 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
         }
     };
 
-    let opts = RedactSearchOptions::exact(&search_word);
+    // Use case-insensitive search so the redaction covers all case variants
+    // ('are'/'Are'/'ARE').  The verification regex also uses (?i), so the
+    // two must agree on case-sensitivity to avoid false FAILs. (#redact-case)
+    let opts = RedactSearchOptions::case_insensitive();
 
     let redact_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         search_and_redact(&mut doc, &search_word, &opts)

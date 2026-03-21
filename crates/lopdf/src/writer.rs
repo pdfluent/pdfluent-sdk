@@ -576,7 +576,27 @@ impl Writer {
                 let mut buf = itoa::Buffer::new();
                 file.write_all(buf.format(*value).as_bytes())
             }
-            Real(value) => write!(file, "{value}"),
+            Real(value) => {
+                let v = *value;
+                if !v.is_finite() {
+                    // infinity/NaN can't be represented in PDF — write 0.
+                    // Occurs when a parsed value overflows f32 (e.g. 3.4029e38).
+                    // (#content_roundtrip)
+                    file.write_all(b"0")
+                } else {
+                    let s = format!("{v}");
+                    if s.contains('.') {
+                        file.write_all(s.as_bytes())
+                    } else {
+                        // Integer-valued or very large float with no decimal point.
+                        // Append ".0" so lopdf's parser recognises it as Real, not Integer.
+                        // Without this, values like 340272...000 are too large for i64
+                        // and fail to parse, producing an op-count mismatch. (#content_roundtrip)
+                        file.write_all(s.as_bytes())?;
+                        file.write_all(b".0")
+                    }
+                }
+            }
             Name(name) => Writer::write_name(file, name),
             String(text, format) => Writer::write_string(file, text, format),
             Array(array) => Writer::write_array(file, array),
