@@ -3623,9 +3623,18 @@ pub fn check_devicen_colorants(pdf: &Pdf, report: &mut ComplianceReport) {
             // Get Colorants dictionary from attributes
             let colorants_dict = attrs.and_then(|a| a.get::<Dict<'_>>(b"Colorants" as &[u8]));
             // Each colorant name (except None and All) must be in Colorants dict
+            // Standard process colorants are implicitly defined by the PDF spec;
+            // they do not need to appear in the Colorants dictionary. Only SPOT
+            // (non-process) colorants require Colorants entries. veraPDF does
+            // not flag missing Colorants entries for process colorants. (#FP-6.2.4.4)
+            const PROCESS_COLORANTS: &[&[u8]] = &[
+                b"Cyan", b"Magenta", b"Yellow", b"Black",
+                b"Red", b"Green", b"Blue", b"White",
+                b"None", b"All",
+            ];
             for cn in colorant_names.iter::<Name>() {
                 let cn_bytes = cn.as_ref();
-                if cn_bytes == b"None" || cn_bytes == b"All" {
+                if PROCESS_COLORANTS.contains(&cn_bytes) {
                     continue;
                 }
                 let defined = colorants_dict
@@ -3639,7 +3648,7 @@ pub fn check_devicen_colorants(pdf: &Pdf, report: &mut ComplianceReport) {
                         report,
                         "6.2.4.4",
                         format!(
-                            "DeviceN CS '{cs_name}' colorant '{cn_str}' not defined in Colorants dictionary"
+                            "DeviceN CS '{cs_name}' spot colorant '{cn_str}' not defined in Colorants dictionary"
                         ),
                         format!("page {}", page_idx + 1),
                     );
