@@ -32,11 +32,15 @@ fn page1_still_contains_word(saved: &[u8], word: &str) -> bool {
         Err(_) => return false,
     };
     let text: String = chars.iter().map(|c| c.ch).collect();
-    // Use word-boundary matching to avoid false positives from substring
-    // occurrences — e.g. "are" inside "Clarence" or "413Are" (digit-prefixed
-    // from extracted page-number text) must not cause a spurious FAIL after
-    // all standalone occurrences of the target word were successfully redacted.
-    let pattern = format!(r"(?i)\b{}\b", regex_lite::escape(word));
+    // Use case-SENSITIVE word-boundary matching.  The redaction is also
+    // case-sensitive (exact match), so we only verify that the exact searched
+    // form has been removed.  A remaining "Are" after searching for "are" is
+    // acceptable — we only committed to removing the form we found.
+    // Using (?i) here caused 360 PASS→FAIL regressions (#redact-ci-regression):
+    // for PDFs where the PDF contains, e.g., "THE" (all-caps), the case-insensitive
+    // redaction failed to remove all variants while (?i) verification then found
+    // remaining lowercase variants.
+    let pattern = format!(r"\b{}\b", regex_lite::escape(word));
     match regex_lite::Regex::new(&pattern) {
         Ok(re) => re.is_match(&text),
         // Fallback to substring if regex construction somehow fails.
@@ -149,10 +153,12 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
         }
     };
 
-    // Use case-insensitive search so the redaction covers all case variants
-    // ('are'/'Are'/'ARE').  The verification regex also uses (?i), so the
-    // two must agree on case-sensitivity to avoid false FAILs. (#redact-case)
-    let opts = RedactSearchOptions::case_insensitive();
+    // Use exact (case-sensitive) search.  Verification is also case-sensitive,
+    // so the two sides agree: we only verify the exact form we searched for is
+    // gone.  Case-insensitive search caused 360 PASS→FAIL regressions because
+    // the case-insensitive redaction engine failed to remove all variants for
+    // many PDFs while the (?i) verification then found them. (#redact-ci-regression)
+    let opts = RedactSearchOptions::default();
 
     let redact_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         search_and_redact(&mut doc, &search_word, &opts)
