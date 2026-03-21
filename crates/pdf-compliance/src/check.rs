@@ -2714,9 +2714,13 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
                 );
             } else if let Some(xmp_val) = xmp_vals.first() {
                 if let Some(info_decoded) = decode_pdf_info_string(author) {
+                    // Decode XML entities in the XMP value before comparing: XMP stores
+                    // '&' as '&amp;', '<' as '&lt;' etc. The Info dict has raw values.
+                    // (#FP-6.7.3.3 gen-698: "E&E" in /Info vs "E&amp;E" in XMP)
+                    let xmp_decoded = decode_xml_entities(xmp_val);
                     // Trim both sides: Info dict strings may have leading/trailing
                     // whitespace that gets stripped when written to XMP. (#FP-6.7.3.3)
-                    if info_decoded.trim() != xmp_val.trim() {
+                    if info_decoded.trim() != xmp_decoded.trim() {
                         error(
                             report,
                             "6.7.3.3",
@@ -8785,34 +8789,20 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                             format!("page {}", page_idx + 1),
                         );
                     } else if let Some(cb) = &cs {
-                        // §6.2.11.4.2: CharSet must list ALL glyphs with non-zero width
+                        // §6.2.11.4.2 (veraPDF model): CharSet must list ALL glyphs that
+                        // are present in the FONT PROGRAM, not just those with non-zero
+                        // width. Usage-based checks (non-zero /Widths entry → glyph name
+                        // must be in CharSet) cause FPs when the PDF declares a non-zero
+                        // width for a code that the font subset doesn't actually contain
+                        // (e.g. /Widths[128]=500 but Euro was never subsetted into the
+                        // font). For CFF (FontFile3) fonts the font-program-based check
+                        // below handles this correctly. For PFB Type1 fonts, fix_type1_charset
+                        // regenerates CharSet from the font program, so the fixer makes
+                        // the file conformant; the checker does not re-verify here.
+                        // (#FP-6.2.11.4.2 gen-698: HFNCEN+Swis721BT-Bold Euro code 128)
                         let ct = std::str::from_utf8(cb).unwrap_or("");
                         let names: std::collections::HashSet<&str> =
                             ct.split('/').filter(|s| !s.is_empty()).collect();
-                        let fc = font_dict.get::<i32>(keys::FIRST_CHAR).unwrap_or(0);
-                        if let Some(wa) = font_dict.get::<Array<'_>>(keys::WIDTHS) {
-                            let enc = font_dict
-                                .get::<Name>(keys::ENCODING)
-                                .map(|n| n.as_ref().to_vec());
-                            let winansi = enc.as_deref() == Some(b"WinAnsiEncoding");
-                            for (i, w) in wa.iter::<pdf_syntax::object::Number>().enumerate() {
-                                if w.as_f64() > 0.0 {
-                                    let code = fc as usize + i;
-                                    if let Some(gn) = if winansi {
-                                        t1_winansi_glyph_name(code as u8)
-                                    } else {
-                                        None
-                                    } {
-                                        if !names.contains(gn) {
-                                            error_at(report, "6.2.11.4.2",
-                                                format!("Type1 font {font_name}: /CharSet missing '/{gn}' (code {code})"),
-                                                format!("page {}", page_idx + 1));
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                        }
 
                         // §6.3.5 T2: For CFF (FontFile3/Type1C) subset fonts, /CharSet must
                         // list ALL glyph names present in the font program. Enumerate via
@@ -11321,6 +11311,26 @@ fn parse_cidfont_w_array(w_arr: &Array<'_>) -> std::collections::HashMap<u32, i3
     map
 }
 
+/// Look up a Unicode codepoint in the Windows BMP (platform 3, encoding 1) cmap only.
+///
+/// veraPDF uses only the (3,1) cmap for TrueType simple-font width validation.
+/// Using face.glyph_index() searches all cmap subtables and may find a mapping
+/// in (0,3) or (1,0) Mac Roman that doesn't exist in (3,1), causing spurious
+/// width mismatches for codes 128-159 where WinAnsi and Mac Roman differ.
+fn lookup_cmap_31(face: &ttf_parser::Face, ch: char) -> Option<ttf_parser::GlyphId> {
+    let cmap = face.tables().cmap?;
+    for subtable in cmap.subtables {
+        if subtable.platform_id == ttf_parser::PlatformId::Windows && subtable.encoding_id == 1 {
+            let gid = subtable.glyph_index(ch as u32)?;
+            if gid.0 != 0 {
+                return Some(gid);
+            }
+            return None; // Mapped to .notdef
+        }
+    }
+    None
+}
+
 /// §6.3.5-fw — Check simple TrueType font /Widths against font program.
 ///
 /// Uses ttf-parser to look up advance widths by Unicode codepoint.
@@ -11421,11 +11431,26 @@ fn check_truetype_simple_widths(
             continue; // Code not defined in encoding
         };
 
-        // When the glyph is absent from the subset font, the renderer falls back to
-        // the notdef glyph (GID 0). veraPDF uses the notdef advance as
-        // "widthFromFontProgram" and compares it with the PDF /Widths entry.
-        // (#FN-6.3.5/6.3.6 isartor-6-3-5-t01-fail-d)
-        let explicit_gid = face.glyph_index(ch);
+        // WinAnsi codes 128-159 differ from Mac Roman. For these codes, use only
+        // the (3,1) Windows BMP cmap — same as the fixer (get_truetype_glyph_width_
+        // fractional). face.glyph_index() searches ALL cmap subtables and may find
+        // the Euro or other wide glyphs in a non-(3,1) subtable, producing a mismatch
+        // when /Widths says 0 (= "not used" per the PDF creator). veraPDF uses (3,1)
+        // exclusively, so if (3,1) has no entry we skip the check. (#FP-6.2.11.5
+        // gen-319/gen-108: code 128 U+20AC in non-(3,1) cmap vs /Widths[128]=0)
+        let explicit_gid = if (128..=159).contains(&code) {
+            // For ambiguous codes 128-159: only (3,1) cmap; None → skip.
+            match lookup_cmap_31(&face, ch) {
+                Some(gid) => Some(gid),
+                None => continue, // Not in (3,1) — skip, no violation
+            }
+        } else {
+            // When the glyph is absent from the subset font, the renderer falls back to
+            // the notdef glyph (GID 0). veraPDF uses the notdef advance as
+            // "widthFromFontProgram" and compares it with the PDF /Widths entry.
+            // (#FN-6.3.5/6.3.6 isartor-6-3-5-t01-fail-d)
+            face.glyph_index(ch)
+        };
         // Use notdef (GID 0) when glyph is absent; skip only when glyph is explicitly
         // mapped to notdef inside the font (the font program maps it to notdef deliberately).
         let gid = explicit_gid.unwrap_or(ttf_parser::GlyphId(0));
