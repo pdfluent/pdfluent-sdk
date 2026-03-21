@@ -13827,7 +13827,14 @@ fn fix_notdef_in_type1(
     let check_start = first_char.min(255);
     let check_end = last_char.min(255);
     for code in check_start..=check_end {
-        if shared_encoding_ref && is_subset && code >= 32 {
+        // For subset fonts with shared encoding refs, skip codes >= 32 to avoid
+        // inadvertent modifications to shared state. Exception: code 32 (space)
+        // when 'space' is absent from the CFF subset — WinAnsiEncoding maps
+        // code 32 → "space" which is missing, causing §6.2.11.4.1:2. The
+        // apply_encoding_fixes() fn creates a private per-font encoding when
+        // the ref is shared, so this is safe. (#fix-cff-subset-space-missing)
+        let space_missing_at_32 = code == 32 && !available_glyphs.contains("space");
+        if shared_encoding_ref && is_subset && code >= 32 && !space_missing_at_32 {
             continue;
         }
         if valid_diff_codes.contains(&code) {
