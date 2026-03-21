@@ -8028,9 +8028,14 @@ fn compute_otf_cff_corrections(
     scale: f64,
     _is_subset: bool,
 ) -> Vec<(usize, i64)> {
-    // If no PDF encoding, try to extract CFF table for its internal encoding.
-    let cff_table = if !has_pdf_encoding {
-        extract_cff_from_otf(font_data)
+    // If no PDF encoding, extract CFF table and its FontMatrix scale.
+    // We use CFF charstring widths (not hmtx) to match veraPDF §6.2.11.5. (#FP-6.2.11.5)
+    let cff_table: Option<(cff_parser::Table<'_>, f64)> = if !has_pdf_encoding {
+        extract_cff_bytes_from_otf(font_data).and_then(|cff_bytes| {
+            let cff = cff_parser::Table::parse(cff_bytes)?;
+            let cff_scale = cff_matrix_scale(cff.matrix().sx);
+            Some((cff, cff_scale))
+        })
     } else {
         None
     };
@@ -8094,8 +8099,11 @@ fn compute_otf_cff_corrections(
             } else {
                 get_otf_width_via_encoding(face, code, enc_name, differences, scale)
             }
-        } else if let Some(ref cff) = cff_table {
-            // No PDF encoding: use CFF internal encoding -> GID -> hmtx
+        } else if let Some((ref cff, cff_scale)) = cff_table {
+            // No PDF encoding: use CFF internal encoding -> GID -> CFF charstring width.
+            // veraPDF §6.2.11.5 validates against the CFF charstring advance, not hmtx.
+            // For OTF-wrapped CFF fonts the hmtx and CFF charstring widths can differ
+            // (e.g. Symbol "multiply": hmtx=250, CFF charstring=549). (#FP-6.2.11.5)
             if code > 255 {
                 continue;
             }
@@ -8103,18 +8111,19 @@ fn compute_otf_cff_corrections(
                 Some(gid) if gid.0 != 0 || code == 0 => gid,
                 _ => continue,
             };
-            // Use hmtx width (what veraPDF validates) rather than CFF charstring width.
-            face.glyph_hor_advance(ttf_parser::GlyphId(gid.0))
-                .map(|w| w as f64 * scale)
+            cff.glyph_width(cff_parser::GlyphId(gid.0))
+                .map(|w| w as f64 * cff_scale)
         } else {
             continue;
         };
 
         // Codes not found in the font program map to .notdef (GID 0).
         // veraPDF validates the Widths entry against GID 0's advance for such
-        // codes, so we correct the dict width to match. Restrict to high-byte
-        // codes (128-255) where absent glyphs are expected in subsets or
-        // encoding gaps; low-byte absences are suspicious. (#479)
+        // codes. Restrict to high-byte codes (128-255) where absent glyphs are
+        // expected in subsets or encoding gaps. (#479)
+        // For CFF path (no PDF encoding), this fallback is unreachable (the
+        // CFF branch uses `continue` when glyph_index returns None/0). For
+        // the PDF-encoding path, use hmtx since that's the available fallback.
         let frac_w = frac_w.or_else(|| {
             if (128..=255).contains(&code) {
                 face.glyph_hor_advance(ttf_parser::GlyphId(0))
@@ -10718,6 +10727,17 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
                         &empty_enc,
                         true,
                     ) {
+                        // Codes covered by explicit Differences are already handled
+                        // by step 1 (find_cff_glyph_width_by_name_fractional).
+                        // Do not let the CFF-internal-encoding fallback overwrite
+                        // them: for subset Symbol CFF, cff.glyph_index(code) often
+                        // returns None → hmtx .notdef fallback = 250, which is wrong
+                        // for codes whose glyph (e.g. "multiply" @ 215) has a real
+                        // CFF charstring width (e.g. 549). (#FP-6.2.11.5)
+                        let code = first_char + idx as u32;
+                        if enc_info.1.contains_key(&code) {
+                            continue;
+                        }
                         merged.entry(idx).or_insert(w);
                     }
                     // Also fill unmapped slots with .notdef when explicit Differences exist.
@@ -10866,14 +10886,18 @@ fn compute_symbolic_difference_width_corrections(
     existing_widths: &[Object],
     differences: &std::collections::HashMap<u32, String>,
 ) -> Vec<(usize, i64)> {
-    let Ok(face) = ttf_parser::Face::parse(font_data, 0) else {
+    // This function is called only for Type1/CFF fonts (FontFile3). veraPDF §6.2.11.5
+    // validates widths against the CFF charstring advance, NOT against the OTF hmtx
+    // table. Use CFF charstring widths to match veraPDF's reference. (#FP-6.2.11.5-sym)
+    //
+    // Get CFF bytes: raw font_data for Type1C, or extract from OTF wrapper.
+    let cff_bytes: &[u8] = extract_cff_bytes_from_otf(font_data).unwrap_or(font_data);
+    let Some(cff) = cff_parser::Table::parse(cff_bytes) else {
         return Vec::new();
     };
-    let upem = face.units_per_em() as f64;
-    if upem == 0.0 {
-        return Vec::new();
-    }
-    let scale = 1000.0 / upem;
+    let matrix = cff.matrix();
+    let cff_scale = cff_matrix_scale(matrix.sx);
+
     let mut corrections = Vec::new();
 
     for (code, name) in differences {
@@ -10884,15 +10908,14 @@ fn compute_symbolic_difference_width_corrections(
         let Some(pdf_w) = existing_widths.get(idx).and_then(object_to_f64) else {
             continue;
         };
-        let gid = face
-            .glyph_index_by_name(name)
-            .or_else(|| glyph_name_to_unicode(name).and_then(|u| face.glyph_index(u)));
-        let Some(gid) = gid else { continue };
-        let Some(advance) = face.glyph_hor_advance(gid) else {
+        // Look up glyph by PostScript name in the CFF charset.
+        // If the name is not found in this subset, skip — do not apply .notdef width.
+        let Some(expected) =
+            find_cff_glyph_width_by_name_fractional(&cff, cff_bytes, name, cff_scale)
+        else {
             continue;
         };
-        let expected = advance as f64 * scale;
-        if (pdf_w - expected).abs() >= 1.0 {
+        if (pdf_w - expected).abs() >= 0.95 {
             corrections.push((idx, expected.round() as i64));
         }
     }
