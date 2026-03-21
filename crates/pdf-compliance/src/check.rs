@@ -2743,28 +2743,23 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
             .map(str::trim)
             .unwrap_or("")
             .is_empty();
-        if subject_non_empty {
-            if !xmp_text.contains("dc:description") {
-                error(
-                    report,
-                    "6.7.3.4",
-                    "/Info has Subject but XMP is missing dc:description",
-                );
-            } else {
-                let xmp_desc = extract_rdf_alt_value(xmp_text, "dc:description");
-                if let Some(xmp_val) = &xmp_desc {
-                    if let Some(info_decoded) = &subject_str {
-                        if info_decoded.trim() != xmp_val.trim() {
-                            error(
-                                report,
-                                "6.7.3.4",
-                                format!(
-                                    "Subject mismatch: Info='{}' vs XMP='{}'",
-                                    info_decoded.chars().take(50).collect::<String>(),
-                                    xmp_val.chars().take(50).collect::<String>()
-                                ),
-                            );
-                        }
+        // §6.7.3.4: only fire when BOTH /Info Subject and dc:description exist and differ.
+        // veraPDF does NOT fire when dc:description is absent — only when it exists
+        // with a conflicting value. (#FP-6.7.3.4-absence)
+        if subject_non_empty && xmp_text.contains("dc:description") {
+            let xmp_desc = extract_rdf_alt_value(xmp_text, "dc:description");
+            if let Some(xmp_val) = &xmp_desc {
+                if let Some(info_decoded) = &subject_str {
+                    if info_decoded.trim() != xmp_val.trim() {
+                        error(
+                            report,
+                            "6.7.3.4",
+                            format!(
+                                "Subject mismatch: Info='{}' vs XMP='{}'",
+                                info_decoded.chars().take(50).collect::<String>(),
+                                xmp_val.chars().take(50).collect::<String>()
+                            ),
+                        );
                     }
                 }
             }
@@ -9781,12 +9776,13 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
         let mut active_cidset: Option<&Vec<u8>> = None;
         // Report at most one glyph-rule violation per page to match veraPDF's
         // single-check-per-rule behaviour.
-        // §6.2.11.8 ("renders as .notdef") is NOT emitted here: whether a CID
-        // absent from the CIDSet actually renders as .notdef depends on the font
-        // program, not just the CIDSet metadata. Emitting §6.2.11.8 based on
-        // CIDSet absence alone produces FPs when the CIDSet is wrong/incomplete but
-        // the glyph IS in the font. §6.2.11.8 is detected by
-        // check_notdef_glyph_reference (literal <0000> codes). (#FP-6.2.11.8)
+        // §6.2.11.8 ("renders as .notdef") is emitted for parts 2/3 when a CID is
+        // absent from the CIDSet of a SUBSET font (ABCDEF+ prefix). Subset fonts only
+        // embed the glyphs listed in their CIDSet; a missing CID guarantees .notdef
+        // rendering. veraPDF fires §6.2.11.8 alongside §6.2.11.4.1 in this case
+        // (confirmed by cs-veraPDF 6-2-11-4-1-t02-fail-d/e). (#FN-6.2.11.8)
+        // Non-subset fonts are not handled here (CIDSet may be incomplete/wrong).
+        let emit_notdef = part == 2 || part == 3;
         'page: for i in 0..n {
             let tok = tokens[i].as_slice();
 
@@ -9814,14 +9810,14 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
                         continue;
                     }
                     if !cid_in_cidset(cid, cidset) {
-                        error_at(
-                            report,
-                            glyph_rule,
-                            format!(
-                                "CID 0x{cid:04X} used in content stream but absent from CIDSet"
-                            ),
-                            loc.clone(),
+                        let msg = format!(
+                            "CID 0x{cid:04X} used in content stream but absent from CIDSet"
                         );
+                        error_at(report, glyph_rule, msg.clone(), loc.clone());
+                        if emit_notdef {
+                            // Subset font: absent CID → .notdef rendered (§6.2.11.8)
+                            error_at(report, "6.2.11.8", msg, loc.clone());
+                        }
                         break 'page;
                     }
                 }
@@ -9841,14 +9837,14 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
                                 continue;
                             }
                             if !cid_in_cidset(cid, cidset) {
-                                error_at(
-                                    report,
-                                    glyph_rule,
-                                    format!(
-                                        "CID 0x{cid:04X} used in content stream but absent from CIDSet"
-                                    ),
-                                    loc.clone(),
+                                let msg = format!(
+                                    "CID 0x{cid:04X} used in content stream but absent from CIDSet"
                                 );
+                                error_at(report, glyph_rule, msg.clone(), loc.clone());
+                                if emit_notdef {
+                                    // Subset font: absent CID → .notdef rendered (§6.2.11.8)
+                                    error_at(report, "6.2.11.8", msg, loc.clone());
+                                }
                                 break 'page;
                             }
                         }
