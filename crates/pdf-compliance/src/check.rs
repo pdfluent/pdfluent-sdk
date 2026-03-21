@@ -9754,7 +9754,7 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
             {
                 continue;
             }
-            if let Some(cidset_bits) = get_type0_cidset(&font_dict) {
+            if let Some(cidset_bits) = get_type0_cidset(&font_dict, xref) {
                 font_cidsets.insert(name.as_ref().to_vec(), cidset_bits);
             }
         }
@@ -9858,7 +9858,11 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
 
 /// Resolve the CIDSet bit array for the first CIDFont descendant of a Type0 font
 /// dict that is a subset font (ABCDEF+ prefix) and has a non-empty /CIDSet.
-fn get_type0_cidset(font_dict: &Dict<'_>) -> Option<Vec<u8>> {
+///
+/// FontDescriptor and CIDSet are typically indirect references — xref fallback is
+/// required to resolve them. Without it, indirect refs silently return None and the
+/// entire content-stream CIDSet check is skipped. (#FN-6.2.11.4.1, #FN-6.3.5)
+fn get_type0_cidset(font_dict: &Dict<'_>, xref: &pdf_syntax::xref::XRef) -> Option<Vec<u8>> {
     let descendants = font_dict.get::<Array<'_>>(keys::DESCENDANT_FONTS)?;
     for cid_font in descendants.iter::<Dict<'_>>() {
         let base = cid_font.get::<Name>(keys::BASE_FONT)?;
@@ -9866,8 +9870,17 @@ fn get_type0_cidset(font_dict: &Dict<'_>) -> Option<Vec<u8>> {
         if !is_subset_font(base_str) {
             continue;
         }
-        let desc = cid_font.get::<Dict<'_>>(keys::FONT_DESC)?;
-        let cidset = desc.get::<Stream<'_>>(keys::CID_SET)?;
+        // FontDescriptor is almost always an indirect reference. (#FN-6.2.11.4.1)
+        let desc = cid_font.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+            cid_font
+                .get_ref(keys::FONT_DESC)
+                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+        })?;
+        // CIDSet is also typically an indirect stream reference. (#FN-6.2.11.4.1)
+        let cidset = desc.get::<Stream<'_>>(keys::CID_SET).or_else(|| {
+            desc.get_ref(keys::CID_SET)
+                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+        })?;
         let bits = cidset.decoded().ok()?;
         if bits.is_empty() || bits.iter().all(|&b| b == 0) {
             continue;
