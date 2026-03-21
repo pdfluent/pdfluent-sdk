@@ -910,24 +910,23 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     // When the pdfaid identification is invalid (absent, wrong namespace URI, or broken
     // RDF structure), veraPDF does NOT fire §6.7.3 consistency sub-rules.
     // Cases: "6.6.4" = PDF/A-2/3 pdfaid invalid; "6.7.11" = PDF/A-1 pdfaid invalid
-    // (pdfaid cascade); "6.5.2" = PDF/A-4; "6.7.3" = generic from broken RDF.
-    // Note: "6.7.11-rdf" (non-canonical RDF namespace) is intentionally NOT included
-    // here — veraPDF fires §6.7.3.7 even when the RDF namespace is broken, because it
-    // sees pdf:Producer as null/undeclared. (#FN-6.7.3.7-PDFIUM-610)
+    // (pdfaid cascade); "6.5.2" = PDF/A-4; "6.7.3" = generic from broken RDF;
+    // "6.7.11-rdf" = non-canonical RDF namespace (before remap to "6.7.11").
     // We also check the namespace URI directly: the §6.7.11 cascade fires *after*
     // check_info_xmp_deep, so we can't rely on §6.7.11 being in the report yet when
     // the pdfaid namespace is wrong. (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4)
     const CORRECT_PDFAID_NS: &str = "http://www.aiim.org/pdfa/ns/id/";
     let pdfaid_wrong_ns = xmp.contains("xmlns:pdfaid") && !xmp.contains(CORRECT_PDFAID_NS);
-    // "6.7.11-rdf" = broken RDF namespace — keep §6.7.3 checks running for this case.
+    // "6.7.11-rdf" = broken RDF namespace. Both "6.7.11" and "6.7.11-rdf" trigger skip,
+    // but "6.7.11-rdf" additionally fires §6.7.3.7 because veraPDF treats pdf:Producer
+    // as null/undeclared when the RDF namespace is non-canonical. (#FN-6.7.3.7-PDFIUM-610)
+    let rdf_ns_broken = report.issues.iter().any(|i| i.rule == "6.7.11-rdf");
     let pdfaid_invalid = pdfaid_wrong_ns
+        || rdf_ns_broken
         || report
             .issues
             .iter()
             .any(|i| matches!(i.rule.as_str(), "6.6.4" | "6.7.11" | "6.5.2" | "6.7.3"));
-    // When the RDF namespace is broken, veraPDF treats all pdf:X properties as null.
-    // Fire §6.7.3.7 if /Producer is non-empty and pdf:Producer appears missing.
-    let rdf_ns_broken = report.issues.iter().any(|i| i.rule == "6.7.11-rdf");
     if pdfaid_invalid {
         if rdf_ns_broken {
             // Broken RDF namespace: pdf:Producer is unreadable → §6.7.3.7 if /Producer set.
