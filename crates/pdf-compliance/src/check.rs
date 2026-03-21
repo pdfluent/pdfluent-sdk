@@ -9462,9 +9462,19 @@ fn check_cmap_streams_for_ffff(
                     dstlo
                 };
                 for val in [dstlo, dsthi] {
+                    // §6.2.11.7.2: U+0000, U+FEFF (BOM), U+FFFE (reverse-BOM) forbidden.
+                    // These belong to §6.2.11.7.2, NOT §6.2.11.7.3. (#FN-6.2.11.7.2)
+                    if val == 0x0000 || val == 0xFEFF || val == 0xFFFE {
+                        error(
+                            report,
+                            "6.2.11.7.2",
+                            format!("ToUnicode CMap (via UseCMap chain) contains forbidden mapping to U+{val:04X}"),
+                        );
+                        return;
+                    }
                     // §6.2.11.7.3: surrogates (D800-DFFF), BMP PUA (E000-F8FF,
-                    // unless ActualText present), U+FFFE, U+FFFF; plus 4-byte
-                    // surrogate pair encodings.
+                    // unless symbolic), U+FFFF; plus 4-byte surrogate pair encodings.
+                    // Note: U+FFFE is §6.2.11.7.2 (handled above). (#FP-6.2.11.7.3)
                     let is_violation = if val > 0xFFFF {
                         let high = (val >> 16) as u16;
                         (0xD800u16..=0xDFFF).contains(&high)
@@ -9472,7 +9482,6 @@ fn check_cmap_streams_for_ffff(
                         (0xD800u32..=0xDFFF).contains(&val)
                             || (!skip_pua && (0xE000u32..=0xF8FF).contains(&val))
                             || val == 0xFFFF
-                            || val == 0xFFFE
                     };
                     if is_violation {
                         error(
