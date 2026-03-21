@@ -3307,3 +3307,59 @@ fn debug_gen152_find_corruption() {
     println!("All intermediate states saved to /tmp/gen152_stepXX_*.pdf");
     println!("Run: for f in /tmp/gen152_step*.pdf; do echo -n \"$f: \"; verapdf --flavour 2b $f 2>/dev/null | grep -o 'failedChecks=\"[0-9]*\"' | head -1; done");
 }
+
+/// Check if fix_ascii85_inline_images actually modifies the gen-152 content stream.
+#[test]
+#[ignore]
+fn debug_gen152_ascii85_fix() {
+    use lopdf::Object;
+
+    let data = std::fs::read("/tmp/gen-152_152696.pdf").unwrap();
+    let mut doc = lopdf::Document::load_mem(&data).unwrap();
+
+    pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false).unwrap();
+    pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+
+    // Find content stream object 1 0
+    let stream_data = match doc.objects.get(&(1, 0)) {
+        Some(Object::Stream(s)) => s.decompressed_content().unwrap_or_else(|_| s.content.clone()),
+        _ => panic!("object (1,0) not found or not a stream"),
+    };
+
+    println!("Stream length: {}", stream_data.len());
+
+    // Count BI blocks
+    let mut bi_count = 0;
+    let mut a85_count = 0;
+    let mut i = 0;
+    while i + 1 < stream_data.len() {
+        if &stream_data[i..i + 2] == b"BI"
+            && (i == 0 || stream_data[i - 1].is_ascii_whitespace())
+            && stream_data[i + 2].is_ascii_whitespace()
+        {
+            // look for /F or /Filter in dict
+            let dict_end = stream_data[i + 2..]
+                .windows(3)
+                .position(|w| w[0].is_ascii_whitespace() && &w[1..3] == b"ID");
+            let dict_bytes = if let Some(end) = dict_end {
+                &stream_data[i + 2..i + 2 + end]
+            } else {
+                &stream_data[i + 2..i + 200.min(stream_data.len() - i - 2)]
+            };
+            bi_count += 1;
+            let has_a85 = dict_bytes.windows(3).any(|w| w == b"A85");
+            if has_a85 {
+                a85_count += 1;
+            }
+            println!("BI at {i}: has_a85={has_a85}, dict[..80]={:?}", &dict_bytes[..dict_bytes.len().min(80)]);
+        }
+        i += 1;
+    }
+    println!("Total BI: {bi_count}, with A85: {a85_count}");
+
+    // Save modified doc
+    let mut saved = Vec::new();
+    doc.clone().save_to(&mut saved).unwrap();
+    std::fs::write("/tmp/gen152_ascii85_fixed.pdf", &saved).unwrap();
+    println!("Saved to /tmp/gen152_ascii85_fixed.pdf");
+}
