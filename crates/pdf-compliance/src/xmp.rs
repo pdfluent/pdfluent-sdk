@@ -907,6 +907,19 @@ fn check_property_namespaces(
 ///
 /// Uses veraPDF subclause numbers so the comparison matches exactly. (#467)
 fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
+    // When pdfaid:part is absent from XMP, veraPDF does NOT fire §6.7.3 consistency
+    // sub-rules — no pdfaid means no conformance claim to validate against.
+    // Covers both "6.6.4" (PDF/A-2/3 missing pdfaid) and "6.7.11" from missing pdfaid
+    // (PDF/A-1). PDFIUM-610-0 style: §6.7.11 from broken RDF namespace but pdfaid IS
+    // present — those sub-rules SHOULD fire, so we only gate on pdfaid absence.
+    // (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4)
+    if !xmp.contains("pdfaid:part") {
+        return;
+    }
+    // Skip when generic §6.7.3 was already emitted by check_xmp_rdf_structure.
+    if report.issues.iter().any(|i| i.rule == "6.7.3") {
+        return;
+    }
     let metadata = pdf.metadata();
 
     // /Title ↔ dc:title (§6.7.3.2)
@@ -1454,28 +1467,26 @@ fn is_valid_iso8601(date: &str) -> bool {
         }
     }
 
-    // If there's a T, validate time portion
+    // If there's a T, validate time portion.
+    // Only require that the hour (HH) is two valid digits after T.
+    // veraPDF accepts non-standard minute/second formatting (e.g. "T19:3:26+1:0")
+    // and does not fire §6.7.9 for such dates. (#FP-6.7.9-date-format, PDFIUM-610-0)
     if date.len() > 10 {
         if date.as_bytes().get(10) != Some(&b'T') {
             return false;
         }
-        // At minimum hh:mm after T
-        if date.len() < 16 {
+        // At minimum HH after T
+        if date.len() < 13 {
             return false;
         }
         let hour = &date[11..13];
-        let minute = &date[14..16];
-        if !hour.chars().all(|c| c.is_ascii_digit()) || !minute.chars().all(|c| c.is_ascii_digit())
-        {
-            return false;
-        }
-        if date.as_bytes().get(13) != Some(&b':') {
+        if !hour.chars().all(|c| c.is_ascii_digit()) {
             return false;
         }
         // Reject "Z+offset" and "Z-offset" — Z (UTC) may not be followed by a
         // numeric offset.  ISO 8601 allows either Z OR ±HH:MM, never both.
         // E.g. "1997-07-16T19:20:15.45Z+01:00" is invalid. (#FN-6.6.2.3.1-t06)
-        let tail = &date[16..];
+        let tail = &date[13..];
         if tail.contains("Z+") || tail.contains("Z-") {
             return false;
         }
@@ -3660,5 +3671,59 @@ mod tests {
         check_deprecated_types(xmp, crate::PdfALevel::A2b, &mut report2);
         assert!(report2.error_count() > 0);
         assert!(report2.issues[0].rule == "6.7.2");
+    }
+
+    #[test]
+    #[ignore]
+    fn debug_all_failing() {
+        let pdfs: &[(&str, &str)] = &[
+            (
+                "/tmp/cs-veraPDF_test_suite_6-2-10-4-1-t02-fail-a.pdf",
+                "6-2-10-4-1-a",
+            ),
+            (
+                "/tmp/cs-veraPDF_test_suite_6-2-10-4-1-t02-fail-b.pdf",
+                "6-2-10-4-1-b",
+            ),
+            (
+                "/tmp/cs-veraPDF_test_suite_6-2-11-4-1-t02-fail-a.pdf",
+                "6-2-11-4-1-a",
+            ),
+            (
+                "/tmp/cs-veraPDF_test_suite_6-2-11-4-1-t02-fail-b.pdf",
+                "6-2-11-4-1-b",
+            ),
+            ("/tmp/cs-isartor-6-3-5-t01-fail-c.pdf", "isartor-635-c"),
+            ("/tmp/cs-isartor-6-3-5-t01-fail-d.pdf", "isartor-635-d"),
+            (
+                "/tmp/cs-veraPDF_test_suite_6-2-11-7-3-t01-fail-c.pdf",
+                "6-2-11-7-3-c",
+            ),
+            ("/tmp/c4k-GHOSTSCRIPT-688790-4.pdf", "GS-688790-4"),
+            ("/tmp/c4k-PDFIUM-610-0.pdf", "PDFIUM-610"),
+            ("/tmp/c4k-poppler-106863-0.pdf", "poppler-106863"),
+            ("/tmp/cs-pdfa2-6-1-7-2-bfo-t01-fail.pdf", "pdfa2-617-bfo"),
+            ("/tmp/cs-pdfa2-6-8-bfo-t03-fail.pdf", "pdfa2-68-bfo"),
+        ];
+        for (path, name) in pdfs {
+            let data = match std::fs::read(path) {
+                Ok(d) => d,
+                Err(_) => {
+                    println!("{name}: MISSING");
+                    continue;
+                }
+            };
+            let pdf = match pdf_syntax::Pdf::new(data.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    println!("{name}: parse error {e:?}");
+                    continue;
+                }
+            };
+            let level = crate::detect_pdfa_level(&pdf).unwrap_or(crate::PdfALevel::A2b);
+            let report = crate::validate_pdfa(&pdf, level);
+            let rules: Vec<&str> = report.issues.iter().map(|i| i.rule.as_str()).collect();
+            println!("{name} [{level:?}]: {rules:?}");
+        }
     }
 }

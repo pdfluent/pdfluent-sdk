@@ -2545,19 +2545,21 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         return;
     };
 
-    // If XMP is structurally malformed (§6.7.11: unparseable XML), veraPDF also
-    // reports §6.7.3 because Info dict fields cannot be verified against broken XMP.
-    // Only trigger this for genuine structural breakage (6.7.11), not for semantic
-    // extension-schema violations (6.7.9.x) which don't prevent XMP parsing.
-    // Fixes #467 (isartor-6-7-9-t01). Narrowed to 6.7.11-only to avoid FP on
-    // PDFs that have 6.7.9 violations but parseable XMP. (#FP-6.7.3)
-    let xmp_structurally_invalid = report.issues.iter().any(|i| i.rule == "6.7.11");
-    if xmp_structurally_invalid && has_info_meta {
-        error(
-            report,
-            "6.7.3",
-            "Info dict metadata cannot be reliably verified against malformed XMP",
-        );
+    // When pdfaid:part is absent from XMP, veraPDF does NOT fire §6.7.3 sub-rules.
+    // Covers "6.6.4" (PDF/A-2/3) and "6.7.11" from missing pdfaid (PDF/A-1).
+    // (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4)
+    if !xmp_text.contains("pdfaid:part") {
+        return;
+    }
+    // When §6.7.11 fires from broken XMP structure (pdfaid present but RDF malformed),
+    // check_info_xmp_deep already handles sub-rule checks. Skip duplicates here.
+    // Also skip if generic §6.7.3 is already present (check_xmp_rdf_structure fired it).
+    // (#FP-6.7.3-no-pdfaid, isartor-6-7-2-t02-fail-a)
+    if report
+        .issues
+        .iter()
+        .any(|i| i.rule == "6.7.11" || i.rule == "6.7.3")
+    {
         return;
     }
 
@@ -7310,12 +7312,16 @@ fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
         {
             continue;
         }
+        // PDF/A §6.1.13: the 32767 limit applies to REAL values only.
+        // Pure integers are allowed up to ±2,147,483,647 (ISO 32000-1 §7.3.3).
+        let is_real = token.contains('.') || token.contains('e') || token.contains('E');
         if let Ok(val) = token.parse::<f64>() {
-            if val.abs() > max {
+            if is_real && val.abs() > max {
                 return true;
             }
-            // Subnormal: non-zero value below the minimum normalized positive float
-            if val != 0.0 && val.abs() < MIN_POSITIVE_REAL {
+            // Subnormal: non-zero value below the minimum normalized positive float.
+            // Applies to all numeric tokens — integers can't be subnormal.
+            if is_real && val != 0.0 && val.abs() < MIN_POSITIVE_REAL {
                 return true;
             }
         }
@@ -8490,7 +8496,12 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                 });
             let Some(fd) = font_dict_opt else { continue };
             let subtype = fd.get::<Name>(keys::SUBTYPE);
-            if subtype.as_ref().is_none_or(|s| s.as_ref() != b"Type1") {
+            // Also cover MMType1 (Adobe Multiple Master) — same subset coverage rules.
+            // (#FN-6.2.11.4.1 cs-veraPDF-6-2-11-4-1-t02-fail-b)
+            if subtype
+                .as_ref()
+                .is_none_or(|s| s.as_ref() != b"Type1" && s.as_ref() != b"MMType1")
+            {
                 continue;
             }
             let base = fd
@@ -9205,10 +9216,13 @@ pub fn check_tounicode_cmap(
             return;
         }
 
-        // PDF/A-2/3/4: Identity-H/V and Type0 fonts are exempt from §6.2.11.7.2/§6.2.10.7,
-        // EXCEPT for conformance level 'U' which requires Unicode mapping for ALL fonts.
-        // PDF/A-1 §6.3.8 applies to ALL renderable fonts — no Type0 or encoding exemption.
-        if part >= 2 && !requires_unicode {
+        // Type0 (composite) fonts are exempt from §6.3.8/§6.2.11.7.2/§6.2.10.7 unless
+        // the conformance level requires full Unicode mapping ('U').
+        // ISO 19005-1 §6.3.8 exempts Type0 fonts whose CMap is predefined (Identity-H/V,
+        // named CMaps like OneByteIdentityH); veraPDF fires §6.3.4 instead for such fonts
+        // and does NOT fire §6.3.8. Applying to all parts avoids this FP.
+        // (#FP-6.3.8-type0, GHOSTSCRIPT-688790-4)
+        if !requires_unicode {
             if let Some(enc) = font_dict.get::<Name>(keys::ENCODING) {
                 if enc.as_ref() == keys::IDENTITY_H || enc.as_ref() == keys::IDENTITY_V {
                     return;
@@ -10899,6 +10913,13 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
             return;
         }
 
+        // When a glyph is absent from the CFF font program, veraPDF uses the .notdef
+        // advance width as "widthFromFontProgram" and compares it against the /Widths
+        // entry. Pre-compute .notdef width (GID 0) here.
+        // (#FN-6.2.11.5 cs-veraPDF-6-2-11-4-1-t02-fail-a)
+        let notdef_cff_width: Option<i32> =
+            table.glyph_width(cff_parser::GlyphId(0)).map(|w| w as i32);
+
         // §6.2.10.5: skip codes whose /Widths entry equals /MissingWidth — those are
         // "unused" sentinel entries, not declared zero-widths. Same logic as the TrueType
         // check. (#FN-6.2.10.5-cff)
@@ -10980,26 +11001,39 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                 });
 
             // Determine GID: prefer PDF /Encoding path, fall back to CFF internal.
-            let gid = if let Some(ref gname) = glyph_name {
+            // When a glyph is absent from the CFF, use the .notdef width as
+            // widthFromFontProgram (matching veraPDF) — a glyph name that resolves to
+            // nothing in the CFF still has an "effective" advance of .notdef.
+            // (#FN-6.2.11.5 cs-veraPDF-6-2-11-4-1-t02-fail-a)
+            let gid_opt = if let Some(ref gname) = glyph_name {
                 if gname.is_empty() || gname == ".notdef" {
                     continue;
                 }
                 match table.glyph_index_by_name(gname) {
-                    Some(g) if g.0 != 0 => g,
-                    _ => continue,
+                    Some(g) if g.0 != 0 => Some(g),
+                    _ => None, // glyph absent → use notdef width below
                 }
             } else {
                 // No PDF /Encoding for this code — fall back to CFF internal encoding.
                 match table.glyph_index(code as u8) {
-                    Some(g) if g.0 != 0 => g,
-                    _ => continue,
+                    Some(g) if g.0 != 0 => Some(g),
+                    _ => None,
                 }
             };
 
-            let Some(cff_w) = table.glyph_width(gid) else {
-                continue;
+            let cff_w_i32: i32 = if let Some(gid) = gid_opt {
+                let Some(cff_w) = table.glyph_width(gid) else {
+                    continue;
+                };
+                cff_w as i32
+            } else {
+                // Glyph absent from font program. veraPDF uses .notdef advance as
+                // widthFromFontProgram and checks it against the /Widths entry.
+                let Some(nd_w) = notdef_cff_width else {
+                    continue;
+                };
+                nd_w
             };
-            let cff_w_i32 = cff_w as i32;
 
             // Tolerance: 1 unit (veraPDF uses strict equality but we allow ±1
             // to avoid fp rounding FPs).
@@ -11009,7 +11043,7 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                     "6.3.5-fw",
                     format!(
                         "Font {name} glyph at code {code} ({glyph_name:?}): \
-                         CFF width {cff_w} != PDF /Widths[{idx}] {pdf_w}"
+                         CFF width {cff_w_i32} != PDF /Widths[{idx}] {pdf_w}"
                     ),
                     loc.clone(),
                 );
@@ -11524,6 +11558,10 @@ fn check_truetype_simple_widths(
     }
 
     let loc = format!("page {}", page_idx + 1);
+    // Track whether we have already emitted a glyph-coverage violation for this font,
+    // so we report at most one §6.2.11.4.1/§6.3.5 instance (matching veraPDF behaviour).
+    // (#FN-6.3.5 isartor-6-3-5-t01-fail-d)
+    let mut glyph_absence_emitted = false;
 
     for code in first..=last {
         let idx = code - first;
@@ -11572,6 +11610,19 @@ fn check_truetype_simple_widths(
         let gid = explicit_gid.unwrap_or(ttf_parser::GlyphId(0));
         if gid.0 == 0 && explicit_gid.is_some() {
             continue;
+        }
+        // When the glyph is absent from the cmap (explicit_gid is None), veraPDF also
+        // fires the glyph-coverage rule (§6.3.5 / §6.2.11.4.1) alongside the width rule.
+        // Emit it once per font here, before falling through to the width check below.
+        // (#FN-6.3.5 isartor-6-3-5-t01-fail-d)
+        if explicit_gid.is_none() && !glyph_absence_emitted {
+            error_at(
+                report,
+                "6.2.11.4.1",
+                format!("Font {name} code {code} (U+{:04X}): glyph not present in embedded font program", ch as u32),
+                loc.clone(),
+            );
+            glyph_absence_emitted = true;
         }
         let Some(advance) = face.glyph_hor_advance(gid) else {
             continue;
@@ -14205,7 +14256,13 @@ pub fn check_trailer_requirements(pdf: &Pdf, part: u8, report: &mut ComplianceRe
                     search = abs + 7;
                     continue;
                 }
-                if !region.windows(3).any(|w| w == b"/ID") {
+                // Only flag a missing /ID when the trailer is a full document trailer
+                // (has /Root).  Minimal update trailers (e.g. linearization stubs with
+                // only /Size) do not need /ID — only the main document trailer does.
+                // Avoids FP on linearized PDFs where the hint-stream xref has no /ID.
+                // (#FP-6.1.3-linearized, PDFBOX-3105-1)
+                let is_full_trailer = region.windows(5).any(|w| w == b"/Root");
+                if is_full_trailer && !region.windows(3).any(|w| w == b"/ID") {
                     any_missing = true;
                 } else if let Some(id_off) = region.windows(4).position(|w| w == b"/ID ") {
                     let after = &region[id_off + 4..];
@@ -16496,23 +16553,43 @@ fn check_type1_simple_widths(
                 );
                 return; // First mismatch per font only
             }
-        } else if pdf_w != 0 {
-            // Glyph is absent from the font program and /Widths claims non-zero advance.
-            // The effective advance is MissingWidth; if that disagrees, the entry is wrong.
-            // Do NOT check pdf_w==0 cases here: width=0 for absent glyphs is common/valid.
-            if let Some(mw) = missing_width {
-                if (mw - pdf_w).abs() > 1 {
+        } else {
+            // Glyph absent from font program. veraPDF uses the .notdef glyph's advance
+            // width as "widthFromFontProgram" and compares it against the /Widths entry
+            // (same behaviour as for TrueType and CFF paths above).
+            // (#FN-6.3.6 isartor-6-3-5-t01-fail-c)
+            let notdef_w_raw = parsed.charstring_widths.get(".notdef").copied();
+            if let Some(nd_raw) = notdef_w_raw {
+                let nd_w = (nd_raw as f64 * parsed.font_matrix_sx * 1000.0).round() as i32;
+                if (nd_w - pdf_w).abs() > 1 {
                     error_at(
                         report,
                         "6.3.5-fw",
                         format!(
                             "Font {name} code {code} ({glyph_name}): \
-                             glyph absent from font program, MissingWidth {mw} \
+                             glyph absent from font program, .notdef width {nd_w} \
                              != PDF /Widths[{idx}] {pdf_w}"
                         ),
                         loc.clone(),
                     );
                     return; // First mismatch per font only
+                }
+            } else if pdf_w != 0 {
+                // No .notdef in charstrings (unusual). Fall back to MissingWidth if declared.
+                if let Some(mw) = missing_width {
+                    if (mw - pdf_w).abs() > 1 {
+                        error_at(
+                            report,
+                            "6.3.5-fw",
+                            format!(
+                                "Font {name} code {code} ({glyph_name}): \
+                                 glyph absent from font program, MissingWidth {mw} \
+                                 != PDF /Widths[{idx}] {pdf_w}"
+                            ),
+                            loc.clone(),
+                        );
+                        return; // First mismatch per font only
+                    }
                 }
             }
         }
