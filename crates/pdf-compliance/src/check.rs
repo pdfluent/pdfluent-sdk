@@ -10118,6 +10118,9 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
         // Build map: resource name → CIDSet bit array (only for subset Type0 fonts).
         let mut font_cidsets: std::collections::HashMap<Vec<u8>, Vec<u8>> =
             std::collections::HashMap::new();
+        // Track which fonts use 1-byte CID encoding (e.g. OneByteIdentityH).
+        let mut font_1byte: std::collections::HashSet<Vec<u8>> =
+            std::collections::HashSet::new();
         let fonts = &page.resources().fonts;
 
         for (name, _) in fonts.entries() {
@@ -10135,6 +10138,9 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
                 .is_none_or(|s| s.as_ref() != b"Type0")
             {
                 continue;
+            }
+            if type0_encoding_is_1byte(&font_dict, xref) {
+                font_1byte.insert(name.as_ref().to_vec());
             }
             if let Some(cidset_bits) = get_type0_cidset(&font_dict, xref) {
                 font_cidsets.insert(name.as_ref().to_vec(), cidset_bits);
@@ -10156,6 +10162,7 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
         let loc = format!("page {}", page_idx + 1);
         let n = tokens.len();
         let mut active_cidset: Option<&Vec<u8>> = None;
+        let mut active_is_1byte: bool = false;
         // Report at most one glyph-rule violation per page to match veraPDF's
         // single-check-per-rule behaviour.
         // §6.2.11.8 ("renders as .notdef") is emitted for parts 2/3 when a CID is
@@ -10171,9 +10178,9 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
             // /FontName size Tf — track which Type0 font is active.
             if tok == b"Tf" && i >= 2 {
                 let font_name = tokens[i - 2].as_slice();
-                active_cidset = font_name
-                    .strip_prefix(b"/")
-                    .and_then(|n| font_cidsets.get(n));
+                let name_key = font_name.strip_prefix(b"/").unwrap_or(font_name);
+                active_cidset = font_cidsets.get(name_key);
+                active_is_1byte = font_1byte.contains(name_key);
             }
 
             let Some(cidset) = active_cidset else {
@@ -10182,11 +10189,10 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
 
             // Tj / ' / " — the preceding token is the string argument.
             // Handle both hex strings (<...>) and literal strings ((...)) because
-            // some test PDFs use literal strings for single-byte CID codes. For
-            // Identity-H an odd-length literal string is padded with 0xFF, giving
-            // e.g. byte 0x23 → CID 0x23FF. Fixes §6.2.11.4.1 FN for literal Tj.
+            // some test PDFs use literal strings for single-byte CID codes.
+            // 1-byte encodings (e.g. OneByteIdentityH) use one byte per CID.
             if matches!(tok, b"Tj" | b"'" | b"\"") && i >= 1 {
-                for cid in extract_cids_from_token(tokens[i - 1].as_slice()) {
+                for cid in extract_cids_from_token(tokens[i - 1].as_slice(), active_is_1byte) {
                     // CID 0 = .notdef by definition; handled separately.
                     if cid == 0 {
                         continue;
@@ -10214,7 +10220,7 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
                         break;
                     }
                     if t.starts_with(b"<") || t.starts_with(b"(") {
-                        for cid in extract_cids_from_token(t) {
+                        for cid in extract_cids_from_token(t, active_is_1byte) {
                             if cid == 0 {
                                 continue;
                             }
@@ -10284,14 +10290,13 @@ fn cid_in_cidset(cid: u32, cidset: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
-/// Extract 2-byte big-endian CID values from either a hex-string (`<XXYY...>`) or
-/// a literal-string (`(...)`) token for Type0/Identity-encoded CIDFonts.
+/// Extract CID values from either a hex-string (`<XXYY...>`) or literal-string
+/// (`(...)`) token for Type0/CID-encoded fonts.
 ///
-/// For hex strings each group of 4 hex digits encodes one CID.
-/// For literal strings the raw bytes are paired as big-endian 2-byte CIDs; an
-/// odd trailing byte is padded with 0xFF (matches how veraPDF processes
-/// single-byte literal strings in Identity-H fonts).
-fn extract_cids_from_token(tok: &[u8]) -> Vec<u32> {
+/// `is_1byte`: when true the font uses a 1-byte encoding (e.g. OneByteIdentityH)
+/// where each byte is its own CID. When false each pair of bytes is a 2-byte
+/// big-endian CID (standard Identity-H behaviour).
+fn extract_cids_from_token(tok: &[u8], is_1byte: bool) -> Vec<u32> {
     if tok.starts_with(b"<") {
         return extract_cids_from_hex(tok);
     }
@@ -10299,8 +10304,14 @@ fn extract_cids_from_token(tok: &[u8]) -> Vec<u32> {
         // Decode PDF literal string escape sequences into raw bytes.
         let inner = &tok[1..tok.len() - 1];
         let bytes = decode_literal_string_bytes(inner);
-        // Pair bytes into 2-byte big-endian CIDs; pad odd trailing byte with 0xFF.
-        // This matches how PDF processors handle 1-byte strings in Identity-H fonts.
+        if is_1byte {
+            // OneByteIdentityH: each byte is a complete CID (0x0000..=0x00FF).
+            return bytes.iter().map(|&b| b as u32).collect();
+        }
+        // Standard 2-byte big-endian CIDs; pad odd trailing byte with 0x00.
+        // Identity-H uses 2-byte CIDs; a trailing single byte is paired with 0x00.
+        // (0xFF padding caused FPs for fonts whose CIDSets cover low CIDs, e.g.
+        //  byte 0x3A → CID 0x3A00, not 0x3AFF.) (#FP-6.3.5-literal-pad)
         let mut cids = Vec::new();
         let mut i = 0;
         while i < bytes.len() {
@@ -10308,7 +10319,7 @@ fn extract_cids_from_token(tok: &[u8]) -> Vec<u32> {
             let lo = if i + 1 < bytes.len() {
                 bytes[i + 1]
             } else {
-                0xFF
+                0x00
             };
             cids.push((hi as u32) << 8 | lo as u32);
             i += 2;
@@ -10316,6 +10327,28 @@ fn extract_cids_from_token(tok: &[u8]) -> Vec<u32> {
         return cids;
     }
     vec![]
+}
+
+/// Returns true if the Type0 font uses a 1-byte CID encoding (e.g. OneByteIdentityH).
+/// These fonts map each single byte to a CID, rather than using 2-byte pairs.
+fn type0_encoding_is_1byte(font_dict: &Dict<'_>, xref: &pdf_syntax::xref::XRef) -> bool {
+    // Check if /Encoding is a direct name (e.g. /Identity-H → 2-byte)
+    if let Some(enc_name) = font_dict.get::<Name>(keys::ENCODING) {
+        let name = enc_name.as_ref();
+        // Known 1-byte CMaps:
+        return name == b"OneByteIdentityH" || name == b"OneByteIdentityV";
+    }
+    // Check if /Encoding is an indirect stream ref to a CMap with 1-byte name
+    if let Some(enc_stream) = font_dict
+        .get_ref(keys::ENCODING)
+        .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+    {
+        if let Some(cmap_name) = enc_stream.dict().get::<Name>(b"CMapName".as_ref()) {
+            let name = cmap_name.as_ref();
+            return name.starts_with(b"OneByte") || name == b"1-byte";
+        }
+    }
+    false
 }
 
 /// Decode PDF literal string escape sequences into a raw byte vector.
@@ -11331,14 +11364,24 @@ fn check_cidfont_type2_widths(
                 continue;
             };
             let loc = format!("page {}", page_idx + 1);
-            let w_map: std::collections::HashMap<u32, i32> =
-                if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
-                    // Range entries (c1 c2 w) cover CIDs not in the subset — skip them
-                    // for width consistency checks to avoid FPs. (#FP-6.2.11.5-range)
-                    parse_cidfont_w_array(&w_arr, false)
-                } else {
-                    std::collections::HashMap::new()
-                };
+            // w_map_all: includes range entries — used for DW "already covered" check.
+            // w_map_individual: array-form entries only — used for per-CID width check.
+            // Range entries (c1 c2 w) cover CIDs not in the subset; checking their
+            // declared width against per-glyph CFF advances causes FPs. (#FP-6.2.11.5-range)
+            let (w_map_all, w_map): (
+                std::collections::HashMap<u32, i32>,
+                std::collections::HashMap<u32, i32>,
+            ) = if let Some(w_arr) = cid_font.get::<Array<'_>>(keys::W) {
+                (
+                    parse_cidfont_w_array(&w_arr, true),
+                    parse_cidfont_w_array(&w_arr, false),
+                )
+            } else {
+                (
+                    std::collections::HashMap::new(),
+                    std::collections::HashMap::new(),
+                )
+            };
             for (cid, pdf_w) in &w_map {
                 if *pdf_w == 0 {
                     continue;
@@ -11369,8 +11412,8 @@ fn check_cidfont_type2_widths(
                 let num_glyphs = table.number_of_glyphs() as u32;
                 for gid in 1..num_glyphs {
                     let cid = gid; // CID == GID for CID-keyed CFF
-                    if w_map.contains_key(&cid) {
-                        continue; // Already checked via /W
+                    if w_map_all.contains_key(&cid) {
+                        continue; // Covered by /W (array or range form)
                     }
                     let Some(cff_w) = table.glyph_width(cff_parser::GlyphId(gid as u16)) else {
                         continue;
