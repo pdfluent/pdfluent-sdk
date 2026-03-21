@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! PDF compliance checking: PDF/A, PDF/UA, and PDF/X.
 //!
 //! Validates PDF documents against conformance profiles defined by:
@@ -56,13 +57,21 @@ use pdf_syntax::Pdf;
 /// PDF/A conformance level (ISO 19005 parts 1–4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PdfALevel {
+    /// PDF/A-1a — conformance level A (tagged, accessible).
     A1a,
+    /// PDF/A-1b — conformance level B (basic).
     A1b,
+    /// PDF/A-2a — conformance level A (tagged, accessible).
     A2a,
+    /// PDF/A-2b — conformance level B (basic).
     A2b,
+    /// PDF/A-2u — conformance level U (Unicode).
     A2u,
+    /// PDF/A-3a — conformance level A (tagged, accessible).
     A3a,
+    /// PDF/A-3b — conformance level B (basic).
     A3b,
+    /// PDF/A-3u — conformance level U (Unicode).
     A3u,
     /// PDF/A-4 base (ISO 19005-4, no conformance letter).
     A4,
