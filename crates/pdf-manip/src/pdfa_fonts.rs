@@ -1179,15 +1179,11 @@ fn winansi_to_char(code: u32) -> char {
     if !(128..=255).contains(&code) {
         return char::from_u32(code).unwrap_or(' ');
     }
-    // PDF Appendix D defines two duplicate WinAnsi codes that are
-    // typographically identical to their base glyphs:
-    // 160 => nonbreaking space (same metrics as space),
-    // 173 => soft hyphen (same metrics as hyphen).
-    match code {
-        160 => return ' ',
-        173 => return '-',
-        _ => {}
-    }
+    // WinAnsi codes 160-255 follow Latin-1 (ISO 8859-1) exactly, except for
+    // 128-159 which differ. Fall through to the Latin-1 mapping below.
+    // Note: code 160 = U+00A0 (non-breaking space, NOT regular space U+0020),
+    // and code 173 = U+00AD (soft hyphen, NOT hyphen U+002D). The compliance
+    // check uses the literal WinAnsi Unicode values, so we must match. (#FN-6.2.11.5-notdef)
     // WinAnsi codes 128-159 that differ from Latin-1.
     const WINANSI_128_159: [u32; 32] = [
         0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, // 128-135
@@ -6124,6 +6120,10 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 fd.has(b"FontFile3"),
             )
         };
+        #[cfg(test)]
+        if base_font.contains("Helvetica") {
+            eprintln!("[DBG Helv] id={font_id:?} subtype={subtype:?} ff1={has_ff1} ff2={has_ff2} ff3={has_ff3} fc={first_char} enc={:?} ndiffs={}", enc_info.0, enc_info.1.len());
+        }
         // Subset CFF Type1 fonts (ABCDEF+Name) have an authoritative CFF internal
         // encoding created during subsetting. The ≤50-unit conservative filter
         // is not needed for them — apply it only to non-subset fonts. (#496)
@@ -6715,22 +6715,43 @@ fn get_truetype_glyph_width_fractional(
     // Character not found in (3,1) cmap. For codes outside the 128-159 range
     // (where Mac Roman and WinAnsi have identical mappings), fall back to (1,0)
     // Mac Roman cmap. veraPDF uses this fallback for non-symbolic TrueType.
-    // Codes 128-159 differ between Mac Roman and WinAnsi — skip those to avoid
-    // incorrect width lookups (root cause of 0168-style regressions).
-    let allow_winansi_145_146 = enc_name == "WinAnsiEncoding" && (code == 145 || code == 146);
-    if code <= 255 && (!(128..=159).contains(&code) || allow_winansi_145_146) {
+    // Codes 128-159 differ between Mac Roman and WinAnsi — skip ALL of them to
+    // avoid incorrect width lookups. The former allow_winansi_145_146 exception
+    // for codes 145/146 was causing wrong corrections: for a TrueType subset
+    // whose Mac (1,0) cmap maps byte 146 to a wide glyph (e.g. advance 778 for
+    // an accented capital letter), this exception returned that wide advance for
+    // WinAnsi code 146 = U+2019 (curly quote), then "corrected" the /Widths
+    // entry to 778 — introducing a §6.2.11.5 violation. (#fix-tt-cmap-145-146)
+    if code <= 255 && !(128..=159).contains(&code) {
         if let Some(gid) = lookup_mac_cmap(face, code) {
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
         }
     }
 
-    // High-byte code not found in any cmap — veraPDF uses .notdef (GID 0)
-    // width for such codes. Return it so we can correct stale Widths entries
-    // that differ from the actual .notdef advance by more than 1 unit. (#479)
-    if (128..=255).contains(&code) {
-        return face
-            .glyph_hor_advance(ttf_parser::GlyphId(0))
-            .map(|w| w as f64 * scale);
+    // Code not found in (3,1) or Mac cmap. Try all cmap subtables to match the
+    // compliance checker, which uses face.glyph_index(ch) over all cmaps.
+    // If found in a non-(3,1) subtable (e.g. (0,3) Unicode platform), use that
+    // advance. If explicitly mapped to GID 0 (notdef), the compliance check skips
+    // that code so we do too. If absent from all cmaps, use .notdef advance for
+    // codes 32-255 (excluding 127/DEL) — veraPDF uses notdef for glyphs absent
+    // from the font subset. (#FN-6.2.11.5-notdef)
+    match face.glyph_index(ch) {
+        Some(gid) if gid.0 != 0 => {
+            // Found in a non-(3,1) cmap — use actual advance.
+            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+        Some(_) => {
+            // Explicitly mapped to GID 0 — compliance check skips, so do we.
+            return None;
+        }
+        None => {
+            // Not in any cmap: veraPDF uses .notdef advance for valid encoding chars.
+            if code >= 32 && code != 127 {
+                return face
+                    .glyph_hor_advance(ttf_parser::GlyphId(0))
+                    .map(|w| w as f64 * scale);
+            }
+        }
     }
 
     None
@@ -8140,7 +8161,7 @@ fn compute_cff_type1_width_corrections(
             None
         };
 
-        // Fallback: for high-byte codes on non-subset fonts without PDF-level
+        // Fallback 1: for high-byte codes on non-subset fonts without PDF-level
         // encoding, veraPDF uses .notdef width for codes absent from the CFF
         // encoding table. Only applies when there is no PDF /Encoding key at all
         // (neither BaseEncoding nor Differences), i.e. the CFF internal encoding
@@ -8152,6 +8173,25 @@ fn compute_cff_type1_width_corrections(
             } else {
                 None
             }
+        });
+
+        // Fallback 2: CFF internal encoding → GID → width (same as the compliance
+        // checker check_font_program_widths, which calls table.glyph_index(code)
+        // directly). When the PDF-encoding → glyph-name → CFF-charset path above
+        // returns None (e.g. glyph is stored as "quoteright" but looked up via
+        // "quotesingle", and no CFF charset entry is found), the CFF encoding
+        // is still authoritative. Use it as a last resort for codes where
+        // cff_width_for_code could not resolve a width. GID 0 = .notdef = not
+        // encoded → skip (same guard as the compliance checker). (#FN-6.2.11.5-cff-enc)
+        let frac_w = frac_w.or_else(|| {
+            if code > 255 {
+                return None;
+            }
+            let gid = cff.glyph_index(code as u8)?;
+            if gid.0 == 0 {
+                return None; // not encoded or .notdef
+            }
+            cff.glyph_width(gid).map(|w| w as f64 * scale)
         });
 
         let Some(frac_w) = frac_w else { continue };
@@ -9384,10 +9424,20 @@ pub fn fix_truetype_unicode_cmap(doc: &mut Document) -> usize {
                 // Avoid PUA Apple logo.
                 unicode_mappings.push((mac_unicode, *gid));
             }
-            // Also add the WinAnsi unicode for the same code position.
+            // Also add the WinAnsi unicode for codes ≥160 only.
+            // For Mac codes 128-159, Mac Roman and WinAnsi map completely
+            // different characters to the same byte position (e.g. Mac byte
+            // 146 = 'í'/U+00ED, WinAnsi byte 146 = U+2019 curly quote). Adding
+            // the WinAnsi Unicode → GID mapping for these codes creates wrong
+            // (3,1) cmap entries because the GID represents the Mac character
+            // (e.g. 'í'), not the WinAnsi one (curly quote). For codes ≥160
+            // the two encodings may share the same visual glyph (e.g. Mac 165
+            // = bullet, WinAnsi 165 = yen — same GID for a converted font), so
+            // adding both Unicode values → GID is intentional there.
+            // (#fix-tt-cmap-winansi-128-159)
             let winansi_char = encoding_to_char(*mac_code as u32, "WinAnsiEncoding");
             let winansi_unicode = winansi_char as u16;
-            if winansi_unicode != mac_unicode && winansi_unicode > 0 {
+            if *mac_code >= 160 && winansi_unicode != mac_unicode && winansi_unicode > 0 {
                 unicode_mappings.push((winansi_unicode, *gid));
             }
         }
@@ -13807,6 +13857,19 @@ fn fix_notdef_in_type1(
 
         if has_glyph {
             continue; // Not .notdef — no fix needed.
+        }
+
+        // CFF internal encoding check: unicode_to_glyph_name may return a raw
+        // ASCII char (e.g. "'" for U+0027) that is NOT in available_glyphs, but
+        // the CFF charset stores it under its AGL name alias (e.g. "quoteright").
+        // In those cases cff.glyph_index(code) returns a non-.notdef GID, meaning
+        // veraPDF considers the code valid for §6.2.11.4.1.  Adding a Differences
+        // entry here (e.g. code 39 → "space") would mislead fix_font_width_mismatches
+        // into computing the wrong expected width (space=278 instead of
+        // quoteright=222) and prevent the §6.2.11.5 width correction.
+        // (#FN-6.2.11.5-cff-enc)
+        if code <= 255 && cff.glyph_index(code as u8).is_some_and(|g| g.0 != 0) {
+            continue;
         }
 
         // Subset high-byte codes can legitimately resolve through existing
