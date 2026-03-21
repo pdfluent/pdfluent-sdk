@@ -56,7 +56,9 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     let elapsed = || start.elapsed().as_millis() as u64;
 
     // Skip already-encrypted documents — lopdf can't re-encrypt without
-    // first decrypting, and we don't have the password.
+    // first decrypting, and we don't have the password. Raw-byte scan covers
+    // most cases; the trailer check below catches xref-stream PDFs where the
+    // /Encrypt ref lives in a compressed xref stream, invisible to window search.
     let already_encrypted = pdf.windows(8).any(|w| w == b"/Encrypt");
     if already_encrypted {
         return TestResult {
@@ -80,6 +82,18 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
             };
         }
     };
+
+    // Secondary encrypted check via the parsed trailer. Catches PDFs whose
+    // /Encrypt ref is only visible after parsing (e.g. embedded in xref streams).
+    if doc.trailer.get(b"Encrypt").is_ok() {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some("already encrypted (trailer /Encrypt)".into()),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata: HashMap::new(),
+        };
+    }
 
     let original_pages = doc.get_pages().len();
     if original_pages == 0 {

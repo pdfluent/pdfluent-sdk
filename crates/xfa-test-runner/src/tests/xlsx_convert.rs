@@ -46,14 +46,26 @@ impl PdfTest for XlsxConvertTest {
 
         let pdf_owned = pdf_data.to_vec();
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
+        // Thread spawn can fail with EAGAIN under concurrent load (OS thread limit).
+        // Return Skip rather than panicking — this is a transient resource constraint,
+        // not a bug in the PDF or our code.
+        if std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024) // 16 MB — sufficient; 64 MB was causing OOM under concurrent load
             .spawn(move || {
                 let r =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));
                 let _ = tx.send(r);
             })
-            .expect("thread spawn");
+            .is_err()
+        {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("thread spawn failed (resource temporarily unavailable)".into()),
+                duration_ms: 0,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
         match rx.recv_timeout(std::time::Duration::from_secs(25)) {
             Ok(Ok(result)) => result,
             Ok(Err(e)) => {
