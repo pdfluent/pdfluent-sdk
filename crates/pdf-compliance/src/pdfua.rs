@@ -65,9 +65,62 @@ fn check_document_title(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Returns true if any structure element in the StructTreeRoot has a /Lang entry.
+///
+/// ISO 14289-1 §7.2 allows omitting catalog /Lang when natural language is
+/// provided for all text through structure element /Lang entries.  VeraPDF
+/// considers a document conformant when every element that requires language
+/// carries its own /Lang, even without a catalog-level entry.
+/// (#FP-7.2-element-lang)
+fn struct_has_any_lang(pdf: &Pdf) -> bool {
+    use pdf_syntax::object::{Array, Dict};
+
+    fn scan(elem: &Dict<'_>, depth: usize) -> bool {
+        if depth > 200 {
+            return false;
+        }
+        // /Lang present on this element?
+        if elem
+            .get::<pdf_syntax::object::String>(keys::LANG)
+            .is_some()
+        {
+            return true;
+        }
+        // Recurse into kids.
+        if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
+            for kid in kids.iter::<Dict<'_>>() {
+                if scan(&kid, depth + 1) {
+                    return true;
+                }
+            }
+        } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
+            return scan(&kid, depth + 1);
+        }
+        false
+    }
+
+    let Some(root) = check::struct_tree_root(pdf) else {
+        return false;
+    };
+    if let Some(kids) = root.get::<Array<'_>>(keys::K) {
+        for kid in kids.iter::<Dict<'_>>() {
+            if scan(&kid, 0) {
+                return true;
+            }
+        }
+    } else if let Some(kid) = root.get::<Dict<'_>>(keys::K) {
+        return scan(&kid, 0);
+    }
+    false
+}
+
 /// Check that the document has a /Lang entry on the catalog.
+///
+/// ISO 14289-1 §7.2 allows element-level /Lang as an alternative to catalog
+/// /Lang when all text has language specified via structure elements.  We only
+/// report an error when BOTH the catalog and the structure tree have no /Lang.
 fn check_document_language(pdf: &Pdf, report: &mut ComplianceReport) {
-    if check::document_lang(pdf).is_none() {
+    if check::document_lang(pdf).is_none() && !struct_has_any_lang(pdf) {
         check::error(
             report,
             "7.2",
@@ -141,10 +194,21 @@ fn check_table_headers(tree: &tagged::StructureTree, report: &mut ComplianceRepo
     }
 }
 
-/// Check that each page has /Tabs = /S.
+/// Check that each page with annotations has /Tabs = /S.
+///
+/// ISO 14289-1 §7.1 requires /Tabs /S only for pages that have annotations
+/// (including form fields).  Pages without /Annots need no tab order.
+/// VeraPDF checks: "Tab order of page with annotations is set to structure".
+/// (#FP-7.1-tabs-s-no-annots)
 fn check_tab_order(pdf: &Pdf, report: &mut ComplianceReport) {
+    use pdf_syntax::object::Array;
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let page_dict = page.raw();
+        // Skip pages that have no annotations — /Tabs /S is only required
+        // when annotations (including form widgets) are present.
+        if page_dict.get::<Array<'_>>(keys::ANNOTS).is_none() {
+            continue;
+        }
         if !check::page_has_tab_order_s(page_dict) {
             check::error_at(
                 report,
