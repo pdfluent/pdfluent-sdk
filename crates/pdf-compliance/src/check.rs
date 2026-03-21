@@ -2738,7 +2738,7 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         // veraPDF does not flag §6.7.3.4 when /Subject is an empty string.
         // (#FP-6.7.3.4)
         let subject_str = decode_pdf_info_string(subject);
-        let subject_non_empty = subject_str.as_deref().map(str::trim).unwrap_or("") != "";
+        let subject_non_empty = !subject_str.as_deref().map(str::trim).unwrap_or("").is_empty();
         if subject_non_empty {
             if !xmp_text.contains("dc:description") {
                 error(
@@ -12831,8 +12831,13 @@ pub fn check_rolemap_circular(pdf: &Pdf, report: &mut ComplianceReport) {
                 Some(n) => n.as_ref().to_vec(),
                 None => break,
             };
+            // Self-referencing entries (e.g. /Document /Document) are identity
+            // maps, not circular chains. veraPDF does not flag these. (#FP-6.7.3.4)
+            if next == current {
+                break;
+            }
             if visited.contains(&next) {
-                // Cycle detected
+                // True multi-step cycle: A→B→A or longer.
                 error(report, "6.7.3.4", "RoleMap contains a circular mapping");
                 break 'outer;
             }
@@ -15248,9 +15253,14 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
     .copied()
     .collect();
 
-    // PDF/A-1: §6.2.10 (undefined operators); PDF/A-2/3/4: §6.2.7.1 (operators)
-    // veraPDF uses §6.2.10 for PDF/A-1, not §6.2.2 (which is OutputIntent related).
-    let undef_op_rule = if pdfa_part >= 2 { "6.2.7.1" } else { "6.2.10" };
+    // PDF/A-1: §6.2.10; PDF/A-2/3: §6.2.7.1 (remapped to §6.2.10 by remap_clause_numbers);
+    // PDF/A-4: §6.2.2 (ISO 19005-4 renumbering — veraPDF confirmed by cs-6-2-2-fail-b.pdf).
+    // (#FN-6.2.2 / #FP-6.2.7.1)
+    let undef_op_rule = match pdfa_part {
+        1 => "6.2.10",
+        4 => "6.2.2",
+        _ => "6.2.7.1",
+    };
 
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         let loc = format!("page {}", page_idx + 1);
