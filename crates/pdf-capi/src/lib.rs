@@ -562,9 +562,7 @@ pub unsafe extern "C" fn pdf_document_convert_pdfa(
     };
     // cleanup_for_pdfa applies PDF/A-incompatible element removal; is_pdfa1
     // enables stricter PDF/A-1 rules (e.g. no transparency at all).
-    if let Err(e) =
-        pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut lopdf_doc, level.is_part1())
-    {
+    if let Err(e) = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut lopdf_doc, level.is_part1()) {
         error::set_last_error(&e.to_string());
         return PdfStatus::ErrorConvert;
     }
@@ -746,10 +744,7 @@ pub unsafe extern "C" fn pdf_form_field_count(doc: *const PdfDocument) -> i32 {
 /// # Safety
 /// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
 #[no_mangle]
-pub unsafe extern "C" fn pdf_form_field_name(
-    doc: *const PdfDocument,
-    index: i32,
-) -> *mut c_char {
+pub unsafe extern "C" fn pdf_form_field_name(doc: *const PdfDocument, index: i32) -> *mut c_char {
     if doc.is_null() || index < 0 {
         return ptr::null_mut();
     }

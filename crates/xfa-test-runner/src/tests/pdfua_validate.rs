@@ -120,9 +120,7 @@ fn pdfua_part_number(pdf_data: &[u8]) -> Option<u8> {
     let pos = pdf_data.windows(needle.len()).position(|w| w == needle)?;
     let after = &pdf_data[pos + needle.len()..];
     // Skip whitespace, '=', '"', '>'
-    let digit_start = after
-        .iter()
-        .position(|&b| b.is_ascii_digit())?;
+    let digit_start = after.iter().position(|&b| b.is_ascii_digit())?;
     let rest = &after[digit_start..];
     let digit_end = rest
         .iter()

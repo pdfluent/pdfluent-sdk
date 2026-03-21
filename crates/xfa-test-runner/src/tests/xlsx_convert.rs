@@ -60,7 +60,9 @@ impl PdfTest for XlsxConvertTest {
         {
             return TestResult {
                 status: TestStatus::Skip,
-                error_message: Some("thread spawn failed (resource temporarily unavailable)".into()),
+                error_message: Some(
+                    "thread spawn failed (resource temporarily unavailable)".into(),
+                ),
                 duration_ms: 0,
                 oracle_score: None,
                 metadata: HashMap::new(),

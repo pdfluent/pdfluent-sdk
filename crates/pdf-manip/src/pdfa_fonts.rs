@@ -6712,17 +6712,21 @@ fn get_truetype_glyph_width_fractional(
         return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
     }
 
-    // Character not found in (3,1) cmap. For codes outside the 128-159 range
-    // (where Mac Roman and WinAnsi have identical mappings), fall back to (1,0)
-    // Mac Roman cmap. veraPDF uses this fallback for non-symbolic TrueType.
-    // Codes 128-159 differ between Mac Roman and WinAnsi — skip ALL of them to
-    // avoid incorrect width lookups. The former allow_winansi_145_146 exception
-    // for codes 145/146 was causing wrong corrections: for a TrueType subset
-    // whose Mac (1,0) cmap maps byte 146 to a wide glyph (e.g. advance 778 for
-    // an accented capital letter), this exception returned that wide advance for
-    // WinAnsi code 146 = U+2019 (curly quote), then "corrected" the /Widths
-    // entry to 778 — introducing a §6.2.11.5 violation. (#fix-tt-cmap-145-146)
-    if code <= 255 && !(128..=159).contains(&code) {
+    // Character not found in (3,1) cmap. Codes 128-159 differ between Mac Roman
+    // and WinAnsi — skip ALL fallbacks for this range to avoid incorrect width
+    // lookups. Without an explicit PDF /Encoding, code->glyph mapping in this
+    // range is ambiguous and any correction would be guesswork. The Mac (1,0)
+    // cmap for codes 128-159 may map to wide glyphs (e.g. accented capitals with
+    // advance 778) that do NOT correspond to the WinAnsi glyph at that code (e.g.
+    // quoteright advance 333), causing wrong "corrections" that introduce new
+    // §6.2.11.5 violations. (#fix-tt-cmap-145-146)
+    if (128..=159).contains(&code) {
+        return None;
+    }
+
+    // For codes outside 128-159, fall back to (1,0) Mac Roman cmap.
+    // veraPDF uses this fallback for non-symbolic TrueType.
+    if code <= 255 {
         if let Some(gid) = lookup_mac_cmap(face, code) {
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
         }
@@ -8597,9 +8601,9 @@ fn cff_width_for_code(
                         // "quotesingle"; the CFF subset may store it as "quoteright".
                         // (#FN-6.2.11.5-agl-alt)
                         for alt in cff_glyph_name_alternatives(&agl_name) {
-                            if let Some(w) = find_cff_glyph_width_by_name_fractional(
-                                cff, font_data, alt, scale,
-                            ) {
+                            if let Some(w) =
+                                find_cff_glyph_width_by_name_fractional(cff, font_data, alt, scale)
+                            {
                                 return Some(w);
                             }
                         }
