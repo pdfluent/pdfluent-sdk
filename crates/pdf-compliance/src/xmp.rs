@@ -911,26 +911,31 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
 
     // /Title ↔ dc:title (§6.7.3.2)
     if let Some(ref title) = metadata.title {
-        let dc_title = extract_rdf_alt_value(xmp, "dc:title");
-        match dc_title {
-            None => {
-                error(
-                    report,
-                    "6.7.3.2",
-                    "/Info has Title but XMP is missing dc:title",
-                );
-            }
-            Some(ref xmp_val) => {
-                let info_str = decode_pdf_string(title);
-                if !values_match(&info_str, xmp_val) {
+        let info_str = decode_pdf_string(title);
+        // Empty /Title is trivially consistent with absent/empty dc:title.
+        // veraPDF does not flag §6.7.3.2 when /Title is an empty string.
+        // (#FP-6.7.3.2)
+        if !info_str.trim().is_empty() {
+            let dc_title = extract_rdf_alt_value(xmp, "dc:title");
+            match dc_title {
+                None => {
                     error(
                         report,
                         "6.7.3.2",
-                        format!(
-                            "Info /Title '{}' does not match XMP dc:title '{}'",
-                            info_str, xmp_val
-                        ),
+                        "/Info has Title but XMP is missing dc:title",
                     );
+                }
+                Some(ref xmp_val) => {
+                    if !values_match(&info_str, xmp_val) {
+                        error(
+                            report,
+                            "6.7.3.2",
+                            format!(
+                                "Info /Title '{}' does not match XMP dc:title '{}'",
+                                info_str, xmp_val
+                            ),
+                        );
+                    }
                 }
             }
         }

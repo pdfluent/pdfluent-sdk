@@ -2734,26 +2734,33 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
 
     // Check Subject (/Info Subject vs dc:description) — §6.7.3.4
     if let Some(subject) = &metadata.subject {
-        if !xmp_text.contains("dc:description") {
-            error(
-                report,
-                "6.7.3.4",
-                "/Info has Subject but XMP is missing dc:description",
-            );
-        } else {
-            let xmp_desc = extract_rdf_alt_value(xmp_text, "dc:description");
-            if let Some(xmp_val) = &xmp_desc {
-                if let Some(info_decoded) = decode_pdf_info_string(subject) {
-                    if info_decoded.trim() != xmp_val.trim() {
-                        error(
-                            report,
-                            "6.7.3.4",
-                            format!(
-                                "Subject mismatch: Info='{}' vs XMP='{}'",
-                                info_decoded.chars().take(50).collect::<String>(),
-                                xmp_val.chars().take(50).collect::<String>()
-                            ),
-                        );
+        // Empty /Subject is trivially consistent with absent/empty dc:description.
+        // veraPDF does not flag §6.7.3.4 when /Subject is an empty string.
+        // (#FP-6.7.3.4)
+        let subject_str = decode_pdf_info_string(subject);
+        let subject_non_empty = subject_str.as_deref().map(str::trim).unwrap_or("") != "";
+        if subject_non_empty {
+            if !xmp_text.contains("dc:description") {
+                error(
+                    report,
+                    "6.7.3.4",
+                    "/Info has Subject but XMP is missing dc:description",
+                );
+            } else {
+                let xmp_desc = extract_rdf_alt_value(xmp_text, "dc:description");
+                if let Some(xmp_val) = &xmp_desc {
+                    if let Some(info_decoded) = &subject_str {
+                        if info_decoded.trim() != xmp_val.trim() {
+                            error(
+                                report,
+                                "6.7.3.4",
+                                format!(
+                                    "Subject mismatch: Info='{}' vs XMP='{}'",
+                                    info_decoded.chars().take(50).collect::<String>(),
+                                    xmp_val.chars().take(50).collect::<String>()
+                                ),
+                            );
+                        }
                     }
                 }
             }
