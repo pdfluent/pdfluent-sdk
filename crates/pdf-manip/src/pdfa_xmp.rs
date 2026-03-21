@@ -258,6 +258,27 @@ fn read_info_dict(doc: &Document) -> PdfMetadata {
     meta
 }
 
+/// Encode a Rust string as a PDF string object.
+///
+/// Uses UTF-16BE with BOM for any string containing non-ASCII characters.
+/// Pure-ASCII strings are stored as literal bytes (PDFDocEncoding-compatible).
+/// This ensures that roundtripping through the Info dict preserves characters
+/// like ® (U+00AE) which are not valid UTF-8 single bytes but are valid
+/// PDFDocEncoding bytes. (#FIX-6.7.3-special-chars)
+fn to_pdf_string(s: &str) -> Object {
+    if s.is_ascii() {
+        Object::String(s.as_bytes().to_vec(), lopdf::StringFormat::Literal)
+    } else {
+        // UTF-16BE with BOM: FE FF followed by big-endian UTF-16 code units.
+        let mut bytes = vec![0xFE_u8, 0xFF];
+        for unit in s.encode_utf16() {
+            bytes.push((unit >> 8) as u8);
+            bytes.push((unit & 0xFF) as u8);
+        }
+        Object::String(bytes, lopdf::StringFormat::Literal)
+    }
+}
+
 fn get_string_value(dict: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
     match dict.get(key).ok()? {
         Object::String(bytes, _) => {
@@ -275,7 +296,16 @@ fn get_string_value(dict: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
                     .collect();
                 String::from_utf16(&utf16).ok()
             } else {
-                Some(String::from_utf8_lossy(bytes).to_string())
+                // Try UTF-8 first. For PDFDocEncoding/Latin-1 strings (e.g. 0xAE = ®),
+                // from_utf8_lossy would replace bytes ≥0x80 that aren't valid UTF-8
+                // sequences with U+FFFD, causing XMP/Info mismatches for strings with
+                // special characters (§6.7.3). Fall back to ISO-8859-1 interpretation
+                // (each byte maps to the same Unicode code point) to preserve the
+                // original character. (#FIX-6.7.3-special-chars)
+                match std::str::from_utf8(bytes) {
+                    Ok(s) => Some(s.to_string()),
+                    Err(_) => Some(bytes.iter().map(|&b| b as char).collect()),
+                }
             }
         }
         _ => None,
@@ -326,28 +356,16 @@ fn sync_info_dict(doc: &mut Document, meta: &PdfMetadata) {
 
     if let Some(Object::Dictionary(ref mut info)) = doc.objects.get_mut(&info_id) {
         if let Some(ref title) = meta.title {
-            info.set(
-                "Title",
-                Object::String(title.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-            );
+            info.set("Title", to_pdf_string(title));
         }
         if let Some(ref author) = meta.creator {
-            info.set(
-                "Author",
-                Object::String(author.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-            );
+            info.set("Author", to_pdf_string(author));
         }
         if let Some(ref producer) = meta.producer {
-            info.set(
-                "Producer",
-                Object::String(producer.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-            );
+            info.set("Producer", to_pdf_string(producer));
         }
         if let Some(ref subject) = meta.description {
-            info.set(
-                "Subject",
-                Object::String(subject.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-            );
+            info.set("Subject", to_pdf_string(subject));
         }
     }
 }
@@ -355,22 +373,13 @@ fn sync_info_dict(doc: &mut Document, meta: &PdfMetadata) {
 fn build_info_dict(meta: &PdfMetadata) -> lopdf::Dictionary {
     let mut dict = lopdf::Dictionary::new();
     if let Some(ref title) = meta.title {
-        dict.set(
-            "Title",
-            Object::String(title.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-        );
+        dict.set("Title", to_pdf_string(title));
     }
     if let Some(ref creator) = meta.creator {
-        dict.set(
-            "Author",
-            Object::String(creator.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-        );
+        dict.set("Author", to_pdf_string(creator));
     }
     if let Some(ref producer) = meta.producer {
-        dict.set(
-            "Producer",
-            Object::String(producer.as_bytes().to_vec(), lopdf::StringFormat::Literal),
-        );
+        dict.set("Producer", to_pdf_string(producer));
     }
     dict
 }

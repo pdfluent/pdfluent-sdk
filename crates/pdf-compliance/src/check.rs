@@ -350,13 +350,26 @@ pub fn check_mark_info(pdf: &Pdf, report: &mut ComplianceReport) {
     }
 }
 
+/// Decode the five predefined XML entities in an XMP text value.
+///
+/// XMP text stored inside XML elements may use standard XML entities.
+/// When comparing XMP values with PDF Info dict values (which have no
+/// entity escaping), we must decode them first. (#FIX-6.7.3-xml-entities)
+fn decode_xml_entities(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+}
+
 /// Extract a value from an XMP element like `<ns:key>value</ns:key>`.
 fn extract_xmp_value(text: &str, key: &str) -> Option<String> {
     let open = format!("<{key}>");
     let close = format!("</{key}>");
     let start = text.find(&open)? + open.len();
     let end = text[start..].find(&close)? + start;
-    Some(text[start..end].trim().to_string())
+    Some(decode_xml_entities(text[start..end].trim()))
 }
 
 /// Extract a value from an XMP attribute like `ns:key="value"` or `ns:key='value'`.
@@ -366,7 +379,7 @@ fn extract_xmp_attr(text: &str, key: &str) -> Option<String> {
     if let Some(start) = text.find(&pattern_dq) {
         let val_start = start + pattern_dq.len();
         if let Some(end) = text[val_start..].find('"') {
-            return Some(text[val_start..val_start + end].trim().to_string());
+            return Some(decode_xml_entities(text[val_start..val_start + end].trim()));
         }
     }
     // Fall back to single-quoted attribute (e.g. pdfaid:part='2')
@@ -374,7 +387,7 @@ fn extract_xmp_attr(text: &str, key: &str) -> Option<String> {
     if let Some(start) = text.find(&pattern_sq) {
         let val_start = start + pattern_sq.len();
         if let Some(end) = text[val_start..].find('\'') {
-            return Some(text[val_start..val_start + end].trim().to_string());
+            return Some(decode_xml_entities(text[val_start..val_start + end].trim()));
         }
     }
     None
@@ -391,7 +404,9 @@ fn extract_rdf_alt_value(text: &str, key: &str) -> Option<String> {
     let li_start = region.find("<rdf:li")?;
     let content_start = region[li_start..].find('>')? + li_start + 1;
     let content_end = region[content_start..].find("</rdf:li>")? + content_start;
-    Some(region[content_start..content_end].trim().to_string())
+    Some(decode_xml_entities(
+        region[content_start..content_end].trim(),
+    ))
 }
 
 /// Extract all values from an rdf:Seq container and count entries.
