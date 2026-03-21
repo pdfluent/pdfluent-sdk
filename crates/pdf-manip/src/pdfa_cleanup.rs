@@ -1168,6 +1168,9 @@ fn is_action_forbidden(dict: &lopdf::Dictionary) -> bool {
         }
         // /S present but not a Name (e.g. string " " or integer) — invalid
         // action type. veraPDF reports this as "Action type null". Fixes #479.
+        // Stream/Reference values mean this is a CharProcs dict (/S glyph), not
+        // an action — do NOT treat as forbidden. (#FN-6.2.11.4.1-charprocs-s)
+        Some(Object::Stream(_)) | Some(Object::Reference(_)) => {}
         Some(_) => return true,
         None => {}
     }

@@ -2873,11 +2873,7 @@ pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
     // xmpRights:UsageTerms violations are caught by check_predefined_property_types
     // → §6.7.9 (not §6.7.3): veraPDF fires §6.7.9 only, not §6.7.3, for xmpRights:.
     // (#FP-6.7.3-xmpRights, #FN-6.7.9-t08-fail-d)
-    let lang_alt_props = [
-        "dc:title",
-        "dc:description",
-        "dc:rights",
-    ];
+    let lang_alt_props = ["dc:title", "dc:description", "dc:rights"];
 
     for prop in lang_alt_props {
         let open_tag = format!("<{prop}>");
@@ -8440,7 +8436,10 @@ fn hex_val(b: u8) -> u8 {
 }
 
 /// Encoding-aware Type1 font entry: (embedded glyph names, code→glyph map).
-type Type1FontEntry = (std::collections::HashSet<String>, std::collections::HashMap<u8, String>);
+type Type1FontEntry = (
+    std::collections::HashSet<String>,
+    std::collections::HashMap<u8, String>,
+);
 
 /// §6.2.11.4.1 — Content stream renders a character whose glyph is not defined
 /// in the embedded Type1/CFF subset font program.
@@ -8481,11 +8480,10 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
             }
             // FontDescriptor is almost always an indirect reference — follow it.
             // (#FN-6.2.11.4.1 gen-698: fd.get::<Dict> returns None for indirect refs)
-            let desc_opt: Option<Dict<'_>> =
-                fd.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
-                    fd.get_ref(keys::FONT_DESC)
-                        .and_then(|r| xref.get::<Dict<'_>>(r.into()))
-                });
+            let desc_opt: Option<Dict<'_>> = fd.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+                fd.get_ref(keys::FONT_DESC)
+                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+            });
             let Some(desc) = desc_opt else {
                 continue;
             };
@@ -8506,11 +8504,16 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                             }
                         }
                     }
-                    if names.is_empty() { None } else { Some(names) }
+                    if names.is_empty() {
+                        None
+                    } else {
+                        Some(names)
+                    }
                 });
 
             // Fall back to /CharSet if CFF parsing failed or font is not CFF.
-            let names: std::collections::HashSet<String> = if let Some(cff_names) = cff_glyph_names {
+            let names: std::collections::HashSet<String> = if let Some(cff_names) = cff_glyph_names
+            {
                 cff_names
             } else {
                 let cs_opt = desc
@@ -8521,7 +8524,10 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                     continue;
                 }
                 let ct = std::str::from_utf8(&cs_bytes).unwrap_or("");
-                ct.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect()
+                ct.split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect()
             };
             // Build a code→glyph name map from the font's /Encoding.
             // WinAnsi/MacRoman/StandardEncoding all agree for ASCII 32-127; we use
@@ -9303,6 +9309,52 @@ pub fn check_tounicode_cmap(
     });
 }
 
+/// Returns true if the document's StructTreeRoot contains any /ActualText entries.
+///
+/// Used by the §6.2.11.7.3 PUA check: if ActualText is present anywhere in the
+/// structure tree, we cannot determine per-glyph ActualText coverage without a full
+/// content-stream / structure-tree cross-reference. In that case the PUA check is
+/// skipped to avoid FPs. The veraPDF rule is `unicodePUA == false || actualTextPresent == true`.
+/// (#FP-6.2.11.7.3)
+fn doc_has_any_actual_text(pdf: &Pdf) -> bool {
+    fn scan_elem(elem: &Dict<'_>, depth: usize) -> bool {
+        if depth > 200 {
+            return false;
+        }
+        if elem.get::<Object<'_>>(b"ActualText" as &[u8]).is_some() {
+            return true;
+        }
+        if let Some(kids) = elem.get::<Array<'_>>(keys::K) {
+            for kid in kids.iter::<Dict<'_>>() {
+                if scan_elem(&kid, depth + 1) {
+                    return true;
+                }
+            }
+        } else if let Some(kid) = elem.get::<Dict<'_>>(keys::K) {
+            if scan_elem(&kid, depth + 1) {
+                return true;
+            }
+        }
+        false
+    }
+
+    let Some(struct_root) = struct_tree_root(pdf) else {
+        return false;
+    };
+    if let Some(kids) = struct_root.get::<Array<'_>>(keys::K) {
+        for kid in kids.iter::<Dict<'_>>() {
+            if scan_elem(&kid, 0) {
+                return true;
+            }
+        }
+    } else if let Some(kid) = struct_root.get::<Dict<'_>>(keys::K) {
+        if scan_elem(&kid, 0) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check ToUnicode CMap values for forbidden Unicode code points.
 ///
 /// §6.2.11.7.2: U+0000, U+FEFF (BOM), and U+FFFE are forbidden.
@@ -9315,13 +9367,17 @@ pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut C
     // §6.2.11.7.3 BMP PUA (U+E000-U+F8FF) is only forbidden for Level A conformance
     // (PDF/A-1A/2A/3A). Level B and U documents are not required to have ActualText,
     // so veraPDF doesn't fire the PUA rule for them. (#FP-6.2.11.7.3)
-    let skip_pua = !level.requires_tagged();
+    //
+    // Additionally, if the document has ANY ActualText in the structure tree, we can't
+    // determine per-glyph ActualText coverage without a full content-stream analysis,
+    // so we skip the PUA check to avoid FPs. (veraPDF rule: unicodePUA == false ||
+    // actualTextPresent == true — #FP-6.2.11.7.3)
+    let skip_pua = !level.requires_tagged() || doc_has_any_actual_text(pdf);
 
     // Collect decoded bytes of direct font ToUnicode streams so check_cmap_streams_for_ffff
-    // (second pass) can skip them — they are already fully handled by the first pass below,
-    // including the per-font symbolic exemption. Without this, symbolic font CMap streams
-    // that the first pass correctly exempts would still be re-scanned (and FP-fired) by the
-    // second pass, which has no per-font context. (#FP-6.2.11.7.3)
+    // (second pass) can skip them — they are already fully handled by the first pass below.
+    // Without this, font CMap streams already handled here would still be re-scanned (and
+    // FP-fired) by the second pass, which has no per-font context. (#FP-6.2.11.7.3)
     let mut direct_tounicode_bytes: std::collections::HashSet<Vec<u8>> =
         std::collections::HashSet::new();
 
@@ -9344,22 +9400,8 @@ pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut C
         direct_tounicode_bytes.insert(data.clone());
         let text = String::from_utf8_lossy(&data);
 
-        // Symbolic fonts (Flags bit 2 set) use PUA by design (Webdings, Wingdings etc.).
-        // veraPDF does not fire §6.2.11.7.3 for symbolic fonts. Resolve FontDescriptor
-        // via both direct dict and indirect ref (FontDescriptor may be on the CIDFont).
-        // (#FP-6.2.11.7.3)
-        let font_is_symbolic = font_dict
-            .get::<Dict<'_>>(keys::FONT_DESC)
-            .or_else(|| {
-                font_dict
-                    .get_ref(keys::FONT_DESC)
-                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
-            })
-            .and_then(|d| d.get::<i32>(keys::FLAGS))
-            .is_some_and(|f| f & 0x04 != 0);
-        // Skip PUA check for symbolic fonts (Webdings/Wingdings etc.) — veraPDF exempts them
-        // regardless of conformance level. (#FP-6.2.11.7.3)
-        let skip_pua_for_font = skip_pua || font_is_symbolic;
+        // PUA exemption is document-level (see skip_pua above), not per-font.
+        let skip_pua_for_font = skip_pua;
 
         // Parse line by line, tracking which section we are in.
         // beginbfchar: each line is  <srccode> <dstcode>  — check dstcode (2nd token)
