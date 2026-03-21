@@ -8439,6 +8439,9 @@ fn hex_val(b: u8) -> u8 {
     }
 }
 
+/// Encoding-aware Type1 font entry: (embedded glyph names, code→glyph map).
+type Type1FontEntry = (std::collections::HashSet<String>, std::collections::HashMap<u8, String>);
+
 /// §6.2.11.4.1 — Content stream renders a character whose glyph is not defined
 /// in the embedded Type1/CFF subset font program.
 ///
@@ -8454,10 +8457,8 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
     for (page_idx, page) in pdf.pages().iter().enumerate() {
         // Build resource-name → (glyph_names, code_to_glyph_map) for Type1 subset fonts.
         // code_to_glyph_map: character code → AGL glyph name (via the font's /Encoding).
-        let mut type1_charsets: std::collections::HashMap<
-            Vec<u8>,
-            (std::collections::HashSet<String>, std::collections::HashMap<u8, String>),
-        > = std::collections::HashMap::new();
+        let mut type1_charsets: std::collections::HashMap<Vec<u8>, Type1FontEntry> =
+            std::collections::HashMap::new();
         let fonts = &page.resources().fonts;
         for (rname, _) in fonts.entries() {
             let font_dict_opt: Option<Dict<'_>> =
@@ -8569,10 +8570,7 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
         let tokens = tokenize_pdf_content(content);
         let n = tokens.len();
         let loc = format!("page {}", page_idx + 1);
-        let mut active: Option<&(
-            std::collections::HashSet<String>,
-            std::collections::HashMap<u8, String>,
-        )> = None;
+        let mut active: Option<&Type1FontEntry> = None;
 
         'tokens: for i in 0..n {
             let tok = tokens[i].as_slice();
