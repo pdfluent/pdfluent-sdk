@@ -89,7 +89,7 @@ impl Skippable for Array<'_> {
 
 impl Default for Array<'_> {
     fn default() -> Self {
-        Self::from_bytes(b"[]").unwrap()
+        Self::from_bytes(b"[]").expect("[] is a valid empty array literal")
     }
 }
 
@@ -126,11 +126,9 @@ impl<'a> Iterator for ArrayIter<'a> {
         self.reader.skip_white_spaces_and_comments();
 
         if !self.reader.at_end() {
-            // Objects are already guaranteed to be valid.
             let item = self
                 .reader
-                .read_with_context::<MaybeRef<Object<'_>>>(&self.ctx)
-                .unwrap();
+                .read_with_context::<MaybeRef<Object<'_>>>(&self.ctx)?;
             return Some(item);
         }
 

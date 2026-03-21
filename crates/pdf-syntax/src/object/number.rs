@@ -142,7 +142,7 @@ fn read_inner(r: &mut Reader<'_>) -> Option<Number> {
     loop {
         match r.peek_byte() {
             Some(b'0'..=b'9') => {
-                let d = r.read_byte().unwrap();
+                let d = r.read_byte().expect("peek_byte returned Some");
                 mantissa = mantissa
                     // Using `saturating` would arguably be better here, but
                     // profiling showed that it seems to be more expensive, at least

@@ -49,10 +49,11 @@ impl Name {
 
             while let Some(b) = r.read_byte() {
                 if b == b'#' {
-                    // We already verified when skipping that it's a valid hex sequence.
-                    let hex = r.read_bytes(2).unwrap();
+                    // The skip phase verified this is a valid 2-hex-digit sequence.
+                    let hex = r.read_bytes(2).expect("verified 2 hex digits during skip");
                     result.push(
-                        decode_hex_digit(hex[0]).unwrap() << 4 | decode_hex_digit(hex[1]).unwrap(),
+                        decode_hex_digit(hex[0]).expect("verified hex digit during skip") << 4
+                            | decode_hex_digit(hex[1]).expect("verified hex digit during skip"),
                     );
                 } else {
                     result.push(b);
