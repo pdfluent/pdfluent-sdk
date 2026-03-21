@@ -250,7 +250,11 @@ fn read_info_dict(doc: &Document) -> PdfMetadata {
     meta.title = get_string_value(info, b"Title");
     meta.creator = get_string_value(info, b"Author");
     meta.producer = get_string_value(info, b"Producer");
-    meta.creator_tool = get_string_value(info, b"Creator");
+    // Trim whitespace: a space-only Creator like "( )" must not trigger §6.7.3.6.
+    // (#FIX-6.7.3.6-whitespace-creator)
+    meta.creator_tool = get_string_value(info, b"Creator")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
     meta.description = get_string_value(info, b"Subject");
     meta.create_date = get_string_value(info, b"CreationDate");
     meta.modify_date = get_string_value(info, b"ModDate");
@@ -366,6 +370,13 @@ fn sync_info_dict(doc: &mut Document, meta: &PdfMetadata) {
         }
         if let Some(ref subject) = meta.description {
             info.set("Subject", to_pdf_string(subject));
+        }
+        // Sync /Creator with (trimmed) creator_tool. If None (e.g. was whitespace-only),
+        // remove it so /Info and XMP agree and §6.7.3.6 does not fire.
+        // (#FIX-6.7.3.6-whitespace-creator)
+        match &meta.creator_tool {
+            Some(tool) => info.set("Creator", to_pdf_string(tool)),
+            None => { info.remove(b"Creator"); }
         }
     }
 }
