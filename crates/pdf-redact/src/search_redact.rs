@@ -7,7 +7,7 @@ use crate::error::{RedactError, Result};
 use crate::redact::{RedactionArea, Redactor};
 use lopdf::{Document, Object, ObjectId};
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Options for search-and-redact operations.
 #[derive(Debug, Clone)]
@@ -290,7 +290,7 @@ fn run_overlaps_single_bbox(run: &pdf_manip::text_run::TextRun, bbox: [f64; 4]) 
 
 /// Check if a text run is on the same baseline as a match bbox and X-overlaps.
 ///
-/// Used for the "covered" check in `apply_per_bbox_spatial_fallback` to decide
+/// Used for the "covered" check in `apply_per_bbox_combined_fallback` to decide
 /// whether a match bbox is already handled by a text-matched run on the same line.
 ///
 /// `bbox[1]` is the text rendering y (baseline) of the matched chars — the same
@@ -351,42 +351,111 @@ fn raw_text_from_op(op: &lopdf::content::Operation) -> Option<String> {
     }
 }
 
-/// Apply per-bbox spatial fallback: for each match bbox not already covered
-/// by a text-matched run, add the ops of every run that spatially overlaps it.
+/// Per-bbox combined fallback: for each match bbox not covered by text-matched
+/// runs, find the correct ops to remove using a two-phase approach:
 ///
-/// This handles "partial token" cases where the search word is split across
-/// multiple Tj ops (so no single run contains the full word) but another
-/// occurrence of the same word elsewhere on the page was text-matched,
-/// preventing the old global `is_empty()` spatial fallback from firing.
-fn apply_per_bbox_spatial_fallback(
+/// **Phase 1 — Y-line raw-byte match**: concatenates the raw Latin-1 bytes of
+/// all ops on the same Y-baseline as the bbox and pattern-matches across them.
+/// This correctly handles:
+/// - Words split across adjacent Tj ops (e.g. "(Ar) Tj (e) Tj" → "Are").
+/// - Mid-line x-coordinate drift: `extract_positioned_chars` uses an
+///   approximate char width (0.5 × font_size), which accumulates error across
+///   a long line.  By the time we reach a mid-line word, the bbox x can be off
+///   by tens of units from the actual run.x from `extract_text_runs` (which
+///   uses real font metrics).  Y is always accurate; the raw bytes are the same
+///   Latin-1 decoding that `extract_positioned_chars` uses.  Fixes #XXX.
+///
+/// **Phase 2 — X+Y spatial overlap** (legacy fallback): fires only when Phase 1
+/// finds no raw-byte match on the Y-line (e.g. font encoding means the glyph
+/// bytes are not the expected ASCII codepoints).
+fn apply_per_bbox_combined_fallback(
     runs: &[pdf_manip::text_run::TextRun],
     indices_to_remove: &mut Vec<usize>,
     bboxes: &[[f64; 4]],
+    ops: &[lopdf::content::Operation],
+    matcher: &TextMatcher,
 ) {
-    // Snapshot the text-matched indices for O(1) "covered" checks.
-    // Spatial indices added in this pass must not retroactively cover other
-    // bboxes, so we only consult the original text-matched set.
-    // Using a HashSet avoids the O(n) Vec::contains hot-path that makes this
-    // function O(B × M × K × n) on PDFs with many matches (#OOM-002874).
+    // Snapshot the text-matched indices for O(1) lookups.  Indices added in
+    // this pass must not retroactively cover other bboxes.
     let text_matched: HashSet<usize> = indices_to_remove.iter().copied().collect();
     let mut to_add: HashSet<usize> = HashSet::new();
 
+    // Build op_index → run.y map for Y-line lookups.
+    let op_to_y: HashMap<usize, f64> = runs
+        .iter()
+        .flat_map(|run| run.ops_range.clone().map(move |i| (i, run.y)))
+        .collect();
+
     for &bbox in bboxes {
-        // Only a text-matched run on the SAME baseline line covers this bbox.
-        // `run_on_same_baseline` compares run.y against bbox[1] (the text
-        // rendering y), not against the full bbox height bbox[3] = bbox[1] +
-        // font_size, which would incorrectly admit runs from adjacent lines.
-        // Fixes #474.
+        // If this bbox is already handled by a text-matched run on the same
+        // baseline, skip it.  Uses run_on_same_baseline (strict Y check) so
+        // runs from adjacent lines don't falsely "cover" this bbox. Fixes #474.
         let covered = runs.iter().any(|run| {
             run_on_same_baseline(run, bbox)
                 && run.ops_range.clone().any(|i| text_matched.contains(&i))
         });
-        if !covered {
-            for run in runs {
-                if run_overlaps_single_bbox(run, bbox) {
-                    for idx in run.ops_range.clone() {
-                        to_add.insert(idx);
+        if covered {
+            continue;
+        }
+
+        // ------------------------------------------------------------------
+        // Phase 1: Y-line raw-byte match.
+        //
+        // bbox[1] = y_baseline - 1 (padding from compute_bounding_rect).
+        // run.y = y_baseline.  So |run.y - bbox[1]| = 1.0; use tol = 6.0 to
+        // catch slight y discrepancies between streams.
+        // ------------------------------------------------------------------
+        let bbox_y = bbox[1];
+        let mut y_line: Vec<(usize, &lopdf::content::Operation)> = ops
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| {
+                op_to_y
+                    .get(idx)
+                    .map(|&y| (y - bbox_y).abs() <= 6.0)
+                    .unwrap_or(false)
+            })
+            .collect();
+        y_line.sort_by_key(|(idx, _)| *idx);
+
+        // Concatenate raw bytes for all ops on this Y-line, tracking which op
+        // contributed each byte so we can map match positions back to op indices.
+        let mut combined = String::new();
+        let mut byte_to_op: Vec<usize> = Vec::new();
+        for &(idx, op) in &y_line {
+            if let Some(raw) = raw_text_from_op(op) {
+                let before = combined.len(); // byte offset before push
+                combined.push_str(&raw);
+                // Each byte in the appended slice belongs to this op.
+                byte_to_op.extend(std::iter::repeat(idx).take(combined.len() - before));
+            }
+        }
+
+        let raw_matches = matcher.find_all(&combined);
+        if !raw_matches.is_empty() {
+            // Phase 1 succeeded: add only the ops that contain the matched bytes.
+            for m in &raw_matches {
+                for i in m.start..m.end {
+                    if let Some(&op_idx) = byte_to_op.get(i) {
+                        if !text_matched.contains(&op_idx) {
+                            to_add.insert(op_idx);
+                        }
                     }
+                }
+            }
+            continue; // Skip Phase 2 for this bbox.
+        }
+
+        // ------------------------------------------------------------------
+        // Phase 2: X+Y spatial overlap (legacy fallback).
+        //
+        // Used when Phase 1 finds nothing, e.g. when the font's byte→glyph
+        // mapping means the raw Tj bytes do not spell the search word in Latin-1.
+        // ------------------------------------------------------------------
+        for run in runs {
+            if run_overlaps_single_bbox(run, bbox) {
+                for idx in run.ops_range.clone() {
+                    to_add.insert(idx);
                 }
             }
         }
@@ -508,12 +577,18 @@ fn remove_text_ops_via_editor(
         }
     }
 
-    // Per-bbox spatial fallback: for each match bbox not covered by a
-    // text-matched run, remove every run that spatially overlaps it.
-    // Fixes partial-token splits (e.g. "(LI) Tj (C) Tj") where a different
-    // occurrence of the word matched textually, blocking the old global fallback.
+    // Per-bbox combined fallback: for each match bbox not covered by a
+    // text-matched run, use Y-line raw-byte matching (Phase 1) to handle
+    // split words and x-coordinate drift, then fall back to spatial overlap
+    // (Phase 2) when the Y-line match finds nothing.
     if !match_bboxes.is_empty() {
-        apply_per_bbox_spatial_fallback(&runs, &mut indices_to_remove, match_bboxes);
+        apply_per_bbox_combined_fallback(
+            &runs,
+            &mut indices_to_remove,
+            match_bboxes,
+            editor.operations(),
+            matcher,
+        );
     }
 
     // Raw-byte fallback: when both text-based and spatial matching found nothing
@@ -595,9 +670,15 @@ fn remove_text_ops_with_inline_images(
         }
     }
 
-    // Per-bbox spatial fallback (same logic as in remove_text_ops_via_editor).
+    // Per-bbox combined fallback (same logic as in remove_text_ops_via_editor).
     if !match_bboxes.is_empty() {
-        apply_per_bbox_spatial_fallback(&runs, &mut indices_to_remove, match_bboxes);
+        apply_per_bbox_combined_fallback(
+            &runs,
+            &mut indices_to_remove,
+            match_bboxes,
+            editor.operations(),
+            matcher,
+        );
     }
 
     if indices_to_remove.is_empty() {
@@ -798,13 +879,18 @@ fn remove_text_ops_from_stream(
         }
     }
 
-    // Per-bbox spatial fallback: for each match bbox not covered by a
-    // text-matched run, remove every run that spatially overlaps it.
-    // Note: XObject run positions are in local space, not page space, so
-    // this fallback is most effective for XObjects without CTM transforms.
-    // Fixes #466 bugs 5–6.
+    // Per-bbox combined fallback: Y-line raw-byte match (Phase 1) + spatial
+    // overlap fallback (Phase 2).  Note: XObject run positions are in local
+    // space, not page space, so spatial matching is most effective for
+    // XObjects without CTM transforms.  Fixes #466 bugs 5–6.
     if !match_bboxes.is_empty() {
-        apply_per_bbox_spatial_fallback(&runs, &mut indices_to_remove, match_bboxes);
+        apply_per_bbox_combined_fallback(
+            &runs,
+            &mut indices_to_remove,
+            match_bboxes,
+            editor.operations(),
+            matcher,
+        );
     }
 
     // Raw-byte fallback: when both text-based and spatial matching failed,

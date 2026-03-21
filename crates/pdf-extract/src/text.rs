@@ -468,8 +468,13 @@ fn extract_chars_from_ops(ops: &[Operation], page: u32) -> Vec<PositionedChar> {
                 if let Some(text) = extract_string_operand(&op.operands) {
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
                     for ch in text.chars() {
-                        let x = state.tm[4];
-                        let y = state.tm[5];
+                        // Apply CTM to TM position so coordinates are in page space,
+                        // matching extract_text_runs (pdf-manip) which also applies CTM.
+                        // Without this, a non-identity CTM causes a coordinate mismatch
+                        // between the bbox used by the spatial redaction fallback and
+                        // run.y / run.x from extract_text_runs. Fixes redact failures
+                        // on PDFs whose content streams use cm transformations.
+                        let (x, y) = apply_ctm(&state);
                         chars.push(PositionedChar {
                             ch,
                             page,
@@ -487,8 +492,7 @@ fn extract_chars_from_ops(ops: &[Operation], page: u32) -> Vec<PositionedChar> {
                             Object::String(bytes, _) => {
                                 let text = decode_pdf_string(bytes);
                                 for ch in text.chars() {
-                                    let x = state.tm[4];
-                                    let y = state.tm[5];
+                                    let (x, y) = apply_ctm(&state);
                                     chars.push(PositionedChar {
                                         ch,
                                         page,
@@ -514,8 +518,7 @@ fn extract_chars_from_ops(ops: &[Operation], page: u32) -> Vec<PositionedChar> {
                 if let Some(text) = extract_string_operand(&op.operands) {
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
                     for ch in text.chars() {
-                        let x = state.tm[4];
-                        let y = state.tm[5];
+                        let (x, y) = apply_ctm(&state);
                         chars.push(PositionedChar {
                             ch,
                             page,
@@ -542,8 +545,7 @@ fn extract_chars_from_ops(ops: &[Operation], page: u32) -> Vec<PositionedChar> {
                     if let Some(text) = extract_string_operand(&op.operands[2..]) {
                         let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
                         for ch in text.chars() {
-                            let x = state.tm[4];
-                            let y = state.tm[5];
+                            let (x, y) = apply_ctm(&state);
                             chars.push(PositionedChar {
                                 ch,
                                 page,
@@ -559,6 +561,21 @@ fn extract_chars_from_ops(ops: &[Operation], page: u32) -> Vec<PositionedChar> {
     }
 
     chars
+}
+
+/// Apply the current transformation matrix (CTM) to the text matrix position,
+/// returning (x, y) in page/user space.
+///
+/// Mirrors the `compute_x` / `compute_y` logic in pdf-manip's `text_run.rs` so
+/// that character positions emitted by `extract_chars_from_ops` use the same
+/// coordinate space as `TextRun.x` / `TextRun.y` from `extract_text_runs`.
+/// Without this, PDFs whose content streams set a non-identity CTM via `cm`
+/// produce mismatched coordinates, breaking the spatial redaction fallback.
+#[inline]
+fn apply_ctm(state: &TextState) -> (f64, f64) {
+    let x = state.ctm[0] * state.tm[4] + state.ctm[2] * state.tm[5] + state.ctm[4];
+    let y = state.ctm[1] * state.tm[4] + state.ctm[3] * state.tm[5] + state.ctm[5];
+    (x, y)
 }
 
 /// Extract the first string operand from a list of operands.
