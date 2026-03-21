@@ -2865,7 +2865,14 @@ pub fn check_xmp_lang_alt_properties(pdf: &Pdf, report: &mut ComplianceReport) {
     };
 
     // Properties that must be Lang Alt (rdf:Alt), not plain strings.
-    let lang_alt_props = ["dc:description", "dc:rights", "xmpRights:UsageTerms"];
+    // dc:title is required to be Lang Alt by the XMP spec and veraPDF checks it.
+    // (#FN-6.7.3 isartor-6-7-2-t02-fail-c tests dc:title as plain string)
+    let lang_alt_props = [
+        "dc:title",
+        "dc:description",
+        "dc:rights",
+        "xmpRights:UsageTerms",
+    ];
 
     for prop in lang_alt_props {
         let open_tag = format!("<{prop}>");
@@ -4351,15 +4358,32 @@ fn check_halftone_in_extgstate(
                     ) {
                         continue;
                     }
-                    // Resolve sub-halftone: direct dict or indirect reference.
+                    // Resolve sub-halftone: direct dict, stream dict, or indirect reference.
+                    // Sub-halftones can be Dict (Type 1/5) or Stream (Type 10/16).
                     let sub_ht_opt: Option<Dict<'_>> =
                         ht_dict.get::<Dict<'_>>(key_bytes).or_else(|| {
-                            ht_dict
-                                .get_ref(key_bytes)
-                                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                            ht_dict.get::<Stream<'_>>(key_bytes).map(|s| s.dict().clone())
+                        }).or_else(|| {
+                            ht_dict.get_ref(key_bytes).and_then(|r| {
+                                xref.get::<Dict<'_>>(r.into()).or_else(|| {
+                                    xref.get::<Stream<'_>>(r.into()).map(|s| s.dict().clone())
+                                })
+                            })
                         });
                     let Some(sub_ht) = sub_ht_opt else { continue };
                     let kstr = std::str::from_utf8(key_bytes).unwrap_or("?");
+                    // §6.2.10.4.1: /HalftoneName also forbidden in Type 5 sub-halftone dicts.
+                    // (#FN-6.2.10.4.1 veraPDF-6-2-10-4-1-t02-fail-b)
+                    if sub_ht.contains_key(b"HalftoneName" as &[u8]) {
+                        error_at(
+                            report,
+                            "6.2.10.4.1",
+                            format!(
+                                "ExtGState {gs_str} Type5/{kstr} contains forbidden /HalftoneName"
+                            ),
+                            location,
+                        );
+                    }
                     let has_tf = sub_ht
                         .get::<Object<'_>>(b"TransferFunction" as &[u8])
                         .is_some();
@@ -8157,15 +8181,72 @@ pub fn check_notdef_glyph_reference(pdf: &Pdf, report: &mut ComplianceReport) {
             })
         });
 
+        let loc = format!("page {}", page_idx + 1);
+
         if let Some(content) = page.page_stream() {
             if scan_for_notdef_in_content(content, has_type0_font) {
                 error_at(
                     report,
                     "6.2.11.8",
                     "Content stream contains reference to .notdef glyph (code 0 / CID 0)",
-                    format!("page {}", page_idx + 1),
+                    loc.clone(),
                 );
                 return;
+            }
+        }
+
+        // Also scan Form XObjects: many PDFs put their actual text content inside
+        // Form XObjects referenced via /Do. Without this, .notdef in a Form XObject
+        // would be missed. (#FN-6.2.11.8 TWG-A007, veraPDF-6-1-13-t10-fail-a)
+        let page_dict = page.raw();
+        if let Some(res_dict) = page_dict.get::<Dict<'_>>(keys::RESOURCES) {
+            if let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) {
+                for (xname, _) in xobj_dict.entries() {
+                    let xstream_opt = xobj_dict.get::<Stream<'_>>(xname.as_ref()).or_else(|| {
+                        xobj_dict
+                            .get_ref(xname.as_ref())
+                            .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                    });
+                    let Some(xstream) = xstream_opt else { continue };
+                    let xdict = xstream.dict();
+                    if xdict
+                        .get::<Name>(keys::SUBTYPE)
+                        .is_none_or(|s| s.as_ref() != b"Form")
+                    {
+                        continue;
+                    }
+                    // Determine cid_mode from Form XObject's own resources.
+                    let xo_has_type0 = xdict
+                        .get::<Dict<'_>>(keys::RESOURCES)
+                        .and_then(|r| r.get::<Dict<'_>>(b"Font" as &[u8]))
+                        .is_some_and(|fonts| {
+                            fonts.entries().any(|(fn_name, _)| {
+                                fonts
+                                    .get::<Dict<'_>>(fn_name.as_ref())
+                                    .or_else(|| {
+                                        fonts
+                                            .get_ref(fn_name.as_ref())
+                                            .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                                    })
+                                    .is_some_and(|fd| {
+                                        fd.get::<Name>(keys::SUBTYPE)
+                                            .is_some_and(|s| s.as_ref() == b"Type0")
+                                    })
+                            })
+                        });
+                    let cid_mode = has_type0_font || xo_has_type0;
+                    if let Ok(decoded) = xstream.decoded() {
+                        if scan_for_notdef_in_content(&decoded, cid_mode) {
+                            error_at(
+                                report,
+                                "6.2.11.8",
+                                "Form XObject content stream contains reference to .notdef glyph",
+                                loc.clone(),
+                            );
+                            return;
+                        }
+                    }
+                }
             }
         }
     }
@@ -8731,8 +8812,13 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
 
                         // §6.3.5 T2: For CFF (FontFile3/Type1C) subset fonts, /CharSet must
                         // list ALL glyph names present in the font program. Enumerate via
-                        // cff-parser and flag any unlisted glyph. Fixes FN for fail-c.
-                        if let Some(ff3) = desc.get::<Stream<'_>>(keys::FONT_FILE3) {
+                        // cff-parser and flag any unlisted glyph. FontFile3 is almost always
+                        // indirect — apply xref fallback. (#FN-6.3.5 isartor-6-3-5-t01-fail-d)
+                        let ff3_opt = desc.get::<Stream<'_>>(keys::FONT_FILE3).or_else(|| {
+                            desc.get_ref(keys::FONT_FILE3)
+                                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                        });
+                        if let Some(ff3) = ff3_opt {
                             if let Ok(cff_data) = ff3.decoded() {
                                 if let Some(cff) = cff_parser::Table::parse(&cff_data) {
                                     for gid in 1..cff.number_of_glyphs() {
@@ -10639,6 +10725,45 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
         // check. (#FN-6.2.10.5-cff)
         let missing_width: Option<i32> = desc.get::<i32>(keys::MISSING_WIDTH);
 
+        // Resolve PDF /Encoding for CFF glyph name lookup (same logic as
+        // check_type1_simple_widths). veraPDF resolves glyphs via PDF /Encoding,
+        // not via the CFF's internal encoding. Using glyph_index(code) directly
+        // caused FNs when PDF /Encoding differs from CFF encoding.
+        // (#FN-6.3.6 isartor-6-3-5-t01-fail-c)
+        let direct_enc_name: Option<Vec<u8>> = font_dict
+            .get::<Name>(keys::ENCODING)
+            .map(|n| n.as_ref().to_vec());
+        let enc_dict_opt: Option<Dict<'_>> =
+            font_dict.get::<Dict<'_>>(keys::ENCODING).or_else(|| {
+                font_dict
+                    .get_ref(keys::ENCODING)
+                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+            });
+        let base_enc_name: Option<Vec<u8>> = enc_dict_opt
+            .as_ref()
+            .and_then(|d| d.get::<Name>(keys::BASE_ENCODING))
+            .map(|n| n.as_ref().to_vec())
+            .or_else(|| direct_enc_name.clone());
+        let mut cff_differences: std::collections::HashMap<u8, String> =
+            std::collections::HashMap::new();
+        if let Some(enc_dict) = enc_dict_opt.as_ref() {
+            if let Some(diffs) = enc_dict.get::<Array<'_>>(b"Differences" as &[u8]) {
+                let mut current_code = 0u8;
+                for item in diffs.iter::<Object<'_>>() {
+                    match item {
+                        Object::Number(n) => current_code = n.as_i64() as u8,
+                        Object::Name(n) => {
+                            if let Ok(s) = std::str::from_utf8(n.as_ref()) {
+                                cff_differences.insert(current_code, s.to_string());
+                            }
+                            current_code = current_code.saturating_add(1);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
         let loc = format!("page {}", page_idx + 1);
 
         // For each character code in [FirstChar..LastChar], compare the CFF
@@ -10653,19 +10778,46 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                 continue;
             }
 
-            // Map code to GID via the CFF encoding.
-            let gid = match table.glyph_index(code as u8) {
-                Some(g) => g,
-                None => continue,
+            // Resolve glyph name via PDF /Encoding (priority: Differences → BaseEncoding
+            // → CFF internal), then look up GID by name. This matches how veraPDF resolves
+            // glyphs for CFF (Type1C) simple fonts. (#FN-6.3.6 isartor-6-3-5-t01-fail-c)
+            let base_enc = base_enc_name.as_deref().unwrap_or(b"");
+            let glyph_name: Option<String> = cff_differences
+                .get(&(code as u8))
+                .cloned()
+                .or_else(|| {
+                    if base_enc == b"WinAnsiEncoding" {
+                        t1_winansi_glyph_name(code as u8).map(str::to_string)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    if base_enc.is_empty() || base_enc == b"StandardEncoding" {
+                        t1_standard_encoding_name(code as u8).map(str::to_string)
+                    } else {
+                        None
+                    }
+                });
+
+            // Determine GID: prefer PDF /Encoding path, fall back to CFF internal.
+            let gid = if let Some(ref gname) = glyph_name {
+                if gname.is_empty() || gname == ".notdef" {
+                    continue;
+                }
+                match table.glyph_index_by_name(gname) {
+                    Some(g) if g.0 != 0 => g,
+                    _ => continue,
+                }
+            } else {
+                // No PDF /Encoding for this code — fall back to CFF internal encoding.
+                let g = match table.glyph_index(code as u8) {
+                    Some(g) if g.0 != 0 => g,
+                    _ => continue,
+                };
+                g
             };
-            // GID 0 is always .notdef in CFF. When glyph_index(code) returns GID 0
-            // it means the code is not explicitly encoded — the CFF fell back to
-            // .notdef. Comparing the .notdef advance width against the PDF /Widths
-            // entry is meaningless and produces FPs (veraPDF also skips GID 0).
-            // (#FP-6.2.11.5-gid0)
-            if gid.0 == 0 {
-                continue;
-            }
+
             let Some(cff_w) = table.glyph_width(gid) else {
                 continue;
             };
@@ -10678,7 +10830,7 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                     report,
                     "6.3.5-fw",
                     format!(
-                        "Font {name} glyph at code {code}: \
+                        "Font {name} glyph at code {code} ({glyph_name:?}): \
                          CFF width {cff_w} != PDF /Widths[{idx}] {pdf_w}"
                     ),
                     loc.clone(),
@@ -12874,8 +13026,12 @@ fn collect_struct_types(elem: &Dict<'_>, types: &mut Vec<Vec<u8>>, depth: usize)
 /// §6.7.3.4 — RoleMap must not contain circular mappings.
 ///
 /// ISO 19005-2/3 §6.7.3.4: "A circular mapping shall not exist in the RoleMap."
-/// For example: A → B → A or A → B → C → A are circular. Walk the mapping chain
-/// from each key and detect if any path revisits a key. (#FN-6.7.3.4)
+/// veraPDF's validation profile (6-7-3-4-t02) applies this check to `SENonStandard`
+/// objects — structure elements whose /S value is non-standard. It does NOT check for
+/// cycles that start from standard type names in the RoleMap. Therefore we only start
+/// cycle detection from non-standard types that are actually used in the structure tree.
+/// Cycles among standard-type RoleMap entries are NOT flagged by veraPDF.
+/// (#FP-6.7.3.4 veraPDF-6-2-11-7-3-t01-fail-b/c)
 pub fn check_rolemap_circular(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else { return };
     let Some(struct_tree) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) else {
@@ -12884,12 +13040,29 @@ pub fn check_rolemap_circular(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(role_map) = struct_tree.get::<Dict<'_>>(keys::ROLE_MAP) else {
         return;
     };
-    // Collect all keys as byte vecs
-    let keys_list: Vec<Vec<u8>> = role_map
-        .entries()
-        .map(|(k, _)| k.as_ref().to_vec())
-        .collect();
-    'outer: for start in &keys_list {
+
+    // Standard structure types (PDF 1.7 Table 333) — same list as check_role_mapping.
+    let standard_types: &[&[u8]] = &[
+        b"Document", b"Part", b"Art", b"Sect", b"Div", b"BlockQuote", b"Caption",
+        b"TOC", b"TOCI", b"Index", b"NonStruct", b"Private",
+        b"H", b"H1", b"H2", b"H3", b"H4", b"H5", b"H6",
+        b"P", b"L", b"LI", b"Lbl", b"LBody",
+        b"Table", b"TR", b"TH", b"TD", b"THead", b"TBody", b"TFoot",
+        b"Span", b"Quote", b"Note", b"Reference", b"BibEntry", b"Code",
+        b"Link", b"Annot", b"Ruby", b"Warichu", b"RB", b"RT", b"RP", b"WT", b"WP",
+        b"Figure", b"Formula", b"Form",
+    ];
+
+    // Collect non-standard structure types actually used in the tree. veraPDF only
+    // fires §6.7.3.4 circular-mapping for SENonStandard (structure elements with a
+    // non-standard /S). We mirror that by only walking chains from non-standard types.
+    let mut used_types: Vec<Vec<u8>> = Vec::new();
+    collect_struct_types(&struct_tree, &mut used_types, 0);
+
+    'outer: for start in &used_types {
+        if standard_types.contains(&start.as_slice()) {
+            continue; // Standard type — not a SENonStandard — skip
+        }
         let mut visited: Vec<Vec<u8>> = vec![start.clone()];
         let mut current = start.clone();
         loop {
@@ -12903,7 +13076,8 @@ pub fn check_rolemap_circular(pdf: &Pdf, report: &mut ComplianceReport) {
                 break;
             }
             if visited.contains(&next) {
-                // True multi-step cycle: A→B→A or longer.
+                // True multi-step cycle: A→B→A or longer, starting from a
+                // non-standard structure element type.
                 error(report, "6.7.3.4", "RoleMap contains a circular mapping");
                 break 'outer;
             }
@@ -14718,12 +14892,14 @@ pub fn check_image_xobject_intent(pdf: &Pdf, report: &mut ComplianceReport) {
             if let Some(intent) = dict.get::<Name>(b"Intent" as &[u8]) {
                 if !valid_intents.iter().any(|v| *v == intent.as_ref()) {
                     let intent_str = std::str::from_utf8(intent.as_ref()).unwrap_or("?");
-                    // veraPDF uses §6.2.6 for ALL rendering intent violations: content
-                    // stream ri, ExtGState /RI, and Image XObject /Intent alike.
-                    // Use "6.2.6" which remaps to §6.2.9 for PDF/A-1.
+                    // Use internal rule "6.2.6-img" to allow per-part remapping.
+                    // PDF/A-2/3: "6.2.6". PDF/A-4: "6.2.9". PDF/A-1: SUPPRESS
+                    // (veraPDF for PDF/A-1 does not separately report /Intent on Image
+                    // XObjects; violations get folded into §6.2.4 or not reported).
+                    // (#FP-6.2.9 isartor-6-2-4-t01-fail-a)
                     error_at(
                         report,
-                        "6.2.6",
+                        "6.2.6-img",
                         format!("Image XObject has invalid rendering intent '{intent_str}'"),
                         format!("page {}", page_idx + 1),
                     );
