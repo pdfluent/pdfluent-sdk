@@ -383,7 +383,9 @@ impl ZugferdInvoice {
             profile,
             invoice_number,
             type_code,
-            issue_date: issue_date.unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()),
+            issue_date: issue_date.unwrap_or_else(|| {
+                NaiveDate::from_ymd_opt(2000, 1, 1).expect("2000-01-01 is valid")
+            }),
             seller: seller.unwrap_or_else(default_party),
             buyer: buyer.unwrap_or_else(default_party),
             line_items,

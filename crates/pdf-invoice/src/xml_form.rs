@@ -238,7 +238,10 @@ fn name_to_fdf_field(fqn: &str, value: Option<&str>) -> crate::fdf::FdfField {
     } else {
         // Build nested structure from dot-separated name.
         let mut current = crate::fdf::FdfField {
-            name: parts.last().unwrap().to_string(),
+            name: parts
+                .last()
+                .expect("parts.len() > 1 checked above")
+                .to_string(),
             value: value.map(String::from),
             kids: vec![],
         };
