@@ -1892,8 +1892,42 @@ fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                 // Isartor §6.2.5 test: Form XObject has /OPI << /1.3 << /F (image.tif) >>,
                 // the /F here is OPI metadata, not an external file reference. (#FP-6.1.7)
                 let is_opi_subdict = current_dict_ctx.windows(4).any(|w| w == b"/OPI" as &[u8]);
+                // The `stream` keyword must belong to the CURRENT object, not the next.
+                // If `endobj` appears between our /F and the `stream`, the stream is
+                // from a different object — this is a FP (e.g. /CharSet glyph names or
+                // annotation /F flags near the following stream object). (#FP-6.1.7.1-raw)
+                let no_endobj_between = !after
+                    .windows(6)
+                    .take_while(|w| *w != b"stream")
+                    .any(|w| w == b"endobj");
+                // Also skip /F values that are inside a PDF string (between parentheses).
+                // Walk backwards from the /F position to detect an unclosed '(' indicating
+                // we're inside a string value like /CharSet(/glyph1/F/glyph2).
+                let in_string = {
+                    let mut depth = 0i32;
+                    let mut in_s = false;
+                    for &b in before.iter() {
+                        match b {
+                            b'(' => {
+                                depth += 1;
+                                in_s = true;
+                            }
+                            b')' => {
+                                depth -= 1;
+                                if depth <= 0 {
+                                    in_s = false;
+                                    depth = 0;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    in_s
+                };
                 if has_dict_start
                     && has_stream_ahead
+                    && no_endobj_between
+                    && !in_string
                     && !is_filespec
                     && !is_embedded
                     && !is_opi_subdict
@@ -3006,10 +3040,13 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
 
             // Lang Alt property type violations (dc:description, dc:rights, xmpRights:UsageTerms).
             // check_xmp_lang_alt_properties emits "6.7.9.3-la" for type-specific violations.
-            // PDF/A-1: veraPDF uses §6.7.3 (confirmed by isartor-6-7-2-t02-fail-c). (#FN-6.7.3)
-            // PDF/A-2/3: §6.6.2.3.1 (same as other property type violations).
-            // PDF/A-4: §6.5.2 (predefined property value type violations).
-            (1, "6.7.9.3-la") => Some("6.7.3"),
+            // PDF/A-1: veraPDF fires §6.7.9 (not §6.7.3) for all Lang Alt type violations.
+            // §6.7.3 sub-rules are already emitted by check_info_xmp_consistency when
+            // the violation also causes an Info/XMP consistency mismatch.
+            // FP fix: the old §6.7.3 remap caused FPs on dc:rights (not Info-dict mapped)
+            // and dc:title rdf:Alt with missing xml:lang (§6.7.9 only per veraPDF).
+            // (#FP-6.7.3-lang-alt, tagged/cs-veraPDF test suite 6-7-2-t06-fail-k/n)
+            (1, "6.7.9.3-la") => Some("6.7.9"),
             (2..=3, "6.7.9.3-la") => Some("6.6.2.3.1"),
             (4, "6.7.9.3-la") => Some("6.5.2"),
 

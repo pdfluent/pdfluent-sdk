@@ -3661,5 +3661,4 @@ mod tests {
         assert!(report2.error_count() > 0);
         assert!(report2.issues[0].rule == "6.7.2");
     }
-
 }

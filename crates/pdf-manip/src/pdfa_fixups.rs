@@ -5186,7 +5186,7 @@ fn reencode_ascii85_inline_images_in_stream(data: &[u8]) -> Option<Vec<u8>> {
                 // include " ID"
                 out.extend_from_slice(&data[id_pos..id_pos + 3]);
                 i = id_pos + 3; // skip past " ID"
-                // Skip single space/newline after "ID" (§8.9.7: single WS after ID)
+                                // Skip single space/newline after "ID" (§8.9.7: single WS after ID)
                 if i < data.len() && data[i].is_ascii_whitespace() {
                     out.push(data[i]);
                     i += 1;
@@ -5282,7 +5282,11 @@ fn reencode_ascii85_inline_images_in_stream(data: &[u8]) -> Option<Vec<u8>> {
         i += 1;
     }
 
-    if modified { Some(out) } else { None }
+    if modified {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 /// Decodes ASCII85-encoded data. The input may include the `~>` end marker.
