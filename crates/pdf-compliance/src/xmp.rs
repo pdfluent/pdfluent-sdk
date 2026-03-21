@@ -1076,22 +1076,37 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         (Some(_), None) => {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.8",
                 "/Info has ModDate but XMP is missing xmp:ModifyDate",
             );
         }
         (Some(info_dt), Some(xmp_dt)) => {
-            let n_info = datetime_to_local_str(info_dt);
-            if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
-                if !dates_match(&n_info, &n_xmp) {
-                    error(
-                        report,
-                        "6.7.3",
-                        format!(
-                            "/Info ModDate '{}' does not match XMP xmp:ModifyDate '{}'",
-                            n_info, xmp_dt
-                        ),
-                    );
+            // Non-zero fractional seconds in XMP can never equal an Info date (second precision
+            // only, implicit .000). veraPDF flags this as not equivalent. Use sub-rule §6.7.3.8
+            // so the §6.7.11 cascade in pdfa.rs (which checks for exact "6.7.3") does not fire.
+            // (#FN-6.7.3-fractional-seconds)
+            if xmp_has_nonzero_fractional_seconds(xmp_dt) {
+                error(
+                    report,
+                    "6.7.3.8",
+                    format!(
+                        "/Info ModDate has no fractional seconds but XMP xmp:ModifyDate '{}' does",
+                        xmp_dt
+                    ),
+                );
+            } else {
+                let n_info = datetime_to_local_str(info_dt);
+                if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
+                    if !dates_match(&n_info, &n_xmp) {
+                        error(
+                            report,
+                            "6.7.3.8",
+                            format!(
+                                "/Info ModDate '{}' does not match XMP xmp:ModifyDate '{}'",
+                                n_info, xmp_dt
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -1106,22 +1121,34 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
         (Some(_), None) => {
             error(
                 report,
-                "6.7.3",
+                "6.7.3.1",
                 "/Info has CreationDate but XMP is missing xmp:CreateDate",
             );
         }
         (Some(info_dt), Some(xmp_dt)) => {
-            let n_info = datetime_to_local_str(info_dt);
-            if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
-                if !dates_match(&n_info, &n_xmp) {
-                    error(
-                        report,
-                        "6.7.3",
-                        format!(
-                            "/Info CreationDate '{}' does not match XMP xmp:CreateDate '{}'",
-                            n_info, xmp_dt
-                        ),
-                    );
+            // Same fractional-seconds check as ModDate (§6.7.3.1). (#FN-6.7.3-fractional-seconds)
+            if xmp_has_nonzero_fractional_seconds(xmp_dt) {
+                error(
+                    report,
+                    "6.7.3.1",
+                    format!(
+                        "/Info CreationDate has no fractional seconds but XMP xmp:CreateDate '{}' does",
+                        xmp_dt
+                    ),
+                );
+            } else {
+                let n_info = datetime_to_local_str(info_dt);
+                if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
+                    if !dates_match(&n_info, &n_xmp) {
+                        error(
+                            report,
+                            "6.7.3.1",
+                            format!(
+                                "/Info CreationDate '{}' does not match XMP xmp:CreateDate '{}'",
+                                n_info, xmp_dt
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -1155,6 +1182,28 @@ fn xmp_date_to_comparable(xmp_date: &str) -> Option<String> {
     // minimum precision available (see dates_match): a date-only XMP value like
     // "2011-11-22" (8 digits) compares against only the first 8 digits of the Info date.
     Some(digits)
+}
+
+/// Returns true if the XMP ISO 8601 date string has non-zero fractional seconds.
+///
+/// PDF Info dict dates have second precision only (implicit .000 fractional part).
+/// If XMP fractional seconds > 0 the dates are inequivalent — veraPDF flags
+/// `D:20151104081259-06'00'` vs `2015-11-04T08:12:59.328-06:00` as not equivalent.
+/// (#FN-6.7.3-fractional-seconds)
+fn xmp_has_nonzero_fractional_seconds(xmp_date: &str) -> bool {
+    // ISO 8601 fractional seconds follow a '.' that appears after at least 18 characters
+    // (minimum: "YYYY-MM-DDTHH:MM:S"). The '.' in a timezone offset (±HH:MM) is never
+    // at position ≥ 18 and is never followed by pure digits.
+    if let Some(dot_pos) = xmp_date.find('.') {
+        if dot_pos >= 18 {
+            let frac: String = xmp_date[dot_pos + 1..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            return !frac.is_empty() && frac.chars().any(|c| c != '0');
+        }
+    }
+    false
 }
 
 /// Compare two normalized date strings produced by [`datetime_to_local_str`] and
@@ -1197,11 +1246,15 @@ fn decode_xml_entities(s: &str) -> String {
 }
 
 /// Compare Info dict value with XMP value, allowing for encoding differences.
+///
+/// The Info dict value is compared as-is (PDF strings preserve leading/trailing whitespace).
+/// Only the XMP value is trimmed, since XML parsers may introduce insignificant whitespace.
+/// veraPDF treats `/Author " Name "` (with space) and `dc:creator "Name"` as NOT equivalent.
+/// (#FN-6.7.3.3-whitespace)
 fn values_match(info_val: &str, xmp_val: &str) -> bool {
-    let info_trimmed = info_val.trim();
     let xmp_trimmed = xmp_val.trim();
     // Decode XML entities in XMP value (e.g. &apos; → ') before comparing.
-    info_trimmed == xmp_trimmed || info_trimmed == decode_xml_entities(xmp_trimmed)
+    info_val == xmp_trimmed || info_val == decode_xml_entities(xmp_trimmed)
 }
 
 /// Extract a value from an rdf:Alt container (used for dc:title, dc:description).
