@@ -1713,16 +1713,15 @@ fn content_stream_has_long_string(data: &[u8], limit: usize) -> bool {
 fn skip_inline_image_data(data: &[u8], start: usize, bi_dict: &[u8]) -> usize {
     let len = data.len();
     // Detect FlateDecode filter (abbreviated /Fl or full /FlateDecode)
-    let has_flate = bi_dict.windows(3).any(|w| w == b"/Fl")
-        || bi_dict.windows(13).any(|w| w == b"FlateDecode");
+    let has_flate =
+        bi_dict.windows(3).any(|w| w == b"/Fl") || bi_dict.windows(13).any(|w| w == b"FlateDecode");
 
     if has_flate {
         // Skip any additional whitespace between the ID separator and the zlib header.
         // The PDF spec mandates one whitespace byte after ID, but CRLF line endings
         // produce two (\r was already consumed as the separator; \n may remain).
         let mut data_start = start;
-        while data_start < len
-            && matches!(data[data_start], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C')
+        while data_start < len && matches!(data[data_start], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C')
         {
             data_start += 1;
         }
@@ -1922,16 +1921,36 @@ mod string_scan_tests {
                     p += 1;
                     while p < len && depth > 0 && decoded <= 32767 && depth <= 32 {
                         match content[p] {
-                            b'\\' => { p = (p + 2).min(len); decoded += 1; }
-                            b'(' => { depth += 1; p += 1; decoded += 1; }
-                            b')' => { depth -= 1; if depth > 0 { decoded += 1; } p += 1; }
-                            _ => { decoded += 1; p += 1; }
+                            b'\\' => {
+                                p = (p + 2).min(len);
+                                decoded += 1;
+                            }
+                            b'(' => {
+                                depth += 1;
+                                p += 1;
+                                decoded += 1;
+                            }
+                            b')' => {
+                                depth -= 1;
+                                if depth > 0 {
+                                    decoded += 1;
+                                }
+                                p += 1;
+                            }
+                            _ => {
+                                decoded += 1;
+                                p += 1;
+                            }
                         }
                     }
                     if decoded > 32767 {
                         eprintln!(
                             "  Long '(' #{}: offset {}, pred=0x{:02X}(ascii={}), depth={}",
-                            count + 1, sp, pred, pred <= 0x7E, depth
+                            count + 1,
+                            sp,
+                            pred,
+                            pred <= 0x7E,
+                            depth
                         );
                         count += 1;
                     }
@@ -1944,16 +1963,62 @@ mod string_scan_tests {
         // Test the zlib skip directly on the first BI block
         let id_pos = 431usize;
         let bi_dict = &content[..id_pos]; // rough approximation of BI dict
-        // Find the whitespace-separator position after ID: ID is at [431..433], separator at 433
+                                          // Find the whitespace-separator position after ID: ID is at [431..433], separator at 433
         let sep_pos = 433usize;
         let data_start_pos = sep_pos + 1; // skip \r, point to \n
-        // Skip the \n too
+                                          // Skip the \n too
         let mut ds = data_start_pos;
-        while ds < len && matches!(content[ds], b' '|b'\t'|b'\n'|b'\r'|b'\x0C') { ds += 1; }
+        while ds < len && matches!(content[ds], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C') {
+            ds += 1;
+        }
         eprintln!("Zlib data starts at: {}", ds);
-        eprintln!("First 4 bytes of zlib data: {:02X?}", &content[ds..ds.min(len).min(ds+4)]);
+        eprintln!(
+            "First 4 bytes of zlib data: {:02X?}",
+            &content[ds..ds.min(len).min(ds + 4)]
+        );
         let zlib_skip = super::try_skip_zlib(&content, ds);
-        eprintln!("try_skip_zlib result: {:?}", zlib_skip);
+        eprintln!("try_skip_zlib block1 result: {:?}", zlib_skip);
+
+        // Test second BI block: ID at 948567, separator at 948569, data at ~948571
+        let id2 = 948567usize;
+        let mut ds2 = id2 + 2 + 1; // skip I,D,\r
+        while ds2 < len && matches!(content[ds2], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C') {
+            ds2 += 1;
+        }
+        eprintln!(
+            "Block2 zlib starts at: {}, first bytes: {:02X?}",
+            ds2,
+            &content[ds2..(ds2 + 4).min(len)]
+        );
+        let zlib2 = super::try_skip_zlib(&content, ds2);
+        eprintln!("try_skip_zlib block2 result: {:?}", zlib2);
+        // Debug: try flate2 directly with more info
+        {
+            use flate2::read::ZlibDecoder;
+            use std::io::{self, Read};
+            let mut d = ZlibDecoder::new(&content[ds2..]);
+            let mut sink = io::sink();
+            let copy_result = io::copy(&mut d, &mut sink);
+            eprintln!(
+                "Block2 io::copy result: {:?}, total_in={}",
+                copy_result,
+                d.total_in()
+            );
+        }
+
+        // Test third BI block: ID at 1807183
+        let id3 = 1807183usize;
+        let mut ds3 = id3 + 2 + 1;
+        while ds3 < len && matches!(content[ds3], b' ' | b'\t' | b'\n' | b'\r' | b'\x0C') {
+            ds3 += 1;
+        }
+        eprintln!(
+            "Block3 zlib starts at: {}, first bytes: {:02X?}",
+            ds3,
+            &content[ds3..(ds3 + 4).min(len)]
+        );
+        let zlib3 = super::try_skip_zlib(&content, ds3);
+        eprintln!("try_skip_zlib block3 result: {:?}", zlib3);
 
         let result = content_stream_has_long_string(&content, 32767);
         eprintln!("content_stream_has_long_string result: {}", result);
