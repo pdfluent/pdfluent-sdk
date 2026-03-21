@@ -32,7 +32,16 @@ fn page1_still_contains_word(saved: &[u8], word: &str) -> bool {
         Err(_) => return false,
     };
     let text: String = chars.iter().map(|c| c.ch).collect();
-    text.contains(word)
+    // Use word-boundary matching to avoid false positives from substring
+    // occurrences — e.g. "are" inside "Clarence" or "413Are" (digit-prefixed
+    // from extracted page-number text) must not cause a spurious FAIL after
+    // all standalone occurrences of the target word were successfully redacted.
+    let pattern = format!(r"(?i)\b{}\b", regex_lite::escape(word));
+    match regex_lite::Regex::new(&pattern) {
+        Ok(re) => re.is_match(&text),
+        // Fallback to substring if regex construction somehow fails.
+        Err(_) => text.contains(word),
+    }
 }
 
 /// Corpus test: redact first word on page 1, verify it is absent after roundtrip.
