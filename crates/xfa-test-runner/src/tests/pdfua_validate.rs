@@ -36,6 +36,19 @@ impl PdfTest for PdfUaValidateTest {
             };
         }
 
+        // Only validate PDF/UA-1 (ISO 14289-1). PDF/UA-2 (ISO 14289-2, 2024)
+        // has different rules; running our PDF/UA-1 checker against it produces
+        // noise failures.  Skip until we support PDF/UA-2 validation.
+        if pdfua_part_number(pdf_data) != Some(1) {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("PDF/UA-2 not supported by this checker".into()),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+
         let pdf = match pdf_syntax::Pdf::new(pdf_data.to_vec()) {
             Ok(p) => p,
             Err(_) => {
@@ -94,4 +107,29 @@ impl PdfTest for PdfUaValidateTest {
 /// byte-level scan.
 fn claims_pdfua(pdf_data: &[u8]) -> bool {
     pdf_data.windows(12).any(|w| w == b"pdfuaid:part")
+}
+
+/// Parse the numeric PDF/UA part from `pdfuaid:part` in the raw XMP bytes.
+///
+/// Handles both attribute (`pdfuaid:part="2"`) and element
+/// (`<pdfuaid:part>2</pdfuaid:part>`) forms.  Returns `None` if the claim is
+/// absent or unparseable.
+fn pdfua_part_number(pdf_data: &[u8]) -> Option<u8> {
+    // Fast scan: find "pdfuaid:part" then read the digit(s) following it.
+    let needle = b"pdfuaid:part";
+    let pos = pdf_data.windows(needle.len()).position(|w| w == needle)?;
+    let after = &pdf_data[pos + needle.len()..];
+    // Skip whitespace, '=', '"', '>'
+    let digit_start = after
+        .iter()
+        .position(|&b| b.is_ascii_digit())?;
+    let rest = &after[digit_start..];
+    let digit_end = rest
+        .iter()
+        .position(|&b| !b.is_ascii_digit())
+        .unwrap_or(rest.len());
+    std::str::from_utf8(&rest[..digit_end])
+        .ok()?
+        .parse::<u8>()
+        .ok()
 }
