@@ -10893,6 +10893,33 @@ fn check_cidfont_type2_widths(
                     return; // First mismatch per font only
                 }
             }
+            // Check /DW (DefaultWidth) against CFF glyph widths for CIDs not in /W.
+            // §6.2.11.5 requires /DW to be consistent with the font program. (#FN-6.2.11.5)
+            if let Some(dw) = cid_font.get::<i32>(keys::DW) {
+                let num_glyphs = table.number_of_glyphs() as u32;
+                for gid in 1..num_glyphs {
+                    let cid = gid; // CID == GID for CID-keyed CFF
+                    if w_map.contains_key(&cid) {
+                        continue; // Already checked via /W
+                    }
+                    let Some(cff_w) = table.glyph_width(cff_parser::GlyphId(gid as u16)) else {
+                        continue;
+                    };
+                    let cff_w_i32 = cff_w as i32;
+                    if (cff_w_i32 - dw).abs() > 1 {
+                        error_at(
+                            report,
+                            "6.3.5-fw",
+                            format!(
+                                "Font {cid_name} CID {cid}: CFF width {cff_w_i32} \
+                                 != PDF /DW {dw}"
+                            ),
+                            loc.clone(),
+                        );
+                        return;
+                    }
+                }
+            }
             continue; // Done with CIDFontType0
         }
 
