@@ -2,6 +2,46 @@ use pdf_redact::search_redact::{search_and_redact, RedactSearchOptions};
 
 #[test]
 #[ignore]
+fn debug_redact_137208_united() {
+    let data = std::fs::read("/tmp/redact-test-137.pdf").unwrap();
+    let word = "UNITED";
+
+    // Step 1: what does extract_positioned_chars return for page 1?
+    let doc_lopdf = lopdf::Document::load_mem(&data).unwrap();
+    let chars = pdf_extract::extract_positioned_chars(&doc_lopdf, 1).unwrap();
+    let pos_text: String = chars.iter().map(|c| c.ch).collect();
+    println!("Positioned text (first 200): {:?}", &pos_text[..200.min(pos_text.len())]);
+    let pos_count = pos_text.matches(word).count();
+    println!("'{}' in positioned text (page 1): {} occurrences", word, pos_count);
+
+    // Step 2: what pages have this word via positioned_chars?
+    let page_count = doc_lopdf.get_pages().len();
+    println!("Total pages: {}", page_count);
+    for p in 1..=page_count.min(3) as u32 {
+        if let Ok(chars) = pdf_extract::extract_positioned_chars(&doc_lopdf, p) {
+            let t: String = chars.iter().map(|c| c.ch).collect();
+            let n = t.matches(word).count();
+            if n > 0 { println!("  Page {}: {} occurrences via positioned_chars", p, n); }
+        }
+    }
+
+    // Step 3: run search_and_redact (all pages)
+    let mut doc2 = lopdf::Document::load_mem(&data).unwrap();
+    let opts = RedactSearchOptions::default();
+    let report = search_and_redact(&mut doc2, word, &opts).unwrap();
+    println!("search_and_redact: areas_redacted={} ops_removed={}", report.areas_redacted, report.operations_removed);
+
+    let mut saved = Vec::new();
+    doc2.save_to(&mut saved).unwrap();
+    let doc3 = lopdf::Document::load_mem(&saved).unwrap();
+    let chars_after = pdf_extract::extract_positioned_chars(&doc3, 1).unwrap();
+    let text_after: String = chars_after.iter().map(|c| c.ch).collect();
+    let remaining = text_after.matches(word).count();
+    println!("After redact: '{}' on page 1 via positioned_chars: {} occurrences", word, remaining);
+}
+
+#[test]
+#[ignore]
 fn debug_redact_gen419_hydrate() {
     let data = std::fs::read("/tmp/gen-419.pdf").unwrap();
     let mut doc = lopdf::Document::load_mem(&data).unwrap();
