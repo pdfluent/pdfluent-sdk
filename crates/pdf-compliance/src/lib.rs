@@ -240,10 +240,14 @@ pub fn validate_pdfa_with_progress(
 }
 
 /// Detect the PDF/A level declared in XMP metadata.
+///
+/// Uses lenient parsing: extracts part/conformance even when the pdfaid namespace URI is
+/// wrong, matching veraPDF's profile-selection behaviour. Compliance violations (§6.7.9,
+/// §6.7.11) are still reported by the strict checks in `validate_pdfa`.
 #[must_use]
 pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
     let xmp = check::get_xmp_metadata(pdf)?;
-    let (part, conformance) = check::parse_xmp_pdfa(&xmp)?;
+    let (part, conformance) = check::parse_xmp_pdfa_lenient(&xmp)?;
     PdfALevel::from_parts(part, &conformance)
 }
 

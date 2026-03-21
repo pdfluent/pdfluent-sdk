@@ -907,21 +907,20 @@ fn check_property_namespaces(
 ///
 /// Uses veraPDF subclause numbers so the comparison matches exactly. (#467)
 fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
-    // When pdfaid:part is absent from XMP, veraPDF does NOT fire §6.7.3 consistency
-    // sub-rules — no pdfaid means no conformance claim to validate against.
-    // Covers both "6.6.4" (PDF/A-2/3 missing pdfaid) and "6.7.11" from missing pdfaid
-    // (PDF/A-1). PDFIUM-610-0 style: §6.7.11 from broken RDF namespace but pdfaid IS
-    // present — those sub-rules SHOULD fire, so we only gate on pdfaid absence.
-    // (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4)
     // When the pdfaid identification is invalid (absent, wrong namespace URI, or broken
     // RDF structure), veraPDF does NOT fire §6.7.3 consistency sub-rules.
     // Cases: "6.6.4" = PDF/A-2/3 pdfaid invalid; "6.7.11" = PDF/A-1 pdfaid invalid
     // (incl. wrong RDF namespace); "6.5.2" = PDF/A-4; "6.7.3" = generic from broken RDF.
-    // (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4, PDFIUM-610-0, isartor-6-7-2-t02-fail-a)
-    let pdfaid_invalid = report
-        .issues
-        .iter()
-        .any(|i| matches!(i.rule.as_str(), "6.6.4" | "6.7.11" | "6.5.2" | "6.7.3"));
+    // We also check the namespace URI directly: the §6.7.11 cascade fires *after*
+    // check_info_xmp_deep, so we can't rely on §6.7.11 being in the report yet when
+    // the pdfaid namespace is wrong. (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4)
+    const CORRECT_PDFAID_NS: &str = "http://www.aiim.org/pdfa/ns/id/";
+    let pdfaid_wrong_ns = xmp.contains("xmlns:pdfaid") && !xmp.contains(CORRECT_PDFAID_NS);
+    let pdfaid_invalid = pdfaid_wrong_ns
+        || report
+            .issues
+            .iter()
+            .any(|i| matches!(i.rule.as_str(), "6.6.4" | "6.7.11" | "6.5.2" | "6.7.3"));
     if pdfaid_invalid {
         return;
     }

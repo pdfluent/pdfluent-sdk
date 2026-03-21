@@ -1318,7 +1318,12 @@ fn check_xmp_metadata(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport
         return;
     };
 
-    let Some((part, conformance)) = check::parse_xmp_pdfa(&xmp) else {
+    // Lenient parse: extract part/conformance even when pdfaid namespace URI is wrong.
+    // Wrong-namespace violations (§6.7.9, §6.7.11) are handled by check_pdfa_version_match
+    // and the cascade in check_xmp_namespaces. Using strict parse here would fire an
+    // extra §6.7.11 "missing pdfaid:part" when the pdfaid IS present but in wrong namespace.
+    // (GHOSTSCRIPT-688790-4, #FP-6.7.11-wrong-ns-double)
+    let Some((part, conformance)) = check::parse_xmp_pdfa_lenient(&xmp) else {
         check::error(report, rule, "XMP metadata missing pdfaid:part");
         return;
     };

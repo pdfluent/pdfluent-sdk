@@ -248,6 +248,28 @@ pub fn parse_xmp_pdfa(xmp: &[u8]) -> Option<(u8, String)> {
     Some((part, conformance))
 }
 
+/// Like `parse_xmp_pdfa` but ignores the pdfaid namespace URI — extracts part/conformance
+/// even when the namespace is wrong (e.g. `http://www.aiim.org/pdfa/ns/id.html`).
+///
+/// Used for level detection (profile selection) only, matching veraPDF's behaviour of using
+/// the declared part/conformance for profile selection regardless of namespace correctness.
+/// Compliance checks still use `parse_xmp_pdfa` (strict) and `check_pdfa_version_match`.
+/// (GHOSTSCRIPT-688790-4, #FP-level-detection-wrong-ns)
+pub fn parse_xmp_pdfa_lenient(xmp: &[u8]) -> Option<(u8, String)> {
+    let text = std::str::from_utf8(xmp).ok()?;
+    if xmp_has_mismatched_close_tags(text) {
+        return None;
+    }
+    let part = extract_xmp_value(text, "pdfaid:part")
+        .or_else(|| extract_xmp_attr(text, "pdfaid:part"))?
+        .parse::<u8>()
+        .ok()?;
+    let conformance = extract_xmp_value(text, "pdfaid:conformance")
+        .or_else(|| extract_xmp_attr(text, "pdfaid:conformance"))
+        .unwrap_or_default();
+    Some((part, conformance))
+}
+
 /// Parse XMP metadata to find pdfuaid:part.
 pub fn parse_xmp_pdfua(xmp: &[u8]) -> Option<u8> {
     let text = std::str::from_utf8(xmp).ok()?;
