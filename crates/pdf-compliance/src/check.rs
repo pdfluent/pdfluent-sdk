@@ -2545,21 +2545,16 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
         return;
     };
 
-    // When pdfaid:part is absent from XMP, veraPDF does NOT fire §6.7.3 sub-rules.
-    // Covers "6.6.4" (PDF/A-2/3) and "6.7.11" from missing pdfaid (PDF/A-1).
-    // (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4)
-    if !xmp_text.contains("pdfaid:part") {
-        return;
-    }
-    // When §6.7.11 fires from broken XMP structure (pdfaid present but RDF malformed),
-    // check_info_xmp_deep already handles sub-rule checks. Skip duplicates here.
-    // Also skip if generic §6.7.3 is already present (check_xmp_rdf_structure fired it).
-    // (#FP-6.7.3-no-pdfaid, isartor-6-7-2-t02-fail-a)
-    if report
+    // When the pdfaid identification is invalid (absent, wrong namespace URI, or broken
+    // RDF structure), veraPDF does NOT fire §6.7.3 consistency sub-rules.
+    // Cases: "6.6.4" = PDF/A-2/3 pdfaid invalid; "6.7.11" = PDF/A-1 pdfaid invalid
+    // (incl. wrong RDF namespace); "6.5.2" = PDF/A-4; "6.7.3" = generic from broken RDF.
+    // (#FP-6.7.3-no-pdfaid, GHOSTSCRIPT-688790-4, PDFIUM-610-0, isartor-6-7-2-t02-fail-a)
+    let pdfaid_invalid = report
         .issues
         .iter()
-        .any(|i| i.rule == "6.7.11" || i.rule == "6.7.3")
-    {
+        .any(|i| matches!(i.rule.as_str(), "6.6.4" | "6.7.11" | "6.5.2" | "6.7.3"));
+    if pdfaid_invalid {
         return;
     }
 
@@ -13292,8 +13287,11 @@ fn collect_struct_types(elem: &Dict<'_>, types: &mut Vec<Vec<u8>>, depth: usize)
 /// objects — structure elements whose /S value is non-standard. It does NOT check for
 /// cycles that start from standard type names in the RoleMap. Therefore we only start
 /// cycle detection from non-standard types that are actually used in the structure tree.
-/// Cycles among standard-type RoleMap entries are NOT flagged by veraPDF.
-/// (#FP-6.7.3.4 veraPDF-6-2-11-7-3-t01-fail-b/c)
+///
+/// Both direct self-loops (Rectangle→Rectangle) and multi-step cycles (A→B→A) are
+/// violations.  Chains that terminate at a standard type are valid; we stop without
+/// flagging when the next hop lands on a standard type (e.g. A→Document is fine even
+/// if /Document /Document also exists in the RoleMap). (#FP-6.7.3.4, #FN-6.7.3.4)
 pub fn check_rolemap_circular(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else { return };
     let Some(struct_tree) = cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT) else {
@@ -13373,14 +13371,17 @@ pub fn check_rolemap_circular(pdf: &Pdf, report: &mut ComplianceReport) {
                 Some(n) => n.as_ref().to_vec(),
                 None => break,
             };
-            // Self-referencing entries (e.g. /Document /Document) are identity
-            // maps, not circular chains. veraPDF does not flag these. (#FP-6.7.3.4)
-            if next == current {
+            // A chain that reaches a standard type terminates validly — stop without
+            // flagging.  This prevents FPs for chains like NonStd→Document→Document
+            // where the standard-type self-loop is a benign entry.  (#FP-6.7.3.4)
+            if standard_types.contains(&next.as_slice()) {
                 break;
             }
             if visited.contains(&next) {
-                // True multi-step cycle: A→B→A or longer, starting from a
-                // non-standard structure element type.
+                // Cycle detected: A→A (non-std self-loop) or A→B→A (multi-step),
+                // starting from a non-standard structure element type.
+                // veraPDF confirms both patterns are §6.7.3.4 violations
+                // (see 6-7-3-4-t02-fail-a: Rectangle→Rectangle). (#FN-6.7.3.4)
                 error(report, "6.7.3.4", "RoleMap contains a circular mapping");
                 break 'outer;
             }
