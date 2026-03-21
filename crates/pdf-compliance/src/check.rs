@@ -3486,12 +3486,14 @@ pub fn check_iccbased_cmyk_not_identical_to_outputintent(pdf: &Pdf, report: &mut
     let mut forbidden_cmyk_profiles: Vec<Vec<u8>> = Vec::new();
 
     let mut collect_output_intent_profile = |r: ObjRef| {
-        forbidden_refs.insert(r);
-        // For CMYK profiles (N≥4), also store decoded bytes so we can catch
-        // the case where two different ICC stream objects carry the same profile.
+        // Only track CMYK (N≥4) profiles: veraPDF does NOT flag RGB/sRGB (N=3)
+        // profile object reuse as §6.2.4.2. Collecting non-CMYK refs caused FPs
+        // when content ICCBased colorspaces shared the sRGB OutputIntent object.
+        // (#FP-6.2.4.2-rgb, cs-pdfa2-6-8-bfo-t03-fail)
         if let Some(stream) = xref.get::<Stream<'_>>(r.into()) {
             let n: i64 = stream.dict().get::<i64>(b"N" as &[u8]).unwrap_or(0);
             if n >= 4 {
+                forbidden_refs.insert(r);
                 if let Ok(decoded) = stream.decoded() {
                     forbidden_cmyk_profiles.push(decoded);
                 }
