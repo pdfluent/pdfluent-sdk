@@ -223,11 +223,15 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     }
 
     match level.part() {
+        1 => check_no_embedded_files(pdf, &obj_cache, level, &mut report),
         3 => check_embedded_files_a3(pdf, &obj_cache, &mut report),
         4 => {
             check::check_pdfa4_conformance_absent(pdf, &mut report);
         }
-        _ => check_no_embedded_files(pdf, &obj_cache, level, &mut report),
+        // PDF/A-2: embedded files allowed by §6.8 (must be PDF/A-1 or PDF/A-2 compliant).
+        // We don't recursively validate embedded file compliance yet, but must NOT fire
+        // §6.1.7 "embedded files forbidden" — that rule only applies to PDF/A-1. (#FP-6.1.7)
+        _ => {}
     }
 
     // Implementation limits & structural checks
@@ -681,6 +685,10 @@ pub fn validate_with_progress(
         tracked!("check_mark_info", check::check_mark_info(pdf, &mut report));
     }
     match level.part() {
+        1 => tracked!(
+            "check_no_embedded_files",
+            check_no_embedded_files(pdf, &obj_cache, level, &mut report)
+        ),
         3 => tracked!(
             "check_embedded_files_a3",
             check_embedded_files_a3(pdf, &obj_cache, &mut report)
@@ -689,10 +697,8 @@ pub fn validate_with_progress(
             "check_pdfa4_conformance_absent",
             check::check_pdfa4_conformance_absent(pdf, &mut report)
         ),
-        _ => tracked!(
-            "check_no_embedded_files",
-            check_no_embedded_files(pdf, &obj_cache, level, &mut report)
-        ),
+        // PDF/A-2: embedded files allowed by §6.8 — don't fire §6.1.7. (#FP-6.1.7)
+        _ => {}
     }
     tracked!(
         "check_name_length",

@@ -1234,7 +1234,6 @@ fn update_cid_widths(doc: &mut Document, cid_id: ObjectId, face: &ttf_parser::Fa
         .glyph_hor_advance(ttf_parser::GlyphId(0))
         .map(|w| (w as f64 * scale).round() as i64)
         .unwrap_or(1000);
-
     if let Some(Object::Dictionary(ref mut cid)) = doc.objects.get_mut(&cid_id) {
         cid.set("DW", Object::Integer(default_width));
         // Remove W array to avoid width mismatches — DW will serve as fallback.
