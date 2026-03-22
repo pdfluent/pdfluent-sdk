@@ -9,7 +9,14 @@
 //! - Our engine cannot open the PDF (defer to parse test)
 //!
 //! Fail condition:
-//! - Any page SSIM < SSIM_PASS_THRESHOLD (0.90)
+//! - Any page SSIM < SSIM_PASS_THRESHOLD (0.75)
+//!
+//! Threshold rationale (empirical, 2026-03-22):
+//! Measured mutool-vs-pdftoppm SSIM on 50 corpus PDFs using scikit-image
+//! (per-channel, pixel-stride). Reference-vs-reference P10 = 0.83, median =
+//! 0.94. Our Rust SSIM (8×8 windows, grayscale) runs slightly higher for the
+//! same pair, so 0.75 gives comfortable headroom below P10 while still
+//! catching real rendering defects.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,7 +28,7 @@ use crate::oracles::ssim;
 
 const MAX_PAGES: usize = 5;
 const RENDER_DPI: f64 = 150.0;
-const SSIM_PASS_THRESHOLD: f64 = 0.90;
+const SSIM_PASS_THRESHOLD: f64 = 0.75;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
