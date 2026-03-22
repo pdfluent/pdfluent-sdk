@@ -3479,10 +3479,10 @@ fn check_mark_info_required(pdf: &Pdf, level: PdfALevel, report: &mut Compliance
     }
 }
 
-/// §6.7.3.3 (PDF/A-2/3/4-A): StructTreeRoot is required for tagged conformance.
+/// §6.8.3.3 (PDF/A-1/2/3-A): StructTreeRoot is required for tagged conformance.
 ///
-/// check_tagged_requirements emits "6.8" but veraPDF uses "6.7.3.3".
-/// Fixes #FN-6.7.3.3.
+/// veraPDF fires §6.8.3.3 for missing StructTreeRoot in tagged-conformance PDFs.
+/// Fixes #FN-6.8.3.3, #FP-6.7.3.3.
 fn check_struct_tree_root_required(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
     if !level.requires_tagged() {
         return;
@@ -3490,8 +3490,8 @@ fn check_struct_tree_root_required(pdf: &Pdf, level: PdfALevel, report: &mut Com
     if check::struct_tree_root(pdf).is_none() {
         error(
             report,
-            "6.7.3.3",
-            "StructTreeRoot is required for PDF/A tagged conformance (§6.7.3.3)",
+            "6.8.3.3",
+            "StructTreeRoot is required for PDF/A tagged conformance (§6.8.3.3)",
         );
     }
 }
