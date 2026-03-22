@@ -33,7 +33,9 @@ const ZUGFERD_FILENAMES: &[&str] = &[
 /// CII namespace present in ZUGFeRD 2.x / Factur-X.
 const CII_NS_PREFIX: &[u8] = b"urn:un:unece:uncefact:data:standard:CrossIndustryInvoice";
 /// ZUGFeRD 1.0 used a different namespace (FERD schema, pre-CII alignment).
-const ZUGFERD_V1_NS_PREFIX: &[u8] = b"urn:ferd:pdfa:CrossIndustryDocument:invoice:";
+/// The XMP extension schema uses urn:ferd:pdfa:..., but the embedded XML data
+/// uses urn:ferd:CrossIndustryDocument:invoice:1p0 (no "pdfa" segment). (#507)
+const ZUGFERD_V1_NS_PREFIX: &[u8] = b"urn:ferd:CrossIndustryDocument:invoice:";
 
 pub struct ZugferdRoundtripTest;
 

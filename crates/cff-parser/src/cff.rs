@@ -1128,6 +1128,17 @@ impl<'a> Table<'a> {
         }
     }
 
+    /// Returns the DefaultWidthX value from the Private DICT (SID fonts only).
+    ///
+    /// veraPDF uses this value as the font program width for character codes
+    /// that are absent from the CFF encoding (i.e., `glyph_index` returns GID 0).
+    pub fn default_width_x(&self) -> Option<u16> {
+        match self.kind {
+            FontKind::SID(ref sid) => u16::try_from(sid.default_width as i32).ok(),
+            FontKind::CID(_) => None,
+        }
+    }
+
     /// Returns a glyph name.
     pub fn glyph_name(&self, glyph_id: GlyphId) -> Option<&'a str> {
         match self.kind {
