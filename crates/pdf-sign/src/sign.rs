@@ -850,7 +850,7 @@ mod tests {
             results[0].status
         );
 
-        // External oracle: openssl cms -verify. Skip if not installed.
+        // External oracle: openssl smime -verify. Skip if not installed.
         if let Some(bin) = find_openssl_bin() {
             let sigs = crate::signature_fields(&parsed);
             let first = &sigs[0];
@@ -868,19 +868,27 @@ mod tests {
             std::fs::write(&content_path, &content).unwrap();
 
             let status = std::process::Command::new(bin)
-                .arg("cms").arg("-verify")
-                .arg("-inform").arg("DER")
-                .arg("-in").arg(&sig_path)
-                .arg("-content").arg(&content_path)
+                .arg("smime")
+                .arg("-verify")
+                .arg("-inform")
+                .arg("DER")
+                .arg("-in")
+                .arg(&sig_path)
+                .arg("-content")
+                .arg(&content_path)
                 .arg("-noverify")
-                .arg("-out").arg("/dev/null")
+                .arg("-out")
+                .arg("/dev/null")
                 .status()
                 .expect("openssl exec");
 
             let _ = std::fs::remove_file(&sig_path);
             let _ = std::fs::remove_file(&content_path);
 
-            assert!(status.success(), "openssl cms -verify failed for XFA form signature");
+            assert!(
+                status.success(),
+                "openssl smime -verify failed for XFA form signature"
+            );
         }
     }
 
