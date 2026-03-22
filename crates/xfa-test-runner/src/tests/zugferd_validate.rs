@@ -134,3 +134,64 @@ impl PdfTest for ZugferdValidateTest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::zugferd_roundtrip::{make_invoice_for_profile, make_minimal_lopdf_pdf};
+
+    fn pdf_bytes_with_invoice(profile: pdf_invoice::zugferd::ZugferdProfile) -> Vec<u8> {
+        let invoice = make_invoice_for_profile(profile);
+        let xml = invoice.to_xml().expect("to_xml");
+        let mut doc = make_minimal_lopdf_pdf();
+        pdf_invoice::embed::embed_xml_attachment(
+            &mut doc,
+            "factur-x.xml",
+            xml.as_bytes(),
+            pdf_invoice::embed::AfRelationship::Data,
+        )
+        .expect("embed");
+        let mut out = Vec::new();
+        doc.save_to(&mut out).expect("save");
+        out
+    }
+
+    macro_rules! validate_test {
+        ($name:ident, $profile:expr) => {
+            #[test]
+            fn $name() {
+                let pdf = pdf_bytes_with_invoice($profile);
+                let test = ZugferdValidateTest;
+                let result = PdfTest::run(&test, &pdf, std::path::Path::new("synthetic"));
+                // Minimum and BasicWL are not subject to full EN 16931 arithmetic
+                // rules, so validation reports no errors; other profiles need
+                // correct totals which we provide.
+                assert!(
+                    result.status == TestStatus::Pass || result.status == TestStatus::Skip,
+                    "profile {:?}: expected Pass or Skip, got {:?}: {:?}",
+                    $profile,
+                    result.status,
+                    result.error_message
+                );
+            }
+        };
+    }
+
+    validate_test!(
+        validate_minimum,
+        pdf_invoice::zugferd::ZugferdProfile::Minimum
+    );
+    validate_test!(
+        validate_basicwl,
+        pdf_invoice::zugferd::ZugferdProfile::BasicWL
+    );
+    validate_test!(validate_basic, pdf_invoice::zugferd::ZugferdProfile::Basic);
+    validate_test!(
+        validate_en16931,
+        pdf_invoice::zugferd::ZugferdProfile::EN16931
+    );
+    validate_test!(
+        validate_extended,
+        pdf_invoice::zugferd::ZugferdProfile::Extended
+    );
+}
