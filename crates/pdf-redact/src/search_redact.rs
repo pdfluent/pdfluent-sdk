@@ -91,6 +91,9 @@ pub struct SearchRedactReport {
     pub pages_affected: usize,
     /// Whether metadata was cleaned.
     pub metadata_cleaned: bool,
+    /// Bounding boxes of all redacted areas: (page_number_1based, [x0,y0,x1,y1] in PDF points).
+    /// Used by visual verification tests to confirm overlay coverage.
+    pub redacted_rects: Vec<(u32, [f64; 4])>,
 }
 
 /// Search for text matching a pattern and redact all occurrences.
@@ -199,8 +202,12 @@ pub fn search_and_redact(
             operations_removed: 0,
             pages_affected: 0,
             metadata_cleaned: false,
+            redacted_rects: Vec::new(),
         });
     }
+
+    // Collect rects before mark_all consumes all_areas.
+    let redacted_rects: Vec<(u32, [f64; 4])> = all_areas.iter().map(|a| (a.page, a.rect)).collect();
 
     // Apply redactions using the existing Redactor.
     let mut redactor = Redactor::new();
@@ -225,6 +232,7 @@ pub fn search_and_redact(
         operations_removed: report.operations_removed + extra_ops_removed,
         pages_affected: report.pages_affected,
         metadata_cleaned: report.metadata_cleaned,
+        redacted_rects,
     })
 }
 
