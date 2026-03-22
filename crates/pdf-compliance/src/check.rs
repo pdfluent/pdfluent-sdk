@@ -15467,13 +15467,41 @@ pub fn check_xref_syntax(pdf: &Pdf, report: &mut ComplianceReport) {
         }
         // Found standalone "xref"
         let after = pos + 4;
-        if after < len {
-            let c = data[after];
-            if c != b'\n' && c != b'\r' {
+        if after >= len {
+            break;
+        }
+        let c = data[after];
+        if c != b'\n' && c != b'\r' {
+            error(
+                report,
+                "6.1.4",
+                "Keyword 'xref' not followed by proper EOL marker",
+            );
+            return;
+        }
+        // Skip past the EOL (handle CRLF)
+        let mut line_start = after + 1;
+        if c == b'\r' && line_start < len && data[line_start] == b'\n' {
+            line_start += 1;
+        }
+        // §6.1.4: The xref subsection header must be `firstObj SP count EOL`.
+        // A double space (e.g. "0  14") is not a valid PDF structure.
+        // veraPDF fires §6.1.4 for double-space separators in the subsection header.
+        // (#FN-6.1.4 cs-isartor-6-1-4-t01-fail-a)
+        if line_start < len {
+            // Find the end of the subsection header line
+            let line_end = data[line_start..]
+                .iter()
+                .position(|&b| b == b'\n' || b == b'\r')
+                .map(|i| line_start + i)
+                .unwrap_or(len.min(line_start + 30));
+            let header_line = &data[line_start..line_end];
+            // Check for double-space (two consecutive space bytes) in the header
+            if header_line.windows(2).any(|w| w == b"  ") {
                 error(
                     report,
                     "6.1.4",
-                    "Keyword 'xref' not followed by proper EOL marker",
+                    "xref subsection header contains double space (must be 'firstObj SP count')",
                 );
                 return;
             }
