@@ -8708,14 +8708,26 @@ fn compute_otf_cff_corrections(
             // veraPDF §6.2.11.5 validates against the CFF charstring advance, not hmtx.
             // For OTF-wrapped CFF fonts the hmtx and CFF charstring widths can differ
             // (e.g. Symbol "multiply": hmtx=250, CFF charstring=549). (#FP-6.2.11.5)
+            //
+            // Use direct CFF encoding lookup only (no Standard encoding fallback).
+            // cff.glyph_index() falls back to Standard encoding when the actual CFF
+            // encoding maps no codes (e.g. StandardSymbolsPS.otf), producing wrong
+            // GIDs and width corrections. veraPDF uses the Symbol (3,0) cmap path for
+            // symbolic OTF fonts and falls back to hmtx(GID 0) for unmapped codes —
+            // so codes not in the CFF encoding must be skipped here. (#FP-6.2.11.5)
             if code > 255 {
                 continue;
             }
-            let gid = match cff.glyph_index(code as u8) {
-                Some(gid) if gid.0 != 0 || code == 0 => gid,
+            let gid = match cff
+                .encoding
+                .code_to_gid(&cff.charset, code as u8)
+            {
+                Some(gid) if gid.0 != 0 || code == 0 => {
+                    cff_parser::GlyphId(gid.0)
+                }
                 _ => continue,
             };
-            cff.glyph_width(cff_parser::GlyphId(gid.0))
+            cff.glyph_width(gid)
                 .map(|w| w as f64 * cff_scale)
         } else {
             continue;
@@ -9024,7 +9036,15 @@ fn cff_width_for_code(
         // GID 65 (width 333) while veraPDF uses defaultWidthX=556 — changing the
         // PDF width 556→333 then fails §6.2.11.5 (font=556, dict=333). Skip name
         // lookup for high-byte codes absent from the CFF encoding. (#6.2.11.5-cff-enc-guard)
-        let code_in_cff_enc = code < 128 || {
+        //
+        // Exception: explicit /Differences entries are always resolved via glyph
+        // name by veraPDF §6.2.11.5, regardless of the CFF internal encoding.
+        // A Differences-only font (no BaseEncoding) may have codes like 222 /Thorn
+        // that don't appear in the CFF encoding table — but veraPDF still looks up
+        // "Thorn" in the CFF charset directly. Bypassing this guard for such codes
+        // prevents incorrect zeroing of valid widths. (#507, §6.2.11.5-differences-bypass)
+        let from_differences = differences.contains_key(&code);
+        let code_in_cff_enc = code < 128 || from_differences || {
             let enc_map_check = parse_cff_encoding_map(font_data);
             enc_map_check.contains_key(&(code as u8))
         };
