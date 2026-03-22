@@ -3196,11 +3196,6 @@ fn remap_clause_numbers(report: &mut ComplianceReport, level: PdfALevel) {
             // which is only emitted by check_stream_length, so no collision. (#496)
             (1, "6.1.7.1") => Some("6.1.7"),
             (1, "6.1.7.1-len") => Some("6.1.7"),
-            // PDF/A-1: obj/endobj whitespace violations (check_object_syntax_spacing emits
-            // "6.1.8") are reported as §6.1.7 by veraPDF — it does not distinguish between
-            // stream-whitespace (§6.1.7) and obj-whitespace (our §6.1.8) in PDF/A-1.
-            // Fixes FN=6.1.7 for GHOSTSCRIPT-688790-4 and PDFIUM-610-0. (#FN-6.1.7)
-            (1, "6.1.8") => Some("6.1.7"),
             // PDF/A-2/3: stream Length mismatch → §6.1.7.1 (veraPDF uses the sub-clause).
             // "6.1.7.1-len" is the internal ID for stream Length errors; remap to match
             // veraPDF's output. Fixes FN=6.1.7.1 + FP=6.1.7.1-len for 6-1-7-1-t03 PDFs.
