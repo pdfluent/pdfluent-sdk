@@ -9304,10 +9304,9 @@ pub fn check_tounicode_cmap(
 
         // Type0 (composite) fonts are exempt from §6.3.8/§6.2.11.7.2/§6.2.10.7 unless
         // the conformance level requires full Unicode mapping ('U').
-        // ISO 19005-1 §6.3.8 exempts Type0 fonts whose CMap is predefined (Identity-H/V,
-        // named CMaps like OneByteIdentityH); veraPDF fires §6.3.4 instead for such fonts
-        // and does NOT fire §6.3.8. Applying to all parts avoids this FP.
-        // (#FP-6.3.8-type0, GHOSTSCRIPT-688790-4)
+        // ISO 19005-1 §6.3.8 exempts Type0 fonts with predefined CMaps (Identity-H/V as a
+        // Name); veraPDF fires §6.3.4/§6.3.5 for Type0 fonts using embedded CMap streams
+        // without a /ToUnicode. (#FP-6.3.8-type0, #FN-6.3.4/6.3.5, GHOSTSCRIPT-688790-4)
         if !requires_unicode {
             if let Some(enc) = font_dict.get::<Name>(keys::ENCODING) {
                 if enc.as_ref() == keys::IDENTITY_H || enc.as_ref() == keys::IDENTITY_V {
@@ -9315,6 +9314,28 @@ pub fn check_tounicode_cmap(
                 }
             }
             if subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type0") {
+                // PDF/A-1: Type0 fonts with embedded (non-predefined) CMap streams require
+                // a /ToUnicode CMap. veraPDF fires §6.3.4 (CIDFont) and §6.3.5 (composite)
+                // for this case instead of §6.3.8. (#FN-6.3.4/6.3.5)
+                if part == 1
+                    && !font_has_tounicode(font_dict)
+                    && font_dict.get::<Name>(keys::ENCODING).is_none()
+                {
+                    error(
+                        report,
+                        "6.3.4",
+                        format!(
+                            "Font {name} (Type0/CIDFont) missing /ToUnicode with non-predefined CMap"
+                        ),
+                    );
+                    error(
+                        report,
+                        "6.3.5",
+                        format!(
+                            "Font {name} (Type0 composite) missing /ToUnicode with non-predefined CMap"
+                        ),
+                    );
+                }
                 return;
             }
         }

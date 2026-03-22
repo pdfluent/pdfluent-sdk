@@ -13,7 +13,7 @@ use crate::check::{self, error, warning};
 use crate::{ComplianceReport, PdfALevel};
 use pdf_syntax::object::dict::keys;
 use pdf_syntax::object::String as PdfString;
-use pdf_syntax::object::{Array, DateTime, Dict, Name, ObjRef, Object};
+use pdf_syntax::object::{Array, DateTime, Dict, Name, ObjRef, Object, Stream};
 use pdf_syntax::Pdf;
 
 /// Well-known XMP value types (XMP Specification Part 1, Table 8).
@@ -292,19 +292,29 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
     );
     // §6.7.9.2 (PDF/A-1) / §6.6.2.3.1 — properties not predefined in XMP 2004 per veraPDF (#489)
     check_not_predefined_properties(xmp_text, &schemas, level, report);
-    // PDF/A-1 §6.7.11: a §6.7.9 violation specifically mentioning the 'pdfaid:' namespace
-    // triggers §6.7.11 — the identification schema cannot be reliably parsed when the
-    // pdfaid: prefix is undeclared or has invalid properties.
+    // PDF/A-1 §6.7.11: a §6.7.9 violation mentioning a core XMP namespace prefix
+    // ('pdfaid:' or 'dc:') triggers §6.7.11 — the identification schema cannot be
+    // reliably parsed when a required namespace is undeclared or invalid.
     // veraPDF reports BOTH §6.7.9 AND §6.7.11 in these cases.
     // Placed here (after all §6.7.9-emitting checks including the pdfaid: closed-namespace
     // check above) so that pdfaid: violations cascade correctly.
-    // Fixes #467 (poppler-106863-0.pdf). Narrowed to 'pdfaid' to avoid FP on
-    // cs-isartor-6-1-7-t01-fail-a.pdf (undeclared non-pdfaid namespace → §6.7.9 only).
-    // Fixes §6.7.11 FN on cs-veraPDF test suite 6-7-3-t01-fail-a.pdf.
+    // 'pdfaid' cascade: Fixes #467 (cs-veraPDF test suite 6-7-3-t01-fail-a.pdf).
+    // 'dc:' cascade: veraPDF fires §6.7.11 when Dublin Core namespace is undeclared
+    // (poppler-106863-0.pdf). The isartor-6-1-7 FP used a non-core namespace, so
+    // narrowing to 'pdfaid' and 'dc' avoids that FP while fixing this FN.
+    const CORE_NS_CASCADE: &[&str] = &["pdfaid", "'dc'"];
     if level.part() == 1
+        && !report.issues[ns_violations_before..]
+            .iter()
+            .any(|i| i.rule == "6.7.11")
         && report.issues[ns_violations_before..]
             .iter()
-            .any(|i| i.rule.starts_with("6.7.9") && i.message.contains("pdfaid"))
+            .any(|i| {
+                i.rule.starts_with("6.7.9")
+                    && CORE_NS_CASCADE
+                        .iter()
+                        .any(|&ns| i.message.contains(ns))
+            })
     {
         error(
             report,
@@ -3359,6 +3369,21 @@ fn check_embedded_file_spec_keys_pdfa2(pdf: &Pdf, level: PdfALevel, report: &mut
                 "6.8",
                 "Embedded file specification missing /UF key (§6.8 T2)",
             );
+        }
+        // §6.8 T1: EmbeddedFile stream must have /Subtype specifying MIME type.
+        // check.rs check_embedded_file_spec_keys only runs for part >= 3; handle PDF/A-2 here.
+        // The EF dict value for key /F is an indirect ref to the EmbeddedFile stream.
+        // get::<Stream> resolves indirect refs automatically. (#FN-6.8)
+        if let Some(ef_dict) = dict.get::<Dict<'_>>(keys::EF) {
+            if let Some(f_stream) = ef_dict.get::<Stream<'_>>(keys::F) {
+                if f_stream.dict().get::<Name>(keys::SUBTYPE).is_none() {
+                    error(
+                        report,
+                        "6.8",
+                        "Embedded file stream missing /Subtype (MIME type) (§6.8 T1)",
+                    );
+                }
+            }
         }
     }
 }
