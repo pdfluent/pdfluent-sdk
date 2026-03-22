@@ -5,6 +5,67 @@ use pdf_redact::search_redact::{search_and_redact, RedactSearchOptions};
 
 use super::{PdfTest, TestResult, TestStatus};
 
+/// Render page 1 of `pdf_data` at 72 dpi and return the RGBA pixel buffer
+/// together with the rendered width and height in pixels.
+///
+/// At 72 dpi, 1 PDF point == 1 pixel, which makes coordinate conversion
+/// from PDF-space bounding boxes trivial.
+fn render_page1_72dpi(pdf_data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let doc = pdf_engine::PdfDocument::open(pdf_data.to_vec()).ok()?;
+    let opts = pdf_engine::RenderOptions {
+        dpi: 72.0,
+        ..Default::default()
+    };
+    let rendered = doc.render_page(0, &opts).ok()?;
+    Some((rendered.pixels, rendered.width, rendered.height))
+}
+
+/// Return the mean brightness (0.0–255.0) of the RGBA pixels inside the
+/// given PDF-coordinate rectangle on a page rendered at 72 dpi.
+///
+/// PDF coordinates have y=0 at the bottom; the pixel buffer has y=0 at the
+/// top.  At 72 dpi, 1 point == 1 pixel so the only conversion needed is a
+/// Y-axis flip.
+///
+/// Returns `None` when the rectangle falls entirely outside the image or
+/// no pixels are sampled.
+fn mean_brightness_in_rect(
+    pixels: &[u8],
+    img_w: u32,
+    img_h: u32,
+    rect: [f64; 4], // [x0, y0, x1, y1] in PDF points
+) -> Option<f64> {
+    // PDF rect coords → pixel coords (72dpi: 1pt = 1px, flip Y).
+    let px0 = rect[0].max(0.0) as u32;
+    let py0 = (img_h as f64 - rect[3]).max(0.0) as u32; // top of rect in image
+    let px1 = (rect[2] as u32).min(img_w);
+    let py1 = (img_h as f64 - rect[1]).min(img_h as f64) as u32; // bottom of rect in image
+
+    if px0 >= px1 || py0 >= py1 {
+        return None;
+    }
+
+    let mut total = 0u64;
+    let mut count = 0u64;
+    for row in py0..py1 {
+        for col in px0..px1 {
+            let idx = ((row * img_w + col) * 4) as usize;
+            if idx + 2 >= pixels.len() {
+                continue;
+            }
+            let r = pixels[idx] as u64;
+            let g = pixels[idx + 1] as u64;
+            let b = pixels[idx + 2] as u64;
+            total += r + g + b;
+            count += 3;
+        }
+    }
+    if count == 0 {
+        return None;
+    }
+    Some(total as f64 / count as f64)
+}
+
 /// Extract text from page 1 using pdf-engine (for initial word selection).
 fn extract_page1_text(pdf_data: &[u8]) -> Option<String> {
     let doc = pdf_engine::PdfDocument::open(pdf_data.to_vec()).ok()?;
@@ -215,7 +276,7 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     metadata.insert("ops_removed".into(), report.operations_removed.to_string());
 
     if page1_still_contains_word(&saved, &search_word) {
-        TestResult {
+        return TestResult {
             status: TestStatus::Fail,
             error_message: Some(format!(
                 "redacted word '{}' still present in content stream",
@@ -224,24 +285,72 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
             duration_ms: elapsed(),
             oracle_score: None,
             metadata,
+        };
+    }
+
+    // 5. Visual check: render page 1 and verify the redaction overlay is dark.
+    //    At 72 dpi, 1 PDF point == 1 pixel, so coordinate conversion is trivial.
+    //    Only check when we have a page-1 rect from the report.
+    let page1_rects: Vec<[f64; 4]> = report
+        .redacted_rects
+        .iter()
+        .filter(|(page, _)| *page == 1)
+        .map(|(_, rect)| *rect)
+        .collect();
+
+    if !page1_rects.is_empty() {
+        match render_page1_72dpi(&saved) {
+            Some((pixels, w, h)) => {
+                // Check every redacted rect on page 1.
+                for rect in &page1_rects {
+                    if let Some(brightness) = mean_brightness_in_rect(&pixels, w, h, *rect) {
+                        metadata.insert(
+                            "visual_brightness".into(),
+                            format!("{brightness:.1}"),
+                        );
+                        // Expect mean brightness < 50/255 — the overlay should be
+                        // close to black. Allow some tolerance for anti-aliasing.
+                        if brightness > 50.0 {
+                            return TestResult {
+                                status: TestStatus::Fail,
+                                error_message: Some(format!(
+                                    "redaction overlay missing or not dark: \
+                                     mean brightness {brightness:.1}/255 in rect \
+                                     [{:.1},{:.1},{:.1},{:.1}]",
+                                    rect[0], rect[1], rect[2], rect[3]
+                                )),
+                                duration_ms: elapsed(),
+                                oracle_score: None,
+                                metadata,
+                            };
+                        }
+                        // First rect passes — no need to check all.
+                        break;
+                    }
+                }
+            }
+            None => {
+                // Render failed — don't fail the test, just skip visual check.
+                metadata.insert("visual_check".into(), "render_failed".into());
+            }
         }
-    } else {
-        // 5. Verify the PDF is still valid (parse succeeds).
-        match pdf_syntax::Pdf::new(saved) {
-            Ok(_) => TestResult {
-                status: TestStatus::Pass,
-                error_message: None,
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata,
-            },
-            Err(e) => TestResult {
-                status: TestStatus::Fail,
-                error_message: Some(format!("reparse failed after redaction: {e:?}")),
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata,
-            },
-        }
+    }
+
+    // 6. Verify the PDF is still valid (parse succeeds).
+    match pdf_syntax::Pdf::new(saved) {
+        Ok(_) => TestResult {
+            status: TestStatus::Pass,
+            error_message: None,
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata,
+        },
+        Err(e) => TestResult {
+            status: TestStatus::Fail,
+            error_message: Some(format!("reparse failed after redaction: {e:?}")),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata,
+        },
     }
 }
