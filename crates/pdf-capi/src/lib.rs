@@ -765,6 +765,303 @@ pub unsafe extern "C" fn pdf_form_field_name(doc: *const PdfDocument, index: i32
     }
 }
 
+// ---- Annotations ---------------------------------------------------------
+
+/// Number of annotations on a page, or -1 on error.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_annotation_count(doc: *const PdfDocument, page_index: i32) -> i32 {
+    if doc.is_null() || page_index < 0 {
+        error::set_last_error("invalid argument");
+        return -1;
+    }
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref();
+    let lopdf_doc = match lopdf::Document::load_mem(raw_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return -1;
+        }
+    };
+    page_annot_objects(&lopdf_doc, page_index as u32)
+        .map(|v| v.len() as i32)
+        .unwrap_or(0)
+}
+
+/// Annotation subtype string at the given index on a page, or null on error.
+///
+/// Free the returned string with `pdf_string_free`.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_annotation_type(
+    doc: *const PdfDocument,
+    page_index: i32,
+    annot_index: i32,
+) -> *mut c_char {
+    if doc.is_null() || page_index < 0 || annot_index < 0 {
+        return ptr::null_mut();
+    }
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref();
+    let lopdf_doc = match lopdf::Document::load_mem(raw_bytes) {
+        Ok(d) => d,
+        Err(_) => return ptr::null_mut(),
+    };
+    let annots = match page_annot_objects(&lopdf_doc, page_index as u32) {
+        Some(a) => a,
+        None => return ptr::null_mut(),
+    };
+    let idx = annot_index as usize;
+    if idx >= annots.len() {
+        return ptr::null_mut();
+    }
+    let subtype = annot_subtype(&lopdf_doc, &annots[idx])
+        .unwrap_or_else(|| "Unknown".to_string());
+    match std::ffi::CString::new(subtype) {
+        Ok(cstr) => cstr.into_raw(),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+/// Add a yellow highlight annotation to a page. Returns a new document.
+///
+/// `x`, `y`, `w`, `h` are in PDF user-space units (points), where `y`
+/// increases upward from the bottom of the page.
+/// The caller owns the returned document and must free it with `pdf_document_free`.
+///
+/// # Safety
+/// `doc` and `out` must be valid non-null pointers.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_annotation_add_highlight(
+    doc: *const PdfDocument,
+    page_index: i32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || out.is_null() || page_index < 0 {
+        error::set_last_error("invalid argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    if let Err(msg) = add_highlight(&mut lopdf_doc, page_index as u32, x, y, w, h) {
+        error::set_last_error(&msg);
+        return PdfStatus::ErrorAnnotation;
+    }
+    let mut buf = Vec::new();
+    if let Err(e) = lopdf_doc.save_to(&mut buf) {
+        error::set_last_error(&format!("save: {e}"));
+        return PdfStatus::ErrorAnnotation;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            PdfStatus::ErrorAnnotation
+        }
+    }
+}
+
+// ---- Document merge ------------------------------------------------------
+
+/// Merge `count` documents into one. `docs` is an array of `count` document pointers.
+///
+/// The caller owns the returned document and must free it with `pdf_document_free`.
+///
+/// # Safety
+/// `docs` must point to `count` valid non-null `PdfDocument` pointers.
+/// `out` must be a valid non-null writable pointer.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_documents_merge(
+    docs: *const *const PdfDocument,
+    count: i32,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if docs.is_null() || out.is_null() || count <= 0 {
+        error::set_last_error("invalid argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let count = count as usize;
+    let docs_slice = unsafe { slice::from_raw_parts(docs, count) };
+    let mut lopdf_docs = Vec::with_capacity(count);
+    for &doc_ptr in docs_slice {
+        if doc_ptr.is_null() {
+            error::set_last_error("null document pointer in array");
+            return PdfStatus::ErrorInvalidArgument;
+        }
+        let raw = unsafe { &*doc_ptr }.0.pdf().data().as_ref().to_vec();
+        match lopdf::Document::load_mem(&raw) {
+            Ok(d) => lopdf_docs.push(d),
+            Err(e) => {
+                error::set_last_error(&e.to_string());
+                return PdfStatus::ErrorCorruptPdf;
+            }
+        }
+    }
+    let mut merged = match pdf_manip::pages::merge_documents(&lopdf_docs) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorMerge;
+        }
+    };
+    let mut buf = Vec::new();
+    if let Err(e) = merged.save_to(&mut buf) {
+        error::set_last_error(&format!("save: {e}"));
+        return PdfStatus::ErrorMerge;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            PdfStatus::ErrorMerge
+        }
+    }
+}
+
+// ---- Annotation helpers --------------------------------------------------
+
+/// Collect the annotation objects for a page (0-based index).
+/// Returns None if the page doesn't exist; empty Vec if it has no annotations.
+fn page_annot_objects(doc: &lopdf::Document, page_index: u32) -> Option<Vec<lopdf::Object>> {
+    let pages = doc.get_pages();
+    let page_id = *pages.get(&(page_index + 1))?;
+    let page_dict = doc.get_dictionary(page_id).ok()?;
+    let annots_obj = page_dict.get(b"Annots").ok()?;
+    let (_, annots_resolved) = doc.dereference(annots_obj).ok()?;
+    let arr = annots_resolved.as_array().ok()?;
+    Some(arr.clone())
+}
+
+/// Resolve an annotation object to its /Subtype name.
+fn annot_subtype(doc: &lopdf::Document, annot_obj: &lopdf::Object) -> Option<String> {
+    let (_, resolved) = doc.dereference(annot_obj).ok()?;
+    let annot_dict = resolved.as_dict().ok()?;
+    let subtype_obj = annot_dict.get(b"Subtype").ok()?;
+    let (_, subtype_resolved) = doc.dereference(subtype_obj).ok()?;
+    let name_bytes = subtype_resolved.as_name().ok()?;
+    Some(String::from_utf8_lossy(name_bytes).into_owned())
+}
+
+/// Add a /Highlight annotation to the given page (0-based) of a lopdf document.
+fn add_highlight(
+    doc: &mut lopdf::Document,
+    page_index: u32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> Result<(), String> {
+    use lopdf::{Dictionary, Object};
+
+    let pages = doc.get_pages();
+    let page_id = *pages
+        .get(&(page_index + 1))
+        .ok_or_else(|| format!("page {} out of range", page_index))?;
+
+    let x2 = x + w;
+    let y2 = y + h;
+
+    let mut annot = Dictionary::new();
+    annot.set("Type", Object::Name(b"Annot".to_vec()));
+    annot.set("Subtype", Object::Name(b"Highlight".to_vec()));
+    annot.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(x as f32),
+            Object::Real(y as f32),
+            Object::Real(x2 as f32),
+            Object::Real(y2 as f32),
+        ]),
+    );
+    // QuadPoints: top-left, top-right, bottom-left, bottom-right
+    annot.set(
+        "QuadPoints",
+        Object::Array(vec![
+            Object::Real(x as f32),
+            Object::Real(y2 as f32),
+            Object::Real(x2 as f32),
+            Object::Real(y2 as f32),
+            Object::Real(x as f32),
+            Object::Real(y as f32),
+            Object::Real(x2 as f32),
+            Object::Real(y as f32),
+        ]),
+    );
+    // Yellow color (R=1, G=1, B=0)
+    annot.set(
+        "C",
+        Object::Array(vec![
+            Object::Real(1.0),
+            Object::Real(1.0),
+            Object::Real(0.0),
+        ]),
+    );
+    annot.set("F", Object::Integer(4)); // Print flag
+
+    let annot_id = doc.add_object(Object::Dictionary(annot));
+
+    // Check whether /Annots on the page is a direct array or an indirect reference,
+    // then append accordingly (two separate borrows to satisfy the borrow checker).
+    let annots_ref_id: Option<lopdf::ObjectId> = {
+        let page_dict = doc
+            .get_dictionary(page_id)
+            .map_err(|e| e.to_string())?;
+        page_dict
+            .get(b"Annots")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
+    };
+
+    if let Some(arr_id) = annots_ref_id {
+        // /Annots is an indirect reference — mutate the referenced array.
+        let arr_obj = doc.get_object_mut(arr_id).map_err(|e| e.to_string())?;
+        if let Object::Array(ref mut a) = arr_obj {
+            a.push(Object::Reference(annot_id));
+        }
+    } else {
+        // /Annots is a direct array or absent.
+        let page_dict = doc
+            .get_dictionary_mut(page_id)
+            .map_err(|e| e.to_string())?;
+        if page_dict.has(b"Annots") {
+            let existing = page_dict
+                .get(b"Annots")
+                .map_err(|e| e.to_string())?
+                .clone();
+            if let Object::Array(mut arr) = existing {
+                arr.push(Object::Reference(annot_id));
+                page_dict.set("Annots", Object::Array(arr));
+            }
+        } else {
+            page_dict.set(
+                "Annots",
+                Object::Array(vec![Object::Reference(annot_id)]),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 // ---- Tests ---------------------------------------------------------------
 
 #[cfg(test)]
@@ -834,7 +1131,27 @@ mod tests {
     fn status_repr() {
         assert_eq!(PdfStatus::Ok as i32, 0);
         assert_eq!(PdfStatus::ErrorInvalidArgument as i32, 1);
+        assert_eq!(PdfStatus::ErrorAnnotation as i32, 10);
+        assert_eq!(PdfStatus::ErrorMerge as i32, 11);
         assert_eq!(PdfStatus::ErrorUnknown as i32, 99);
+    }
+
+    #[test]
+    fn annotation_null_doc() {
+        assert_eq!(unsafe { pdf_annotation_count(ptr::null(), 0) }, -1);
+        assert!(unsafe { pdf_annotation_type(ptr::null(), 0, 0) }.is_null());
+    }
+
+    #[test]
+    fn merge_invalid_args() {
+        let mut out: *mut PdfDocument = ptr::null_mut();
+        // null docs pointer
+        let s = unsafe { pdf_documents_merge(ptr::null(), 2, &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+        // zero count
+        let docs: [*const PdfDocument; 0] = [];
+        let s = unsafe { pdf_documents_merge(docs.as_ptr(), 0, &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
     }
 
     #[test]
