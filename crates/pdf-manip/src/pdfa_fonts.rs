@@ -1201,29 +1201,77 @@ fn standard_encoding_to_char(code: u32) -> char {
         //  152       153       154       155       156       157       158       159
         0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
         //  160       161           162           163           164           165           166           167
-        0xFFFF, 0x00A1/*¡*/, 0x00A2/*¢*/, 0x00A3/*£*/, 0x2044/*⁄*/, 0x00A5/*¥*/, 0x0192/*ƒ*/, 0x00A7/*§*/,
+        0xFFFF, 0x00A1, /*¡*/
+        0x00A2, /*¢*/
+        0x00A3, /*£*/
+        0x2044, /*⁄*/
+        0x00A5, /*¥*/
+        0x0192, /*ƒ*/
+        0x00A7, /*§*/
         //  168           169           170           171           172           173           174           175
-        0x00A4/*¤*/, 0x0027/*'*/, 0x201C/*"*/, 0x00AB/*«*/, 0x2039/*‹*/, 0x203A/*›*/, 0xFB01/*ﬁ*/, 0xFB02/*ﬂ*/,
+        0x00A4, /*¤*/
+        0x0027, /*'*/
+        0x201C, /*"*/
+        0x00AB, /*«*/
+        0x2039, /*‹*/
+        0x203A, /*›*/
+        0xFB01, /*ﬁ*/
+        0xFB02, /*ﬂ*/
         //  176       177           178           179           180           181       182           183
-        0xFFFF, 0x2013/*–*/, 0x2020/*†*/, 0x2021/*‡*/, 0x00B7/*·*/, 0xFFFF, 0x00B6/*¶*/, 0x2022/*•*/,
+        0xFFFF, 0x2013, /*–*/
+        0x2020, /*†*/
+        0x2021, /*‡*/
+        0x00B7, /*·*/
+        0xFFFF, 0x00B6, /*¶*/
+        0x2022, /*•*/
         //  184           185           186           187           188           189           190       191
-        0x201A/*‚*/, 0x201E/*„*/, 0x201D/*"*/, 0x00BB/*»*/, 0x2026/*…*/, 0x2030/*‰*/, 0xFFFF, 0x00BF/*¿*/,
+        0x201A, /*‚*/
+        0x201E, /*„*/
+        0x201D, /*"*/
+        0x00BB, /*»*/
+        0x2026, /*…*/
+        0x2030, /*‰*/
+        0xFFFF, 0x00BF, /*¿*/
         //  192       193           194           195           196           197           198           199
-        0xFFFF, 0x0060/*`*/, 0x00B4/*´*/, 0x02C6/*ˆ*/, 0x02DC/*˜*/, 0x00AF/*¯*/, 0x02D8/*˘*/, 0x02D9/*˙*/,
+        0xFFFF, 0x0060, /*`*/
+        0x00B4, /*´*/
+        0x02C6, /*ˆ*/
+        0x02DC, /*˜*/
+        0x00AF, /*¯*/
+        0x02D8, /*˘*/
+        0x02D9, /*˙*/
         //  200           201       202           203           204       205           206           207
-        0x00A8/*¨*/, 0xFFFF, 0x02DA/*˚*/, 0x00B8/*¸*/, 0xFFFF, 0x02DD/*˝*/, 0x02DB/*˛*/, 0x02C7/*ˇ*/,
+        0x00A8, /*¨*/
+        0xFFFF, 0x02DA, /*˚*/
+        0x00B8, /*¸*/
+        0xFFFF, 0x02DD, /*˝*/
+        0x02DB, /*˛*/
+        0x02C7, /*ˇ*/
         //  208           209       210       211       212       213       214       215
-        0x2014/*—*/, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+        0x2014, /*—*/
+        0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
         //  216       217       218       219       220       221       222       223
         0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
         //  224       225           226       227           228       229       230       231
-        0xFFFF, 0x00C6/*Æ*/, 0xFFFF, 0x00AA/*ª*/, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+        0xFFFF, 0x00C6, /*Æ*/
+        0xFFFF, 0x00AA, /*ª*/
+        0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
         //  232           233           234           235           236       237       238       239
-        0x0141/*Ł*/, 0x00D8/*Ø*/, 0x0152/*Œ*/, 0x00BA/*º*/, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+        0x0141, /*Ł*/
+        0x00D8, /*Ø*/
+        0x0152, /*Œ*/
+        0x00BA, /*º*/
+        0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
         //  240       241           242       243       244       245       246           247
-        0xFFFF, 0x00E6/*æ*/, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0131/*ı*/, 0xFFFF,
+        0xFFFF, 0x00E6, /*æ*/
+        0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0x0131, /*ı*/
+        0xFFFF,
         //  248           249           250           251           252       253       254       255
-        0x0142/*ł*/, 0x00F8/*ø*/, 0x0153/*œ*/, 0x00DF/*ß*/, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
+        0x0142, /*ł*/
+        0x00F8, /*ø*/
+        0x0153, /*œ*/
+        0x00DF, /*ß*/
+        0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF,
     ];
     let cp = STD_ENC[(code - 128) as usize];
     char::from_u32(cp).unwrap_or('\u{FFFF}')
@@ -6294,8 +6342,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                     // Must extract the raw CFF table bytes first: font_data may be
                     // an OTF-wrapped CFF (starts with "OTTO"), and parse_cff_encoding_map
                     // expects raw CFF, not the OTF container. (#504)
-                    let cff_bytes =
-                        extract_cff_bytes_from_otf(&font_data).unwrap_or(&font_data);
+                    let cff_bytes = extract_cff_bytes_from_otf(&font_data).unwrap_or(&font_data);
                     Some(parse_cff_encoding_map(cff_bytes))
                 } else {
                     None
@@ -6351,8 +6398,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 // (#6.2.11.5-cff-enc-filter)
                 let cff_enc_for_filter: Option<std::collections::HashMap<u8, u16>> = {
                     // Must extract raw CFF bytes first: font_data may be OTF-wrapped.
-                    let cff_bytes =
-                        extract_cff_bytes_from_otf(&font_data).unwrap_or(&font_data);
+                    let cff_bytes = extract_cff_bytes_from_otf(&font_data).unwrap_or(&font_data);
                     Some(parse_cff_encoding_map(cff_bytes))
                 };
                 // Compute .notdef (GID 0) advance for this font so the filter can
@@ -6409,26 +6455,14 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                                 &enc_info.1,
                             )
                             || matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0)
-                            // Non-WinAnsi, non-SE encodings (e.g. MacRomanEncoding) all
-                            // use CFF internal encoding (same path as veraPDF) — every
-                            // correction is definitively correct, allow all high-byte codes.
-                            // (#6.2.11.5-non-winansi-cff-fallback)
-                            || (!enc_info.0.is_empty()
-                                && enc_info.0 != "WinAnsiEncoding"
-                                && enc_info.0 != "StandardEncoding")
                     } else {
                         // Explicit Differences entries are deterministic mappings, so
                         // high-byte corrections remain safe on non-subset fonts.
                         // Also allow when the CFF encoding maps the code to a valid GID:
                         // for fonts with no BaseEncoding, CFF encoding is authoritative. (#479)
-                        // Non-WinAnsi, non-SE encodings: all corrections via CFF internal
-                        // encoding (same as veraPDF) — allow all. (#6.2.11.5-non-winansi-cff-fallback)
                         code <= 127
                             || enc_info.1.contains_key(&code)
                             || matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0)
-                            || (!enc_info.0.is_empty()
-                                && enc_info.0 != "WinAnsiEncoding"
-                                && enc_info.0 != "StandardEncoding")
                     }
                 });
             }
@@ -8288,14 +8322,13 @@ fn compute_cff_corrections_by_cff_encoding(
             continue;
         }
         let frac_w = match cff.glyph_index(code as u8) {
-            Some(gid) if gid.0 != 0 => {
-                cff.glyph_width(gid).map(|w| w as f64 * scale)
-            }
+            Some(gid) if gid.0 != 0 => cff.glyph_width(gid).map(|w| w as f64 * scale),
             _ => {
                 // Code not encoded → veraPDF uses .notdef width for high-byte
                 // codes. Skip low-byte codes (0-127 are well-defined via ASCII).
                 if (128..=255).contains(&code) {
-                    cff.glyph_width(cff_parser::GlyphId(0)).map(|w| w as f64 * scale)
+                    cff.glyph_width(cff_parser::GlyphId(0))
+                        .map(|w| w as f64 * scale)
                 } else {
                     None
                 }
@@ -8336,14 +8369,12 @@ fn compute_cff_corrections_by_name(
         if code > 255 {
             continue;
         }
-        let frac_w_opt =
-            cff_width_for_code(cff, font_data, code, enc_name, differences, scale);
+        let frac_w_opt = cff_width_for_code(cff, font_data, code, enc_name, differences, scale);
         let Some(frac_w) = frac_w_opt else {
             continue;
         };
         let rounded_w = frac_w.round() as i64;
-        // veraPDF §6.2.11.5 allows ≤1 unit tolerance — only flag differences > 1.
-        if (rounded_w - pdf_w as i64).abs() > 1 {
+        if rounded_w != pdf_w as i64 {
             corrections.push((i, rounded_w));
         }
     }
@@ -8904,16 +8935,9 @@ fn cff_width_for_code(
                     unicode_to_glyph_name(ch).unwrap_or_default()
                 }
             }
-        } else if enc_name == "WinAnsiEncoding" {
+        } else {
             let ch = encoding_to_char(code, enc_name);
             unicode_to_glyph_name(ch).unwrap_or_default()
-        } else {
-            // For MacRomanEncoding and any other non-standard encoding,
-            // veraPDF does NOT use name-based lookup — it falls directly to
-            // CFF internal encoding (table.glyph_index(code)).  Return empty
-            // string here so name_is_undefined triggers the CFF fallback.
-            // (#6.2.11.5-non-winansi-cff-fallback)
-            String::new()
         };
         if !glyph_name.is_empty() && glyph_name != ".notdef" {
             if let Some(w) =
@@ -14907,6 +14931,38 @@ fn unicode_to_agl_name(ch: char) -> Option<String> {
         0x203A => Some("guilsinglright".into()),
         0x20AC => Some("Euro".into()),
         0x2122 => Some("trademark".into()),
+        // Ligatures in MacRomanEncoding (222=fi, 223=fl) and Standard Encoding
+        // (174=fi, 175=fl). unicode_to_glyph_name returns "uniFB01" for U+FB01
+        // which fails CFF charset lookups — must resolve to the canonical AGL name.
+        // (#6.2.11.5-ligatures)
+        0xFB00 => Some("ff".into()),
+        0xFB01 => Some("fi".into()),
+        0xFB02 => Some("fl".into()),
+        0xFB03 => Some("ffi".into()),
+        0xFB04 => Some("ffl".into()),
+        // Other common AGL names missing from the table.
+        0x0131 => Some("dotlessi".into()),
+        0x02C7 => Some("caron".into()),
+        0x02D8 => Some("breve".into()),
+        0x02D9 => Some("dotaccent".into()),
+        0x02DA => Some("ring".into()),
+        0x02DB => Some("ogonek".into()),
+        0x02DD => Some("hungarumlaut".into()),
+        0x03C0 => Some("pi".into()),
+        0x2044 => Some("fraction".into()),
+        0x2126 => Some("Omega".into()),
+        0x221E => Some("infinity".into()),
+        0x220F => Some("product".into()),
+        0x2211 => Some("summation".into()),
+        0x2202 => Some("partialdiff".into()),
+        0x221A => Some("radical".into()),
+        0x222B => Some("integral".into()),
+        0x2248 => Some("approxequal".into()),
+        0x2206 => Some("Delta".into()),
+        0x2260 => Some("notequal".into()),
+        0x2264 => Some("lessequal".into()),
+        0x2265 => Some("greaterequal".into()),
+        0x25CA => Some("lozenge".into()),
         _ => None,
     }
 }
