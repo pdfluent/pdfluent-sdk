@@ -9490,11 +9490,11 @@ pub fn check_tounicode_values(pdf: &Pdf, level: crate::PdfALevel, report: &mut C
     // (PDF/A-1A/2A/3A). Level B and U documents are not required to have ActualText,
     // so veraPDF doesn't fire the PUA rule for them. (#FP-6.2.11.7.3)
     //
-    // Additionally, if the document has ANY ActualText in the structure tree, we can't
-    // determine per-glyph ActualText coverage without a full content-stream analysis,
-    // so we skip the PUA check to avoid FPs. (veraPDF rule: unicodePUA == false ||
-    // actualTextPresent == true — #FP-6.2.11.7.3)
-    let skip_pua = !level.requires_tagged() || doc_has_any_actual_text(pdf);
+    // NOTE: We do NOT skip the PUA check when the document has document-level ActualText,
+    // because veraPDF checks per-glyph ActualText coverage (not document-level). A document
+    // with some ActualText but a PUA-mapped glyph without per-glyph ActualText still
+    // triggers §6.2.11.7.3. (#FN-6.2.11.7.3)
+    let skip_pua = !level.requires_tagged();
 
     // Collect decoded bytes of direct font ToUnicode streams so check_cmap_streams_for_ffff
     // (second pass) can skip them — they are already fully handled by the first pass below.
