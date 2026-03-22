@@ -35,8 +35,10 @@ pub mod text_extract;
 pub mod text_oracle;
 pub mod text_replace;
 pub mod watermark_roundtrip;
+pub mod xfa_data_roundtrip;
 pub mod xfa_extract;
 pub mod xfa_flatten;
+pub mod xfa_formcalc;
 pub mod xlsx_convert;
 pub mod zugferd_roundtrip;
 pub mod zugferd_validate;
@@ -140,6 +142,8 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(compress_roundtrip::CompressRoundtripTest),
         Box::new(xfa_extract::XfaExtractTest),
         Box::new(xfa_flatten::XfaFlattenTest),
+        Box::new(xfa_formcalc::XfaFormCalcTest),
+        Box::new(xfa_data_roundtrip::XfaDataRoundtripTest),
         Box::new(render_mupdf_oracle::RenderMupdfOracleTest),
         Box::new(docx_convert::DocxConvertTest),
         Box::new(xlsx_convert::XlsxConvertTest),
