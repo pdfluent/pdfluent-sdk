@@ -1,4 +1,5 @@
 #![cfg(feature = "pdfa-convert")]
+#![allow(unused_imports, unused_variables, dead_code, unused_parens)]
 
 #[test]
 #[ignore]
