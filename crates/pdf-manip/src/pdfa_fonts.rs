@@ -8383,6 +8383,7 @@ fn compute_cff_corrections_for_custom_encoding(
 /// veraPDF §6.2.11.5 which maps code → PDF-encoding-name → CFF-charset →
 /// charstring width. When the name is absent from the CFF charset, veraPDF
 /// uses the .notdef advance width (GID 0) — cff_width_for_code handles this.
+#[allow(clippy::too_many_arguments)]
 fn compute_cff_corrections_by_name(
     cff: &cff_parser::Table,
     font_data: &[u8],
@@ -8391,6 +8392,7 @@ fn compute_cff_corrections_by_name(
     enc_name: &str,
     differences: &std::collections::HashMap<u32, String>,
     scale: f64,
+    is_subset: bool,
 ) -> Vec<(usize, i64)> {
     let mut corrections = Vec::new();
     for (i, obj) in existing_widths.iter().enumerate() {
@@ -8403,7 +8405,8 @@ fn compute_cff_corrections_by_name(
         if code > 255 {
             continue;
         }
-        let frac_w_opt = cff_width_for_code(cff, font_data, code, enc_name, differences, scale);
+        let frac_w_opt =
+            cff_width_for_code(cff, font_data, code, enc_name, differences, scale, is_subset);
         let Some(frac_w) = frac_w_opt else {
             continue;
         };
@@ -8465,6 +8468,7 @@ fn compute_cff_type1_width_corrections(
                 enc_name,
                 differences,
                 scale,
+                is_subset,
             );
         }
         // CFF parse failed: nothing we can do.
@@ -8548,7 +8552,7 @@ fn compute_cff_type1_width_corrections(
         // code 151 WinAnsiEncoding→emdash→1000). Using .notdef (278) as the
         // expected width then introduces a false correction 1000→278. (#6.2.11.5)
         let frac_w = if code <= 255 {
-            cff_width_for_code(&cff, font_data, code, enc_name, differences, scale)
+            cff_width_for_code(&cff, font_data, code, enc_name, differences, scale, is_subset)
         } else {
             None
         };
@@ -8994,7 +8998,12 @@ fn compute_cff_single_width(
     }
 
     // For Differences-overridden codes, CID fonts, or codes > 255: use name lookup.
-    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale)
+    // is_subset=false: compute_cff_single_width is used for compliance checking and
+    // single-code fixes where subset status is not propagated. The non-subset guard
+    // (code_in_cff_enc) is conservative here — callers that DO have is_subset context
+    // (fix_font_width_mismatches, compute_cff_type1_width_corrections) pass is_subset
+    // via the correct path. (#6.2.11.5-subset-cff-enc-guard)
+    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale, false)
 }
 
 /// Look up the CFF glyph width for a character code, trying multiple strategies:
@@ -9007,6 +9016,7 @@ fn cff_width_for_code(
     enc_name: &str,
     differences: &std::collections::HashMap<u32, String>,
     scale: f64,
+    is_subset: bool,
 ) -> Option<f64> {
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
 
@@ -9060,23 +9070,29 @@ fn cff_width_for_code(
         };
         // Hoist resolved glyph name for use in the final fallback below.
         pdf_glyph_name = glyph_name.clone();
-        // Guard: veraPDF uses the CFF encoding table (not PDF /Encoding) to map
-        // code → GID. For codes absent from the CFF encoding, veraPDF falls back
-        // to the font's defaultWidthX (Private DICT op 20), NOT to a name-based
-        // charset lookup. Performing name lookup for such codes produces wrong
-        // corrections: e.g. WinAnsi code 225 "aacute" found in CFF charset at
-        // GID 65 (width 333) while veraPDF uses defaultWidthX=556 — changing the
-        // PDF width 556→333 then fails §6.2.11.5 (font=556, dict=333). Skip name
-        // lookup for high-byte codes absent from the CFF encoding. (#6.2.11.5-cff-enc-guard)
+        // Guard: for non-subset fonts, veraPDF uses the CFF encoding table (not
+        // PDF /Encoding) to map code → GID. For codes absent from the CFF encoding,
+        // veraPDF falls back to the font's defaultWidthX (Private DICT op 20), NOT
+        // to a name-based charset lookup. Performing name lookup for such codes
+        // produces wrong corrections: e.g. WinAnsi code 225 "aacute" found in CFF
+        // charset at GID 65 (width 333) while veraPDF uses defaultWidthX=556.
+        // (#6.2.11.5-cff-enc-guard)
         //
-        // Exception: explicit /Differences entries are always resolved via glyph
+        // Exception 1: explicit /Differences entries are always resolved via glyph
         // name by veraPDF §6.2.11.5, regardless of the CFF internal encoding.
-        // A Differences-only font (no BaseEncoding) may have codes like 222 /Thorn
-        // that don't appear in the CFF encoding table — but veraPDF still looks up
-        // "Thorn" in the CFF charset directly. Bypassing this guard for such codes
-        // prevents incorrect zeroing of valid widths. (#507, §6.2.11.5-differences-bypass)
+        // (#507, §6.2.11.5-differences-bypass)
+        //
+        // Exception 2: subset fonts (ABCDEF+ prefix). During subsetting the CFF
+        // encoding is rewritten with sequential arbitrary codes unrelated to the
+        // original PDF encoding codes, so the CFF encoding is useless for mapping.
+        // veraPDF resolves subset font codes via PDF encoding → glyph name → CFF
+        // charset lookup, regardless of the CFF internal encoding. Bypassing the
+        // guard for subset fonts allows name lookup to find the actual glyph (e.g.
+        // WinAnsi 227 "atilde" found in subset at GID 64, width 556) rather than
+        // falling through to defaultWidthX=333, which would produce a wrong
+        // correction 556→333. (#6.2.11.5-subset-cff-enc-guard)
         let from_differences = differences.contains_key(&code);
-        let code_in_cff_enc = code < 128 || from_differences || {
+        let code_in_cff_enc = is_subset || code < 128 || from_differences || {
             let enc_map_check = parse_cff_encoding_map(font_data);
             enc_map_check.contains_key(&(code as u8))
         };
