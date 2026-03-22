@@ -154,7 +154,7 @@ fn cluster_id(test_name: &str, category: &str, pattern: &str) -> String {
 fn likely_crate(test_name: &str) -> &str {
     match test_name {
         "parse" | "metadata" | "geometry" => "pdf-syntax",
-        "render" | "render_oracle" | "bookmarks" => "pdf-engine",
+        "render" | "render_oracle" | "render_mupdf_oracle" | "bookmarks" => "pdf-engine",
         "text_extract" | "text_oracle" | "images" | "search" => "pdf-extract",
         "form_fields" => "pdf-forms",
         "annotations" => "pdf-annot",

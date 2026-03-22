@@ -117,6 +117,7 @@ pub fn compute_ssim(
 ///
 /// Takes two RGBA images with potentially different strides, outputs the
 /// overlapping region with differences amplified 5x.
+#[cfg(feature = "pdfium-oracle")]
 pub fn generate_diff(
     img_a: &[u8],
     width_a: u32,
@@ -189,6 +190,7 @@ mod tests {
         assert!((score - 1.0).abs() < 1e-6);
     }
 
+    #[cfg(feature = "pdfium-oracle")]
     #[test]
     fn diff_identical_is_black() {
         let w = 4u32;

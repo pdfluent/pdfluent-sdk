@@ -5,9 +5,9 @@
 //! with `pdf_syntax` and checks that the output is a structurally valid PDF
 //! with at least one page.
 //!
-//! This validates that the flatten pass does not corrupt the PDF skeleton and
-//! that the rendered page content (content streams, resources, page tree)
-//! survives the AcroForm removal intact.
+//! When the iText 5 oracle script is present at `/opt/itext/itext-xfa-oracle.sh`,
+//! the test also compares our page count against iText's flatten output and
+//! fails if they differ.
 //!
 //! Skip policy:
 //! - No /XFA key in AcroForm → Skip (not an XFA form)
@@ -17,11 +17,13 @@
 //! - lopdf cannot re-serialise the mutated document
 //! - pdf_syntax cannot re-parse the saved bytes
 //! - Re-parsed PDF has zero pages
+//! - Page count differs from iText oracle (when oracle is available)
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use super::{PdfTest, TestResult, TestStatus};
+use crate::oracles::itext::ITextOracle;
 
 pub struct XfaFlattenTest;
 
@@ -30,7 +32,7 @@ impl PdfTest for XfaFlattenTest {
         "xfa_flatten"
     }
 
-    fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
+    fn run(&self, pdf_data: &[u8], path: &Path) -> TestResult {
         let start = std::time::Instant::now();
 
         let mut doc = match lopdf::Document::load_mem(pdf_data) {
@@ -56,6 +58,10 @@ impl PdfTest for XfaFlattenTest {
             };
         }
 
+        // Query the iText oracle with the original PDF before we mutate it.
+        // Stored as Option<(itext_page_count, flatten_success)>.
+        let itext_result = ITextOracle::new().and_then(|oracle| oracle.call(path));
+
         // Strip the AcroForm (which contains the /XFA key) from the catalog.
         // This is the minimum "flatten" step: the page content streams remain
         // untouched so the PDF stays renderable.
@@ -77,14 +83,50 @@ impl PdfTest for XfaFlattenTest {
                 let pages = reparsed.pages().len();
                 let mut metadata = HashMap::new();
                 metadata.insert("page_count".to_string(), pages.to_string());
-                let (status, error_message) = if pages > 0 {
-                    (TestStatus::Pass, None)
-                } else {
-                    (TestStatus::Fail, Some("flattened PDF has no pages".into()))
-                };
+
+                // Structural check: at least one page.
+                if pages == 0 {
+                    return TestResult {
+                        status: TestStatus::Fail,
+                        error_message: Some("flattened PDF has no pages".into()),
+                        duration_ms: start.elapsed().as_millis() as u64,
+                        oracle_score: None,
+                        metadata,
+                    };
+                }
+
+                // iText oracle comparison: fail if page count differs.
+                if let Some(ref r) = itext_result {
+                    metadata.insert("itext_has_xfa".to_string(), r.has_xfa.to_string());
+                    metadata.insert("itext_page_count".to_string(), r.page_count.to_string());
+                    metadata.insert(
+                        "itext_flatten_success".to_string(),
+                        r.flatten_success.to_string(),
+                    );
+                    if !r.errors.is_empty() {
+                        metadata.insert("itext_errors".to_string(), r.errors.join("; "));
+                    }
+                    if r.has_xfa
+                        && r.flatten_success
+                        && r.page_count > 0
+                        && r.page_count as usize != pages
+                    {
+                        return TestResult {
+                            status: TestStatus::Fail,
+                            error_message: Some(format!(
+                                "page count mismatch: ours={pages}, iText={}",
+                                r.page_count
+                            )),
+                            duration_ms: start.elapsed().as_millis() as u64,
+                            oracle_score: None,
+                            metadata,
+                        };
+                    }
+                }
+
                 TestResult {
-                    status,
-                    error_message,
+                    status: TestStatus::Pass,
+                    error_message: None,
                     duration_ms: start.elapsed().as_millis() as u64,
                     oracle_score: None,
                     metadata,

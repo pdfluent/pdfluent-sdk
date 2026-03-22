@@ -23,6 +23,7 @@ pub mod pdfx_validate;
 pub mod pptx_convert;
 pub mod redact;
 pub mod render;
+pub mod render_mupdf_oracle;
 #[cfg(feature = "pdfium-oracle")]
 pub mod render_oracle;
 pub mod rotate_roundtrip;
@@ -139,6 +140,7 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(compress_roundtrip::CompressRoundtripTest),
         Box::new(xfa_extract::XfaExtractTest),
         Box::new(xfa_flatten::XfaFlattenTest),
+        Box::new(render_mupdf_oracle::RenderMupdfOracleTest),
         Box::new(docx_convert::DocxConvertTest),
         Box::new(xlsx_convert::XlsxConvertTest),
         Box::new(zugferd_roundtrip::ZugferdRoundtripTest),
