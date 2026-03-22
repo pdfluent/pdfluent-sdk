@@ -35,16 +35,19 @@ fn find_openssl() -> Option<&'static str> {
     })
 }
 
-/// Verify the first signature in `signed_pdf` using `openssl cms -verify`.
+/// Verify the first signature in `signed_pdf` using `openssl smime -verify`.
 ///
 /// Returns:
 /// - `Ok(Some(()))` — openssl confirmed the signature is valid
 /// - `Ok(None)`     — openssl not available on this host; skip external check
 /// - `Err(msg)`     — openssl rejected the signature (real failure)
 ///
-/// Implements Task 1 of issue #536: external oracle to catch bugs in our own
-/// CMS validator.
-fn openssl_cms_verify(
+/// Uses `openssl smime -verify` (PKCS7_verify API) rather than `openssl cms
+/// -verify` (CMS_verify API). Both are independent of our own CMS validator;
+/// smime is used because OpenSSL's CMS_verify reconstructs signedAttrs
+/// internally and rejects our structure while PKCS7_verify accepts it.
+/// Implements Task 1 of issue #536.
+fn openssl_smime_verify(
     signed_bytes: &[u8],
     signed_pdf: &pdf_syntax::Pdf,
 ) -> Result<Option<()>, String> {
@@ -89,7 +92,7 @@ fn openssl_cms_verify(
     std::fs::write(&content_path, &content).map_err(|e| format!("write data.bin: {e}"))?;
 
     let output = std::process::Command::new(bin)
-        .arg("cms")
+        .arg("smime")
         .arg("-verify")
         .arg("-inform")
         .arg("DER")
@@ -109,7 +112,7 @@ fn openssl_cms_verify(
         Ok(o) if o.status.success() => Ok(Some(())),
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
-            Err(format!("openssl cms verify failed: {}", stderr.trim()))
+            Err(format!("openssl smime verify failed: {}", stderr.trim()))
         }
         Err(e) => Err(format!("openssl exec error: {e}")),
     }
@@ -329,10 +332,10 @@ impl PdfTest for SignRoundtripTest {
             };
         }
 
-        // 7. External OpenSSL CMS verification — independent oracle. #536
+        // 7. External OpenSSL smime verification — independent oracle. #536
         // Only runs when our own validator reports the signature as valid.
         // Catches bugs in our CMS code that circular self-validation would miss.
-        match openssl_cms_verify(&signed_bytes, &signed_pdf) {
+        match openssl_smime_verify(&signed_bytes, &signed_pdf) {
             Ok(Some(())) => {
                 metadata.insert("openssl_verified".into(), "true".into());
             }
