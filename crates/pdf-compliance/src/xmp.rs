@@ -307,14 +307,9 @@ pub fn validate_xmp(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) 
         && !report.issues[ns_violations_before..]
             .iter()
             .any(|i| i.rule == "6.7.11")
-        && report.issues[ns_violations_before..]
-            .iter()
-            .any(|i| {
-                i.rule.starts_with("6.7.9")
-                    && CORE_NS_CASCADE
-                        .iter()
-                        .any(|&ns| i.message.contains(ns))
-            })
+        && report.issues[ns_violations_before..].iter().any(|i| {
+            i.rule.starts_with("6.7.9") && CORE_NS_CASCADE.iter().any(|&ns| i.message.contains(ns))
+        })
     {
         error(
             report,
@@ -1303,9 +1298,13 @@ fn decode_xml_entities(s: &str) -> String {
 /// veraPDF treats `/Author " Name "` (with space) and `dc:creator "Name"` as NOT equivalent.
 /// (#FN-6.7.3.3-whitespace)
 fn values_match(info_val: &str, xmp_val: &str) -> bool {
+    // Trim both sides: PDF Info strings may have trailing whitespace added by
+    // PDF generators (e.g. extra spaces after a title) that does not appear in
+    // the XMP counterpart. veraPDF trims before comparing. (#FP-6.7.3.2 gen-302)
+    let info_trimmed = info_val.trim();
     let xmp_trimmed = xmp_val.trim();
     // Decode XML entities in XMP value (e.g. &apos; → ') before comparing.
-    info_val == xmp_trimmed || info_val == decode_xml_entities(xmp_trimmed)
+    info_trimmed == xmp_trimmed || info_trimmed == decode_xml_entities(xmp_trimmed)
 }
 
 /// Extract a value from an rdf:Alt container (used for dc:title, dc:description).

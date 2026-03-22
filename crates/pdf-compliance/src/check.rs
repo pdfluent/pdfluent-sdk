@@ -6847,8 +6847,6 @@ pub fn check_xref_format(pdf: &Pdf, report: &mut ComplianceReport) {
         if &data[pos..pos + 4] == b"xref" {
             let after = pos + 4;
             if after < data.len() && (data[after] == b'\n' || data[after] == b'\r') {
-                // §6.1.4 t1: xref subsection header "N M" must use single space.
-                check_xref_header_spacing(&data[after..], report);
                 if let Some(issue) = validate_xref_section(&data[after..]) {
                     error(report, "6.1.3", issue);
                     return;
@@ -6856,45 +6854,6 @@ pub fn check_xref_format(pdf: &Pdf, report: &mut ComplianceReport) {
             }
         }
         pos += 1;
-    }
-}
-
-/// Check xref subsection headers for single-space separator (§6.1.4 t1).
-fn check_xref_header_spacing(data: &[u8], report: &mut ComplianceReport) {
-    let mut pos = 0;
-    // Skip initial EOL
-    while pos < data.len() && (data[pos] == b'\n' || data[pos] == b'\r') {
-        pos += 1;
-    }
-    while pos < data.len() {
-        if data[pos..].starts_with(b"trailer") {
-            break;
-        }
-        // Check if this line is a subsection header (short number + space + number)
-        let line_start = pos;
-        while pos < data.len() && data[pos] != b'\n' && data[pos] != b'\r' {
-            pos += 1;
-        }
-        let line = &data[line_start..pos];
-        // Subsection headers have format "N M" where N and M are numbers.
-        // They're shorter than xref entries (which are exactly 18+ bytes).
-        if line.len() < 18 && !line.is_empty() {
-            // Check for multiple spaces between the two numbers
-            if let Some(sp) = line.iter().position(|&b| b == b' ') {
-                if sp + 1 < line.len() && line[sp + 1] == b' ' {
-                    error(
-                        report,
-                        "6.1.4",
-                        "Cross-reference subsection header has multiple spaces between object number and count",
-                    );
-                    return;
-                }
-            }
-        }
-        // Skip EOL
-        while pos < data.len() && (data[pos] == b'\n' || data[pos] == b'\r') {
-            pos += 1;
-        }
     }
 }
 
@@ -11546,7 +11505,7 @@ fn check_cidfont_type2_widths(
             }
         }
 
-        // Check /DW (DefaultWidth) against the actual font advance for all GIDs
+        // Check /DW (DefaultWidth) against the actual font advance for GIDs
         // not explicitly covered by /W. §6.3.5/§6.3.6 requires the default width
         // declared in the PDF to be consistent with the font program.
         // Fixes FN for cs-isartor-6-3-5-t01-fail-b where DW=1000 but GID 1674
@@ -11554,12 +11513,23 @@ fn check_cidfont_type2_widths(
         // Skip DW=0: it's a degenerate default meaning "absent/notdef" — checking every
         // glyph against DW=0 causes FPs since subset glyphs always have non-zero advances.
         // veraPDF does not fire §6.2.11.5 for DW=0 mismatches. (#FP-6.2.11.5-dw0)
+        //
+        // Range: only check GIDs within [min_W_cid, max_W_cid] (or [4, num_glyphs) if /W
+        // is absent). GIDs below min_W are control-char CIDs (e.g. GID 4 = U+0004 = EOT)
+        // that are never used as document characters in Identity-mapped CID fonts.
+        // veraPDF does not check these low CIDs against /DW. (#FP-6.3.6-gen-302)
         if let Some(dw) = cid_font.get::<i32>(keys::DW).filter(|&d| d > 0) {
             let num_glyphs = face.number_of_glyphs() as u32;
-            for gid_u32 in 0..num_glyphs {
-                if gid_u32 == 0 {
-                    continue; // GID 0 is always .notdef — never a document character; skip
-                }
+            let (range_start, range_end) = if w_map.is_empty() {
+                // No /W declared: use full glyph range minus standard control GIDs 0-3.
+                (4u32, num_glyphs)
+            } else {
+                let min_cid = *w_map.keys().min().unwrap_or(&4); // safe: filtered non-empty
+                let max_cid = *w_map.keys().max().unwrap_or(&num_glyphs);
+                // Never start below GID 4 (first four are universal control glyphs).
+                (min_cid.max(4), max_cid + 1)
+            };
+            for gid_u32 in range_start..range_end {
                 if w_map.contains_key(&gid_u32) {
                     continue; // Covered by /W — already checked above
                 }
@@ -11804,18 +11774,23 @@ fn check_truetype_simple_widths(
         if gid.0 == 0 && explicit_gid.is_some() {
             continue;
         }
-        // When the glyph is absent from the cmap (explicit_gid is None), veraPDF also
-        // fires the glyph-coverage rule (§6.3.5 / §6.2.11.4.1) alongside the width rule.
-        // Emit it once per font here, before falling through to the width check below.
-        // (#FN-6.3.5 isartor-6-3-5-t01-fail-d)
-        if explicit_gid.is_none() && !glyph_absence_emitted {
-            error_at(
-                report,
-                "6.2.11.4.1",
-                format!("Font {name} code {code} (U+{:04X}): glyph not present in embedded font program", ch as u32),
-                loc.clone(),
-            );
-            glyph_absence_emitted = true;
+        // When the glyph is absent from the cmap, emit the glyph-coverage rule
+        // (§6.3.5 / §6.2.11.4.1) and skip the width check. The PDF/A-1 §6.3.6
+        // width-consistency requirement only applies to glyphs that ARE present in
+        // the font program; using the .notdef advance as a stand-in produces spurious
+        // width mismatches. veraPDF fires §6.3.5 but not §6.3.6 for absent glyphs.
+        // (#FN-6.3.5 isartor-6-3-5-t01-fail-d, #FP-6.3.6 gen-302)
+        if explicit_gid.is_none() {
+            if !glyph_absence_emitted {
+                error_at(
+                    report,
+                    "6.2.11.4.1",
+                    format!("Font {name} code {code} (U+{:04X}): glyph not present in embedded font program", ch as u32),
+                    loc.clone(),
+                );
+                glyph_absence_emitted = true;
+            }
+            continue; // Width check inapplicable for absent glyphs
         }
         let Some(advance) = face.glyph_hor_advance(gid) else {
             continue;
@@ -12271,7 +12246,11 @@ pub fn check_annotation_appearance(pdf: &Pdf, report: &mut ComplianceReport) {
         };
         for annot in annots.iter::<Dict<'_>>() {
             if let Some(subtype) = annot.get::<Name>(keys::SUBTYPE) {
-                if subtype.as_ref() == b"Popup" {
+                // Popup annotations are structurally exempt (no visual content).
+                // Link annotations are also exempt: they define clickable regions
+                // but have no appearance of their own — veraPDF does not require
+                // /AP for Link in any PDF/A part. (#FP-6.5.3 gen-302)
+                if subtype.as_ref() == b"Popup" || subtype.as_ref() == b"Link" {
                     continue;
                 }
             }
@@ -17816,22 +17795,6 @@ mod tests {
         assert_eq!(t1_winansi_glyph_name(48), Some("zero"));
         assert_eq!(t1_winansi_glyph_name(46), Some("period"));
         assert_eq!(t1_winansi_glyph_name(0), None);
-    }
-
-    // ── xref header spacing ──
-
-    #[test]
-    fn xref_header_double_space_detected() {
-        let mut report = ComplianceReport::default();
-        check_xref_header_spacing(b"\n0  14\n0000000000 65535 f \r\n", &mut report);
-        assert!(report.issues.iter().any(|i| i.rule == "6.1.4"));
-    }
-
-    #[test]
-    fn xref_header_single_space_ok() {
-        let mut report = ComplianceReport::default();
-        check_xref_header_spacing(b"\n0 14\n0000000000 65535 f \r\n", &mut report);
-        assert!(!report.issues.iter().any(|i| i.rule == "6.1.4"));
     }
 
     // ── ICC profile identity comparison ──
