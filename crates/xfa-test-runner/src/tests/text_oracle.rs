@@ -4,8 +4,16 @@ use std::path::Path;
 use super::{PdfTest, TestResult, TestStatus};
 use crate::oracles::poppler::{self, PopplerOracle};
 
+/// Minimum similarity (normalized Levenshtein) below which the test fails.
+/// Poppler is the ground truth; <50% agreement signals a meaningful regression.
+/// Only applied when poppler extracts at least MIN_POPPLER_CHARS characters
+/// (to avoid false failures on scanned/image-only PDFs where both are empty
+/// and on tiny documents where one stray character skews the ratio).
+const FAIL_THRESHOLD: f64 = 0.50;
+const MIN_POPPLER_CHARS: usize = 50;
+
 /// Compares our text extraction against Poppler's `pdftotext`.
-/// Always returns Pass with oracle_score indicating quality (0.0-1.0).
+/// Fails when similarity < 0.50 on documents where poppler extracts real text.
 pub struct TextOracleTest;
 
 impl PdfTest for TextOracleTest {
@@ -100,8 +108,26 @@ impl PdfTest for TextOracleTest {
             poppler_normalized.len().to_string(),
         );
         metadata.insert("pages_compared".to_string(), pages_to_extract.to_string());
+        metadata.insert("threshold".to_string(), format!("{FAIL_THRESHOLD:.2}"));
 
-        // Quality metric: always Pass, score captures quality
+        // Fail when poppler extracts real text and our similarity is below threshold.
+        // Skip the threshold for image-heavy/scanned PDFs (too few poppler chars).
+        let qualifies_for_threshold = poppler_normalized.len() >= MIN_POPPLER_CHARS;
+        if qualifies_for_threshold && similarity < FAIL_THRESHOLD {
+            return TestResult {
+                status: TestStatus::Fail,
+                error_message: Some(format!(
+                    "text similarity {similarity:.4} below threshold {FAIL_THRESHOLD:.2} \
+                     (our={} chars, poppler={} chars)",
+                    our_normalized.len(),
+                    poppler_normalized.len(),
+                )),
+                duration_ms: start.elapsed().as_millis() as u64,
+                oracle_score: Some(similarity),
+                metadata,
+            };
+        }
+
         TestResult {
             status: TestStatus::Pass,
             error_message: None,
