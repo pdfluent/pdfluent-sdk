@@ -140,8 +140,10 @@ fn resolve_pages_depth<'a>(
         ctx.crop_box = Some(crop_box);
     }
 
-    if let Some(rotate) = pages_dict.get::<u32>(ROTATE) {
-        ctx.rotate = Some(rotate);
+    // /Rotate may be negative (e.g. -90), which is valid per the PDF spec.
+    // Normalise to [0, 360) via Euclidean remainder so u32 storage is safe.
+    if let Some(rotate) = pages_dict.get::<i32>(ROTATE) {
+        ctx.rotate = Some(rotate.rem_euclid(360) as u32);
     }
 
     let resources = Resources::from_parent(
@@ -218,7 +220,12 @@ impl<'a> Page<'a> {
             .or(ctx.crop_box)
             .unwrap_or(media_box);
 
-        let rotation = match dict.get::<u32>(ROTATE).or(ctx.rotate).unwrap_or(0) % 360 {
+        let rotation = match dict
+            .get::<i32>(ROTATE)
+            .map(|r| r.rem_euclid(360) as u32)
+            .or(ctx.rotate)
+            .unwrap_or(0)
+        {
             0 => Rotation::None,
             90 => Rotation::Horizontal,
             180 => Rotation::Flipped,
