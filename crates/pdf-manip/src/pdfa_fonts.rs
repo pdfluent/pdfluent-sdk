@@ -5320,7 +5320,13 @@ pub fn fix_classic_symbolic_base14_encoding(doc: &mut Document) -> usize {
                 Some(Object::Name(n))
                     if n == b"WinAnsiEncoding"
                         || n == b"MacRomanEncoding"
-                        || n == b"MacExpertEncoding" =>
+                        || n == b"MacExpertEncoding"
+                        // StandardEncoding is also wrong for Symbol/ZapfDingbats.
+                        // Symbol fonts use their own internal encoding; applying
+                        // StandardEncoding maps codes to Latin glyph names that
+                        // produce wrong widths when the font program is replaced
+                        // with a non-Latin alternative (e.g. StandardSymbolsPS).
+                        || n == b"StandardEncoding" =>
                 {
                     true
                 }
@@ -5332,6 +5338,7 @@ pub fn fix_classic_symbolic_base14_encoding(doc: &mut Document) -> usize {
                                 if n == b"WinAnsiEncoding"
                                     || n == b"MacRomanEncoding"
                                     || n == b"MacExpertEncoding"
+                                    || n == b"StandardEncoding"
                         )
                 }
                 Some(Object::Reference(enc_id)) => match doc.objects.get(enc_id) {
@@ -5343,6 +5350,7 @@ pub fn fix_classic_symbolic_base14_encoding(doc: &mut Document) -> usize {
                                     if n == b"WinAnsiEncoding"
                                         || n == b"MacRomanEncoding"
                                         || n == b"MacExpertEncoding"
+                                        || n == b"StandardEncoding"
                             )
                     }
                     _ => false,
@@ -8709,23 +8717,47 @@ fn compute_otf_cff_corrections(
             // For OTF-wrapped CFF fonts the hmtx and CFF charstring widths can differ
             // (e.g. Symbol "multiply": hmtx=250, CFF charstring=549). (#FP-6.2.11.5)
             //
-            // Use direct CFF encoding lookup only (no Standard encoding fallback).
-            // cff.glyph_index() falls back to Standard encoding when the actual CFF
-            // encoding maps no codes (e.g. StandardSymbolsPS.otf), producing wrong
-            // GIDs and width corrections. veraPDF uses the Symbol (3,0) cmap path for
-            // symbolic OTF fonts and falls back to hmtx(GID 0) for unmapped codes —
-            // so codes not in the CFF encoding must be skipped here. (#FP-6.2.11.5)
+            // For non-symbolic fonts (Latin script, e.g. Helvetica), veraPDF uses
+            // Standard encoding as the default mapping when no PDF /Encoding is present
+            // (Type1 per §8.5.3). cff.glyph_index() includes this Standard encoding
+            // fallback, so we use it for fonts that have Latin characters.
+            //
+            // For symbolic/non-Latin fonts (e.g. StandardSymbolsPS.otf), the Standard
+            // encoding fallback produces wrong GIDs: code 183 → StandardEncoding → SID
+            // → finds a Latin glyph in the font's charset (e.g. GID 120, CFF 460) while
+            // veraPDF uses Symbol cmap or GID 0 fallback (hmtx=250). Use code_to_gid
+            // only (no Standard fallback) for such fonts to avoid wrong corrections.
+            // Symbolic fonts are detected by absence of a Latin 'A' glyph. (#FP-6.2.11.5)
             if code > 255 {
                 continue;
             }
+            // Detect symbolic/non-Latin fonts by checking whether SID 35 ("A")
+            // is in the CFF charset. Latin fonts (Helvetica, Times, …) have "A"
+            // in their charset; symbol/pi fonts (StandardSymbolsPS, …) do not.
+            // For non-Latin fonts we suppress the Standard encoding fallback
+            // because veraPDF takes a different lookup path for symbolic fonts
+            // (Symbol cmap or GID 0), so the Standard encoding fallback would
+            // pick up the wrong glyph (e.g. SID 147 → GID 120 in StandardSymbolsPS,
+            // CFF charstring 460, while veraPDF expects hmtx(GID 0)=250). (#FP-6.2.11.5)
+            let has_latin_in_charset =
+                cff.charset.sid_to_gid(cff_parser::StringId(35)).is_some(); // SID 35 = "A"
             let gid = match cff
                 .encoding
                 .code_to_gid(&cff.charset, code as u8)
             {
-                Some(gid) if gid.0 != 0 || code == 0 => {
-                    cff_parser::GlyphId(gid.0)
+                Some(gid) if gid.0 != 0 || code == 0 => cff_parser::GlyphId(gid.0),
+                _ => {
+                    if has_latin_in_charset {
+                        // Non-symbolic: Standard encoding fallback mirrors veraPDF's
+                        // default encoding behavior (Type1 §8.5.3).
+                        match cff.glyph_index(code as u8) {
+                            Some(gid) if gid.0 != 0 || code == 0 => gid,
+                            _ => continue,
+                        }
+                    } else {
+                        continue
+                    }
                 }
-                _ => continue,
             };
             cff.glyph_width(gid)
                 .map(|w| w as f64 * cff_scale)
