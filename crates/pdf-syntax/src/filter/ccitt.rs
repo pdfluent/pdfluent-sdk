@@ -14,7 +14,13 @@ pub(crate) fn decode(
 ) -> Option<FilterResult> {
     let k = params.get::<i32>(K).unwrap_or(0);
 
-    let rows = params.get::<u32>(ROWS).unwrap_or(image_params.height);
+    // /Rows 0 means "derive row count from end-of-block marker or image height".
+    // Treat 0 as absent so the fallback to image_params.height is used.
+    // Without this, the Group4 decoder exits immediately (decoded_rows=0 == rows=0).
+    let rows = params
+        .get::<u32>(ROWS)
+        .filter(|&r| r > 0)
+        .unwrap_or(image_params.height);
     let end_of_block = params.get::<bool>(END_OF_BLOCK).unwrap_or(true);
 
     let settings = DecodeSettings {
