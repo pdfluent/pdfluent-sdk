@@ -2627,8 +2627,8 @@ fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
             "Document is not marked (MarkInfo/Marked missing or false)",
         );
     }
-    // §6.8.3.3 (missing StructTreeRoot) is handled by check_struct_tree_root_required which
-    // emits §6.7.3.3 — the rule veraPDF actually uses. (#FP-6.8.3.3)
+    // §6.8.3.3 (missing StructTreeRoot) is handled by check_struct_tree_root_required
+    // which emits §6.8.3.3 — the rule veraPDF uses for tagged conformance. (#FP-6.8.3.3)
 }
 
 /// PDF/A-3 allows embedded files; check they have proper AF relationships.

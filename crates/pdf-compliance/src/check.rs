@@ -8944,9 +8944,13 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                                             cff.glyph_name(cff_parser::GlyphId(gid))
                                         {
                                             if gname != ".notdef" && !names.contains(gname) {
+                                                // PDF/A-2/3: §6.2.11.4.2 (CharSet must cover all embedded glyphs).
+                                                // PDF/A-1: §6.3.5. PDF/A-4: §6.2.10.4.1 (via remap of "6.3.5").
+                                                // (#FP-6.2.11.5, cs-veraPDF 6-2-11-4-2-t01-fail)
+                                                let charset_rule = if part >= 2 { "6.2.11.4.2" } else { "6.3.5" };
                                                 error_at(
                                                     report,
-                                                    "6.3.5",
+                                                    charset_rule,
                                                     format!("CFF font {font_name}: /CharSet missing '/{gname}' (glyph present in font program)"),
                                                     format!("page {}", page_idx + 1),
                                                 );
@@ -11081,6 +11085,33 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
 
         let loc = format!("page {}", page_idx + 1);
 
+        // §6.2.11.5 only applies when the font's /CharSet correctly declares all embedded
+        // glyphs. If there is a §6.2.11.4.2 violation (some glyph in the CFF is absent
+        // from /CharSet), veraPDF fires §6.2.11.4.2 and skips §6.2.11.5 for that font
+        // entirely (the CharSet is the root cause; width consistency is secondary).
+        // (#FP-6.2.11.5 cs-veraPDF 6-2-11-4-2-t01-fail)
+        let charset_names: Option<std::collections::HashSet<String>> = desc
+            .get::<pdf_syntax::object::String>(keys::CHAR_SET)
+            .map(|s| {
+                let ct = std::str::from_utf8(s.as_bytes()).unwrap_or("");
+                ct.split('/').filter(|g| !g.is_empty()).map(str::to_string).collect()
+            });
+        // When /CharSet is present and non-empty but incomplete (some CFF glyph absent),
+        // veraPDF fires §6.2.11.4.2 as the primary violation and skips §6.2.11.5.
+        // Absent or empty /CharSet triggers §6.3.5 (different rule) and §6.2.11.5 still runs.
+        // (#FP-6.2.11.5 cs-veraPDF 6-2-11-4-2-t01-fail)
+        if let Some(ref names) = charset_names {
+            if !names.is_empty() {
+                let has_charset_violation = (1..table.number_of_glyphs()).any(|gid| {
+                    table.glyph_name(cff_parser::GlyphId(gid))
+                        .is_some_and(|gname| gname != ".notdef" && !names.contains(gname))
+                });
+                if has_charset_violation {
+                    return; // §6.2.11.4.2 is the primary violation; skip §6.2.11.5
+                }
+            }
+        }
+
         // For each character code in [FirstChar..LastChar], compare the CFF
         // charstring advance width with the PDF /Widths entry.
         for code in first..=last {
@@ -11114,6 +11145,15 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                         None
                     }
                 });
+
+            // If /CharSet is present and non-empty, skip glyphs not declared in it.
+            // veraPDF only checks §6.2.11.5 for glyphs that ARE in /CharSet.
+            // Empty /CharSet is handled by §6.3.5 (not §6.2.11.4.2); don't filter there.
+            if let (Some(ref names), Some(ref gname)) = (&charset_names, &glyph_name) {
+                if !names.is_empty() && !gname.is_empty() && gname != ".notdef" && !names.contains(gname) {
+                    continue; // Not in CharSet — §6.2.11.4.2 handles this, not §6.2.11.5
+                }
+            }
 
             // Determine GID: prefer PDF /Encoding path, fall back to CFF internal.
             // When a glyph is absent from the CFF, use the .notdef width as
@@ -11518,40 +11558,49 @@ fn check_cidfont_type2_widths(
         // is absent). GIDs below min_W are control-char CIDs (e.g. GID 4 = U+0004 = EOT)
         // that are never used as document characters in Identity-mapped CID fonts.
         // veraPDF does not check these low CIDs against /DW. (#FP-6.3.6-gen-302)
+        // Skip DW loop when /W contains range-form entries (c1 c2 w).
+        // Range entries cover contiguous CID spans that may include unused glyphs;
+        // checking gaps inside those spans against /DW causes FPs because we lack
+        // content-stream text extraction to know which glyphs are actually used.
+        // Individual-only /W arrays (all array-form) are dense enough to check safely.
+        // (#FP-6.3.6-dw-range, cs-veraPDF 6-3-8-t01-fail-c)
+        let w_has_ranges = w_map.len() > w_map_individual.len();
         if let Some(dw) = cid_font.get::<i32>(keys::DW).filter(|&d| d > 0) {
-            let num_glyphs = face.number_of_glyphs() as u32;
-            let (range_start, range_end) = if w_map.is_empty() {
-                // No /W declared: use full glyph range minus standard control GIDs 0-3.
-                (4u32, num_glyphs)
-            } else {
-                let min_cid = *w_map.keys().min().unwrap_or(&4); // safe: filtered non-empty
-                let max_cid = *w_map.keys().max().unwrap_or(&num_glyphs);
-                // Never start below GID 4 (first four are universal control glyphs).
-                (min_cid.max(4), max_cid + 1)
-            };
-            for gid_u32 in range_start..range_end {
-                if w_map.contains_key(&gid_u32) {
-                    continue; // Covered by /W — already checked above
-                }
-                let gid = ttf_parser::GlyphId(gid_u32 as u16);
-                let Some(advance) = face.glyph_hor_advance(gid) else {
-                    continue;
+            if !w_has_ranges {
+                let num_glyphs = face.number_of_glyphs() as u32;
+                let (range_start, range_end) = if w_map.is_empty() {
+                    // No /W declared: use full glyph range minus standard control GIDs 0-3.
+                    (4u32, num_glyphs)
+                } else {
+                    let min_cid = *w_map.keys().min().unwrap_or(&4); // safe: filtered non-empty
+                    let max_cid = *w_map.keys().max().unwrap_or(&num_glyphs);
+                    // Never start below GID 4 (first four are universal control glyphs).
+                    (min_cid.max(4), max_cid + 1)
                 };
-                if advance == 0 {
-                    continue; // Skip genuinely 0-width glyphs (e.g. space variants)
-                }
-                let font_w = (advance as f64 * 1000.0 / upem).round() as i32;
-                if (font_w - dw).abs() > 2 {
-                    error_at(
-                        report,
-                        "6.3.5-fw",
-                        format!(
-                            "Font {cid_name} GID {gid_u32}: TrueType advance {font_w} \
-                             != /DW {dw} (not in /W)"
-                        ),
-                        loc.clone(),
-                    );
-                    return; // First mismatch per font only
+                for gid_u32 in range_start..range_end {
+                    if w_map.contains_key(&gid_u32) {
+                        continue; // Covered by /W — already checked above
+                    }
+                    let gid = ttf_parser::GlyphId(gid_u32 as u16);
+                    let Some(advance) = face.glyph_hor_advance(gid) else {
+                        continue;
+                    };
+                    if advance == 0 {
+                        continue; // Skip genuinely 0-width glyphs (e.g. space variants)
+                    }
+                    let font_w = (advance as f64 * 1000.0 / upem).round() as i32;
+                    if (font_w - dw).abs() > 2 {
+                        error_at(
+                            report,
+                            "6.3.5-fw",
+                            format!(
+                                "Font {cid_name} GID {gid_u32}: TrueType advance {font_w} \
+                                 != /DW {dw} (not in /W)"
+                            ),
+                            loc.clone(),
+                        );
+                        return; // First mismatch per font only
+                    }
                 }
             }
         }
@@ -11729,15 +11778,16 @@ fn check_truetype_simple_widths(
     for code in first..=last {
         let idx = code - first;
         let pdf_w = pdf_widths[idx];
-        // §6.2.10.5: pdf_w=0 is a declared width (not "absent") — if the font program
-        // has a non-zero advance for that glyph it is a genuine mismatch. The MissingWidth
-        // check below handles legitimate "unused code" entries whose value equals the
-        // declared fallback. DO NOT skip 0-width entries here. (#FN-6.2.10.5)
-
-        // §6.2.11.5 applies only to characters "used in the document". PDF creators
-        // set entries for unused codes to /MissingWidth (the generic fallback width).
-        // Skip codes whose PDF width equals the MissingWidth sentinel. (#FP-6.2.11.5)
+        // Skip codes whose PDF width equals the MissingWidth sentinel — these are
+        // "unused code" entries set to the fallback width by the PDF creator. (#FP-6.2.11.5)
         if missing_width.is_some_and(|mw| mw == pdf_w) {
+            continue;
+        }
+        // pdf_w=0 means "glyph absent/unused" in this font subset. veraPDF does not
+        // fire §6.3.6/§6.2.11.5 when the PDF declares width=0 but the font program
+        // has a non-zero advance — same behaviour as the Type1 check at check.rs:#16718.
+        // (#FP-6.2.11.5-zero, empirically: cs-veraPDF 6-1-7-1-t04-fail)
+        if pdf_w == 0 {
             continue;
         }
 
