@@ -19,6 +19,7 @@ pdf-annot = { path = "../crates/pdf-annot" }
 pdf-forms = { path = "../crates/pdf-forms" }
 pdf-sign = { path = "../crates/pdf-sign" }
 pdf-compliance = { path = "../crates/pdf-compliance" }
+pdf-extract = { path = "../crates/pdf-extract" }
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -100,4 +101,19 @@ doc = false
 [[bin]]
 name = "fuzz_sign"
 path = "fuzz_targets/fuzz_sign.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_pdfa_validate"
+path = "fuzz_targets/fuzz_pdfa_validate.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_xfa_extract"
+path = "fuzz_targets/fuzz_xfa_extract.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_sign_document"
+path = "fuzz_targets/fuzz_sign_document.rs"
 doc = false
