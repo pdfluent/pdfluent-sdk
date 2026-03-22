@@ -1298,10 +1298,11 @@ fn decode_xml_entities(s: &str) -> String {
 /// veraPDF treats `/Author " Name "` (with space) and `dc:creator "Name"` as NOT equivalent.
 /// (#FN-6.7.3.3-whitespace)
 fn values_match(info_val: &str, xmp_val: &str) -> bool {
-    // Trim both sides: PDF Info strings may have trailing whitespace added by
-    // PDF generators (e.g. extra spaces after a title) that does not appear in
-    // the XMP counterpart. veraPDF trims before comparing. (#FP-6.7.3.2 gen-302)
-    let info_trimmed = info_val.trim();
+    // Trim only trailing whitespace from the Info value: PDF generators may add
+    // trailing spaces (e.g. "Title ") that veraPDF ignores. Leading whitespace is
+    // preserved — veraPDF treats `/Author " Name"` and `dc:creator "Name"` as NOT
+    // equivalent. (#FP-6.7.3.2 gen-302, #FN-6.7.3.3-whitespace)
+    let info_trimmed = info_val.trim_end();
     let xmp_trimmed = xmp_val.trim();
     // Decode XML entities in XMP value (e.g. &apos; → ') before comparing.
     info_trimmed == xmp_trimmed || info_trimmed == decode_xml_entities(xmp_trimmed)
@@ -1566,6 +1567,15 @@ fn check_xmp_rdf_structure(xmp: &str, level: PdfALevel, report: &mut ComplianceR
             rule,
             "XMP packet is missing closing </x:xmpmeta> tag (malformed XMP serialization)",
         );
+        // §6.7.3 cascade (PDF/A-1): malformed XMP makes the metadata stream non-conformant.
+        // veraPDF fires §6.7.3 for missing </x:xmpmeta> in PDF/A-1 files. (#FN-6.7.3)
+        if level.part() == 1 {
+            error(
+                report,
+                "6.7.3",
+                "XMP metadata stream is non-conformant (malformed XMP serialization)",
+            );
+        }
         // §6.7.11 cascade: malformed XMP means pdfaid cannot be verified.
         error(
             report,
@@ -1628,8 +1638,22 @@ fn check_pdfa_version_match(xmp: &str, level: PdfALevel, report: &mut Compliance
                 "6.7.9",
                 "XMP pdfaid namespace URI is wrong or missing (must be 'http://www.aiim.org/pdfa/ns/id/')",
             );
+        } else if level.part() == 4 {
+            // For PDF/A-4, veraPDF fires §6.5.9 + §6.5.11 (native) = §6.7.9 + §6.7.11 (normalized).
+            // Neither fires via parse_xmp_pdfa in pdfa.rs (that only covers part 2/3 §6.6.4).
+            // (#FN-6.7.9-6-7-3-t01)
+            error(
+                report,
+                "6.7.9",
+                "XMP pdfaid namespace URI is wrong or missing (must be 'http://www.aiim.org/pdfa/ns/id/')",
+            );
+            error(
+                report,
+                "6.7.11",
+                "XMP pdfaid namespace invalid; PDF/A identification cannot be verified",
+            );
         }
-        // For PDF/A-2/3/4: §6.6.4 is fired by parse_xmp_pdfa in pdfa.rs; return without
+        // For PDF/A-2/3: §6.6.4 is fired by parse_xmp_pdfa in pdfa.rs; return without
         // additional violation here to avoid the FP.
         return;
     }

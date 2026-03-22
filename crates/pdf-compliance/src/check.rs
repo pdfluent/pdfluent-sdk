@@ -352,16 +352,27 @@ pub fn check_stream_empty_keys_cached(cache: &ObjectCache<'_>, report: &mut Comp
 
 /// Check MarkInfo/Marked is present and true (§6.8.2.2).
 ///
-/// Only fires when the MarkInfo dict EXISTS but has wrong/missing Marked flag.
-/// When MarkInfo is entirely absent, veraPDF fires §6.7.3.3 (missing StructTreeRoot)
-/// rather than §6.8.2.2, so we skip that case to avoid FPs.
-/// (#FP-6.8.2.2, c4k-poppler-106863-0)
+/// veraPDF fires §6.8.2.2 when:
+/// - MarkInfo dict is absent AND StructTreeRoot IS present (tagged document)
+/// - MarkInfo dict exists but Marked is false or absent
+///
+/// When MarkInfo is absent AND StructTreeRoot is also absent, veraPDF fires only
+/// §6.7.3.3 (check_struct_tree_root_required) rather than §6.8.2.2. (#FP-6.8.2.2)
+/// (#FN-6.8.2.2 verapdf-6-8-2-2-t01-fail-a)
 pub fn check_mark_info(pdf: &Pdf, report: &mut ComplianceReport) {
     let Some(cat) = catalog(pdf) else {
         return;
     };
     let Some(mark_info) = cat.get::<Dict<'_>>(keys::MARK_INFO) else {
-        // MarkInfo absent — §6.7.3.3 (check_struct_tree_root_required) covers this.
+        // MarkInfo absent: fire §6.8.2.2 only when StructTreeRoot exists.
+        // A document with no StructTreeRoot fires §6.7.3.3 instead (c4k-poppler-106863-0).
+        if struct_tree_root(pdf).is_some() {
+            error(
+                report,
+                "6.8.2.2",
+                "MarkInfo dictionary is absent from Document Catalog",
+            );
+        }
         return;
     };
     match mark_info.get::<Object<'_>>(b"Marked" as &[u8]) {
@@ -14104,28 +14115,9 @@ fn check_integer_range_obj(obj: &Object<'_>, min: f64, max: f64) -> bool {
     use pdf_syntax::object::MaybeRef;
     match obj {
         Object::Number(n) => is_int_out_of_range(n.as_f64(), min, max),
-        Object::Dict(dict) => {
-            for (_, val) in dict.entries() {
-                match val {
-                    MaybeRef::NotRef(Object::Number(n)) => {
-                        if is_int_out_of_range(n.as_f64(), min, max) {
-                            return true;
-                        }
-                    }
-                    MaybeRef::NotRef(Object::Array(arr)) => {
-                        for item in arr.raw_iter() {
-                            if let MaybeRef::NotRef(Object::Number(n)) = item {
-                                if is_int_out_of_range(n.as_f64(), min, max) {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            false
-        }
+        Object::Dict(dict) => check_integer_range_dict(dict, min, max),
+        // Stream objects have a dict — check it too. (#FN-6.1.12 / #FN-6.1.13)
+        Object::Stream(stream) => check_integer_range_dict(stream.dict(), min, max),
         Object::Array(arr) => {
             for item in arr.raw_iter() {
                 if let MaybeRef::NotRef(Object::Number(n)) = item {
@@ -14138,6 +14130,30 @@ fn check_integer_range_obj(obj: &Object<'_>, min: f64, max: f64) -> bool {
         }
         _ => false,
     }
+}
+
+fn check_integer_range_dict(dict: &Dict<'_>, min: f64, max: f64) -> bool {
+    use pdf_syntax::object::MaybeRef;
+    for (_, val) in dict.entries() {
+        match val {
+            MaybeRef::NotRef(Object::Number(n)) => {
+                if is_int_out_of_range(n.as_f64(), min, max) {
+                    return true;
+                }
+            }
+            MaybeRef::NotRef(Object::Array(arr)) => {
+                for item in arr.raw_iter() {
+                    if let MaybeRef::NotRef(Object::Number(n)) = item {
+                        if is_int_out_of_range(n.as_f64(), min, max) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 // ─── §6.3.2 — Font program format ───────────────────────────────────────────
