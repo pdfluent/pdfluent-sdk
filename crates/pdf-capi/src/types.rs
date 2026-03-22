@@ -30,6 +30,10 @@ pub enum PdfStatus {
     ErrorRedact = 8,
     /// Document signing failed.
     ErrorSign = 9,
+    /// An annotation operation failed.
+    ErrorAnnotation = 10,
+    /// A document merge operation failed.
+    ErrorMerge = 11,
     /// An unknown error occurred.
     ErrorUnknown = 99,
 }

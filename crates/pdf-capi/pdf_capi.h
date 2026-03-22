@@ -24,6 +24,8 @@ typedef enum {
     PDF_STATUS_ERROR_CONVERT = 7,
     PDF_STATUS_ERROR_REDACT = 8,
     PDF_STATUS_ERROR_SIGN = 9,
+    PDF_STATUS_ERROR_ANNOTATION = 10,
+    PDF_STATUS_ERROR_MERGE = 11,
     PDF_STATUS_ERROR_UNKNOWN = 99,
 } PdfStatus;
 
@@ -172,6 +174,37 @@ int32_t pdf_form_field_count(const PdfDocument *doc);
 // Fully qualified name of field at zero-based index.
 // Returns NULL for out-of-range index or no AcroForm. Free with pdf_string_free.
 char *pdf_form_field_name(const PdfDocument *doc, int32_t index);
+
+// ---- Annotations ----
+
+// Number of annotations on a page; 0 if none; -1 on error.
+int32_t pdf_annotation_count(const PdfDocument *doc, int32_t page_index);
+
+// Subtype string of annotation at zero-based annot_index on the page.
+// Returns NULL for out-of-range or error. Free with pdf_string_free.
+char *pdf_annotation_type(
+    const PdfDocument *doc,
+    int32_t page_index,
+    int32_t annot_index);
+
+// Add a yellow highlight annotation to a page and return a new document.
+// x, y, w, h are in PDF user-space points (y increases upward).
+// The caller must free the returned document with pdf_document_free.
+PdfStatus pdf_annotation_add_highlight(
+    const PdfDocument *doc,
+    int32_t page_index,
+    double x, double y,
+    double w, double h,
+    PdfDocument **out);
+
+// ---- Document merge ----
+
+// Merge count documents into one. docs is an array of count document pointers.
+// The caller must free the returned document with pdf_document_free.
+PdfStatus pdf_documents_merge(
+    const PdfDocument *const *docs,
+    int32_t count,
+    PdfDocument **out);
 
 // ---- Error state ----
 

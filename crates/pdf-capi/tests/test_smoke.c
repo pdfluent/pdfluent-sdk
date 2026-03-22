@@ -172,21 +172,81 @@ static int test_form_field_write(void) {
 /* ---------- Scenario 7: Read annotations ---------- */
 
 static int test_annotations_read(void) {
-    /* TODO: C API does not yet expose annotation reading.
-     * Requires: pdf_page_annotations() or similar.
-     * Depends on: pdf-capi extension with annotations API.
-     */
-    return 77; /* skip */
+    PdfDocument *doc = NULL;
+    PdfStatus s = pdf_document_open(SAMPLE_PDF, NULL, &doc);
+    if (s != PDF_STATUS_OK) return 77; /* skip if fixture missing */
+
+    /* Count must be >= 0 (not -1) for a valid doc */
+    int32_t count = pdf_annotation_count(doc, 0);
+    assert(count >= 0);
+
+    if (count > 0) {
+        /* Verify first annotation has a non-null type string */
+        char *type = pdf_annotation_type(doc, 0, 0);
+        assert(type != NULL);
+        assert(strlen(type) > 0);
+        pdf_string_free(type);
+
+        /* Out-of-range index must return NULL */
+        assert(pdf_annotation_type(doc, 0, count) == NULL);
+    }
+
+    /* Safety: null / negative inputs must not crash */
+    assert(pdf_annotation_count(NULL, 0) == -1);
+    assert(pdf_annotation_type(NULL, 0, 0) == NULL);
+    assert(pdf_annotation_type(doc, -1, 0) == NULL);
+    assert(pdf_annotation_type(doc, 0, -1) == NULL);
+
+    pdf_document_free(doc);
+    return 0;
 }
 
 /* ---------- Scenario 8: Add highlight, save ---------- */
 
 static int test_annotation_highlight(void) {
-    /* TODO: C API does not yet expose annotation creation.
-     * Requires: pdf_page_add_highlight() + pdf_document_save().
-     * Depends on: pdf-capi extension with annotation write API.
-     */
-    return 77; /* skip */
+    PdfDocument *doc = NULL;
+    PdfStatus s = pdf_document_open(SAMPLE_PDF, NULL, &doc);
+    if (s != PDF_STATUS_OK) return 77; /* skip if fixture missing */
+
+    /* Page dimensions to pick a sensible highlight rectangle */
+    double pw = pdf_page_width(doc, 0);
+    double ph = pdf_page_height(doc, 0);
+    assert(pw > 0.0 && ph > 0.0);
+
+    /* Highlight a small area near the centre of page 0 */
+    double x = pw * 0.25, y = ph * 0.45, w = pw * 0.5, h = ph * 0.1;
+
+    PdfDocument *out = NULL;
+    s = pdf_annotation_add_highlight(doc, 0, x, y, w, h, &out);
+    if (s != PDF_STATUS_OK) {
+        pdf_document_free(doc);
+        return 77;
+    }
+
+    assert(out != NULL);
+    /* The returned doc must still have at least as many pages */
+    assert(pdf_document_page_count(out) >= pdf_document_page_count(doc));
+
+    /* The annotation we just added must be visible via the read API */
+    int32_t count_after = pdf_annotation_count(out, 0);
+    assert(count_after > 0);
+
+    /* Type of the last annotation must be "Highlight" */
+    char *type = pdf_annotation_type(out, 0, count_after - 1);
+    assert(type != NULL);
+    assert(strcmp(type, "Highlight") == 0);
+    pdf_string_free(type);
+
+    /* Safety: null inputs */
+    PdfDocument *nil = NULL;
+    assert(pdf_annotation_add_highlight(NULL, 0, x, y, w, h, &nil)
+           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+    assert(pdf_annotation_add_highlight(doc, 0, x, y, w, h, NULL)
+           == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+
+    pdf_document_free(out);
+    pdf_document_free(doc);
+    return 0;
 }
 
 /* ---------- Scenario 9: Validate PDF/A ---------- */
@@ -223,11 +283,37 @@ static int test_pdfa_validation(void) {
 /* ---------- Scenario 10: Merge 2 PDFs ---------- */
 
 static int test_merge_pdfs(void) {
-    /* TODO: C API does not yet expose PDF merging.
-     * Requires: pdf_document_merge() or similar.
-     * Depends on: pdf-capi extension with manipulation API.
-     */
-    return 77; /* skip */
+    PdfDocument *doc1 = NULL, *doc2 = NULL;
+    PdfStatus s = pdf_document_open(SAMPLE_PDF, NULL, &doc1);
+    if (s != PDF_STATUS_OK) return 77;
+    s = pdf_document_open(MULTI_PDF, NULL, &doc2);
+    if (s != PDF_STATUS_OK) {
+        pdf_document_free(doc1);
+        return 77;
+    }
+
+    int32_t pages1 = pdf_document_page_count(doc1);
+    int32_t pages2 = pdf_document_page_count(doc2);
+    assert(pages1 >= 1 && pages2 >= 1);
+
+    const PdfDocument *inputs[2] = { doc1, doc2 };
+    PdfDocument *merged = NULL;
+    s = pdf_documents_merge(inputs, 2, &merged);
+    assert(s == PDF_STATUS_OK);
+    assert(merged != NULL);
+
+    /* Merged doc must have combined page count */
+    assert(pdf_document_page_count(merged) == pages1 + pages2);
+
+    /* Safety: null / bad inputs */
+    PdfDocument *nil = NULL;
+    assert(pdf_documents_merge(NULL, 2, &nil) == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+    assert(pdf_documents_merge(inputs, 0, &nil) == PDF_STATUS_ERROR_INVALID_ARGUMENT);
+
+    pdf_document_free(merged);
+    pdf_document_free(doc2);
+    pdf_document_free(doc1);
+    return 0;
 }
 
 /* ---------- Scenario 11: Verify signature ---------- */
