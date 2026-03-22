@@ -2,7 +2,7 @@
 //!
 //! Detects tables in each corpus PDF using `pdf_xlsx::extract_tables`, then
 //! converts them to XLSX and verifies that the output is a valid OOXML
-//! spreadsheet (ZIP containing at least one `xl/worksheets/sheet*.xml` entry).
+//! spreadsheet with at least one non-empty cell containing data.
 //!
 //! Skip policy:
 //! - lopdf cannot load the PDF → Skip
@@ -12,8 +12,10 @@
 //! - `pdf_xlsx::pdf_to_xlsx` returns an error despite tables being found
 //! - Output is not a ZIP
 //! - No `xl/worksheets/` entry in the ZIP
+//! - All worksheet cells are empty (zero data preserved from source)
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 
 use super::{PdfTest, TestResult, TestStatus};
@@ -197,10 +199,27 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
                 };
             }
 
+            // Verify at least one non-empty <c> cell exists across all sheets.
+            // An all-empty XLSX is a crash-test pass but carries no table data.
+            let non_empty_cells = count_nonempty_xlsx_cells(&xlsx_bytes);
+            if non_empty_cells == 0 {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some(
+                        "XLSX output has worksheets but all cells are empty (no data preserved)"
+                            .into(),
+                    ),
+                    duration_ms: elapsed(),
+                    oracle_score: None,
+                    metadata: HashMap::new(),
+                };
+            }
+
             let mut metadata = HashMap::new();
             metadata.insert("table_count".to_string(), table_count.to_string());
             metadata.insert("total_rows".to_string(), total_rows.to_string());
             metadata.insert("xlsx_size_bytes".to_string(), xlsx_bytes.len().to_string());
+            metadata.insert("nonempty_cells".to_string(), non_empty_cells.to_string());
 
             TestResult {
                 status: TestStatus::Pass,
@@ -210,5 +229,88 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
                 metadata,
             }
         }
+    }
+}
+
+/// Count non-empty cells across all `xl/worksheets/sheet*.xml` entries.
+///
+/// A cell (`<c>` element) is non-empty when it contains a `<v>` (value) or
+/// `<is><t>` (inline string) child element with non-whitespace content.
+/// This distinguishes a genuinely populated spreadsheet from an empty skeleton.
+fn count_nonempty_xlsx_cells(xlsx_bytes: &[u8]) -> usize {
+    let cursor = std::io::Cursor::new(xlsx_bytes);
+    let mut archive = match zip::ZipArchive::new(cursor) {
+        Ok(a) => a,
+        Err(_) => return 0,
+    };
+
+    // Collect sheet paths first to avoid borrow issues.
+    let sheet_names: Vec<String> = (0..archive.len())
+        .filter_map(|i| archive.name_for_index(i).map(str::to_string))
+        .filter(|n| n.starts_with("xl/worksheets/") && n.ends_with(".xml"))
+        .collect();
+
+    let mut count = 0;
+    for name in &sheet_names {
+        let Ok(mut entry) = archive.by_name(name) else {
+            continue;
+        };
+        let mut xml = String::new();
+        let _ = entry.read_to_string(&mut xml);
+        count += count_cells_in_sheet_xml(&xml);
+    }
+    count
+}
+
+/// Count non-empty cells in a single sheet XML string.
+fn count_cells_in_sheet_xml(xml: &str) -> usize {
+    // Count <v> elements with non-whitespace content — these are cell values.
+    let mut count = 0;
+    let mut rest = xml;
+    while let Some(start) = rest.find("<v>") {
+        rest = &rest[start + 3..];
+        let Some(end) = rest.find("</v>") else {
+            break;
+        };
+        if !rest[..end].trim().is_empty() {
+            count += 1;
+        }
+        rest = &rest[end + 4..];
+    }
+    // Also count inline strings <is><t>text</t></is>.
+    rest = xml;
+    while let Some(start) = rest.find("<t>") {
+        rest = &rest[start + 3..];
+        let Some(end) = rest.find("</t>") else {
+            break;
+        };
+        if !rest[..end].trim().is_empty() {
+            count += 1;
+        }
+        rest = &rest[end + 4..];
+    }
+    count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_cells_finds_values() {
+        let xml = r#"<sheetData><row><c><v>42</v></c><c><v>hello</v></c></row></sheetData>"#;
+        assert_eq!(count_cells_in_sheet_xml(xml), 2);
+    }
+
+    #[test]
+    fn count_cells_skips_empty() {
+        let xml = r#"<sheetData><row><c><v></v></c><c><v>  </v></c></row></sheetData>"#;
+        assert_eq!(count_cells_in_sheet_xml(xml), 0);
+    }
+
+    #[test]
+    fn count_cells_inline_strings() {
+        let xml = r#"<c t="inlineStr"><is><t>Hello</t></is></c>"#;
+        assert_eq!(count_cells_in_sheet_xml(xml), 1);
     }
 }
