@@ -10140,8 +10140,7 @@ pub fn check_cidset_content_coverage(pdf: &Pdf, part: u8, report: &mut Complianc
         let mut font_cidsets: std::collections::HashMap<Vec<u8>, Vec<u8>> =
             std::collections::HashMap::new();
         // Track which fonts use 1-byte CID encoding (e.g. OneByteIdentityH).
-        let mut font_1byte: std::collections::HashSet<Vec<u8>> =
-            std::collections::HashSet::new();
+        let mut font_1byte: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
         let fonts = &page.resources().fonts;
 
         for (name, _) in fonts.entries() {
@@ -14762,8 +14761,9 @@ pub fn check_stream_length(pdf: &Pdf, report: &mut ComplianceReport) {
         }
         let actual_len = actual_end - data_start;
 
-        // Find the /Length value by scanning backwards from "stream" to find the dict
-        let declared = find_length_value(data, abs_stream);
+        // Find the /Length value by scanning backwards from "stream" to find the dict.
+        // Resolves indirect references (e.g. `/Length 8 0 R`) via xref. (#FN-6.1.7)
+        let declared = find_length_value(pdf, data, abs_stream);
         if let Some(declared_len) = declared {
             if declared_len != actual_len {
                 // If we stripped \r\n as the EOL and declared == actual+1, the \r
@@ -14825,7 +14825,9 @@ fn find_keyword(data: &[u8], keyword: &[u8]) -> Option<usize> {
 
 /// Extract the /Length integer value from the stream dictionary, by scanning
 /// backwards from the "stream" keyword to find `/Length <number>`.
-fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
+/// When the value is an indirect reference (`/Length N M R`), resolves it via
+/// the PDF xref table. Fixes §6.1.7 FN for streams with indirect /Length. (#FN-6.1.7)
+fn find_length_value(pdf: &Pdf, data: &[u8], stream_pos: usize) -> Option<usize> {
     let start = stream_pos.saturating_sub(500);
     let region = &data[start..stream_pos];
     // Search for /Length as bytes (not UTF-8) to handle binary content
@@ -14893,7 +14895,14 @@ fn find_length_value(data: &[u8], stream_pos: usize) -> Option<usize> {
             .position(|b| !b.is_ascii_whitespace())
             .unwrap_or(rest2.len());
         if rest2.get(ws2).copied() == Some(b'R') {
-            return None; // Indirect reference — skip length check
+            // Indirect reference: `/Length N M R`. Resolve via xref.
+            // `after[..end]` is the object number, `rest[..gen_end]` is gen number.
+            let obj_num: i32 = std::str::from_utf8(&after[..end]).ok()?.parse().ok()?;
+            let gen_num: i32 = std::str::from_utf8(&rest[..gen_end]).ok()?.parse().ok()?;
+            let val = pdf
+                .xref()
+                .get::<i64>(ObjRef::new(obj_num, gen_num).into())?;
+            return usize::try_from(val).ok();
         }
     }
     std::str::from_utf8(&after[..end]).ok()?.parse().ok()
