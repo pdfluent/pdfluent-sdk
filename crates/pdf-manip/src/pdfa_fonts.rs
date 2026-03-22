@@ -1987,7 +1987,15 @@ fn fix_cid_widths_from_cff(
                 1.0_f32
             };
             let scaled = (w as f64 * scale as f64).round() as i64;
-            let cid = cff.glyph_cid(glyph_id).unwrap_or(gid);
+            // For CIDFontType0 (CID-keyed CFF), every valid glyph must have a
+            // charset entry. GIDs where glyph_cid returns None are unassigned
+            // charstrings that carry no CID mapping — skip them. Using
+            // unwrap_or(gid) as fallback caused phantom GIDs to collide with
+            // real CID mappings, triggering the dedup logic and replacing
+            // correct widths with the .notdef width. (#6.2.11.5-cid-phantom)
+            let Some(cid) = cff.glyph_cid(glyph_id) else {
+                continue;
+            };
             by_cid.entry(cid).or_default().push(scaled);
         }
     }
@@ -2026,17 +2034,27 @@ fn fix_cid_widths_from_cff(
             let resolved = if vals.len() <= 1 {
                 vals[0]
             } else {
-                let mut freq: std::collections::HashMap<i64, usize> =
-                    std::collections::HashMap::new();
-                for v in &vals {
-                    *freq.entry(*v).or_default() += 1;
+                // Multiple GIDs mapping to the same CID. If all agree on the
+                // same width there is no conflict — use that width directly.
+                // Only fall back to .notdef when the widths genuinely differ,
+                // to match veraPDF's behaviour for ambiguous duplicates.
+                // (#6.2.11.5-cid-dedup)
+                let all_same = vals.iter().all(|&v| v == vals[0]);
+                if all_same {
+                    vals[0]
+                } else {
+                    let mut freq: std::collections::HashMap<i64, usize> =
+                        std::collections::HashMap::new();
+                    for v in &vals {
+                        *freq.entry(*v).or_default() += 1;
+                    }
+                    notdef_dw_for_dedup.unwrap_or_else(|| {
+                        freq.into_iter()
+                            .max_by_key(|(_, c)| *c)
+                            .map(|(w, _)| w)
+                            .unwrap_or(vals[0])
+                    })
                 }
-                notdef_dw_for_dedup.unwrap_or_else(|| {
-                    freq.into_iter()
-                        .max_by_key(|(_, c)| *c)
-                        .map(|(w, _)| w)
-                        .unwrap_or(vals[0])
-                })
             };
             (cid, resolved)
         })
@@ -6200,14 +6218,6 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
 
         let mut corrections: Vec<(usize, i64)>;
 
-        if std::env::var("PDF_MANIP_DBG").is_ok() {
-            eprintln!(
-                "[DBG fix_fw] font={} subtype={} ff1={} ff2={} ff3={} fc={} enc={:?} ndiffs={}",
-                base_font, subtype, has_ff1, has_ff2, has_ff3,
-                first_char, enc_info.0, enc_info.1.len()
-            );
-        }
-
         if has_ff2 && subtype == "TrueType" {
             // TrueType font with FontFile2 — use ttf-parser + cmap.
             corrections = compute_truetype_width_corrections(
@@ -6260,16 +6270,6 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             }
         } else {
             continue;
-        }
-
-        if std::env::var("PDF_MANIP_DBG").is_ok() && !corrections.is_empty() {
-            eprintln!(
-                "[DBG fix_fw] {} corrections BEFORE filters for font={} subtype={} enc={:?}",
-                corrections.len(), base_font, subtype, enc_info.0
-            );
-            for (idx, w) in &corrections {
-                eprintln!("  idx={} new_w={}", idx, w);
-            }
         }
 
         if ambiguous_cff_base_encoding && !no_pdf_encoding {
@@ -6342,19 +6342,19 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 // veraPDF uses it as a fallback when name-based lookup fails (e.g. for
                 // glyphs with GID-based or non-standard names). Applying corrections for
                 // these codes is safe because they are definitively mapped. (#504)
-                let cff_enc_for_filter: Option<std::collections::HashMap<u8, u16>> =
-                    if enc_info.0.is_empty() || enc_info.0 == "StandardEncoding" || is_subset {
-                        // Must extract raw CFF bytes first: font_data may be OTF-wrapped.
-                        // parse_cff_encoding_map expects raw CFF, not the OTF container. (#504)
-                        // Also populate for StandardEncoding: veraPDF uses CFF internal encoding
-                        // for width comparison on these fonts, so CFF-mapped codes are
-                        // definitively correct regardless of PDF Differences. (#504)
-                        let cff_bytes =
-                            extract_cff_bytes_from_otf(&font_data).unwrap_or(&font_data);
-                        Some(parse_cff_encoding_map(cff_bytes))
-                    } else {
-                        None
-                    };
+                // Parse the CFF internal encoding map for the high-byte filter.
+                // veraPDF §6.2.11.5 falls back to CFF glyph_index(code) when the
+                // PDF encoding has no name for a code (e.g. WinAnsiEncoding code 129
+                // = undefined control char). This applies to ALL font encodings, not
+                // just SE-implied or subset fonts. Populate the map unconditionally so
+                // the filter allows corrections for CFF-mapped codes > 127 on any font.
+                // (#6.2.11.5-cff-enc-filter)
+                let cff_enc_for_filter: Option<std::collections::HashMap<u8, u16>> = {
+                    // Must extract raw CFF bytes first: font_data may be OTF-wrapped.
+                    let cff_bytes =
+                        extract_cff_bytes_from_otf(&font_data).unwrap_or(&font_data);
+                    Some(parse_cff_encoding_map(cff_bytes))
+                };
                 // Compute .notdef (GID 0) advance for this font so the filter can
                 // allow corrections that bring the dict width to .notdef width.
                 // veraPDF uses .notdef width for codes absent from the font program,
@@ -6393,8 +6393,15 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                         // resolve to an actual glyph name in the subset, and
                         // codes where the CFF encoding maps to a valid GID
                         // (veraPDF's fallback when name lookup fails). (#504)
+                        //
+                        // Explicit Differences entries are also safe for subset
+                        // fonts: veraPDF §6.2.11.5 maps code → glyph name (via
+                        // Differences) → CFF charset → charstring width — the
+                        // same path our cff_width_for_code uses. If we computed
+                        // a correction for a Differences-mapped code, it is
+                        // correct and should not be filtered out. (#6.2.11.5-diff-subset)
                         code <= 127
-                            || matches!(enc_info.1.get(&code), Some(name) if name == "space")
+                            || enc_info.1.contains_key(&code)
                             || subset_standard_cff_code_is_safe(
                                 &font_data,
                                 code,
@@ -6402,14 +6409,26 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                                 &enc_info.1,
                             )
                             || matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0)
+                            // Non-WinAnsi, non-SE encodings (e.g. MacRomanEncoding) all
+                            // use CFF internal encoding (same path as veraPDF) — every
+                            // correction is definitively correct, allow all high-byte codes.
+                            // (#6.2.11.5-non-winansi-cff-fallback)
+                            || (!enc_info.0.is_empty()
+                                && enc_info.0 != "WinAnsiEncoding"
+                                && enc_info.0 != "StandardEncoding")
                     } else {
                         // Explicit Differences entries are deterministic mappings, so
                         // high-byte corrections remain safe on non-subset fonts.
                         // Also allow when the CFF encoding maps the code to a valid GID:
                         // for fonts with no BaseEncoding, CFF encoding is authoritative. (#479)
+                        // Non-WinAnsi, non-SE encodings: all corrections via CFF internal
+                        // encoding (same as veraPDF) — allow all. (#6.2.11.5-non-winansi-cff-fallback)
                         code <= 127
                             || enc_info.1.contains_key(&code)
                             || matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0)
+                            || (!enc_info.0.is_empty()
+                                && enc_info.0 != "WinAnsiEncoding"
+                                && enc_info.0 != "StandardEncoding")
                     }
                 });
             }
@@ -6817,9 +6836,28 @@ fn get_truetype_glyph_width_fractional(
     // font width validation. Using the general glyph_index() would search all
     // subtables and may find a mapping in (1,0) Mac Roman that doesn't exist
     // in (3,1), causing width mismatches.
+    //
+    // Use a tri-state raw lookup to distinguish:
+    //   Some(gid) gid != 0 → real glyph, use its advance
+    //   Some(GID(0))       → (3,1) explicitly maps to notdef; veraPDF uses the
+    //                        notdef advance — do NOT fall through to Mac cmap
+    //   None               → truly absent from (3,1); may fall through to Mac
+    // (#fix-tt-cmap31-notdef-vs-absent)
     let ch = encoding_to_char(code, enc_name);
-    if let Some(gid) = lookup_unicode_cmap_31(face, ch as u32) {
-        return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+    match lookup_unicode_cmap_31_raw(face, ch as u32) {
+        Some(gid) if gid.0 != 0 => {
+            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+        Some(_) => {
+            // (3,1) cmap maps this code to GID 0 (notdef). veraPDF uses the
+            // notdef advance for the §6.2.11.5 width check — return that here
+            // instead of letting the Mac cmap find the real glyph width and
+            // suppressing the correction. (#fix-tt-cmap31-notdef-vs-absent)
+            return face
+                .glyph_hor_advance(ttf_parser::GlyphId(0))
+                .map(|w| w as f64 * scale);
+        }
+        None => {} // Truly absent from (3,1) — fall through to Mac cmap below.
     }
 
     // Character not found in (3,1) cmap. Codes 128-159 differ between Mac Roman
@@ -6884,6 +6922,25 @@ fn lookup_unicode_cmap_31(face: &ttf_parser::Face, unicode: u32) -> Option<ttf_p
                 return Some(gid);
             }
             return None; // Mapped to .notdef
+        }
+    }
+    None
+}
+
+/// Look up a Unicode code point in the (3,1) Windows Unicode BMP cmap, returning
+/// the raw GlyphId without filtering GID 0. Unlike `lookup_unicode_cmap_31`, this
+/// returns `Some(GlyphId(0))` when the code is explicitly mapped to the notdef glyph,
+/// and `None` only when the code is truly absent from the (3,1) subtable.
+/// Used to distinguish "mapped to notdef" from "not in cmap at all" for correct
+/// fallback handling. (#fix-tt-cmap31-notdef-vs-absent)
+fn lookup_unicode_cmap_31_raw(
+    face: &ttf_parser::Face,
+    unicode: u32,
+) -> Option<ttf_parser::GlyphId> {
+    let cmap = face.tables().cmap?;
+    for subtable in cmap.subtables {
+        if subtable.platform_id == ttf_parser::PlatformId::Windows && subtable.encoding_id == 1 {
+            return subtable.glyph_index(unicode);
         }
     }
     None
@@ -8281,18 +8338,12 @@ fn compute_cff_corrections_by_name(
         }
         let frac_w_opt =
             cff_width_for_code(cff, font_data, code, enc_name, differences, scale);
-        if std::env::var("PDF_MANIP_DBG").is_ok() {
-            let diff_name = differences.get(&code);
-            eprintln!(
-                "[DBG cbn] code={} diff={:?} pdf_w={} cff_w={:?}",
-                code, diff_name, pdf_w, frac_w_opt
-            );
-        }
         let Some(frac_w) = frac_w_opt else {
             continue;
         };
         let rounded_w = frac_w.round() as i64;
-        if rounded_w != pdf_w as i64 {
+        // veraPDF §6.2.11.5 allows ≤1 unit tolerance — only flag differences > 1.
+        if (rounded_w - pdf_w as i64).abs() > 1 {
             corrections.push((i, rounded_w));
         }
     }
@@ -8786,17 +8837,24 @@ fn compute_cff_single_width(
     }
 
     // Secondary: CFF internal encoding → GID → width. Mirrors the compliance
-    // checker (check_font_program_widths) which uses glyph_index() directly,
-    // including GID 0 (.notdef). This ensures that for codes where name-based
-    // lookup fails (glyph not in the subset's charset), we return the .notdef
-    // width — the same value the compliance checker uses. Without this, we'd
-    // leave /Widths entries at 0 for extended codes, causing violations.
-    // (#6.2.11.5-extensions)
+    // checker (check_font_program_widths) which uses glyph_index() directly.
+    // For SE-implied/explicit encodings, when glyph_index returns None or GID 0
+    // (code absent from CFF), use .notdef width — matches veraPDF §6.2.11.5
+    // which uses .notdef as widthFromFontProgram for absent glyphs.
+    // (#6.2.11.5-extensions, #6.2.11.5-std-enc)
     if code <= 255 {
-        return cff
-            .glyph_index(code as u8)
-            .and_then(|g| cff.glyph_width(g))
-            .map(|w| w as f64 * scale); // scale must be applied; raw CFF units ≠ PDF units
+        let gid_opt = cff.glyph_index(code as u8).filter(|g| g.0 != 0);
+        if let Some(gid) = gid_opt {
+            return cff.glyph_width(gid).map(|w| w as f64 * scale);
+        }
+        // glyph_index returned None or GID 0: for SE-implied/explicit encoding,
+        // return .notdef width (matches veraPDF: absent glyph → .notdef advance).
+        let uses_standard_encoding = enc_name.is_empty() || enc_name == "StandardEncoding";
+        if uses_standard_encoding {
+            return cff
+                .glyph_width(cff_parser::GlyphId(0))
+                .map(|w| w as f64 * scale);
+        }
     }
 
     None
@@ -8814,7 +8872,6 @@ fn cff_width_for_code(
     scale: f64,
 ) -> Option<f64> {
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
-    let has_explicit_difference = differences.contains_key(&code);
 
     // Primary path: PDF encoding → glyph name → CFF charset lookup.
     // veraPDF resolves code → glyph name via the PDF Encoding, then looks up
@@ -8822,29 +8879,43 @@ fn cff_width_for_code(
     // CFF (e.g. because the subset uses GID-based names like G80) does it
     // fall back to the CFF internal encoding.
     let mut name_found = false;
-    // True when the PDF encoding does not define a glyph for this code
-    // (e.g. WinAnsiEncoding code 127 = DEL = undefined). In that case veraPDF
-    // falls back to the CFF internal encoding for width comparison, so we must
-    // do the same. (#FN-6.2.11.5-undefined-code)
-    let mut name_is_undefined = false;
     if has_pdf_encoding {
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.clone()
         } else if enc_name.is_empty() {
-            // No BaseEncoding → StandardEncoding is the implied base for Type1 per
-            // PDF spec §8.5.3. Using the WinAnsi fallback in encoding_to_char would
-            // give the wrong glyph (e.g. code 177 → plusminus/564 instead of
-            // cedilla/500). Let name_is_undefined=true below so we fall through to
-            // the CFF internal encoding (StandardEncoding) path. (#504)
-            String::new()
-        } else {
+            // No BaseEncoding → StandardEncoding is implied per PDF spec §8.5.3.
+            // veraPDF resolves code → glyph name via Standard Encoding.
+            // - Codes 32-126: have SE glyph assignments → resolve to name, then
+            //   look up in CFF. If absent → Fix 2 (.notdef).
+            // - Codes 0-31, 127, high undefined: NOT in SE. Return "" so
+            //   name_is_undefined=true, cff_width_for_code returns None, and the
+            //   outer cff_width_for_raw_fontfile3 falls through to glyph_index(code)
+            //   — matching veraPDF's CFF internal encoding fallback for those codes.
+            // (#504, #6.2.11.5-std-enc)
+            let is_se_defined = (32..127).contains(&code);
+            if !is_se_defined {
+                // Control char or undefined: not in Standard Encoding.
+                String::new()
+            } else {
+                let ch = encoding_to_char(code, "StandardEncoding");
+                if ch == '\u{FFFF}' {
+                    String::new()
+                } else {
+                    unicode_to_glyph_name(ch).unwrap_or_default()
+                }
+            }
+        } else if enc_name == "WinAnsiEncoding" {
             let ch = encoding_to_char(code, enc_name);
             unicode_to_glyph_name(ch).unwrap_or_default()
+        } else {
+            // For MacRomanEncoding and any other non-standard encoding,
+            // veraPDF does NOT use name-based lookup — it falls directly to
+            // CFF internal encoding (table.glyph_index(code)).  Return empty
+            // string here so name_is_undefined triggers the CFF fallback.
+            // (#6.2.11.5-non-winansi-cff-fallback)
+            String::new()
         };
-        if glyph_name.is_empty() || glyph_name == ".notdef" {
-            // PDF encoding has no glyph for this code — allow CFF encoding fallback.
-            name_is_undefined = true;
-        } else if !glyph_name.is_empty() && glyph_name != ".notdef" {
+        if !glyph_name.is_empty() && glyph_name != ".notdef" {
             if let Some(w) =
                 find_cff_glyph_width_by_name_fractional(cff, font_data, &glyph_name, scale)
             {
@@ -8889,19 +8960,24 @@ fn cff_width_for_code(
     }
 
     // Fallback: CFF internal encoding → GID → width.
-    // Used when (a) no PDF encoding exists, (b) PDF encoding name lookup
-    // failed AND the CFF uses GID-based names (G80, G32, etc.) where name
-    // lookup will never succeed, or (c) the PDF encoding doesn't define a
-    // glyph for this code (undefined codes like WinAnsiEncoding code 127=DEL).
-    let allow_cff_encoding_fallback = !has_pdf_encoding
-        || cff_has_gid_based_names(cff)
-        // Encoding dictionary with empty or StandardEncoding BaseEncoding:
-        // for codes not explicitly listed in Differences, use CFF internal
-        // encoding as the authoritative mapping (matches veraPDF §6.2.11.5). (#504)
-        || ((enc_name.is_empty() || enc_name == "StandardEncoding") && !has_explicit_difference)
-        // PDF encoding doesn't define a glyph name for this code — veraPDF
-        // uses CFF encoding directly for width comparison. (#FN-6.2.11.5)
-        || name_is_undefined;
+    // veraPDF's algorithm for ALL CFF fonts with a PDF /Encoding:
+    //   1. Resolve code → glyph name via PDF Encoding (SE, WinAnsi, Differences…)
+    //   2. Look up glyph name in CFF charset → if found, use charstring width
+    //   3. If NOT found → fall back to CFF INTERNAL encoding (glyph_index(code))
+    //      → if found, use that charstring width
+    //   4. If STILL not found → use .notdef width (Fix 2 below)
+    // This means CFF internal encoding fallback is needed for SE-implied AND non-SE
+    // fonts whenever the name-based lookup fails. Evidence: veraPDF reports e.g.
+    // "Glyph width 727.65 in the embedded font program is not consistent with the
+    // Widths" for SE-implied G-named fonts (G72, G73…) where "H", "I" etc. fail name
+    // lookup but the CFF encoding maps the code to the correct non-0 GID.
+    // (#6.2.11.5-std-enc-cff-fallback)
+    // CFF internal encoding fallback is always active here. When we reach this
+    // point, name_found=false (name_found=true causes early return above). For every
+    // PDF /Encoding, veraPDF falls back to CFF glyph_index(code) when name lookup
+    // fails — whether the encoding is SE-implied, WinAnsi, or explicit Differences.
+    // (#6.2.11.5-std-enc-cff-fallback)
+    let allow_cff_encoding_fallback = code <= 255;
 
     if !name_found && code <= 255 && allow_cff_encoding_fallback {
         let enc_map = parse_cff_encoding_map(font_data);
@@ -8924,12 +9000,15 @@ fn cff_width_for_code(
         }
     }
 
-    // PDF encoding defines a glyph name but that name (and all known aliases)
-    // is absent from the CFF charset. veraPDF §6.2.11.5 uses the .notdef
-    // advance width as "widthFromFontProgram" for absent glyphs (it does NOT
-    // skip the check). Return .notdef width so the correction sets the PDF
-    // /Widths entry to the value veraPDF will compare against. (#6.2.11.5-none-glyph)
-    if has_pdf_encoding && !name_is_undefined && !name_found {
+    // Final fallback: if BOTH name-based lookup AND CFF internal encoding returned
+    // nothing (or GID 0), veraPDF uses the .notdef advance as widthFromFontProgram.
+    // This applies to any code where the CFF has no mapping, regardless of encoding
+    // type.  The old SE-only restriction was wrong: veraPDF returns .notdef width
+    // when table.glyph_index(code) gives GID 0 for ANY encoding, including
+    // WinAnsiEncoding undefined codes (e.g. code 129) and MacRomanEncoding codes
+    // that fall through CFF encoding with no valid GID.
+    // (#6.2.11.5-none-glyph, #6.2.11.5-winansi-undef-notdef)
+    if has_pdf_encoding && !name_found {
         return cff
             .glyph_width(cff_parser::GlyphId(0))
             .map(|w| w as f64 * scale);
@@ -9512,10 +9591,6 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
     // Strip Encoding from symbolic TrueType fonts (6.2.11.6:3).
     for id in &symbolic_to_strip {
         if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(*id) {
-            if std::env::var("PDF_MANIP_DBG").is_ok() {
-                let name = get_name(dict, b"BaseFont").unwrap_or_default();
-                eprintln!("[DBG fix_tt_enc] stripping Encoding from symbolic TrueType font: {name}");
-            }
             dict.remove(b"Encoding");
         }
     }
