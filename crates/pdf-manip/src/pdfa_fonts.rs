@@ -9163,12 +9163,24 @@ fn cff_width_for_code(
         }
         // cff.glyph_index falls back to StandardEncoding for codes not in the
         // CFF encoding table, and StandardEncoding maps many codes to SID 0
-        // (→ GID 0 = .notdef).  Using .notdef width as the "expected width" for
-        // an unmapped code would incorrectly overwrite a correct existing width
+        // (→ GID 0 = .notdef).  For HIGH-BYTE codes (>127) that resolve to GID 0
+        // this way, veraPDF treats the code as absent from the font → uses
+        // defaultWidthX (Case 1) or .notdef charstring advance (Case 2). We set
+        // cff_enc_explicit_notdef=true to trigger the correct Case below.
+        //
+        // RESTRICTED TO code > 127: for low-byte codes, the name-lookup path
+        // (above) is always attempted first and correctly resolves the glyph
+        // via the PDF Differences entry. Using .notdef for code ≤127 would
+        // wrongly overwrite a correct existing width when the named glyph IS in
+        // the CFF charset but Standard encoding doesn't know about it
         // (e.g. code 1 width 411 → 250 for ABDHHO+Symbol). (#626)
         if let Some(gid) = cff.glyph_index(code as u8) {
             if gid.0 != 0 {
                 return cff.glyph_width(gid).map(|w| w as f64 * scale);
+            }
+            // GID 0 via Standard encoding fallback for a high-byte code.
+            if code > 127 {
+                cff_enc_explicit_notdef = true;
             }
         }
 
