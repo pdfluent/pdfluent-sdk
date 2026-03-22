@@ -40,7 +40,9 @@ impl Skippable for Comment<'_> {
 impl<'a> Readable<'a> for Comment<'a> {
     fn read(r: &mut Reader<'a>, _: &ReaderContext<'_>) -> Option<Self> {
         let bytes = r.skip_in_content_stream::<Comment<'_>>()?;
-        let bytes = bytes.get(1..bytes.len()).expect("comment starts with %, bytes.len() >= 1");
+        let bytes = bytes
+            .get(1..bytes.len())
+            .expect("comment starts with %, bytes.len() >= 1");
 
         Some(Comment(bytes))
     }

@@ -7567,7 +7567,11 @@ fn compute_type1_fontfile_width_corrections(
         }
         // Look up width. For .notdef, always use 0 if charstring is absent.
         let cs_width = if glyph_name == ".notdef" {
-            parsed.charstring_widths.get(".notdef").copied().unwrap_or_default()
+            parsed
+                .charstring_widths
+                .get(".notdef")
+                .copied()
+                .unwrap_or_default()
         } else {
             match parsed.charstring_widths.get(glyph_name.as_str()).copied() {
                 Some(w) => w,
@@ -9073,9 +9077,8 @@ fn cff_width_for_code(
                 if se_w.is_none() {
                     let g_name = unicode_to_glyph_name(se_ch).unwrap_or_default();
                     if !g_name.is_empty() && g_name != ".notdef" {
-                        se_w = find_cff_glyph_width_by_name_fractional(
-                            cff, font_data, &g_name, scale,
-                        );
+                        se_w =
+                            find_cff_glyph_width_by_name_fractional(cff, font_data, &g_name, scale);
                     }
                 }
                 if let Some(w) = se_w {
@@ -15148,6 +15151,90 @@ fn apply_encoding_fixes(
     }
 
     false
+}
+
+/// Fix Type3 fonts where CharProcs defines a `.notdef` glyph procedure.
+///
+/// Some Type3 fonts use `.notdef` as an internal glyph name for glyphs that
+/// are actually rendered (e.g. space, dash).  They assign character codes in
+/// their Encoding/Differences to `.notdef` and then supply a real drawing
+/// procedure under CharProcs[.notdef].  This is valid PDF, but PDF/A-2
+/// §6.2.11.8 forbids any Encoding entry that names `.notdef`, even when the
+/// font provides a CharProc for it.
+///
+/// Fix: rename `.notdef` → `gnotdef` in CharProcs **and** replace every
+/// `/.notdef` occurrence in the Encoding /Differences array with `/gnotdef`.
+/// The drawn appearance is unchanged; only the glyph name changes.
+///
+/// Fixes §6.2.11.8 violations caused by Type3 fonts. (#507)
+pub fn fix_type3_notdef_charprocs(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+
+    for font_id in font_ids {
+        // Identify Type3 fonts with a CharProcs dict that contains .notdef.
+        let (charprocs_id, encoding_info) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            if !is_font_dict(dict) {
+                continue;
+            }
+            if get_name(dict, b"Subtype").as_deref() != Some("Type3") {
+                continue;
+            }
+            // CharProcs must be a reference to a dict.
+            let cp_id = match dict.get(b"CharProcs").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+            // Encoding reference (if indirect) or inline dict.
+            let enc_ref = match dict.get(b"Encoding").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            };
+            (cp_id, enc_ref)
+        };
+
+        // Check that CharProcs actually contains .notdef.
+        let charprocs_has_notdef = {
+            let Some(Object::Dictionary(cp)) = doc.objects.get(&charprocs_id) else {
+                continue;
+            };
+            cp.has(b".notdef")
+        };
+        if !charprocs_has_notdef {
+            continue;
+        }
+
+        // Rename .notdef → gnotdef in CharProcs.
+        if let Some(Object::Dictionary(cp)) = doc.objects.get_mut(&charprocs_id) {
+            if let Some(val) = cp.remove(b".notdef") {
+                cp.set("gnotdef", val);
+                fixed += 1;
+            }
+        }
+
+        // Update the Encoding /Differences array to replace .notdef with gnotdef.
+        let enc_id = match encoding_info {
+            Some(id) => id,
+            None => continue,
+        };
+        let Some(Object::Dictionary(enc_dict)) = doc.objects.get_mut(&enc_id) else {
+            continue;
+        };
+        let diffs = match enc_dict.get_mut(b"Differences").ok() {
+            Some(Object::Array(arr)) => arr,
+            _ => continue,
+        };
+        for item in diffs.iter_mut() {
+            if matches!(item, Object::Name(n) if n == b".notdef") {
+                *item = Object::Name(b"gnotdef".to_vec());
+            }
+        }
+    }
+
+    fixed
 }
 
 #[cfg(test)]

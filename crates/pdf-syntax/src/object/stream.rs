@@ -141,7 +141,10 @@ impl<'a> Stream<'a> {
 
     /// Return the object identifier of the stream.
     pub fn obj_id(&self) -> ObjectIdentifier {
-        self.0.dict.obj_id().expect("streams are always indirect objects")
+        self.0
+            .dict
+            .obj_id()
+            .expect("streams are always indirect objects")
     }
 
     /// Return the filters that are applied to the stream.
