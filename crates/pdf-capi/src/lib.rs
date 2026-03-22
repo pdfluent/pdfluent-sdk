@@ -818,8 +818,7 @@ pub unsafe extern "C" fn pdf_annotation_type(
     if idx >= annots.len() {
         return ptr::null_mut();
     }
-    let subtype = annot_subtype(&lopdf_doc, &annots[idx])
-        .unwrap_or_else(|| "Unknown".to_string());
+    let subtype = annot_subtype(&lopdf_doc, &annots[idx]).unwrap_or_else(|| "Unknown".to_string());
     match std::ffi::CString::new(subtype) {
         Ok(cstr) => cstr.into_raw(),
         Err(_) => ptr::null_mut(),
@@ -1022,9 +1021,7 @@ fn add_highlight(
     // Check whether /Annots on the page is a direct array or an indirect reference,
     // then append accordingly (two separate borrows to satisfy the borrow checker).
     let annots_ref_id: Option<lopdf::ObjectId> = {
-        let page_dict = doc
-            .get_dictionary(page_id)
-            .map_err(|e| e.to_string())?;
+        let page_dict = doc.get_dictionary(page_id).map_err(|e| e.to_string())?;
         page_dict
             .get(b"Annots")
             .ok()
@@ -1039,23 +1036,15 @@ fn add_highlight(
         }
     } else {
         // /Annots is a direct array or absent.
-        let page_dict = doc
-            .get_dictionary_mut(page_id)
-            .map_err(|e| e.to_string())?;
+        let page_dict = doc.get_dictionary_mut(page_id).map_err(|e| e.to_string())?;
         if page_dict.has(b"Annots") {
-            let existing = page_dict
-                .get(b"Annots")
-                .map_err(|e| e.to_string())?
-                .clone();
+            let existing = page_dict.get(b"Annots").map_err(|e| e.to_string())?.clone();
             if let Object::Array(mut arr) = existing {
                 arr.push(Object::Reference(annot_id));
                 page_dict.set("Annots", Object::Array(arr));
             }
         } else {
-            page_dict.set(
-                "Annots",
-                Object::Array(vec![Object::Reference(annot_id)]),
-            );
+            page_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
         }
     }
 
