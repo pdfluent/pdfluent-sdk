@@ -824,4 +824,86 @@ mod tests {
         assert_eq!(hex_encode(&[0xDE, 0xAD, 0xBE, 0xEF]), b"DEADBEEF");
         assert_eq!(hex_encode(&[0x00, 0xFF]), b"00FF");
     }
+
+    /// Sign an XFA form PDF and verify the result with our own validator and
+    /// with OpenSSL as an independent external oracle. Covers issue #536 Task 3.
+    #[test]
+    fn sign_xfa_form_roundtrip() {
+        let path = corpus_path("xfa-form.pdf");
+        if !path.exists() {
+            // corpus-mini is optional in CI; skip gracefully.
+            return;
+        }
+        let pdf = std::fs::read(&path).expect("read xfa-form.pdf");
+        let signer = load_rsa_signer();
+
+        let signed = sign_pdf(&pdf, &signer, &SignOptions::default())
+            .expect("sign_pdf should succeed on XFA form");
+
+        // Internal validation.
+        let parsed = pdf_syntax::Pdf::new(signed.clone()).expect("parse signed PDF");
+        let results = crate::validate_signatures(&parsed);
+        assert!(!results.is_empty(), "no signatures in signed XFA PDF");
+        assert!(
+            matches!(results[0].status, crate::types::ValidationStatus::Valid),
+            "XFA form signature not valid: {:?}",
+            results[0].status
+        );
+
+        // External oracle: openssl cms -verify. Skip if not installed.
+        if let Some(bin) = find_openssl_bin() {
+            let sigs = crate::signature_fields(&parsed);
+            let first = &sigs[0];
+            let [off1, len1, off2, len2] = first.sig.byte_range().expect("ByteRange");
+            let der = first.sig.contents_raw().expect("Contents");
+
+            let mut content = Vec::with_capacity(len1 + len2);
+            content.extend_from_slice(&signed[off1..off1 + len1]);
+            content.extend_from_slice(&signed[off2..off2 + len2]);
+
+            let tmpdir = std::env::temp_dir();
+            let sig_path = tmpdir.join("xfa_sign_test_xfa.der");
+            let content_path = tmpdir.join("xfa_sign_test_xfa.bin");
+            std::fs::write(&sig_path, &der).unwrap();
+            std::fs::write(&content_path, &content).unwrap();
+
+            let status = std::process::Command::new(bin)
+                .arg("cms").arg("-verify")
+                .arg("-inform").arg("DER")
+                .arg("-in").arg(&sig_path)
+                .arg("-content").arg(&content_path)
+                .arg("-noverify")
+                .arg("-out").arg("/dev/null")
+                .status()
+                .expect("openssl exec");
+
+            let _ = std::fs::remove_file(&sig_path);
+            let _ = std::fs::remove_file(&content_path);
+
+            assert!(status.success(), "openssl cms -verify failed for XFA form signature");
+        }
+    }
+
+    /// Find an OpenSSL binary for external-oracle tests.
+    fn find_openssl_bin() -> Option<&'static str> {
+        const CANDIDATES: &[&str] = &[
+            "/opt/anaconda3/bin/openssl",
+            "/usr/local/bin/openssl",
+            "/usr/bin/openssl",
+        ];
+        for &bin in CANDIDATES {
+            if std::path::Path::new(bin).exists() {
+                return Some(bin);
+            }
+        }
+        if std::process::Command::new("openssl")
+            .arg("version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return Some("openssl");
+        }
+        None
+    }
 }

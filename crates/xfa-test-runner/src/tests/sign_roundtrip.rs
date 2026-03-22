@@ -5,6 +5,116 @@ use std::time::Duration;
 
 use super::{PdfTest, TestResult, TestStatus};
 
+/// Find an OpenSSL binary on the system. Returns `None` when unavailable
+/// (external verification is then skipped rather than failed). Cached after
+/// the first lookup to avoid repeated file-system probes on corpus runs.
+fn find_openssl() -> Option<&'static str> {
+    static OPENSSL: OnceLock<Option<&'static str>> = OnceLock::new();
+    *OPENSSL.get_or_init(|| {
+        // Prefer OpenSSL 3.x over LibreSSL for better CMS support.
+        const CANDIDATES: &[&str] = &[
+            "/opt/anaconda3/bin/openssl", // macOS Anaconda (OpenSSL 3.x)
+            "/usr/local/bin/openssl",     // Homebrew / custom install
+            "/usr/bin/openssl",           // macOS (LibreSSL) or Linux system openssl
+        ];
+        for &bin in CANDIDATES {
+            if std::path::Path::new(bin).exists() {
+                return Some(bin);
+            }
+        }
+        // Fall back to PATH lookup.
+        if std::process::Command::new("openssl")
+            .arg("version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            return Some("openssl");
+        }
+        None
+    })
+}
+
+/// Verify the first signature in `signed_pdf` using `openssl cms -verify`.
+///
+/// Returns:
+/// - `Ok(Some(()))` — openssl confirmed the signature is valid
+/// - `Ok(None)`     — openssl not available on this host; skip external check
+/// - `Err(msg)`     — openssl rejected the signature (real failure)
+///
+/// Implements Task 1 of issue #536: external oracle to catch bugs in our own
+/// CMS validator.
+fn openssl_cms_verify(
+    signed_bytes: &[u8],
+    signed_pdf: &pdf_syntax::Pdf,
+) -> Result<Option<()>, String> {
+    let bin = match find_openssl() {
+        Some(b) => b,
+        None => return Ok(None),
+    };
+
+    let sigs = pdf_sign::signature_fields(signed_pdf);
+    let first = sigs
+        .first()
+        .ok_or_else(|| "no signatures found for openssl verify".to_string())?;
+
+    let [off1, len1, off2, len2] = first
+        .sig
+        .byte_range()
+        .ok_or_else(|| "signature missing /ByteRange".to_string())?;
+    let der = first
+        .sig
+        .contents_raw()
+        .ok_or_else(|| "signature missing /Contents".to_string())?;
+
+    if off1 + len1 > signed_bytes.len() || off2 + len2 > signed_bytes.len() {
+        return Err("ByteRange extends past end of PDF".into());
+    }
+
+    // Build the signed content from the two ByteRange regions.
+    let mut content = Vec::with_capacity(len1 + len2);
+    content.extend_from_slice(&signed_bytes[off1..off1 + len1]);
+    content.extend_from_slice(&signed_bytes[off2..off2 + len2]);
+
+    // Unique temp-file suffix per thread so parallel corpus runs don't collide.
+    let uid: String = format!("{:?}", std::thread::current().id())
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect();
+    let tmpdir = std::env::temp_dir();
+    let sig_path = tmpdir.join(format!("xfa_sig_{uid}.der"));
+    let content_path = tmpdir.join(format!("xfa_sig_{uid}.bin"));
+
+    std::fs::write(&sig_path, &der).map_err(|e| format!("write sig.der: {e}"))?;
+    std::fs::write(&content_path, &content).map_err(|e| format!("write data.bin: {e}"))?;
+
+    let output = std::process::Command::new(bin)
+        .arg("cms")
+        .arg("-verify")
+        .arg("-inform")
+        .arg("DER")
+        .arg("-in")
+        .arg(&sig_path)
+        .arg("-content")
+        .arg(&content_path)
+        .arg("-noverify")
+        .arg("-out")
+        .arg("/dev/null")
+        .output();
+
+    let _ = std::fs::remove_file(&sig_path);
+    let _ = std::fs::remove_file(&content_path);
+
+    match output {
+        Ok(o) if o.status.success() => Ok(Some(())),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            Err(format!("openssl cms verify failed: {}", stderr.trim()))
+        }
+        Err(e) => Err(format!("openssl exec error: {e}")),
+    }
+}
+
 /// Total time budget for sign_roundtrip.run() before the outer runner's 30s timer fires.
 /// The two sequential inner threads (lopdf load + sign_pdf) share this budget, leaving
 /// 4s of margin so run() always returns before the outer runner's recv_timeout.
@@ -210,25 +320,46 @@ impl PdfTest for SignRoundtripTest {
         let oracle_score = valid_count as f64 / total as f64;
 
         if valid_count == 0 {
-            TestResult {
+            return TestResult {
                 status: TestStatus::Fail,
                 error_message: Some(format!("0/{total} signatures valid: {}", issues.join("; "))),
                 duration_ms: elapsed(),
                 oracle_score: Some(oracle_score),
                 metadata,
+            };
+        }
+
+        // 7. External OpenSSL CMS verification — independent oracle. #536
+        // Only runs when our own validator reports the signature as valid.
+        // Catches bugs in our CMS code that circular self-validation would miss.
+        match openssl_cms_verify(&signed_bytes, &signed_pdf) {
+            Ok(Some(())) => {
+                metadata.insert("openssl_verified".into(), "true".into());
             }
-        } else {
-            TestResult {
-                status: TestStatus::Pass,
-                error_message: if issues.is_empty() {
-                    None
-                } else {
-                    Some(issues.join("; "))
-                },
-                duration_ms: elapsed(),
-                oracle_score: Some(oracle_score),
-                metadata,
+            Ok(None) => {
+                metadata.insert("openssl_skipped".into(), "not available".into());
             }
+            Err(msg) => {
+                return TestResult {
+                    status: TestStatus::Fail,
+                    error_message: Some(msg),
+                    duration_ms: elapsed(),
+                    oracle_score: Some(oracle_score),
+                    metadata,
+                };
+            }
+        }
+
+        TestResult {
+            status: TestStatus::Pass,
+            error_message: if issues.is_empty() {
+                None
+            } else {
+                Some(issues.join("; "))
+            },
+            duration_ms: elapsed(),
+            oracle_score: Some(oracle_score),
+            metadata,
         }
     }
 }
