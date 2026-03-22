@@ -2337,12 +2337,13 @@ fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                     .take_while(|w| *w != b"stream")
                     .any(|w| w == b"endobj");
                 // Also skip /F values that are inside a PDF string (between parentheses).
-                // Walk backwards from the /F position to detect an unclosed '(' indicating
-                // we're inside a string value like /CharSet(/glyph1/F/glyph2).
+                // Use current_dict_ctx (from last '<<') not the full before window: prior
+                // stream objects contain binary data with unbalanced '(' bytes that falsely
+                // indicate we're inside a string. (#FN-6.1.7.1 verapdf-6-1-7-1-t04-fail-a)
                 let in_string = {
                     let mut depth = 0i32;
                     let mut in_s = false;
-                    for &b in before.iter() {
+                    for &b in current_dict_ctx.iter() {
                         match b {
                             b'(' => {
                                 depth += 1;
@@ -2616,11 +2617,12 @@ fn check_tagged_requirements(pdf: &Pdf, level: PdfALevel, report: &mut Complianc
         return;
     }
 
-    // For PDF/A-1/2/3: when the document has no StructTreeRoot, veraPDF fires only §6.7.3.3
-    // (emitted by check_struct_tree_root_required). Firing §6.8 here too would be a FP.
-    // Only fire §6.8 when the document HAS a StructTreeRoot but MarkInfo is wrong.
-    // (#FP-6.8, c4k-poppler-106863-0)
-    if has_struct_tree && !check::is_marked(pdf) {
+    // For PDF/A-1: MarkInfo violations are reported as §6.8.2.2 by check_mark_info.
+    // Firing §6.8 here too would be a FP — veraPDF uses §6.8.2.2 not §6.8 for this case.
+    // For PDF/A-2/3: fire §6.8 when the document HAS a StructTreeRoot but MarkInfo is wrong.
+    // When StructTreeRoot is absent, veraPDF fires only §6.7.3.3. (#FP-6.8, c4k-poppler-106863-0)
+    // (#FN-6.8.2.2 verapdf-6-8-2-2-t01-fail-a)
+    if level.part() != 1 && has_struct_tree && !check::is_marked(pdf) {
         check::error(
             report,
             mark_rule,
