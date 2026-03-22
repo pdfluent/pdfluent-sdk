@@ -5493,12 +5493,18 @@ fn debug_batch_6_2_11_5() {
 
         let data = match std::fs::read(&path) {
             Ok(d) => d,
-            Err(e) => { eprintln!("MISSING {name}: {e}"); continue; }
+            Err(e) => {
+                eprintln!("MISSING {name}: {e}");
+                continue;
+            }
         };
 
         let mut doc = match lopdf::Document::load_mem(&data) {
             Ok(d) if !d.objects.is_empty() => d,
-            _ => { eprintln!("LOAD FAIL {name}"); continue; }
+            _ => {
+                eprintln!("LOAD FAIL {name}");
+                continue;
+            }
         };
 
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -5552,8 +5558,11 @@ fn debug_batch_6_2_11_5() {
             Ok(o) => {
                 let txt = String::from_utf8_lossy(&o.stdout);
                 // Print only lines containing the rule or error details
-                let errors: Vec<&str> = txt.lines()
-                    .filter(|l| l.contains("6.2.11.5") || l.contains("FAIL") || l.contains("context"))
+                let errors: Vec<&str> = txt
+                    .lines()
+                    .filter(|l| {
+                        l.contains("6.2.11.5") || l.contains("FAIL") || l.contains("context")
+                    })
                     .collect();
                 if errors.is_empty() {
                     eprintln!("{name}: PASS");
@@ -5577,39 +5586,73 @@ fn debug_diagnose_6_2_11_5() {
 
     // (pdf_path, font_contains, codes_to_trace)
     let cases: Vec<(&str, &str, Vec<u32>)> = vec![
-        ("/tmp/pdf-test-6.2.11.5/gen-765_765033.pdf", "Helvetica-Bold",          vec![225, 233]),
-        ("/tmp/pdf-test-6.2.11.5/gen-764_764288.pdf", "Helvetica-Condensed-Bold", vec![39]),
-        ("/tmp/pdf-test-6.2.11.5/gen-131_131159.pdf", "AvantGarde-Book",         vec![129]),
-        ("/tmp/pdf-test-6.2.11.5/gen-488_488313.pdf", "Frutiger-Black",          vec![233]),
-        ("/tmp/pdf-test-6.2.11.5/gen-724_724164.pdf", "Times-Roman",             vec![243]),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-765_765033.pdf",
+            "Helvetica-Bold",
+            vec![225, 233],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-764_764288.pdf",
+            "Helvetica-Condensed-Bold",
+            vec![39],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-131_131159.pdf",
+            "AvantGarde-Book",
+            vec![129],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-488_488313.pdf",
+            "Frutiger-Black",
+            vec![233],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-724_724164.pdf",
+            "Times-Roman",
+            vec![243],
+        ),
     ];
 
-    fn get_font_widths(doc: &lopdf::Document, font_substr: &str, codes: &[u32]) -> Vec<(String, u32, i64)> {
+    fn get_font_widths(
+        doc: &lopdf::Document,
+        font_substr: &str,
+        codes: &[u32],
+    ) -> Vec<(String, u32, i64)> {
         use lopdf::Object;
         let mut results = Vec::new();
         for (id, obj) in &doc.objects {
-            let Object::Dictionary(dict) = obj else { continue };
+            let Object::Dictionary(dict) = obj else {
+                continue;
+            };
             let base = match dict.get(b"BaseFont").ok() {
                 Some(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
                 _ => continue,
             };
-            if !base.contains(font_substr) { continue }
+            if !base.contains(font_substr) {
+                continue;
+            }
             let fc = match dict.get(b"FirstChar").ok() {
                 Some(Object::Integer(i)) => *i as u32,
                 _ => continue,
             };
             let widths: Vec<i64> = match dict.get(b"Widths").ok() {
-                Some(Object::Array(arr)) => arr.iter().map(|o| match o {
-                    Object::Integer(i) => *i,
-                    Object::Real(r) => *r as i64,
-                    _ => -1,
-                }).collect(),
-                Some(Object::Reference(r)) => match doc.get_object(*r) {
-                    Ok(Object::Array(arr)) => arr.iter().map(|o| match o {
+                Some(Object::Array(arr)) => arr
+                    .iter()
+                    .map(|o| match o {
                         Object::Integer(i) => *i,
                         Object::Real(r) => *r as i64,
                         _ => -1,
-                    }).collect(),
+                    })
+                    .collect(),
+                Some(Object::Reference(r)) => match doc.get_object(*r) {
+                    Ok(Object::Array(arr)) => arr
+                        .iter()
+                        .map(|o| match o {
+                            Object::Integer(i) => *i,
+                            Object::Real(r) => *r as i64,
+                            _ => -1,
+                        })
+                        .collect(),
                     _ => vec![],
                 },
                 _ => vec![],
@@ -5626,7 +5669,10 @@ fn debug_diagnose_6_2_11_5() {
                 Some(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
                 _ => "(custom/none)".to_string(),
             };
-            eprintln!("  font_obj={id:?} base={base} fc={fc} enc={enc_name} widths_len={}", widths.len());
+            eprintln!(
+                "  font_obj={id:?} base={base} fc={fc} enc={enc_name} widths_len={}",
+                widths.len()
+            );
             break;
         }
         results
@@ -5707,17 +5753,23 @@ fn debug_cff_charset_helv_bold() {
 
     // Find HJPIGJ+Helvetica-Bold font
     for (id, obj) in &doc.objects {
-        let Object::Dictionary(dict) = obj else { continue };
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
         let subtype = match dict.get(b"Subtype").ok() {
             Some(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
             _ => continue,
         };
-        if subtype != "Type1" { continue }
+        if subtype != "Type1" {
+            continue;
+        }
         let base = match dict.get(b"BaseFont").ok() {
             Some(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
             _ => continue,
         };
-        if !base.contains("Helvetica-Bold") { continue }
+        if !base.contains("Helvetica-Bold") {
+            continue;
+        }
         eprintln!("=== Font {id:?}: {base} ===");
 
         // Get FontDescriptor
@@ -5725,22 +5777,39 @@ fn debug_cff_charset_helv_bold() {
             Some(Object::Reference(r)) => *r,
             _ => continue,
         };
-        let Some(Object::Dictionary(fd)) = doc.objects.get(&fd_id) else { continue };
+        let Some(Object::Dictionary(fd)) = doc.objects.get(&fd_id) else {
+            continue;
+        };
         let ff3_id = match fd.get(b"FontFile3").ok() {
             Some(Object::Reference(r)) => *r,
-            _ => { eprintln!("No FontFile3"); continue; }
+            _ => {
+                eprintln!("No FontFile3");
+                continue;
+            }
         };
-        let Some(Object::Stream(ref stream)) = doc.objects.get(&ff3_id) else { continue };
+        let Some(Object::Stream(ref stream)) = doc.objects.get(&ff3_id) else {
+            continue;
+        };
         let font_data = match stream.decompressed_content() {
             Ok(d) => d,
-            Err(e) => { eprintln!("Decomp error: {e}"); continue; }
+            Err(e) => {
+                eprintln!("Decomp error: {e}");
+                continue;
+            }
         };
-        eprintln!("  font bytes: {} first4={:02x?}", font_data.len(), &font_data[..4.min(font_data.len())]);
+        eprintln!(
+            "  font bytes: {} first4={:02x?}",
+            font_data.len(),
+            &font_data[..4.min(font_data.len())]
+        );
 
         // Check glyph_index and enc_map for codes 225 and 233
         let cff = match cff_parser::Table::parse(&font_data) {
             Some(c) => c,
-            None => { eprintln!("CFF parse failed on raw"); continue; }
+            None => {
+                eprintln!("CFF parse failed on raw");
+                continue;
+            }
         };
         let ng = cff.number_of_glyphs();
         eprintln!("  raw CFF num_glyphs={ng}");
@@ -5764,45 +5833,147 @@ fn debug_cff_charset_helv_bold() {
 fn debug_fonttype_all_611() {
     use lopdf::Object;
     for (path, font_substr, codes) in &[
-        ("/tmp/pdf-test-6.2.11.5/gen-764_764288.pdf",      "Helvetica-Cond",         &[39u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/gen-131_131159.pdf",      "AvantGarde-Book",         &[129u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/gen-724_724164.pdf",      "Times-Roman",             &[243u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/gen-529_529771.pdf",      "NewCenturySchlbk",        &[173u32, 237u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/gen-997_997093.pdf",      "Symbol",                  &[183u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/r3-656_656510.pdf",       "Symbol",                  &[43u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/r3-FOP-32-0.zip-1.pdf",  "Symbol",                  &[183u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/gen-530_530303.pdf",      "CMR10",                   &[147u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/gen-530_530612.pdf",      "Myriad-Italic",           &[237u32][..]),
-        ("/tmp/pdf-test-6.2.11.5/gen-181_181486.pdf",      "HelveticaNeue-LightCond", &[243u32][..]),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-764_764288.pdf",
+            "Helvetica-Cond",
+            &[39u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-131_131159.pdf",
+            "AvantGarde-Book",
+            &[129u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-724_724164.pdf",
+            "Times-Roman",
+            &[243u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-529_529771.pdf",
+            "NewCenturySchlbk",
+            &[173u32, 237u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-997_997093.pdf",
+            "Symbol",
+            &[183u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/r3-656_656510.pdf",
+            "Symbol",
+            &[43u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/r3-FOP-32-0.zip-1.pdf",
+            "Symbol",
+            &[183u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-530_530303.pdf",
+            "CMR10",
+            &[147u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-530_530612.pdf",
+            "Myriad-Italic",
+            &[237u32][..],
+        ),
+        (
+            "/tmp/pdf-test-6.2.11.5/gen-181_181486.pdf",
+            "HelveticaNeue-LightCond",
+            &[243u32][..],
+        ),
     ] {
-        let Ok(data) = std::fs::read(path) else { eprintln!("missing {path}"); continue };
+        let Ok(data) = std::fs::read(path) else {
+            eprintln!("missing {path}");
+            continue;
+        };
         let doc = lopdf::Document::load_mem(&data).unwrap();
         let mut found_fd_id = None;
         for (id, obj) in &doc.objects {
-            let Object::Dictionary(dict) = obj else { continue };
-            let Ok(Object::Name(n)) = dict.get(b"BaseFont") else { continue };
+            let Object::Dictionary(dict) = obj else {
+                continue;
+            };
+            let Ok(Object::Name(n)) = dict.get(b"BaseFont") else {
+                continue;
+            };
             let base = String::from_utf8_lossy(n);
-            if !base.contains(font_substr) { continue }
-            let subtype = dict.get(b"Subtype").ok().and_then(|o| {
-                if let Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None }
-            }).unwrap_or_default();
-            let enc = dict.get(b"Encoding").ok().and_then(|o| match o {
-                Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
-                Object::Dictionary(_) => Some("(dict)".to_string()),
-                _ => None,
-            }).unwrap_or_default();
-            let first_char = dict.get(b"FirstChar").ok().and_then(|o| if let Object::Integer(i) = o { Some(*i) } else { None }).unwrap_or(0);
+            if !base.contains(font_substr) {
+                continue;
+            }
+            let subtype = dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(String::from_utf8_lossy(n).to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default();
+            let enc = dict
+                .get(b"Encoding")
+                .ok()
+                .and_then(|o| match o {
+                    Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
+                    Object::Dictionary(_) => Some("(dict)".to_string()),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let first_char = dict
+                .get(b"FirstChar")
+                .ok()
+                .and_then(|o| {
+                    if let Object::Integer(i) = o {
+                        Some(*i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
             let widths: Vec<i64> = match dict.get(b"Widths").ok() {
-                Some(Object::Array(arr)) => arr.iter().map(|o| match o { Object::Integer(i) => *i, Object::Real(r) => *r as i64, _ => -1 }).collect(),
-                Some(Object::Reference(r)) => if let Ok(Object::Array(arr)) = doc.get_object(*r) { arr.iter().map(|o| match o { Object::Integer(i) => *i, Object::Real(r) => *r as i64, _ => -1 }).collect() } else { vec![] },
+                Some(Object::Array(arr)) => arr
+                    .iter()
+                    .map(|o| match o {
+                        Object::Integer(i) => *i,
+                        Object::Real(r) => *r as i64,
+                        _ => -1,
+                    })
+                    .collect(),
+                Some(Object::Reference(r)) => {
+                    if let Ok(Object::Array(arr)) = doc.get_object(*r) {
+                        arr.iter()
+                            .map(|o| match o {
+                                Object::Integer(i) => *i,
+                                Object::Real(r) => *r as i64,
+                                _ => -1,
+                            })
+                            .collect()
+                    } else {
+                        vec![]
+                    }
+                }
                 _ => vec![],
             };
             eprintln!("=== {path} / {font_substr} ===  obj={id:?} subtype={subtype} enc={enc} fc={first_char}");
             for &code in *codes {
-                let w = if code >= first_char as u32 && (code - first_char as u32) < widths.len() as u32 { widths[(code - first_char as u32) as usize] } else { -999 };
+                let w = if code >= first_char as u32
+                    && (code - first_char as u32) < widths.len() as u32
+                {
+                    widths[(code - first_char as u32) as usize]
+                } else {
+                    -999
+                };
                 eprintln!("  code {code} width={w}");
             }
-            found_fd_id = dict.get(b"FontDescriptor").ok().and_then(|o| if let Object::Reference(r) = o { Some(*r) } else { None });
+            found_fd_id = dict.get(b"FontDescriptor").ok().and_then(|o| {
+                if let Object::Reference(r) = o {
+                    Some(*r)
+                } else {
+                    None
+                }
+            });
             break;
         }
         if let Some(fd_id) = found_fd_id {
@@ -5814,12 +5985,26 @@ fn debug_fonttype_all_611() {
                 if has_ff3 {
                     if let Ok(Object::Reference(r)) = dict.get(b"FontFile3").cloned() {
                         if let Some(Object::Stream(s)) = doc.objects.get(&r) {
-                            let st = s.dict.get(b"Subtype").ok().and_then(|o| if let Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None }).unwrap_or_default();
+                            let st = s
+                                .dict
+                                .get(b"Subtype")
+                                .ok()
+                                .and_then(|o| {
+                                    if let Object::Name(n) = o {
+                                        Some(String::from_utf8_lossy(n).to_string())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or_default();
                             let len = s.content.len();
                             eprintln!("  FontFile3 subtype={st} len={len}");
                             // Check first bytes for font magic
                             if len >= 4 {
-                                let magic: Vec<_> = s.content[..4.min(len)].iter().map(|b| format!("{b:02x}")).collect();
+                                let magic: Vec<_> = s.content[..4.min(len)]
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect();
                                 eprintln!("  FontFile3 magic=[{}]", magic.join(" "));
                             }
                         }
@@ -5874,12 +6059,35 @@ fn debug_gen724_width_trace() {
     let _ = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
 
     for (id, obj) in &doc.objects {
-        let Object::Dictionary(dict) = obj else { continue };
-        let Ok(Object::Name(n)) = dict.get(b"BaseFont") else { continue };
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        let Ok(Object::Name(n)) = dict.get(b"BaseFont") else {
+            continue;
+        };
         let base = String::from_utf8_lossy(n);
-        if !base.contains("Times-Roman") { continue }
-        let enc = dict.get(b"Encoding").ok().and_then(|o| match o { Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()), _ => None }).unwrap_or_default();
-        let fc = dict.get(b"FirstChar").ok().and_then(|o| if let Object::Integer(i) = o { Some(*i as u32) } else { None }).unwrap_or(0);
+        if !base.contains("Times-Roman") {
+            continue;
+        }
+        let enc = dict
+            .get(b"Encoding")
+            .ok()
+            .and_then(|o| match o {
+                Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let fc = dict
+            .get(b"FirstChar")
+            .ok()
+            .and_then(|o| {
+                if let Object::Integer(i) = o {
+                    Some(*i as u32)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
         eprintln!("Font: {base} enc={enc} fc={fc} obj={id:?}");
 
         if let Ok(Object::Reference(fd_ref)) = dict.get(b"FontDescriptor").cloned() {
@@ -5893,11 +6101,17 @@ fn debug_gen724_width_trace() {
 
                         if let Some(cff) = cff_parser::Table::parse(&font_data) {
                             eprintln!("  CFF num_glyphs={}", cff.number_of_glyphs());
-                            eprintln!("  GID 0 width={:?}", cff.glyph_width(cff_parser::GlyphId(0)));
+                            eprintln!(
+                                "  GID 0 width={:?}",
+                                cff.glyph_width(cff_parser::GlyphId(0))
+                            );
                             eprintln!("  glyph_index(243)={:?}", cff.glyph_index(243u8));
                             for gid in 0..cff.number_of_glyphs().min(50) {
                                 let name = cff.glyph_name(cff_parser::GlyphId(gid));
-                                if name.map(|n| n.contains("acute") || n.contains("notdef")).unwrap_or(false) {
+                                if name
+                                    .map(|n| n.contains("acute") || n.contains("notdef"))
+                                    .unwrap_or(false)
+                                {
                                     let w = cff.glyph_width(cff_parser::GlyphId(gid));
                                     eprintln!("    GID {gid}: name={name:?} width={w:?}");
                                 }

@@ -339,6 +339,14 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc)
         }));
 
+        // 3a2b1. Fix Type3 fonts that name a CharProc glyph ".notdef" (6.2.11.8:1).
+        // Some Type3 fonts encode real glyphs (e.g. space) as ".notdef" in both
+        // CharProcs and Encoding; rename to "gnotdef" to avoid the veraPDF violation.
+        set_progress("type3_notdef");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type3_notdef_charprocs(&mut doc)
+        }));
+
         // 3a2c. Fix .notdef in CID fonts by modifying content streams (6.2.11.8:1).
         set_progress("cid_notdef");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -880,6 +888,9 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type3_notdef_charprocs(&mut doc)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc)

@@ -295,6 +295,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cff-parser"
+version = "0.2.0"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -436,6 +440,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 dependencies = [
  "powerfmt",
+]
+
+[[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher",
 ]
 
 [[package]]
@@ -638,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "formcalc-interpreter"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "thiserror",
  "xfa-dom-resolver",
@@ -657,14 +670,27 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "wasi",
+]
+
+[[package]]
+name = "getrandom"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -891,7 +917,7 @@ version = "0.1.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
 dependencies = [
- "getrandom",
+ "getrandom 0.3.4",
  "libc",
 ]
 
@@ -971,8 +997,6 @@ dependencies = [
 [[package]]
 name = "lopdf"
 version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f560f57dfb9142a02d673e137622fd515d4231e51feb8b4af28d92647d83f35b"
 dependencies = [
  "aes",
  "bitflags",
@@ -981,7 +1005,7 @@ dependencies = [
  "ecb",
  "encoding_rs",
  "flate2",
- "getrandom",
+ "getrandom 0.3.4",
  "indexmap",
  "itoa",
  "jiff",
@@ -1169,6 +1193,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 
 [[package]]
+name = "p12"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4873306de53fe82e7e484df31e1e947d61514b6ea2ed6cd7b45d63006fd9224"
+dependencies = [
+ "cbc",
+ "cipher",
+ "des",
+ "getrandom 0.2.17",
+ "hmac",
+ "lazy_static",
+ "rc2",
+ "sha1",
+ "yasna",
+]
+
+[[package]]
 name = "p256"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1206,7 +1247,7 @@ checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
 name = "pdf-annot"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "log",
  "lopdf",
@@ -1216,17 +1257,20 @@ dependencies = [
 
 [[package]]
 name = "pdf-compliance"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
+ "cff-parser",
+ "flate2",
  "log",
  "lopdf",
  "pdf-syntax",
  "thiserror",
+ "ttf-parser",
 ]
 
 [[package]]
 name = "pdf-extract"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "flate2",
  "lopdf",
@@ -1235,7 +1279,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-font"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "brotli",
  "log",
@@ -1244,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-forms"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "log",
  "lopdf",
@@ -1254,8 +1298,9 @@ dependencies = [
 
 [[package]]
 name = "pdf-manip"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
+ "cff-parser",
  "flate2",
  "image",
  "lopdf",
@@ -1265,12 +1310,14 @@ dependencies = [
  "serde_json",
  "subsetter",
  "thiserror",
+ "ttf-parser",
+ "weezl",
  "xmp-writer",
 ]
 
 [[package]]
 name = "pdf-redact"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "flate2",
  "lopdf",
@@ -1282,20 +1329,24 @@ dependencies = [
 
 [[package]]
 name = "pdf-sign"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "der",
  "digest",
  "ecdsa",
  "log",
+ "lopdf",
+ "p12",
  "p256",
  "p384",
  "pdf-syntax",
+ "pkcs8",
  "rsa",
  "sha1",
  "sha2",
  "signature",
  "spki",
+ "thiserror",
 ]
 
 [[package]]
@@ -1544,7 +1595,7 @@ version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 dependencies = [
- "getrandom",
+ "getrandom 0.3.4",
 ]
 
 [[package]]
@@ -1621,6 +1672,15 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rc2"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62c64daa8e9438b84aaae55010a93f396f8e60e3911590fcba770d04643fc1dd"
+dependencies = [
+ "cipher",
 ]
 
 [[package]]
@@ -2047,6 +2107,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "wasi"
+version = "0.11.1+wasi-snapshot-preview1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
+
+[[package]]
 name = "wasip2"
 version = "1.0.2+wasi-0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2195,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "xfa-dom-resolver"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "roxmltree",
  "thiserror",
@@ -2210,6 +2276,7 @@ dependencies = [
  "lopdf",
  "pdf-annot",
  "pdf-compliance",
+ "pdf-extract",
  "pdf-forms",
  "pdf-manip",
  "pdf-redact",
@@ -2229,6 +2296,12 @@ name = "y4m"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a5a4b21e1a62b67a2970e6831bc091d7b87e119e7f9791aef9702e3bef04448"
+
+[[package]]
+name = "yasna"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
 
 [[package]]
 name = "zerocopy"
