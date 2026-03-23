@@ -7430,7 +7430,7 @@ fn scan_content_stream_integers(content: &[u8]) -> bool {
             continue;
         }
         if let Ok(val) = token.parse::<f64>() {
-            if val > MAX_INT || val < MIN_INT {
+            if !(MIN_INT..=MAX_INT).contains(&val) {
                 return true;
             }
         }
@@ -8672,8 +8672,20 @@ fn collect_rendered_codes_for_font(
     content: &[u8],
     font_rname: &str,
 ) -> std::collections::HashSet<u8> {
-    let mut result = std::collections::HashSet::new();
     let tokens = tokenize_pdf_content(content);
+    collect_rendered_codes_from_tokens(&tokens, font_rname)
+}
+
+/// Extract rendered character codes for a specific font resource from pre-tokenized content.
+///
+/// Separated from `collect_rendered_codes_for_font` so that callers with many fonts
+/// per page can tokenize once and reuse the token list per font — reducing O(pages × fonts)
+/// tokenizations to O(pages). (#perf-font-width-check)
+fn collect_rendered_codes_from_tokens(
+    tokens: &[Vec<u8>],
+    font_rname: &str,
+) -> std::collections::HashSet<u8> {
+    let mut result = std::collections::HashSet::new();
     let n = tokens.len();
     let mut is_active = false;
     for i in 0..n {
@@ -11213,6 +11225,10 @@ pub fn check_font_widths(pdf: &Pdf, report: &mut ComplianceReport) {
 /// §6.2.10.5 (part 4) in pdfa.rs. (#467)
 pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
     let xref = pdf.xref();
+    // Cache tokenized page content streams by page index. Avoids re-tokenizing the same
+    // content stream once per font (O(pages × fonts) → O(pages)). (#perf-font-width-check)
+    let mut page_tokens_cache: std::collections::HashMap<usize, Vec<Vec<u8>>> =
+        std::collections::HashMap::new();
     for_each_font(pdf, |name, font_dict, page_idx| {
         let subtype = font_dict.get::<Name>(keys::SUBTYPE);
         let subtype_bytes = subtype.as_ref().map(|s| s.as_ref());
@@ -11262,13 +11278,19 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                 let pdf_widths: Vec<i32> = widths_arr.iter::<i32>().collect();
                 // Collect rendered codes so we only check §6.2.10.5/§6.2.11.5 for
                 // glyphs actually used in rendering (matches veraPDF's scope).
-                // Falls back to conservative heuristic when stream unavailable.
+                // Use cached tokens when available to avoid re-tokenizing the same
+                // page stream for every font. (#perf-font-width-check)
                 let rendered_codes: Option<std::collections::HashSet<u8>> = pdf
                     .pages()
                     .get(page_idx)
                     .and_then(|pg| pg.page_stream())
                     .filter(|s| s.len() <= MAX_CONTENT_STREAM_SCAN_SIZE)
-                    .map(|content| collect_rendered_codes_for_font(content, name));
+                    .map(|content| {
+                        let tokens = page_tokens_cache
+                            .entry(page_idx)
+                            .or_insert_with(|| tokenize_pdf_content(content));
+                        collect_rendered_codes_from_tokens(tokens, name)
+                    });
                 check_truetype_simple_widths(
                     &font_data,
                     font_dict,
@@ -11433,13 +11455,20 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
         // Collect rendered codes for this font on this page. veraPDF's §6.2.11.5 check
         // is triggered by rendering: only check codes that are actually used. Falls back
         // to checking all codes if the content stream is unavailable or too large.
-        // (#FN-6.2.11.5 cs-veraPDF-6-2-11-4-1-t02-fail-a)
+        // Use cached tokens when available to avoid re-tokenizing the same page stream
+        // for every font. (#FN-6.2.11.5 cs-veraPDF-6-2-11-4-1-t02-fail-a,
+        // #perf-font-width-check)
         let rendered_codes: Option<std::collections::HashSet<u8>> = pdf
             .pages()
             .get(page_idx)
             .and_then(|pg| pg.page_stream())
             .filter(|s| s.len() <= MAX_CONTENT_STREAM_SCAN_SIZE)
-            .map(|content| collect_rendered_codes_for_font(content, name));
+            .map(|content| {
+                let tokens = page_tokens_cache
+                    .entry(page_idx)
+                    .or_insert_with(|| tokenize_pdf_content(content));
+                collect_rendered_codes_from_tokens(tokens, name)
+            });
 
         // For each character code in [FirstChar..LastChar], compare the CFF
         // charstring advance width with the PDF /Widths entry.
