@@ -9743,7 +9743,16 @@ fn cff_width_for_code(
                     .map(|w| w as f64 * scale);
             }
             // Case 1: named glyph absent from subset → defaultWidthX.
-            return cff.default_width_x().map(|w| w as f64 * scale);
+            // Fall back to .notdef charstring advance when defaultWidthX is absent
+            // from the Private DICT — veraPDF uses .notdef advance in that case.
+            // (#fix-cff-case1-notdef-fallback)
+            return cff
+                .default_width_x()
+                .map(|w| w as f64 * scale)
+                .or_else(|| {
+                    cff.glyph_width(cff_parser::GlyphId(0))
+                        .map(|w| w as f64 * scale)
+                });
         }
         // Case 3: custom encoding, explicit GID 0 → .notdef charstring advance.
         return cff
