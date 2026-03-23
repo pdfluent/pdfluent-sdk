@@ -104,11 +104,15 @@ pub fn render(
     // vello_common::Pixmap::new(0, 0) allocates an empty buffer; any subsequent
     // pixel sample then panics with "index out of bounds: the len is 0".
     // Fixes crashes on poppler-327-0.zip-{0,1}.pdf. (#546)
+    // Round (not floor) to match MuPDF canvas sizes for non-integer MediaBox
+    // dimensions (e.g. 612.479 × 792.959 pt).  For integer values the result
+    // is identical to floor; for fractional values it gives the nearest pixel
+    // and avoids 1-pixel canvas-size mismatches that tank SSIM. (#544)
     let (pix_width, pix_height) = (
-        render_settings.width.unwrap_or(scaled_width.floor() as u16).max(1),
+        render_settings.width.unwrap_or(scaled_width.round() as u16).max(1),
         render_settings
             .height
-            .unwrap_or(scaled_height.floor() as u16)
+            .unwrap_or(scaled_height.round() as u16)
             .max(1),
     );
     let mut state = Context::new(
