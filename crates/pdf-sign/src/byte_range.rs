@@ -36,10 +36,12 @@ pub fn verify_byte_range_digest(
         return DigestVerification::Error("byte range does not start at offset 0".into());
     }
 
-    // Enforce that the second range reaches the end of the PDF data.
-    // This prevents crafted offsets from omitting trailing bytes.
-    if end2 != pdf_data.len() {
-        return DigestVerification::Error("byte range does not cover end of file".into());
+    // The second range must not exceed the PDF data, but it need not reach the
+    // very end: ISO 32000-2 §12.8.1 allows incremental updates (e.g. a DSS
+    // dictionary) to be appended after the signed byte range without
+    // invalidating the signature.
+    if end2 > pdf_data.len() {
+        return DigestVerification::Error("byte range exceeds PDF size".into());
     }
 
     let range1 = &pdf_data[off1..end1];

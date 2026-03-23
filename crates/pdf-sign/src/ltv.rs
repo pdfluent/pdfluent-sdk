@@ -3,6 +3,7 @@
 //! Per ISO 32000-2 §12.8.7, the DSS dictionary stores validation-related
 //! information (certificates, OCSP responses, CRLs) for offline verification.
 
+use lopdf::{Dictionary, Document, Object, Stream};
 use pdf_syntax::object::dict::keys::*;
 use pdf_syntax::object::{Array, Dict};
 use pdf_syntax::Pdf;
@@ -123,4 +124,142 @@ pub fn compute_vri_key(sig_contents: &[u8]) -> String {
     use sha1::Digest;
     let hash = sha1::Sha1::new_with_prefix(sig_contents).finalize();
     hash.iter().map(|b| format!("{b:02X}")).collect::<String>()
+}
+
+/// Embed a DSS (Document Security Store) as an incremental update to a signed PDF.
+///
+/// Per ISO 32000-2 §12.8.7 and ETSI EN 319 102-1, the DSS is appended outside
+/// the signed byte range so existing signature integrity is preserved. This is
+/// the standard mechanism for adding LTV (Long-Term Validation) data after signing.
+///
+/// `certificates` — DER-encoded certificates to place in /Certs.
+/// `ocsp_responses` — DER-encoded OCSP responses for /OCSPs.
+/// `crls` — DER-encoded CRLs for /CRLs.
+/// `vri_entries` — per-signature VRI entries for /VRI.
+pub fn embed_dss_incremental(
+    pdf_bytes: &[u8],
+    certificates: Vec<Vec<u8>>,
+    ocsp_responses: Vec<Vec<u8>>,
+    crls: Vec<Vec<u8>>,
+    vri_entries: Vec<VriEntry>,
+) -> Result<Vec<u8>, String> {
+    let prev =
+        Document::load_mem(pdf_bytes).map_err(|e| format!("load PDF for DSS embed: {e}"))?;
+    let mut doc = Document::new_from_prev(&prev);
+
+    // Add certificate streams to the document, collecting indirect-reference objects.
+    let cert_refs: Vec<Object> = certificates
+        .iter()
+        .map(|data| {
+            let s = Stream::new(Dictionary::new(), data.clone());
+            Object::Reference(doc.add_object(Object::Stream(s)))
+        })
+        .collect();
+
+    let ocsp_refs: Vec<Object> = ocsp_responses
+        .iter()
+        .map(|data| {
+            let s = Stream::new(Dictionary::new(), data.clone());
+            Object::Reference(doc.add_object(Object::Stream(s)))
+        })
+        .collect();
+
+    let crl_refs: Vec<Object> = crls
+        .iter()
+        .map(|data| {
+            let s = Stream::new(Dictionary::new(), data.clone());
+            Object::Reference(doc.add_object(Object::Stream(s)))
+        })
+        .collect();
+
+    // Build /VRI sub-dictionary.
+    let mut vri_dict = Dictionary::new();
+    for entry in &vri_entries {
+        let mut e = Dictionary::new();
+
+        let ecerts: Vec<Object> = entry
+            .certificates
+            .iter()
+            .map(|data| {
+                let s = Stream::new(Dictionary::new(), data.clone());
+                Object::Reference(doc.add_object(Object::Stream(s)))
+            })
+            .collect();
+        if !ecerts.is_empty() {
+            e.set("Cert", Object::Array(ecerts));
+        }
+
+        let eocsps: Vec<Object> = entry
+            .ocsp_responses
+            .iter()
+            .map(|data| {
+                let s = Stream::new(Dictionary::new(), data.clone());
+                Object::Reference(doc.add_object(Object::Stream(s)))
+            })
+            .collect();
+        if !eocsps.is_empty() {
+            e.set("OCSP", Object::Array(eocsps));
+        }
+
+        let ecrls: Vec<Object> = entry
+            .crls
+            .iter()
+            .map(|data| {
+                let s = Stream::new(Dictionary::new(), data.clone());
+                Object::Reference(doc.add_object(Object::Stream(s)))
+            })
+            .collect();
+        if !ecrls.is_empty() {
+            e.set("CRL", Object::Array(ecrls));
+        }
+
+        if let Some(ts) = &entry.timestamp {
+            e.set("TU", Object::string_literal(ts.as_bytes()));
+        }
+
+        vri_dict.set(entry.key.as_bytes(), Object::Dictionary(e));
+    }
+
+    // Build /DSS dictionary.
+    let mut dss = Dictionary::new();
+    if !cert_refs.is_empty() {
+        dss.set("Certs", Object::Array(cert_refs));
+    }
+    if !ocsp_refs.is_empty() {
+        dss.set("OCSPs", Object::Array(ocsp_refs));
+    }
+    if !crl_refs.is_empty() {
+        dss.set("CRLs", Object::Array(crl_refs));
+    }
+    if !vri_dict.is_empty() {
+        dss.set("VRI", Object::Dictionary(vri_dict));
+    }
+
+    let dss_id = doc.add_object(Object::Dictionary(dss));
+
+    // For an incremental update, the catalog lives in `prev`'s object table —
+    // the new `doc` has an empty objects map. Get the catalog ID from the
+    // trailer, clone the dict from prev, add /DSS, then re-write it in `doc`
+    // with the same ID so the incremental xref shadows the original entry.
+    let catalog_id = prev
+        .trailer
+        .get(b"Root")
+        .ok()
+        .and_then(|o| o.as_reference().ok())
+        .ok_or_else(|| "no /Root in trailer".to_string())?;
+    let mut catalog = prev
+        .get_dictionary(catalog_id)
+        .map_err(|e| format!("catalog: {e}"))?
+        .clone();
+    catalog.set("DSS", Object::Reference(dss_id));
+    doc.set_object(catalog_id, Object::Dictionary(catalog));
+
+    // Save the incremental portion and prepend the original bytes.
+    let mut incremental = Vec::new();
+    doc.save_to(&mut incremental)
+        .map_err(|e| format!("save DSS increment: {e}"))?;
+
+    let mut result = pdf_bytes.to_vec();
+    result.extend_from_slice(&incremental);
+    Ok(result)
 }

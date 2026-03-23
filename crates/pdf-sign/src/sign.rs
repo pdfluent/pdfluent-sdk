@@ -673,6 +673,163 @@ fn ensure_acroform(doc: &mut Document, field_id: ObjectId) -> Result<(), SignErr
     Ok(())
 }
 
+/// Sign a PDF with PAdES-LTV (Long-Term Validation) support.
+///
+/// Performs three steps in one call:
+/// 1. Signs the PDF with an enlarged `/Contents` placeholder (≥ 32 KiB) to leave
+///    room for the timestamp token.
+/// 2. Requests an RFC 3161 timestamp from `tsa_config.url`, embeds it as the
+///    `id-smime-aa-timeStampToken` unsigned attribute in the CMS `SignerInfo`,
+///    and patches the modified CMS back into the `/Contents` placeholder.
+/// 3. Appends a DSS (Document Security Store, ISO 32000-2 §12.8.7) containing
+///    the signer's certificate chain as an incremental update, enabling offline
+///    validation without fetching certificates from the network.
+///
+/// The result is a PAdES-B-LT (Baseline Long-Term) conformant PDF.
+///
+/// Requires the `tsa` crate feature (adds `ureq` for HTTP to the TSA endpoint).
+#[cfg(feature = "tsa")]
+pub fn sign_pdf_ltv(
+    pdf_bytes: &[u8],
+    signer: &impl PdfSigner,
+    options: &SignOptions,
+    tsa_config: &crate::tsa::TsaConfig,
+) -> Result<Vec<u8>, SignError> {
+    // Step 1: Sign with an enlarged placeholder so the TSA token (~4 KiB) fits.
+    let ltv_options = SignOptions {
+        placeholder_size: options.placeholder_size.max(32768),
+        ..options.clone()
+    };
+    let mut signed = sign_pdf(pdf_bytes, signer, &ltv_options)?;
+
+    // Step 2: Extract the CMS DER currently stored in /Contents.
+    let (angle_start, hex_len, cms_der) = extract_cms_from_signed(&signed)?;
+
+    // Step 3: Request a timestamp from the TSA.
+    let tsa_token = crate::tsa::request_timestamp(tsa_config, &cms_der)
+        .map_err(|e| SignError::CmsBuild(format!("TSA request: {e}")))?;
+
+    // Step 4: Embed the timestamp token as a CMS unsigned attribute.
+    let cms_with_tsa = crate::tsa::embed_timestamp_in_cms(&cms_der, &tsa_token)
+        .map_err(|e| SignError::CmsBuild(format!("TSA embed: {e}")))?;
+
+    // Step 5: Patch the modified CMS back into the /Contents placeholder.
+    let new_hex = hex_encode(&cms_with_tsa);
+    if new_hex.len() > hex_len {
+        return Err(SignError::CmsBuild(format!(
+            "TSA-extended CMS ({} hex chars) overflows /Contents placeholder ({hex_len} hex \
+             chars); increase SignOptions::placeholder_size above {}",
+            new_hex.len(),
+            new_hex.len() / 2 + 1,
+        )));
+    }
+    let hex_start = angle_start + 1; // skip '<'
+    signed[hex_start..hex_start + new_hex.len()].copy_from_slice(&new_hex);
+    signed[hex_start + new_hex.len()..hex_start + hex_len].fill(b'0');
+
+    // Step 6: Build a VRI entry from the signer's certificate chain.
+    let certs = signer.certificate_chain_der().to_vec();
+    let vri_key = crate::ltv::compute_vri_key(&cms_with_tsa);
+    let vri = crate::ltv::VriEntry {
+        key: vri_key,
+        certificates: certs.clone(),
+        ocsp_responses: vec![],
+        crls: vec![],
+        timestamp: None,
+    };
+
+    // Step 7: Append DSS as an incremental update (preserves existing signatures).
+    crate::ltv::embed_dss_incremental(&signed, certs, vec![], vec![], vec![vri])
+        .map_err(|e| SignError::CmsBuild(format!("DSS embed: {e}")))
+}
+
+#[cfg(feature = "tsa")]
+/// Locate and extract the CMS DER from the `/Contents` hex string in a signed PDF.
+///
+/// Returns `(angle_start, hex_len, cms_der)`:
+/// - `angle_start` — index of `<` in the serialized `/Contents <HEX>`.
+/// - `hex_len` — total hex chars between `<` and `>` (= placeholder size × 2).
+/// - `cms_der` — decoded CMS DER bytes, trimmed to actual DER length (no zero pad).
+///
+/// Uses the **last** occurrence of `/Contents <` to skip pre-existing signatures.
+fn extract_cms_from_signed(buffer: &[u8]) -> Result<(usize, usize, Vec<u8>), SignError> {
+    let needle = b"/Contents <";
+    let pos = buffer
+        .windows(needle.len())
+        .enumerate()
+        .rev()
+        .find_map(|(i, w)| if w == needle { Some(i) } else { None })
+        .ok_or_else(|| SignError::CmsBuild("/Contents not found in signed PDF".into()))?;
+
+    let angle_start = pos + b"/Contents ".len();
+    let angle_end = buffer[angle_start + 1..]
+        .iter()
+        .position(|&b| b == b'>')
+        .map(|p| angle_start + 1 + p)
+        .ok_or_else(|| SignError::CmsBuild("no closing '>' after /Contents".into()))?;
+
+    let hex_slice = &buffer[angle_start + 1..angle_end];
+    let hex_len = hex_slice.len();
+
+    // Decode the full hex placeholder.
+    let decoded: Vec<u8> = hex_slice
+        .chunks(2)
+        .filter_map(|c| {
+            if c.len() < 2 {
+                return None;
+            }
+            let hi = hex_nibble(c[0])?;
+            let lo = hex_nibble(c[1])?;
+            Some((hi << 4) | lo)
+        })
+        .collect();
+
+    // Determine the actual DER length from the outer SEQUENCE tag+length.
+    let actual_len = parse_der_outer_length(&decoded)
+        .ok_or_else(|| SignError::CmsBuild("invalid CMS DER in /Contents".into()))?;
+
+    if actual_len > decoded.len() {
+        return Err(SignError::CmsBuild(format!(
+            "CMS DER claims {actual_len} bytes but placeholder holds only {}",
+            decoded.len()
+        )));
+    }
+
+    Ok((angle_start, hex_len, decoded[..actual_len].to_vec()))
+}
+
+#[cfg(feature = "tsa")]
+/// Compute the total byte length of the outermost DER TLV from its header.
+fn parse_der_outer_length(data: &[u8]) -> Option<usize> {
+    if data.len() < 2 {
+        return None;
+    }
+    let (header_len, content_len) = if data[1] < 0x80 {
+        (2usize, data[1] as usize)
+    } else {
+        let n = (data[1] & 0x7F) as usize;
+        if n == 0 || data.len() < 2 + n {
+            return None;
+        }
+        let mut len = 0usize;
+        for i in 0..n {
+            len = (len << 8) | (data[2 + i] as usize);
+        }
+        (2 + n, len)
+    };
+    header_len.checked_add(content_len)
+}
+
+#[cfg(feature = "tsa")]
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(10 + b - b'a'),
+        b'A'..=b'F' => Some(10 + b - b'A'),
+        _ => None,
+    }
+}
+
 /// Hex-encode bytes to uppercase hex ASCII.
 fn hex_encode(data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(data.len() * 2);
@@ -890,6 +1047,88 @@ mod tests {
                 "openssl smime -verify failed for XFA form signature"
             );
         }
+    }
+
+    #[cfg(feature = "tsa")]
+    #[test]
+    fn extract_cms_from_signed_roundtrip() {
+        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let signer = load_rsa_signer();
+        let signed = sign_pdf(&pdf, &signer, &SignOptions::default()).unwrap();
+
+        let result = extract_cms_from_signed(&signed);
+        assert!(result.is_ok(), "extract_cms failed: {:?}", result.err());
+        let (angle_start, hex_len, cms_der) = result.unwrap();
+        assert!(angle_start > 0);
+        assert!(hex_len >= 16384, "default placeholder should be 8192 bytes = 16384 hex chars");
+        assert!(!cms_der.is_empty());
+        // CMS ContentInfo starts with SEQUENCE tag 0x30.
+        assert_eq!(cms_der[0], 0x30, "CMS must start with SEQUENCE");
+    }
+
+    #[test]
+    fn embed_dss_incremental_preserves_signature() {
+        let pdf = std::fs::read(corpus_path("simple.pdf")).unwrap();
+        let signer = load_rsa_signer();
+        let signed = sign_pdf(&pdf, &signer, &SignOptions::default()).unwrap();
+
+        let certs = signer.certificate_chain_der().to_vec();
+        let vri = crate::ltv::VriEntry {
+            key: "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF".into(),
+            certificates: certs.clone(),
+            ocsp_responses: vec![],
+            crls: vec![],
+            timestamp: None,
+        };
+        let with_dss =
+            crate::ltv::embed_dss_incremental(&signed, certs, vec![], vec![], vec![vri]).unwrap();
+
+        // DSS must be readable.
+        let parsed = pdf_syntax::Pdf::new(with_dss).unwrap();
+        let dss = crate::ltv::DocumentSecurityStore::from_pdf(&parsed);
+        assert!(dss.is_some(), "DSS not found after embed");
+        let dss = dss.unwrap();
+        assert!(dss.has_ltv_data(), "DSS should have LTV data");
+        assert!(!dss.certificates.is_empty());
+        assert!(!dss.vri_entries.is_empty());
+
+        // Original signature must still validate.
+        let results = crate::validate_signatures(&parsed);
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(results[0].status, crate::types::ValidationStatus::Valid),
+            "signature invalid after DSS embed: {:?}",
+            results[0].status,
+        );
+    }
+
+    #[cfg(feature = "tsa")]
+    #[test]
+    fn parse_der_outer_length_basic() {
+        // Short form: SEQUENCE of 10 bytes → total 12.
+        let data = [0x30u8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(parse_der_outer_length(&data), Some(12));
+
+        // Long form: SEQUENCE, 2-byte length = 300 → total 304.
+        let mut long = vec![0x30u8, 0x82, 0x01, 0x2C];
+        long.extend(vec![0u8; 300]);
+        assert_eq!(parse_der_outer_length(&long), Some(304));
+
+        // Too short to have a length.
+        assert_eq!(parse_der_outer_length(&[0x30u8]), None);
+    }
+
+    #[cfg(feature = "tsa")]
+    #[test]
+    fn hex_nibble_coverage() {
+        assert_eq!(hex_nibble(b'0'), Some(0));
+        assert_eq!(hex_nibble(b'9'), Some(9));
+        assert_eq!(hex_nibble(b'a'), Some(10));
+        assert_eq!(hex_nibble(b'f'), Some(15));
+        assert_eq!(hex_nibble(b'A'), Some(10));
+        assert_eq!(hex_nibble(b'F'), Some(15));
+        assert_eq!(hex_nibble(b'G'), None);
+        assert_eq!(hex_nibble(b' '), None);
     }
 
     /// Find an OpenSSL binary for external-oracle tests.
