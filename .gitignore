@@ -6,6 +6,7 @@
 *.pdf
 !/tests/fixtures/*.pdf
 !/fixtures/formcalc/*.pdf
+!/fixtures/xfa-layout/*.pdf
 !/tests/corpus-mini/*.pdf
 !/corpus/*.pdf
 !/crates/pdf-java/src/test/resources/*.pdf
