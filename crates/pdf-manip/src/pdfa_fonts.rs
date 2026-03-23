@@ -6932,15 +6932,14 @@ fn get_truetype_glyph_width_fractional(
     }
 
     // Character not found in (3,1) cmap. Codes 128-159 differ between Mac Roman
-    // and WinAnsi — skip ALL fallbacks for this range to avoid incorrect width
-    // lookups. Without an explicit PDF /Encoding, code->glyph mapping in this
-    // range is ambiguous and any correction would be guesswork. The Mac (1,0)
-    // cmap for codes 128-159 may map to wide glyphs (e.g. accented capitals with
-    // advance 778) that do NOT correspond to the WinAnsi glyph at that code (e.g.
-    // quoteright advance 333), causing wrong "corrections" that introduce new
-    // §6.2.11.5 violations. (#fix-tt-cmap-145-146)
+    // and WinAnsi — do NOT fall through to Mac (1,0) cmap for this range as it
+    // maps to different glyphs (e.g. accented capitals vs curly quotes).
+    // Instead, use .notdef (GID 0) advance — veraPDF maps absent glyphs to GID 0
+    // and uses that width for §6.2.11.5 comparison. (#fix-tt-cmap-145-146)
     if (128..=159).contains(&code) {
-        return None;
+        return face
+            .glyph_hor_advance(ttf_parser::GlyphId(0))
+            .map(|w| w as f64 * scale);
     }
 
     // For codes outside 128-159, fall back to (1,0) Mac Roman cmap.
@@ -6964,8 +6963,11 @@ fn get_truetype_glyph_width_fractional(
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
         }
         Some(_) => {
-            // Explicitly mapped to GID 0 — compliance check skips, so do we.
-            return None;
+            // Mapped to GID 0 (.notdef). veraPDF uses .notdef advance width
+            // for §6.2.11.5 comparison — return that, not None. (#fix-tt-notdef-width)
+            return face
+                .glyph_hor_advance(ttf_parser::GlyphId(0))
+                .map(|w| w as f64 * scale);
         }
         None => {
             // Not in any cmap: veraPDF uses .notdef advance for valid encoding chars.
