@@ -213,7 +213,7 @@ impl<'a> Page<'a> {
             return None;
         }
 
-        let media_box = dict.get::<Rect>(MEDIA_BOX).or(ctx.media_box).unwrap_or(A4);
+        let media_box = dict.get::<Rect>(MEDIA_BOX).or(ctx.media_box).unwrap_or(US_LETTER);
 
         let crop_box = dict
             .get::<Rect>(CROP_BOX)
@@ -322,7 +322,7 @@ impl<'a> Page<'a> {
 
         if (crop_box.width() as f32).is_nearly_zero() || (crop_box.height() as f32).is_nearly_zero()
         {
-            (A4.width() as f32, A4.height() as f32)
+            (US_LETTER.width() as f32, US_LETTER.height() as f32)
         } else {
             (
                 crop_box.width().max(1.0) as f32,
@@ -481,12 +481,26 @@ impl<'a> Resources<'a> {
 const POINTS_PER_INCH: f64 = 72.0;
 const POINTS_PER_MM: f64 = 1.0 / (10.0 * 2.54) * POINTS_PER_INCH;
 
-/// The dimension of an A4 page.
+/// The dimension of an A4 page (kept for completeness).
 pub const A4: Rect = Rect {
     x0: 0.0,
     y0: 0.0,
     x1: 210.0 * POINTS_PER_MM,
     y1: 297.0 * POINTS_PER_MM,
+};
+
+/// US Letter (8.5×11 in) — used as fallback when no MediaBox is present.
+///
+/// Old PDF 1.0/1.1 documents (especially US-government publications from the
+/// 1990s) omit MediaBox entirely and assume a US-Letter canvas, which matches
+/// the PostScript default and MuPDF's behaviour.  Using A4 here causes a
+/// ~5 % scale mismatch that tanks SSIM against MuPDF's oracle renders.
+/// See render_mupdf_oracle failures gen-059, gen-069, …  (#544)
+const US_LETTER: Rect = Rect {
+    x0: 0.0,
+    y0: 0.0,
+    x1: 8.5 * POINTS_PER_INCH,
+    y1: 11.0 * POINTS_PER_INCH,
 };
 
 pub(crate) mod cached {
