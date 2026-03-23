@@ -9008,13 +9008,11 @@ fn find_cff_glyph_width_by_name_fractional(
     // When a font stores a standard glyph name under a CUSTOM SID (≥391 in the
     // font's private String INDEX), veraPDF's SID-based lookup fails to find it
     // and falls back to GID 0 → Private DICT defaultWidthX.
-    // Example: HHCOAA+Tekton-Bold stores "igrave" under a custom SID (≥391),
-    // not under standard SID 214. veraPDF → SID 214 not in charset → GID 0 →
-    // defaultWidthX=220. Our name-string search would wrongly return the "igrave"
-    // charstring width (263), causing a §6.2.11.5 mismatch in the converted PDF.
     // Fix: if the found glyph has a custom SID but the name IS a standard CFF
     // name, return None (veraPDF can't find it via SID → uses defaultWidthX).
-    // (#507, §6.2.11.5-tekton-cff-sid)
+    // Note: Type 1-compat seac composites (HHCOAA "igrave" etc.) also return
+    // defaultWidthX because the seac asb is not a real advance width — this is
+    // handled in cff-parser's seac endchar handler.  (#507)
     let is_standard_name = cff_parser::STANDARD_NAMES.contains(&glyph_name);
     let num_glyphs = cff.number_of_glyphs();
     for gid_raw in 0..num_glyphs {
@@ -9222,18 +9220,28 @@ fn cff_width_for_code(
         // above cases. (#6.2.11.5-cff-enc-primary, #6.2.11.5-subset-custom-enc)
         let from_differences = differences.contains_key(&code);
         let enc_map_check = parse_cff_encoding_map(font_data);
-        // veraPDF uses the CFF encoding as authoritative. For any encoding
-        // (Standard, Expert, or custom), a code that maps to GID 0 means
-        // the glyph is absent/undefined → veraPDF uses defaultWidthX.
-        // Phase 1 name-based lookup must only run when the CFF encoding
-        // explicitly maps the code to a real (non-.notdef) glyph (GID != 0),
-        // OR when the PDF /Differences override explicitly names the glyph.
+        // For CUSTOM CFF encoding fonts (enc_offset > 1), veraPDF uses the CFF
+        // encoding as authoritative for §6.2.11.5. A code that maps to GID 0
+        // (or is absent from the encoding) means the glyph is undefined →
+        // veraPDF uses defaultWidthX. Phase 1 must be blocked for those codes.
         //
-        // Without this guard, named-encoding codes like 236→"igrave" (WinAnsi)
-        // would trigger a CFF charset name lookup and return the charstring
-        // width (263) instead of the correct defaultWidthX (220). Fixes #507,
-        // §6.2.11.5-tekton-se-named-encoding.
-        let in_cff_enc_map = enc_map_check.get(&(code as u8)).copied().unwrap_or(0) != 0;
+        // For STANDARD / EXPERT CFF encoding fonts (enc_offset 0/1), veraPDF
+        // resolves glyph widths via PDF /Encoding → glyph name → CFF charset
+        // name lookup (SID-based), NOT via the CFF Standard Encoding. Phase 1
+        // must always run so we can find the correct charstring width via the
+        // PDF encoding name (e.g. MacRoman 143→"egrave" → CFF "egrave"→444).
+        //
+        // Note: `find_cff_glyph_width_by_name_fractional` already handles the
+        // case where a standard glyph name is stored under a CUSTOM SID (≥391)
+        // in the CFF String INDEX — it returns None so we fall through to
+        // defaultWidthX (e.g. HHCOAA "igrave" under custom SID). Fixes #507.
+        let in_cff_enc_map = if cff_has_custom_encoding(font_data) {
+            // Custom CFF enc: Phase 1 only when code maps to a real GID.
+            enc_map_check.get(&(code as u8)).copied().unwrap_or(0) != 0
+        } else {
+            // SE/Expert: PDF name lookup is always primary; always enable Phase 1.
+            true
+        };
         let code_in_cff_enc = code < 128 || from_differences || in_cff_enc_map;
         if code_in_cff_enc && !glyph_name.is_empty() && glyph_name != ".notdef" {
             if let Some(w) =

@@ -590,9 +590,13 @@ fn _parse_char_string(
                     let dy = p.stack.pop();
                     let dx = p.stack.pop();
 
-                    if ctx.width.is_none() && !p.stack.is_empty() {
-                        ctx.width = Some(p.stack.pop())
-                    }
+                    // If a 5th argument remains, it is the Type 1-compatible 'asb'
+                    // (accent sidebearing from Type 1 seac), NOT an explicit advance
+                    // width.  veraPDF's §6.2.11.5 algorithm treats this 5-arg form as
+                    // "no explicit width" and uses defaultWidthX from the Private DICT.
+                    // Discard it so ctx.width stays None → glyph_width() returns
+                    // defaultWidthX, matching veraPDF.  Fixes #507.
+                    p.stack.clear();
 
                     ctx.has_seac = true;
 
@@ -605,16 +609,27 @@ fn _parse_char_string(
                         .char_strings
                         .get(u32::from(base_char.0))
                         .ok_or(CFFError::InvalidSeacCode)?;
-                    _parse_char_string(ctx, base_char_string, depth + 1, p)?;
-                    p.x = dx;
-                    p.y = dy;
 
-                    let accent_char_string = ctx
-                        .metadata
-                        .char_strings
-                        .get(u32::from(accent_char.0))
-                        .ok_or(CFFError::InvalidSeacCode)?;
-                    _parse_char_string(ctx, accent_char_string, depth + 1, p)?;
+                    if p.width_only {
+                        // Width-only mode: Type 1 seac advance width = base char's
+                        // advance width.  Parse only the base char; ignore failures
+                        // (failed base → ctx.width stays None → defaultWidthX).
+                        // Skip the accent entirely — it must not affect the composite
+                        // width (e.g. "grave" w=263 must NOT overwrite "igrave" →
+                        // defaultWidthX=220).  Fixes #507.
+                        let _ = _parse_char_string(ctx, base_char_string, depth + 1, p);
+                    } else {
+                        _parse_char_string(ctx, base_char_string, depth + 1, p)?;
+                        p.x = dx;
+                        p.y = dy;
+
+                        let accent_char_string = ctx
+                            .metadata
+                            .char_strings
+                            .get(u32::from(accent_char.0))
+                            .ok_or(CFFError::InvalidSeacCode)?;
+                        _parse_char_string(ctx, accent_char_string, depth + 1, p)?;
+                    }
                 } else if p.stack.len() == 1 && ctx.width.is_none() {
                     ctx.width = Some(p.stack.pop());
                 }
