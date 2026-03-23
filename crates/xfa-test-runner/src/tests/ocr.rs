@@ -245,13 +245,14 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
         // A pass here would silently count as "OCR works" even though no
         // inference ran.  Build with --features paddle-ocr to enable OCR.
         metadata.insert("ocr_engine".into(), "none".into());
+        metadata.insert("scanned_pages_detected".into(), scanned_pages.len().to_string());
         TestResult {
             status: TestStatus::Skip,
-            error_message: Some(format!(
-                "{} scanned pages detected, OCR engine not compiled in \
-                 (build with --features paddle-ocr)",
-                scanned_pages.len()
-            )),
+            error_message: Some(
+                "OCR: skipped — paddle-ocr feature not compiled \
+                 (build with --features paddle-ocr)"
+                    .into(),
+            ),
             duration_ms: elapsed(),
             oracle_score: None,
             metadata,
