@@ -6478,8 +6478,19 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                         // same path our cff_width_for_code uses. If we computed
                         // a correction for a Differences-mapped code, it is
                         // correct and should not be filtered out. (#6.2.11.5-diff-subset)
+                        //
+                        // WinAnsiEncoding and MacRomanEncoding subset fonts: same
+                        // logic as the non-subset branch applies. cff_width_for_code
+                        // uses the T1 glyph name table for high-byte codes, so when
+                        // a correction is generated the glyph was found by name —
+                        // it is definitively correct. This handles e.g. code 173
+                        // ("hyphen" via T1 WinAnsi table) in NGEPHG+Helvetica where
+                        // subset_standard_cff_code_is_safe returns false because the
+                        // Unicode AGL path ("softhyphen") is absent from the subset.
+                        // (#6.2.11.5-t1-winansi, gen-348)
                         code <= 127
                             || enc_info.1.contains_key(&code)
+                            || matches!(enc_info.0.as_str(), "WinAnsiEncoding" | "MacRomanEncoding")
                             || (subset_standard_cff_code_is_safe(
                                 &font_data,
                                 code,
@@ -7394,6 +7405,144 @@ fn ps_standard_encoding_override(code: u32) -> Option<&'static str> {
     match code {
         39 => Some("quotesingle"), // CFF SE code 39 → SID 170 = "quotesingle"
         96 => Some("quoteleft"),   // CFF SE code 96 → SID 171 = "quoteleft"
+        _ => None,
+    }
+}
+
+/// Direct Adobe glyph name table for WinAnsiEncoding, matching the lookup
+/// veraPDF uses in §6.2.11.5 width checks for Type 1 / Type1C fonts.
+///
+/// Differs from the Unicode AGL roundtrip for two codes:
+///   - code 160 (U+00A0 NO-BREAK SPACE) → "space"   (AGL: "nbspace")
+///   - code 173 (U+00AD SOFT HYPHEN)    → "hyphen"  (AGL: "softhyphen")
+///
+/// Using this table in `cff_width_for_code` keeps our correction aligned with
+/// what veraPDF's compliance checker expects. (#6.2.11.5-t1-winansi)
+fn winansi_type1_glyph_name(code: u8) -> Option<&'static str> {
+    match code {
+        128 => Some("Euro"),
+        130 => Some("quotesinglbase"),
+        131 => Some("florin"),
+        132 => Some("quotedblbase"),
+        133 => Some("ellipsis"),
+        134 => Some("dagger"),
+        135 => Some("daggerdbl"),
+        136 => Some("circumflex"),
+        137 => Some("perthousand"),
+        138 => Some("Scaron"),
+        139 => Some("guilsinglleft"),
+        140 => Some("OE"),
+        142 => Some("Zcaron"),
+        145 => Some("quoteleft"),
+        146 => Some("quoteright"),
+        147 => Some("quotedblleft"),
+        148 => Some("quotedblright"),
+        149 => Some("bullet"),
+        150 => Some("endash"),
+        151 => Some("emdash"),
+        152 => Some("tilde"),
+        153 => Some("trademark"),
+        154 => Some("scaron"),
+        155 => Some("guilsinglright"),
+        156 => Some("oe"),
+        158 => Some("zcaron"),
+        159 => Some("Ydieresis"),
+        160 => Some("space"),      // U+00A0 → "space" (not AGL "nbspace")
+        161 => Some("exclamdown"),
+        162 => Some("cent"),
+        163 => Some("sterling"),
+        164 => Some("currency"),
+        165 => Some("yen"),
+        166 => Some("brokenbar"),
+        167 => Some("section"),
+        168 => Some("dieresis"),
+        169 => Some("copyright"),
+        170 => Some("ordfeminine"),
+        171 => Some("guillemotleft"),
+        172 => Some("logicalnot"),
+        173 => Some("hyphen"),     // U+00AD → "hyphen" (not AGL "softhyphen")
+        174 => Some("registered"),
+        175 => Some("macron"),
+        176 => Some("degree"),
+        177 => Some("plusminus"),
+        178 => Some("twosuperior"),
+        179 => Some("threesuperior"),
+        180 => Some("acute"),
+        181 => Some("mu"),
+        182 => Some("paragraph"),
+        183 => Some("periodcentered"),
+        184 => Some("cedilla"),
+        185 => Some("onesuperior"),
+        186 => Some("ordmasculine"),
+        187 => Some("guillemotright"),
+        188 => Some("onequarter"),
+        189 => Some("onehalf"),
+        190 => Some("threequarters"),
+        191 => Some("questiondown"),
+        192 => Some("Agrave"),
+        193 => Some("Aacute"),
+        194 => Some("Acircumflex"),
+        195 => Some("Atilde"),
+        196 => Some("Adieresis"),
+        197 => Some("Aring"),
+        198 => Some("AE"),
+        199 => Some("Ccedilla"),
+        200 => Some("Egrave"),
+        201 => Some("Eacute"),
+        202 => Some("Ecircumflex"),
+        203 => Some("Edieresis"),
+        204 => Some("Igrave"),
+        205 => Some("Iacute"),
+        206 => Some("Icircumflex"),
+        207 => Some("Idieresis"),
+        208 => Some("Eth"),
+        209 => Some("Ntilde"),
+        210 => Some("Ograve"),
+        211 => Some("Oacute"),
+        212 => Some("Ocircumflex"),
+        213 => Some("Otilde"),
+        214 => Some("Odieresis"),
+        215 => Some("multiply"),
+        216 => Some("Oslash"),
+        217 => Some("Ugrave"),
+        218 => Some("Uacute"),
+        219 => Some("Ucircumflex"),
+        220 => Some("Udieresis"),
+        221 => Some("Yacute"),
+        222 => Some("Thorn"),
+        223 => Some("germandbls"),
+        224 => Some("agrave"),
+        225 => Some("aacute"),
+        226 => Some("acircumflex"),
+        227 => Some("atilde"),
+        228 => Some("adieresis"),
+        229 => Some("aring"),
+        230 => Some("ae"),
+        231 => Some("ccedilla"),
+        232 => Some("egrave"),
+        233 => Some("eacute"),
+        234 => Some("ecircumflex"),
+        235 => Some("edieresis"),
+        236 => Some("igrave"),
+        237 => Some("iacute"),
+        238 => Some("icircumflex"),
+        239 => Some("idieresis"),
+        240 => Some("eth"),
+        241 => Some("ntilde"),
+        242 => Some("ograve"),
+        243 => Some("oacute"),
+        244 => Some("ocircumflex"),
+        245 => Some("otilde"),
+        246 => Some("odieresis"),
+        247 => Some("divide"),
+        248 => Some("oslash"),
+        249 => Some("ugrave"),
+        250 => Some("uacute"),
+        251 => Some("ucircumflex"),
+        252 => Some("udieresis"),
+        253 => Some("yacute"),
+        254 => Some("thorn"),
+        255 => Some("ydieresis"),
         _ => None,
     }
 }
@@ -9313,6 +9462,16 @@ fn cff_width_for_code(
                     unicode_to_glyph_name(ch).unwrap_or_default()
                 }
             }
+        } else if enc_name == "WinAnsiEncoding" && code >= 128 {
+            // For T1/Type1C fonts with WinAnsiEncoding, codes ≥ 128 must use the
+            // direct Adobe glyph name table rather than the Unicode AGL roundtrip.
+            // The roundtrip gives wrong names for two codes:
+            //   code 160 (U+00A0) → AGL "nbspace", but T1 WinAnsi → "space"
+            //   code 173 (U+00AD) → AGL "softhyphen", but T1 WinAnsi → "hyphen"
+            // veraPDF's §6.2.11.5 checker resolves via the T1 table. (#6.2.11.5-t1-winansi)
+            winansi_type1_glyph_name(code as u8)
+                .map(|s| s.to_string())
+                .unwrap_or_default()
         } else {
             let ch = encoding_to_char(code, enc_name);
             unicode_to_glyph_name(ch).unwrap_or_default()
