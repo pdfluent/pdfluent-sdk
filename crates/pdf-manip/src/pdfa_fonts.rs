@@ -6942,35 +6942,30 @@ fn get_truetype_glyph_width_fractional(
             .map(|w| w as f64 * scale);
     }
 
-    // For codes outside 128-159, fall back to (1,0) Mac Roman cmap.
-    // veraPDF uses this fallback for non-symbolic TrueType.
+    // When (3,1) cmap exists but returned None for this code: veraPDF maps
+    // to GID 0 (.notdef) and uses its advance for §6.2.11.5. Do NOT fall
+    // back to Mac (1,0) cmap — it maps codes differently (e.g. code 160 is
+    // dagger in Mac Roman but NBSP in WinAnsi). (#fix-tt-cmap31-authoritative)
+    if has_cmap_31(face) {
+        return face
+            .glyph_hor_advance(ttf_parser::GlyphId(0))
+            .map(|w| w as f64 * scale);
+    }
+
+    // No (3,1) cmap: fall back to Mac (1,0) cmap, then all subtables.
     if code <= 255 {
         if let Some(gid) = lookup_mac_cmap(face, code) {
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
         }
     }
 
-    // Code not found in (3,1) or Mac cmap. Try all cmap subtables to match the
-    // compliance checker, which uses face.glyph_index(ch) over all cmaps.
-    // If found in a non-(3,1) subtable (e.g. (0,3) Unicode platform), use that
-    // advance. If explicitly mapped to GID 0 (notdef), the compliance check skips
-    // that code so we do too. If absent from all cmaps, use .notdef advance for
-    // codes 32-255 (excluding 127/DEL) — veraPDF uses notdef for glyphs absent
-    // from the font subset. (#FN-6.2.11.5-notdef)
+    // Try all cmap subtables.
     match face.glyph_index(ch) {
         Some(gid) if gid.0 != 0 => {
-            // Found in a non-(3,1) cmap — use actual advance.
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
         }
-        Some(_) => {
-            // Mapped to GID 0 (.notdef). veraPDF uses .notdef advance width
-            // for §6.2.11.5 comparison — return that, not None. (#fix-tt-notdef-width)
-            return face
-                .glyph_hor_advance(ttf_parser::GlyphId(0))
-                .map(|w| w as f64 * scale);
-        }
-        None => {
-            // Not in any cmap: veraPDF uses .notdef advance for valid encoding chars.
+        _ => {
+            // Mapped to GID 0 or absent: use .notdef advance.
             if code >= 32 && code != 127 {
                 return face
                     .glyph_hor_advance(ttf_parser::GlyphId(0))
@@ -7017,6 +7012,20 @@ fn lookup_unicode_cmap_31_raw(
         }
     }
     None
+}
+
+/// Returns true when the font has a (3,1) Windows Unicode BMP cmap subtable.
+/// When present, veraPDF uses it exclusively for non-symbolic TrueType fonts —
+/// codes absent from it map to GID 0 (.notdef). When absent, Mac (1,0) cmap
+/// or other subtables may be used as fallback.
+fn has_cmap_31(face: &ttf_parser::Face) -> bool {
+    face.tables()
+        .cmap
+        .map_or(false, |cmap| {
+            cmap.subtables.into_iter().any(|s| {
+                s.platform_id == ttf_parser::PlatformId::Windows && s.encoding_id == 1
+            })
+        })
 }
 
 /// `(start_code, end_code, start_cid)` triple from a CMap cidrange entry.
@@ -8923,10 +8932,13 @@ fn compute_otf_cff_corrections(
                         // default encoding behavior (Type1 §8.5.3).
                         match cff.glyph_index(code as u8) {
                             Some(gid) if gid.0 != 0 || code == 0 => gid,
-                            _ => continue,
+                            // Code absent from CFF encoding — veraPDF uses .notdef
+                            // (GID 0) advance for §6.2.11.5. (#fix-cff-notdef-width)
+                            _ => cff_parser::GlyphId(0),
                         }
                     } else {
-                        continue;
+                        // Symbolic font: veraPDF uses GID 0 for absent codes.
+                        cff_parser::GlyphId(0)
                     }
                 }
             };
