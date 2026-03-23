@@ -1,9 +1,11 @@
 /target
+.env
 *.swp
 *.swo
 .DS_Store
 *.pdf
 !/tests/fixtures/*.pdf
+!/fixtures/formcalc/*.pdf
 !/tests/corpus-mini/*.pdf
 !/corpus/*.pdf
 !/crates/pdf-java/src/test/resources/*.pdf

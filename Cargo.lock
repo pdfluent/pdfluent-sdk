@@ -8461,6 +8461,7 @@ dependencies = [
 name = "xfa-test-runner"
 version = "1.0.0-beta.1"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "clap",
  "image",
@@ -8486,6 +8487,7 @@ dependencies = [
  "pdfium-ffi-bridge",
  "rayon",
  "regex-lite",
+ "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
