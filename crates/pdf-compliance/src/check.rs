@@ -2251,8 +2251,15 @@ fn check_image_cs_in_resources(
     let Some(xobj_dict) = res_dict.get::<Dict<'_>>(keys::XOBJECT) else {
         return;
     };
-    check_image_cs_in_xobjects(&xobj_dict, rgb_ok, cmyk_ok, gray_ok, location, report);
+    check_image_cs_in_xobjects(&xobj_dict, rgb_ok, cmyk_ok, gray_ok, location, report, 0);
 }
+
+/// Maximum nesting depth for Form XObject resource traversal.
+/// Corrupt / fuzzer PDFs can contain circular Form XObject references.  Even
+/// without a true cycle, N levels × X entries each = O(X^N) iterations, which
+/// is unbounded on large corrupt dicts.  Limit to 2 (page → form → nested form)
+/// so worst case is X^2 iterations, which is always fast.  Fixes #541.
+const MAX_FORM_NESTING: usize = 2;
 
 /// Check image XObject color spaces from a resolved XObject dict.
 fn check_image_cs_in_xobjects(
@@ -2262,6 +2269,7 @@ fn check_image_cs_in_xobjects(
     gray_ok: bool,
     location: &str,
     report: &mut ComplianceReport,
+    depth: usize,
 ) {
     for (name, _) in xobj_dict.entries() {
         let Some(stream) = xobj_dict.get::<Stream<'_>>(name.as_ref()) else {
@@ -2270,8 +2278,20 @@ fn check_image_cs_in_xobjects(
         let dict = stream.dict();
         let subtype = dict.get::<Name>(keys::SUBTYPE);
         if subtype.as_ref().is_some_and(|s| s.as_ref() == keys::FORM) {
-            if let Some(fr) = dict.get::<Dict<'_>>(keys::RESOURCES) {
-                check_image_cs_in_resources(&fr, rgb_ok, cmyk_ok, gray_ok, location, report);
+            if depth < MAX_FORM_NESTING {
+                if let Some(fr) = dict.get::<Dict<'_>>(keys::RESOURCES) {
+                    if let Some(nested_xobj) = fr.get::<Dict<'_>>(keys::XOBJECT) {
+                        check_image_cs_in_xobjects(
+                            &nested_xobj,
+                            rgb_ok,
+                            cmyk_ok,
+                            gray_ok,
+                            location,
+                            report,
+                            depth + 1,
+                        );
+                    }
+                }
             }
             continue;
         }
@@ -7393,7 +7413,7 @@ pub fn check_image_xobject_colorspaces(pdf: &Pdf, report: &mut ComplianceReport)
         let xobj_dict = &res.x_objects;
         let loc = format!("page {}", page_idx + 1);
         // Check image XObjects via resolved resources
-        check_image_cs_in_xobjects(xobj_dict, rgb_ok, cmyk_ok, gray_ok, &loc, report);
+        check_image_cs_in_xobjects(xobj_dict, rgb_ok, cmyk_ok, gray_ok, &loc, report, 0);
 
         // Also scan annotation appearance streams for image XObjects
         if let Some(annots) = page_dict.get::<Array<'_>>(keys::ANNOTS) {
@@ -8265,6 +8285,92 @@ pub fn check_notdef_glyph_reference(pdf: &Pdf, report: &mut ComplianceReport) {
                     "Content stream contains reference to .notdef glyph (code 0 / CID 0)",
                     loc.clone(),
                 );
+                // §6.2.11.5 co-fires with §6.2.11.8 when code 0 is rendered: the
+                // .notdef glyph (GID 0) advance must match the effective PDF width
+                // for code 0, which is MissingWidth or 0 (code 0 is almost always
+                // outside [FirstChar, LastChar]). Only check simple-font pages;
+                // CID pages use 2-byte codes where code 0 semantics differ.
+                // (#FN-6.2.11.5 cs-veraPDF-6-2-11-8-t01-fail-b,
+                //               cs-veraPDF-6-2-11-4-1-t02-fail-c)
+                if !has_type0_font {
+                    'notdef_width: for fname_bytes in &font_names {
+                        let fname_slice: &[u8] = fname_bytes.as_slice();
+                        let Some(font_dict) = page
+                            .resources()
+                            .fonts
+                            .get::<Dict<'_>>(fname_slice)
+                            .or_else(|| {
+                                page.resources()
+                                    .fonts
+                                    .get_ref(fname_slice)
+                                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                            })
+                        else {
+                            continue;
+                        };
+                        if font_dict
+                            .get::<Name>(keys::SUBTYPE)
+                            .is_some_and(|s| s.as_ref() == b"Type0")
+                        {
+                            continue; // Skip CID fonts
+                        }
+                        let Some(desc) = font_dict
+                            .get::<Dict<'_>>(keys::FONT_DESC)
+                            .or_else(|| {
+                                font_dict
+                                    .get_ref(keys::FONT_DESC)
+                                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                            })
+                        else {
+                            continue;
+                        };
+                        let Some(ff2) = desc
+                            .get::<Stream<'_>>(keys::FONT_FILE2)
+                            .or_else(|| {
+                                desc.get_ref(keys::FONT_FILE2)
+                                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                            })
+                        else {
+                            continue; // Not TrueType
+                        };
+                        let Ok(font_data) = ff2.decoded() else { continue };
+                        let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+                            continue
+                        };
+                        let upem = face.units_per_em() as f64;
+                        if upem <= 0.0 {
+                            continue;
+                        }
+                        let Some(advance) =
+                            face.glyph_hor_advance(ttf_parser::GlyphId(0))
+                        else {
+                            continue;
+                        };
+                        let gid0_w = (advance as f64 * 1000.0 / upem).round() as i32;
+                        let missing_w = desc
+                            .get::<i32>(keys::MISSING_WIDTH)
+                            .or_else(|| font_dict.get::<i32>(keys::MISSING_WIDTH))
+                            .unwrap_or(0);
+                        if (gid0_w - missing_w).abs() > 1 {
+                            let base_name = font_dict
+                                .get::<Name>(keys::BASE_FONT)
+                                .map(|n| String::from_utf8_lossy(n.as_ref()).into_owned())
+                                .unwrap_or_else(|| {
+                                    String::from_utf8_lossy(fname_slice).into_owned()
+                                });
+                            error_at(
+                                report,
+                                "6.3.5-fw",
+                                format!(
+                                    "Font {base_name} .notdef (GID 0) advance {gid0_w} \
+                                     != MissingWidth/0 {missing_w}"
+                                ),
+                                loc.clone(),
+                            );
+                            break 'notdef_width;
+                        }
+                    }
+                }
                 return;
             }
         }
@@ -10741,8 +10847,14 @@ fn tokenize_pdf_content(content: &[u8]) -> Vec<Vec<u8>> {
             continue;
         }
 
-        // Single-char array delimiters.
-        if b == b'[' || b == b']' {
+        // Single-char array / procedure delimiters, and stray `)`.
+        // All of `[`, `]`, `{`, `}`, `)` are matched by is_pdf_delim() but have
+        // no dedicated branch above.  Without this check the regular-token while
+        // loop exits immediately at i == start (is_pdf_delim stops it) and i is
+        // never advanced → infinite loop on any content stream containing one of
+        // these bytes (corrupt / fuzzer PDFs).
+        // Fixes #541: compliance checker hangs on malformed content streams.
+        if b == b'[' || b == b']' || b == b'{' || b == b'}' || b == b')' {
             tokens.push(vec![b]);
             i += 1;
             continue;
@@ -11107,21 +11219,12 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                 let ct = std::str::from_utf8(s.as_bytes()).unwrap_or("");
                 ct.split('/').filter(|g| !g.is_empty()).map(str::to_string).collect()
             });
-        // When /CharSet is present and non-empty but incomplete (some CFF glyph absent),
-        // veraPDF fires §6.2.11.4.2 as the primary violation and skips §6.2.11.5.
-        // Absent or empty /CharSet triggers §6.3.5 (different rule) and §6.2.11.5 still runs.
-        // (#FP-6.2.11.5 cs-veraPDF 6-2-11-4-2-t01-fail)
-        if let Some(ref names) = charset_names {
-            if !names.is_empty() {
-                let has_charset_violation = (1..table.number_of_glyphs()).any(|gid| {
-                    table.glyph_name(cff_parser::GlyphId(gid))
-                        .is_some_and(|gname| gname != ".notdef" && !names.contains(gname))
-                });
-                if has_charset_violation {
-                    return; // §6.2.11.4.2 is the primary violation; skip §6.2.11.5
-                }
-            }
-        }
+        // §6.2.11.4.1: font program has a glyph NOT in /CharSet → veraPDF fires §6.2.11.4.1
+        //   AND still checks §6.2.11.5 for all renderable codes. Do NOT skip §6.2.11.5.
+        // §6.2.11.4.2: /CharSet names a glyph absent from the font program →
+        //   widthFromFontProgram=null for that glyph → veraPDF skips §6.2.11.5 for it.
+        //   Handled per-code below; no need for an early return here.
+        // (#FP-6.2.11.5 cs-veraPDF 6-2-11-4-2-t01-fail-a, #FN cs-veraPDF 6-2-11-4-1-t02-fail-a)
 
         // For each character code in [FirstChar..LastChar], compare the CFF
         // charstring advance width with the PDF /Widths entry.
@@ -11157,12 +11260,16 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
                     }
                 });
 
-            // If /CharSet is present and non-empty, skip glyphs not declared in it.
-            // veraPDF only checks §6.2.11.5 for glyphs that ARE in /CharSet.
-            // Empty /CharSet is handled by §6.3.5 (not §6.2.11.4.2); don't filter there.
+            // §6.2.11.4.2: if /CharSet declares a glyph that is absent from the font program,
+            // veraPDF treats widthFromFontProgram as null and does NOT fire §6.2.11.5 for it.
+            // §6.2.11.4.1: if font program has a glyph not in /CharSet, §6.2.11.5 still fires.
+            // (#FP cs-veraPDF 6-2-11-4-2-t01-fail-a, #FN cs-veraPDF 6-2-11-4-1-t02-fail-a)
             if let (Some(ref names), Some(ref gname)) = (&charset_names, &glyph_name) {
-                if !names.is_empty() && !gname.is_empty() && gname != ".notdef" && !names.contains(gname) {
-                    continue; // Not in CharSet — §6.2.11.4.2 handles this, not §6.2.11.5
+                if !names.is_empty() && !gname.is_empty() && gname != ".notdef"
+                    && names.contains(gname)
+                    && table.glyph_index_by_name(gname).map_or(true, |g| g.0 == 0)
+                {
+                    continue; // In /CharSet but absent from font program → widthFromFontProgram=null
                 }
             }
 
@@ -11794,14 +11901,6 @@ fn check_truetype_simple_widths(
         if missing_width.is_some_and(|mw| mw == pdf_w) {
             continue;
         }
-        // pdf_w=0 means "glyph absent/unused" in this font subset. veraPDF does not
-        // fire §6.3.6/§6.2.11.5 when the PDF declares width=0 but the font program
-        // has a non-zero advance — same behaviour as the Type1 check at check.rs:#16718.
-        // (#FP-6.2.11.5-zero, empirically: cs-veraPDF 6-1-7-1-t04-fail)
-        if pdf_w == 0 {
-            continue;
-        }
-
         let ch = if use_winansi {
             winansi_code_to_char(code as u8)
         } else {
@@ -11825,24 +11924,19 @@ fn check_truetype_simple_widths(
                 None => continue, // Not in (3,1) — skip, no violation
             }
         } else {
-            // When the glyph is absent from the font subset, veraPDF uses the notdef
-            // advance as widthFromFontProgram and compares it against the /Widths entry.
             face.glyph_index(ch)
         };
-        // Use notdef (GID 0) when glyph is absent; skip only when glyph is explicitly
-        // mapped to notdef inside the font (the font program maps it to notdef deliberately).
         let gid = explicit_gid.unwrap_or(ttf_parser::GlyphId(0));
-        if gid.0 == 0 && explicit_gid.is_some() {
-            continue;
-        }
         // When the glyph is absent from the cmap, emit the glyph-coverage rule
         // (§6.3.5 / §6.2.11.4.1) and skip the width check. The PDF/A-1 §6.3.6
         // width-consistency requirement only applies to glyphs that ARE present in
         // the font program; using the .notdef advance as a stand-in produces spurious
         // width mismatches. veraPDF fires §6.3.5 but not §6.3.6 for absent glyphs.
-        // (#FN-6.3.5 isartor-6-3-5-t01-fail-d, #FP-6.3.6 gen-302)
+        // For absent glyphs with pdf_w=0 the PDF declares the code unused — veraPDF
+        // does not fire §6.2.11.4.1 in that case. (#FP-6.2.11.5-zero, #FN-6.3.5
+        // isartor-6-3-5-t01-fail-d, #FP-6.3.6 gen-302, empirically cs-veraPDF 6-1-7-1-t04-fail)
         if explicit_gid.is_none() {
-            if !glyph_absence_emitted {
+            if pdf_w != 0 && !glyph_absence_emitted {
                 error_at(
                     report,
                     "6.2.11.4.1",
@@ -11852,6 +11946,14 @@ fn check_truetype_simple_widths(
                 glyph_absence_emitted = true;
             }
             continue; // Width check inapplicable for absent glyphs
+        }
+        // If cmap maps to a real glyph (GID > 0) and pdf_w=0, the PDF treats the code
+        // as unused — veraPDF does NOT fire §6.2.11.5 in this case.
+        // EXCEPTION: when cmap explicitly maps to GID 0 (.notdef), pdf_w=0 still signals
+        // a width inconsistency because .notdef has a non-zero advance, and veraPDF fires
+        // §6.2.11.5. (#FP-6.2.11.5-zero 6-1-13-t01-fail-b, #FN-6.2.11.5 6-2-11-8-t01-fail-b)
+        if pdf_w == 0 && gid.0 != 0 {
+            continue;
         }
         let Some(advance) = face.glyph_hor_advance(gid) else {
             continue;
