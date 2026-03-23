@@ -6977,6 +6977,21 @@ fn get_truetype_glyph_width_fractional(
             .map(|w| w as f64 * scale);
     }
 
+    // Some Unicode formatting characters are rendered using a canonical base glyph.
+    // veraPDF normalizes these when looking up glyph widths in the (3,1) cmap:
+    // U+00AD (soft hyphen) → U+002D (hyphen); the font's soft-hyphen slot reuses
+    // the hyphen glyph, so veraPDF reports the hyphen advance for §6.2.11.5.
+    // (#fix-tt-cmap-soft-hyphen)
+    let canonical_fallback: Option<char> = match ch {
+        '\u{00AD}' => Some('-'), // soft hyphen → hyphen-minus
+        _ => None,
+    };
+    if let Some(fb_ch) = canonical_fallback {
+        if let Some(gid) = lookup_unicode_cmap_31(face, fb_ch as u32) {
+            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+    }
+
     // When (3,1) cmap exists but returned None for this code: veraPDF maps
     // to GID 0 (.notdef) and uses its advance for §6.2.11.5. Do NOT fall
     // back to Mac (1,0) cmap — it maps codes differently (e.g. code 160 is
@@ -14748,6 +14763,30 @@ fn fix_notdef_in_truetype(
 
         if has_valid_glyph {
             continue; // Glyph present with outline data — no fix needed.
+        }
+
+        // Some Unicode characters are rendered via a canonical base glyph —
+        // the same fallback that veraPDF uses for §6.2.11.5 width checking.
+        // U+00AD (soft hyphen) is handled by falling back to U+002D (hyphen).
+        // If the font has the canonical glyph, the code is effectively mapped
+        // to a valid glyph and needs no Differences entry. Adding "space" here
+        // would cause fix_font_width_mismatches to return the space width instead
+        // of the hyphen width, producing a §6.2.11.5 mismatch. (#fix-tt-notdef-soft-hyphen)
+        let canonical_fallback_ch: Option<char> = match ch {
+            '\u{00AD}' => Some('-'), // soft hyphen → hyphen-minus
+            _ => None,
+        };
+        if let Some(fb_ch) = canonical_fallback_ch {
+            if let Some(fb_gid) = face.glyph_index(fb_ch) {
+                let fb_valid = if is_subset {
+                    tt_glyph_has_data(&face, fb_gid)
+                } else {
+                    true
+                };
+                if fb_valid {
+                    continue; // Canonical fallback present — no Differences needed.
+                }
+            }
         }
 
         // For subset fonts where the cmap has an entry but the outline
