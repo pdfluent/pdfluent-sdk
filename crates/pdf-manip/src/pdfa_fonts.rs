@@ -7368,10 +7368,19 @@ fn build_valid_codes_from_cmap_ranges(
 /// Only covers the two historically significant deviations; all other codes are identical.
 /// Source: Adobe Type 1 Font Format spec (PLRM Appendix E), same as t1_standard_encoding_name
 /// in pdf-compliance. (#507, §6.2.11.5-se-quoteleft)
+/// CFF Standard Encoding glyph name override for codes where the Unicode
+/// identity → AGL roundtrip produces a different name.
+///
+/// Only called from `cff_width_for_code` (CFF fonts), so uses CFF Standard
+/// Encoding SID mapping (not PostScript Standard Encoding, which differs for
+/// code 39: PS SE = "quoteright" SID 169, CFF SE = "quotesingle" SID 170).
+/// Using PS SE caused wrong corrections: "quoteright" found in CFF charset
+/// (238) while veraPDF uses CFF SE → "quotesingle" → absent → GID 0 → .notdef.
+/// (#fix-cff-se-code39)
 fn ps_standard_encoding_override(code: u32) -> Option<&'static str> {
     match code {
-        39 => Some("quoteright"), // ASCII ' (U+0027) → "quotesingle" in AGL, but SE = "quoteright"
-        96 => Some("quoteleft"),  // ASCII ` (U+0060) → "grave" in AGL, but SE = "quoteleft"
+        39 => Some("quotesingle"), // CFF SE code 39 → SID 170 = "quotesingle"
+        96 => Some("quoteleft"),   // CFF SE code 96 → SID 171 = "quoteleft"
         _ => None,
     }
 }
