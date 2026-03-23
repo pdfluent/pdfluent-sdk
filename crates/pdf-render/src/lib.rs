@@ -99,11 +99,17 @@ pub fn render(
     let initial_transform =
         Affine::scale_non_uniform(x_scale as f64, y_scale as f64) * page.initial_transform(true);
 
+    // Clamp to at least 1 pixel. Pages with zero-area MediaBox (e.g. adversarial
+    // PDFs from the poppler fuzzing corpus) produce scaled_width/height = 0.
+    // vello_common::Pixmap::new(0, 0) allocates an empty buffer; any subsequent
+    // pixel sample then panics with "index out of bounds: the len is 0".
+    // Fixes crashes on poppler-327-0.zip-{0,1}.pdf. (#546)
     let (pix_width, pix_height) = (
-        render_settings.width.unwrap_or(scaled_width.floor() as u16),
+        render_settings.width.unwrap_or(scaled_width.floor() as u16).max(1),
         render_settings
             .height
-            .unwrap_or(scaled_height.floor() as u16),
+            .unwrap_or(scaled_height.floor() as u16)
+            .max(1),
     );
     let mut state = Context::new(
         initial_transform,
