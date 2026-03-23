@@ -173,7 +173,8 @@ impl ColorSpaceType {
                     return Some(Self::DeviceN(DeviceN::new(&color_array, cache)?));
                 }
                 PATTERN => {
-                    let _ = iter.next::<Name>();
+                    // Base colorspace is the next element: [/Pattern /DeviceCMYK] or
+                    // [/Pattern [/ICCBased ...]] etc. Do NOT skip an extra element here.
                     let cs = iter
                         .next::<Object<'_>>()
                         .and_then(|o| ColorSpace::new(o, cache))
