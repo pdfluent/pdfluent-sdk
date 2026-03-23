@@ -738,6 +738,14 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         return None;
     }
 
+    macro_rules! dbg_step {
+        ($label:expr) => {
+            eprintln!("  [cvt-step] {} {:?}", $label, path.file_name().unwrap_or_default());
+            let _ = <std::io::Stderr as std::io::Write>::flush(&mut std::io::stderr());
+        };
+    }
+
+    dbg_step!("pdf_syntax");
     // Already PDF/A — nothing to convert; oracle-generate can skip these
     // because PdfAConvertTest::run() returns Pass without calling veraPDF.
     match pdf_syntax::Pdf::new(pdf_data.to_vec()) {
@@ -745,6 +753,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         _ => {}
     }
 
+    dbg_step!("lopdf_load");
     // Load via lopdf.
     let mut doc = match lopdf::Document::load_mem(pdf_data) {
         Ok(d) if !d.objects.is_empty() => d,
@@ -807,6 +816,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         }
     }
 
+    dbg_step!("cleanup");
     // Cleanup (required step — panic or error → abort).
     let cleanup_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false)
@@ -834,6 +844,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         }
     }
 
+    dbg_step!("font_fixes");
     // Font fixes (best-effort, all wrapped in catch_unwind).
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc)
@@ -923,6 +934,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc)
     }));
 
+    dbg_step!("colorspace");
     // Color space normalization (required — error → abort).
     fix_wrong_root(&mut doc);
     let cs_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -933,6 +945,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         Ok(Err(_)) | Err(_) => return None,
     }
 
+    dbg_step!("run_fixups");
     // Supplementary fixups.
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fixups::run_fixups(&mut doc)
@@ -948,6 +961,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         Ok(Err(_)) | Err(_) => return None,
     }
 
+    dbg_step!("xmp");
     // XMP metadata repair.
     let xmp_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_xmp::repair_xmp_metadata(
@@ -961,6 +975,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         Ok(Err(_)) | Err(_) => return None,
     }
 
+    dbg_step!("save");
     // Save.
     let mut saved = Vec::new();
     if doc.save_to(&mut saved).is_err() {
