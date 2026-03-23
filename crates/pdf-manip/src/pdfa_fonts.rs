@@ -10276,8 +10276,8 @@ fn is_symbolic_font_name(name: &str) -> bool {
 /// - Non-symbolic TrueType fonts must have MacRomanEncoding or WinAnsiEncoding.
 /// - Symbolic TrueType fonts must NOT have an Encoding entry.
 pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
-    // Collect font IDs that need fixing (non-symbolic: add encoding).
-    let mut to_fix: Vec<ObjectId> = Vec::new();
+    // Collect (font_id, target_encoding_name) pairs that need fixing.
+    let mut to_fix: Vec<(ObjectId, &'static [u8])> = Vec::new();
     // Collect symbolic font IDs that need Encoding removed.
     let mut symbolic_to_strip: Vec<ObjectId> = Vec::new();
 
@@ -10300,57 +10300,74 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
             continue;
         }
 
-        // Check existing Encoding — normalize everything to WinAnsiEncoding.
-        // MacRomanEncoding codes 128-255 differ from Unicode, but veraPDF's
-        // TrueType width validation uses raw character codes as Unicode in the
-        // (3,1) cmap. WinAnsiEncoding codes 160-255 are identity with Unicode,
-        // avoiding width mismatches.
-        let needs_fix = match dict.get(b"Encoding") {
+        // Check existing Encoding. Both WinAnsiEncoding and MacRomanEncoding
+        // are valid for non-symbolic TrueType fonts per §6.2.11.6:2.
+        // MacRomanEncoding must be preserved as-is: veraPDF's §6.2.11.5 width
+        // check uses glyph-name lookup (encoding[code] → glyph name → font
+        // name table), so converting MacRomanEncoding → WinAnsiEncoding changes
+        // which glyph name veraPDF expects for each code. For example, Mac code
+        // 160 = "dagger" (present in the font), WinAnsi code 160 = "nbspace"
+        // (absent) → converting Mac→Win causes §6.2.11.5 failures. (#507)
+        let is_valid_enc = |enc_str: &str| {
+            enc_str == "WinAnsiEncoding" || enc_str == "MacRomanEncoding"
+        };
+        // Determine whether this font needs its encoding fixed, and if so,
+        // which target encoding to use. When flattening a dict with Differences
+        // we preserve the base encoding (MacRoman→MacRoman, WinAnsi→WinAnsi).
+        let (needs_fix, target_enc): (bool, &'static [u8]) = match dict.get(b"Encoding") {
             Ok(Object::Name(enc)) => {
                 let enc_str = String::from_utf8_lossy(enc);
-                enc_str != "WinAnsiEncoding"
+                (!is_valid_enc(&enc_str), b"WinAnsiEncoding")
             }
             Ok(Object::Dictionary(enc_dict)) => {
-                let base_is_winansi = matches!(
-                    get_name(enc_dict, b"BaseEncoding").as_deref(),
-                    Some("WinAnsiEncoding")
-                );
-                // Even with BaseEncoding=WinAnsi, flatten dictionaries with
-                // Differences to a simple Name to avoid 6.2.11.6:2 failures on
-                // non-AGL glyph names.
-                !base_is_winansi || enc_dict.has(b"Differences")
+                let base_enc = get_name(enc_dict, b"BaseEncoding").unwrap_or_default();
+                let base_is_standard = is_valid_enc(&base_enc);
+                // Even with BaseEncoding=WinAnsi/MacRoman, flatten dictionaries
+                // with Differences to a simple Name to avoid 6.2.11.6:2 failures
+                // on non-AGL glyph names.
+                let needs = !base_is_standard || enc_dict.has(b"Differences");
+                let target: &'static [u8] = if base_enc == "MacRomanEncoding" {
+                    b"MacRomanEncoding"
+                } else {
+                    b"WinAnsiEncoding"
+                };
+                (needs, target)
             }
             Ok(Object::Reference(enc_ref)) => match doc.get_object(*enc_ref) {
                 Ok(Object::Name(enc)) => {
                     let enc_str = String::from_utf8_lossy(enc);
-                    enc_str != "WinAnsiEncoding"
+                    (!is_valid_enc(&enc_str), b"WinAnsiEncoding")
                 }
                 Ok(Object::Dictionary(enc_dict)) => {
-                    let base_is_winansi = matches!(
-                        get_name(enc_dict, b"BaseEncoding").as_deref(),
-                        Some("WinAnsiEncoding")
-                    );
-                    !base_is_winansi || enc_dict.has(b"Differences")
+                    let base_enc = get_name(enc_dict, b"BaseEncoding").unwrap_or_default();
+                    let base_is_standard = is_valid_enc(&base_enc);
+                    let needs = !base_is_standard || enc_dict.has(b"Differences");
+                    let target: &'static [u8] = if base_enc == "MacRomanEncoding" {
+                        b"MacRomanEncoding"
+                    } else {
+                        b"WinAnsiEncoding"
+                    };
+                    (needs, target)
                 }
-                _ => true,
+                _ => (true, b"WinAnsiEncoding"),
             },
-            _ => true, // Missing Encoding — needs fix.
+            _ => (true, b"WinAnsiEncoding"), // Missing Encoding — needs fix.
         };
 
         if needs_fix {
-            to_fix.push(*id);
+            to_fix.push((*id, target_enc));
         }
     }
 
     // Apply fixes.
     let count = to_fix.len();
-    for id in to_fix {
+    for (id, enc_name) in to_fix {
         if let Ok(Object::Dictionary(dict)) = doc.get_object_mut(id) {
-            // Always set Encoding to simple WinAnsiEncoding Name.
+            // Set Encoding to a simple Name (WinAnsi or MacRoman, see above).
             // Preserving Differences arrays from referenced encoding dicts
             // can cause 6.2.11.6:2 violations when glyph names aren't in
             // the Adobe Glyph List. A simple Name avoids that check.
-            dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+            dict.set("Encoding", Object::Name(enc_name.to_vec()));
         }
     }
 

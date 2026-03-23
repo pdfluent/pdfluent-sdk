@@ -183,7 +183,14 @@ pub trait PageExt {
 
 impl PageExt for Page<'_> {
     fn initial_transform(&self, invert_y: bool) -> Affine {
-        let crop_box = self.intersected_crop_box();
+        // Use the raw CropBox origin for the coordinate-system translation.
+        // MuPDF maps (CropBox.x0, CropBox.y0) → canvas (0, 0).  For normal
+        // PDFs (CropBox ⊆ MediaBox) intersected_crop_box and crop_box share
+        // the same origin, so there is no change.  For unusual documents where
+        // CropBox extends beyond MediaBox (e.g. gen-802: CropBox=[0,0,684,864]
+        // but MediaBox=[36,36,648,828]) the intersected origin was (36,36),
+        // producing a 75-pixel content offset vs MuPDF. (#544 follow-up)
+        let crop_box = self.crop_box();
         let (_, base_height) = self.base_dimensions();
         let (width, height) = self.render_dimensions();
 

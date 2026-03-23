@@ -18,8 +18,8 @@ use crate::x_object::{
 use kurbo::{Affine, Point, Shape};
 use log::warn;
 use pdf_syntax::content::ops::TypedInstruction;
-use pdf_syntax::object::dict::keys::{ANNOTS, AP, F, MCID, N, OC, RECT};
-use pdf_syntax::object::{Array, Dict, Object, Rect, Stream, dict_or_stream};
+use pdf_syntax::object::dict::keys::{ANNOTS, AP, F, FT, MCID, N, OC, RECT};
+use pdf_syntax::object::{Array, Dict, Name, Object, Rect, Stream, dict_or_stream};
 use pdf_syntax::page::{Page, Resources};
 use smallvec::smallvec;
 use std::sync::Arc;
@@ -151,6 +151,17 @@ pub fn interpret_page<'a>(
 
             // Annotation should be hidden.
             if flags & 2 != 0 {
+                continue;
+            }
+
+            // MuPDF renders signature widgets (/FT /Sig) with its own built-in
+            // "SIGN here" indicator and ignores the custom /AP/N stream, so we
+            // skip AP rendering for these annotations to match MuPDF output.
+            if annot
+                .get::<Name>(FT)
+                .as_deref()
+                .is_some_and(|n| n == b"Sig")
+            {
                 continue;
             }
 
