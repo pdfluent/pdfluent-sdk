@@ -6457,12 +6457,17 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                         // correct and should not be filtered out. (#6.2.11.5-diff-subset)
                         code <= 127
                             || enc_info.1.contains_key(&code)
-                            || subset_standard_cff_code_is_safe(
+                            || (subset_standard_cff_code_is_safe(
                                 &font_data,
                                 code,
                                 &enc_info.0,
                                 &enc_info.1,
                             )
+                                // If the CFF internal encoding maps this code to GID 0 (.notdef),
+                                // veraPDF uses defaultWidthX for the code, not the named glyph's
+                                // charstring width. Block the correction to avoid spurious
+                                // §6.2.11.5 failures. (#507, §6.2.11.5-tekton-std-enc-notdef)
+                                && !matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(1) == 0))
                             || matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0)
                     } else {
                         // Explicit Differences entries are deterministic mappings, so
@@ -9070,10 +9075,10 @@ fn cff_width_for_code(
         };
         // Hoist resolved glyph name for use in the final fallback below.
         pdf_glyph_name = glyph_name.clone();
-        // Guard: for non-subset fonts, veraPDF uses the CFF encoding table (not
-        // PDF /Encoding) to map code → GID. For codes absent from the CFF encoding,
-        // veraPDF falls back to the font's defaultWidthX (Private DICT op 20), NOT
-        // to a name-based charset lookup. Performing name lookup for such codes
+        // Guard: veraPDF uses the CFF encoding table (not PDF /Encoding) to map
+        // code → GID for non-Differences high-byte codes absent from the CFF
+        // encoding. For absent codes it falls back to defaultWidthX (Private DICT
+        // op 20), NOT to a name-based charset lookup. Name lookup for such codes
         // produces wrong corrections: e.g. WinAnsi code 225 "aacute" found in CFF
         // charset at GID 65 (width 333) while veraPDF uses defaultWidthX=556.
         // (#6.2.11.5-cff-enc-guard)
@@ -9082,20 +9087,23 @@ fn cff_width_for_code(
         // name by veraPDF §6.2.11.5, regardless of the CFF internal encoding.
         // (#507, §6.2.11.5-differences-bypass)
         //
-        // Exception 2: subset fonts (ABCDEF+ prefix). During subsetting the CFF
-        // encoding is rewritten with sequential arbitrary codes unrelated to the
-        // original PDF encoding codes, so the CFF encoding is useless for mapping.
+        // Exception 2: subset fonts with CUSTOM CFF encoding. During subsetting
+        // with custom encoding the codes are rewritten with arbitrary values
+        // unrelated to PDF encoding codes, so the enc_map lookup is unreliable.
         // veraPDF resolves subset font codes via PDF encoding → glyph name → CFF
-        // charset lookup, regardless of the CFF internal encoding. Bypassing the
-        // guard for subset fonts allows name lookup to find the actual glyph (e.g.
-        // WinAnsi 227 "atilde" found in subset at GID 64, width 556) rather than
-        // falling through to defaultWidthX=333, which would produce a wrong
-        // correction 556→333. (#6.2.11.5-subset-cff-enc-guard)
+        // charset lookup for custom-encoding fonts. Bypassing allows name lookup to
+        // find the glyph (e.g. WinAnsi 227 "atilde" found at GID 64, width 556).
+        // Subset fonts with STANDARD/EXPERT CFF encoding are NOT bypassed: for
+        // those, veraPDF uses the CFF encoding → defaultWidthX for codes absent
+        // from the encoding (e.g. HJPIGJ+Helvetica-Bold code 225 "aacute":
+        // glyph_index=None → defaultWidthX=556, not charstring 333).
+        // (#6.2.11.5-subset-cff-enc-guard, gen-765)
         let from_differences = differences.contains_key(&code);
-        let code_in_cff_enc = is_subset || code < 128 || from_differences || {
-            let enc_map_check = parse_cff_encoding_map(font_data);
-            enc_map_check.contains_key(&(code as u8))
-        };
+        let enc_map_check = parse_cff_encoding_map(font_data);
+        let in_cff_enc_map = enc_map_check.contains_key(&(code as u8));
+        let subset_with_custom_cff = is_subset && cff_has_custom_encoding(font_data);
+        let code_in_cff_enc =
+            code < 128 || from_differences || in_cff_enc_map || subset_with_custom_cff;
         if code_in_cff_enc && !glyph_name.is_empty() && glyph_name != ".notdef" {
             if let Some(w) =
                 find_cff_glyph_width_by_name_fractional(cff, font_data, &glyph_name, scale)
