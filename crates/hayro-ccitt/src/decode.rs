@@ -61,19 +61,28 @@ impl BitReader<'_> {
     /// Decode a white run length.
     #[inline(always)]
     fn decode_white_run(&mut self) -> Result<u32> {
-        self.decode_run_inner(&WHITE_STATES)
-            // See 0506179.pdf. We are lenient and check whether perhaps
-            // the opposite color works.
-            .or_else(|_| self.decode_run_inner(&BLACK_STATES))
+        // See 0506179.pdf: some PDFs have the colour polarity swapped. We are
+        // lenient and retry with the opposite table if the primary decode fails.
+        // Critically, we restore the reader position before the retry so the
+        // fallback parses from the same bit offset — without this, a failed
+        // partial advance causes the fallback to read from the wrong position,
+        // cascading into completely garbled output on corrupt streams (new3).
+        let saved = self.clone();
+        self.decode_run_inner(&WHITE_STATES).or_else(|_| {
+            *self = saved;
+            self.decode_run_inner(&BLACK_STATES)
+        })
     }
 
     /// Decode a black run length.
     #[inline(always)]
     fn decode_black_run(&mut self) -> Result<u32> {
-        self.decode_run_inner(&BLACK_STATES)
-            // See 0506179.pdf. We are lenient and check whether perhaps
-            // the opposite color works.
-            .or_else(|_| self.decode_run_inner(&WHITE_STATES))
+        // See 0506179.pdf. Same restore-before-retry approach as decode_white_run.
+        let saved = self.clone();
+        self.decode_run_inner(&BLACK_STATES).or_else(|_| {
+            *self = saved;
+            self.decode_run_inner(&WHITE_STATES)
+        })
     }
 
     /// Decode a run length for the specified color.
