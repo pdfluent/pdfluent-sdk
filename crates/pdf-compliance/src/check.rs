@@ -5839,6 +5839,16 @@ pub fn check_page_dimensions_with_cache(
                     format!("page {}", page_idx + 1),
                 );
             }
+            // Also check for integers outside ±2,147,483,647 (PDF §7.3.3 limit).
+            // (#FN-6.1.12 isartor-6-1-12-t01-fail-c, #FN-6.1.13 veraPDF-6-1-13-t01-fail-b)
+            if scan_content_stream_integers(content) {
+                error_at(
+                    report,
+                    rule,
+                    "Content stream contains integer outside ±2147483647 (32-bit signed range)",
+                    format!("page {}", page_idx + 1),
+                );
+            }
         }
 
         // Also scan Form XObject content streams — they may contain subnormal
@@ -7393,6 +7403,34 @@ fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
             // Subnormal: non-zero value below the minimum normalized positive float.
             // Applies to all numeric tokens — integers can't be subnormal.
             if is_real && val != 0.0 && val.abs() < MIN_POSITIVE_REAL {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Scan decoded content stream for integer operands outside [-2147483648, 2147483647].
+/// PDF §7.3.3 limits integers to 32-bit signed range. veraPDF fires §6.1.12/§6.1.13
+/// when a content stream has an integer beyond this range.
+/// (#FN-6.1.12 isartor-6-1-12-t01-fail-c, #FN-6.1.13 veraPDF-6-1-13-t01-fail-b)
+fn scan_content_stream_integers(content: &[u8]) -> bool {
+    const MAX_INT: f64 = 2_147_483_647.0;
+    const MIN_INT: f64 = -2_147_483_648.0;
+    let text = std::string::String::from_utf8_lossy(content);
+    for token in text.split_ascii_whitespace() {
+        // Skip operators (alphabetic), names (/), and strings
+        if token.starts_with(|c: char| c.is_ascii_alphabetic() || c == '\'' || c == '"')
+            || token.starts_with('/')
+        {
+            continue;
+        }
+        // Only check pure integers (no decimal point, no exponent)
+        if token.contains('.') || token.contains('e') || token.contains('E') {
+            continue;
+        }
+        if let Ok(val) = token.parse::<f64>() {
+            if val > MAX_INT || val < MIN_INT {
                 return true;
             }
         }
@@ -9479,16 +9517,56 @@ pub fn check_tounicode_cmap(
 
         // Type0 (composite) fonts are exempt from §6.3.8/§6.2.11.7.2/§6.2.10.7 unless
         // the conformance level requires full Unicode mapping ('U').
-        // ISO 19005-1 §6.3.8 exempts Type0 fonts with predefined CMaps (Identity-H/V as a
-        // Name); veraPDF fires §6.3.4/§6.3.5 for Type0 fonts using embedded CMap streams
-        // without a /ToUnicode. (#FP-6.3.8-type0, #FN-6.3.4/6.3.5, GHOSTSCRIPT-688790-4)
+        // Identity-H/V CMaps are only exempt from §6.3.8 when the descendant CIDFont uses
+        // one of the four standard CJK character collections (Adobe-GB1/CNS1/Japan1/Korea1).
+        // Fonts with Adobe-Identity or non-standard orderings still require /ToUnicode.
+        // veraPDF fires §6.3.4/§6.3.5 for Type0 fonts using embedded CMap streams without
+        // a /ToUnicode. (#FP-6.3.8-type0, #FN-6.3.4/6.3.5, #FN-6.3.8-identity-ordering,
+        // GHOSTSCRIPT-688790-4)
+        let mut identity_cmap_needs_tounicode = false;
         if !requires_unicode {
             if let Some(enc) = font_dict.get::<Name>(keys::ENCODING) {
                 if enc.as_ref() == keys::IDENTITY_H || enc.as_ref() == keys::IDENTITY_V {
-                    return;
+                    // Exempt only when descendant CIDFont uses a standard CJK collection.
+                    let uses_standard_cjk = font_dict
+                        .get::<Array<'_>>(keys::DESCENDANT_FONTS)
+                        .and_then(|arr| arr.iter::<Dict<'_>>().next())
+                        .map(|cid_font| {
+                            let csi: Option<Dict<'_>> =
+                                cid_font.get::<Dict<'_>>(keys::CIDSYSTEMINFO).or_else(|| {
+                                    cid_font
+                                        .get_ref(keys::CIDSYSTEMINFO)
+                                        .and_then(|r| pdf.xref().get::<Dict<'_>>(r.into()))
+                                });
+                            csi.map(|csi_dict| {
+                                let reg = csi_dict
+                                    .get::<pdf_syntax::object::String>(keys::REGISTRY);
+                                let ord = csi_dict
+                                    .get::<pdf_syntax::object::String>(keys::ORDERING);
+                                let is_adobe =
+                                    reg.is_some_and(|r| r.as_bytes() == b"Adobe");
+                                let is_std_ord = ord.is_some_and(|o| {
+                                    matches!(
+                                        o.as_bytes(),
+                                        b"GB1" | b"CNS1" | b"Japan1" | b"Korea1"
+                                    )
+                                });
+                                is_adobe && is_std_ord
+                            })
+                            .unwrap_or(false)
+                        })
+                        .unwrap_or(false);
+                    if uses_standard_cjk {
+                        return;
+                    }
+                    // Non-standard collection (e.g. Adobe-Identity): fall through to §6.3.8.
+                    // Also skip the blanket Type0 early-return below so §6.3.8 can fire.
+                    identity_cmap_needs_tounicode = true;
                 }
             }
-            if subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type0") {
+            if !identity_cmap_needs_tounicode
+                && subtype.as_ref().is_some_and(|s| s.as_ref() == b"Type0")
+            {
                 // PDF/A-1: Type0 fonts with embedded (non-predefined) CMap streams require
                 // a /ToUnicode CMap. veraPDF fires §6.3.4 (CIDFont) and §6.3.5 (composite)
                 // for this case instead of §6.3.8. (#FN-6.3.4/6.3.5)

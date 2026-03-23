@@ -3504,20 +3504,44 @@ fn check_mark_info_required(pdf: &Pdf, level: PdfALevel, report: &mut Compliance
 }
 
 /// §6.8.3.3 (PDF/A-1 only): StructTreeRoot is required for tagged conformance.
+/// §6.7.3.3 (PDF/A-2/3): StructTreeRoot is required when MarkInfo/Marked=true.
 ///
 /// §6.8.3.3 is a PDF/A-1 rule. PDF/A-2/3/4 use §6.7.3.x for tagged-conformance
 /// structure requirements — veraPDF does NOT fire §6.8.3.3 for PDF/A-2/3/4A.
 /// Firing it on PDF/A-2/3/4A causes false positives (FP regression, issue #536).
+///
+/// §6.7.3.3 fires for PDF/A-2/3 whenever the Catalog has MarkInfo.Marked=true but
+/// no StructTreeRoot — this is a content-based check (not conformance-level-based).
+/// (#FN-6.7.3.3, cs-veraPDF-test-suite-6-7-3-3-t01-fail-a)
 fn check_struct_tree_root_required(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
-    if !level.requires_tagged() || level.part() != 1 {
-        return;
-    }
-    if check::struct_tree_root(pdf).is_none() {
-        error(
-            report,
-            "6.8.3.3",
-            "StructTreeRoot is required for PDF/A tagged conformance (§6.8.3.3)",
-        );
+    let part = level.part();
+    if part == 1 {
+        if !level.requires_tagged() {
+            return;
+        }
+        if check::struct_tree_root(pdf).is_none() {
+            error(
+                report,
+                "6.8.3.3",
+                "StructTreeRoot is required for PDF/A tagged conformance (§6.8.3.3)",
+            );
+        }
+    } else if part == 2 || part == 3 {
+        // §6.7.3.3: when MarkInfo.Marked=true, StructTreeRoot must be present.
+        let Some(cat) = check::catalog(pdf) else {
+            return;
+        };
+        let marked = cat
+            .get::<Dict<'_>>(keys::MARK_INFO)
+            .and_then(|mi| mi.get::<bool>(b"Marked" as &[u8]))
+            .unwrap_or(false);
+        if marked && cat.get::<Dict<'_>>(keys::STRUCT_TREE_ROOT).is_none() {
+            error(
+                report,
+                "6.7.3.3",
+                "MarkInfo/Marked is true but Catalog has no StructTreeRoot (§6.7.3.3)",
+            );
+        }
     }
 }
 
