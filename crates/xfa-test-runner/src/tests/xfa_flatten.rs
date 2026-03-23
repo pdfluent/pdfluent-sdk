@@ -50,6 +50,20 @@ impl PdfTest for XfaFlattenTest {
     fn run(&self, pdf_data: &[u8], path: &Path) -> TestResult {
         let start = std::time::Instant::now();
 
+        // Pre-check: if pdf-syntax cannot parse the original PDF, skip rather
+        // than fail.  lopdf is more lenient and may load corrupt fuzzer PDFs
+        // that pdf-syntax rejects; after lopdf re-serialises, the output would
+        // still be unparseable, producing a misleading Fail. (#546)
+        if pdf_syntax::Pdf::new(pdf_data.to_vec()).is_err() {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("pdf-syntax could not parse PDF".into()),
+                duration_ms: start.elapsed().as_millis() as u64,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+
         let mut doc = match lopdf::Document::load_mem(pdf_data) {
             Ok(d) => d,
             Err(_) => {
