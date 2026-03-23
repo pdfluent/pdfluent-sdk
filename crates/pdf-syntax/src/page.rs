@@ -315,10 +315,14 @@ impl<'a> Page<'a> {
         self.crop_box().intersect(self.media_box())
     }
 
-    /// Return the base dimensions of the page (same as `intersected_crop_box`, but with special
-    /// handling applied for zero-area pages).
+    /// Return the base dimensions of the page used for the canvas size.
+    ///
+    /// Uses the raw CropBox dimensions (not clipped to MediaBox) to match
+    /// MuPDF's behaviour: the canvas is sized to the CropBox, and content
+    /// outside the MediaBox area is simply white.  The clip path in the
+    /// renderer still clips to `intersected_crop_box()`. (#544)
     pub fn base_dimensions(&self) -> (f32, f32) {
-        let crop_box = self.intersected_crop_box();
+        let crop_box = self.crop_box();
 
         if (crop_box.width() as f32).is_nearly_zero() || (crop_box.height() as f32).is_nearly_zero()
         {
