@@ -31,6 +31,7 @@ mod std_names;
 pub use cff::{string_by_id, Table};
 pub use encoding::{Encoding, EncodingKind, Format1Range, STANDARD_ENCODING};
 use parser::{FromData, Stream, TryNumFrom};
+pub use std_names::STANDARD_NAMES;
 
 /// A type-safe wrapper for string ID.
 #[derive(Clone, Copy, PartialEq, PartialOrd, Debug)]
