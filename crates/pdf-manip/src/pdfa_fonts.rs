@@ -1181,6 +1181,17 @@ fn encoding_to_char(code: u32, encoding_name: &str) -> char {
 /// code 208 = "emdash" (U+2014, not Ð U+00D0). Using the correct mapping ensures
 /// veraPDF §6.2.11.5 glyph-name → CFF-charset lookups find the right glyphs. (#504)
 fn standard_encoding_to_char(code: u32) -> char {
+    // Standard Encoding is NOT ASCII for all codes < 128. Two codes differ:
+    //   code 39 = "quoteright" (U+2019), not "quotesingle" (U+0027/ASCII)
+    //   code 96 = "quoteleft"  (U+2018), not "grave" (U+0060/ASCII)
+    // These overrides must be applied BEFORE the ASCII fallback, otherwise
+    // the AGL lookup produces the wrong glyph name (quotesingle/grave
+    // instead of quoteright/quoteleft). (#fix-std-enc-code39)
+    match code {
+        39 => return '\u{2019}', // quoteright
+        96 => return '\u{2018}', // quoteleft
+        _ => {}
+    }
     if code < 128 {
         return char::from_u32(code).unwrap_or('\u{FFFF}');
     }
@@ -8659,9 +8670,20 @@ fn compute_cff_corrections_for_custom_encoding(
                 cff.glyph_width(gid).map(|w| w as f64 * scale)
             }
             Some(_) | None => {
-                // GID 0 (.notdef) or absent from encoding → veraPDF uses defaultWidthX.
-                // (#6.2.11.5-gid0-uses-defaultwidthx, #6.2.11.5-custom-enc-absent)
-                cff.default_width_x().map(|w| w as f64 * scale)
+                // Code maps to .notdef (GID 0) or is absent from the CFF encoding.
+                // veraPDF uses the .notdef charstring advance width for such codes, not
+                // defaultWidthX. The .notdef charstring may have an explicit width that
+                // differs from defaultWidthX (e.g. BundesSerif-Bold .notdef=603 vs
+                // defaultWidthX=500). Using defaultWidthX here introduced violations.
+                //
+                // Codes with pdf_w==0 are unused placeholder slots (PDF spec §9.6.2).
+                // veraPDF skips w==0 entries — changing 0 to .notdef-advance would
+                // introduce violations for unused codes. (#6.2.11.5-gid0-notdef-advance)
+                if pdf_w == 0.0 {
+                    continue;
+                }
+                cff.glyph_width(cff_parser::GlyphId(0))
+                    .map(|w| w as f64 * scale)
             }
         };
         let Some(frac_w) = frac_w else { continue };
