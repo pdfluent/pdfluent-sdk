@@ -329,13 +329,14 @@ impl ToRgb for ColorSpace {
                 // PDF spec (§10.3.5): R = 1 − min(1, C+K), G = 1 − min(1, M+K), B = 1 − min(1, Y+K).
                 // Using an ICC profile instead produces wrong results for out-of-gamut CMYK values
                 // (e.g. C=0.72 K=0.66 should clamp to black, but the ICC gives dark gray).
-                if input.len() < 4 || output.len() < 3 {
-                    return None;
+                // Iterate over all pixels — previous code only converted the first pixel, leaving
+                // all remaining image pixels black. (#544-cmyk)
+                for (input, output) in input.chunks_exact(4).zip(output.chunks_exact_mut(3)) {
+                    let (c, m, y, k) = (input[0], input[1], input[2], input[3]);
+                    output[0] = f32_to_u8(1.0 - (c + k).min(1.0));
+                    output[1] = f32_to_u8(1.0 - (m + k).min(1.0));
+                    output[2] = f32_to_u8(1.0 - (y + k).min(1.0));
                 }
-                let (c, m, y, k) = (input[0], input[1], input[2], input[3]);
-                output[0] = f32_to_u8(1.0 - (c + k).min(1.0));
-                output[1] = f32_to_u8(1.0 - (m + k).min(1.0));
-                output[2] = f32_to_u8(1.0 - (y + k).min(1.0));
                 Some(())
             }
             ColorSpaceType::DeviceGray => {
@@ -385,18 +386,19 @@ impl ToRgb for ColorSpace {
         match self.0.as_ref() {
             ColorSpaceType::DeviceCmyk => {
                 // PDF spec §10.3.5 formula (u8 domain: sum then saturating-subtract from 255).
-                if input.len() < 4 || output.len() < 3 {
-                    return None;
+                // Iterate over all pixels — previous code only converted the first pixel, leaving
+                // all remaining image pixels black. (#544-cmyk)
+                for (input, output) in input.chunks_exact(4).zip(output.chunks_exact_mut(3)) {
+                    let (c, m, y, k) = (
+                        input[0] as u16,
+                        input[1] as u16,
+                        input[2] as u16,
+                        input[3] as u16,
+                    );
+                    output[0] = (255u16.saturating_sub(c + k)) as u8;
+                    output[1] = (255u16.saturating_sub(m + k)) as u8;
+                    output[2] = (255u16.saturating_sub(y + k)) as u8;
                 }
-                let (c, m, y, k) = (
-                    input[0] as u16,
-                    input[1] as u16,
-                    input[2] as u16,
-                    input[3] as u16,
-                );
-                output[0] = (255u16.saturating_sub(c + k)) as u8;
-                output[1] = (255u16.saturating_sub(m + k)) as u8;
-                output[2] = (255u16.saturating_sub(y + k)) as u8;
                 Some(())
             }
             ColorSpaceType::DeviceGray => {
