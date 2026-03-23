@@ -123,9 +123,7 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
                     Err(_) => {
                         return TestResult {
                             status: TestStatus::Fail,
-                            error_message: Some(
-                                "DOCX output ZIP could not be opened".into(),
-                            ),
+                            error_message: Some("DOCX output ZIP could not be opened".into()),
                             duration_ms: elapsed(),
                             oracle_score: None,
                             metadata: HashMap::new(),
@@ -141,12 +139,14 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
             metadata.insert("docx_size_bytes".to_string(), docx_bytes.len().to_string());
             metadata.insert("pdf_chars".to_string(), pdf_text.len().to_string());
             metadata.insert("docx_chars".to_string(), docx_text.len().to_string());
-            metadata.insert("threshold".to_string(), format!("{SIMILARITY_THRESHOLD:.2}"));
+            metadata.insert(
+                "threshold".to_string(),
+                format!("{SIMILARITY_THRESHOLD:.2}"),
+            );
 
             // Only compare when the PDF has meaningful text content.
             if pdf_text.len() >= MIN_PDF_CHARS {
-                let similarity =
-                    strsim::normalized_levenshtein(&pdf_text, &docx_text);
+                let similarity = strsim::normalized_levenshtein(&pdf_text, &docx_text);
                 metadata.insert("similarity".to_string(), format!("{similarity:.4}"));
 
                 if similarity < SIMILARITY_THRESHOLD {
@@ -174,10 +174,7 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
                 }
             } else {
                 // Image-only / scanned PDF — skip text comparison.
-                metadata.insert(
-                    "skip_reason".to_string(),
-                    "pdf_too_few_chars".to_string(),
-                );
+                metadata.insert("skip_reason".to_string(), "pdf_too_few_chars".to_string());
                 TestResult {
                     status: TestStatus::Pass,
                     error_message: None,
@@ -197,7 +194,7 @@ fn extract_docx_text(xml: &str) -> String {
     let mut rest = xml;
     while let Some(start) = rest.find("<w:t") {
         rest = &rest[start + 4..]; // skip past "<w:t"
-        // Find the closing '>' of the opening tag (may have attributes).
+                                   // Find the closing '>' of the opening tag (may have attributes).
         let Some(tag_end) = rest.find('>') else {
             break;
         };
@@ -230,7 +227,11 @@ fn extract_pdf_text(pdf: &[u8]) -> String {
         Err(_) => return String::new(),
     };
     let blocks = pdf_extract::extract_text(&doc);
-    let raw: String = blocks.into_iter().map(|b| b.text).collect::<Vec<_>>().join(" ");
+    let raw: String = blocks
+        .into_iter()
+        .map(|b| b.text)
+        .collect::<Vec<_>>()
+        .join(" ");
     raw.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")

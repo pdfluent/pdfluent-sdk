@@ -1,6 +1,61 @@
 #![cfg(feature = "pdfa-convert")]
 #![allow(unused_imports, unused_variables, dead_code, unused_parens)]
 
+/// Step-by-step pipeline test to identify which step crashes on a given PDF.
+/// Run with: cargo test -p pdf-manip --features pdfa-convert --test debug_convert debug_step_by_step -- --ignored --nocapture
+#[test]
+#[ignore]
+fn debug_step_by_step() {
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+    use std::io::Write;
+
+    macro_rules! step {
+        ($label:expr, $e:expr) => {{
+            eprint!("  {} ... ", $label);
+            let _ = std::io::stderr().flush();
+            $e;
+            eprintln!("OK");
+        }};
+    }
+
+    let path = std::env::var("DEBUG_PDF").unwrap_or_else(|_| "/tmp/poppler-43279-0.pdf".into());
+    eprintln!("Testing: {path}");
+
+    let data = std::fs::read(&path).unwrap();
+    eprintln!("Loaded {} bytes", data.len());
+
+    step!("lopdf load", {
+        let doc = lopdf::Document::load_mem(&data);
+        eprintln!("(pages={})", doc.as_ref().map(|d| d.get_pages().len()).unwrap_or(0));
+    });
+
+    let mut doc = lopdf::Document::load_mem(&data).unwrap_or_default();
+    step!("cleanup_for_pdfa", { let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false); });
+    step!("embed_fonts", { let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc); });
+    step!("fix_cff_widths", { pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc); });
+    step!("fix_truetype_cid_widths", { pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc); });
+    step!("fix_type1_charset", { pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc); });
+    step!("fix_truetype_encoding", { pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc); });
+    step!("fix_truetype_unicode_cmap", { pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc); });
+    step!("fix_notdef_glyph_refs", { pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc); });
+    step!("fix_cid_font_notdef", { pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc); });
+    step!("fix_symbolic_font_notdef_streams", { pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc); });
+    step!("fix_undefined_encoding_codes", { pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc); });
+    step!("fix_symbolic_flags", { pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc); });
+    step!("fix_missing_simple_font_widths", { pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc); });
+    step!("fix_font_width_mismatches", { pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc); });
+    step!("fix_symbolic_font_widths", { pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc); });
+    step!("fix_cidset", { pdf_manip::pdfa_fonts::fix_cidset(&mut doc); });
+    step!("normalize_colorspaces", { let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc); });
+    step!("run_fixups", { pdf_manip::pdfa_fixups::run_fixups(&mut doc); });
+    step!("repair_xmp", { let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None); });
+    step!("save", {
+        let mut saved = Vec::new();
+        doc.save_to(&mut saved).unwrap();
+    });
+    eprintln!("ALL STEPS COMPLETED");
+}
+
 #[test]
 #[ignore]
 fn save_converted_for_debug() {
@@ -6161,35 +6216,57 @@ fn debug_gen997_symbol_trace() {
 
     fn get_symbol_info(doc: &lopdf::Document) -> Option<(String, bool, bool, bool, i64)> {
         for (_id, obj) in &doc.objects {
-            let Object::Dictionary(dict) = obj else { continue };
+            let Object::Dictionary(dict) = obj else {
+                continue;
+            };
             let base = match dict.get(b"BaseFont").ok() {
                 Some(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
                 _ => continue,
             };
-            if !base.contains("Symbol") { continue }
+            if !base.contains("Symbol") {
+                continue;
+            }
             let fc = match dict.get(b"FirstChar").ok() {
                 Some(Object::Integer(i)) => *i as u32,
                 _ => continue,
             };
             let widths: Vec<i64> = match dict.get(b"Widths").ok() {
-                Some(Object::Array(a)) => a.iter().map(|o| match o {
-                    Object::Integer(i) => *i, Object::Real(r) => *r as i64, _ => -1
-                }).collect(),
+                Some(Object::Array(a)) => a
+                    .iter()
+                    .map(|o| match o {
+                        Object::Integer(i) => *i,
+                        Object::Real(r) => *r as i64,
+                        _ => -1,
+                    })
+                    .collect(),
                 Some(Object::Reference(r)) => match doc.get_object(*r) {
-                    Ok(Object::Array(a)) => a.iter().map(|o| match o {
-                        Object::Integer(i) => *i, Object::Real(r) => *r as i64, _ => -1
-                    }).collect(),
+                    Ok(Object::Array(a)) => a
+                        .iter()
+                        .map(|o| match o {
+                            Object::Integer(i) => *i,
+                            Object::Real(r) => *r as i64,
+                            _ => -1,
+                        })
+                        .collect(),
                     _ => vec![],
                 },
                 _ => vec![],
             };
-            let w183 = if 183 >= fc && (183 - fc) < widths.len() as u32 { widths[(183-fc) as usize] } else { -1 };
+            let w183 = if 183 >= fc && (183 - fc) < widths.len() as u32 {
+                widths[(183 - fc) as usize]
+            } else {
+                -1
+            };
             let fd_id = match dict.get(b"FontDescriptor").ok() {
                 Some(Object::Reference(r)) => *r,
                 _ => return Some((base, false, false, false, w183)),
             };
             let (has_ff, has_ff2, has_ff3) = match doc.objects.get(&fd_id) {
-                Some(Object::Dictionary(fd)) => (fd.has(b"FontFile"), fd.has(b"FontFile2"), fd.has(b"FontFile3")),
+                Some(Object::Dictionary(fd)) => (
+                    fd.has(b"FontFile"),
+                    fd.has(b"FontFile2"),
+                    fd.has(b"FontFile3"),
+                ),
                 _ => (false, false, false),
             };
             return Some((base, has_ff, has_ff2, has_ff3, w183));
@@ -6200,23 +6277,29 @@ fn debug_gen997_symbol_trace() {
     macro_rules! report {
         ($label:expr, $doc:expr) => {
             if let Some((base, ff, ff2, ff3, w183)) = get_symbol_info($doc) {
-                eprintln!("{}: {} FF={ff} FF2={ff2} FF3={ff3} w183={w183}", $label, base);
+                eprintln!(
+                    "{}: {} FF={ff} FF2={ff2} FF3={ff3} w183={w183}",
+                    $label, base
+                );
             } else {
                 eprintln!("{}: no Symbol font found", $label);
             }
-        }
+        };
     }
 
     let data = std::fs::read("/tmp/pdf-test-6.2.11.5/gen-997_997093.pdf").unwrap();
     let mut doc = lopdf::Document::load_mem(&data).unwrap();
     // Check object (21, 0) directly
     let ff2_id = (21u32, 0u16);
-    eprintln!("Object (21,0) on load: {:?}", doc.objects.get(&ff2_id).map(|o| match o {
-        lopdf::Object::Stream(_) => "Stream",
-        lopdf::Object::Dictionary(_) => "Dictionary",
-        lopdf::Object::Null => "Null",
-        _ => "Other",
-    }));
+    eprintln!(
+        "Object (21,0) on load: {:?}",
+        doc.objects.get(&ff2_id).map(|o| match o {
+            lopdf::Object::Stream(_) => "Stream",
+            lopdf::Object::Dictionary(_) => "Dictionary",
+            lopdf::Object::Null => "Null",
+            _ => "Other",
+        })
+    );
     report!("ORIGINAL", &doc);
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false).unwrap();
@@ -6225,47 +6308,60 @@ fn debug_gen997_symbol_trace() {
     // Debug: check if Symbol FontFile2 data is valid
     eprintln!("DEBUG: doc has {} objects", doc.objects.len());
     for (id, obj) in &doc.objects {
-        let lopdf::Object::Dictionary(dict) = obj else { continue };
+        let lopdf::Object::Dictionary(dict) = obj else {
+            continue;
+        };
         let base = match dict.get(b"BaseFont").ok() {
             Some(lopdf::Object::Name(n)) => {
                 let s = String::from_utf8_lossy(n).to_string();
-                if s.contains("ymbol") { eprintln!("  Found: {s} at {id:?}"); }
+                if s.contains("ymbol") {
+                    eprintln!("  Found: {s} at {id:?}");
+                }
                 s
-            },
+            }
             _ => continue,
         };
-        if !base.contains("Symbol") { continue }
+        if !base.contains("Symbol") {
+            continue;
+        }
         eprintln!("  Processing {base} at {id:?}");
         let fd_id = match dict.get(b"FontDescriptor").ok() {
             Some(lopdf::Object::Reference(r)) => *r,
             _ => {
                 let fd_obj = dict.get(b"FontDescriptor").ok();
                 eprintln!("No FD reference for {base} at {id:?}: fd={fd_obj:?}");
-                continue
-            },
+                continue;
+            }
         };
         eprintln!("  fd_id={fd_id:?}");
         let Some(lopdf::Object::Dictionary(fd)) = doc.objects.get(&fd_id) else {
             eprintln!("  No FD dict at {fd_id:?}");
-            continue
+            continue;
         };
         eprintln!("  FD has FontFile2: {}", fd.has(b"FontFile2"));
         let ff2_id = match fd.get(b"FontFile2").ok() {
             Some(lopdf::Object::Reference(r)) => *r,
-            _ => { eprintln!("No FontFile2 for {base} fd={fd_id:?}"); continue },
+            _ => {
+                eprintln!("No FontFile2 for {base} fd={fd_id:?}");
+                continue;
+            }
         };
         let obj_at_ff2 = doc.objects.get(&ff2_id);
-        eprintln!("  Object at ff2_id {ff2_id:?}: {:?}", obj_at_ff2.map(|o| match o {
-            lopdf::Object::Stream(_) => "Stream",
-            lopdf::Object::Dictionary(_) => "Dictionary",
-            lopdf::Object::Array(_) => "Array",
-            lopdf::Object::Integer(_i) => "Integer",
-            lopdf::Object::Null => "Null",
-            lopdf::Object::Reference(_r) => "Reference",
-            _ => "Other",
-        }));
+        eprintln!(
+            "  Object at ff2_id {ff2_id:?}: {:?}",
+            obj_at_ff2.map(|o| match o {
+                lopdf::Object::Stream(_) => "Stream",
+                lopdf::Object::Dictionary(_) => "Dictionary",
+                lopdf::Object::Array(_) => "Array",
+                lopdf::Object::Integer(_i) => "Integer",
+                lopdf::Object::Null => "Null",
+                lopdf::Object::Reference(_r) => "Reference",
+                _ => "Other",
+            })
+        );
         let Some(lopdf::Object::Stream(s)) = doc.objects.get(&ff2_id) else {
-            eprintln!("FontFile2 not a stream"); continue
+            eprintln!("FontFile2 not a stream");
+            continue;
         };
         let mut s2 = s.clone();
         let decomp_result = s2.decompress();
@@ -6273,7 +6369,10 @@ fn debug_gen997_symbol_trace() {
         eprintln!("  decompress result: {:?}", decomp_result.is_ok());
         eprintln!("  content len after decompress: {}", s2.content.len());
         if s2.content.len() >= 4 {
-            eprintln!("  first 4 bytes: {:02x}{:02x}{:02x}{:02x}", s2.content[0], s2.content[1], s2.content[2], s2.content[3]);
+            eprintln!(
+                "  first 4 bytes: {:02x}{:02x}{:02x}{:02x}",
+                s2.content[0], s2.content[1], s2.content[2], s2.content[3]
+            );
             let parse_ok = ttf_parser::Face::parse(&s2.content, 0).is_ok();
             eprintln!("  ttf_parser parse: {parse_ok}");
             if parse_ok {
@@ -6284,9 +6383,13 @@ fn debug_gen997_symbol_trace() {
         break;
     }
     let embed_report = pdf_manip::pdfa_fonts::embed_fonts(&mut doc).unwrap();
-    eprintln!("embed_fonts: inspected={} non_embedded={} embedded={} failed={:?}",
-        embed_report.fonts_inspected, embed_report.non_embedded_found,
-        embed_report.fonts_embedded, embed_report.failed);
+    eprintln!(
+        "embed_fonts: inspected={} non_embedded={} embedded={} failed={:?}",
+        embed_report.fonts_inspected,
+        embed_report.non_embedded_found,
+        embed_report.fonts_embedded,
+        embed_report.failed
+    );
     report!("after embed_fonts", &doc);
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
@@ -6411,25 +6514,63 @@ fn debug_r25_trace_width_zeroing() {
     fn get_widths_for_font(doc: &Document, base_font_prefix: &str) -> Option<(u32, Vec<i64>)> {
         for obj in doc.objects.values() {
             if let Object::Dictionary(dict) = obj {
-                let subtype = dict.get(b"Subtype").ok()
-                    .and_then(|o| if let Object::Name(n) = o { std::str::from_utf8(n).ok().map(str::to_string) } else { None })
+                let subtype = dict
+                    .get(b"Subtype")
+                    .ok()
+                    .and_then(|o| {
+                        if let Object::Name(n) = o {
+                            std::str::from_utf8(n).ok().map(str::to_string)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or_default();
-                if !matches!(subtype.as_str(), "Type1" | "TrueType" | "MMType1") { continue; }
-                let bf = dict.get(b"BaseFont").ok()
-                    .and_then(|o| if let Object::Name(n) = o { std::str::from_utf8(n).ok().map(str::to_string) } else { None })
+                if !matches!(subtype.as_str(), "Type1" | "TrueType" | "MMType1") {
+                    continue;
+                }
+                let bf = dict
+                    .get(b"BaseFont")
+                    .ok()
+                    .and_then(|o| {
+                        if let Object::Name(n) = o {
+                            std::str::from_utf8(n).ok().map(str::to_string)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or_default();
-                if !bf.contains(base_font_prefix) { continue; }
-                let fc = dict.get(b"FirstChar").ok()
-                    .and_then(|o| if let Object::Integer(i) = o { Some(*i as u32) } else { None })
+                if !bf.contains(base_font_prefix) {
+                    continue;
+                }
+                let fc = dict
+                    .get(b"FirstChar")
+                    .ok()
+                    .and_then(|o| {
+                        if let Object::Integer(i) = o {
+                            Some(*i as u32)
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(0);
                 let widths = match dict.get(b"Widths").ok() {
-                    Some(Object::Array(arr)) => arr.iter().map(|o| match o {
-                        Object::Integer(i) => *i, Object::Real(r) => *r as i64, _ => 0,
-                    }).collect::<Vec<i64>>(),
+                    Some(Object::Array(arr)) => arr
+                        .iter()
+                        .map(|o| match o {
+                            Object::Integer(i) => *i,
+                            Object::Real(r) => *r as i64,
+                            _ => 0,
+                        })
+                        .collect::<Vec<i64>>(),
                     Some(Object::Reference(r)) => match doc.objects.get(r) {
-                        Some(Object::Array(arr)) => arr.iter().map(|o| match o {
-                            Object::Integer(i) => *i, Object::Real(r2) => *r2 as i64, _ => 0,
-                        }).collect::<Vec<i64>>(),
+                        Some(Object::Array(arr)) => arr
+                            .iter()
+                            .map(|o| match o {
+                                Object::Integer(i) => *i,
+                                Object::Real(r2) => *r2 as i64,
+                                _ => 0,
+                            })
+                            .collect::<Vec<i64>>(),
                         _ => vec![],
                     },
                     _ => vec![],
@@ -6463,25 +6604,363 @@ fn debug_r25_trace_width_zeroing() {
     }
 
     check_codes(&doc, "INITIAL", "AdvP4C4E74", &[222, 240]);
-    step!("cleanup", { let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false); });
-    step!("embed_fonts", { let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc); });
-    step!("fix_cff_widths", { pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc); });
-    step!("fix_tt_cid_widths", { pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc); });
-    step!("fix_type1_charset", { pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc); });
-    step!("fix_tt_encoding", { pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc); });
-    step!("fix_existing_tt_cmaps", { let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc); });
-    step!("fix_tt_unicode_cmap", { pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc); });
-    step!("fix_t1_tounicode", { let _ = pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc); });
-    step!("fix_notdef_refs", { pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc); });
-    step!("fix_cid_notdef", { pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc); });
-    step!("fix_sym_notdef_streams", { pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc); });
-    step!("fix_simple_oor", { let _ = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc); });
-    step!("fix_undef_enc", { pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc); });
-    step!("fix_sym_flags", { pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc); });
-    step!("fix_classic_sym", { let _ = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc); });
-    step!("fix_missing_widths", { pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc); });
-    step!("fix_t3_widths", { let _ = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc); });
-    step!("fix_font_width_mism", { pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc); });
-    step!("fix_sym_font_widths", { pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc); });
+    step!("cleanup", {
+        let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false);
+    });
+    step!("embed_fonts", {
+        let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+    });
+    step!("fix_cff_widths", {
+        pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+    });
+    step!("fix_tt_cid_widths", {
+        pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+    });
+    step!("fix_type1_charset", {
+        pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+    });
+    step!("fix_tt_encoding", {
+        pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+    });
+    step!("fix_existing_tt_cmaps", {
+        let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+    });
+    step!("fix_tt_unicode_cmap", {
+        pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+    });
+    step!("fix_t1_tounicode", {
+        let _ = pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc);
+    });
+    step!("fix_notdef_refs", {
+        pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+    });
+    step!("fix_cid_notdef", {
+        pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+    });
+    step!("fix_sym_notdef_streams", {
+        pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    });
+    step!("fix_simple_oor", {
+        let _ = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc);
+    });
+    step!("fix_undef_enc", {
+        pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+    });
+    step!("fix_sym_flags", {
+        pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+    });
+    step!("fix_classic_sym", {
+        let _ = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc);
+    });
+    step!("fix_missing_widths", {
+        pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+    });
+    step!("fix_t3_widths", {
+        let _ = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
+    });
+    step!("fix_font_width_mism", {
+        pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+    });
+    step!("fix_sym_font_widths", {
+        pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    });
     println!("Trace complete");
+}
+
+/// Trace MELEBE+NCSchlbk code 227 width through pipeline for gen-539.
+#[test]
+#[ignore]
+fn debug_melebe_trace() {
+    use lopdf::Object;
+
+    fn melebe_w227(doc: &lopdf::Document, label: &str) {
+        for (_id, obj) in &doc.objects {
+            let Object::Dictionary(dict) = obj else {
+                continue;
+            };
+            let base = match dict.get(b"BaseFont").ok() {
+                Some(Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
+                _ => continue,
+            };
+            if !base.contains("MELEBE") {
+                continue;
+            }
+            let fc = match dict.get(b"FirstChar").ok() {
+                Some(Object::Integer(i)) => *i as u32,
+                _ => continue,
+            };
+            let widths: Vec<i64> = match dict.get(b"Widths").ok() {
+                Some(Object::Array(arr)) => arr
+                    .iter()
+                    .map(|o| match o {
+                        Object::Integer(i) => *i,
+                        Object::Real(r) => *r as i64,
+                        _ => -1,
+                    })
+                    .collect(),
+                Some(Object::Reference(r)) => match doc.get_object(*r) {
+                    Ok(Object::Array(arr)) => arr
+                        .iter()
+                        .map(|o| match o {
+                            Object::Integer(i) => *i,
+                            Object::Real(r) => *r as i64,
+                            _ => -1,
+                        })
+                        .collect(),
+                    _ => vec![],
+                },
+                _ => vec![],
+            };
+            let w227 = if 227 >= fc && (227 - fc) < widths.len() as u32 {
+                widths[(227 - fc) as usize]
+            } else {
+                -999
+            };
+            // Check font file type
+            let ff_type = match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(fd_ref)) => match doc.objects.get(fd_ref) {
+                    Some(Object::Dictionary(fd)) => {
+                        let ff1 = fd.has(b"FontFile");
+                        let ff2 = fd.has(b"FontFile2");
+                        let ff3 = fd.has(b"FontFile3");
+                        format!("FF1={ff1} FF2={ff2} FF3={ff3}")
+                    }
+                    _ => "no FD".into(),
+                },
+                _ => "no ref".into(),
+            };
+            eprintln!("[{label}] {base}: fc={fc} w[227]={w227} {ff_type}");
+            break;
+        }
+    }
+
+    let data = std::fs::read("/tmp/w6211/gen-539_539969.pdf").unwrap();
+    let mut doc = lopdf::Document::load_mem(&data).unwrap();
+
+    melebe_w227(&doc, "original");
+
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false).unwrap();
+    }));
+    melebe_w227(&doc, "cleanup");
+
+    let _ = pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+    melebe_w227(&doc, "embed_fonts");
+
+    let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
+    melebe_w227(&doc, "fix_pfb");
+
+    let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
+    melebe_w227(&doc, "fix_stub");
+
+    let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    melebe_w227(&doc, "fix_mislabel");
+
+    let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+    pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc);
+    pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+    pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc);
+    pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+    pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc);
+    pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+    melebe_w227(&doc, "fix_missing_widths");
+    // Check Differences for MELEBE at this point
+    for (_id, obj) in &doc.objects {
+        let lopdf::Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        let base = match dict.get(b"BaseFont").ok() {
+            Some(lopdf::Object::Name(n)) => String::from_utf8_lossy(n).to_string(),
+            _ => continue,
+        };
+        if !base.contains("MELEBE") {
+            continue;
+        }
+        // Parse encoding manually
+        let mut enc_name = String::new();
+        let mut diffs = std::collections::HashMap::new();
+        match dict.get(b"Encoding").ok() {
+            Some(lopdf::Object::Name(n)) => enc_name = String::from_utf8_lossy(n).to_string(),
+            Some(lopdf::Object::Reference(r)) => {
+                if let Some(lopdf::Object::Dictionary(ed)) = doc.objects.get(r) {
+                    if let Ok(lopdf::Object::Name(n)) = ed.get(b"BaseEncoding") {
+                        enc_name = String::from_utf8_lossy(n).to_string();
+                    }
+                    if let Ok(lopdf::Object::Array(arr)) = ed.get(b"Differences") {
+                        let mut code = 0u32;
+                        for item in arr {
+                            match item {
+                                lopdf::Object::Integer(c) => code = *c as u32,
+                                lopdf::Object::Name(n) => {
+                                    diffs.insert(code, String::from_utf8_lossy(n).to_string());
+                                    code += 1;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        let d227 = diffs.get(&227).cloned().unwrap_or_default();
+        let d252 = diffs.get(&252).cloned().unwrap_or_default();
+        let d144 = diffs.get(&144).cloned().unwrap_or_default();
+        let ndiffs = diffs.len();
+        eprintln!(
+            "[MELEBE enc] enc={enc_name} ndiffs={ndiffs} d[144]={d144} d[227]={d227} d[252]={d252}"
+        );
+        break;
+    }
+
+    let _ = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
+    pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+    melebe_w227(&doc, "fix_width_mismatch");
+
+    pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    melebe_w227(&doc, "final");
+
+    // Save and run veraPDF (no manual width overrides)
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+    pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc);
+    let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc);
+    pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+    let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None);
+    let mut saved = Vec::new();
+    doc.save_to(&mut saved).unwrap();
+    pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+    pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
+    std::fs::write("/tmp/w6211/out/gen-539_manual.pdf", &saved).unwrap();
+    let vp = std::process::Command::new("/usr/local/bin/verapdf")
+        .args([
+            "--format",
+            "mrr",
+            "--flavour",
+            "2b",
+            "/tmp/w6211/out/gen-539_manual.pdf",
+        ])
+        .output()
+        .unwrap();
+    let txt = String::from_utf8_lossy(&vp.stdout);
+    if txt.contains("isCompliant=\"true\"") {
+        eprintln!("[MELEBE manual] veraPDF: PASS");
+    } else {
+        for line in txt.lines() {
+            if line.contains("errorMessage") || line.contains("context") {
+                eprintln!("  {}", line.trim());
+            }
+        }
+        eprintln!("[MELEBE manual] veraPDF: FAIL");
+    }
+}
+
+/// Convert a batch of PDFs from /tmp/w6211/ and show veraPDF violations.
+#[test]
+#[ignore]
+fn debug_w6211_batch() {
+    use pdf_manip::pdfa_xmp::PdfAConformance;
+    use std::process::Command;
+
+    let dir = "/tmp/w6211";
+    let out_dir = "/tmp/w6211/out";
+    std::fs::create_dir_all(out_dir).unwrap();
+
+    let entries: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().map(|x| x == "pdf").unwrap_or(false))
+        .collect();
+
+    for entry in &entries {
+        let path = entry.path();
+        let name = path.file_name().unwrap().to_str().unwrap();
+        let out_path = format!("{out_dir}/{name}");
+
+        let data = std::fs::read(&path).unwrap();
+        let mut doc = match lopdf::Document::load_mem(&data) {
+            Ok(d) if !d.objects.is_empty() => d,
+            _ => {
+                eprintln!("LOAD FAIL {name}");
+                continue;
+            }
+        };
+
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false).unwrap();
+        }));
+        let _ = pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
+        pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+        pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+        pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+        pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc);
+        pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc);
+        pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+        pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+        pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc);
+        pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+        pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_classic_symbolic_base14_encoding(&mut doc);
+        pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_type3_font_widths(&mut doc);
+        pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+        pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+        pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc);
+        let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc);
+        pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+        let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None);
+
+        let mut saved = Vec::new();
+        if doc.save_to(&mut saved).is_err() {
+            eprintln!("SAVE FAIL {name}");
+            continue;
+        }
+        pdf_manip::pdfa_cleanup::fix_pdf_header(&mut saved);
+        pdf_manip::pdfa_cleanup::fix_startxref(&mut saved);
+        std::fs::write(&out_path, &saved).unwrap();
+
+        let vp = Command::new("/usr/local/bin/verapdf")
+            .args(["--format", "mrr", "--flavour", "2b", &out_path])
+            .output();
+        match vp {
+            Ok(o) => {
+                let txt = String::from_utf8_lossy(&o.stdout);
+                let is_pass = txt.contains("isCompliant=\"true\"");
+                if is_pass {
+                    eprintln!("{name}: PASS");
+                } else {
+                    eprintln!("{name}: FAIL");
+                    for line in txt.lines() {
+                        if line.contains("errorMessage") || line.contains("context") {
+                            eprintln!("  {}", line.trim());
+                        }
+                    }
+                }
+            }
+            Err(e) => eprintln!("{name}: verapdf error: {e}"),
+        }
+    }
 }

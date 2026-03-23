@@ -128,16 +128,12 @@ impl PdfTest for PdfUaValidateTest {
                         verapdf_result.duration_ms.to_string(),
                     );
                     if !comparison.false_negatives.is_empty() {
-                        metadata.insert(
-                            "fn_rules".to_string(),
-                            comparison.false_negatives.join(","),
-                        );
+                        metadata
+                            .insert("fn_rules".to_string(), comparison.false_negatives.join(","));
                     }
                     if !comparison.false_positives.is_empty() {
-                        metadata.insert(
-                            "fp_rules".to_string(),
-                            comparison.false_positives.join(","),
-                        );
+                        metadata
+                            .insert("fp_rules".to_string(), comparison.false_positives.join(","));
                     }
 
                     // False negatives are bugs — we miss something veraPDF catches.

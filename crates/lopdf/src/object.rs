@@ -679,12 +679,19 @@ impl Stream {
     }
 
     pub fn compress(&mut self) -> Result<()> {
+        self.compress_with_level(9)
+    }
+
+    /// Compress with a specific DEFLATE level (1=fast, 9=best).
+    /// Use level 1 for intermediate pipeline passes where output size matters
+    /// less than throughput. (#534 perf)
+    pub fn compress_with_level(&mut self, level: u32) -> Result<()> {
         use flate2::Compression;
         use flate2::write::ZlibEncoder;
         use std::io::prelude::*;
 
         if self.dict.get(b"Filter").is_err() {
-            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+            let mut encoder = ZlibEncoder::new(Vec::new(), Compression::new(level));
             encoder.write_all(self.content.as_slice())?;
             let compressed = encoder.finish()?;
             if compressed.len() + 19 < self.content.len() {

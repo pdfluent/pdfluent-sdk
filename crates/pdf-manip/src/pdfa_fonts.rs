@@ -8387,6 +8387,57 @@ pub fn cff_matrix_scale(matrix_sx: f32) -> f64 {
     }
 }
 
+/// Per-font CFF cache built once and shared across all per-code width lookups.
+///
+/// Eliminates O(n_codes × n_glyphs) complexity in the width-correction hot path:
+/// - `parse_cff_encoding_map` and `cff_has_custom_encoding` were called up to 256×
+///   per font inside `cff_width_for_code`; now called once.
+/// - `find_cff_glyph_width_by_name_fractional` scanned all glyphs linearly per call;
+///   now replaced by an O(1) HashMap lookup.
+struct CffFontCtx {
+    is_custom_enc: bool,
+    /// code → GID for custom-encoding fonts (CFF enc_offset > 1).
+    enc_map: std::collections::HashMap<u8, u16>,
+    /// Glyph name → advance width (PDF glyph-space, after scale).
+    /// Only contains glyphs accessible to veraPDF: standard names under a standard
+    /// SID (< STANDARD_NAMES.len()), or any non-standard name. Absent means the
+    /// glyph is either not in the CFF charset or stored under a custom SID for a
+    /// standard name (veraPDF can't reach it via SID lookup → uses defaultWidthX).
+    name_to_width: std::collections::HashMap<String, f64>,
+}
+
+/// Build a `CffFontCtx` from an already-parsed CFF table and its raw bytes.
+fn build_cff_font_ctx(cff: &cff_parser::Table, font_data: &[u8], scale: f64) -> CffFontCtx {
+    let is_custom_enc = cff_has_custom_encoding(font_data);
+    let enc_map = if is_custom_enc {
+        parse_cff_encoding_map(font_data)
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // Pre-scan the CFF charset: glyph name → width.
+    // Mirrors `find_cff_glyph_width_by_name_fractional` but runs once for all glyphs.
+    let num_glyphs = cff.number_of_glyphs();
+    let mut name_to_width = std::collections::HashMap::with_capacity(num_glyphs as usize);
+    for gid_raw in 0..num_glyphs {
+        let gid = cff_parser::GlyphId(gid_raw);
+        let Some(name) = cff.glyph_name(gid) else { continue };
+        // Standard CFF name: only accessible when stored under a standard SID.
+        // Custom SID → veraPDF's SID-based lookup fails → uses defaultWidthX.
+        if cff_parser::STANDARD_NAMES.contains(&name) {
+            let sid = cff.charset.gid_to_sid(gid).map(|s| s.0).unwrap_or(u16::MAX);
+            if sid as usize >= cff_parser::STANDARD_NAMES.len() {
+                continue;
+            }
+        }
+        if let Some(w) = cff.glyph_width(gid) {
+            name_to_width.insert(name.to_string(), w as f64 * scale);
+        }
+    }
+
+    CffFontCtx { is_custom_enc, enc_map, name_to_width }
+}
+
 /// Compute width corrections for a CFF font using its internal CFF encoding.
 ///
 /// veraPDF §6.2.11.5 always uses the CFF `glyph_index` encoding to resolve
@@ -8457,24 +8508,20 @@ fn compute_cff_corrections_by_name(
     scale: f64,
     is_subset: bool,
 ) -> Vec<(usize, i64)> {
-    // For custom CFF encoding fonts, compute defaultWidthX so we can detect
-    // cases where the CFF parser incorrectly reports a charstring width for a
-    // glyph that actually uses defaultWidthX (no explicit width in charstring).
-    // veraPDF uses defaultWidthX for such glyphs; applying our parser's wrong
-    // charstring width would create a §6.2.11.5 mismatch.
+    // Build a per-font context once: pre-computes the CFF encoding map and a
+    // name→width HashMap so that the per-code hot loop avoids 256× redundant
+    // parse_cff_encoding_map / cff_has_custom_encoding calls and O(n_glyphs)
+    // linear scans in find_cff_glyph_width_by_name_fractional. (#534)
+    let ctx = build_cff_font_ctx(cff, font_data, scale);
+
+    // For custom CFF encoding fonts, guard against CFF parser charstring bugs:
+    // when the parser incorrectly reads an implicit-width charstring as having
+    // an explicit width, preserve the existing defaultWidthX-aligned value.
     // Evidence: MELEBE+NCSchlbk GID 64 "atilde" — parser returns 682 (→333)
-    // but veraPDF uses defaultWidthX 1139 (→556). GIDs 65 "udieresis" and
-    // 67 "quoteright" have correct explicit widths. (#6.2.11.5-cff-parser-dwx)
-    let dwx_rounded: Option<i64> = if cff_has_custom_encoding(font_data) {
+    // but veraPDF uses defaultWidthX 1139 (→556). (#6.2.11.5-cff-parser-dwx)
+    let dwx_rounded: Option<i64> = if ctx.is_custom_enc {
         cff.default_width_x()
             .map(|w| (w as f64 * scale).round() as i64)
-    } else {
-        None
-    };
-
-    let is_custom_enc = cff_has_custom_encoding(font_data);
-    let enc_map = if is_custom_enc {
-        Some(parse_cff_encoding_map(font_data))
     } else {
         None
     };
@@ -8498,6 +8545,7 @@ fn compute_cff_corrections_by_name(
             differences,
             scale,
             is_subset,
+            Some(&ctx),
         );
         let Some(frac_w) = frac_w_opt else {
             continue;
@@ -8510,13 +8558,15 @@ fn compute_cff_corrections_by_name(
             // may have a charstring width bug (incorrectly reading an implicit-
             // width charstring as having an explicit width). Preserve the existing
             // defaultWidthX-aligned value. (#6.2.11.5-cff-parser-dwx)
-            if let (Some(dwx), Some(ref em)) = (dwx_rounded, &enc_map) {
-                let code_in_enc = em.get(&(code as u8)).copied().unwrap_or(0) != 0;
-                if !code_in_enc
-                    && (pdf_w.round() as i64 - dwx).abs() <= 1
-                    && (rounded_w - dwx).abs() > 1
-                {
-                    continue; // preserve existing defaultWidthX-aligned width
+            if let Some(dwx) = dwx_rounded {
+                if ctx.is_custom_enc {
+                    let code_in_enc = ctx.enc_map.get(&(code as u8)).copied().unwrap_or(0) != 0;
+                    if !code_in_enc
+                        && (pdf_w.round() as i64 - dwx).abs() <= 1
+                        && (rounded_w - dwx).abs() > 1
+                    {
+                        continue; // preserve existing defaultWidthX-aligned width
+                    }
                 }
             }
             corrections.push((i, rounded_w));
@@ -8632,6 +8682,9 @@ fn compute_cff_type1_width_corrections(
         );
     }
 
+    // Build per-font context for the per-code loop below. (#534)
+    let ctx = build_cff_font_ctx(&cff, font_data, scale);
+
     let mut corrections = Vec::new();
 
     for (i, obj) in existing_widths.iter().enumerate() {
@@ -8667,6 +8720,7 @@ fn compute_cff_type1_width_corrections(
                 differences,
                 scale,
                 is_subset,
+                Some(&ctx),
             )
         } else {
             None
@@ -9132,12 +9186,18 @@ fn compute_cff_single_width(
     // (code_in_cff_enc) is conservative here — callers that DO have is_subset context
     // (fix_font_width_mismatches, compute_cff_type1_width_corrections) pass is_subset
     // via the correct path. (#6.2.11.5-subset-cff-enc-guard)
-    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale, false)
+    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale, false, None)
 }
 
 /// Look up the CFF glyph width for a character code, trying multiple strategies:
 /// 1. PDF encoding → glyph name → CFF name lookup
 /// 2. CFF internal encoding (direct parse, no Standard Encoding fallback)
+///
+/// `ctx` is an optional pre-built `CffFontCtx` that caches the CFF encoding map and
+/// name→width table.  When provided, all per-code CFF structure parses and linear
+/// glyph-name scans are replaced by O(1) HashMap lookups.  Pass `None` for one-shot
+/// callers where the overhead of building the context isn't worth it.
+#[allow(clippy::too_many_arguments)]
 fn cff_width_for_code(
     cff: &cff_parser::Table,
     font_data: &[u8],
@@ -9146,8 +9206,32 @@ fn cff_width_for_code(
     differences: &std::collections::HashMap<u32, String>,
     scale: f64,
     _is_subset: bool,
+    ctx: Option<&CffFontCtx>,
 ) -> Option<f64> {
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
+
+    // Hoist frequently-used CFF structural data from ctx (pre-computed) or
+    // compute lazily when ctx is absent.  These were previously re-computed for
+    // every code inside the hot per-code loop — up to 256× per font.
+    let is_custom_enc = ctx.map_or_else(|| cff_has_custom_encoding(font_data), |c| c.is_custom_enc);
+    // enc_map is used at two separate sites below; keep a single owned copy when
+    // ctx is absent to avoid calling parse_cff_encoding_map twice.
+    let enc_map_owned;
+    let enc_map: &std::collections::HashMap<u8, u16> = if let Some(c) = ctx {
+        &c.enc_map
+    } else {
+        enc_map_owned = parse_cff_encoding_map(font_data);
+        &enc_map_owned
+    };
+    // Fast name→width lookup via pre-built HashMap (when ctx is available) or
+    // falls back to the linear scan in find_cff_glyph_width_by_name_fractional.
+    let lookup_name = |name: &str| -> Option<f64> {
+        if let Some(c) = ctx {
+            c.name_to_width.get(name).copied()
+        } else {
+            find_cff_glyph_width_by_name_fractional(cff, font_data, name, scale)
+        }
+    };
 
     // Primary path: PDF encoding → glyph name → CFF charset lookup.
     // veraPDF resolves code → glyph name via the PDF Encoding, then looks up
@@ -9219,7 +9303,8 @@ fn cff_width_for_code(
         // code was actually in the encoding — causing wrong corrections for the
         // above cases. (#6.2.11.5-cff-enc-primary, #6.2.11.5-subset-custom-enc)
         let from_differences = differences.contains_key(&code);
-        let enc_map_check = parse_cff_encoding_map(font_data);
+        // Use pre-computed enc_map (hoisted to top of function) instead of
+        // calling parse_cff_encoding_map again.
         // For CUSTOM CFF encoding fonts (enc_offset > 1), veraPDF uses the CFF
         // encoding as authoritative for §6.2.11.5. A code that maps to GID 0
         // (or is absent from the encoding) means the glyph is undefined →
@@ -9235,18 +9320,16 @@ fn cff_width_for_code(
         // case where a standard glyph name is stored under a CUSTOM SID (≥391)
         // in the CFF String INDEX — it returns None so we fall through to
         // defaultWidthX (e.g. HHCOAA "igrave" under custom SID). Fixes #507.
-        let in_cff_enc_map = if cff_has_custom_encoding(font_data) {
+        let in_cff_enc_map = if is_custom_enc {
             // Custom CFF enc: Phase 1 only when code maps to a real GID.
-            enc_map_check.get(&(code as u8)).copied().unwrap_or(0) != 0
+            enc_map.get(&(code as u8)).copied().unwrap_or(0) != 0
         } else {
             // SE/Expert: PDF name lookup is always primary; always enable Phase 1.
             true
         };
         let code_in_cff_enc = code < 128 || from_differences || in_cff_enc_map;
         if code_in_cff_enc && !glyph_name.is_empty() && glyph_name != ".notdef" {
-            if let Some(w) =
-                find_cff_glyph_width_by_name_fractional(cff, font_data, &glyph_name, scale)
-            {
+            if let Some(w) = lookup_name(&glyph_name) {
                 return Some(w);
             }
             // Try AGL canonical name: unicode_to_glyph_name returns raw chars
@@ -9257,9 +9340,7 @@ fn cff_width_for_code(
                 let ch = encoding_to_char(code, enc_name);
                 if let Some(agl_name) = unicode_to_agl_name(ch) {
                     if agl_name != glyph_name {
-                        if let Some(w) = find_cff_glyph_width_by_name_fractional(
-                            cff, font_data, &agl_name, scale,
-                        ) {
+                        if let Some(w) = lookup_name(&agl_name) {
                             return Some(w);
                         }
                         // Also try alternatives of the AGL name. For example,
@@ -9267,9 +9348,7 @@ fn cff_width_for_code(
                         // "quotesingle"; the CFF subset may store it as "quoteright".
                         // (#FN-6.2.11.5-agl-alt)
                         for alt in cff_glyph_name_alternatives(&agl_name) {
-                            if let Some(w) =
-                                find_cff_glyph_width_by_name_fractional(cff, font_data, alt, scale)
-                            {
+                            if let Some(w) = lookup_name(alt) {
                                 return Some(w);
                             }
                         }
@@ -9277,8 +9356,7 @@ fn cff_width_for_code(
                 }
             }
             for alt in cff_glyph_name_alternatives(&glyph_name) {
-                if let Some(w) = find_cff_glyph_width_by_name_fractional(cff, font_data, alt, scale)
-                {
+                if let Some(w) = lookup_name(alt) {
                     return Some(w);
                 }
             }
@@ -9314,7 +9392,7 @@ fn cff_width_for_code(
     let mut cff_enc_explicit_notdef = false;
 
     if !name_found && code <= 255 && allow_cff_encoding_fallback {
-        let enc_map = parse_cff_encoding_map(font_data);
+        // Use pre-computed enc_map (hoisted to top of function).
         if let Some(&gid) = enc_map.get(&(code as u8)) {
             if gid != 0 {
                 return cff
@@ -9360,20 +9438,18 @@ fn cff_width_for_code(
         // determined the glyph name — the SE name may differ (e.g. WinAnsi 233 =
         // "eacute" but SE 233 = something else), which would produce wrong widths.
         // (#6.2.11.5-se-fallback)
-        if !enc_map.contains_key(&(code as u8)) && cff_has_custom_encoding(font_data) {
+        if !enc_map.contains_key(&(code as u8)) && is_custom_enc {
             let se_ch = encoding_to_char(code, "StandardEncoding");
             let mut se_glyph_found = false;
             if se_ch != '\u{FFFF}' {
                 let mut se_w: Option<f64> = None;
                 if let Some(agl_name) = unicode_to_agl_name(se_ch) {
-                    se_w =
-                        find_cff_glyph_width_by_name_fractional(cff, font_data, &agl_name, scale);
+                    se_w = lookup_name(&agl_name);
                 }
                 if se_w.is_none() {
                     let g_name = unicode_to_glyph_name(se_ch).unwrap_or_default();
                     if !g_name.is_empty() && g_name != ".notdef" {
-                        se_w =
-                            find_cff_glyph_width_by_name_fractional(cff, font_data, &g_name, scale);
+                        se_w = lookup_name(&g_name);
                     }
                 }
                 if let Some(w) = se_w {
@@ -9445,7 +9521,7 @@ fn cff_width_for_code(
                 // Differences). CFF custom encoding maps 227→GID 0. veraPDF
                 // reports font program width = defaultWidthX (1139→556.15), NOT
                 // .notdef charstring (682→333). (#6.2.11.5-case2-custom-enc)
-                if cff_has_custom_encoding(font_data) {
+                if is_custom_enc {
                     return cff.default_width_x().map(|w| w as f64 * scale);
                 }
                 return cff
@@ -13628,6 +13704,206 @@ pub fn fix_simple_font_out_of_range_codes(doc: &mut Document) -> usize {
     }
 
     total_fixed
+}
+
+/// Combined single-pass replacement for `fix_simple_font_out_of_range_codes` +
+/// `strip_control_chars_from_streams`. Processes each content stream once instead of
+/// twice, halving ContentEditor parse and re-encode overhead. (#534 perf)
+///
+/// Returns `(range_fixed, control_fixed)` — streams modified by each sub-pass.
+pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
+    use std::collections::HashMap;
+
+    struct FontInfo {
+        /// True for TrueType/Type1/MMType1/Type3 — strip control bytes.
+        can_strip: bool,
+        /// FirstChar/LastChar range (TrueType/Type1/MMType1 only).
+        range: Option<(u8, u8)>,
+    }
+
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    let mut range_fixed = 0usize;
+    let mut ctrl_fixed = 0usize;
+
+    for &page_id in &page_ids {
+        let mut has_type0 = false;
+
+        let font_infos: HashMap<String, FontInfo> = {
+            let page = match doc.objects.get(&page_id) {
+                Some(Object::Dictionary(d)) => d.clone(),
+                _ => continue,
+            };
+            let resources = match page.get(b"Resources").ok() {
+                Some(Object::Dictionary(d)) => d.clone(),
+                Some(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Dictionary(d)) => d.clone(),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let fonts = match resources.get(b"Font").ok() {
+                Some(Object::Dictionary(d)) => d.clone(),
+                Some(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Dictionary(d)) => d.clone(),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+
+            let mut map = HashMap::new();
+            for (key, val) in fonts.iter() {
+                let res_name = String::from_utf8_lossy(key).to_string();
+                let fd = match val {
+                    Object::Reference(id) => match doc.objects.get(id) {
+                        Some(Object::Dictionary(d)) => d,
+                        _ => continue,
+                    },
+                    Object::Dictionary(d) => d,
+                    _ => continue,
+                };
+                let subtype = get_name(fd, b"Subtype").unwrap_or_default();
+                if subtype == "Type0" {
+                    has_type0 = true;
+                }
+                let can_strip =
+                    matches!(subtype.as_str(), "TrueType" | "Type1" | "MMType1" | "Type3");
+                let range = if matches!(subtype.as_str(), "TrueType" | "Type1" | "MMType1") {
+                    let fc = fd
+                        .get(b"FirstChar")
+                        .ok()
+                        .and_then(|o| match o {
+                            Object::Integer(i) => Some(*i),
+                            _ => None,
+                        })
+                        .unwrap_or(0)
+                        .clamp(0, 255) as u8;
+                    let lc = fd
+                        .get(b"LastChar")
+                        .ok()
+                        .and_then(|o| match o {
+                            Object::Integer(i) => Some(*i),
+                            _ => None,
+                        })
+                        .unwrap_or(255)
+                        .clamp(0, 255) as u8;
+                    Some((fc, lc))
+                } else {
+                    None
+                };
+                map.insert(res_name, FontInfo { can_strip, range });
+            }
+            map
+        };
+
+        if !font_infos.values().any(|fi| fi.can_strip || fi.range.is_some()) {
+            continue;
+        }
+        if has_type0 {
+            continue;
+        }
+
+        let content_ids = crate::content_editor::get_content_stream_ids(doc, page_id);
+        let mut current_font = String::new();
+
+        for cs_id in content_ids {
+            let stream_data = match doc.objects.get(&cs_id) {
+                Some(Object::Stream(s)) => {
+                    let mut s = s.clone();
+                    let _ = s.decompress();
+                    s.content
+                }
+                _ => continue,
+            };
+
+            let Ok(editor) = crate::content_editor::ContentEditor::from_stream(&stream_data)
+            else {
+                continue;
+            };
+            let ops = editor.operations().to_vec();
+            let mut did_range = false;
+            let mut did_ctrl = false;
+            let mut new_ops = Vec::with_capacity(ops.len());
+
+            for op in &ops {
+                match op.operator.as_str() {
+                    "Tf" => {
+                        if let Some(Object::Name(n)) = op.operands.first() {
+                            current_font = String::from_utf8_lossy(n).to_string();
+                        }
+                        new_ops.push(op.clone());
+                    }
+                    "Tj" | "'" | "\"" => {
+                        let fi = font_infos.get(&current_font);
+                        if fi.is_some_and(|fi| fi.can_strip || fi.range.is_some()) {
+                            let mut new_op = op.clone();
+                            let str_idx = if op.operator == "\"" { 2 } else { 0 };
+                            if let (Some(fi), Some(Object::String(bytes, _))) =
+                                (fi, new_op.operands.get_mut(str_idx))
+                            {
+                                if let Some((fc, lc)) = fi.range {
+                                    if fix_simple_text_string_out_of_range(bytes, fc, lc, true) {
+                                        did_range = true;
+                                    }
+                                }
+                                if fi.can_strip && strip_control_bytes(bytes, true) {
+                                    did_ctrl = true;
+                                }
+                            }
+                            new_ops.push(new_op);
+                        } else {
+                            new_ops.push(op.clone());
+                        }
+                    }
+                    "TJ" => {
+                        let fi = font_infos.get(&current_font);
+                        if fi.is_some_and(|fi| fi.can_strip || fi.range.is_some()) {
+                            let mut new_op = op.clone();
+                            if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
+                                for item in arr.iter_mut() {
+                                    if let (Some(fi), Object::String(bytes, _)) =
+                                        (fi, item)
+                                    {
+                                        if let Some((fc, lc)) = fi.range {
+                                            if fix_simple_text_string_out_of_range(
+                                                bytes, fc, lc, true,
+                                            ) {
+                                                did_range = true;
+                                            }
+                                        }
+                                        if fi.can_strip && strip_control_bytes(bytes, true) {
+                                            did_ctrl = true;
+                                        }
+                                    }
+                                }
+                            }
+                            new_ops.push(new_op);
+                        } else {
+                            new_ops.push(op.clone());
+                        }
+                    }
+                    _ => new_ops.push(op.clone()),
+                }
+            }
+
+            if did_range || did_ctrl {
+                let new_editor =
+                    crate::content_editor::ContentEditor::from_operations(new_ops);
+                if let Ok(encoded) = new_editor.encode() {
+                    if let Some(Object::Stream(s)) = doc.objects.get_mut(&cs_id) {
+                        s.set_plain_content(encoded);
+                        if did_range {
+                            range_fixed += 1;
+                        }
+                        if did_ctrl {
+                            ctrl_fixed += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (range_fixed, ctrl_fixed)
 }
 
 /// Replace single-byte codes in a simple font text string that are invalid.

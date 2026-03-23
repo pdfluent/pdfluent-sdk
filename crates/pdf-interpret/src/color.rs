@@ -388,7 +388,12 @@ impl ToRgb for ColorSpace {
                 if input.len() < 4 || output.len() < 3 {
                     return None;
                 }
-                let (c, m, y, k) = (input[0] as u16, input[1] as u16, input[2] as u16, input[3] as u16);
+                let (c, m, y, k) = (
+                    input[0] as u16,
+                    input[1] as u16,
+                    input[2] as u16,
+                    input[3] as u16,
+                );
                 output[0] = (255u16.saturating_sub(c + k)) as u8;
                 output[1] = (255u16.saturating_sub(m + k)) as u8;
                 output[2] = (255u16.saturating_sub(y + k)) as u8;
@@ -1057,7 +1062,6 @@ impl Color {
         self.opacity
     }
 }
-
 
 pub(crate) trait ToRgb {
     fn convert_f32(&self, input: &[f32], output: &mut [u8], manual_scale: bool) -> Option<()>;

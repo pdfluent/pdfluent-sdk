@@ -304,10 +304,7 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
                 // Check every redacted rect on page 1.
                 for rect in &page1_rects {
                     if let Some(brightness) = mean_brightness_in_rect(&pixels, w, h, *rect) {
-                        metadata.insert(
-                            "visual_brightness".into(),
-                            format!("{brightness:.1}"),
-                        );
+                        metadata.insert("visual_brightness".into(), format!("{brightness:.1}"));
                         // Expect mean brightness < 50/255 — the overlay should be
                         // close to black. Allow some tolerance for anti-aliasing.
                         if brightness > 50.0 {

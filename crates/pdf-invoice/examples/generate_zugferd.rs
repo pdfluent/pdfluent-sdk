@@ -21,11 +21,27 @@ fn main() {
     std::fs::create_dir_all(&outdir).expect("create outdir");
 
     let profiles = [
-        (ZugferdProfile::Minimum, "zugferd-minimum.pdf", "factur-x.xml"),
-        (ZugferdProfile::BasicWL, "zugferd-basicwl.pdf", "factur-x.xml"),
+        (
+            ZugferdProfile::Minimum,
+            "zugferd-minimum.pdf",
+            "factur-x.xml",
+        ),
+        (
+            ZugferdProfile::BasicWL,
+            "zugferd-basicwl.pdf",
+            "factur-x.xml",
+        ),
         (ZugferdProfile::Basic, "zugferd-basic.pdf", "factur-x.xml"),
-        (ZugferdProfile::EN16931, "zugferd-en16931.pdf", "factur-x.xml"),
-        (ZugferdProfile::Extended, "zugferd-extended.pdf", "factur-x.xml"),
+        (
+            ZugferdProfile::EN16931,
+            "zugferd-en16931.pdf",
+            "factur-x.xml",
+        ),
+        (
+            ZugferdProfile::Extended,
+            "zugferd-extended.pdf",
+            "factur-x.xml",
+        ),
     ];
 
     for (profile, filename, xml_name) in &profiles {
@@ -57,10 +73,7 @@ fn make_minimal_pdf() -> Document {
 
 fn make_invoice(profile: ZugferdProfile) -> ZugferdInvoice {
     let needs_line_items = profile.requires_line_items();
-    let needs_tax_id = matches!(
-        profile,
-        ZugferdProfile::EN16931 | ZugferdProfile::Extended
-    );
+    let needs_tax_id = matches!(profile, ZugferdProfile::EN16931 | ZugferdProfile::Extended);
     let issue_date = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
 
     let line_items = if needs_line_items {
