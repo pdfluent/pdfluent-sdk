@@ -105,6 +105,13 @@ impl Renderer {
     }
 
     fn draw_image(&mut self, rgb_data: RgbData, alpha_data: Option<LumaData>) {
+        // Guard against degenerate images from corrupt PDFs. A zero-dimension or
+        // empty-data image would create an inconsistent Pixmap that vello_cpu panics on
+        // when bilinear-sampling at index 0. (#corrupt-pdf-render)
+        if rgb_data.width == 0 || rgb_data.height == 0 || rgb_data.data.is_empty() {
+            return;
+        }
+
         let cur_transform = *self.ctx.transform();
         let mut additional_transform = Affine::IDENTITY;
 
@@ -356,8 +363,10 @@ impl Renderer {
 
                         let scaled_width = bbox.width() as f32 * xs;
                         let scaled_height = bbox.height() as f32 * ys;
-                        let pix_width = x_step.abs().round() as u16;
-                        let pix_height = y_step.abs().round() as u16;
+                        // Clamp to at least 1 to avoid zero-size Pixmap which
+                        // causes vello_cpu to panic on bilinear sampling. (#546)
+                        let pix_width = (x_step.abs().round() as u16).max(1);
+                        let pix_height = (y_step.abs().round() as u16).max(1);
 
                         let mut renderer = Self {
                             ctx: RenderContext::new_with(
