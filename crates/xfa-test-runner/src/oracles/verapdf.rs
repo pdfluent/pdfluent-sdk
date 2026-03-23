@@ -137,11 +137,41 @@ impl VeraPdfOracle {
         Ok(result)
     }
 
+    /// Validate a PDF against PDF/UA-1 using veraPDF `--flavour ua1`.
+    ///
+    /// Uses a separate cache key (`"verapdf-ua1"`) so results don't collide
+    /// with the PDF/A auto-detect cache used by [`Self::validate`].
+    pub fn validate_pdfua(&self, pdf_path: &Path, pdf_hash: &str) -> Result<VeraPdfResult, String> {
+        // Check run-local cache (ua1-specific key)
+        if let Some(db) = &self.db {
+            if let Some(cached) = db.get_oracle_cache("verapdf-ua1", pdf_hash) {
+                return serde_json::from_str(&cached)
+                    .map_err(|e| format!("cache deserialize error: {e}"));
+            }
+        }
+
+        // Cache miss — run veraPDF with ua1 flavour
+        let result = self.run_verapdf_flavour("ua1", pdf_path)?;
+
+        // Store in run-local cache
+        if let Some(db) = &self.db {
+            if let Ok(json) = serde_json::to_string(&result) {
+                let _ = db.set_oracle_cache("verapdf-ua1", pdf_hash, &json);
+            }
+        }
+
+        Ok(result)
+    }
+
     fn run_verapdf(&self, pdf_path: &Path) -> Result<VeraPdfResult, String> {
+        self.run_verapdf_flavour("0", pdf_path)
+    }
+
+    fn run_verapdf_flavour(&self, flavour: &str, pdf_path: &Path) -> Result<VeraPdfResult, String> {
         let start = Instant::now();
 
         let mut cmd = Command::new(&self.binary_path);
-        cmd.args(["--format", "json", "--flavour", "0"]);
+        cmd.args(["--format", "json", "--flavour", flavour]);
         cmd.arg(pdf_path);
         // Ensure JAVA_HOME is set for the veraPDF JVM.
         if std::env::var("JAVA_HOME").is_err() {
