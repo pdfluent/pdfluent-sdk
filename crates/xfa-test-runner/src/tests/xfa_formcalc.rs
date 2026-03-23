@@ -154,7 +154,20 @@ fn extract_formcalc_scripts(template_xml: &str) -> Vec<String> {
         return Vec::new();
     };
     re.captures_iter(template_xml)
-        .filter_map(|cap| cap.get(1).map(|m| m.as_str().trim().to_string()))
+        .filter_map(|cap| {
+            cap.get(1).map(|m| {
+                let raw = m.as_str().trim();
+                // Strip CDATA wrapper. XFA tools (Acrobat, Designer, LiveCycle)
+                // commonly wrap script bodies in CDATA sections so that operators
+                // like < > & don't need XML escaping.  Strip the wrapper before
+                // handing the text to the lexer.
+                if raw.starts_with("<![CDATA[") && raw.ends_with("]]>") {
+                    raw[9..raw.len() - 3].trim().to_string()
+                } else {
+                    raw.to_string()
+                }
+            })
+        })
         .filter(|s| !s.is_empty())
         .collect()
 }
