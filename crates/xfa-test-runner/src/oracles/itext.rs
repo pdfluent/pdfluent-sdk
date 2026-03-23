@@ -42,15 +42,21 @@ impl ITextOracle {
         }
     }
 
-    /// Run the oracle for the given PDF path.
+    /// Run the oracle and optionally write the flattened PDF to `output_path`.
     ///
-    /// Returns `None` if the script cannot be executed or produces
-    /// unparseable output.
-    pub fn call(&self, pdf_path: &Path) -> Option<ITextResult> {
-        let output = std::process::Command::new(&self.script_path)
-            .arg(pdf_path)
-            .output()
-            .ok()?;
+    /// When `output_path` is `Some`, the script receives it as a second
+    /// argument and writes the iText-flattened PDF there (if flatten succeeded).
+    pub fn call_with_output(
+        &self,
+        pdf_path: &Path,
+        output_path: Option<&Path>,
+    ) -> Option<ITextResult> {
+        let mut cmd = std::process::Command::new(&self.script_path);
+        cmd.arg(pdf_path);
+        if let Some(out) = output_path {
+            cmd.arg(out);
+        }
+        let output = cmd.output().ok()?;
 
         // Accept non-zero exit codes: iText may exit non-zero on XFA errors
         // while still printing valid JSON.

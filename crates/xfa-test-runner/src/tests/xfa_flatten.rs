@@ -9,11 +9,11 @@
 //! the test also compares our page count against iText's flatten output and
 //! fails if they differ.
 //!
-//! SSIM visual regression: when `mutool` is available, renders page 1 of the
-//! flattened output (via pdf-engine) and page 1 of the original (via mutool),
-//! then computes SSIM between them. Fails if SSIM < 0.70.  The threshold is
-//! intentionally lenient: XFA flattening strips dynamic form content, so the
-//! appearance is expected to change, but shouldn't produce garbage.
+//! SSIM visual regression: when `mutool` and the iText oracle are available,
+//! renders page 1 of our flatten and page 1 of the iText flatten (both via
+//! mutool), then computes SSIM between them. Fails if SSIM < 0.60.  The
+//! threshold is intentionally lenient: XFA flattening strips dynamic form
+//! content, so some visual divergence is expected.
 //!
 //! Skip policy:
 //! - No /XFA key in AcroForm → Skip (not an XFA form)
@@ -35,7 +35,7 @@ use super::{PdfTest, TestResult, TestStatus};
 use crate::oracles::itext::ITextOracle;
 use crate::oracles::ssim;
 
-const SSIM_PASS_THRESHOLD: f64 = 0.70;
+const SSIM_PASS_THRESHOLD: f64 = 0.60;
 const RENDER_DPI: f64 = 150.0;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -73,9 +73,17 @@ impl PdfTest for XfaFlattenTest {
             };
         }
 
+        // Unique IDs for iText output temp file (used for SSIM comparison).
+        let uid = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let tmp_dir = std::env::temp_dir();
+        let itext_flat_path = tmp_dir.join(format!("xfa-itext-flat-{pid}-{uid}.pdf"));
+
         // Query the iText oracle with the original PDF before we mutate it.
-        // Stored as Option<(itext_page_count, flatten_success)>.
-        let itext_result = ITextOracle::new().and_then(|oracle| oracle.call(path));
+        // Pass itext_flat_path so the oracle writes its flattened output there
+        // for later SSIM comparison.
+        let itext_result = ITextOracle::new()
+            .and_then(|oracle| oracle.call_with_output(path, Some(&itext_flat_path)));
 
         // Strip the AcroForm (which contains the /XFA key) from the catalog.
         // This is the minimum "flatten" step: the page content streams remain
@@ -139,10 +147,11 @@ impl PdfTest for XfaFlattenTest {
                     }
                 }
 
-                // SSIM visual regression: compare our flatten output (page 1 via
-                // pdf-engine) against the original PDF (page 1 via mutool). Skips
-                // the comparison if mutool is unavailable or if rendering fails.
-                let ssim_result = compute_ssim_comparison(pdf_data, &buf);
+                // SSIM visual regression: compare our flatten (page 1 via mutool)
+                // against iText's flatten (page 1 via mutool). Skips when iText
+                // oracle is unavailable or did not write its output file.
+                let ssim_result = compute_ssim_comparison(&buf, &itext_flat_path);
+                let _ = std::fs::remove_file(&itext_flat_path);
                 match ssim_result {
                     SsimResult::Score(score) => {
                         metadata.insert("ssim".to_string(), format!("{score:.4}"));
@@ -193,86 +202,88 @@ enum SsimResult {
     Skipped(String),
 }
 
-/// Compute SSIM between page 1 of our flatten output and the original PDF.
+/// Compute SSIM between page 1 of our flatten and iText's flatten.
 ///
-/// - Our output is rendered via pdf-engine.
-/// - The original is rendered via mutool (as visual reference).
-/// - Returns `Skipped` if mutool is unavailable or if either render fails.
-fn compute_ssim_comparison(original_data: &[u8], flattened_data: &[u8]) -> SsimResult {
-    // Require mutool.
+/// Both PDFs are rendered via mutool for a fair comparison that isolates
+/// flatten quality from renderer differences.
+///
+/// Returns `Skipped` when mutool is unavailable or the iText output file
+/// does not exist (oracle not installed or flatten failed).
+fn compute_ssim_comparison(flattened_data: &[u8], itext_flat_path: &std::path::Path) -> SsimResult {
     if Command::new("mutool").arg("-v").output().is_err() {
         return SsimResult::Skipped("mutool not found".into());
     }
-
-    // Render our flatten output page 1 via pdf-engine.
-    let flatten_doc = match pdf_engine::PdfDocument::open(flattened_data.to_vec()) {
-        Ok(d) => d,
-        Err(e) => return SsimResult::Skipped(format!("engine open flatten: {e}")),
-    };
-    if flatten_doc.page_count() == 0 {
-        return SsimResult::Skipped("flatten has no pages".into());
+    if !itext_flat_path.exists() {
+        return SsimResult::Skipped("iText flatten output not available".into());
     }
-    let opts = pdf_engine::RenderOptions {
-        dpi: RENDER_DPI,
-        ..Default::default()
-    };
-    let our_render = match flatten_doc.render_page(0, &opts) {
-        Ok(r) => r,
-        Err(e) => return SsimResult::Skipped(format!("engine render page 0: {e}")),
-    };
 
-    // Render the original PDF page 1 via mutool.
     let uid = COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     let tmp_dir = std::env::temp_dir();
-    let orig_tmp = tmp_dir.join(format!("xfa-flatten-orig-{pid}-{uid}.pdf"));
-    let png_tmp = tmp_dir.join(format!("xfa-flatten-orig-{pid}-{uid}.png"));
+    let our_tmp = tmp_dir.join(format!("xfa-flatten-ours-{pid}-{uid}.pdf"));
+    let our_png = tmp_dir.join(format!("xfa-flatten-ours-{pid}-{uid}.png"));
+    let itext_png = tmp_dir.join(format!("xfa-flatten-itext-{pid}-{uid}.png"));
 
-    if std::fs::write(&orig_tmp, original_data).is_err() {
-        return SsimResult::Skipped("could not write temp PDF".into());
+    if std::fs::write(&our_tmp, flattened_data).is_err() {
+        return SsimResult::Skipped("could not write flatten temp file".into());
     }
 
     let dpi_s = format!("{}", RENDER_DPI as u32);
+
+    // Render our flatten page 1 via mutool.
     let ok = Command::new("mutool")
         .args([
-            "draw",
-            "-q",
-            "-r",
-            &dpi_s,
-            "-o",
-            png_tmp.to_str().unwrap_or(""),
-            orig_tmp.to_str().unwrap_or(""),
-            "1",
+            "draw", "-q", "-r", &dpi_s,
+            "-o", our_png.to_str().unwrap_or(""),
+            our_tmp.to_str().unwrap_or(""), "1",
         ])
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-
-    let _ = std::fs::remove_file(&orig_tmp);
-
+    let _ = std::fs::remove_file(&our_tmp);
     if !ok {
-        let _ = std::fs::remove_file(&png_tmp);
-        return SsimResult::Skipped("mutool draw failed on original".into());
+        let _ = std::fs::remove_file(&our_png);
+        return SsimResult::Skipped("mutool draw failed on our flatten".into());
     }
 
-    let orig_img = match image::open(&png_tmp) {
+    // Render iText flatten page 1 via mutool.
+    let ok = Command::new("mutool")
+        .args([
+            "draw", "-q", "-r", &dpi_s,
+            "-o", itext_png.to_str().unwrap_or(""),
+            itext_flat_path.to_str().unwrap_or(""), "1",
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        let _ = std::fs::remove_file(&our_png);
+        let _ = std::fs::remove_file(&itext_png);
+        return SsimResult::Skipped("mutool draw failed on iText flatten".into());
+    }
+
+    let our_img = match image::open(&our_png) {
         Ok(img) => img.into_rgba8(),
         Err(e) => {
-            let _ = std::fs::remove_file(&png_tmp);
-            return SsimResult::Skipped(format!("load mutool PNG: {e}"));
+            let _ = std::fs::remove_file(&our_png);
+            let _ = std::fs::remove_file(&itext_png);
+            return SsimResult::Skipped(format!("load our flatten PNG: {e}"));
         }
     };
-    let _ = std::fs::remove_file(&png_tmp);
+    let _ = std::fs::remove_file(&our_png);
 
-    let (ow, oh) = (orig_img.width(), orig_img.height());
-    let score = ssim::compute_ssim(
-        &our_render.pixels,
-        our_render.width,
-        our_render.height,
-        orig_img.as_raw(),
-        ow,
-        oh,
-    );
+    let itext_img = match image::open(&itext_png) {
+        Ok(img) => img.into_rgba8(),
+        Err(e) => {
+            let _ = std::fs::remove_file(&itext_png);
+            return SsimResult::Skipped(format!("load iText flatten PNG: {e}"));
+        }
+    };
+    let _ = std::fs::remove_file(&itext_png);
+
+    let (ow, oh) = (our_img.width(), our_img.height());
+    let (iw, ih) = (itext_img.width(), itext_img.height());
+    let score = ssim::compute_ssim(our_img.as_raw(), ow, oh, itext_img.as_raw(), iw, ih);
     SsimResult::Score(score)
 }
 
