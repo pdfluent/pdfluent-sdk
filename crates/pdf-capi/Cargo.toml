@@ -15,4 +15,5 @@ pdf-forms = { path = "../pdf-forms" }
 pdf-manip = { path = "../pdf-manip" }
 pdf-redact = { path = "../pdf-redact" }
 pdf-sign = { path = "../pdf-sign" }
+pdf-extract = { path = "../pdf-extract" }
 lopdf = { path = "../lopdf" }

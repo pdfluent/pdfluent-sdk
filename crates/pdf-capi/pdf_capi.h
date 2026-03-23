@@ -26,6 +26,10 @@ typedef enum {
     PDF_STATUS_ERROR_SIGN = 9,
     PDF_STATUS_ERROR_ANNOTATION = 10,
     PDF_STATUS_ERROR_MERGE = 11,
+    PDF_STATUS_ERROR_EXTRACT = 12,
+    PDF_STATUS_ERROR_SPLIT = 13,
+    PDF_STATUS_ERROR_WATERMARK = 14,
+    PDF_STATUS_ERROR_COMPRESS = 15,
     PDF_STATUS_ERROR_UNKNOWN = 99,
 } PdfStatus;
 
@@ -204,6 +208,67 @@ PdfStatus pdf_annotation_add_highlight(
 PdfStatus pdf_documents_merge(
     const PdfDocument *const *docs,
     int32_t count,
+    PdfDocument **out);
+
+// ---- Signature verification ----
+
+// Number of signature fields in the document; -1 on null doc.
+int32_t pdf_signature_count(const PdfDocument *doc);
+
+// Validate the signature at zero-based index.
+// Returns 1=valid, 0=invalid, -1=unknown/error.
+int32_t pdf_signature_is_valid(const PdfDocument *doc, int32_t index);
+
+// ---- Image extraction ----
+
+// Number of images on a page; -1 on error.
+int32_t pdf_page_image_count(const PdfDocument *doc, int32_t page_index);
+
+// Extract raw image bytes at image_index on page_index.
+// On success writes width/height and a heap buffer to *out_data / *out_len.
+// Free with pdf_bytes_free(*out_data, *out_len).
+PdfStatus pdf_page_extract_image(
+    const PdfDocument *doc,
+    int32_t page_index,
+    int32_t image_index,
+    uint32_t *out_width,
+    uint32_t *out_height,
+    uint8_t **out_data,
+    size_t *out_len);
+
+// Free a byte buffer returned by pdf_page_extract_image. Null is safe.
+void pdf_bytes_free(uint8_t *data, size_t len);
+
+// ---- Text search ----
+
+// Count total occurrences of query across all pages. Returns -1 on error.
+int32_t pdf_document_search_count(const PdfDocument *doc, const char *query);
+
+// ---- Document split ----
+
+// Extract pages from_page..=to_page (0-based, inclusive) into a new document.
+// The caller must free the returned document with pdf_document_free.
+PdfStatus pdf_document_split_range(
+    const PdfDocument *doc,
+    int32_t from_page,
+    int32_t to_page,
+    PdfDocument **out);
+
+// ---- Watermark ----
+
+// Apply a diagonal text watermark to all pages. Returns a new document.
+// The caller must free the returned document with pdf_document_free.
+PdfStatus pdf_document_add_watermark(
+    const PdfDocument *doc,
+    const char *text,
+    PdfDocument **out);
+
+// ---- Compression ----
+
+// Compress stream objects and return a new (smaller) document.
+// The caller must free the returned document with pdf_document_free.
+PdfStatus pdf_document_compress(
+    const PdfDocument *doc,
     PdfDocument **out);
 
 // ---- Error state ----

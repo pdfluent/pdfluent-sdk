@@ -4044,6 +4044,7 @@ dependencies = [
  "lopdf",
  "pdf-compliance",
  "pdf-engine",
+ "pdf-extract",
  "pdf-forms",
  "pdf-manip",
  "pdf-redact",

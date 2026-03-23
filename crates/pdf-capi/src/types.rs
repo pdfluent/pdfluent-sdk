@@ -34,6 +34,14 @@ pub enum PdfStatus {
     ErrorAnnotation = 10,
     /// A document merge operation failed.
     ErrorMerge = 11,
+    /// An image or content extraction failed.
+    ErrorExtract = 12,
+    /// A document split operation failed.
+    ErrorSplit = 13,
+    /// A watermark operation failed.
+    ErrorWatermark = 14,
+    /// A compression/optimization operation failed.
+    ErrorCompress = 15,
     /// An unknown error occurred.
     ErrorUnknown = 99,
 }

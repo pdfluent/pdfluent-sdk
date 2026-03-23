@@ -1051,6 +1051,357 @@ fn add_highlight(
     Ok(())
 }
 
+// ---- Signature verification ----------------------------------------------
+
+/// Number of signature fields in the document, or -1 on error.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_signature_count(doc: *const PdfDocument) -> i32 {
+    if doc.is_null() {
+        error::set_last_error("null document pointer");
+        return -1;
+    }
+    let pdf = unsafe { &*doc }.0.pdf();
+    pdf_sign::validate_signatures(pdf).len() as i32
+}
+
+/// Validate the signature at zero-based `index`.
+///
+/// Returns 1 if the signature is cryptographically valid, 0 if invalid,
+/// -1 if the status is unknown or on error (null doc, out-of-range index).
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_signature_is_valid(doc: *const PdfDocument, index: i32) -> i32 {
+    if doc.is_null() || index < 0 {
+        error::set_last_error("invalid argument");
+        return -1;
+    }
+    let pdf = unsafe { &*doc }.0.pdf();
+    let results = pdf_sign::validate_signatures(pdf);
+    let idx = index as usize;
+    if idx >= results.len() {
+        error::set_last_error("signature index out of range");
+        return -1;
+    }
+    match results[idx].status {
+        pdf_sign::ValidationStatus::Valid => 1,
+        pdf_sign::ValidationStatus::Invalid(_) => 0,
+        pdf_sign::ValidationStatus::Unknown(_) => -1,
+    }
+}
+
+// ---- Image extraction ----------------------------------------------------
+
+/// Number of images on a page, or -1 on error.
+///
+/// # Safety
+/// `doc` must be a valid pointer returned by `pdf_document_open*`, or null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_page_image_count(doc: *const PdfDocument, page_index: i32) -> i32 {
+    if doc.is_null() || page_index < 0 {
+        error::set_last_error("invalid argument");
+        return -1;
+    }
+    let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let lopdf_doc = match lopdf::Document::load_mem(&raw) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return -1;
+        }
+    };
+    match pdf_extract::images::extract_page_images(&lopdf_doc, page_index as u32 + 1) {
+        Ok(imgs) => imgs.len() as i32,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            -1
+        }
+    }
+}
+
+/// Extract raw image bytes for the image at `image_index` on `page_index`.
+///
+/// On success writes the image dimensions to `out_width`/`out_height` and
+/// a heap-allocated byte buffer to `*out_data` with its length in `*out_len`.
+/// Free the buffer with `pdf_bytes_free(*out_data, *out_len)`.
+///
+/// # Safety
+/// `doc` must be valid. All output pointers must be non-null and writable.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_page_extract_image(
+    doc: *const PdfDocument,
+    page_index: i32,
+    image_index: i32,
+    out_width: *mut u32,
+    out_height: *mut u32,
+    out_data: *mut *mut u8,
+    out_len: *mut usize,
+) -> PdfStatus {
+    if doc.is_null()
+        || page_index < 0
+        || image_index < 0
+        || out_width.is_null()
+        || out_height.is_null()
+        || out_data.is_null()
+        || out_len.is_null()
+    {
+        error::set_last_error("null pointer or invalid argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let lopdf_doc = match lopdf::Document::load_mem(&raw) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    let imgs = match pdf_extract::images::extract_page_images(&lopdf_doc, page_index as u32 + 1) {
+        Ok(v) => v,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorExtract;
+        }
+    };
+    let idx = image_index as usize;
+    if idx >= imgs.len() {
+        error::set_last_error("image index out of range");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let img = &imgs[idx];
+    unsafe {
+        *out_width = img.width;
+        *out_height = img.height;
+    }
+    let mut data = img.data.clone().into_boxed_slice();
+    let len = data.len();
+    unsafe {
+        *out_data = data.as_mut_ptr();
+        *out_len = len;
+    }
+    std::mem::forget(data);
+    PdfStatus::Ok
+}
+
+/// Free a byte buffer returned by `pdf_page_extract_image`. Null is safe (no-op).
+///
+/// # Safety
+/// `data` must have been returned by `pdf_page_extract_image` with matching `len`, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_bytes_free(data: *mut u8, len: usize) {
+    if !data.is_null() && len > 0 {
+        drop(unsafe { Vec::from_raw_parts(data, len, len) });
+    }
+}
+
+// ---- Text search ---------------------------------------------------------
+
+/// Count total occurrences of `query` across all pages. Returns -1 on error.
+///
+/// # Safety
+/// `doc` and `query` must be valid pointers. `query` must be null-terminated UTF-8.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_search_count(
+    doc: *const PdfDocument,
+    query: *const c_char,
+) -> i32 {
+    if doc.is_null() || query.is_null() {
+        error::set_last_error("null pointer argument");
+        return -1;
+    }
+    let q = match unsafe { CStr::from_ptr(query) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error("invalid UTF-8 in query");
+            return -1;
+        }
+    };
+    let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let lopdf_doc = match lopdf::Document::load_mem(&raw) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return -1;
+        }
+    };
+    let opts = pdf_extract::search::SearchOptions::default();
+    let results = pdf_extract::search::search_text(&lopdf_doc, q, &opts);
+    results.len() as i32
+}
+
+// ---- Document split ------------------------------------------------------
+
+/// Extract pages `from_page..=to_page` (0-based, inclusive) into a new document.
+///
+/// The caller owns the returned document and must free it with `pdf_document_free`.
+///
+/// # Safety
+/// `doc` and `out` must be valid non-null pointers.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_split_range(
+    doc: *const PdfDocument,
+    from_page: i32,
+    to_page: i32,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || out.is_null() || from_page < 0 || to_page < from_page {
+        error::set_last_error("invalid argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let lopdf_doc = match lopdf::Document::load_mem(&raw) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    // extract_pages takes 1-based page numbers.
+    let pages: Vec<u32> = (from_page as u32..=to_page as u32)
+        .map(|p| p + 1)
+        .collect();
+    let mut extracted = match pdf_manip::pages::extract_pages(&lopdf_doc, &pages) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorSplit;
+        }
+    };
+    let mut buf = Vec::new();
+    if let Err(e) = extracted.save_to(&mut buf) {
+        error::set_last_error(&format!("save: {e}"));
+        return PdfStatus::ErrorSplit;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            PdfStatus::ErrorSplit
+        }
+    }
+}
+
+// ---- Watermark -----------------------------------------------------------
+
+/// Apply a diagonal text watermark to all pages and return a new document.
+///
+/// The caller owns the returned document and must free it with `pdf_document_free`.
+///
+/// # Safety
+/// `doc`, `text`, and `out` must be valid non-null pointers.
+/// `text` must be a null-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_add_watermark(
+    doc: *const PdfDocument,
+    text: *const c_char,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || text.is_null() || out.is_null() {
+        error::set_last_error("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let text_str = match unsafe { CStr::from_ptr(text) }.to_str() {
+        Ok(s) => s,
+        Err(_) => {
+            error::set_last_error("invalid UTF-8 in text");
+            return PdfStatus::ErrorInvalidArgument;
+        }
+    };
+    let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let mut lopdf_doc = match lopdf::Document::load_mem(&raw) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    let watermark = pdf_manip::watermark::TextWatermark {
+        text: text_str.to_string(),
+        font_size: 60.0,
+        rotation: 45.0,
+        opacity: 0.25,
+        color: pdf_manip::watermark::Color::Rgb(0.5, 0.5, 0.5),
+        position: pdf_manip::watermark::Position::Center,
+        layer: pdf_manip::watermark::Layer::Foreground,
+    };
+    if let Err(e) = pdf_manip::watermark::apply_text_watermark(
+        &mut lopdf_doc,
+        &watermark,
+        &pdf_manip::watermark::PageSelection::All,
+    ) {
+        error::set_last_error(&e.to_string());
+        return PdfStatus::ErrorWatermark;
+    }
+    let mut buf = Vec::new();
+    if let Err(e) = lopdf_doc.save_to(&mut buf) {
+        error::set_last_error(&format!("save: {e}"));
+        return PdfStatus::ErrorWatermark;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            PdfStatus::ErrorWatermark
+        }
+    }
+}
+
+// ---- Compression ---------------------------------------------------------
+
+/// Compress stream objects in the document and return a new (smaller) document.
+///
+/// The caller owns the returned document and must free it with `pdf_document_free`.
+///
+/// # Safety
+/// `doc` and `out` must be valid non-null pointers.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_document_compress(
+    doc: *const PdfDocument,
+    out: *mut *mut PdfDocument,
+) -> PdfStatus {
+    if doc.is_null() || out.is_null() {
+        error::set_last_error("null pointer argument");
+        return PdfStatus::ErrorInvalidArgument;
+    }
+    let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
+    let mut lopdf_doc = match lopdf::Document::load_mem(&raw) {
+        Ok(d) => d,
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            return PdfStatus::ErrorCorruptPdf;
+        }
+    };
+    if let Err(e) = pdf_manip::optimize::compress_streams(&mut lopdf_doc) {
+        error::set_last_error(&e.to_string());
+        return PdfStatus::ErrorCompress;
+    }
+    let mut buf = Vec::new();
+    if let Err(e) = lopdf_doc.save_to(&mut buf) {
+        error::set_last_error(&format!("save: {e}"));
+        return PdfStatus::ErrorCompress;
+    }
+    match pdf_engine::PdfDocument::open(buf) {
+        Ok(new_doc) => {
+            unsafe { *out = Box::into_raw(Box::new(PdfDocument(new_doc))) };
+            PdfStatus::Ok
+        }
+        Err(e) => {
+            error::set_last_error(&e.to_string());
+            PdfStatus::ErrorCompress
+        }
+    }
+}
+
 // ---- Tests ---------------------------------------------------------------
 
 #[cfg(test)]
@@ -1152,5 +1503,84 @@ mod tests {
     fn meta_null() {
         let key = b"Title\0".as_ptr().cast::<c_char>();
         assert!(unsafe { pdf_document_get_meta(ptr::null(), key) }.is_null());
+    }
+
+    #[test]
+    fn signature_count_null() {
+        assert_eq!(unsafe { pdf_signature_count(ptr::null()) }, -1);
+    }
+
+    #[test]
+    fn signature_is_valid_null() {
+        assert_eq!(unsafe { pdf_signature_is_valid(ptr::null(), 0) }, -1);
+        // negative index
+        let mut out: *mut PdfDocument = ptr::null_mut();
+        let data = b"not a pdf";
+        let _ = unsafe { pdf_document_open_from_bytes(data.as_ptr(), data.len(), &mut out) };
+        // out is still null because the open failed
+        assert_eq!(unsafe { pdf_signature_is_valid(ptr::null(), -1) }, -1);
+    }
+
+    #[test]
+    fn image_count_null() {
+        assert_eq!(unsafe { pdf_page_image_count(ptr::null(), 0) }, -1);
+        assert_eq!(unsafe { pdf_page_image_count(ptr::null(), -1) }, -1);
+    }
+
+    #[test]
+    fn search_count_null() {
+        let q = b"test\0".as_ptr().cast::<c_char>();
+        assert_eq!(unsafe { pdf_document_search_count(ptr::null(), q) }, -1);
+        assert_eq!(
+            unsafe { pdf_document_search_count(ptr::null(), ptr::null()) },
+            -1
+        );
+    }
+
+    #[test]
+    fn split_range_null() {
+        let mut out: *mut PdfDocument = ptr::null_mut();
+        let s = unsafe { pdf_document_split_range(ptr::null(), 0, 0, &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+    }
+
+    #[test]
+    fn split_range_invalid_pages() {
+        let mut out: *mut PdfDocument = ptr::null_mut();
+        // to_page < from_page
+        let s = unsafe { pdf_document_split_range(ptr::null(), 5, 2, &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+        // negative from_page
+        let s = unsafe { pdf_document_split_range(ptr::null(), -1, 0, &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+    }
+
+    #[test]
+    fn watermark_null() {
+        let text = b"DRAFT\0".as_ptr().cast::<c_char>();
+        let mut out: *mut PdfDocument = ptr::null_mut();
+        let s = unsafe { pdf_document_add_watermark(ptr::null(), text, &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+    }
+
+    #[test]
+    fn compress_null() {
+        let mut out: *mut PdfDocument = ptr::null_mut();
+        let s = unsafe { pdf_document_compress(ptr::null(), &mut out) };
+        assert_eq!(s, PdfStatus::ErrorInvalidArgument);
+    }
+
+    #[test]
+    fn bytes_free_null_safe() {
+        unsafe { pdf_bytes_free(ptr::null_mut(), 0) };
+        unsafe { pdf_bytes_free(ptr::null_mut(), 42) };
+    }
+
+    #[test]
+    fn new_status_codes() {
+        assert_eq!(PdfStatus::ErrorExtract as i32, 12);
+        assert_eq!(PdfStatus::ErrorSplit as i32, 13);
+        assert_eq!(PdfStatus::ErrorWatermark as i32, 14);
+        assert_eq!(PdfStatus::ErrorCompress as i32, 15);
     }
 }
