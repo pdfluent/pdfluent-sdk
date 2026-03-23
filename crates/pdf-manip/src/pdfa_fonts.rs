@@ -10183,10 +10183,12 @@ fn cff_glyph_name_alternatives(name: &str) -> &'static [&'static str] {
         "uni00AD" | "softhyphen" => &["hyphen", "sfthyphen"],
         "uni00A0" | "nbspace" => &["space"],
         "uni2010" => &["hyphen"],
-        // "quotesingle" (U+0027 apostrophe, WinAnsiEncoding code 39) is often
-        // stored as "quoteright" in Type1 subset CFF fonts. veraPDF resolves via
-        // AGL and accepts "quoteright" as equivalent for §6.2.11.5. (#FN-6.2.11.5)
-        "quotesingle" => &["quoteright"],
+        // "quotesingle" (SID 170) and "quoteright" (SID 169) are different CFF
+        // SIDs. veraPDF uses exact SID lookup — if SID 170 is absent from the
+        // charset, it does NOT try SID 169. Treating them as alternatives caused
+        // wrong corrections (found "quoteright" 238 when veraPDF expects .notdef
+        // 278). (#fix-cff-se-code39)
+        // "quotesingle" => &["quoteright"],  // REMOVED — different SIDs
         _ => &[],
     }
 }
