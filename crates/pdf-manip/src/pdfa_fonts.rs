@@ -6497,9 +6497,22 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                         // high-byte corrections remain safe on non-subset fonts.
                         // Also allow when the CFF encoding maps the code to a valid GID:
                         // for fonts with no BaseEncoding, CFF encoding is authoritative. (#479)
+                        //
+                        // WinAnsiEncoding and MacRomanEncoding are standard PDF encodings
+                        // whose high-byte codes (128-255) all have well-defined AGL glyph
+                        // names.  compute_cff_corrections_by_name uses name-based lookup for
+                        // these encodings, which is unambiguous: if the glyph name exists in
+                        // the CFF charset the width is correct; if not, cff_width_for_code
+                        // returns None and no correction is generated.  Blocking high-byte
+                        // corrections for these reliable encodings causes §6.2.11.5 failures
+                        // for standard glyphs such as "softhyphen" (code 173, Helvetica /
+                        // Times-Roman) whose CFF StandardEncoding does not map code 0xAD.
+                        // Allow all name-based corrections when the PDF encoding is reliable.
+                        // (#546, gen-348 Helvetica/Times-Roman code 173)
                         code <= 127
                             || enc_info.1.contains_key(&code)
                             || matches!(&cff_enc_for_filter, Some(m) if m.get(&(code as u8)).copied().unwrap_or(0) != 0)
+                            || matches!(enc_info.0.as_str(), "WinAnsiEncoding" | "MacRomanEncoding")
                     }
                 });
             }
