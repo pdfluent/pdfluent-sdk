@@ -363,10 +363,14 @@ impl Renderer {
 
                         let scaled_width = bbox.width() as f32 * xs;
                         let scaled_height = bbox.height() as f32 * ys;
-                        // Clamp to at least 1 to avoid zero-size Pixmap which
-                        // causes vello_cpu to panic on bilinear sampling. (#546)
-                        let pix_width = (x_step.abs().round() as u16).max(1);
-                        let pix_height = (y_step.abs().round() as u16).max(1);
+
+                        // The step-sized pixmap is pre-baked to hold the correct composite of all
+                        // BBox tile instances that overlap within one XStep×YStep cell. When
+                        // BBox > XStep tiles overlap and their contributions must be merged here;
+                        // when BBox == XStep exactly one tile contributes (original behaviour).
+                        // (#544-tiling)
+                        let pix_width = (x_step.abs().ceil() as u16).max(1);
+                        let pix_height = (y_step.abs().ceil() as u16).max(1);
 
                         let mut renderer = Self {
                             ctx: RenderContext::new_with(
@@ -381,14 +385,30 @@ impl Renderer {
                             cur_blend_mode: BlendMode::default(),
                             in_type3_glyph: false,
                         };
-                        let mut initial_transform = Affine::scale_non_uniform(xs as f64, ys as f64)
+
+                        let base_transform = Affine::scale_non_uniform(xs as f64, ys as f64)
                             * Affine::translate((-bbox.x0, -bbox.y0));
-                        t.interpret(&mut renderer, initial_transform, is_stroke);
+
+                        // Number of tile instances that can overlap into one step cell (≥1).
+                        let x_reps = (scaled_width / x_step.abs()).ceil() as i32;
+                        let y_reps = (scaled_height / y_step.abs()).ceil() as i32;
+
+                        // Render from most-negative offset to (0,0) so the (0,0) tile is on top.
+                        for ny in (0..y_reps).rev() {
+                            for nx in (0..x_reps).rev() {
+                                let shift = Affine::translate((
+                                    -(nx as f64) * x_step.abs() as f64,
+                                    -(ny as f64) * y_step.abs() as f64,
+                                ));
+                                t.interpret(&mut renderer, shift * base_transform, is_stroke);
+                            }
+                        }
+
+                        let mut initial_transform = base_transform;
                         let mut pix = Pixmap::new(pix_width, pix_height);
                         renderer.ctx.flush();
                         renderer.ctx.render_to_pixmap(&mut pix);
 
-                        // TODO: Fix these
                         if x_step < 0.0 {
                             initial_transform *=
                                 Affine::new([-1.0, 0.0, 0.0, 1.0, scaled_width as f64, 0.0]);
