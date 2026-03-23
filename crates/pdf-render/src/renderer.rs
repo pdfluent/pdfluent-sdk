@@ -419,8 +419,24 @@ impl Renderer {
                                 Affine::new([1.0, 0.0, 0.0, -1.0, 0.0, scaled_height as f64]);
                         }
 
-                        paint_transform =
-                            path_transform.inverse() * t.matrix * initial_transform.inverse();
+                        // Compensate for integer rounding of pix_width/pix_height:
+                        // the pixmap is ceil(x_step) pixels wide, but the tile must
+                        // repeat every *exact* x_step pixels (which may be fractional at
+                        // high DPI). Without correction the rounding error accumulates
+                        // across the page (e.g. at 150 DPI, step=31.25→32 → 2.4% drift).
+                        // Multiplying paint_transform by scale(pix/step) restores the
+                        // exact tiling interval while accepting a <1px content stretch.
+                        // scale(step/pix): shrinks the image by the rounding error so
+                        // the tiling interval is exactly x_step (not ceil(x_step)).
+                        let step_round_correction = Affine::scale_non_uniform(
+                            x_step.abs() as f64 / pix_width as f64,
+                            y_step.abs() as f64 / pix_height as f64,
+                        );
+
+                        paint_transform = path_transform.inverse()
+                            * t.matrix
+                            * initial_transform.inverse()
+                            * step_round_correction;
 
                         let image = Image {
                             image: ImageSource::Pixmap(Arc::new(pix)),
