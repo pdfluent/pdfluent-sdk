@@ -302,10 +302,20 @@ impl<'a> ImageXObject<'a> {
                 })
         };
 
-        let interpolate = dict
+        let interpolate_flag = dict
             .get::<bool>(I)
             .or_else(|| dict.get::<bool>(INTERPOLATE))
             .unwrap_or(false);
+
+        let bpc = dict
+            .get::<u8>(BPC)
+            .or_else(|| dict.get::<u8>(BITS_PER_COMPONENT))
+            .unwrap_or(8);
+
+        // MuPDF always uses anti-aliased scaling for all 1bpc images regardless of
+        // the /Interpolate flag (both image masks and scanned 1bpc DevGray images).
+        // Force interpolation on so our renderer matches. (#544 follow-up)
+        let interpolate = interpolate_flag || bpc == 1;
 
         let width = dict.get::<u32>(W).or_else(|| dict.get::<u32>(WIDTH))?;
         let height = dict.get::<u32>(H).or_else(|| dict.get::<u32>(HEIGHT))?;
