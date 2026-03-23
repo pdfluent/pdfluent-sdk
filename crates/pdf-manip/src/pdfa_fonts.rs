@@ -9430,6 +9430,7 @@ fn cff_width_for_code(
     // (#6.2.11.5-std-enc-defaultwidthx, #6.2.11.5-undef-notdef-charstring)
     let mut pdf_glyph_name = String::new();
     let mut name_found = false;
+    let mut name_from_cff_se_override = false;
     if has_pdf_encoding {
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.clone()
@@ -9448,11 +9449,13 @@ fn cff_width_for_code(
                 // Control char or undefined: not in Standard Encoding.
                 String::new()
             } else if let Some(se_name) = ps_standard_encoding_override(code) {
-                // PostScript Standard Encoding has two codes (39, 96) whose glyph name
-                // differs from what the Unicode identity map + AGL would produce.
-                // Use the SE glyph name directly to avoid the roundtrip error:
-                //   code 96 → U+0060 → AGL "grave" (627 in Lucida) → WRONG
-                //   code 96 → SE direct "quoteleft" (241 in Lucida) → CORRECT (#507)
+                // CFF Standard Encoding name for codes where Unicode roundtrip
+                // gives a different name. The CFF SE mapping is authoritative —
+                // veraPDF uses this exact SID for the charset lookup. If this
+                // name is not in the charset, veraPDF falls to GID 0; alternatives
+                // (e.g. "quoteright" for "quotesingle") must NOT be tried since
+                // they have different SIDs. (#fix-cff-se-code39)
+                name_from_cff_se_override = true;
                 se_name.to_string()
             } else {
                 let ch = encoding_to_char(code, "StandardEncoding");
@@ -9530,18 +9533,17 @@ fn cff_width_for_code(
             // Try AGL canonical name: unicode_to_glyph_name returns raw chars
             // for ASCII printable (e.g. "0" for digit '0'), but CFF charset
             // uses AGL names (e.g. "zero"). Also covers "uni00XX" → "Agrave".
-            // Only applies when the name comes from encoding lookup, not Differences. (#479)
-            if !differences.contains_key(&code) {
+            // Only applies when the name comes from encoding lookup, not Differences.
+            // Skip entirely when the name came from CFF SE override — the CFF SE
+            // SID mapping is authoritative; alternatives have different SIDs and
+            // would cause wrong corrections. (#479, #fix-cff-se-code39)
+            if !differences.contains_key(&code) && !name_from_cff_se_override {
                 let ch = encoding_to_char(code, enc_name);
                 if let Some(agl_name) = unicode_to_agl_name(ch) {
                     if agl_name != glyph_name {
                         if let Some(w) = lookup_name(&agl_name) {
                             return Some(w);
                         }
-                        // Also try alternatives of the AGL name. For example,
-                        // unicode_to_glyph_name(U+0027) = "'" but AGL name is
-                        // "quotesingle"; the CFF subset may store it as "quoteright".
-                        // (#FN-6.2.11.5-agl-alt)
                         for alt in cff_glyph_name_alternatives(&agl_name) {
                             if let Some(w) = lookup_name(alt) {
                                 return Some(w);
@@ -9550,9 +9552,11 @@ fn cff_width_for_code(
                     }
                 }
             }
-            for alt in cff_glyph_name_alternatives(&glyph_name) {
-                if let Some(w) = lookup_name(alt) {
-                    return Some(w);
+            if !name_from_cff_se_override {
+                for alt in cff_glyph_name_alternatives(&glyph_name) {
+                    if let Some(w) = lookup_name(alt) {
+                        return Some(w);
+                    }
                 }
             }
             // Name resolved but not found in CFF — will try CFF encoding below.
