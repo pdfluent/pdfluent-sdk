@@ -8362,36 +8362,30 @@ pub fn check_notdef_glyph_reference(pdf: &Pdf, report: &mut ComplianceReport) {
                         {
                             continue; // Skip CID fonts
                         }
-                        let Some(desc) = font_dict
-                            .get::<Dict<'_>>(keys::FONT_DESC)
-                            .or_else(|| {
-                                font_dict
-                                    .get_ref(keys::FONT_DESC)
-                                    .and_then(|r| xref.get::<Dict<'_>>(r.into()))
-                            })
-                        else {
+                        let Some(desc) = font_dict.get::<Dict<'_>>(keys::FONT_DESC).or_else(|| {
+                            font_dict
+                                .get_ref(keys::FONT_DESC)
+                                .and_then(|r| xref.get::<Dict<'_>>(r.into()))
+                        }) else {
                             continue;
                         };
-                        let Some(ff2) = desc
-                            .get::<Stream<'_>>(keys::FONT_FILE2)
-                            .or_else(|| {
-                                desc.get_ref(keys::FONT_FILE2)
-                                    .and_then(|r| xref.get::<Stream<'_>>(r.into()))
-                            })
-                        else {
+                        let Some(ff2) = desc.get::<Stream<'_>>(keys::FONT_FILE2).or_else(|| {
+                            desc.get_ref(keys::FONT_FILE2)
+                                .and_then(|r| xref.get::<Stream<'_>>(r.into()))
+                        }) else {
                             continue; // Not TrueType
                         };
-                        let Ok(font_data) = ff2.decoded() else { continue };
+                        let Ok(font_data) = ff2.decoded() else {
+                            continue;
+                        };
                         let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
-                            continue
+                            continue;
                         };
                         let upem = face.units_per_em() as f64;
                         if upem <= 0.0 {
                             continue;
                         }
-                        let Some(advance) =
-                            face.glyph_hor_advance(ttf_parser::GlyphId(0))
-                        else {
+                        let Some(advance) = face.glyph_hor_advance(ttf_parser::GlyphId(0)) else {
                             continue;
                         };
                         let gid0_w = (advance as f64 * 1000.0 / upem).round() as i32;
@@ -8773,7 +8767,9 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                         .and_then(|r| xref.get::<Dict<'_>>(r.into()))
                 });
             let Some(fd) = font_dict_opt else {
-                if let Some(key) = font_obj_ref { font_entry_cache.insert(key, None); }
+                if let Some(key) = font_obj_ref {
+                    font_entry_cache.insert(key, None);
+                }
                 continue;
             };
             let subtype = fd.get::<Name>(keys::SUBTYPE);
@@ -8783,7 +8779,9 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                 .as_ref()
                 .is_none_or(|s| s.as_ref() != b"Type1" && s.as_ref() != b"MMType1")
             {
-                if let Some(key) = font_obj_ref { font_entry_cache.insert(key, None); }
+                if let Some(key) = font_obj_ref {
+                    font_entry_cache.insert(key, None);
+                }
                 continue;
             }
             let base = fd
@@ -8791,7 +8789,9 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                 .map(|n| std::str::from_utf8(n.as_ref()).unwrap_or("").to_string())
                 .unwrap_or_default();
             if !is_subset_font(&base) {
-                if let Some(key) = font_obj_ref { font_entry_cache.insert(key, None); }
+                if let Some(key) = font_obj_ref {
+                    font_entry_cache.insert(key, None);
+                }
                 continue;
             }
             // FontDescriptor is almost always an indirect reference — follow it.
@@ -8801,7 +8801,9 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                     .and_then(|r| xref.get::<Dict<'_>>(r.into()))
             });
             let Some(desc) = desc_opt else {
-                if let Some(key) = font_obj_ref { font_entry_cache.insert(key, None); }
+                if let Some(key) = font_obj_ref {
+                    font_entry_cache.insert(key, None);
+                }
                 continue;
             };
             // For CFF (FontFile3) fonts, use the actual glyphs from the font program
@@ -8837,11 +8839,15 @@ pub fn check_type1_charset_coverage(pdf: &Pdf, report: &mut ComplianceReport) {
                     .get::<pdf_syntax::object::String>(keys::CHAR_SET)
                     .map(|s| s.as_bytes().to_vec());
                 let Some(cs_bytes) = cs_opt else {
-                    if let Some(key) = font_obj_ref { font_entry_cache.insert(key, None); }
+                    if let Some(key) = font_obj_ref {
+                        font_entry_cache.insert(key, None);
+                    }
                     continue;
                 };
                 if cs_bytes.is_empty() {
-                    if let Some(key) = font_obj_ref { font_entry_cache.insert(key, None); }
+                    if let Some(key) = font_obj_ref {
+                        font_entry_cache.insert(key, None);
+                    }
                     continue;
                 }
                 let ct = std::str::from_utf8(&cs_bytes).unwrap_or("");
@@ -9209,7 +9215,8 @@ pub fn check_font_embedding_deep(pdf: &Pdf, part: u8, report: &mut ComplianceRep
                                                 // PDF/A-2/3: §6.2.11.4.2 (CharSet must cover all embedded glyphs).
                                                 // PDF/A-1: §6.3.5. PDF/A-4: §6.2.10.4.1 (via remap of "6.3.5").
                                                 // (#FP-6.2.11.5, cs-veraPDF 6-2-11-4-2-t01-fail)
-                                                let charset_rule = if part >= 2 { "6.2.11.4.2" } else { "6.3.5" };
+                                                let charset_rule =
+                                                    if part >= 2 { "6.2.11.4.2" } else { "6.3.5" };
                                                 error_at(
                                                     report,
                                                     charset_rule,
@@ -9551,17 +9558,13 @@ pub fn check_tounicode_cmap(
                                         .and_then(|r| pdf.xref().get::<Dict<'_>>(r.into()))
                                 });
                             csi.map(|csi_dict| {
-                                let reg = csi_dict
-                                    .get::<pdf_syntax::object::String>(keys::REGISTRY);
-                                let ord = csi_dict
-                                    .get::<pdf_syntax::object::String>(keys::ORDERING);
-                                let is_adobe =
-                                    reg.is_some_and(|r| r.as_bytes() == b"Adobe");
+                                let reg =
+                                    csi_dict.get::<pdf_syntax::object::String>(keys::REGISTRY);
+                                let ord =
+                                    csi_dict.get::<pdf_syntax::object::String>(keys::ORDERING);
+                                let is_adobe = reg.is_some_and(|r| r.as_bytes() == b"Adobe");
                                 let is_std_ord = ord.is_some_and(|o| {
-                                    matches!(
-                                        o.as_bytes(),
-                                        b"GB1" | b"CNS1" | b"Japan1" | b"Korea1"
-                                    )
+                                    matches!(o.as_bytes(), b"GB1" | b"CNS1" | b"Japan1" | b"Korea1")
                                 });
                                 is_adobe && is_std_ord
                             })
@@ -11422,7 +11425,10 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
             .get::<pdf_syntax::object::String>(keys::CHAR_SET)
             .map(|s| {
                 let ct = std::str::from_utf8(s.as_bytes()).unwrap_or("");
-                ct.split('/').filter(|g| !g.is_empty()).map(str::to_string).collect()
+                ct.split('/')
+                    .filter(|g| !g.is_empty())
+                    .map(str::to_string)
+                    .collect()
             });
         // Pre-compute .notdef advance width (GID 0). When a glyph name is resolved for a
         // code but absent from the CFF font program, veraPDF uses .notdef advance as
@@ -11443,7 +11449,9 @@ pub fn check_font_program_widths(pdf: &Pdf, report: &mut ComplianceReport) {
             if !names.is_empty() {
                 // §6.2.11.4.2: any CFF glyph (GID≥1) whose name is absent from CharSet.
                 let has_42_violation = (1..table.number_of_glyphs()).any(|gid| {
-                    let gname = table.glyph_name(cff_parser::GlyphId(gid)).unwrap_or(".notdef");
+                    let gname = table
+                        .glyph_name(cff_parser::GlyphId(gid))
+                        .unwrap_or(".notdef");
                     gname != ".notdef" && !names.contains(gname)
                 });
                 if has_42_violation {
@@ -12176,15 +12184,23 @@ fn check_truetype_simple_widths(
         };
         let gid = explicit_gid.unwrap_or(ttf_parser::GlyphId(0));
         // When the glyph is absent from the cmap, emit the glyph-coverage rule
-        // (§6.3.5 / §6.2.11.4.1) and skip the width check. The PDF/A-1 §6.3.6
-        // width-consistency requirement only applies to glyphs that ARE present in
-        // the font program; using the .notdef advance as a stand-in produces spurious
-        // width mismatches. veraPDF fires §6.3.5 but not §6.3.6 for absent glyphs.
-        // For absent glyphs with pdf_w=0 the PDF declares the code unused — veraPDF
-        // does not fire §6.2.11.4.1 in that case. (#FP-6.2.11.5-zero, #FN-6.3.5
-        // isartor-6-3-5-t01-fail-d, #FP-6.3.6 gen-302, empirically cs-veraPDF 6-1-7-1-t04-fail)
+        // (§6.3.5 / §6.2.11.4.1) and the width rule using .notdef advance.
+        //
+        // §6.2.11.4.1 fires when:
+        //   - rendered_codes confirms the code IS rendered (known usage), OR
+        //   - pdf_w != 0 (non-zero width implies the creator expected this glyph present)
+        // When rendered_codes is None and pdf_w=0, the PDF creator likely marked this
+        // code as "unused" (pdf_w=0 sentinel), so don't fire. (#FP-6.2.11.5-zero,
+        // empirically cs-veraPDF-6-1-7-1-t04-fail)
+        //
+        // §6.3.5-fw (→ §6.3.6 for PDF/A-1): when the rendered code has no cmap entry,
+        // veraPDF uses the .notdef advance as "widthFromFontProgram" and compares it
+        // against pdf_w — same logic as CFF notdef fallback. (#FN-6.3.5
+        // isartor-6-3-5-t01-fail-d, #FP-6.3.6 gen-302)
         if explicit_gid.is_none() {
-            if pdf_w != 0 && !glyph_absence_emitted {
+            let code_is_rendered =
+                rendered_codes.as_ref().is_some_and(|rc| rc.contains(&(code as u8)));
+            if (pdf_w != 0 || code_is_rendered) && !glyph_absence_emitted {
                 error_at(
                     report,
                     "6.2.11.4.1",
@@ -12193,7 +12209,26 @@ fn check_truetype_simple_widths(
                 );
                 glyph_absence_emitted = true;
             }
-            continue; // Width check inapplicable for absent glyphs
+            // For rendered codes: also check width using .notdef advance as fallback.
+            if code_is_rendered {
+                let notdef_advance = face.glyph_hor_advance(ttf_parser::GlyphId(0));
+                if let Some(advance) = notdef_advance {
+                    let font_w = (advance as f64 * 1000.0 / upem).round() as i32;
+                    if (font_w - pdf_w).abs() > 2 {
+                        error_at(
+                            report,
+                            "6.3.5-fw",
+                            format!(
+                                "Font {name} code {code} (U+{:04X}): glyph absent, \
+                                 .notdef advance {font_w} != PDF /Widths[{idx}] {pdf_w}",
+                                ch as u32
+                            ),
+                            loc.clone(),
+                        );
+                    }
+                }
+            }
+            continue; // Normal width path inapplicable for absent glyphs
         }
         // Fallback for when rendered_codes is unavailable: if cmap maps to a real glyph
         // (GID > 0) and pdf_w=0, treat the code as unused and skip. When rendered_codes
