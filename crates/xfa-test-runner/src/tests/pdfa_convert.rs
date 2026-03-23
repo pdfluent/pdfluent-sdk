@@ -359,17 +359,11 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc)
         }));
 
-        // 3a2d1. Remove simple-font bytes outside FirstChar..LastChar.
+        // 3a2d1+d2. Remove out-of-range codes and strip control chars in one pass.
+        // (#534 perf: merged to avoid double ContentEditor parse per stream)
         set_progress("simple_range_notdef");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc)
-        }));
-
-        // 3a2d2. Strip control characters from content streams (catches remaining
-        // .notdef refs from PFB fonts where glyph availability is unknown).
-        set_progress("strip_control");
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            pdf_manip::pdfa_fonts::strip_control_chars_from_streams(&mut doc)
+            pdf_manip::pdfa_fonts::fix_simple_font_streams(&mut doc)
         }));
 
         // 3a2e. Ensure undefined WinAnsi codes have Differences entries.
@@ -899,10 +893,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pdf_manip::pdfa_fonts::fix_simple_font_out_of_range_codes(&mut doc)
-    }));
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        pdf_manip::pdfa_fonts::strip_control_chars_from_streams(&mut doc)
+        pdf_manip::pdfa_fonts::fix_simple_font_streams(&mut doc) // merged pass (#534 perf)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc)

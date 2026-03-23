@@ -245,7 +245,10 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
         // A pass here would silently count as "OCR works" even though no
         // inference ran.  Build with --features paddle-ocr to enable OCR.
         metadata.insert("ocr_engine".into(), "none".into());
-        metadata.insert("scanned_pages_detected".into(), scanned_pages.len().to_string());
+        metadata.insert(
+            "scanned_pages_detected".into(),
+            scanned_pages.len().to_string(),
+        );
         TestResult {
             status: TestStatus::Skip,
             error_message: Some(

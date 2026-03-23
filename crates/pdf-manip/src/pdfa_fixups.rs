@@ -3823,7 +3823,7 @@ fn fix_unreadable_content_streams(doc: &mut Document) -> usize {
                         s.dict.remove(b"Filter");
                         s.dict.remove(b"DecodeParms");
                         s.set_content(inner); // also updates /Length (#FP-6.1.7.1-len)
-                        let _ = s.compress();
+                        let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
                         count += 1;
                     }
                 }
@@ -3913,7 +3913,7 @@ fn fix_invalid_operator_preamble(doc: &mut Document) -> usize {
             s.dict.remove(b"Filter");
             s.dict.remove(b"DecodeParms");
             s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
-            let _ = s.compress();
+            let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
             count += 1;
         }
     }
@@ -4057,7 +4057,7 @@ fn fix_page_content_stream_nesting(doc: &mut Document) -> usize {
                     s.dict.remove(b"Filter");
                     s.dict.remove(b"DecodeParms");
                     s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
-                    let _ = s.compress();
+                    let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
                 }
             }
         }
@@ -4143,7 +4143,7 @@ fn fix_graphics_state_nesting_limit(doc: &mut Document) -> usize {
             s.dict.remove(b"Filter");
             s.dict.remove(b"DecodeParms");
             s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
-            let _ = s.compress();
+            let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
         }
     }
 
@@ -4409,7 +4409,7 @@ fn fix_content_stream_operator_spacing(doc: &mut Document) -> usize {
             s.dict.remove(b"DecodeParms");
             s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
                                         // Re-compress for smaller output.
-            let _ = s.compress();
+            let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
         }
     }
     count
@@ -4489,7 +4489,7 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
                 s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
-                let _ = s.compress();
+                let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
             }
         }
     }
@@ -4622,7 +4622,7 @@ fn fix_non_finite_numbers_in_streams(doc: &mut Document) -> usize {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
                 s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
-                let _ = s.compress();
+                let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
             }
         }
     }
@@ -4988,7 +4988,7 @@ fn fix_odd_hex_strings_in_streams(doc: &mut Document) -> usize {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
                 s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
-                let _ = s.compress();
+                let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
             }
         }
     }
@@ -5052,7 +5052,7 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
                 s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
-                let _ = s.compress();
+                let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
             }
         }
     }
@@ -5409,7 +5409,7 @@ fn strip_unknown_content_stream_operators(doc: &mut Document) -> usize {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
                 s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
-                let _ = s.compress();
+                let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
                 count += 1;
             }
         }

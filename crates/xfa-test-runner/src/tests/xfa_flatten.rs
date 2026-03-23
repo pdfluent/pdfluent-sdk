@@ -233,9 +233,14 @@ fn compute_ssim_comparison(flattened_data: &[u8], itext_flat_path: &std::path::P
     // Render our flatten page 1 via mutool.
     let ok = Command::new("mutool")
         .args([
-            "draw", "-q", "-r", &dpi_s,
-            "-o", our_png.to_str().unwrap_or(""),
-            our_tmp.to_str().unwrap_or(""), "1",
+            "draw",
+            "-q",
+            "-r",
+            &dpi_s,
+            "-o",
+            our_png.to_str().unwrap_or(""),
+            our_tmp.to_str().unwrap_or(""),
+            "1",
         ])
         .status()
         .map(|s| s.success())
@@ -249,9 +254,14 @@ fn compute_ssim_comparison(flattened_data: &[u8], itext_flat_path: &std::path::P
     // Render iText flatten page 1 via mutool.
     let ok = Command::new("mutool")
         .args([
-            "draw", "-q", "-r", &dpi_s,
-            "-o", itext_png.to_str().unwrap_or(""),
-            itext_flat_path.to_str().unwrap_or(""), "1",
+            "draw",
+            "-q",
+            "-r",
+            &dpi_s,
+            "-o",
+            itext_png.to_str().unwrap_or(""),
+            itext_flat_path.to_str().unwrap_or(""),
+            "1",
         ])
         .status()
         .map(|s| s.success())
