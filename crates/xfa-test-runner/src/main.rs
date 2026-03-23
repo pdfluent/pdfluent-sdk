@@ -1118,27 +1118,26 @@ fn main() {
                         // Hash the CONVERTED bytes — must match what PdfAConvertTest::run()
                         // hashes when it calls verapdf.validate(). (Bug 1 + Bug 2 fix)
                         //
-                        // Wrap in a dedicated thread with a 64 MB stack, matching the
-                        // per-test thread wrapper used by PdfAConvertTest::run().  Without
-                        // this, lopdf/font-parser recursion on corrupt PDFs can overflow
-                        // the default OS thread stack even though the rayon pool itself
-                        // has 64 MB — any std::thread::spawn inside the pipeline would
-                        // inherit the OS default (~8 MB).  (#oracle-gen-stackoverflow)
+                        // Wrap in a dedicated thread with a 256 MB stack.  64 MB was not
+                        // enough for pathological stressful-corpus PDFs that trigger very
+                        // deep recursion inside lopdf / font-parser.  The per-PDF path is
+                        // also logged to stderr so that the last line before a crash
+                        // identifies the offending file.  (#oracle-gen-stackoverflow)
+                        eprintln!("converting: {}", pdf_path.display());
                         let pdf_for_thread = input_data.clone();
                         let path_for_thread = pdf_path.clone();
                         let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
                         std::thread::Builder::new()
-                            .stack_size(64 * 1024 * 1024)
+                            .stack_size(256 * 1024 * 1024)
                             .spawn(move || {
-                                let result = std::panic::catch_unwind(
-                                    std::panic::AssertUnwindSafe(|| {
+                                let result =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                         tests::pdfa_convert::convert_to_pdfa_bytes(
                                             &pdf_for_thread,
                                             &path_for_thread,
                                         )
-                                    }),
-                                )
-                                .unwrap_or(None);
+                                    }))
+                                    .unwrap_or(None);
                                 let _ = tx.send(result);
                             })
                             .expect("thread spawn");
@@ -1146,21 +1145,21 @@ fn main() {
                             .recv_timeout(std::time::Duration::from_secs(60))
                             .unwrap_or(None)
                         {
-                                Some(c) => c,
-                                None => {
-                                    // Not a PDF, already PDF/A, conversion failed, or timeout.
-                                    skipped.fetch_add(1, Ordering::Relaxed);
-                                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                                    if n.is_multiple_of(100) {
-                                        eprintln!(
-                                            "[{n}/{total}] skipped={} failed={}",
-                                            skipped.load(Ordering::Relaxed),
-                                            failed.load(Ordering::Relaxed)
-                                        );
-                                    }
-                                    return;
+                            Some(c) => c,
+                            None => {
+                                // Not a PDF, already PDF/A, conversion failed, or timeout.
+                                skipped.fetch_add(1, Ordering::Relaxed);
+                                let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                                if n.is_multiple_of(100) {
+                                    eprintln!(
+                                        "[{n}/{total}] skipped={} failed={}",
+                                        skipped.load(Ordering::Relaxed),
+                                        failed.load(Ordering::Relaxed)
+                                    );
                                 }
-                            };
+                                return;
+                            }
+                        };
 
                         let hash = {
                             let mut hasher = Sha256::new();
