@@ -23,7 +23,7 @@ pub(crate) fn decode(data: &[u8]) -> Option<Vec<u8>> {
     let flush_group = |group: &mut Vec<u8>, decoded: &mut Vec<u8>| -> Option<()> {
         let (digits, output_len): ([u32; 5], usize) = match group.len() {
             0 => return Some(()),
-            1 => return None, // A single character is not valid.
+            1 => return Some(()), // Lenient: 1-char partial group produces 0 bytes (malformed but common in scanned PDFs, e.g. gen-694). Fixes #544.
             2 => (
                 [group[0], group[1], b'u', b'u', b'u'].map(|b| (b - b'!') as u32),
                 1,
