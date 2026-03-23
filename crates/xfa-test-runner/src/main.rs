@@ -1117,12 +1117,38 @@ fn main() {
                         // Run our full PDF/A conversion pipeline.
                         // Hash the CONVERTED bytes — must match what PdfAConvertTest::run()
                         // hashes when it calls verapdf.validate(). (Bug 1 + Bug 2 fix)
-                        let converted =
-                            match tests::pdfa_convert::convert_to_pdfa_bytes(&input_data, pdf_path)
-                            {
+                        //
+                        // Wrap in a dedicated thread with a 64 MB stack, matching the
+                        // per-test thread wrapper used by PdfAConvertTest::run().  Without
+                        // this, lopdf/font-parser recursion on corrupt PDFs can overflow
+                        // the default OS thread stack even though the rayon pool itself
+                        // has 64 MB — any std::thread::spawn inside the pipeline would
+                        // inherit the OS default (~8 MB).  (#oracle-gen-stackoverflow)
+                        let pdf_for_thread = input_data.clone();
+                        let path_for_thread = pdf_path.clone();
+                        let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
+                        std::thread::Builder::new()
+                            .stack_size(64 * 1024 * 1024)
+                            .spawn(move || {
+                                let result = std::panic::catch_unwind(
+                                    std::panic::AssertUnwindSafe(|| {
+                                        tests::pdfa_convert::convert_to_pdfa_bytes(
+                                            &pdf_for_thread,
+                                            &path_for_thread,
+                                        )
+                                    }),
+                                )
+                                .unwrap_or(None);
+                                let _ = tx.send(result);
+                            })
+                            .expect("thread spawn");
+                        let converted = match rx
+                            .recv_timeout(std::time::Duration::from_secs(60))
+                            .unwrap_or(None)
+                        {
                                 Some(c) => c,
                                 None => {
-                                    // Not a PDF, already PDF/A, or conversion failed — skip.
+                                    // Not a PDF, already PDF/A, conversion failed, or timeout.
                                     skipped.fetch_add(1, Ordering::Relaxed);
                                     let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                                     if n.is_multiple_of(100) {
