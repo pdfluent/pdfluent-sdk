@@ -9624,26 +9624,19 @@ fn cff_width_for_code(
             cff_enc_explicit_notdef = true;
         }
         // cff.glyph_index falls back to StandardEncoding for codes not in the
-        // CFF encoding table, and StandardEncoding maps many codes to SID 0
-        // (→ GID 0 = .notdef).  For HIGH-BYTE codes (>127) that resolve to GID 0
-        // this way, veraPDF treats the code as absent from the font → uses
-        // defaultWidthX (Case 1) or .notdef charstring advance (Case 2). We set
-        // cff_enc_explicit_notdef=true to trigger the correct Case below.
+        // CFF encoding table. When it returns GID 0, veraPDF treats the code as
+        // absent → uses defaultWidthX (Case 1) or .notdef advance (Case 2).
         //
-        // RESTRICTED TO code > 127: for low-byte codes, the name-lookup path
-        // (above) is always attempted first and correctly resolves the glyph
-        // via the PDF Differences entry. Using .notdef for code ≤127 would
-        // wrongly overwrite a correct existing width when the named glyph IS in
-        // the CFF charset but Standard encoding doesn't know about it
-        // (e.g. code 1 width 411 → 250 for ABDHHO+Symbol). (#626)
+        // This applies to ALL codes (including ≤127) when we reach this point,
+        // because the name-based lookup (Phase 1 above) already failed. If the
+        // named glyph WERE in the charset, Phase 1 would have returned it.
+        // So GID 0 here is authoritative. (#626, #fix-cff-lowbyte-notdef)
         if let Some(gid) = cff.glyph_index(code as u8) {
             if gid.0 != 0 {
                 return cff.glyph_width(gid).map(|w| w as f64 * scale);
             }
-            // GID 0 via Standard encoding fallback for a high-byte code.
-            if code > 127 {
-                cff_enc_explicit_notdef = true;
-            }
+            // GID 0 via encoding fallback — name lookup already failed above.
+            cff_enc_explicit_notdef = true;
         }
 
         // StandardEncoding fallback for codes absent from the custom Format0/Format1
