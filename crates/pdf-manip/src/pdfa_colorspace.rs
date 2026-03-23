@@ -1626,7 +1626,7 @@ fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
     let mut visited_refs: HashSet<ObjectId> = HashSet::new();
 
     for (&id, obj) in &doc.objects {
-        collect_separations_recursive(doc, id, obj, &mut by_name, &mut visited_refs);
+        collect_separations_recursive(doc, id, obj, &mut by_name, &mut visited_refs, 0);
     }
 
     // Phase 2: For each name with multiple Separation array objects, pick a
@@ -1705,7 +1705,7 @@ fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
     for (id, name, alt, tint) in content_fixes {
         if seen.insert((id, name.clone())) {
             if let Some(obj) = doc.objects.get_mut(&id) {
-                fix_separation_recursive(obj, &name, &alt, &tint);
+                fix_separation_recursive(obj, &name, &alt, &tint, 0);
                 count += 1;
             }
         }
@@ -1718,7 +1718,7 @@ fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
         for obj_id in all_ids {
             if let Some(obj) = doc.objects.get_mut(&obj_id) {
                 for (old_id, new_id) in &redirects {
-                    redirect_references_recursive(obj, *old_id, *new_id);
+                    redirect_references_recursive(obj, *old_id, *new_id, 0);
                 }
             }
         }
@@ -1736,13 +1736,21 @@ fn normalize_separation_colorspaces(doc: &mut Document) -> usize {
     count
 }
 
+// Depth limit for inline-object recursion — prevents stack overflow on
+// pathological PDFs with thousands of nested arrays/dicts. (#oracle-gen-stackoverflow)
+const MAX_OBJECT_DEPTH: usize = 128;
+
 fn collect_separations_recursive(
     doc: &Document,
     id: ObjectId,
     obj: &Object,
     map: &mut std::collections::HashMap<Vec<u8>, Vec<(ObjectId, Object, Object)>>,
     visited_refs: &mut std::collections::HashSet<ObjectId>,
+    depth: usize,
 ) {
+    if depth > MAX_OBJECT_DEPTH {
+        return;
+    }
     match obj {
         Object::Array(arr) => {
             if arr.len() >= 4 {
@@ -1759,23 +1767,23 @@ fn collect_separations_recursive(
                 }
             }
             for item in arr {
-                collect_separations_recursive(doc, id, item, map, visited_refs);
+                collect_separations_recursive(doc, id, item, map, visited_refs, depth + 1);
             }
         }
         Object::Dictionary(dict) => {
             for (_, val) in dict.iter() {
-                collect_separations_recursive(doc, id, val, map, visited_refs);
+                collect_separations_recursive(doc, id, val, map, visited_refs, depth + 1);
             }
         }
         Object::Stream(stream) => {
             for (_, val) in stream.dict.iter() {
-                collect_separations_recursive(doc, id, val, map, visited_refs);
+                collect_separations_recursive(doc, id, val, map, visited_refs, depth + 1);
             }
         }
         Object::Reference(ref_id) => {
             if visited_refs.insert(*ref_id) {
                 if let Ok(resolved) = doc.get_object(*ref_id) {
-                    collect_separations_recursive(doc, *ref_id, resolved, map, visited_refs);
+                    collect_separations_recursive(doc, *ref_id, resolved, map, visited_refs, depth + 1);
                 }
             }
         }
@@ -1784,7 +1792,10 @@ fn collect_separations_recursive(
 }
 
 /// Recursively replace all Reference(old_id) with Reference(new_id) in an object tree.
-fn redirect_references_recursive(obj: &mut Object, old_id: ObjectId, new_id: ObjectId) {
+fn redirect_references_recursive(obj: &mut Object, old_id: ObjectId, new_id: ObjectId, depth: usize) {
+    if depth > MAX_OBJECT_DEPTH {
+        return;
+    }
     match obj {
         Object::Reference(r) => {
             if *r == old_id {
@@ -1793,24 +1804,27 @@ fn redirect_references_recursive(obj: &mut Object, old_id: ObjectId, new_id: Obj
         }
         Object::Array(arr) => {
             for item in arr.iter_mut() {
-                redirect_references_recursive(item, old_id, new_id);
+                redirect_references_recursive(item, old_id, new_id, depth + 1);
             }
         }
         Object::Dictionary(dict) => {
             for (_, val) in dict.iter_mut() {
-                redirect_references_recursive(val, old_id, new_id);
+                redirect_references_recursive(val, old_id, new_id, depth + 1);
             }
         }
         Object::Stream(stream) => {
             for (_, val) in stream.dict.iter_mut() {
-                redirect_references_recursive(val, old_id, new_id);
+                redirect_references_recursive(val, old_id, new_id, depth + 1);
             }
         }
         _ => {}
     }
 }
 
-fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &Object) {
+fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &Object, depth: usize) {
+    if depth > MAX_OBJECT_DEPTH {
+        return;
+    }
     match obj {
         Object::Array(arr) => {
             if arr.len() >= 4 {
@@ -1826,17 +1840,17 @@ fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &
                 }
             }
             for item in arr.iter_mut() {
-                fix_separation_recursive(item, name, alt, tint);
+                fix_separation_recursive(item, name, alt, tint, depth + 1);
             }
         }
         Object::Dictionary(dict) => {
             for (_, val) in dict.iter_mut() {
-                fix_separation_recursive(val, name, alt, tint);
+                fix_separation_recursive(val, name, alt, tint, depth + 1);
             }
         }
         Object::Stream(stream) => {
             for (_, val) in stream.dict.iter_mut() {
-                fix_separation_recursive(val, name, alt, tint);
+                fix_separation_recursive(val, name, alt, tint, depth + 1);
             }
         }
         _ => {}
