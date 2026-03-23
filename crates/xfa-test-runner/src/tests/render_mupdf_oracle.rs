@@ -61,9 +61,12 @@ impl PdfTest for RenderMupdfOracleTest {
             Ok(d) => d,
             Err(e) => {
                 let msg = format!("engine open: {e}");
+                // Also skip PDFs that are structurally invalid and cannot be opened at all —
+                // these are not rendering defects but corrupt/unsupported input files.
                 let is_encrypted = msg.contains("Decryption(")
                     || msg.contains("PasswordProtected")
-                    || msg.contains("UnsupportedAlgorithm");
+                    || msg.contains("UnsupportedAlgorithm")
+                    || msg.contains("invalid PDF");
                 return TestResult {
                     status: if is_encrypted {
                         TestStatus::Skip

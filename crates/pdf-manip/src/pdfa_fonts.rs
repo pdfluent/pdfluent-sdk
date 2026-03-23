@@ -7021,7 +7021,7 @@ fn lookup_unicode_cmap_31_raw(
 fn has_cmap_31(face: &ttf_parser::Face) -> bool {
     face.tables()
         .cmap
-        .map_or(false, |cmap| {
+        .is_some_and(|cmap| {
             cmap.subtables.into_iter().any(|s| {
                 s.platform_id == ttf_parser::PlatformId::Windows && s.encoding_id == 1
             })
