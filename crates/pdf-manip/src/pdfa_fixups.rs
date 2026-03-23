@@ -3574,7 +3574,7 @@ fn fix_overflow_integers(doc: &mut Document) -> usize {
             Some(o) => o.clone(),
             None => continue,
         };
-        let (fixed, n) = fix_overflow_in_object(obj);
+        let (fixed, n) = fix_overflow_in_object(obj, 0);
         if n > 0 {
             doc.objects.insert(id, fixed);
             count += n;
@@ -3583,7 +3583,14 @@ fn fix_overflow_integers(doc: &mut Document) -> usize {
     count
 }
 
-fn fix_overflow_in_object(obj: Object) -> (Object, usize) {
+// Depth limit for inline-object recursion — prevents stack overflow on
+// pathological PDFs with thousands of nested arrays/dicts. (#oracle-gen-stackoverflow)
+const MAX_OBJECT_DEPTH: usize = 128;
+
+fn fix_overflow_in_object(obj: Object, depth: usize) -> (Object, usize) {
+    if depth > MAX_OBJECT_DEPTH {
+        return (obj, 0);
+    }
     match obj {
         Object::Integer(v) if v > i64::from(i32::MAX) => (Object::Integer(i64::from(i32::MAX)), 1),
         Object::Integer(v) if v < i64::from(i32::MIN) => (Object::Integer(i64::from(i32::MIN)), 1),
@@ -3592,7 +3599,7 @@ fn fix_overflow_in_object(obj: Object) -> (Object, usize) {
             let new_arr: Vec<Object> = arr
                 .into_iter()
                 .map(|o| {
-                    let (fixed, n) = fix_overflow_in_object(o);
+                    let (fixed, n) = fix_overflow_in_object(o, depth + 1);
                     total += n;
                     fixed
                 })
@@ -3603,7 +3610,7 @@ fn fix_overflow_in_object(obj: Object) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in dict.into_iter() {
-                let (fixed, n) = fix_overflow_in_object(val);
+                let (fixed, n) = fix_overflow_in_object(val, depth + 1);
                 total += n;
                 new_dict.set(key, fixed);
             }
@@ -3613,7 +3620,7 @@ fn fix_overflow_in_object(obj: Object) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in s.dict.into_iter() {
-                let (fixed, n) = fix_overflow_in_object(val);
+                let (fixed, n) = fix_overflow_in_object(val, depth + 1);
                 total += n;
                 new_dict.set(key, fixed);
             }
@@ -3636,7 +3643,7 @@ fn fix_long_strings(doc: &mut Document) -> usize {
             Some(o) => o.clone(),
             None => continue,
         };
-        let (fixed, n) = fix_long_strings_in_object(obj);
+        let (fixed, n) = fix_long_strings_in_object(obj, 0);
         if n > 0 {
             doc.objects.insert(id, fixed);
             count += n;
@@ -3645,7 +3652,10 @@ fn fix_long_strings(doc: &mut Document) -> usize {
     count
 }
 
-fn fix_long_strings_in_object(obj: Object) -> (Object, usize) {
+fn fix_long_strings_in_object(obj: Object, depth: usize) -> (Object, usize) {
+    if depth > MAX_OBJECT_DEPTH {
+        return (obj, 0);
+    }
     const MAX_STRING_LEN: usize = 32767;
     match obj {
         Object::String(ref s, fmt) if s.len() > MAX_STRING_LEN => {
@@ -3657,7 +3667,7 @@ fn fix_long_strings_in_object(obj: Object) -> (Object, usize) {
             let new_arr: Vec<Object> = arr
                 .into_iter()
                 .map(|o| {
-                    let (fixed, n) = fix_long_strings_in_object(o);
+                    let (fixed, n) = fix_long_strings_in_object(o, depth + 1);
                     total += n;
                     fixed
                 })
@@ -3668,7 +3678,7 @@ fn fix_long_strings_in_object(obj: Object) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in dict.into_iter() {
-                let (fixed, n) = fix_long_strings_in_object(val);
+                let (fixed, n) = fix_long_strings_in_object(val, depth + 1);
                 total += n;
                 new_dict.set(key, fixed);
             }
@@ -3678,7 +3688,7 @@ fn fix_long_strings_in_object(obj: Object) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in s.dict.into_iter() {
-                let (fixed, n) = fix_long_strings_in_object(val);
+                let (fixed, n) = fix_long_strings_in_object(val, depth + 1);
                 total += n;
                 new_dict.set(key, fixed);
             }

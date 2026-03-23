@@ -273,7 +273,7 @@ pub fn remove_embedded_files(doc: &mut Document) -> usize {
     if let Some(nid) = names_id {
         if let Some(Object::Dictionary(names)) = doc.objects.get(&nid) {
             if let Ok(Object::Reference(ef_id)) = names.get(b"EmbeddedFiles") {
-                count += count_name_tree_entries(doc, *ef_id);
+                count += count_name_tree_entries(doc, *ef_id, 0);
             }
         }
     }
@@ -3002,7 +3002,12 @@ fn get_catalog_id(doc: &Document) -> Option<ObjectId> {
     }
 }
 
-fn count_name_tree_entries(doc: &Document, tree_id: ObjectId) -> usize {
+fn count_name_tree_entries(doc: &Document, tree_id: ObjectId, depth: usize) -> usize {
+    // Guard against circular name-tree references or excessive depth.
+    // (#oracle-gen-stackoverflow)
+    if depth > 64 {
+        return 0;
+    }
     if let Some(Object::Dictionary(tree)) = doc.objects.get(&tree_id) {
         if let Ok(Object::Array(names)) = tree.get(b"Names") {
             return names.len() / 2;
@@ -3012,7 +3017,7 @@ fn count_name_tree_entries(doc: &Document, tree_id: ObjectId) -> usize {
                 .iter()
                 .map(|kid| {
                     if let Object::Reference(kid_id) = kid {
-                        count_name_tree_entries(doc, *kid_id)
+                        count_name_tree_entries(doc, *kid_id, depth + 1)
                     } else {
                         0
                     }
