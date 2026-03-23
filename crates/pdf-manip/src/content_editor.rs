@@ -19,9 +19,50 @@ pub struct ContentEditor {
     operations: Vec<Operation>,
 }
 
+/// Maximum array nesting depth allowed in a content stream before we reject it.
+/// lopdf's array parser is mutually recursive (array → _direct_object → array),
+/// so a content stream containing thousands of nested `[` (e.g. adversarial PDFs
+/// from the poppler fuzzing corpus) causes a stack overflow. Reject such streams
+/// before passing them to `Content::decode`. Normal PDF content never exceeds ~5
+/// levels of nesting; 64 is a generous ceiling.
+const MAX_CONTENT_ARRAY_DEPTH: usize = 64;
+
+/// Check whether a raw content stream byte slice has excessive array nesting.
+/// Returns `true` when the stream should be rejected (nesting too deep).
+fn content_stream_too_deeply_nested(stream: &[u8]) -> bool {
+    let mut depth: usize = 0;
+    for &b in stream {
+        match b {
+            b'[' => {
+                depth += 1;
+                if depth > MAX_CONTENT_ARRAY_DEPTH {
+                    return true;
+                }
+            }
+            b']' => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 impl ContentEditor {
     /// Decode a content stream from raw bytes.
+    ///
+    /// Returns `Err` if the stream has pathological array nesting (depth >
+    /// `MAX_CONTENT_ARRAY_DEPTH`) to avoid a stack overflow in lopdf's
+    /// recursive array parser. All callers handle `Err` gracefully (skip/continue).
     pub fn from_stream(stream: &[u8]) -> Result<Self> {
+        // Guard against adversarial content streams with thousands of nested `[`
+        // that cause lopdf's recursive array parser to overflow the call stack.
+        // Fixes stack overflow on poppler fuzzing corpus PDFs (e.g. poppler-43279-0.pdf).
+        if content_stream_too_deeply_nested(stream) {
+            return Err(ManipError::Other(
+                "content stream rejected: array nesting too deep".into(),
+            ));
+        }
         let content = Content::decode(stream)
             .map_err(|e| ManipError::Other(format!("content decode: {e}")))?;
         Ok(Self {
