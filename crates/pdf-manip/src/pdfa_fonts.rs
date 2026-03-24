@@ -9639,7 +9639,13 @@ fn cff_width_for_code(
     let mut name_found = false;
     let name_from_cff_se_override = false;
     if has_pdf_encoding {
-        let glyph_name = if let Some(name) = differences.get(&code) {
+        let glyph_name = if code == 173 {
+            // veraPDF normalizes U+00AD (soft hyphen, WinAnsi/MacRoman code 173) →
+            // U+002D (hyphen) for §6.2.11.5 width comparison, regardless of the PDF
+            // Encoding or Differences. Always use "hyphen" to match veraPDF's
+            // canonical mapping. (#fix-cff-softhyphen-canonical)
+            "hyphen".to_string()
+        } else if let Some(name) = differences.get(&code) {
             name.clone()
         } else if enc_name.is_empty() {
             // No BaseEncoding, not in Differences: PDF spec §8.5.3 says "use the
