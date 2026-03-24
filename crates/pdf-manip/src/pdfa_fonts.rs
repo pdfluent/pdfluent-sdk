@@ -8906,10 +8906,10 @@ struct CffFontCtx {
     /// code → GID for custom-encoding fonts (CFF enc_offset > 1).
     enc_map: std::collections::HashMap<u8, u16>,
     /// Glyph name → advance width (PDF glyph-space, after scale).
-    /// Only contains glyphs accessible to veraPDF: standard names under a standard
-    /// SID (< STANDARD_NAMES.len()), or any non-standard name. Absent means the
-    /// glyph is either not in the CFF charset or stored under a custom SID for a
-    /// standard name (veraPDF can't reach it via SID lookup → uses defaultWidthX).
+    /// Contains ALL glyphs in the CFF charset. When a PDF /Encoding is present,
+    /// veraPDF resolves glyphs by name iteration (not SID lookup), so custom SIDs
+    /// are reachable. Used exclusively by compute_cff_corrections_by_name which
+    /// always has has_pdf_encoding=true.
     name_to_width: std::collections::HashMap<String, f64>,
 }
 
@@ -8923,7 +8923,13 @@ fn build_cff_font_ctx(cff: &cff_parser::Table, font_data: &[u8], scale: f64) -> 
     };
 
     // Pre-scan the CFF charset: glyph name → width.
-    // Mirrors `find_cff_glyph_width_by_name_fractional` but runs once for all glyphs.
+    // Include ALL glyphs regardless of SID. When a PDF /Encoding is present
+    // (which is always the case when this map is used via compute_cff_corrections_
+    // by_name), veraPDF resolves glyphs by NAME iteration, not SID lookup.
+    // Standard names under custom SIDs (≥391) ARE findable by veraPDF's name
+    // path — only the CFF-encoding-only path (no PDF /Encoding) uses SID lookup
+    // and would miss them, but that path doesn't use this map.
+    // (#fix-cff-name-map-include-all)
     let num_glyphs = cff.number_of_glyphs();
     let mut name_to_width = std::collections::HashMap::with_capacity(num_glyphs as usize);
     for gid_raw in 0..num_glyphs {
@@ -8931,14 +8937,6 @@ fn build_cff_font_ctx(cff: &cff_parser::Table, font_data: &[u8], scale: f64) -> 
         let Some(name) = cff.glyph_name(gid) else {
             continue;
         };
-        // Standard CFF name: only accessible when stored under a standard SID.
-        // Custom SID → veraPDF's SID-based lookup fails → uses defaultWidthX.
-        if cff_parser::STANDARD_NAMES.contains(&name) {
-            let sid = cff.charset.gid_to_sid(gid).map(|s| s.0).unwrap_or(u16::MAX);
-            if sid as usize >= cff_parser::STANDARD_NAMES.len() {
-                continue;
-            }
-        }
         if let Some(w) = cff.glyph_width(gid) {
             name_to_width.insert(name.to_string(), w as f64 * scale);
         }
