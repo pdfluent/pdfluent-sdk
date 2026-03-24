@@ -31,70 +31,66 @@ fn main() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/xfa-data");
     std::fs::create_dir_all(&out_dir).expect("create xfa-data fixtures dir");
 
-    let cases: &[(&str, &str, &str, &str)] = &[
-        (
-            "personal_info",
-            "Personal info: name, email, phone",
-            TMPL_PERSONAL,
-            DATA_PERSONAL,
-        ),
-        (
-            "address",
-            "Address fields: street, city, postal code, country",
-            TMPL_ADDRESS,
-            DATA_ADDRESS,
-        ),
-        (
-            "date_fields",
-            "Date fields: birth date, issue date, expiry date",
-            TMPL_DATES,
-            DATA_DATES,
-        ),
-        (
-            "repeating_rows",
-            "Repeating rows: 3 invoice line items",
-            TMPL_ROWS,
-            DATA_ROWS,
-        ),
-        (
-            "combined",
-            "Combined: personal + address + dates",
-            TMPL_COMBINED,
-            DATA_COMBINED,
-        ),
-        (
-            "nested_groups",
-            "Nested groups: company → department → employee",
-            TMPL_NESTED,
-            DATA_NESTED,
-        ),
-        (
-            "unicode_values",
-            "Unicode values: accented chars and symbols",
-            TMPL_UNICODE,
-            DATA_UNICODE,
-        ),
-        (
-            "numeric_values",
-            "Numeric values: integers and decimals",
-            TMPL_NUMERIC,
-            DATA_NUMERIC,
-        ),
-        (
-            "multipage_data",
-            "Multi-page: 10 data-bound fields",
-            TMPL_MULTIPAGE,
-            DATA_MULTIPAGE,
-        ),
-        (
-            "mixed_empty",
-            "Mix: some fields filled, some empty",
-            TMPL_MIXED,
-            DATA_MIXED,
-        ),
+    // Static cases: (suffix, description, template_body, data_body)
+    let mut cases: Vec<(&str, &str, String, String)> = vec![
+        ("personal_info", "Personal info: name, email, phone",
+            TMPL_PERSONAL.to_string(), DATA_PERSONAL.to_string()),
+        ("address", "Address fields: street, city, postal code, country",
+            TMPL_ADDRESS.to_string(), DATA_ADDRESS.to_string()),
+        ("date_fields", "Date fields: birth date, issue date, expiry date",
+            TMPL_DATES.to_string(), DATA_DATES.to_string()),
+        ("repeating_rows", "Repeating rows: 3 invoice line items",
+            TMPL_ROWS.to_string(), DATA_ROWS.to_string()),
+        ("combined", "Combined: personal + address + dates",
+            TMPL_COMBINED.to_string(), DATA_COMBINED.to_string()),
+        ("nested_groups", "Nested groups: company → department → employee",
+            TMPL_NESTED.to_string(), DATA_NESTED.to_string()),
+        ("unicode_values", "Unicode values: accented chars and symbols",
+            TMPL_UNICODE.to_string(), DATA_UNICODE.to_string()),
+        ("numeric_values", "Numeric values: integers and decimals",
+            TMPL_NUMERIC.to_string(), DATA_NUMERIC.to_string()),
+        ("multipage_data", "Multi-page: 10 data-bound fields",
+            TMPL_MULTIPAGE.to_string(), DATA_MULTIPAGE.to_string()),
+        ("mixed_empty", "Mix: some fields filled, some empty",
+            TMPL_MIXED.to_string(), DATA_MIXED.to_string()),
     ];
 
-    for (i, &(suffix, desc, tmpl, data)) in cases.iter().enumerate() {
+    // Edge cases with dynamically generated content
+    cases.push((
+        "null_values",
+        "Null and empty element values in datasets",
+        TMPL_NULL_VALUES.to_string(),
+        DATA_NULL_VALUES.to_string(),
+    ));
+    cases.push((
+        "deep_nesting",
+        "Deeply nested data groups (5 levels)",
+        TMPL_DEEP.to_string(),
+        DATA_DEEP.to_string(),
+    ));
+    cases.push((
+        "cjk_unicode",
+        "CJK characters, emoji (via XML entity), and mixed scripts",
+        TMPL_CJK.to_string(),
+        DATA_CJK.to_string(),
+    ));
+    cases.push((
+        "empty_collection",
+        "Empty collection element (0 child items)",
+        TMPL_EMPTY_COLL.to_string(),
+        DATA_EMPTY_COLL.to_string(),
+    ));
+
+    // Large dataset: 100 fields generated at runtime
+    let (large_tmpl, large_data) = build_large_dataset(100);
+    cases.push((
+        "large_dataset",
+        "Large dataset: 100 data-bound fields",
+        large_tmpl,
+        large_data,
+    ));
+
+    for (i, (suffix, desc, tmpl, data)) in cases.iter().enumerate() {
         let filename = format!("xd_{:02}_{suffix}.pdf", i + 1);
         let path = out_dir.join(&filename);
         let xdp = build_xdp(desc, tmpl, data);
@@ -439,6 +435,155 @@ const DATA_MIXED: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-d
       <filled3>Gamma value</filled3>
     </mixedForm>
   </xfa:data>"#;
+
+// ---------------------------------------------------------------------------
+// Edge case templates and data
+// ---------------------------------------------------------------------------
+
+const TMPL_NULL_VALUES: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="nullForm" layout="tb" w="7.5in">
+      <field name="presentField" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="emptyField" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="nilField" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="anotherPresent" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+// emptyField has empty text; nilField uses xsi:nil; both should roundtrip correctly.
+const DATA_NULL_VALUES: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <nullForm>
+      <presentField>I have a value</presentField>
+      <emptyField></emptyField>
+      <nilField xsi:nil="true"/>
+      <anotherPresent>Also present</anotherPresent>
+    </nullForm>
+  </xfa:data>"#;
+
+const TMPL_DEEP: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="level1" layout="tb" w="7.5in">
+      <field name="topField" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+// 5-level deep nesting: data.level1.level2.level3.level4.level5.deepValue
+const DATA_DEEP: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <level1>
+      <topField>top</topField>
+      <level2>
+        <l2Field>level 2</l2Field>
+        <level3>
+          <l3Field>level 3</l3Field>
+          <level4>
+            <l4Field>level 4</l4Field>
+            <level5>
+              <deepValue>deep leaf at level 5</deepValue>
+            </level5>
+          </level4>
+        </level3>
+      </level2>
+    </level1>
+  </xfa:data>"#;
+
+const TMPL_CJK: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="cjkForm" layout="tb" w="7.5in">
+      <field name="japanese" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="chinese" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="korean" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="emoji" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="mixed" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+// Emoji via XML numeric character references (safe in XML 1.0).
+const DATA_CJK: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <cjkForm>
+      <japanese>こんにちは世界</japanese>
+      <chinese>你好世界</chinese>
+      <korean>안녕하세요</korean>
+      <emoji>&#x1F600; &#x1F4C4; &#x2705;</emoji>
+      <mixed>PDF &#x1F4C4; XFA &#x2022; FormCalc</mixed>
+    </cjkForm>
+  </xfa:data>"#;
+
+const TMPL_EMPTY_COLL: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="collForm" layout="tb" w="7.5in">
+      <field name="title" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+// items element has no children: empty collection with 0 items.
+// DataDom will see it as a DataValue with empty text.
+const DATA_EMPTY_COLL: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <collForm>
+      <title>Empty collection test</title>
+      <items></items>
+      <count>0</count>
+    </collForm>
+  </xfa:data>"#;
+
+/// Build template and data for a large dataset (n fields).
+fn build_large_dataset(n: usize) -> (String, String) {
+    let field_defs: String = (1..=n)
+        .map(|i| {
+            format!(
+                r#"      <field name="f{i:03}" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let tmpl = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="bigForm" layout="tb" w="7.5in">
+{field_defs}
+    </subform>
+  </subform>"#
+    );
+
+    let data_fields: String = (1..=n)
+        .map(|i| format!("      <f{i:03}>Value {i:03}</f{i:03}>"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let data = format!(
+        r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <bigForm>
+{data_fields}
+    </bigForm>
+  </xfa:data>"#
+    );
+
+    (tmpl, data)
+}
 
 // ---------------------------------------------------------------------------
 // XDP + PDF builders
