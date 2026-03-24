@@ -40,7 +40,7 @@ use pdf_interpret::FillRule;
 use pdf_interpret::InterpreterSettings;
 use pdf_interpret::pdf_syntax::Pdf;
 use pdf_interpret::pdf_syntax::page::Page;
-use pdf_interpret::util::{PageExt, RectExt};
+use pdf_interpret::util::PageExt;
 use pdf_interpret::{BlendMode, Context};
 use pdf_interpret::{ClipPath, interpret_page};
 use std::ops::RangeInclusive;
@@ -137,10 +137,20 @@ pub fn render(
     device
         .ctx
         .fill_rect(&Rect::new(0.0, 0.0, pix_width as f64, pix_height as f64));
-    let mut clip_path = page.intersected_crop_box().to_kurbo().to_path(0.1);
-    clip_path.apply_affine(initial_transform);
+    // Clip to the canvas bounds (integer pixel dimensions) rather than the
+    // sub-pixel-precise transformed CropBox rectangle.
+    // MuPDF clips to the integer pixel canvas boundary (ceil(crop_box × scale));
+    // it does not impose a separate sub-pixel-accurate CropBox clip.  Using the
+    // exact transformed CropBox rect causes anti-aliased edge columns/rows that
+    // differ from MuPDF at the sub-pixel boundary (e.g. a 25 pt page at 150 DPI
+    // = 52.083 px → the last pixel column ends up near-white in our render but
+    // fully-painted dark red in MuPDF).  Clipping to the integer canvas bounds
+    // reproduces MuPDF's behaviour while still preventing content from bleeding
+    // outside the canvas.  For the case where CropBox extends beyond MediaBox
+    // (gen-802), content outside the MediaBox is simply unpainted (background
+    // colour), so no visible difference results.  (#558, follow-up to #544)
     device.push_clip_path(&ClipPath {
-        path: clip_path,
+        path: Rect::new(0.0, 0.0, pix_width as f64, pix_height as f64).to_path(0.1),
         fill: FillRule::NonZero,
     });
 
@@ -295,3 +305,4 @@ pub(crate) fn derive_settings(settings: &vello_cpu::RenderSettings) -> vello_cpu
         ..*settings
     }
 }
+
