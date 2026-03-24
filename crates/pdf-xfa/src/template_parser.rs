@@ -116,11 +116,19 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let bm = parse_box_model(elem);
 
+    // Hidden/invisible/inactive fields keep their layout space but render no
+    // content or borders. We represent this by returning an empty value. (#557)
+    let hidden = is_hidden(elem);
+
     // Extract the field value (from <value><text>…</text></value>).
-    let value = extract_value_text(elem).unwrap_or_default();
+    let value = if hidden {
+        String::new()
+    } else {
+        extract_value_text(elem).unwrap_or_default()
+    };
 
     // Extract caption text (from <caption><value><text>…</text></value>).
-    let caption_text = extract_caption_text(elem);
+    let caption_text = if hidden { None } else { extract_caption_text(elem) };
     let mut bm_with_caption = bm.clone();
     if let Some(ref cap_text) = caption_text {
         bm_with_caption.caption = Some(Caption {
@@ -130,9 +138,18 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         });
     }
 
+    // Hidden fields keep layout space but render neither content nor borders.
+    // Map them to Draw nodes with empty content — Draw nodes don't render
+    // borders, keeping the visual output clean. (#557)
+    let node_type = if hidden {
+        FormNodeType::Draw { content: String::new() }
+    } else {
+        FormNodeType::Field { value }
+    };
+
     let node = FormNode {
         name,
-        node_type: FormNodeType::Field { value },
+        node_type,
         box_model: bm_with_caption,
         layout: LayoutStrategy::Positioned,
         children: Vec::new(),
@@ -151,7 +168,12 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
 fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let bm = parse_box_model(elem);
-    let content = extract_value_text(elem).unwrap_or_default();
+    // Hidden/invisible/inactive draw elements keep layout space but show nothing.
+    let content = if is_hidden(elem) {
+        String::new()
+    } else {
+        extract_value_text(elem).unwrap_or_default()
+    };
 
     let node = FormNode {
         name,
@@ -168,6 +190,16 @@ fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     };
     let _ = tree;
     Ok(node)
+}
+
+/// Return `true` when the element has a `presence` attribute value that means
+/// the element should not be rendered (`"hidden"`, `"invisible"`, `"inactive"`).
+/// Elements with no `presence` attribute or `presence="visible"` are rendered.
+fn is_hidden(elem: Node<'_, '_>) -> bool {
+    matches!(
+        attr(elem, "presence"),
+        Some("hidden") | Some("invisible") | Some("inactive")
+    )
 }
 
 /// Parse font size from `<font size="…">` child element (if present).
@@ -597,6 +629,63 @@ mod tests {
                 );
             }
             other => panic!("expected Draw, got {other:?}"),
+        }
+    }
+
+    /// Draw and field elements with presence="hidden" must not expose content
+    /// to the renderer (content should be empty) while still occupying layout
+    /// space (node is still present in the tree). (#557)
+    #[test]
+    fn hidden_elements_have_empty_content() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="body" layout="tb" w="7.5in">
+      <draw name="visible_draw" w="7in" h="0.5in">
+        <value><text>Visible text</text></value>
+      </draw>
+      <draw name="hidden_draw" w="7in" h="0.5in" presence="hidden">
+        <value><text>DRAFT</text></value>
+      </draw>
+      <field name="hidden_field" w="3in" h="0.3in" presence="hidden">
+        <value><text>secret</text></value>
+      </field>
+    </subform>
+  </subform>
+</template>"#;
+        let (tree, root_id) = parse_template(xml).unwrap();
+
+        let visible = find_node_by_name(&tree, root_id, "visible_draw").unwrap();
+        match &visible.node_type {
+            FormNodeType::Draw { content } => assert_eq!(content, "Visible text"),
+            other => panic!("expected Draw, got {other:?}"),
+        }
+
+        let hidden_draw = find_node_by_name(&tree, root_id, "hidden_draw").unwrap();
+        match &hidden_draw.node_type {
+            FormNodeType::Draw { content } => {
+                assert!(content.is_empty(), "hidden draw should have no content, got: {content:?}")
+            }
+            other => panic!("expected Draw, got {other:?}"),
+        }
+
+        // Hidden fields are remapped to Draw with empty content so the
+        // renderer skips both text and border drawing. (#557)
+        let hidden_field = find_node_by_name(&tree, root_id, "hidden_field").unwrap();
+        match &hidden_field.node_type {
+            FormNodeType::Draw { content } => {
+                assert!(
+                    content.is_empty(),
+                    "hidden field (remapped to Draw) should have no content, got: {content:?}"
+                )
+            }
+            other => panic!("expected Draw (remapped from hidden Field), got {other:?}"),
         }
     }
 }
