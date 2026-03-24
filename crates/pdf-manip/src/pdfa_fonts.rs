@@ -6967,11 +6967,14 @@ fn get_truetype_glyph_width_fractional(
     }
 
     // Character not found in (3,1) cmap. Codes 128-159 differ between Mac Roman
-    // and WinAnsi — do NOT fall through to Mac (1,0) cmap for this range as it
-    // maps to different glyphs (e.g. accented capitals vs curly quotes).
-    // Instead, use .notdef (GID 0) advance — veraPDF maps absent glyphs to GID 0
-    // and uses that width for §6.2.11.5 comparison. (#fix-tt-cmap-145-146)
-    if (128..=159).contains(&code) {
+    // and WinAnsi — do NOT fall through to Mac (1,0) cmap for WinAnsiEncoding
+    // fonts for this range, as WinAnsi 128-159 map to control characters / CP1252
+    // extras that are absent from TrueType fonts. Use .notdef (GID 0) advance —
+    // veraPDF maps absent glyphs to GID 0 and uses that width for §6.2.11.5.
+    // For MacRomanEncoding or no-encoding fonts, 128-159 may be valid Mac glyphs
+    // (e.g. "dagger", curly quotes) present in the (1,0) cmap — fall through.
+    // (#fix-tt-cmap-145-146, #507)
+    if enc_name == "WinAnsiEncoding" && (128..=159).contains(&code) {
         return face
             .glyph_hor_advance(ttf_parser::GlyphId(0))
             .map(|w| w as f64 * scale);
@@ -6989,6 +6992,20 @@ fn get_truetype_glyph_width_fractional(
     if let Some(fb_ch) = canonical_fallback {
         if let Some(gid) = lookup_unicode_cmap_31(face, fb_ch as u32) {
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+        }
+    }
+
+    // veraPDF §6.2.11.5 locates TrueType glyphs via glyph-name lookup:
+    // encoding[code] → Unicode → AGL glyph name → font name table → GID.
+    // Try this before returning notdef — the glyph may be present by name
+    // even when absent from the (3,1) cmap (e.g. "quoteright" at WinAnsi
+    // code 146, U+2019, is often in the font's name table but not in
+    // a subsetted (3,1) cmap). (#507, #fix-tt-agl-name-fallback)
+    if let Some(agl_name) = unicode_to_agl_name(ch) {
+        if let Some(gid) = face.glyph_index_by_name(&agl_name) {
+            if gid.0 != 0 {
+                return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
+            }
         }
     }
 
