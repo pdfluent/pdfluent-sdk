@@ -26,29 +26,70 @@ fn debug_step_by_step() {
 
     step!("lopdf load", {
         let doc = lopdf::Document::load_mem(&data);
-        eprintln!("(pages={})", doc.as_ref().map(|d| d.get_pages().len()).unwrap_or(0));
+        eprintln!(
+            "(pages={})",
+            doc.as_ref().map(|d| d.get_pages().len()).unwrap_or(0)
+        );
     });
 
     let mut doc = lopdf::Document::load_mem(&data).unwrap_or_default();
-    step!("cleanup_for_pdfa", { let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false); });
-    step!("embed_fonts", { let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc); });
-    step!("fix_cff_widths", { pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc); });
-    step!("fix_truetype_cid_widths", { pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc); });
-    step!("fix_type1_charset", { pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc); });
-    step!("fix_truetype_encoding", { pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc); });
-    step!("fix_truetype_unicode_cmap", { pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc); });
-    step!("fix_notdef_glyph_refs", { pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc); });
-    step!("fix_cid_font_notdef", { pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc); });
-    step!("fix_symbolic_font_notdef_streams", { pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc); });
-    step!("fix_undefined_encoding_codes", { pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc); });
-    step!("fix_symbolic_flags", { pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc); });
-    step!("fix_missing_simple_font_widths", { pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc); });
-    step!("fix_font_width_mismatches", { pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc); });
-    step!("fix_symbolic_font_widths", { pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc); });
-    step!("fix_cidset", { pdf_manip::pdfa_fonts::fix_cidset(&mut doc); });
-    step!("normalize_colorspaces", { let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc); });
-    step!("run_fixups", { pdf_manip::pdfa_fixups::run_fixups(&mut doc); });
-    step!("repair_xmp", { let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None); });
+    step!("cleanup_for_pdfa", {
+        let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false);
+    });
+    step!("embed_fonts", {
+        let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
+    });
+    step!("fix_cff_widths", {
+        pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
+    });
+    step!("fix_truetype_cid_widths", {
+        pdf_manip::pdfa_fonts::fix_truetype_cid_widths(&mut doc);
+    });
+    step!("fix_type1_charset", {
+        pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
+    });
+    step!("fix_truetype_encoding", {
+        pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc);
+    });
+    step!("fix_truetype_unicode_cmap", {
+        pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
+    });
+    step!("fix_notdef_glyph_refs", {
+        pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);
+    });
+    step!("fix_cid_font_notdef", {
+        pdf_manip::pdfa_fonts::fix_cid_font_notdef(&mut doc);
+    });
+    step!("fix_symbolic_font_notdef_streams", {
+        pdf_manip::pdfa_fonts::fix_symbolic_font_notdef_streams(&mut doc);
+    });
+    step!("fix_undefined_encoding_codes", {
+        pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc);
+    });
+    step!("fix_symbolic_flags", {
+        pdf_manip::pdfa_fonts::fix_symbolic_flags(&mut doc);
+    });
+    step!("fix_missing_simple_font_widths", {
+        pdf_manip::pdfa_fonts::fix_missing_simple_font_widths(&mut doc);
+    });
+    step!("fix_font_width_mismatches", {
+        pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc);
+    });
+    step!("fix_symbolic_font_widths", {
+        pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc);
+    });
+    step!("fix_cidset", {
+        pdf_manip::pdfa_fonts::fix_cidset(&mut doc);
+    });
+    step!("normalize_colorspaces", {
+        let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc);
+    });
+    step!("run_fixups", {
+        pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+    });
+    step!("repair_xmp", {
+        let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None);
+    });
     step!("save", {
         let mut saved = Vec::new();
         doc.save_to(&mut saved).unwrap();
@@ -69,6 +110,7 @@ fn save_converted_for_debug() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -202,6 +244,7 @@ fn debug_gen626_symbol_widths_trace() {
     let _ = pdf_manip::pdfa_fonts::embed_fonts(&mut doc);
     check!("after embed_fonts");
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     pdf_manip::pdfa_fonts::fix_cff_widths(&mut doc);
     check!("after fix_cff_widths");
     pdf_manip::pdfa_fonts::fix_type1_charset(&mut doc);
@@ -1259,6 +1302,7 @@ fn debug_round23_failures() {
         let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -2117,6 +2161,7 @@ fn debug_gen319_fix_trace() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -2845,6 +2890,7 @@ fn debug_gen319_full_pipeline() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -3060,6 +3106,7 @@ fn debug_gen698_save_converted() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -3111,6 +3158,7 @@ fn debug_gen152_save_converted() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -3242,6 +3290,7 @@ fn debug_gen698_width_trace() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -3634,6 +3683,7 @@ fn debug_gen152_find_corruption() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -3687,6 +3737,7 @@ fn debug_gen152_full_convert() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -4764,6 +4815,7 @@ fn debug_isartor635_convert() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -4850,6 +4902,7 @@ fn debug_pdfa_fails_all_convert() {
         let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -5570,6 +5623,7 @@ fn debug_batch_6_2_11_5() {
         let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -6121,6 +6175,7 @@ fn debug_gen724_width_trace() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -6394,6 +6449,7 @@ fn debug_gen997_symbol_trace() {
     let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     report!("after fix_mislabeled", &doc);
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
     let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
@@ -6755,6 +6811,7 @@ fn debug_melebe_trace() {
     melebe_w227(&doc, "fix_stub");
 
     let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
     melebe_w227(&doc, "fix_mislabel");
 
     let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
@@ -6906,6 +6963,7 @@ fn debug_w6211_batch() {
         let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
+    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
