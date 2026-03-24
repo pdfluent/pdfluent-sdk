@@ -139,6 +139,20 @@ pub enum MeasurementUnit {
     Em,
 }
 
+/// Horizontal text alignment (XFA `<para hAlign>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    /// Left-aligned (default).
+    #[default]
+    Left,
+    /// Centered.
+    Center,
+    /// Right-aligned.
+    Right,
+    /// Justified (treated as left for simple text rendering).
+    Justify,
+}
+
 /// Layout strategy for a container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LayoutStrategy {

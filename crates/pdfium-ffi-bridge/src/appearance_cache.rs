@@ -88,7 +88,9 @@ fn hash_content(content: &LayoutContent) -> u64 {
             mix(&mut h, b"text:");
             mix(&mut h, text.as_bytes());
         }
-        LayoutContent::WrappedText { lines, font_size } => {
+        LayoutContent::WrappedText {
+            lines, font_size, ..
+        } => {
             mix(&mut h, b"wrapped:");
             for line in lines {
                 mix(&mut h, line.as_bytes());
@@ -319,7 +321,9 @@ fn generate_appearance(
     match &node.content {
         LayoutContent::Field { value } => field_appearance(value, width, height, config),
         LayoutContent::Text(text) => draw_appearance(text, width, height, config),
-        LayoutContent::WrappedText { lines, font_size } => {
+        LayoutContent::WrappedText {
+            lines, font_size, ..
+        } => {
             let line_height = font_size * 1.2;
             multiline_appearance(lines, *font_size, line_height, width, height, config)
         }

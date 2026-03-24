@@ -684,6 +684,7 @@ mod tests {
             content: LayoutContent::WrappedText {
                 lines: vec![text.to_string()],
                 font_size: 12.0,
+                text_align: xfa_layout_engine::types::TextAlign::Left,
             },
             children: vec![],
         }

@@ -155,7 +155,9 @@ fn emit_node_commands(
                 });
             }
         }
-        LayoutContent::WrappedText { lines, font_size } => {
+        LayoutContent::WrappedText {
+            lines, font_size, ..
+        } => {
             let fs = *font_size;
             let line_height = fs * 1.2;
             if !lines.is_empty() {
@@ -271,6 +273,7 @@ mod tests {
                 content: LayoutContent::WrappedText {
                     lines: vec!["Line 1".into(), "Line 2".into()],
                     font_size: 10.0,
+                    text_align: xfa_layout_engine::types::TextAlign::Left,
                 },
                 children: vec![],
             }],

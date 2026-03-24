@@ -133,7 +133,9 @@ fn collect_appearances(
         let ap = match &node.content {
             LayoutContent::Field { value } => Some(field_appearance(value, w, h, config)),
             LayoutContent::Text(text) => Some(draw_appearance(text, w, h, config)),
-            LayoutContent::WrappedText { lines, font_size } => Some(multiline_appearance(
+            LayoutContent::WrappedText {
+                lines, font_size, ..
+            } => Some(multiline_appearance(
                 lines,
                 *font_size,
                 font_size * 1.2,

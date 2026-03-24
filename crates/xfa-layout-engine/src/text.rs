@@ -5,7 +5,7 @@
 //! on font size. This module will be extended with PDFium-based font metrics
 //! in a later epic.
 
-use crate::types::Size;
+use crate::types::{Size, TextAlign};
 
 /// Font properties for text measurement.
 #[derive(Debug, Clone)]
@@ -17,6 +17,8 @@ pub struct FontMetrics {
     /// Average character width as a fraction of font size.
     /// For proportional fonts ~0.5, for monospace ~0.6.
     pub avg_char_width: f64,
+    /// Horizontal text alignment (from XFA `<para hAlign>`).
+    pub text_align: TextAlign,
 }
 
 impl Default for FontMetrics {
@@ -25,6 +27,7 @@ impl Default for FontMetrics {
             size: 10.0,
             line_height: 1.2,
             avg_char_width: 0.5,
+            text_align: TextAlign::Left,
         }
     }
 }

@@ -229,9 +229,7 @@ fn run_ocr_inference(
                 metadata.insert("ocr_engine".into(), "unavailable".into());
                 return TestResult {
                     status: TestStatus::Skip,
-                    error_message: Some(
-                        "PaddleOCR engine not available (models missing?)".into(),
-                    ),
+                    error_message: Some("PaddleOCR engine not available (models missing?)".into()),
                     duration_ms: elapsed(),
                     oracle_score: None,
                     metadata,
@@ -247,7 +245,7 @@ fn run_ocr_inference(
     {
         let _ = (pdf, target_page);
         metadata.insert("ocr_engine".into(), "none".into());
-        return TestResult {
+        TestResult {
             status: TestStatus::Skip,
             error_message: Some(
                 "OCR: skipped — no OCR backend compiled \
@@ -258,7 +256,7 @@ fn run_ocr_inference(
             duration_ms: elapsed(),
             oracle_score: None,
             metadata,
-        };
+        }
     }
 }
 
@@ -394,8 +392,8 @@ fn run_with_paddle(
 /// Render a PDF page to RGB pixels (3 bytes per pixel, row-major) using pdf-engine.
 #[cfg(any(feature = "ocr", feature = "paddle-ocr"))]
 fn render_page_rgb(pdf_data: &[u8], page_num: u32) -> Result<(Vec<u8>, u32, u32), String> {
-    let doc = pdf_engine::PdfDocument::open(pdf_data.to_vec())
-        .map_err(|e| format!("open: {e:?}"))?;
+    let doc =
+        pdf_engine::PdfDocument::open(pdf_data.to_vec()).map_err(|e| format!("open: {e:?}"))?;
     let page_idx = (page_num - 1) as usize;
     let options = pdf_engine::RenderOptions {
         dpi: 150.0,

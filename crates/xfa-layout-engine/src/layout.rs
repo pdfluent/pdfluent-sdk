@@ -6,7 +6,7 @@
 use crate::error::{LayoutError, Result};
 use crate::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree};
 use crate::text;
-use crate::types::{LayoutStrategy, Rect, Size};
+use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
 
 /// A unique identifier for a layout node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +53,8 @@ pub enum LayoutContent {
     WrappedText {
         lines: Vec<String>,
         font_size: f64,
+        /// Horizontal text alignment (from XFA `<para hAlign>`).
+        text_align: TextAlign,
     },
 }
 
@@ -788,6 +790,7 @@ impl<'a> LayoutEngine<'a> {
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
                         font_size: node.font.size,
+                        text_align: node.font.text_align,
                     }
                 } else {
                     LayoutContent::Field {
@@ -804,6 +807,7 @@ impl<'a> LayoutEngine<'a> {
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
                         font_size: node.font.size,
+                        text_align: node.font.text_align,
                     }
                 } else {
                     LayoutContent::Text(content.clone())
@@ -3058,7 +3062,9 @@ mod tests {
 
         let node = &result.pages[0].nodes[0];
         match &node.content {
-            LayoutContent::WrappedText { lines, font_size } => {
+            LayoutContent::WrappedText {
+                lines, font_size, ..
+            } => {
                 assert_eq!(lines.len(), 1);
                 assert_eq!(lines[0], "John");
                 assert_eq!(*font_size, 10.0);
