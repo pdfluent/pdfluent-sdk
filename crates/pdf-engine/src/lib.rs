@@ -57,6 +57,7 @@
 pub mod document;
 pub mod error;
 pub mod geometry;
+pub mod ocr;
 pub mod render;
 pub mod text;
 pub mod thumbnail;
@@ -64,6 +65,12 @@ pub mod thumbnail;
 pub use document::{BookmarkItem, DocumentInfo, PdfDocument};
 pub use error::{EngineError, Result};
 pub use geometry::{PageBox, PageGeometry, PageRotation};
+pub use ocr::{OcrBackend, OcrError, OcrResult, OcrWord};
 pub use render::{RenderOptions, RenderedPage};
 pub use text::{TextBlock, TextSpan};
 pub use thumbnail::ThumbnailOptions;
+
+#[cfg(feature = "ocr")]
+pub use ocr::OcrsBackend;
+#[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
+pub use ocr::ocr_page_default;

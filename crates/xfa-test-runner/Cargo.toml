@@ -13,6 +13,8 @@ path = "src/main.rs"
 default = []
 pdfium-oracle = ["dep:pdfium-ffi-bridge"]
 paddle-ocr = ["dep:pdf-ocr"]
+# Pure-Rust ocrs backend — enable with --features ocr
+ocr = ["pdf-engine/ocr"]
 
 [dependencies]
 # Workspace crates
