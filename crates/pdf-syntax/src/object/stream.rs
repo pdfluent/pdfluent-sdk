@@ -244,6 +244,16 @@ pub enum ImageColorSpace {
     Gray,
     /// RGB color space.
     Rgb,
+    /// RGB produced by JPEG YCbCr→RGB decoding.
+    ///
+    /// JPEG images stored with YCbCr encoding (Adobe APP14 transform=1 or
+    /// JFIF default) are converted to sRGB by the JPEG decoder using the
+    /// standard BT.601 matrix. The resulting RGB values are already in sRGB
+    /// colorimetry. Any PDF `/ColorSpace` entry that is not device-RGB (e.g.
+    /// an [`ICCBased`] printer profile) should be ignored for these images;
+    /// the JPEG decoder's own colour model takes precedence, matching MuPDF
+    /// and Acrobat behaviour.
+    RgbFromYCbCr,
     /// CMYK color space.
     Cmyk,
     /// An unknown color space.
