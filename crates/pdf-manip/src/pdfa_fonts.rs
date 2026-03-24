@@ -9,7 +9,7 @@
 //! - Width matching: updates Widths/DW from embedded font data
 
 use crate::error::{ManipError, Result};
-use lopdf::{Document, Object, ObjectId, Stream, dictionary};
+use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use std::path::PathBuf;
 
 /// Report from font embedding pass.
@@ -3981,7 +3981,11 @@ pub fn fix_mislabeled_truetype_as_cff(doc: &mut Document) -> usize {
             let mut s2 = s.clone();
             let _ = s2.decompress();
             let magic = s2.content.get(..4)?;
-            if magic == TT_MAGIC { Some(*id) } else { None }
+            if magic == TT_MAGIC {
+                Some(*id)
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -7099,13 +7103,11 @@ fn lookup_unicode_cmap_31_raw(
 /// codes absent from it map to GID 0 (.notdef). When absent, Mac (1,0) cmap
 /// or other subtables may be used as fallback.
 fn has_cmap_31(face: &ttf_parser::Face) -> bool {
-    face.tables()
-        .cmap
-        .is_some_and(|cmap| {
-            cmap.subtables.into_iter().any(|s| {
-                s.platform_id == ttf_parser::PlatformId::Windows && s.encoding_id == 1
-            })
-        })
+    face.tables().cmap.is_some_and(|cmap| {
+        cmap.subtables
+            .into_iter()
+            .any(|s| s.platform_id == ttf_parser::PlatformId::Windows && s.encoding_id == 1)
+    })
 }
 
 /// `(start_code, end_code, start_cid)` triple from a CMap cidrange entry.
@@ -7481,7 +7483,7 @@ fn winansi_type1_glyph_name(code: u8) -> Option<&'static str> {
         156 => Some("oe"),
         158 => Some("zcaron"),
         159 => Some("Ydieresis"),
-        160 => Some("space"),      // U+00A0 → "space" (not AGL "nbspace")
+        160 => Some("space"), // U+00A0 → "space" (not AGL "nbspace")
         161 => Some("exclamdown"),
         162 => Some("cent"),
         163 => Some("sterling"),
@@ -7494,7 +7496,7 @@ fn winansi_type1_glyph_name(code: u8) -> Option<&'static str> {
         170 => Some("ordfeminine"),
         171 => Some("guillemotleft"),
         172 => Some("logicalnot"),
-        173 => Some("hyphen"),     // U+00AD → "hyphen" (not AGL "softhyphen")
+        173 => Some("hyphen"), // U+00AD → "hyphen" (not AGL "softhyphen")
         174 => Some("registered"),
         175 => Some("macron"),
         176 => Some("degree"),
@@ -7620,19 +7622,42 @@ fn parse_tounicode_map_bytes(stream_data: &[u8]) -> std::collections::HashMap<u8
     }
 
     #[derive(PartialEq)]
-    enum Section { None, BfChar, BfRange }
+    enum Section {
+        None,
+        BfChar,
+        BfRange,
+    }
     let mut section = Section::None;
     let mut i = 0;
     while i < tokens.len() {
         let t = &tokens[i];
-        if t.contains("beginbfchar") { section = Section::BfChar; i += 1; continue; }
-        if t.contains("endbfchar")   { section = Section::None;   i += 1; continue; }
-        if t.contains("beginbfrange") { section = Section::BfRange; i += 1; continue; }
-        if t.contains("endbfrange")   { section = Section::None;    i += 1; continue; }
+        if t.contains("beginbfchar") {
+            section = Section::BfChar;
+            i += 1;
+            continue;
+        }
+        if t.contains("endbfchar") {
+            section = Section::None;
+            i += 1;
+            continue;
+        }
+        if t.contains("beginbfrange") {
+            section = Section::BfRange;
+            i += 1;
+            continue;
+        }
+        if t.contains("endbfrange") {
+            section = Section::None;
+            i += 1;
+            continue;
+        }
 
         // Only process pure hex tokens inside a section.
         let is_hex = !t.is_empty() && t.chars().all(|c| c.is_ascii_hexdigit());
-        if !is_hex { i += 1; continue; }
+        if !is_hex {
+            i += 1;
+            continue;
+        }
 
         match section {
             Section::BfChar => {
@@ -7640,10 +7665,9 @@ fn parse_tounicode_map_bytes(stream_data: &[u8]) -> std::collections::HashMap<u8
                 if i + 1 < tokens.len() {
                     let dt = &tokens[i + 1];
                     if dt.chars().all(|c| c.is_ascii_hexdigit()) {
-                        if let (Ok(src), Ok(dst)) = (
-                            u32::from_str_radix(t, 16),
-                            u32::from_str_radix(dt, 16),
-                        ) {
+                        if let (Ok(src), Ok(dst)) =
+                            (u32::from_str_radix(t, 16), u32::from_str_radix(dt, 16))
+                        {
                             if src <= 0xFF {
                                 if let Some(ch) = char::from_u32(dst) {
                                     map.insert(src as u8, ch);
@@ -7684,7 +7708,9 @@ fn parse_tounicode_map_bytes(stream_data: &[u8]) -> std::collections::HashMap<u8
                 }
                 i += 1;
             }
-            Section::None => { i += 1; }
+            Section::None => {
+                i += 1;
+            }
         }
     }
     map
@@ -8765,7 +8791,9 @@ fn build_cff_font_ctx(cff: &cff_parser::Table, font_data: &[u8], scale: f64) -> 
     let mut name_to_width = std::collections::HashMap::with_capacity(num_glyphs as usize);
     for gid_raw in 0..num_glyphs {
         let gid = cff_parser::GlyphId(gid_raw);
-        let Some(name) = cff.glyph_name(gid) else { continue };
+        let Some(name) = cff.glyph_name(gid) else {
+            continue;
+        };
         // Standard CFF name: only accessible when stored under a standard SID.
         // Custom SID → veraPDF's SID-based lookup fails → uses defaultWidthX.
         if cff_parser::STANDARD_NAMES.contains(&name) {
@@ -8779,7 +8807,11 @@ fn build_cff_font_ctx(cff: &cff_parser::Table, font_data: &[u8], scale: f64) -> 
         }
     }
 
-    CffFontCtx { is_custom_enc, enc_map, name_to_width }
+    CffFontCtx {
+        is_custom_enc,
+        enc_map,
+        name_to_width,
+    }
 }
 
 /// Compute width corrections for a CFF font using its internal CFF encoding.
@@ -8930,8 +8962,10 @@ fn compute_cff_corrections_by_name(
                     let dwx_w = cff
                         .default_width_x()
                         .map(|w| (w as f64 * scale).round() as i64);
-                    let pdf_matches_notdef = matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
-                    let pdf_matches_dwx = matches!(dwx_w, Some(dw) if (pdf_w.round() as i64 - dw).abs() <= 1);
+                    let pdf_matches_notdef =
+                        matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
+                    let pdf_matches_dwx =
+                        matches!(dwx_w, Some(dw) if (pdf_w.round() as i64 - dw).abs() <= 1);
                     if pdf_matches_notdef || pdf_matches_dwx {
                         continue; // pdf_w already correct for .notdef — don't worsen it
                     }
@@ -9564,7 +9598,14 @@ fn compute_cff_single_width(
             }
             None => {
                 if cff_has_custom_encoding(font_data) {
-                    return cff.default_width_x().map(|w| w as f64 * scale);
+                    // Code absent from CFF encoding: veraPDF resolves via GID 0
+                    // (.notdef) and uses its actual charstring advance width.
+                    // Using defaultWidthX returns 0 for most subset fonts (Private
+                    // DICT default_width=0) and causes false §6.2.11.5 corrections
+                    // (e.g. gen-783 Garamond-Light Width[32]=250 → 0). (#gen-783)
+                    return cff
+                        .glyph_width(cff_parser::GlyphId(0))
+                        .map(|w| w as f64 * scale);
                 }
                 // CID font or standard/expert encoding — fall through to name lookup.
             }
@@ -9577,7 +9618,17 @@ fn compute_cff_single_width(
     // (code_in_cff_enc) is conservative here — callers that DO have is_subset context
     // (fix_font_width_mismatches, compute_cff_type1_width_corrections) pass is_subset
     // via the correct path. (#6.2.11.5-subset-cff-enc-guard)
-    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale, false, None, None)
+    cff_width_for_code(
+        &cff,
+        font_data,
+        code,
+        enc_name,
+        differences,
+        scale,
+        false,
+        None,
+        None,
+    )
 }
 
 /// Look up the CFF glyph width for a character code, trying multiple strategies:
@@ -9967,13 +10018,10 @@ fn cff_width_for_code(
             // Fall back to .notdef charstring advance when defaultWidthX is absent
             // from the Private DICT — veraPDF uses .notdef advance in that case.
             // (#fix-cff-case1-notdef-fallback)
-            return cff
-                .default_width_x()
-                .map(|w| w as f64 * scale)
-                .or_else(|| {
-                    cff.glyph_width(cff_parser::GlyphId(0))
-                        .map(|w| w as f64 * scale)
-                });
+            return cff.default_width_x().map(|w| w as f64 * scale).or_else(|| {
+                cff.glyph_width(cff_parser::GlyphId(0))
+                    .map(|w| w as f64 * scale)
+            });
         }
         // Case 3: custom encoding, explicit GID 0 → .notdef charstring advance.
         return cff
@@ -10514,9 +10562,8 @@ pub fn fix_truetype_encoding(doc: &mut Document) -> usize {
         // which glyph name veraPDF expects for each code. For example, Mac code
         // 160 = "dagger" (present in the font), WinAnsi code 160 = "nbspace"
         // (absent) → converting Mac→Win causes §6.2.11.5 failures. (#507)
-        let is_valid_enc = |enc_str: &str| {
-            enc_str == "WinAnsiEncoding" || enc_str == "MacRomanEncoding"
-        };
+        let is_valid_enc =
+            |enc_str: &str| enc_str == "WinAnsiEncoding" || enc_str == "MacRomanEncoding";
         // Determine whether this font needs its encoding fixed, and if so,
         // which target encoding to use. When flattening a dict with Differences
         // we preserve the base encoding (MacRoman→MacRoman, WinAnsi→WinAnsi).
@@ -11686,7 +11733,11 @@ pub fn fix_undefined_encoding_codes(doc: &mut Document) -> usize {
                 },
                 _ => false,
             };
-            if is_winansi { Some(*id) } else { None }
+            if is_winansi {
+                Some(*id)
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -12943,22 +12994,23 @@ pub fn fix_cid_font_notdef(doc: &mut Document) -> usize {
                 .as_deref()
                 .filter(|name| !is_identity_type0_cmap(name))
                 .and_then(load_predefined_unicode_cmap_ranges);
-            let euc_cmap_ranges = cmap_name
-                .as_deref()
-                .filter(|name| !is_identity_type0_cmap(name))
-                .filter(|name| is_euc_style_cmap(name))
-                .and_then(load_all_cmap_cidranges)
-                .or_else(|| {
-                    // Fallback: read cidranges directly from an embedded CMap stream.
-                    // Needed for fonts whose /Encoding references a CMap stream with
-                    // an internal EUC/GBK name (e.g. FOUNDER-GBK-EUC-H stored under
-                    // the stream label "Fdr-gbk-5") — the dict-level CMapName "Fdr-gbk-5"
-                    // doesn't contain "euc" so the file-based lookup above finds nothing.
-                    // Fixes #460: prevents fix_cid_text_string from treating GBK char
-                    // codes as raw CID pairs and corrupting the text stream.
-                    load_embedded_cmap_stream_ranges(doc, font_dict)
-                        .and_then(|(ranges, is_euc)| if is_euc { Some(ranges) } else { None })
-                });
+            let euc_cmap_ranges =
+                cmap_name
+                    .as_deref()
+                    .filter(|name| !is_identity_type0_cmap(name))
+                    .filter(|name| is_euc_style_cmap(name))
+                    .and_then(load_all_cmap_cidranges)
+                    .or_else(|| {
+                        // Fallback: read cidranges directly from an embedded CMap stream.
+                        // Needed for fonts whose /Encoding references a CMap stream with
+                        // an internal EUC/GBK name (e.g. FOUNDER-GBK-EUC-H stored under
+                        // the stream label "Fdr-gbk-5") — the dict-level CMapName "Fdr-gbk-5"
+                        // doesn't contain "euc" so the file-based lookup above finds nothing.
+                        // Fixes #460: prevents fix_cid_text_string from treating GBK char
+                        // codes as raw CID pairs and corrupting the text stream.
+                        load_embedded_cmap_stream_ranges(doc, font_dict)
+                            .and_then(|(ranges, is_euc)| if is_euc { Some(ranges) } else { None })
+                    });
 
             // Get descendant CIDFont (may be inline array or reference).
             let desc_arr = match font_dict.get(b"DescendantFonts").ok() {
@@ -14260,7 +14312,10 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
             map
         };
 
-        if !font_infos.values().any(|fi| fi.can_strip || fi.range.is_some()) {
+        if !font_infos
+            .values()
+            .any(|fi| fi.can_strip || fi.range.is_some())
+        {
             continue;
         }
         if has_type0 {
@@ -14280,8 +14335,7 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                 _ => continue,
             };
 
-            let Ok(editor) = crate::content_editor::ContentEditor::from_stream(&stream_data)
-            else {
+            let Ok(editor) = crate::content_editor::ContentEditor::from_stream(&stream_data) else {
                 continue;
             };
             let ops = editor.operations().to_vec();
@@ -14325,9 +14379,7 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
                             let mut new_op = op.clone();
                             if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                                 for item in arr.iter_mut() {
-                                    if let (Some(fi), Object::String(bytes, _)) =
-                                        (fi, item)
-                                    {
+                                    if let (Some(fi), Object::String(bytes, _)) = (fi, item) {
                                         if let Some((fc, lc)) = fi.range {
                                             if fix_simple_text_string_out_of_range(
                                                 bytes, fc, lc, true,
@@ -14351,8 +14403,7 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
             }
 
             if did_range || did_ctrl {
-                let new_editor =
-                    crate::content_editor::ContentEditor::from_operations(new_ops);
+                let new_editor = crate::content_editor::ContentEditor::from_operations(new_ops);
                 if let Ok(encoded) = new_editor.encode() {
                     if let Some(Object::Stream(s)) = doc.objects.get_mut(&cs_id) {
                         s.set_plain_content(encoded);
