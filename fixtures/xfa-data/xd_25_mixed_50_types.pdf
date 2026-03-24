@@ -1,0 +1,261 @@
+%PDF-1.4
+%»­ÀÞ
+1 0 obj
+<</Length 8264>>stream
+<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <desc>
+    <text name="description">50 fields of alternating text/numeric types</text>
+  </desc>
+  <subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="mixedForm" layout="tb" w="7.5in">
+      <field name="t001" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n002" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t003" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n004" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t005" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n006" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t007" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n008" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t009" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n010" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t011" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n012" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t013" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n014" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t015" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n016" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t017" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n018" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t019" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n020" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t021" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n022" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t023" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n024" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t025" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n026" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t027" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n028" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t029" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n030" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t031" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n032" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t033" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n034" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t035" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n036" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t037" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n038" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t039" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n040" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t041" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n042" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t043" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n044" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t045" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n046" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t047" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n048" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+      <field name="t049" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="n050" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>
+    </subform>
+  </subform>
+</template>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <mixedForm>
+      <t001>Text value 001</t001>
+      <n002>14</n002>
+      <t003>Text value 003</t003>
+      <n004>28</n004>
+      <t005>Text value 005</t005>
+      <n006>42</n006>
+      <t007>Text value 007</t007>
+      <n008>56</n008>
+      <t009>Text value 009</t009>
+      <n010>70</n010>
+      <t011>Text value 011</t011>
+      <n012>84</n012>
+      <t013>Text value 013</t013>
+      <n014>98</n014>
+      <t015>Text value 015</t015>
+      <n016>112</n016>
+      <t017>Text value 017</t017>
+      <n018>126</n018>
+      <t019>Text value 019</t019>
+      <n020>140</n020>
+      <t021>Text value 021</t021>
+      <n022>154</n022>
+      <t023>Text value 023</t023>
+      <n024>168</n024>
+      <t025>Text value 025</t025>
+      <n026>182</n026>
+      <t027>Text value 027</t027>
+      <n028>196</n028>
+      <t029>Text value 029</t029>
+      <n030>210</n030>
+      <t031>Text value 031</t031>
+      <n032>224</n032>
+      <t033>Text value 033</t033>
+      <n034>238</n034>
+      <t035>Text value 035</t035>
+      <n036>252</n036>
+      <t037>Text value 037</t037>
+      <n038>266</n038>
+      <t039>Text value 039</t039>
+      <n040>280</n040>
+      <t041>Text value 041</t041>
+      <n042>294</n042>
+      <t043>Text value 043</t043>
+      <n044>308</n044>
+      <t045>Text value 045</t045>
+      <n046>322</n046>
+      <t047>Text value 047</t047>
+      <n048>336</n048>
+      <t049>Text value 049</t049>
+      <n050>350</n050>
+    </mixedForm>
+  </xfa:data>
+</xfa:datasets>
+</xdp:xdp>
+
+endstream 
+endobj
+2 0 obj
+<</Type/Pages/Kids[4 0 R]/Count 1>>
+endobj
+3 0 obj
+<</Length 0>>stream
+
+endstream 
+endobj
+4 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 3 0 R>>
+endobj
+5 0 obj
+<</XFA 1 0 R/Fields[]>>
+endobj
+6 0 obj
+<</Type/Catalog/Pages 2 0 R/AcroForm 5 0 R>>
+endobj
+7 0 obj
+<</Root 6 0 R/Type/XRef/Size 8/W[1 4 2]/Index[1 7]/Length 49>>stream
+        ‰     ¼     ë    !;    !b    !ž  
+endstream 
+endobj
+
+startxref
+8606
+%%EOF
