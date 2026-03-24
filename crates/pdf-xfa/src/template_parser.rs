@@ -137,7 +137,7 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         layout: LayoutStrategy::Positioned,
         children: Vec::new(),
         occur: Occur::once(),
-        font: FontMetrics::default(),
+        font: parse_font_metrics(elem),
         calculate: None,
         validate: None,
         column_widths: Vec::new(),
@@ -160,7 +160,7 @@ fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         layout: LayoutStrategy::Positioned,
         children: Vec::new(),
         occur: Occur::once(),
-        font: FontMetrics::default(),
+        font: parse_font_metrics(elem),
         calculate: None,
         validate: None,
         column_widths: Vec::new(),
@@ -168,6 +168,16 @@ fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     };
     let _ = tree;
     Ok(node)
+}
+
+/// Parse font size from `<font size="…">` child element (if present).
+/// Returns `FontMetrics::default()` when no `<font>` element or `size` attr found.
+fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
+    let size = find_first_child_by_name(elem, "font")
+        .and_then(|f| attr(f, "size"))
+        .and_then(parse_dim)
+        .unwrap_or(FontMetrics::default().size);
+    FontMetrics::new(size)
 }
 
 fn parse_page_set(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
