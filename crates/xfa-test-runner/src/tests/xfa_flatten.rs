@@ -156,7 +156,16 @@ impl PdfTest for XfaFlattenTest {
                     if !r.errors.is_empty() {
                         metadata.insert("itext_errors".to_string(), r.errors.join("; "));
                     }
-                    if r.has_xfa
+                    // Skip page count comparison for certified/signed PDFs: iText 5
+                    // cannot modify a PDF protected by a certification signature
+                    // (/Perms in catalog) and silently returns the original unmodified
+                    // page tree, making the comparison meaningless. (#557)
+                    let skip_page_count = is_certified_pdf(&doc);
+                    if skip_page_count {
+                        metadata.insert("itext_skip_reason".to_string(), "certified_pdf".to_string());
+                    }
+                    if !skip_page_count
+                        && r.has_xfa
                         && r.flatten_success
                         && r.page_count > 0
                         && r.page_count as usize != pages
@@ -354,6 +363,21 @@ fn has_xfa(doc: &lopdf::Document) -> bool {
             .unwrap_or(false),
         _ => false,
     }
+}
+
+/// Returns `true` when the PDF catalog has a /Perms entry, indicating a
+/// certification signature.  iText 5 cannot modify such PDFs (doing so would
+/// break the certification), so it silently returns the original page tree
+/// instead of a real flatten output.  We skip the page-count oracle comparison
+/// in this case to avoid false failures. (#557)
+fn is_certified_pdf(doc: &lopdf::Document) -> bool {
+    let root_id = match doc.trailer.get(b"Root") {
+        Ok(lopdf::Object::Reference(id)) => *id,
+        _ => return false,
+    };
+    doc.get_dictionary(root_id)
+        .map(|d| d.get(b"Perms").is_ok())
+        .unwrap_or(false)
 }
 
 /// Remove the /AcroForm entry from the document catalog.
