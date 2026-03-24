@@ -9764,12 +9764,22 @@ fn cff_width_for_code(
     if has_pdf_encoding {
         let glyph_name = if code == 173 {
             // veraPDF normalizes U+00AD (soft hyphen, code 173) → U+002D (hyphen)
-            // for §6.2.11.5, regardless of PDF Encoding or Differences. If "hyphen"
-            // is in the CFF charset, use its width directly and return early. If not,
-            // return None: we can't determine the correct width, and any fallback
-            // (like .notdef) would produce a wrong correction that makes things worse
-            // for fonts that already have the correct value. (#fix-cff-softhyphen)
-            return lookup_name("hyphen");
+            // for §6.2.11.5, regardless of PDF Encoding or Differences.
+            // Try the pre-built name→width map first (filters custom SIDs).
+            // If not found, scan ALL GIDs directly for "hyphen" — some CFF subsets
+            // store it under a custom SID that build_cff_font_ctx filters out, but
+            // veraPDF's name-based lookup still finds it. (#fix-cff-softhyphen)
+            if let Some(w) = lookup_name("hyphen") {
+                return Some(w);
+            }
+            // Direct scan: find "hyphen" by name in any GID (including custom SIDs).
+            for gid_raw in 0..cff.number_of_glyphs() {
+                let gid = cff_parser::GlyphId(gid_raw);
+                if cff.glyph_name(gid) == Some("hyphen") {
+                    return cff.glyph_width(gid).map(|w| w as f64 * scale);
+                }
+            }
+            return None;
         } else if let Some(name) = differences.get(&code) {
             name.clone()
         } else if enc_name.is_empty() {
