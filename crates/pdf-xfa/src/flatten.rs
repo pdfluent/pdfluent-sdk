@@ -55,7 +55,9 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         .map_err(|e| XfaError::LayoutFailed(format!("{e:?}")))?;
 
     if layout.pages.is_empty() {
-        return Err(XfaError::LayoutFailed("layout produced 0 pages".to_string()));
+        return Err(XfaError::LayoutFailed(
+            "layout produced 0 pages".to_string(),
+        ));
     }
 
     // 4. Generate content stream bytes for each layout page.
@@ -238,8 +240,7 @@ mod tests {
         );
         let xfa_id = doc.add_object(Object::Stream(xfa_stream));
         let pages_id = doc.new_object_id();
-        let content_stream =
-            Stream::new(dictionary! { "Length" => Object::Integer(0i64) }, vec![]);
+        let content_stream = Stream::new(dictionary! { "Length" => Object::Integer(0i64) }, vec![]);
         let content_id = doc.add_object(Object::Stream(content_stream));
         let page_id = doc.add_object(Object::Dictionary(dictionary! {
             "Type"     => Object::Name(b"Page".to_vec()),
@@ -267,8 +268,7 @@ mod tests {
             "Pages"    => Object::Reference(pages_id),
             "AcroForm" => Object::Reference(acroform_id)
         }));
-        doc.trailer
-            .set("Root", Object::Reference(catalog_id));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
         let mut out = Vec::new();
         doc.save_to(&mut out).unwrap();
         out
@@ -393,12 +393,7 @@ mod tests {
         let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
         let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
         let doc = Document::load_mem(&result).expect("load flattened PDF");
-        let root_id = doc
-            .trailer
-            .get(b"Root")
-            .unwrap()
-            .as_reference()
-            .unwrap();
+        let root_id = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
         let catalog = doc.get_dictionary(root_id).unwrap();
         assert!(
             catalog.get(b"AcroForm").is_err(),
@@ -431,8 +426,7 @@ mod tests {
             "Type"  => Object::Name(b"Catalog".to_vec()),
             "Pages" => Object::Reference(pages_id)
         }));
-        doc.trailer
-            .set("Root", Object::Reference(catalog_id));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
         let mut raw = Vec::new();
         doc.save_to(&mut raw).unwrap();
 

@@ -6396,12 +6396,21 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             && (subtype == "Type1" || subtype == "MMType1" || subtype == "TrueType")
             && enc_info.0.is_empty()
             && !is_subset_font;
+        let skip_subset_symbol_cff_without_pdf_encoding = has_ff3
+            && is_subset_font
+            && is_symbolic_font_name(strip_subset_prefix(&base_font))
+            && enc_info.0.is_empty()
+            && enc_info.1.is_empty();
         // When no PDF encoding exists at all (neither BaseEncoding nor Differences),
         // the CFF internal encoding is the sole code→GID mapping, which is exactly
         // what veraPDF uses for §6.2.11.5. Corrections via cff_width_for_code in
         // this case are computed with the same mapping and are definitively correct;
         // the conservative 50-unit filter is not needed. (#6.2.11.5-simple-cff)
         let no_pdf_encoding = enc_info.0.is_empty() && enc_info.1.is_empty();
+
+        if skip_subset_symbol_cff_without_pdf_encoding {
+            continue;
+        }
 
         let font_data = read_embedded_font_data(doc, fd_id);
         let Some(font_data) = font_data else {
@@ -6460,10 +6469,10 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
             corrections = type1_corr
                 .into_iter()
-                .filter_map(|(idx, new_w, _is_certain)| {
+                .filter_map(|(idx, new_w, _is_certain, allow_large_delta)| {
                     if !is_subset {
                         let pdf_w = existing_widths.get(idx).and_then(object_to_f64)?;
-                        if (pdf_w - new_w as f64).abs() > 5.0 {
+                        if (pdf_w - new_w as f64).abs() > 5.0 && !allow_large_delta {
                             return None; // too large a delta → ambiguous mapping, skip
                         }
                     }
@@ -8056,15 +8065,16 @@ fn glyph_name_to_unicode(name: &str) -> Option<char> {
 ///
 /// Returns (index_in_widths_array, correct_width) for mismatched entries.
 /// Only reliable for subset fonts where charstrings may differ from the original dict.
-/// Returns `(index, new_width, is_certain)` triples. `is_certain=true` when
-/// the correction targets `.notdef` (code absent from font encoding with no PDF
-/// encoding), which bypasses the outer conservative delta filter.
+/// Returns `(index, new_width, is_certain, allow_large_delta)` tuples.
+/// `allow_large_delta=true` is reserved for a narrow StandardEncoding punctuation
+/// set where veraPDF's mapping is deterministic even when the width delta is
+/// larger than the usual ambiguity guard.
 fn compute_type1_fontfile_width_corrections(
     font_data: &[u8],
     first_char: u32,
     existing_widths: &[Object],
     enc_info: &(String, std::collections::HashMap<u32, String>),
-) -> Vec<(usize, i64, bool)> {
+) -> Vec<(usize, i64, bool, bool)> {
     let (enc_name, differences) = enc_info;
     let Some(parsed) = parse_type1_program(font_data) else {
         return Vec::new();
@@ -8081,6 +8091,7 @@ fn compute_type1_fontfile_width_corrections(
         // Track whether this correction is definitely correct (e.g. from .notdef)
         // so we can bypass the outer delta-5 filter for it.
         let mut is_certain_correction = false;
+        let mut allow_large_delta = false;
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.as_str().to_string()
         } else if let Some(name) = parsed.encoding.get(&(code as u8)) {
@@ -8099,9 +8110,14 @@ fn compute_type1_fontfile_width_corrections(
             // StandardEncoding in their PFB program but have a custom /Encoding dict
             // in the PDF with no BaseEncoding key. (#6.2.11.5-type1-named-enc)
             let ch = encoding_to_char(code, &parsed.base_encoding_name);
-            unicode_to_agl_name(ch)
+            let name = unicode_to_agl_name(ch)
                 .or_else(|| unicode_to_glyph_name(ch))
-                .unwrap_or_default()
+                .unwrap_or_default();
+            allow_large_delta = matches!(
+                name.as_str(),
+                "quoteright" | "quoteleft" | "hyphen" | "endash" | "emdash"
+            );
+            name
         } else {
             // No explicit PDF or font-level encoding for this code. veraPDF uses
             // the font's internal encoding; for codes absent from it (like code 39
@@ -8132,7 +8148,7 @@ fn compute_type1_fontfile_width_corrections(
         let font_w = (cs_width as f64 * scale).round();
         let delta = (pdf_w - font_w).abs();
         if delta >= 1.0 {
-            corrections.push((i, font_w as i64, is_certain_correction));
+            corrections.push((i, font_w as i64, is_certain_correction, allow_large_delta));
         }
     }
     corrections

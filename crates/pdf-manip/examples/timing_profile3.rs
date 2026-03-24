@@ -1,9 +1,13 @@
-fn t() -> std::time::Instant { std::time::Instant::now() }
+fn t() -> std::time::Instant {
+    std::time::Instant::now()
+}
 fn e(label: &str, start: std::time::Instant) {
     eprintln!("{}: {:.3}s", label, start.elapsed().as_secs_f64());
 }
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or("/tmp/w6211/gen-348_348434.pdf".to_string());
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or("/tmp/w6211/gen-348_348434.pdf".to_string());
     let data = std::fs::read(&path).unwrap();
     let mut doc = lopdf::Document::load_mem(&data).unwrap();
     let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false);
@@ -39,5 +43,7 @@ fn main() {
     let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc);
 
     // Instrument run_fixups sub-functions
-    let t0 = t(); let _ = pdf_manip::pdfa_fixups::run_fixups(&mut doc); e("run_fixups", t0);
+    let t0 = t();
+    let _ = pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+    e("run_fixups", t0);
 }

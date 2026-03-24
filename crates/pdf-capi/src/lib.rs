@@ -1261,9 +1261,7 @@ pub unsafe extern "C" fn pdf_document_split_range(
         }
     };
     // extract_pages takes 1-based page numbers.
-    let pages: Vec<u32> = (from_page as u32..=to_page as u32)
-        .map(|p| p + 1)
-        .collect();
+    let pages: Vec<u32> = (from_page as u32..=to_page as u32).map(|p| p + 1).collect();
     let mut extracted = match pdf_manip::pages::extract_pages(&lopdf_doc, &pages) {
         Ok(d) => d,
         Err(e) => {

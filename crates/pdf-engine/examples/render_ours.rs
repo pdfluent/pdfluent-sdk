@@ -5,23 +5,28 @@ fn main() {
     let data = std::fs::read(path).unwrap();
     let doc = match pdf_engine::PdfDocument::open(data) {
         Ok(d) => d,
-        Err(e) => { eprintln!("open error: {e}"); return; }
+        Err(e) => {
+            eprintln!("open error: {e}");
+            return;
+        }
     };
     let dpi: f64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(72.0);
-    let opts = pdf_engine::RenderOptions { dpi, ..Default::default() };
+    let opts = pdf_engine::RenderOptions {
+        dpi,
+        ..Default::default()
+    };
     for i in 0..doc.page_count().min(5) {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            doc.render_page(i, &opts)
-        }));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| doc.render_page(i, &opts)));
         match result {
             Ok(Ok(p)) => {
-                let outpath = format!("{prefix}_{}.png", i+1);
+                let outpath = format!("{prefix}_{}.png", i + 1);
                 // Encode as PNG manually using basic approach
                 save_png(&outpath, p.width, p.height, &p.pixels);
-                eprintln!("page {}: {}x{}", i+1, p.width, p.height);
-            },
-            Ok(Err(e)) => eprintln!("page {} error: {e}", i+1),
-            Err(_) => eprintln!("page {} PANIC", i+1),
+                eprintln!("page {}: {}x{}", i + 1, p.width, p.height);
+            }
+            Ok(Err(e)) => eprintln!("page {} error: {e}", i + 1),
+            Err(_) => eprintln!("page {} PANIC", i + 1),
         }
     }
 }

@@ -12198,8 +12198,9 @@ fn check_truetype_simple_widths(
         // against pdf_w — same logic as CFF notdef fallback. (#FN-6.3.5
         // isartor-6-3-5-t01-fail-d, #FP-6.3.6 gen-302)
         if explicit_gid.is_none() {
-            let code_is_rendered =
-                rendered_codes.as_ref().is_some_and(|rc| rc.contains(&(code as u8)));
+            let code_is_rendered = rendered_codes
+                .as_ref()
+                .is_some_and(|rc| rc.contains(&(code as u8)));
             if (pdf_w != 0 || code_is_rendered) && !glyph_absence_emitted {
                 error_at(
                     report,

@@ -143,8 +143,7 @@ pub fn embed_dss_incremental(
     crls: Vec<Vec<u8>>,
     vri_entries: Vec<VriEntry>,
 ) -> Result<Vec<u8>, String> {
-    let prev =
-        Document::load_mem(pdf_bytes).map_err(|e| format!("load PDF for DSS embed: {e}"))?;
+    let prev = Document::load_mem(pdf_bytes).map_err(|e| format!("load PDF for DSS embed: {e}"))?;
     let mut doc = Document::new_from_prev(&prev);
 
     // Add certificate streams to the document, collecting indirect-reference objects.

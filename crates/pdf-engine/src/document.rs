@@ -183,7 +183,11 @@ impl PdfDocument {
                             .cloned()
                             .collect::<Vec<_>>()
                             .join(", ");
-                        if joined.is_empty() { None } else { Some(joined) }
+                        if joined.is_empty() {
+                            None
+                        } else {
+                            Some(joined)
+                        }
                     }
                     _ => None,
                 };

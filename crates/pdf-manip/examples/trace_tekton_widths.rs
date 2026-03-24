@@ -114,8 +114,13 @@ fn main() {
                                         let gid = cff_parser::GlyphId(gid_raw);
                                         let name = cff.glyph_name(gid);
                                         let sid = cff.charset.gid_to_sid(gid).map(|s| s.0);
-                                        let is_std = sid.map_or(false, |s| (s as usize) < cff_parser::STANDARD_NAMES.len());
-                                        eprintln!("  GID {}: name={:?} SID={:?} is_standard={}", gid_raw, name, sid, is_std);
+                                        let is_std = sid.map_or(false, |s| {
+                                            (s as usize) < cff_parser::STANDARD_NAMES.len()
+                                        });
+                                        eprintln!(
+                                            "  GID {}: name={:?} SID={:?} is_standard={}",
+                                            gid_raw, name, sid, is_std
+                                        );
                                     }
                                 }
                             }

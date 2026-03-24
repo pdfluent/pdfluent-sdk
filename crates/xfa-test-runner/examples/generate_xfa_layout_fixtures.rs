@@ -22,11 +22,10 @@
 
 use std::path::PathBuf;
 
-use lopdf::{Document, Object, Stream, dictionary};
+use lopdf::{dictionary, Document, Object, Stream};
 
 fn main() {
-    let out_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/xfa-layout");
+    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/xfa-layout");
     std::fs::create_dir_all(&out_dir).expect("create xfa-layout fixtures dir");
 
     let cases: Vec<(&str, &str, String)> = vec![
@@ -577,7 +576,10 @@ fn build_keep_together() -> String {
       <field name="line3" w="7in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
     </subform>
   </subform>"#;
-    xdp_wrap("Keep-together: subform that must not be split across pages", body)
+    xdp_wrap(
+        "Keep-together: subform that must not be split across pages",
+        body,
+    )
 }
 
 fn build_dynamic_table() -> String {
@@ -692,7 +694,10 @@ fn build_relevance_expr() -> String {
       </field>
     </subform>
   </subform>"#;
-    xdp_wrap("Conditional relevance expressions on fields and subforms", body)
+    xdp_wrap(
+        "Conditional relevance expressions on fields and subforms",
+        body,
+    )
 }
 
 // ---------------------------------------------------------------------------
