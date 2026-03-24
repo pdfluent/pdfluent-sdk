@@ -410,6 +410,25 @@ impl DecodedImageXObject {
             })
             .unwrap_or((obj.width, obj.height));
 
+        // When the JPEG decoder applied a YCbCr→RGB colour transform the
+        // decoded bytes are already in sRGB colorimetry (BT.601 matrix).
+        // Applying an additional PDF ICCBased / CalRGB conversion on top would
+        // produce wrong colours (double-conversion).  Override the PDF's
+        // /ColorSpace with DeviceRGB in that case, matching MuPDF/Acrobat. (#558)
+        let color_space = if decoded
+            .image_data
+            .as_ref()
+            .and_then(|d| d.color_space)
+            .is_some_and(|cs| matches!(cs, ImageColorSpace::RgbFromYCbCr))
+            && color_space
+                .as_ref()
+                .is_some_and(|cs| !cs.is_device_rgb())
+        {
+            Some(ColorSpace::device_rgb())
+        } else {
+            color_space
+        };
+
         let color_space = color_space
             .or_else(|| {
                 decoded
@@ -419,7 +438,9 @@ impl DecodedImageXObject {
                     .and_then(|c| {
                         c.and_then(|c| match c {
                             ImageColorSpace::Gray => Some(ColorSpace::device_gray()),
-                            ImageColorSpace::Rgb => Some(ColorSpace::device_rgb()),
+                            ImageColorSpace::Rgb | ImageColorSpace::RgbFromYCbCr => {
+                                Some(ColorSpace::device_rgb())
+                            }
                             ImageColorSpace::Cmyk => Some(ColorSpace::device_cmyk()),
                             ImageColorSpace::Unknown(_) => None,
                         })

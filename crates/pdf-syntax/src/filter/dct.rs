@@ -33,6 +33,11 @@ pub(crate) fn decode(
     let color_transform = params.get::<u8>(COLOR_TRANSFORM);
     let input_color_space = decoder.input_colorspace()?;
 
+    // Track whether the JPEG decoder will apply a YCbCr→RGB colour transform.
+    // When it does, the decoded bytes are already in sRGB colorimetry (BT.601
+    // matrix) and any PDF ICCBased profile must NOT be applied on top.
+    let mut jpeg_ycbcr_to_rgb = false;
+
     let mut out_colorspace = if let Some(num_components) = image_params.num_components
         && !matches!(num_components, 1 | 3 | 4)
     {
@@ -41,6 +46,7 @@ pub(crate) fn decode(
         match input_color_space {
             ColorSpace::YCbCr => {
                 if color_transform.is_none_or(|c| c == 1) {
+                    jpeg_ycbcr_to_rgb = true;
                     ColorSpace::RGB
                 } else {
                     ColorSpace::YCbCr
@@ -82,7 +88,16 @@ pub(crate) fn decode(
     let image_data = ImageData {
         alpha: None,
         color_space: match out_colorspace {
-            ColorSpace::RGB | ColorSpace::YCbCr => Some(ImageColorSpace::Rgb),
+            ColorSpace::RGB | ColorSpace::YCbCr => {
+                if jpeg_ycbcr_to_rgb {
+                    // Signal that the bytes are already in sRGB (BT.601 matrix
+                    // applied by the JPEG decoder). x_object.rs uses this to
+                    // skip any PDF ICCBased/CalRGB conversion.
+                    Some(ImageColorSpace::RgbFromYCbCr)
+                } else {
+                    Some(ImageColorSpace::Rgb)
+                }
+            }
             ColorSpace::Luma => Some(ImageColorSpace::Gray),
             ColorSpace::YCCK | CMYK => Some(ImageColorSpace::Cmyk),
             ColorSpace::MultiBand(_) => None,

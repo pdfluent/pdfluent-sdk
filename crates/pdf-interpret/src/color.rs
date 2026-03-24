@@ -248,6 +248,10 @@ impl ColorSpace {
         Self(Arc::new(ColorSpaceType::DeviceCmyk))
     }
 
+    pub(crate) fn is_device_rgb(&self) -> bool {
+        matches!(*self.0, ColorSpaceType::DeviceRgb)
+    }
+
     /// Return the pattern color space.
     pub(crate) fn pattern() -> Self {
         Self(Arc::new(ColorSpaceType::Pattern(Self::device_gray())))
