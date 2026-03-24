@@ -10,7 +10,7 @@ impl ImageColorSpace {
     fn num_components(&self) -> u8 {
         match self {
             Self::Gray => 1,
-            Self::Rgb => 3,
+            Self::Rgb | Self::RgbFromYCbCr => 3,
             Self::Cmyk => 4,
             Self::Unknown(num) => *num,
         }

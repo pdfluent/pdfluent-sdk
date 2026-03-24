@@ -264,6 +264,49 @@ impl PdfDocument {
         parse_outline_items(&first)
     }
 
+    /// Run OCR on a page and return the recognized text and word positions.
+    ///
+    /// The page is rendered at `dpi` (default 150) before recognition.
+    /// Pass any [`OcrBackend`] implementation; use [`OcrsBackend::try_default`]
+    /// to load the pure-Rust `ocrs` engine from the standard model paths.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # #[cfg(feature = "ocr")] {
+    /// use pdf_engine::{PdfDocument, OcrsBackend, RenderOptions};
+    ///
+    /// let doc = PdfDocument::open(std::fs::read("scan.pdf").unwrap()).unwrap();
+    /// let backend = OcrsBackend::try_default().unwrap();
+    /// let result = doc.ocr_page(0, &backend, 150.0_f64).unwrap();
+    /// println!("{}", result.text);
+    /// # }
+    /// ```
+    pub fn ocr_page(
+        &self,
+        index: usize,
+        backend: &dyn crate::ocr::OcrBackend,
+        dpi: f64,
+    ) -> crate::error::Result<crate::ocr::OcrResult> {
+        let opts = crate::render::RenderOptions {
+            dpi,
+            ..Default::default()
+        };
+        let rendered = self.render_page(index, &opts)?;
+
+        // Convert RGBA → RGB (ocrs expects RGB input).
+        let mut rgb = Vec::with_capacity((rendered.width * rendered.height * 3) as usize);
+        for chunk in rendered.pixels.chunks(4) {
+            rgb.push(chunk[0]);
+            rgb.push(chunk[1]);
+            rgb.push(chunk[2]);
+        }
+
+        backend
+            .recognize(&rgb, rendered.width, rendered.height)
+            .map_err(|e| crate::error::EngineError::RenderError(e.to_string()))
+    }
+
     fn get_page(&self, index: usize) -> Result<&Page<'_>> {
         let pages = self.pdf.pages();
         if index >= pages.len() {

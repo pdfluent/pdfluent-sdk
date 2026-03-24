@@ -14,10 +14,17 @@ pdf-xfa = { path = "../pdf-xfa" }
 thiserror = { workspace = true }
 kurbo = "0.13.0"
 rayon = { version = "1", optional = true }
+ocrs = { version = "0.12", optional = true }
+rten = { version = "0.24", optional = true }
+dirs-sys = { version = "0.3", optional = true }
 
 [features]
 default = ["parallel"]
 parallel = ["dep:rayon"]
+# Pure-Rust OCR via ocrs (requires external .rten model files at ~/.cache/ocrs/).
+ocr = ["dep:ocrs", "dep:rten", "dep:dirs-sys"]
+# Planned: ocr-tesseract = ["leptess"]
+# Planned: ocr-paddle = ["paddle-ocr"]
 
 [dev-dependencies]
 image = { workspace = true }
