@@ -406,6 +406,21 @@ enum Command {
         workers: usize,
     },
 
+    /// Internal: convert a single PDF to PDF/A and write to output path.
+    ///
+    /// Used by oracle-generate to isolate crashes — each PDF runs in its own
+    /// subprocess so a SIGSEGV or abort() does not kill the parent.
+    #[command(hide = true)]
+    OracleConvertOne {
+        /// Input PDF path
+        #[arg(long)]
+        input: PathBuf,
+
+        /// Output path for the converted PDF bytes
+        #[arg(long)]
+        output: PathBuf,
+    },
+
     /// Check for regression between two runs (exit code 1 = regression)
     CheckRegression {
         /// SQLite database path
@@ -1114,40 +1129,57 @@ fn main() {
                             }
                         };
 
-                        // Run our full PDF/A conversion pipeline.
+                        // Run our full PDF/A conversion pipeline in a subprocess.
                         // Hash the CONVERTED bytes — must match what PdfAConvertTest::run()
                         // hashes when it calls verapdf.validate(). (Bug 1 + Bug 2 fix)
                         //
-                        // Wrap in a dedicated thread with a 256 MB stack.  64 MB was not
-                        // enough for pathological stressful-corpus PDFs that trigger very
-                        // deep recursion inside lopdf / font-parser.  The per-PDF path is
-                        // also logged to stderr so that the last line before a crash
-                        // identifies the offending file.  (#oracle-gen-stackoverflow)
+                        // subprocess isolation: a thread-based approach (even with 256 MB
+                        // stack + catch_unwind) cannot survive SIGSEGV or abort() in
+                        // pathological PDFs.  Running each PDF in a child process ensures
+                        // crashes are contained: the parent skips the PDF and continues.
+                        // (#oracle-gen-subprocess)
                         eprintln!("converting: {}", pdf_path.display());
-                        let pdf_for_thread = input_data.clone();
-                        let path_for_thread = pdf_path.clone();
+                        let current_exe = std::env::current_exe()
+                            .unwrap_or_else(|_| PathBuf::from("xfa-test-runner"));
+                        let tmp_conv = {
+                            use sha2::{Digest, Sha256};
+                            let mut h = Sha256::new();
+                            h.update(&input_data);
+                            let hex = format!("{:x}", h.finalize());
+                            std::env::temp_dir()
+                                .join(format!("{}_oracle_conv.pdf", &hex[..16]))
+                        };
                         let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
-                        std::thread::Builder::new()
-                            .stack_size(256 * 1024 * 1024)
-                            .spawn(move || {
-                                let result =
-                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        tests::pdfa_convert::convert_to_pdfa_bytes(
-                                            &pdf_for_thread,
-                                            &path_for_thread,
-                                        )
-                                    }))
-                                    .unwrap_or(None);
-                                let _ = tx.send(result);
-                            })
-                            .expect("thread spawn");
+                        let exe_c = current_exe.clone();
+                        let path_c = pdf_path.clone();
+                        let tmp_c = tmp_conv.clone();
+                        std::thread::spawn(move || {
+                            let status = std::process::Command::new(&exe_c)
+                                .args([
+                                    std::ffi::OsStr::new("oracle-convert-one"),
+                                    std::ffi::OsStr::new("--input"),
+                                    path_c.as_os_str(),
+                                    std::ffi::OsStr::new("--output"),
+                                    tmp_c.as_os_str(),
+                                ])
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .status();
+                            let result = match status {
+                                Ok(s) if s.success() => std::fs::read(&tmp_c).ok(),
+                                _ => None,
+                            };
+                            let _ = std::fs::remove_file(&tmp_c);
+                            let _ = tx.send(result);
+                        });
                         let converted = match rx
-                            .recv_timeout(std::time::Duration::from_secs(60))
+                            .recv_timeout(std::time::Duration::from_secs(90))
                             .unwrap_or(None)
                         {
                             Some(c) => c,
                             None => {
-                                // Not a PDF, already PDF/A, conversion failed, or timeout.
+                                let _ = std::fs::remove_file(&tmp_conv);
+                                // Not a PDF, already PDF/A, conversion failed, timeout, or crash.
                                 skipped.fetch_add(1, Ordering::Relaxed);
                                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                                 if n.is_multiple_of(100) {
@@ -1267,6 +1299,21 @@ fn main() {
                 failed.load(Ordering::Relaxed),
                 final_count,
             );
+        }
+
+        Command::OracleConvertOne { input, output } => {
+            let data = match std::fs::read(&input) {
+                Ok(d) => d,
+                Err(_) => std::process::exit(1),
+            };
+            match tests::pdfa_convert::convert_to_pdfa_bytes(&data, &input) {
+                Some(converted) => {
+                    if std::fs::write(&output, &converted).is_err() {
+                        std::process::exit(1);
+                    }
+                }
+                None => std::process::exit(1),
+            }
         }
 
         Command::RetestFailures {
