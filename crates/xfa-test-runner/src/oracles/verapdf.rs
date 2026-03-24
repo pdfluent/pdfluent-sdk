@@ -163,6 +163,43 @@ impl VeraPdfOracle {
         Ok(result)
     }
 
+    /// Validate a PDF against its claimed PDF/X level using veraPDF.
+    ///
+    /// Maps the detected [`pdf_compliance::PdfXLevel`] to the corresponding
+    /// veraPDF flavour string. Uses a separate cache key (`"verapdf-pdfx"`)
+    /// so results don't collide with the PDF/A or PDF/UA flavour caches.
+    pub fn validate_pdfx(
+        &self,
+        pdf_path: &Path,
+        pdf_hash: &str,
+        level: pdf_compliance::PdfXLevel,
+    ) -> Result<VeraPdfResult, String> {
+        // Check run-local cache (pdfx-specific key)
+        if let Some(db) = &self.db {
+            if let Some(cached) = db.get_oracle_cache("verapdf-pdfx", pdf_hash) {
+                return serde_json::from_str(&cached)
+                    .map_err(|e| format!("cache deserialize error: {e}"));
+            }
+        }
+
+        let flavour = match level {
+            pdf_compliance::PdfXLevel::X1a2003 => "pdfx1a",
+            pdf_compliance::PdfXLevel::X32003 => "pdfx3",
+            pdf_compliance::PdfXLevel::X4 => "pdfx4",
+        };
+
+        let result = self.run_verapdf_flavour(flavour, pdf_path)?;
+
+        // Store in run-local cache
+        if let Some(db) = &self.db {
+            if let Ok(json) = serde_json::to_string(&result) {
+                let _ = db.set_oracle_cache("verapdf-pdfx", pdf_hash, &json);
+            }
+        }
+
+        Ok(result)
+    }
+
     fn run_verapdf(&self, pdf_path: &Path) -> Result<VeraPdfResult, String> {
         self.run_verapdf_flavour("0", pdf_path)
     }

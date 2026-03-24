@@ -116,6 +116,12 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         pdfua_validate::PdfUaValidateTest::new()
     };
 
+    let pdfx_validate = if let Some(ref oracle) = verapdf_arc {
+        pdfx_validate::PdfXValidateTest::new().with_verapdf(oracle.clone())
+    } else {
+        pdfx_validate::PdfXValidateTest::new()
+    };
+
     #[allow(unused_mut)]
     let mut tests: Vec<Box<dyn PdfTest>> = vec![
         Box::new(parse::ParseTest),
@@ -158,7 +164,7 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(zugferd_roundtrip::ZugferdRoundtripTest),
         Box::new(zugferd_validate::ZugferdValidateTest),
         Box::new(pdfua_validate),
-        Box::new(pdfx_validate::PdfXValidateTest),
+        Box::new(pdfx_validate),
         Box::new(pptx_convert::PptxConvertTest),
         Box::new(header_footer::HeaderFooterTest),
     ];
