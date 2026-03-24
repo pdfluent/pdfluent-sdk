@@ -105,6 +105,84 @@ fn main() {
             "Conditional relevance expressions on fields and subforms",
             build_relevance_expr(),
         ),
+        // ── Complex nesting ──────────────────────────────────────
+        (
+            "deep_5_levels",
+            "Five levels of nested subforms with fields at each level",
+            build_deep_5_levels(),
+        ),
+        (
+            "mixed_nested_modes",
+            "Different layout modes at each nesting level (tb/lr-tb/position)",
+            build_mixed_nested_modes(),
+        ),
+        (
+            "grid_3x3",
+            "3×3 grid using nested lr-tb row subforms",
+            build_grid_3x3(),
+        ),
+        (
+            "column_nested_rows",
+            "Column of sections each containing a multi-column row",
+            build_column_nested_rows(),
+        ),
+        (
+            "table_in_section",
+            "Table layout nested inside a named section subform",
+            build_table_in_section(),
+        ),
+        // ── Overflow scenarios ────────────────────────────────────
+        (
+            "hundred_fields",
+            "100 fields forcing many pages via pagination overflow",
+            build_hundred_fields(),
+        ),
+        (
+            "tall_multiline",
+            "Tall multiline text areas causing single-page overflow",
+            build_tall_multiline(),
+        ),
+        (
+            "many_sections_overflow",
+            "Many labelled sections each with content, overflowing pages",
+            build_many_sections_overflow(),
+        ),
+        (
+            "two_col_overflow",
+            "Two-column layout with enough content to overflow both columns",
+            build_two_col_overflow(),
+        ),
+        (
+            "large_table_overflow",
+            "Large table with 35 data rows overflowing onto multiple pages",
+            build_large_table_overflow(),
+        ),
+        // ── Styling ──────────────────────────────────────────────
+        (
+            "border_styles",
+            "Fields with solid, dashed, and dotted border edge styles",
+            build_border_styles(),
+        ),
+        (
+            "margins_inset",
+            "Fields with explicit left/right/top/bottom margin insets",
+            build_margins_inset(),
+        ),
+        (
+            "font_variations",
+            "Draw elements with varying font size, typeface, and color",
+            build_font_variations(),
+        ),
+        (
+            "fill_colors",
+            "Fields with colored background fills via border/fill element",
+            build_fill_colors(),
+        ),
+        (
+            "para_alignment",
+            "Draw elements with left, center, right, and justify alignment",
+            build_para_alignment(),
+        ),
     ];
 
     for (i, (suffix, desc, xdp)) in cases.iter().enumerate() {
@@ -698,6 +776,549 @@ fn build_relevance_expr() -> String {
         "Conditional relevance expressions on fields and subforms",
         body,
     )
+}
+
+// ---------------------------------------------------------------------------
+// Complex nesting builders
+// ---------------------------------------------------------------------------
+
+fn build_deep_5_levels() -> String {
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="l1" layout="tb" w="7.5in">
+      <field name="f1" w="6in" h="0.25in">
+        <caption><value><text>Level 1</text></value></caption>
+        <ui><textEdit/></ui><value><text>depth 1</text></value>
+      </field>
+      <subform name="l2" layout="tb" w="7in">
+        <field name="f2" w="5.5in" h="0.25in">
+          <caption><value><text>Level 2</text></value></caption>
+          <ui><textEdit/></ui><value><text>depth 2</text></value>
+        </field>
+        <subform name="l3" layout="tb" w="6.5in">
+          <field name="f3" w="5in" h="0.25in">
+            <caption><value><text>Level 3</text></value></caption>
+            <ui><textEdit/></ui><value><text>depth 3</text></value>
+          </field>
+          <subform name="l4" layout="tb" w="6in">
+            <field name="f4" w="4.5in" h="0.25in">
+              <caption><value><text>Level 4</text></value></caption>
+              <ui><textEdit/></ui><value><text>depth 4</text></value>
+            </field>
+            <subform name="l5" layout="tb" w="5.5in">
+              <field name="f5" w="4in" h="0.25in">
+                <caption><value><text>Level 5</text></value></caption>
+                <ui><textEdit/></ui><value><text>depth 5</text></value>
+              </field>
+            </subform>
+          </subform>
+        </subform>
+      </subform>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Five levels of nested subforms", body)
+}
+
+fn build_mixed_nested_modes() -> String {
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <!-- tb outer -->
+    <subform name="outer" layout="tb" w="7.5in">
+      <draw name="outerLabel" w="7in" h="0.3in">
+        <value><text>Outer: top-bottom flow</text></value>
+      </draw>
+      <!-- lr-tb inside tb -->
+      <subform name="rowZone" layout="lr-tb" w="7.5in">
+        <subform name="leftCell" layout="tb" w="3.5in">
+          <field name="leftA" w="3.5in" h="0.3in">
+            <ui><textEdit/></ui><value><text>Left A</text></value>
+          </field>
+          <field name="leftB" w="3.5in" h="0.3in">
+            <ui><textEdit/></ui><value><text>Left B</text></value>
+          </field>
+        </subform>
+        <!-- position inside lr-tb -->
+        <subform name="rightCell" layout="position" w="3.5in" h="1in">
+          <field name="abs1" x="0.1in" y="0.1in" w="3in" h="0.3in">
+            <ui><textEdit/></ui><value><text>Abs 1</text></value>
+          </field>
+          <field name="abs2" x="0.1in" y="0.55in" w="3in" h="0.3in">
+            <ui><textEdit/></ui><value><text>Abs 2</text></value>
+          </field>
+        </subform>
+      </subform>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Different layout modes at each nesting level", body)
+}
+
+fn build_grid_3x3() -> String {
+    let cell = |name: &str, text: &str| {
+        format!(
+            r#"<field name="{name}" w="2.4in" h="0.4in">
+          <ui><textEdit/></ui><value><text>{text}</text></value>
+        </field>"#
+        )
+    };
+    let row = |r: usize| {
+        format!(
+            r#"<subform name="row{r}" layout="lr-tb" w="7.5in" h="0.4in">
+        {}{}{}
+      </subform>"#,
+            cell(&format!("c{r}1"), &format!("R{r}C1")),
+            cell(&format!("c{r}2"), &format!("R{r}C2")),
+            cell(&format!("c{r}3"), &format!("R{r}C3")),
+        )
+    };
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    {PAGE_AREA}
+    <subform name="grid" layout="tb" w="7.5in">
+      {r1}
+      {r2}
+      {r3}
+    </subform>
+  </subform>"#,
+        r1 = row(1),
+        r2 = row(2),
+        r3 = row(3),
+    );
+    xdp_wrap("3x3 grid using nested lr-tb row subforms", &body)
+}
+
+fn build_column_nested_rows() -> String {
+    let section = |n: usize| {
+        format!(
+            r#"<subform name="sec{n}" layout="tb" w="7.5in">
+      <draw name="h{n}" w="7in" h="0.25in">
+        <value><text>Section {n}</text></value>
+      </draw>
+      <subform name="row{n}" layout="lr-tb" w="7.5in" h="0.35in">
+        <field name="s{n}f1" w="3.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Col A</text></value>
+        </field>
+        <field name="s{n}f2" w="3.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Col B</text></value>
+        </field>
+      </subform>
+    </subform>"#
+        )
+    };
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    {PAGE_AREA}
+    <subform name="cols" layout="tb" w="7.5in">
+      {s1}{s2}{s3}{s4}
+    </subform>
+  </subform>"#,
+        s1 = section(1),
+        s2 = section(2),
+        s3 = section(3),
+        s4 = section(4),
+    );
+    xdp_wrap(
+        "Column of sections each containing a multi-column row",
+        &body,
+    )
+}
+
+fn build_table_in_section() -> String {
+    let data_row = |label: &str, val: &str| {
+        format!(
+            r#"<subform layout="row" w="6in" h="0.3in">
+          <field name="k" w="3in" h="0.3in"><ui><textEdit/></ui><value><text>{label}</text></value></field>
+          <field name="v" w="3in" h="0.3in"><ui><textEdit/></ui><value><text>{val}</text></value></field>
+        </subform>"#
+        )
+    };
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    {PAGE_AREA}
+    <subform name="section" layout="tb" w="7.5in">
+      <draw name="title" w="7in" h="0.35in">
+        <value><text>Product Details</text></value>
+      </draw>
+      <subform name="details" layout="table" w="6in">
+        {r1}
+        {r2}
+        {r3}
+        {r4}
+      </subform>
+    </subform>
+  </subform>"#,
+        r1 = data_row("Name", "Widget Pro"),
+        r2 = data_row("SKU", "WP-2024-001"),
+        r3 = data_row("Price", "EUR 49.99"),
+        r4 = data_row("Stock", "142 units"),
+    );
+    xdp_wrap("Table layout nested inside a named section subform", &body)
+}
+
+// ---------------------------------------------------------------------------
+// Overflow builders
+// ---------------------------------------------------------------------------
+
+fn build_hundred_fields() -> String {
+    let mut fields = String::new();
+    for i in 1..=100 {
+        fields.push_str(&format!(
+            r#"<field name="f{i:03}" w="7in" h="0.25in">
+        <caption><value><text>Field {i:03}</text></value></caption>
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+"#
+        ));
+    }
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="data" layout="tb" w="7.5in">
+      {fields}
+    </subform>
+  </subform>"#
+    );
+    xdp_wrap("100 fields forcing multi-page overflow", &body)
+}
+
+fn build_tall_multiline() -> String {
+    let mut fields = String::new();
+    for i in 1..=6 {
+        fields.push_str(&format!(
+            r#"<field name="block{i}" w="7in" h="2in">
+        <caption><value><text>Block {i}</text></value></caption>
+        <ui><textEdit multiLine="1"/></ui><value><text/></value>
+      </field>
+"#
+        ));
+    }
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="data" layout="tb" w="7.5in">
+      {fields}
+    </subform>
+  </subform>"#
+    );
+    xdp_wrap("Tall multiline text areas causing overflow", &body)
+}
+
+fn build_many_sections_overflow() -> String {
+    let section = |n: usize| {
+        let mut rows = String::new();
+        for i in 1..=4 {
+            rows.push_str(&format!(
+                r#"<field name="s{n}r{i}" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section {n} row {i}</text></value>
+        </field>
+"#
+            ));
+        }
+        format!(
+            r#"<subform name="section{n}" layout="tb" w="7.5in">
+      <draw name="h{n}" w="7in" h="0.3in">
+        <value><text>Section {n} Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      {rows}
+    </subform>"#
+        )
+    };
+    let mut sections = String::new();
+    for n in 1..=10 {
+        sections.push_str(&section(n));
+        sections.push('\n');
+    }
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    {sections}
+  </subform>"#
+    );
+    xdp_wrap(
+        "Many labelled sections overflowing onto multiple pages",
+        &body,
+    )
+}
+
+fn build_two_col_overflow() -> String {
+    let mut left = String::new();
+    let mut right = String::new();
+    for i in 1..=15 {
+        left.push_str(&format!(
+            r#"<field name="l{i}" w="3.5in" h="0.3in">
+          <ui><textEdit/></ui><value><text>Left {i}</text></value>
+        </field>
+"#
+        ));
+        right.push_str(&format!(
+            r#"<field name="r{i}" w="3.5in" h="0.3in">
+          <ui><textEdit/></ui><value><text>Right {i}</text></value>
+        </field>
+"#
+        ));
+    }
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="twoCol" layout="lr-tb" w="7.5in">
+      <subform name="leftCol" layout="tb" w="3.5in">
+        {left}
+      </subform>
+      <subform name="rightCol" layout="tb" w="3.5in">
+        {right}
+      </subform>
+    </subform>
+  </subform>"#
+    );
+    xdp_wrap("Two-column layout overflowing both columns", &body)
+}
+
+fn build_large_table_overflow() -> String {
+    let header = r#"<subform name="headerRow" layout="lr-tb" w="7.5in" h="0.35in">
+        <field name="hItem" w="3in" h="0.35in"><ui><textEdit/></ui><value><text>Item</text></value></field>
+        <field name="hQty" w="1.5in" h="0.35in"><ui><textEdit/></ui><value><text>Qty</text></value></field>
+        <field name="hPrice" w="1.5in" h="0.35in"><ui><textEdit/></ui><value><text>Price</text></value></field>
+        <field name="hTotal" w="1.5in" h="0.35in"><ui><textEdit/></ui><value><text>Total</text></value></field>
+      </subform>"#;
+    let mut rows = String::new();
+    for i in 1..=35 {
+        rows.push_str(&format!(
+            r#"<subform name="row{i}" layout="lr-tb" w="7.5in" h="0.3in">
+        <field name="item{i}" w="3in" h="0.3in"><ui><textEdit/></ui><value><text>Product {i:02}</text></value></field>
+        <field name="qty{i}" w="1.5in" h="0.3in"><ui><numericEdit/></ui><value><float>{i}</float></value></field>
+        <field name="price{i}" w="1.5in" h="0.3in"><ui><numericEdit/></ui><value><float>{:.2}</float></value></field>
+        <field name="total{i}" w="1.5in" h="0.3in"><ui><numericEdit/></ui><value><float>{:.2}</float></value></field>
+      </subform>
+"#,
+            i as f64 * 9.99,
+            i as f64 * 9.99 * i as f64,
+        ));
+    }
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="invoiceTable" layout="tb" w="7.5in">
+      {header}
+      {rows}
+    </subform>
+  </subform>"#
+    );
+    xdp_wrap("Large table with 35 rows overflowing multiple pages", &body)
+}
+
+// ---------------------------------------------------------------------------
+// Styling builders
+// ---------------------------------------------------------------------------
+
+fn build_border_styles() -> String {
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="borders" layout="tb" w="7.5in">
+      <field name="solidBorder" w="5in" h="0.4in">
+        <border><edge stroke="solid" thickness="1pt" color="0,0,0"/></border>
+        <ui><textEdit/></ui><value><text>Solid black border</text></value>
+      </field>
+      <field name="dashedBorder" w="5in" h="0.4in">
+        <border><edge stroke="dashed" thickness="1pt" color="0,0,200"/></border>
+        <ui><textEdit/></ui><value><text>Dashed blue border</text></value>
+      </field>
+      <field name="dottedBorder" w="5in" h="0.4in">
+        <border><edge stroke="dotted" thickness="1pt" color="200,0,0"/></border>
+        <ui><textEdit/></ui><value><text>Dotted red border</text></value>
+      </field>
+      <field name="thickBorder" w="5in" h="0.4in">
+        <border><edge stroke="solid" thickness="3pt" color="0,128,0"/></border>
+        <ui><textEdit/></ui><value><text>Thick green border</text></value>
+      </field>
+      <field name="noBorder" w="5in" h="0.4in">
+        <border><edge stroke="none"/></border>
+        <ui><textEdit/></ui><value><text>No border</text></value>
+      </field>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Fields with solid, dashed, and dotted border styles", body)
+}
+
+fn build_margins_inset() -> String {
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="spaced" layout="tb" w="7.5in">
+      <field name="noMargin" w="5in" h="0.4in">
+        <ui><textEdit/></ui><value><text>No explicit margin</text></value>
+      </field>
+      <field name="smallMargin" w="5in" h="0.4in">
+        <margin leftInset="4pt" rightInset="4pt" topInset="2pt" bottomInset="2pt"/>
+        <ui><textEdit/></ui><value><text>Small margins (4pt/2pt)</text></value>
+      </field>
+      <field name="largeMargin" w="5in" h="0.6in">
+        <margin leftInset="16pt" rightInset="16pt" topInset="8pt" bottomInset="8pt"/>
+        <ui><textEdit/></ui><value><text>Large margins (16pt/8pt)</text></value>
+      </field>
+      <field name="asymMargin" w="5in" h="0.5in">
+        <margin leftInset="24pt" rightInset="4pt" topInset="2pt" bottomInset="12pt"/>
+        <ui><textEdit/></ui><value><text>Asymmetric margins</text></value>
+      </field>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Fields with explicit margin insets", body)
+}
+
+fn build_font_variations() -> String {
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="fonts" layout="tb" w="7.5in">
+      <draw name="small" w="7in" h="0.3in">
+        <value><text>Small 8pt text</text></value>
+        <font size="8pt" typeface="Arial"/>
+      </draw>
+      <draw name="normal" w="7in" h="0.35in">
+        <value><text>Normal 12pt text</text></value>
+        <font size="12pt" typeface="Arial"/>
+      </draw>
+      <draw name="large" w="7in" h="0.5in">
+        <value><text>Large 18pt text</text></value>
+        <font size="18pt" typeface="Arial"/>
+      </draw>
+      <draw name="bold" w="7in" h="0.4in">
+        <value><text>Bold 14pt text</text></value>
+        <font size="14pt" typeface="Arial" weight="bold"/>
+      </draw>
+      <draw name="colored" w="7in" h="0.4in">
+        <value><text>Colored 14pt text (blue)</text></value>
+        <font size="14pt" typeface="Arial" color="0,0,200"/>
+      </draw>
+      <draw name="redSmall" w="7in" h="0.3in">
+        <value><text>Red 9pt text</text></value>
+        <font size="9pt" typeface="Arial" color="200,0,0"/>
+      </draw>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Draw elements with varying font size and color", body)
+}
+
+fn build_fill_colors() -> String {
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="fills" layout="tb" w="7.5in">
+      <field name="yellowBg" w="5in" h="0.4in">
+        <border><fill><color value="255,255,0"/></fill></border>
+        <ui><textEdit/></ui><value><text>Yellow background</text></value>
+      </field>
+      <field name="lightBlueBg" w="5in" h="0.4in">
+        <border><fill><color value="200,220,255"/></fill></border>
+        <ui><textEdit/></ui><value><text>Light blue background</text></value>
+      </field>
+      <field name="greenBg" w="5in" h="0.4in">
+        <border><fill><color value="200,240,200"/></fill></border>
+        <ui><textEdit/></ui><value><text>Light green background</text></value>
+      </field>
+      <field name="pinkBg" w="5in" h="0.4in">
+        <border><fill><color value="255,210,210"/></fill></border>
+        <ui><textEdit/></ui><value><text>Pink background (error state)</text></value>
+      </field>
+      <field name="noBg" w="5in" h="0.4in">
+        <ui><textEdit/></ui><value><text>No explicit background</text></value>
+      </field>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Fields with colored background fills", body)
+}
+
+fn build_para_alignment() -> String {
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="aligned" layout="tb" w="7.5in">
+      <draw name="leftAligned" w="7in" h="0.35in">
+        <value><text>Left-aligned text (default)</text></value>
+        <para hAlign="left"/>
+      </draw>
+      <draw name="centeredText" w="7in" h="0.35in">
+        <value><text>Centered text</text></value>
+        <para hAlign="center"/>
+      </draw>
+      <draw name="rightAligned" w="7in" h="0.35in">
+        <value><text>Right-aligned text</text></value>
+        <para hAlign="right"/>
+      </draw>
+      <draw name="justifiedText" w="7in" h="0.35in">
+        <value><text>Justified text (spread across width)</text></value>
+        <para hAlign="justify"/>
+      </draw>
+      <field name="centeredField" w="6in" h="0.4in">
+        <caption placement="top"><value><text>Centered field value</text></value></caption>
+        <ui><textEdit/></ui>
+        <value><text>centered</text></value>
+        <para hAlign="center"/>
+      </field>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Paragraph text alignment variants", body)
 }
 
 // ---------------------------------------------------------------------------

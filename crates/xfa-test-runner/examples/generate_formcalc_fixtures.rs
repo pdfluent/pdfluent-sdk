@@ -253,6 +253,327 @@ var futureVal = FV(100, 0.005, 12)
 var presentVal = PV(100, 0.005, 12)
 Round(monthlyPmt + futureVal + presentVal, 2)"#,
     ),
+    // ── Error recovery ────────────────────────────────────────────
+    (
+        "err_denom_guard",
+        "Error recovery: zero-denominator guard before division",
+        r#"var denom = 0
+var result = 0
+if denom <> 0 then
+  result = 100 / denom
+else
+  result = -1
+endif
+result"#,
+    ),
+    (
+        "err_null_chain",
+        "Error recovery: null propagated through arithmetic chain",
+        r#"var a = null
+var b = null
+var c = (a + 0) + (b + 0)
+var d = c * 2
+d"#,
+    ),
+    (
+        "err_empty_str_to_num",
+        "Error recovery: empty-string-to-number coercion equals zero",
+        r#"var s = ""
+var n = s + 0
+var ok = ""
+if n == 0 then
+  ok = "zero"
+else
+  ok = "nonzero"
+endif
+ok"#,
+    ),
+    (
+        "err_nested_null_arith",
+        "Error recovery: nested null arithmetic stays stable",
+        r#"var x = null
+var y = null
+var sum = (x + 0) + (y + 0)
+var product = (x + 1) * (y + 1)
+sum + product"#,
+    ),
+    (
+        "err_large_num",
+        "Error recovery: very large number arithmetic remains positive",
+        r#"var big = 1000000000
+var bigger = big * 1000
+var result = 0
+if bigger > 0 then
+  result = 1
+else
+  result = -1
+endif
+result"#,
+    ),
+    // ── Nested SOM paths ──────────────────────────────────────────
+    (
+        "som_this_rawvalue",
+        "SOM: this.rawValue access returns Null without DOM",
+        r#"var selfVal = this.rawValue
+var result = 0
+if selfVal == null then
+  result = 99
+endif
+result"#,
+    ),
+    (
+        "som_parent_access",
+        "SOM: $.parent navigation returns Null without DOM",
+        r#"var parentNode = $.parent
+var grandParent = $.parent.parent
+var depth = 0
+if parentNode == null then
+  depth = depth + 1
+endif
+if grandParent == null then
+  depth = depth + 1
+endif
+depth"#,
+    ),
+    (
+        "som_record_binding",
+        "SOM: $record.fieldName binding pattern returns Null without DOM",
+        r#"var rec = $record
+var val = $record.firstName
+var result = 0
+if rec == null then
+  result = result + 1
+endif
+if val == null then
+  result = result + 1
+endif
+result"#,
+    ),
+    (
+        "som_form_absolute",
+        "SOM: absolute $form path lookup returns Null without DOM",
+        r#"var n1 = $form.page1.firstName.rawValue
+var n2 = $form.page1.lastName.rawValue
+var found = 0
+if n1 <> null then
+  found = found + 1
+endif
+if n2 <> null then
+  found = found + 1
+endif
+found"#,
+    ),
+    (
+        "som_xfa_host_chain",
+        "SOM: xfa.host.* member chain access returns Null without DOM",
+        r#"var page = xfa.host.currentPage
+var name = xfa.host.name
+var result = 0
+if page == null then
+  result = result + 1
+endif
+if name == null then
+  result = result + 1
+endif
+result"#,
+    ),
+    // ── Event-style scripts ───────────────────────────────────────
+    (
+        "event_calc_sum",
+        "Event: calculate — sum two sibling fields via SOM (returns 0 without DOM)",
+        r#"var v1 = xfa.form.form1.section.amount1.rawValue
+var v2 = xfa.form.form1.section.amount2.rawValue
+var total = (v1 + 0) + (v2 + 0)
+total"#,
+    ),
+    (
+        "event_validate_range",
+        "Event: validate — range check on field value",
+        r#"var val = this.rawValue + 0
+var valid = 1
+if val < 0 then
+  valid = 0
+endif
+if val > 100 then
+  valid = 0
+endif
+valid"#,
+    ),
+    (
+        "event_enter_init",
+        "Event: enter — build page hint message from xfa.host",
+        r#"var page = xfa.host.currentPage
+var msg = ""
+if page == null then
+  msg = "ready"
+else
+  msg = Concat("page ", page + 0)
+endif
+msg"#,
+    ),
+    (
+        "event_exit_classify",
+        "Event: exit — classify numeric value into category string",
+        r#"var raw = this.rawValue + 0
+var category = ""
+if raw > 1000 then
+  category = "high"
+elseif raw > 100 then
+  category = "medium"
+elseif raw > 0 then
+  category = "low"
+else
+  category = "zero"
+endif
+category"#,
+    ),
+    (
+        "event_change_filter",
+        "Event: change — keystroke filter allows only digit characters",
+        r#"var newChar = xfa.event.change
+var allow = 1
+if newChar <> null then
+  var isDigit = OneOf(newChar, "0", "1", "2", "3", "4", "5", "6", "7", "8", "9")
+  if isDigit == 0 then
+    allow = 0
+  endif
+endif
+allow"#,
+    ),
+    // ── String edge cases ─────────────────────────────────────────
+    (
+        "str_empty_ops",
+        "String edge: Len/Concat/At on empty string all succeed",
+        r#"var empty = ""
+var lenE = Len(empty)
+var cat = Concat(empty, "x", empty)
+var atE = At("x", empty)
+Concat(lenE + 0, ",", atE + 0, ",", cat)"#,
+    ),
+    (
+        "str_unicode_accents",
+        "String edge: accented characters through Upper/Lower/Len",
+        r#"var s = "Hello World"
+var u = Upper(s)
+var l = Lower(s)
+Concat(Len(s) + 0, ":", u)"#,
+    ),
+    (
+        "str_large_build",
+        "String edge: build a 1KB+ string via Concat loop, measure Len",
+        r#"var chunk = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+var big = ""
+for i = 1 upto 30 do
+  big = Concat(big, chunk)
+endfor
+Len(big)"#,
+    ),
+    (
+        "str_at_replace",
+        "String edge: At and Replace with overlapping needle patterns",
+        r#"var s = "abcabcabc"
+var pos = At("abc", s)
+var rep = Replace(s, "abc", "XY")
+var pos2 = At("XY", rep)
+Concat(pos + 0, " ", pos2 + 0)"#,
+    ),
+    (
+        "str_substr_bounds",
+        "String edge: Substr at start, middle, and past-end positions",
+        r#"var s = "Hello"
+var s1 = Substr(s, 1, 3)
+var s2 = Substr(s, 4, 10)
+var s3 = Substr(s, 6, 5)
+Concat(s1, "|", s2, "|", Len(s3) + 0)"#,
+    ),
+    // ── Mixed scenarios ───────────────────────────────────────────
+    (
+        "mixed_loop_to_str",
+        "Mixed: loop builds comma-separated string of squares",
+        r#"var result = ""
+for i = 1 upto 5 do
+  var sq = i * i
+  result = Concat(result, sq + 0, ",")
+endfor
+result"#,
+    ),
+    (
+        "mixed_func_finance",
+        "Mixed: user function wrapping iterative financial calculation",
+        r#"func monthlyPay(p, annualRate, n)
+  var r = annualRate / 12
+  var factor = 1
+  for k = 1 upto n do
+    factor = factor * (1 + r)
+  endfor
+  p * r * factor / (factor - 1)
+endfunc
+Round(monthlyPay(20000, 0.05, 36), 2)"#,
+    ),
+    (
+        "mixed_date_math",
+        "Mixed: date number with Mod and formatted string result",
+        r#"var d = Date()
+var ds = Num2Date(d, "YYYY-MM-DD")
+var yr = Left(ds, 4) + 0
+var remainder = Mod(d, 365)
+Concat(yr, "/", remainder + 0)"#,
+    ),
+    (
+        "mixed_null_loop",
+        "Mixed: null-guarded accumulation inside loop",
+        r#"var total = 0
+var skipped = 0
+for i = 1 upto 8 do
+  var v = null
+  if Mod(i, 3) <> 0 then
+    v = i * 5
+  endif
+  if v == null then
+    skipped = skipped + 1
+  else
+    total = total + v
+  endif
+endfor
+Concat(total + 0, " skip:", skipped + 0)"#,
+    ),
+    (
+        "mixed_nested_funcs",
+        "Mixed: chained user functions with string formatting",
+        r#"func triple(x)
+  x * 3
+endfunc
+func nineX(x)
+  triple(triple(x))
+endfunc
+func label(n)
+  Concat("9x(", n + 0, ")=", nineX(n) + 0)
+endfunc
+label(4)"#,
+    ),
+    (
+        "mixed_coerce_pipeline",
+        "Mixed: string-number coercion pipeline ending in formatted result",
+        r#"var raw = "123"
+var num = raw + 0
+var doubled = num * 2
+var pct = Round(doubled / 1000, 3)
+Concat(doubled + 0, " pct=", pct + 0)"#,
+    ),
+    (
+        "mixed_search_loop",
+        "Mixed: linear search in loop returns first index divisible by 7",
+        r#"var target = 7
+var found = -1
+for i = 1 upto 20 do
+  if found == -1 then
+    if Mod(i, target) == 0 then
+      found = i
+    endif
+  endif
+endfor
+found"#,
+    ),
 ];
 
 fn main() {

@@ -129,6 +129,105 @@ fn main() {
         large_data,
     ));
 
+    // ── Edge cases ────────────────────────────────────────────────
+    cases.push((
+        "null_nested_values",
+        "Null/missing values at multiple nesting levels",
+        TMPL_NULL_NESTED.to_string(),
+        DATA_NULL_NESTED.to_string(),
+    ));
+    cases.push((
+        "empty_array_element",
+        "Collection element present but containing no children",
+        TMPL_EMPTY_ARR.to_string(),
+        DATA_EMPTY_ARR.to_string(),
+    ));
+    cases.push((
+        "six_levels_deep",
+        "Data nesting 6 levels deep (beyond standard 5-level test)",
+        TMPL_SIX_DEEP.to_string(),
+        DATA_SIX_DEEP.to_string(),
+    ));
+    cases.push((
+        "xml_special_chars",
+        "Data values containing XML special characters (&, <, >, \", ')",
+        TMPL_XML_CHARS.to_string(),
+        DATA_XML_CHARS.to_string(),
+    ));
+    cases.push((
+        "sibling_duplicates",
+        "Multiple sibling elements with the same tag name (repeating rows)",
+        TMPL_SIBLINGS.to_string(),
+        DATA_SIBLINGS.to_string(),
+    ));
+
+    // ── Large data ────────────────────────────────────────────────
+    let (fifty_tmpl, fifty_data) = build_large_dataset(50);
+    cases.push((
+        "fifty_fields",
+        "Exactly 50 data-bound fields",
+        fifty_tmpl,
+        fifty_data,
+    ));
+    let (rep50_tmpl, rep50_data) = build_repeating_dataset(50);
+    cases.push((
+        "repeating_50_rows",
+        "50 repeating row elements in a collection",
+        rep50_tmpl,
+        rep50_data,
+    ));
+    cases.push((
+        "wide_table",
+        "Wide table: 10 columns × 5 rows",
+        TMPL_WIDE.to_string(),
+        DATA_WIDE.to_string(),
+    ));
+    cases.push((
+        "tree_50_nodes",
+        "Hierarchical tree with 3-level branching (~50 nodes total)",
+        TMPL_TREE50.to_string(),
+        DATA_TREE50.to_string(),
+    ));
+    let (mixed50_tmpl, mixed50_data) = build_mixed_types_dataset(50);
+    cases.push((
+        "mixed_50_types",
+        "50 fields of alternating text/numeric types",
+        mixed50_tmpl,
+        mixed50_data,
+    ));
+
+    // ── Unicode ───────────────────────────────────────────────────
+    cases.push((
+        "arabic_rtl",
+        "Arabic RTL text data values",
+        TMPL_ARABIC.to_string(),
+        DATA_ARABIC.to_string(),
+    ));
+    cases.push((
+        "hebrew_rtl",
+        "Hebrew RTL text data values",
+        TMPL_HEBREW.to_string(),
+        DATA_HEBREW.to_string(),
+    ));
+    cases.push((
+        "cjk_extended",
+        "Extended CJK: Traditional Chinese, Japanese kanji, Korean Hangul",
+        TMPL_CJK_EXT.to_string(),
+        DATA_CJK_EXT.to_string(),
+    ));
+    cases.push((
+        "emoji_unicode",
+        "Emoji and symbols via XML numeric character references",
+        TMPL_EMOJI.to_string(),
+        DATA_EMOJI.to_string(),
+    ));
+    cases.push((
+        "multilingual",
+        "Mixed: Latin, Cyrillic, Greek, and CJK in one dataset",
+        TMPL_MULTILINGUAL.to_string(),
+        DATA_MULTILINGUAL.to_string(),
+    ));
+
     for (i, (suffix, desc, tmpl, data)) in cases.iter().enumerate() {
         let filename = format!("xd_{:02}_{suffix}.pdf", i + 1);
         let path = out_dir.join(&filename);
@@ -618,6 +717,433 @@ fn build_large_dataset(n: usize) -> (String, String) {
     <bigForm>
 {data_fields}
     </bigForm>
+  </xfa:data>"#
+    );
+
+    (tmpl, data)
+}
+
+// ---------------------------------------------------------------------------
+// Edge case templates and data (new)
+// ---------------------------------------------------------------------------
+
+const TMPL_NULL_NESTED: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="report" layout="tb" w="7.5in">
+      <field name="title" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <subform name="section" layout="tb" w="7in">
+        <field name="sectionHead" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="sectionBody" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="sectionNote" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      </subform>
+    </subform>
+  </subform>"#;
+
+// sectionBody and sectionNote intentionally absent from data (null by omission)
+const DATA_NULL_NESTED: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <report>
+      <title>Null nesting test</title>
+      <section>
+        <sectionHead>Present heading</sectionHead>
+      </section>
+    </report>
+  </xfa:data>"#;
+
+const TMPL_EMPTY_ARR: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="container" layout="tb" w="7.5in">
+      <field name="label" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="count" w="2in" h="0.3in"><ui><numericEdit/></ui><value><integer>0</integer></value></field>
+    </subform>
+  </subform>"#;
+
+const DATA_EMPTY_ARR: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <container>
+      <label>Empty collection</label>
+      <count>0</count>
+      <items></items>
+      <tags></tags>
+    </container>
+  </xfa:data>"#;
+
+const TMPL_SIX_DEEP: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="root" layout="tb" w="7.5in">
+      <field name="rootVal" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+const DATA_SIX_DEEP: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <root>
+      <rootVal>level 1</rootVal>
+      <l2>
+        <l2v>level 2</l2v>
+        <l3>
+          <l3v>level 3</l3v>
+          <l4>
+            <l4v>level 4</l4v>
+            <l5>
+              <l5v>level 5</l5v>
+              <l6>
+                <deepest>leaf at level 6</deepest>
+              </l6>
+            </l5>
+          </l4>
+        </l3>
+      </l2>
+    </root>
+  </xfa:data>"#;
+
+const TMPL_XML_CHARS: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="xmlChars" layout="tb" w="7.5in">
+      <field name="ampField" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="ltGtField" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="quoteField" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="mixedField" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+const DATA_XML_CHARS: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <xmlChars>
+      <ampField>Tom &amp; Jerry Productions</ampField>
+      <ltGtField>x &lt; 10 &amp;&amp; y &gt; 0</ltGtField>
+      <quoteField>He said &quot;Hello&quot; and she said &apos;Hi&apos;</quoteField>
+      <mixedField>A&amp;B &lt;tag&gt; &quot;quoted&quot;</mixedField>
+    </xmlChars>
+  </xfa:data>"#;
+
+const TMPL_SIBLINGS: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="catalog" layout="tb" w="7.5in">
+      <field name="name" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <subform name="entries" layout="tb" w="7in">
+        <subform name="entry" layout="lr-tb" w="7in" h="0.3in">
+          <field name="key" w="3in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+          <field name="value" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        </subform>
+      </subform>
+    </subform>
+  </subform>"#;
+
+const DATA_SIBLINGS: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <catalog>
+      <name>Color Map</name>
+      <entries>
+        <entry><key>red</key><value>#FF0000</value></entry>
+        <entry><key>green</key><value>#00FF00</value></entry>
+        <entry><key>blue</key><value>#0000FF</value></entry>
+        <entry><key>white</key><value>#FFFFFF</value></entry>
+        <entry><key>black</key><value>#000000</value></entry>
+      </entries>
+    </catalog>
+  </xfa:data>"#;
+
+// ---------------------------------------------------------------------------
+// Wide table constants
+// ---------------------------------------------------------------------------
+
+const TMPL_WIDE: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.25in" y="0.5in" w="8in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="wideTable" layout="tb" w="8in">
+      <subform name="row1" layout="lr-tb" w="8in" h="0.3in">
+        <field name="c1" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c2" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c3" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c4" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c5" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c6" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c7" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c8" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c9" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="c10" w="0.8in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      </subform>
+    </subform>
+  </subform>"#;
+
+const DATA_WIDE: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <wideTable>
+      <row1>
+        <c1>Col1R1</c1><c2>Col2R1</c2><c3>Col3R1</c3><c4>Col4R1</c4><c5>Col5R1</c5>
+        <c6>Col6R1</c6><c7>Col7R1</c7><c8>Col8R1</c8><c9>Col9R1</c9><c10>Col10R1</c10>
+      </row1>
+    </wideTable>
+  </xfa:data>"#;
+
+// ---------------------------------------------------------------------------
+// Hierarchical tree constants
+// ---------------------------------------------------------------------------
+
+const TMPL_TREE50: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="org" layout="tb" w="7.5in">
+      <field name="orgName" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+const DATA_TREE50: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <org>
+      <orgName>Acme Corp</orgName>
+      <div><name>Engineering</name>
+        <team><name>Backend</name><member>Alice</member><member>Bob</member><member>Carol</member></team>
+        <team><name>Frontend</name><member>Dave</member><member>Eve</member><member>Frank</member></team>
+        <team><name>DevOps</name><member>Grace</member><member>Hank</member><member>Ivy</member></team>
+      </div>
+      <div><name>Product</name>
+        <team><name>Design</name><member>Jack</member><member>Kate</member><member>Leo</member></team>
+        <team><name>Research</name><member>Mia</member><member>Noah</member><member>Olivia</member></team>
+      </div>
+      <div><name>Operations</name>
+        <team><name>Finance</name><member>Paul</member><member>Quinn</member><member>Rose</member></team>
+        <team><name>HR</name><member>Sam</member><member>Tina</member><member>Uma</member></team>
+        <team><name>Legal</name><member>Victor</member><member>Wendy</member><member>Xena</member></team>
+      </div>
+    </org>
+  </xfa:data>"#;
+
+// ---------------------------------------------------------------------------
+// Unicode constants
+// ---------------------------------------------------------------------------
+
+const TMPL_ARABIC: &str = r#"<subform name="form1" layout="paginate" locale="ar_AE">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="arabicForm" layout="tb" w="7.5in">
+      <field name="greeting" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="city" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="country" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="phrase" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+const DATA_ARABIC: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <arabicForm>
+      <greeting>مرحبا بالعالم</greeting>
+      <city>دبي</city>
+      <country>الإمارات العربية المتحدة</country>
+      <phrase>نموذج XFA بالعربية</phrase>
+    </arabicForm>
+  </xfa:data>"#;
+
+const TMPL_HEBREW: &str = r#"<subform name="form1" layout="paginate" locale="he_IL">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="hebrewForm" layout="tb" w="7.5in">
+      <field name="greeting" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="city" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="label" w="5in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+const DATA_HEBREW: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <hebrewForm>
+      <greeting>שלום עולם</greeting>
+      <city>תל אביב</city>
+      <label>טופס XFA בעברית</label>
+    </hebrewForm>
+  </xfa:data>"#;
+
+const TMPL_CJK_EXT: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="cjkExt" layout="tb" w="7.5in">
+      <field name="tradChinese" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="japanese" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="korean" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="mixed" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+const DATA_CJK_EXT: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <cjkExt>
+      <tradChinese>繁體中文表單填寫範例</tradChinese>
+      <japanese>日本語のXFAフォーム記入例</japanese>
+      <korean>한국어 XFA 양식 작성 예시</korean>
+      <mixed>PDF・XFA・FormCalc 三合一</mixed>
+    </cjkExt>
+  </xfa:data>"#;
+
+const TMPL_EMOJI: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="emojiForm" layout="tb" w="7.5in">
+      <field name="faces" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="objects" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="symbols" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="flags" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+// Emoji as XML numeric character references (safe in XML 1.0)
+const DATA_EMOJI: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <emojiForm>
+      <faces>&#x1F600; &#x1F604; &#x1F622; &#x1F914; &#x1F389;</faces>
+      <objects>&#x1F4C4; &#x1F4BB; &#x1F4F1; &#x1F5C2; &#x1F4BE;</objects>
+      <symbols>&#x2705; &#x274C; &#x2B50; &#x2714; &#x2716;</symbols>
+      <flags>Status: &#x2705; passed &#x2714; verified</flags>
+    </emojiForm>
+  </xfa:data>"#;
+
+const TMPL_MULTILINGUAL: &str = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="multiLang" layout="tb" w="7.5in">
+      <field name="latin" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="cyrillic" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="greek" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="cjk" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="allTogether" w="6in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+
+const DATA_MULTILINGUAL: &str = r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <multiLang>
+      <latin>Héllo Wörld — Ñoño — Ångström</latin>
+      <cyrillic>Привет мир — Москва — Россия</cyrillic>
+      <greek>Γεια σου κόσμε — Αθήνα</greek>
+      <cjk>你好世界 — こんにちは — 안녕하세요</cjk>
+      <allTogether>Hello Привет 你好 Γεια مرحبا שלום</allTogether>
+    </multiLang>
+  </xfa:data>"#;
+
+// ---------------------------------------------------------------------------
+// Dynamic large-data builders
+// ---------------------------------------------------------------------------
+
+/// Build template and data for a dataset with alternating text/numeric fields.
+fn build_mixed_types_dataset(n: usize) -> (String, String) {
+    let field_defs: String = (1..=n)
+        .map(|i| {
+            if i % 2 == 0 {
+                format!(
+                    r#"      <field name="n{i:03}" w="7in" h="0.25in">
+        <ui><numericEdit/></ui><value><float>0</float></value>
+      </field>"#
+                )
+            } else {
+                format!(
+                    r#"      <field name="t{i:03}" w="7in" h="0.25in">
+        <ui><textEdit/></ui><value><text/></value>
+      </field>"#
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let tmpl = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="mixedForm" layout="tb" w="7.5in">
+{field_defs}
+    </subform>
+  </subform>"#
+    );
+
+    let data_fields: String = (1..=n)
+        .map(|i| {
+            if i % 2 == 0 {
+                format!("      <n{i:03}>{}</n{i:03}>", i * 7)
+            } else {
+                format!("      <t{i:03}>Text value {i:03}</t{i:03}>")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let data = format!(
+        r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <mixedForm>
+{data_fields}
+    </mixedForm>
+  </xfa:data>"#
+    );
+
+    (tmpl, data)
+}
+
+/// Build template and data for n repeating row elements.
+fn build_repeating_dataset(n: usize) -> (String, String) {
+    let tmpl = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="list" layout="tb" w="7.5in">
+      <subform name="rows" layout="tb" w="7.5in">
+        <subform name="row" layout="lr-tb" w="7.5in" h="0.3in">
+          <field name="idx" w="1in" h="0.3in"><ui><numericEdit/></ui><value><integer>0</integer></value></field>
+          <field name="label" w="4in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+          <field name="amount" w="2in" h="0.3in"><ui><numericEdit/></ui><value><float>0</float></value></field>
+        </subform>
+      </subform>
+    </subform>
+  </subform>"#
+        .to_string();
+
+    let rows: String = (1..=n)
+        .map(|i| {
+            format!(
+                "        <row><idx>{i}</idx><label>Row {i:03}</label><amount>{:.2}</amount></row>",
+                i as f64 * 1.5
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let data = format!(
+        r#"<xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+    <list>
+      <rows>
+{rows}
+      </rows>
+    </list>
   </xfa:data>"#
     );
 

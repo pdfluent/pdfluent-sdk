@@ -1,0 +1,244 @@
+%PDF-1.4
+%Л­Ро
+1 0 obj
+<</Length 8110>>stream
+<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <desc>
+    <text name="description">Many labelled sections overflowing onto multiple pages</text>
+  </desc>
+  <subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="section1" layout="tb" w="7.5in">
+      <draw name="h1" w="7in" h="0.3in">
+        <value><text>Section 1 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s1r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 1 row 1</text></value>
+        </field>
+<field name="s1r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 1 row 2</text></value>
+        </field>
+<field name="s1r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 1 row 3</text></value>
+        </field>
+<field name="s1r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 1 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section2" layout="tb" w="7.5in">
+      <draw name="h2" w="7in" h="0.3in">
+        <value><text>Section 2 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s2r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 2 row 1</text></value>
+        </field>
+<field name="s2r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 2 row 2</text></value>
+        </field>
+<field name="s2r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 2 row 3</text></value>
+        </field>
+<field name="s2r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 2 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section3" layout="tb" w="7.5in">
+      <draw name="h3" w="7in" h="0.3in">
+        <value><text>Section 3 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s3r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 3 row 1</text></value>
+        </field>
+<field name="s3r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 3 row 2</text></value>
+        </field>
+<field name="s3r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 3 row 3</text></value>
+        </field>
+<field name="s3r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 3 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section4" layout="tb" w="7.5in">
+      <draw name="h4" w="7in" h="0.3in">
+        <value><text>Section 4 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s4r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 4 row 1</text></value>
+        </field>
+<field name="s4r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 4 row 2</text></value>
+        </field>
+<field name="s4r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 4 row 3</text></value>
+        </field>
+<field name="s4r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 4 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section5" layout="tb" w="7.5in">
+      <draw name="h5" w="7in" h="0.3in">
+        <value><text>Section 5 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s5r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 5 row 1</text></value>
+        </field>
+<field name="s5r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 5 row 2</text></value>
+        </field>
+<field name="s5r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 5 row 3</text></value>
+        </field>
+<field name="s5r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 5 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section6" layout="tb" w="7.5in">
+      <draw name="h6" w="7in" h="0.3in">
+        <value><text>Section 6 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s6r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 6 row 1</text></value>
+        </field>
+<field name="s6r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 6 row 2</text></value>
+        </field>
+<field name="s6r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 6 row 3</text></value>
+        </field>
+<field name="s6r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 6 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section7" layout="tb" w="7.5in">
+      <draw name="h7" w="7in" h="0.3in">
+        <value><text>Section 7 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s7r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 7 row 1</text></value>
+        </field>
+<field name="s7r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 7 row 2</text></value>
+        </field>
+<field name="s7r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 7 row 3</text></value>
+        </field>
+<field name="s7r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 7 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section8" layout="tb" w="7.5in">
+      <draw name="h8" w="7in" h="0.3in">
+        <value><text>Section 8 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s8r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 8 row 1</text></value>
+        </field>
+<field name="s8r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 8 row 2</text></value>
+        </field>
+<field name="s8r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 8 row 3</text></value>
+        </field>
+<field name="s8r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 8 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section9" layout="tb" w="7.5in">
+      <draw name="h9" w="7in" h="0.3in">
+        <value><text>Section 9 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s9r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 9 row 1</text></value>
+        </field>
+<field name="s9r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 9 row 2</text></value>
+        </field>
+<field name="s9r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 9 row 3</text></value>
+        </field>
+<field name="s9r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 9 row 4</text></value>
+        </field>
+
+    </subform>
+<subform name="section10" layout="tb" w="7.5in">
+      <draw name="h10" w="7in" h="0.3in">
+        <value><text>Section 10 Heading</text></value>
+        <font size="11pt"/>
+      </draw>
+      <field name="s10r1" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 10 row 1</text></value>
+        </field>
+<field name="s10r2" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 10 row 2</text></value>
+        </field>
+<field name="s10r3" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 10 row 3</text></value>
+        </field>
+<field name="s10r4" w="6.5in" h="0.35in">
+          <ui><textEdit/></ui><value><text>Section 10 row 4</text></value>
+        </field>
+
+    </subform>
+
+  </subform>
+</template>
+</xdp:xdp>
+
+endstream 
+endobj
+2 0 obj
+<</Type/Pages/Kids[4 0 R]/Count 1>>
+endobj
+3 0 obj
+<</Length 0>>stream
+
+endstream 
+endobj
+4 0 obj
+<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 3 0 R>>
+endobj
+5 0 obj
+<</XFA 1 0 R/Fields[]>>
+endobj
+6 0 obj
+<</Type/Catalog/Pages 2 0 R/AcroForm 5 0 R>>
+endobj
+7 0 obj
+<</Root 6 0 R/Type/XRef/Size 8/W[1 4 2]/Index[1 7]/Length 49>>stream
+       я     "     Q     Ё     Ш    !  
+endstream 
+endobj
+
+startxref
+8452
+%%EOF
