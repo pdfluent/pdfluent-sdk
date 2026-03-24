@@ -12635,9 +12635,15 @@ pub fn fix_notdef_glyph_refs(doc: &mut Document) -> usize {
             // Symbolic fonts by name are handled via stream-level repair.
             // For TrueType symbolic fonts (by flags), avoid Differences-based
             // edits here to prevent reintroducing /Encoding (6.2.11.6:3).
+            // For Type1 (non-TrueType) fonts we do NOT skip on symbolic_flags
+            // alone: text fonts like Garamond are sometimes incorrectly
+            // flagged with Flags=4 (Symbolic) in the original PDF. When such
+            // a font has Differences[code]=".notdef", fix_symbolic_flags (which
+            // runs later in the pipeline) would correct the flag, but too late
+            // for fix_notdef_glyph_refs. Skipping them leaves §6.2.11.8:1
+            // unfixed. (#gen-783)
             if (symbolic_name && !(subtype != "TrueType" && allow_symbolic_type1_override))
                 || (subtype == "TrueType" && symbolic_flags)
-                || (subtype != "TrueType" && symbolic_flags && !allow_symbolic_type1_override)
             {
                 continue;
             }
