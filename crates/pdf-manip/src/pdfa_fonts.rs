@@ -5276,6 +5276,59 @@ pub fn fix_symbolic_flags(doc: &mut Document) -> usize {
     let mut fixed = 0;
 
     for font_id in font_ids {
+        // TrueType fonts named "Symbol" / "ZapfDingbats" etc. are sometimes
+        // generated with Flags=32 (NonSymbolic) and /Encoding /WinAnsiEncoding.
+        // veraPDF then maps character codes through WinAnsiEncoding → Unicode →
+        // (3,1) cmap, but the (3,1) cmap of a Symbol subset uses low-byte or
+        // PUA codepoints that don't match — isGlyphPresent=false (§6.2.11.4.1:2).
+        // Fix: set Symbolic flag + remove /Encoding so veraPDF uses the
+        // (3,0) Symbol cmap that fix_existing_symbolic_truetype_cmaps adds.
+        let tt_sym_fd: Option<ObjectId> = match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(dict))
+                if get_name(dict, b"Subtype").as_deref() == Some("TrueType") =>
+            {
+                let name = get_name(dict, b"BaseFont").unwrap_or_default();
+                let base = strip_subset_prefix(&name).to_owned();
+                if is_symbolic_font_name(&base) {
+                    match dict.get(b"FontDescriptor").ok() {
+                        Some(Object::Reference(r)) => Some(*r),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(fd_id) = tt_sym_fd {
+            let needs_fix = match doc.objects.get(&fd_id) {
+                Some(Object::Dictionary(fd)) => {
+                    let has_ff2 = fd.has(b"FontFile2");
+                    let flags = match fd.get(b"Flags").ok() {
+                        Some(Object::Integer(f)) => *f,
+                        _ => 0,
+                    };
+                    has_ff2 && ((flags & 4 == 0) || (flags & 32 != 0))
+                }
+                _ => false,
+            };
+            if needs_fix {
+                if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                    let flags = match fd.get(b"Flags").ok() {
+                        Some(Object::Integer(f)) => *f,
+                        _ => 0,
+                    };
+                    fd.set("Flags", Object::Integer((flags | 4) & !32));
+                }
+                // Remove Encoding — symbolic TrueType must not have one.
+                if let Some(Object::Dictionary(ref mut fdict)) = doc.objects.get_mut(&font_id) {
+                    fdict.remove(b"Encoding");
+                }
+                fixed += 1;
+            }
+            continue;
+        }
+
         let (name, fd_id) = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
                 continue;
