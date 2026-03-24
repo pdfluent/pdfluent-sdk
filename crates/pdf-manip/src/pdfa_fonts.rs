@@ -6710,12 +6710,12 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             }
         }
 
-        // Write back.
-        if let Some(widths_id) = widths_ref {
-            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&widths_id) {
-                *arr = new_widths;
-            }
-        } else if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
+        // Write back. Always set as inline array on the font dict to avoid
+        // clobbering shared /Widths references. Multiple font dicts may point to
+        // the same /Widths object but need different corrections (e.g. different
+        // Encoding/Differences → different target widths for the same code).
+        // Writing inline gives each font its own copy. (#fix-shared-widths)
+        if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
             font.set("Widths", Object::Array(new_widths));
         }
         // Update FirstChar if prepended.
