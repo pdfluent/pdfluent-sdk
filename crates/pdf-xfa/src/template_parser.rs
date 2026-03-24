@@ -386,6 +386,11 @@ fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
 }
 
 /// Extract text from `<value><text>…</text></value>` or `<value><float>…</float></value>`.
+///
+/// Also handles `<value><exData contentType="text/html">…</exData></value>` by
+/// stripping the HTML/XHTML markup and returning the concatenated plain text.
+/// This covers XFA draw elements whose content is rich-text (e.g. IRS form
+/// instructions stored as inline XHTML). (#557)
 fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
     let value = find_first_child_by_name(elem, "value")?;
     // Try <text>, <float>, <integer>, <date>
@@ -397,7 +402,33 @@ fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
             }
         }
     }
+    // Fall back to <exData contentType="text/html|text/xml|…"> — collect all
+    // descendant text nodes and join them, stripping the XHTML markup.
+    if let Some(ex) = find_first_child_by_name(value, "exData") {
+        let text = extract_text_from_descendants(ex);
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
     None
+}
+
+/// Walk all descendant text nodes of `node` and return their trimmed content
+/// joined by spaces, with excess whitespace collapsed. Used to extract plain
+/// text from XHTML-encoded `<exData>` nodes.
+fn extract_text_from_descendants(node: Node<'_, '_>) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for desc in node.descendants() {
+        if desc.is_text() {
+            if let Some(t) = desc.text() {
+                let t = t.trim();
+                if !t.is_empty() {
+                    parts.push(t);
+                }
+            }
+        }
+    }
+    parts.join(" ")
 }
 
 /// Extract caption text from `<caption><value><text>…</text></value></caption>`.
@@ -517,5 +548,45 @@ mod tests {
             }
         }
         None
+    }
+
+    /// <exData contentType="text/html"> rich-text draw nodes must have their
+    /// HTML stripped and plain text extracted so LayoutEngine can render them.
+    #[test]
+    fn draw_exdata_html_text_extracted() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="body" layout="tb" w="7.5in">
+      <draw name="instructions" w="7in" h="1in">
+        <value>
+          <exData contentType="text/html">
+            <body xmlns="http://www.w3.org/1999/xhtml">
+              <p>Do <span>not</span> file this form.</p>
+            </body>
+          </exData>
+        </value>
+      </draw>
+    </subform>
+  </subform>
+</template>"#;
+        let (tree, root_id) = parse_template(xml).unwrap();
+        let node = find_node_by_name(&tree, root_id, "instructions")
+            .expect("instructions draw not found");
+        match &node.node_type {
+            FormNodeType::Draw { content } => {
+                assert!(
+                    content.contains("not") && content.contains("file"),
+                    "expected HTML text extracted, got: {content:?}"
+                );
+            }
+            other => panic!("expected Draw, got {other:?}"),
+        }
     }
 }
