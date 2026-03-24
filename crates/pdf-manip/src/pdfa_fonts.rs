@@ -6211,6 +6211,12 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             // unreliable in that case.
             let has_explicit_encoding = dict.has(b"Encoding");
 
+            // Extract ToUnicode map for codes undefined in the PDF encoding.
+            // Used to mirror veraPDF's fallback: when WinAnsiEncoding leaves a
+            // code undefined (e.g. 0x81), veraPDF resolves via ToUnicode → Unicode
+            // → font cmap → advance. (#507, gen-131)
+            let to_unicode_map = read_font_to_unicode_map(doc, dict);
+
             (
                 subtype,
                 base_font,
@@ -6220,6 +6226,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 enc_info,
                 widths_ref,
                 has_explicit_encoding,
+                to_unicode_map,
             )
         };
 
@@ -6232,6 +6239,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             enc_info,
             widths_ref,
             _has_explicit_encoding,
+            to_unicode_map,
         ) = info;
 
         // Check if font program is embedded (FontFile key exists).
@@ -6297,6 +6305,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 &existing_widths,
                 &enc_info,
                 is_subset_font,
+                Some(&to_unicode_map),
             );
         } else if has_ff2 && (subtype == "Type1" || subtype == "MMType1") {
             // Type1 font re-encoded as TrueType (after embedding fallback font).
@@ -6318,12 +6327,16 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             // wrong widths for seac composites and unusual charstrings even when
             // the PDF has an explicit /Encoding (e.g. Helvetica-Condensed-Black
             // code 55 parsed as 250 when actual is 500).
-            // Corrections derived from .notdef (is_certain=true) bypass this filter.
+            // IMPORTANT: do NOT bypass this filter for is_certain=true (.notdef path).
+            // The .notdef fallback fires incorrectly for non-subset fonts that have
+            // implicit StandardEncoding which our parser can't detect (e.g.
+            // NewCenturySchlbk-Italic code 39: parser → .notdef → advance 278, but
+            // veraPDF uses StandardEncoding → "quoteright" → advance 204). (#507)
             let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
             corrections = type1_corr
                 .into_iter()
-                .filter_map(|(idx, new_w, is_certain)| {
-                    if !is_subset && !is_certain {
+                .filter_map(|(idx, new_w, _is_certain)| {
+                    if !is_subset {
                         let pdf_w = existing_widths.get(idx).and_then(object_to_f64)?;
                         if (pdf_w - new_w as f64).abs() > 5.0 {
                             return None; // too large a delta → ambiguous mapping, skip
@@ -7430,28 +7443,6 @@ fn build_valid_codes_from_cmap_ranges(
 
 /// Map a common glyph name to its Unicode codepoint.
 /// Based on the Adobe Glyph List (AGL) for common names.
-/// PostScript Standard Encoding glyph name for codes in 32-126 that differ from
-/// the Unicode identity (ASCII) name used by unicode_to_glyph_name / unicode_to_agl_name.
-/// Only covers the two historically significant deviations; all other codes are identical.
-/// Source: Adobe Type 1 Font Format spec (PLRM Appendix E), same as t1_standard_encoding_name
-/// in pdf-compliance. (#507, §6.2.11.5-se-quoteleft)
-/// CFF Standard Encoding glyph name override for codes where the Unicode
-/// identity → AGL roundtrip produces a different name.
-///
-/// Only called from `cff_width_for_code` (CFF fonts), so uses CFF Standard
-/// Encoding SID mapping (not PostScript Standard Encoding, which differs for
-/// code 39: PS SE = "quoteright" SID 169, CFF SE = "quotesingle" SID 170).
-/// Using PS SE caused wrong corrections: "quoteright" found in CFF charset
-/// (238) while veraPDF uses CFF SE → "quotesingle" → absent → GID 0 → .notdef.
-/// (#fix-cff-se-code39)
-fn ps_standard_encoding_override(code: u32) -> Option<&'static str> {
-    match code {
-        39 => Some("quotesingle"), // CFF SE code 39 → SID 170 = "quotesingle"
-        96 => Some("quoteleft"),   // CFF SE code 96 → SID 171 = "quoteleft"
-        _ => None,
-    }
-}
-
 /// Direct Adobe glyph name table for WinAnsiEncoding, matching the lookup
 /// veraPDF uses in §6.2.11.5 width checks for Type 1 / Type1C fonts.
 ///
@@ -7588,6 +7579,134 @@ fn winansi_type1_glyph_name(code: u8) -> Option<&'static str> {
         255 => Some("ydieresis"),
         _ => None,
     }
+}
+
+/// Parse a ToUnicode CMap stream into a single-byte code→Unicode mapping.
+///
+/// Handles `beginbfchar` / `endbfchar` and `beginbfrange` / `endbfrange` sections.
+/// Only extracts mappings where the source code fits in one byte (codes 0x00–0xFF).
+/// Used by `cff_width_for_code` to resolve codes that are undefined in the PDF
+/// encoding (e.g. WinAnsiEncoding code 0x81 = U+2022 per ToUnicode). (#507, gen-131)
+///
+/// Handles compact CMaps where multiple entries appear on one line without separators,
+/// e.g. `21 beginbfrange<20> <7e> <0020><7f> <7f> <2022><81> <81> <2022>endbfrange`.
+fn parse_tounicode_map_bytes(stream_data: &[u8]) -> std::collections::HashMap<u8, char> {
+    let text = String::from_utf8_lossy(stream_data);
+    let mut map = std::collections::HashMap::new();
+
+    // Tokenise: extract all <hex> tokens and keyword tokens in order.
+    // A <hex> token is the content between '<' and '>'.
+    // Keywords are whitespace-delimited words outside angle brackets.
+    let mut tokens: Vec<String> = Vec::new();
+    let text_ref: &str = &text;
+    let mut s = text_ref;
+    while !s.is_empty() {
+        if let Some(lt) = s.find('<') {
+            // Words before '<'
+            for w in s[..lt].split_whitespace() {
+                tokens.push(w.to_string());
+            }
+            s = &s[lt + 1..];
+            if let Some(gt) = s.find('>') {
+                tokens.push(s[..gt].to_string());
+                s = &s[gt + 1..];
+            }
+        } else {
+            for w in s.split_whitespace() {
+                tokens.push(w.to_string());
+            }
+            break;
+        }
+    }
+
+    #[derive(PartialEq)]
+    enum Section { None, BfChar, BfRange }
+    let mut section = Section::None;
+    let mut i = 0;
+    while i < tokens.len() {
+        let t = &tokens[i];
+        if t.contains("beginbfchar") { section = Section::BfChar; i += 1; continue; }
+        if t.contains("endbfchar")   { section = Section::None;   i += 1; continue; }
+        if t.contains("beginbfrange") { section = Section::BfRange; i += 1; continue; }
+        if t.contains("endbfrange")   { section = Section::None;    i += 1; continue; }
+
+        // Only process pure hex tokens inside a section.
+        let is_hex = !t.is_empty() && t.chars().all(|c| c.is_ascii_hexdigit());
+        if !is_hex { i += 1; continue; }
+
+        match section {
+            Section::BfChar => {
+                // Consume 2 tokens: <src> <dst>
+                if i + 1 < tokens.len() {
+                    let dt = &tokens[i + 1];
+                    if dt.chars().all(|c| c.is_ascii_hexdigit()) {
+                        if let (Ok(src), Ok(dst)) = (
+                            u32::from_str_radix(t, 16),
+                            u32::from_str_radix(dt, 16),
+                        ) {
+                            if src <= 0xFF {
+                                if let Some(ch) = char::from_u32(dst) {
+                                    map.insert(src as u8, ch);
+                                }
+                            }
+                        }
+                        i += 2;
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+            Section::BfRange => {
+                // Consume 3 tokens: <start> <end> <first_dst>
+                if i + 2 < tokens.len() {
+                    let et = &tokens[i + 1];
+                    let dt = &tokens[i + 2];
+                    if et.chars().all(|c| c.is_ascii_hexdigit())
+                        && dt.chars().all(|c| c.is_ascii_hexdigit())
+                    {
+                        if let (Ok(start), Ok(end), Ok(dst)) = (
+                            u32::from_str_radix(t, 16),
+                            u32::from_str_radix(et, 16),
+                            u32::from_str_radix(dt, 16),
+                        ) {
+                            if start <= 0xFF {
+                                let end_c = end.min(0xFF);
+                                for code in start..=end_c {
+                                    if let Some(ch) = char::from_u32(dst + (code - start)) {
+                                        map.insert(code as u8, ch);
+                                    }
+                                }
+                            }
+                        }
+                        i += 3;
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+            Section::None => { i += 1; }
+        }
+    }
+    map
+}
+
+/// Extract the ToUnicode code→char mapping for a font from the PDF document.
+/// Returns an empty map if the font has no ToUnicode or parsing fails.
+fn read_font_to_unicode_map(
+    doc: &lopdf::Document,
+    font_dict: &lopdf::Dictionary,
+) -> std::collections::HashMap<u8, char> {
+    let ref_id = match font_dict.get(b"ToUnicode").ok() {
+        Some(Object::Reference(r)) => *r,
+        _ => return std::collections::HashMap::new(),
+    };
+    let stream = match doc.get_object(ref_id) {
+        Ok(Object::Stream(s)) => s.clone(),
+        _ => return std::collections::HashMap::new(),
+    };
+    let mut s = stream;
+    let _ = s.decompress();
+    parse_tounicode_map_bytes(&s.content)
 }
 
 fn glyph_name_to_unicode(name: &str) -> Option<char> {
@@ -8743,6 +8862,7 @@ fn compute_cff_corrections_by_name(
     differences: &std::collections::HashMap<u32, String>,
     scale: f64,
     is_subset: bool,
+    to_unicode: Option<&std::collections::HashMap<u8, char>>,
 ) -> Vec<(usize, i64)> {
     // Build a per-font context once: pre-computes the CFF encoding map and a
     // name→width HashMap so that the per-code hot loop avoids 256× redundant
@@ -8782,6 +8902,7 @@ fn compute_cff_corrections_by_name(
             scale,
             is_subset,
             Some(&ctx),
+            to_unicode,
         );
         let Some(frac_w) = frac_w_opt else {
             continue;
@@ -8818,6 +8939,7 @@ fn compute_cff_type1_width_corrections(
     existing_widths: &[Object],
     enc_info: &(String, std::collections::HashMap<u32, String>),
     is_subset: bool,
+    to_unicode: Option<&std::collections::HashMap<u8, char>>,
 ) -> Vec<(usize, i64)> {
     let (enc_name, differences) = enc_info;
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
@@ -8862,6 +8984,7 @@ fn compute_cff_type1_width_corrections(
                 differences,
                 scale,
                 is_subset,
+                to_unicode,
             );
         }
         // CFF parse failed: nothing we can do.
@@ -8957,6 +9080,7 @@ fn compute_cff_type1_width_corrections(
                 scale,
                 is_subset,
                 Some(&ctx),
+                None,
             )
         } else {
             None
@@ -9425,7 +9549,7 @@ fn compute_cff_single_width(
     // (code_in_cff_enc) is conservative here — callers that DO have is_subset context
     // (fix_font_width_mismatches, compute_cff_type1_width_corrections) pass is_subset
     // via the correct path. (#6.2.11.5-subset-cff-enc-guard)
-    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale, false, None)
+    cff_width_for_code(&cff, font_data, code, enc_name, differences, scale, false, None, None)
 }
 
 /// Look up the CFF glyph width for a character code, trying multiple strategies:
@@ -9446,6 +9570,7 @@ fn cff_width_for_code(
     scale: f64,
     _is_subset: bool,
     ctx: Option<&CffFontCtx>,
+    to_unicode: Option<&std::collections::HashMap<u8, char>>,
 ) -> Option<f64> {
     let has_pdf_encoding = !enc_name.is_empty() || !differences.is_empty();
 
@@ -9484,41 +9609,23 @@ fn cff_width_for_code(
     // (#6.2.11.5-std-enc-defaultwidthx, #6.2.11.5-undef-notdef-charstring)
     let mut pdf_glyph_name = String::new();
     let mut name_found = false;
-    let mut name_from_cff_se_override = false;
+    let name_from_cff_se_override = false;
     if has_pdf_encoding {
         let glyph_name = if let Some(name) = differences.get(&code) {
             name.clone()
         } else if enc_name.is_empty() {
-            // No BaseEncoding → StandardEncoding is implied per PDF spec §8.5.3.
-            // veraPDF resolves code → glyph name via Standard Encoding.
-            // - Codes 32-126: have SE glyph assignments → resolve to name, then
-            //   look up in CFF. If absent → Fix 2 (.notdef).
-            // - Codes 0-31, 127, high undefined: NOT in SE. Return "" so
-            //   name_is_undefined=true, cff_width_for_code returns None, and the
-            //   outer cff_width_for_raw_fontfile3 falls through to glyph_index(code)
-            //   — matching veraPDF's CFF internal encoding fallback for those codes.
-            // (#504, #6.2.11.5-std-enc)
-            let is_se_defined = (32..127).contains(&code);
-            if !is_se_defined {
-                // Control char or undefined: not in Standard Encoding.
-                String::new()
-            } else if let Some(se_name) = ps_standard_encoding_override(code) {
-                // CFF Standard Encoding name for codes where Unicode roundtrip
-                // gives a different name. The CFF SE mapping is authoritative —
-                // veraPDF uses this exact SID for the charset lookup. If this
-                // name is not in the charset, veraPDF falls to GID 0; alternatives
-                // (e.g. "quoteright" for "quotesingle") must NOT be tried since
-                // they have different SIDs. (#fix-cff-se-code39)
-                name_from_cff_se_override = true;
-                se_name.to_string()
-            } else {
-                let ch = encoding_to_char(code, "StandardEncoding");
-                if ch == '\u{FFFF}' {
-                    String::new()
-                } else {
-                    unicode_to_glyph_name(ch).unwrap_or_default()
-                }
-            }
+            // No BaseEncoding, not in Differences: PDF spec §8.5.3 says "use the
+            // font's built-in encoding". For CFF/Type1C fonts (FontFile3), the
+            // built-in encoding IS the CFF internal encoding (enc_offset 0/1/custom).
+            // veraPDF resolves these codes via cff.glyph_index(code) — NOT via the
+            // PostScript Standard Encoding. Return "" so we fall through to the CFF
+            // encoding fallback (cff.glyph_index) below.
+            //
+            // Concretely: CFF SE maps code 39 → SID 8 = "quoteright" (advance 204),
+            // NOT SID 104 = "quotesingle" (advance 278). The old ps_standard_encoding_
+            // override("quotesingle") was based on PS SE which differs from CFF SE for
+            // this code, causing a wrong 204→278 correction in C059-Italic. (#507)
+            String::new()
         } else if enc_name == "WinAnsiEncoding" && code >= 128 {
             // For T1/Type1C fonts with WinAnsiEncoding, codes ≥ 128 must use the
             // direct Adobe glyph name table rather than the Unicode AGL roundtrip.
@@ -9573,8 +9680,22 @@ fn cff_width_for_code(
         // in the CFF String INDEX — it returns None so we fall through to
         // defaultWidthX (e.g. HHCOAA "igrave" under custom SID). Fixes #507.
         let in_cff_enc_map = if is_custom_enc {
-            // Custom CFF enc: Phase 1 only when code maps to a real GID.
-            enc_map.get(&(code as u8)).copied().unwrap_or(0) != 0
+            // Custom CFF enc: Phase 1 (PDF encoding → name → CFF charset lookup) runs:
+            //
+            // a) For MacRomanEncoding / WinAnsiEncoding: always run Phase 1 regardless
+            //    of whether the code is in the CFF encoding. veraPDF resolves these
+            //    standard encodings via name lookup even when the CFF has a custom
+            //    encoding that doesn't include the code.
+            //    Example: ZHEMYE+CMR12 CFF has only codes {1,2} in its custom encoding;
+            //    code 222 (MacRoman → "fi") is absent. veraPDF still finds "fi" in the
+            //    CFF charset (GID 73, advance 543) via PDF name lookup. (#507, gen-490)
+            //
+            // b) For codes explicitly present in the CFF encoding (including GID 0):
+            //    Phase 1 runs even when the CFF enc maps the code to GID 0 (.notdef).
+            //    veraPDF still uses name-based lookup for such codes. The old `!= 0`
+            //    guard incorrectly blocked Phase 1 and fell through to defaultWidthX.
+            matches!(enc_name, "MacRomanEncoding" | "WinAnsiEncoding")
+                || enc_map.contains_key(&(code as u8))
         } else {
             // SE/Expert: PDF name lookup is always primary; always enable Phase 1.
             true
@@ -9584,13 +9705,6 @@ fn cff_width_for_code(
             if let Some(w) = lookup_name(&glyph_name) {
                 return Some(w);
             }
-            // Try AGL canonical name: unicode_to_glyph_name returns raw chars
-            // for ASCII printable (e.g. "0" for digit '0'), but CFF charset
-            // uses AGL names (e.g. "zero"). Also covers "uni00XX" → "Agrave".
-            // Only applies when the name comes from encoding lookup, not Differences.
-            // Skip entirely when the name came from CFF SE override — the CFF SE
-            // SID mapping is authoritative; alternatives have different SIDs and
-            // would cause wrong corrections. (#479, #fix-cff-se-code39)
             if !differences.contains_key(&code) && !name_from_cff_se_override {
                 let ch = encoding_to_char(code, enc_name);
                 if let Some(agl_name) = unicode_to_agl_name(ch) {
@@ -9615,6 +9729,32 @@ fn cff_width_for_code(
             }
             // Name resolved but not found in CFF — will try CFF encoding below.
             name_found = false;
+        }
+    }
+
+    // ToUnicode fallback: for codes with no glyph name in the PDF encoding
+    // (e.g. WinAnsiEncoding codes 0x81, 0x8D, 0x8F, 0x90, 0x9D that are
+    // undefined in the standard table), veraPDF resolves the glyph via the
+    // ToUnicode CMap → Unicode → font cmap → advance. Mirror this lookup
+    // when a ToUnicode map is provided.
+    //
+    // Example: gen-131 AvantGarde-Book WinAnsiEncoding code 129 → ToUnicode
+    // U+2022 (bullet) → name="bullet" → advance 606. Without this fallback,
+    // we return .notdef advance (277) and generate a wrong correction. (#507)
+    if pdf_glyph_name.is_empty() {
+        if let Some(tu_map) = to_unicode {
+            if let Some(&ch) = tu_map.get(&(code as u8)) {
+                if let Some(agl_name) = unicode_to_agl_name(ch) {
+                    if let Some(w) = lookup_name(&agl_name) {
+                        return Some(w);
+                    }
+                    for alt in cff_glyph_name_alternatives(&agl_name) {
+                        if let Some(w) = lookup_name(alt) {
+                            return Some(w);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -11879,6 +12019,7 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
                         &existing_widths,
                         &empty_enc,
                         true,
+                        None,
                     ) {
                         // Codes covered by explicit Differences are already handled
                         // by step 1 (find_cff_glyph_width_by_name_fractional).
@@ -11923,6 +12064,7 @@ pub fn fix_symbolic_font_widths(doc: &mut Document) -> usize {
                     &existing_widths,
                     &enc_info,
                     is_subset,
+                    None,
                 )
             }
         };
