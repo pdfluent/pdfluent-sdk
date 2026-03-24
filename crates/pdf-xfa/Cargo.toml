@@ -13,6 +13,7 @@ xfa-json = { path = "../xfa-json" }
 pdf-syntax = { path = "../pdf-syntax" }
 pdf-font = { path = "../pdf-font" }
 pdf-interpret = { path = "../pdf-interpret" }
+lopdf = { path = "../lopdf" }
 thiserror = "2"
 ttf-parser = "0.25"
 roxmltree = "0.20"

@@ -17,7 +17,22 @@ use pdf_syntax::object::dict::keys::*;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
+
+/// Default DeviceCMYK → sRGB profile (CGATS001Compat-v2-micro, same family as MuPDF's built-in).
+/// Loaded once on first use; falls back to the PDF spec formula if loading fails.
+static DEFAULT_CMYK_PROFILE: OnceLock<Option<ICCProfile>> = OnceLock::new();
+
+fn default_cmyk_profile() -> Option<&'static ICCProfile> {
+    DEFAULT_CMYK_PROFILE
+        .get_or_init(|| {
+            ICCProfile::new(
+                include_bytes!("../assets/CGATS001Compat-v2-micro.icc"),
+                4,
+            )
+        })
+        .as_ref()
+}
 
 /// A storage for the components of colors.
 pub type ColorComponents = SmallVec<[f32; 4]>;
