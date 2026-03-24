@@ -8922,19 +8922,19 @@ fn compute_cff_corrections_for_custom_encoding(
             }
             Some(_) | None => {
                 // Code maps to .notdef (GID 0) or is absent from the CFF encoding.
-                // veraPDF uses the .notdef charstring advance width for such codes, not
-                // defaultWidthX. The .notdef charstring may have an explicit width that
-                // differs from defaultWidthX (e.g. BundesSerif-Bold .notdef=603 vs
-                // defaultWidthX=500). Using defaultWidthX here introduced violations.
+                // veraPDF uses defaultWidthX for custom-CFF codes that resolve to
+                // GID 0 or are absent from the encoding. Fall back to the .notdef
+                // charstring only when the Private DICT omits defaultWidthX.
                 //
                 // Codes with pdf_w==0 are unused placeholder slots (PDF spec §9.6.2).
-                // veraPDF skips w==0 entries — changing 0 to .notdef-advance would
-                // introduce violations for unused codes. (#6.2.11.5-gid0-notdef-advance)
+                // veraPDF skips w==0 entries — changing 0 to a synthesized width would
+                // introduce violations for unused codes. (#6.2.11.5-gid0-uses-defaultwidthx)
                 if pdf_w == 0.0 {
                     continue;
                 }
-                cff.glyph_width(cff_parser::GlyphId(0))
+                cff.default_width_x()
                     .map(|w| w as f64 * scale)
+                    .or_else(|| cff.glyph_width(cff_parser::GlyphId(0)).map(|w| w as f64 * scale))
             }
         };
         let Some(frac_w) = frac_w else { continue };
@@ -9032,13 +9032,23 @@ fn compute_cff_corrections_by_name(
                     let corr_is_dwx = matches!(dwx_w, Some(dw) if (rounded_w - dw).abs() <= 1);
                     if !corr_is_notdef && !corr_is_dwx {
                         // Correction targets a real glyph width, not .notdef/dwx.
-                        // Block if pdf_w already matches .notdef/dwx (already correct).
-                        let pdf_matches_notdef =
-                            matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
-                        let pdf_matches_dwx =
-                            matches!(dwx_w, Some(dw) if (pdf_w.round() as i64 - dw).abs() <= 1);
-                        if pdf_matches_notdef || pdf_matches_dwx {
-                            continue;
+                        // Check if the target width is from a SID-reachable glyph
+                        // in the name→width map. If so, veraPDF's name-based path
+                        // would also find it → allow the correction even when pdf_w
+                        // matches .notdef (the glyph IS in the charset under a
+                        // standard SID). Only block when the width is NOT in the
+                        // name map (came from a custom SID or encoding artifact).
+                        // (#fix-cff-xval-sid-reachable)
+                        let corr_in_name_map = ctx.name_to_width.values()
+                            .any(|&w| (w.round() as i64 - rounded_w).abs() <= 1);
+                        if !corr_in_name_map {
+                            let pdf_matches_notdef =
+                                matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
+                            let pdf_matches_dwx =
+                                matches!(dwx_w, Some(dw) if (pdf_w.round() as i64 - dw).abs() <= 1);
+                            if pdf_matches_notdef || pdf_matches_dwx {
+                                continue;
+                            }
                         }
                     }
                 }
@@ -9591,6 +9601,24 @@ fn find_cff_glyph_width_by_name_fractional(
     None
 }
 
+/// Exact-name lookup that bypasses the standard-SID guard.
+///
+/// Used for resolver paths where veraPDF does not appear to rely on the CFF
+/// standard SID table directly, such as ToUnicode fallback on OTF-wrapped CFF.
+fn find_cff_glyph_width_by_exact_name_fractional(
+    cff: &cff_parser::Table,
+    glyph_name: &str,
+    scale: f64,
+) -> Option<f64> {
+    for gid_raw in 0..cff.number_of_glyphs() {
+        let gid = cff_parser::GlyphId(gid_raw);
+        if cff.glyph_name(gid) == Some(glyph_name) {
+            return cff.glyph_width(gid).map(|w| w as f64 * scale);
+        }
+    }
+    None
+}
+
 /// Compute the expected width for a single character code in a CFF font program.
 fn compute_cff_single_width(
     font_data: &[u8],
@@ -9930,8 +9958,18 @@ fn cff_width_for_code(
                     if let Some(w) = lookup_name(&agl_name) {
                         return Some(w);
                     }
+                    if let Some(w) =
+                        find_cff_glyph_width_by_exact_name_fractional(cff, &agl_name, scale)
+                    {
+                        return Some(w);
+                    }
                     for alt in cff_glyph_name_alternatives(&agl_name) {
                         if let Some(w) = lookup_name(alt) {
+                            return Some(w);
+                        }
+                        if let Some(w) =
+                            find_cff_glyph_width_by_exact_name_fractional(cff, alt, scale)
+                        {
                             return Some(w);
                         }
                     }
@@ -9985,12 +10023,14 @@ fn cff_width_for_code(
         // because the name-based lookup (Phase 1 above) already failed. If the
         // named glyph WERE in the charset, Phase 1 would have returned it.
         // So GID 0 here is authoritative. (#626, #fix-cff-lowbyte-notdef)
-        if let Some(gid) = cff.glyph_index(code as u8) {
-            if gid.0 != 0 {
-                return cff.glyph_width(gid).map(|w| w as f64 * scale);
+        if !is_custom_enc || enc_map.contains_key(&(code as u8)) {
+            if let Some(gid) = cff.glyph_index(code as u8) {
+                if gid.0 != 0 {
+                    return cff.glyph_width(gid).map(|w| w as f64 * scale);
+                }
+                // GID 0 via encoding fallback — name lookup already failed above.
+                cff_enc_explicit_notdef = true;
             }
-            // GID 0 via encoding fallback — name lookup already failed above.
-            cff_enc_explicit_notdef = true;
         }
 
         // StandardEncoding fallback for codes absent from the custom Format0/Format1
