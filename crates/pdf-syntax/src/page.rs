@@ -213,7 +213,10 @@ impl<'a> Page<'a> {
             return None;
         }
 
-        let media_box = dict.get::<Rect>(MEDIA_BOX).or(ctx.media_box).unwrap_or(US_LETTER);
+        let media_box = dict
+            .get::<Rect>(MEDIA_BOX)
+            .or(ctx.media_box)
+            .unwrap_or(US_LETTER);
 
         let crop_box = dict
             .get::<Rect>(CROP_BOX)
@@ -317,20 +320,38 @@ impl<'a> Page<'a> {
 
     /// Return the base dimensions of the page used for the canvas size.
     ///
-    /// Uses the raw CropBox dimensions (not clipped to MediaBox) to match
-    /// MuPDF's behaviour: the canvas is sized to the CropBox, and content
-    /// outside the MediaBox area is simply white.  The clip path in the
-    /// renderer still clips to `intersected_crop_box()`. (#544)
+    /// When the CropBox origin is within the MediaBox (i.e. CropBox.x0 >=
+    /// MediaBox.x0 and CropBox.y0 >= MediaBox.y0), the canvas is sized to
+    /// intersect(CropBox, MediaBox).  This matches MuPDF's behaviour for
+    /// spec-violating PDFs where CropBox.y1 > MediaBox.y1 (e.g. gen-271:
+    /// CropBox=[0,0,595,793.7] vs MediaBox=[0,0,612,792] — using raw
+    /// CropBox gives 1654px height, a 4px vertical content offset, and
+    /// SSIM 0.49; intersecting gives 1650px matching MuPDF exactly).
+    ///
+    /// When CropBox extends below the MediaBox origin (gen-802 style:
+    /// CropBox=[0,0,684,864] vs MediaBox=[36,36,648,828]), MuPDF still uses
+    /// the full CropBox dimensions, so we do too. (#544, #558, gen-271)
     pub fn base_dimensions(&self) -> (f32, f32) {
         let crop_box = self.crop_box();
+        let media_box = self.media_box();
 
-        if (crop_box.width() as f32).is_nearly_zero() || (crop_box.height() as f32).is_nearly_zero()
+        // Clip to MediaBox only when the CropBox origin lies within the
+        // MediaBox (both axes).  When the CropBox extends below the MediaBox
+        // origin MuPDF uses the raw CropBox, so preserve that behaviour.
+        let effective = if crop_box.x0 >= media_box.x0 && crop_box.y0 >= media_box.y0 {
+            crop_box.intersect(media_box)
+        } else {
+            crop_box
+        };
+
+        if (effective.width() as f32).is_nearly_zero()
+            || (effective.height() as f32).is_nearly_zero()
         {
             (US_LETTER.width() as f32, US_LETTER.height() as f32)
         } else {
             (
-                crop_box.width().max(1.0) as f32,
-                crop_box.height().max(1.0) as f32,
+                effective.width().max(1.0) as f32,
+                effective.height().max(1.0) as f32,
             )
         }
     }
