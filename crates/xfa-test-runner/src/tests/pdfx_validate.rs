@@ -10,22 +10,51 @@
 //! - PDF does not contain `GTS_PDFX` marker → Skip
 //! - pdf-syntax cannot parse the PDF → Skip
 //!
-//! Fail conditions:
+//! Fail conditions (oracle mode):
+//! - veraPDF oracle available: false negatives detected (veraPDF finds
+//!   violations we miss)
+//!
+//! Fail conditions (no oracle):
 //! - Our PDF/X validator reports at least one Error-severity issue
+//!
+//! Oracle metadata (when veraPDF runs):
+//! - `fn_rules`          — comma-separated ISO 15930 clauses we miss
+//! - `fp_rules`          — comma-separated clauses we flag but veraPDF doesn't
+//! - `false_negatives`   — count of FNs
+//! - `false_positives`   — count of FPs
+//! - `verapdf_compliant` — veraPDF's own verdict
+//! - `verapdf_duration_ms`
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use super::{PdfTest, TestResult, TestStatus};
+use crate::oracles::verapdf::{self, VeraPdfOracle};
 
-pub struct PdfXValidateTest;
+pub struct PdfXValidateTest {
+    pub verapdf_oracle: Option<Arc<VeraPdfOracle>>,
+}
+
+impl PdfXValidateTest {
+    pub fn new() -> Self {
+        Self {
+            verapdf_oracle: None,
+        }
+    }
+
+    pub fn with_verapdf(mut self, oracle: Arc<VeraPdfOracle>) -> Self {
+        self.verapdf_oracle = Some(oracle);
+        self
+    }
+}
 
 impl PdfTest for PdfXValidateTest {
     fn name(&self) -> &str {
         "pdfx_validate"
     }
 
-    fn run(&self, pdf_data: &[u8], _path: &Path) -> TestResult {
+    fn run(&self, pdf_data: &[u8], path: &Path) -> TestResult {
         let start = std::time::Instant::now();
         let elapsed = || start.elapsed().as_millis() as u64;
 
@@ -65,6 +94,68 @@ impl PdfTest for PdfXValidateTest {
         metadata.insert("warning_count".to_string(), warning_count.to_string());
         metadata.insert("compliant".to_string(), report.is_compliant().to_string());
 
+        // If we have a veraPDF oracle, compare our results against it.
+        if let Some(oracle) = &self.verapdf_oracle {
+            let pdf_hash = sha2_hex(pdf_data);
+            match oracle.validate_pdfx(path, &pdf_hash, level) {
+                Ok(verapdf_result) => {
+                    let comparison = verapdf::compare_compliance(&report, &verapdf_result);
+
+                    metadata.insert(
+                        "verapdf_compliant".to_string(),
+                        comparison.verapdf_compliant.to_string(),
+                    );
+                    metadata.insert(
+                        "false_negatives".to_string(),
+                        comparison.false_negatives.len().to_string(),
+                    );
+                    metadata.insert(
+                        "false_positives".to_string(),
+                        comparison.false_positives.len().to_string(),
+                    );
+                    metadata.insert(
+                        "verapdf_duration_ms".to_string(),
+                        verapdf_result.duration_ms.to_string(),
+                    );
+                    if !comparison.false_negatives.is_empty() {
+                        metadata
+                            .insert("fn_rules".to_string(), comparison.false_negatives.join(","));
+                    }
+                    if !comparison.false_positives.is_empty() {
+                        metadata
+                            .insert("fp_rules".to_string(), comparison.false_positives.join(","));
+                    }
+
+                    // False negatives are bugs — we miss something veraPDF catches.
+                    if !comparison.false_negatives.is_empty() {
+                        return TestResult {
+                            status: TestStatus::Fail,
+                            error_message: Some(format!(
+                                "False negatives vs veraPDF pdfx: {:?}",
+                                comparison.false_negatives
+                            )),
+                            duration_ms: elapsed(),
+                            oracle_score: Some(comparison.agreement_rate),
+                            metadata,
+                        };
+                    }
+
+                    return TestResult {
+                        status: TestStatus::Pass,
+                        error_message: None,
+                        duration_ms: elapsed(),
+                        oracle_score: Some(comparison.agreement_rate),
+                        metadata,
+                    };
+                }
+                Err(e) => {
+                    // veraPDF cannot process this PDF — fall through to local-only verdict.
+                    metadata.insert("verapdf_error".to_string(), e);
+                }
+            }
+        }
+
+        // No oracle (or oracle failed): fall back to our own checker's verdict.
         if error_count > 0 {
             let first_error = report
                 .issues
@@ -121,4 +212,11 @@ fn detect_pdfx_level(pdf_data: &[u8]) -> pdf_compliance::PdfXLevel {
     }
     // Default: PDF/X-4
     pdf_compliance::PdfXLevel::X4
+}
+
+fn sha2_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
 }
