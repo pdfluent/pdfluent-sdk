@@ -61,6 +61,11 @@ fn main() {
     let tt_mislabeled = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
     eprintln!("Mislabeled TrueType-as-CFF: fixed={tt_mislabeled}");
 
+    // Fix simple fonts declared /Subtype /TrueType but with FontFile3/Type1C (CFF program).
+    // veraPDF's containsFontFile=false unless FontFile2 or FF3/OpenType for TrueType.
+    let tt_with_cff = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
+    eprintln!("TrueType-with-CFF-program: fixed={tt_with_cff}");
+
     // Fix invalid CFF BCD real number encodings that cause veraPDF CFF parser to throw
     // NumberFormatException → successfullyParsed=false → 6.2.11.4.1:1 fails.
     let bcd_fixed = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);

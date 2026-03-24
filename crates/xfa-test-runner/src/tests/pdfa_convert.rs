@@ -269,6 +269,14 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc)
         }));
 
+        // Fix simple fonts declared /Subtype /TrueType but with FontFile3/Type1C (CFF).
+        // veraPDF's containsFontFile=false for TrueType unless FontFile2 or FF3/OpenType.
+        // Changing Subtype to Type1 makes the font dict consistent with the embedded program.
+        set_progress("truetype_with_cff_program");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc)
+        }));
+
         // Fix invalid CFF BCD real number encodings that prevent veraPDF's CFF parser
         // from loading the font (NumberFormatException → successfullyParsed=false →
         // 6.2.11.4.1:1). The fix is now scoped to DICT sections only (before the
@@ -740,7 +748,11 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
 
     macro_rules! dbg_step {
         ($label:expr) => {
-            eprintln!("  [cvt-step] {} {:?}", $label, path.file_name().unwrap_or_default());
+            eprintln!(
+                "  [cvt-step] {} {:?}",
+                $label,
+                path.file_name().unwrap_or_default()
+            );
             let _ = <std::io::Stderr as std::io::Write>::flush(&mut std::io::stderr());
         };
     }
@@ -860,6 +872,9 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc)
