@@ -64,6 +64,12 @@ impl PdfTest for TextOracleTest {
                 }
             }
         }
+        // Include AcroForm field values. pdftotext extracts these; so must we.
+        let acroform_text = doc.extract_acroform_text();
+        if !acroform_text.is_empty() {
+            our_text.push('\n');
+            our_text.push_str(&acroform_text);
+        }
 
         // 2. Extract with Poppler
         let poppler_text = match PopplerOracle::extract_all_text(path) {

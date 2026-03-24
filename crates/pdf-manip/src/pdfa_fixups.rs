@@ -47,7 +47,9 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     // data (printable ASCII), causing it to treat subsequent bytes as content stream operators.
     // Converting to FlateDecode (binary) eliminates the false EI detection. (#fix-ascii85-inline)
     let ascii85_inline_images_fixed = fix_ascii85_inline_images(doc);
-    let concatenated_operators_fixed = fix_concatenated_operators(doc);
+    let invalid_ri_fixed = fix_invalid_rendering_intents(doc);
+    let opm_fixed = fix_extgstate_opm(doc);
+    let concatenated_operators_fixed = fix_concatenated_operators(doc) + invalid_ri_fixed + opm_fixed;
     let unknown_operators_stripped = strip_unknown_content_stream_operators(doc);
     let page_boundary_fixed = fix_page_boundary_sizes(doc);
     // Add /Group to pages using transparency without one (6.2.10-tgroup).
@@ -361,15 +363,169 @@ fn fix_devicen_colorants(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
 
-    for id in ids {
-        let fix_info = analyze_devicen_colorants(doc, id);
+    // Pass 1: fix standalone DeviceN array objects (stored as top-level objects).
+    for id in &ids {
+        let fix_info = analyze_devicen_colorants(doc, *id);
         if let Some(missing_names) = fix_info {
-            if add_colorants_entries(doc, id, &missing_names) {
+            if add_colorants_entries(doc, *id, &missing_names) {
                 count += 1;
             }
         }
     }
+
+    // Pass 2: fix inline DeviceN arrays embedded within dictionary/stream objects.
+    // Resource /ColorSpace sub-dicts often store DeviceN arrays inline as dict
+    // values (e.g. /CS1 [/DeviceN [/Pantone#20540#20blue] /DeviceCMYK 2402 0 R])
+    // rather than as standalone objects, so Pass 1 misses them.
+    // Form XObjects also have inline Resources in their stream dicts. (#gen-544)
+    for id in &ids {
+        // Clone the object to avoid simultaneous mutable/immutable borrows.
+        let obj_clone = doc.objects.get(id).cloned();
+        match obj_clone {
+            Some(Object::Dictionary(d)) => {
+                let mut d_patched = d.clone();
+                let fixed = fix_inline_devicen_in_dict(&mut d_patched);
+                if fixed > 0 {
+                    doc.objects.insert(*id, Object::Dictionary(d_patched));
+                    count += fixed;
+                }
+            }
+            Some(Object::Stream(s)) => {
+                let mut s_patched = s.clone();
+                let fixed = fix_inline_devicen_in_dict(&mut s_patched.dict);
+                if fixed > 0 {
+                    doc.objects.insert(*id, Object::Stream(s_patched));
+                    count += fixed;
+                }
+            }
+            _ => {}
+        }
+    }
+
     count
+}
+
+/// Walk every value in `dict` (and nested dicts/arrays) looking for inline
+/// DeviceN colorspace arrays that are missing a Colorants entry. Patch them
+/// in place and return the number of arrays fixed.
+fn fix_inline_devicen_in_dict(dict: &mut lopdf::Dictionary) -> usize {
+    let mut count = 0;
+    for (_, val) in dict.iter_mut() {
+        count += fix_inline_devicen_in_value(val);
+    }
+    count
+}
+
+fn fix_inline_devicen_in_value(val: &mut Object) -> usize {
+    match val {
+        Object::Array(arr) => {
+            let fixed = try_fix_inline_devicen_array(arr);
+            // Also recurse into array elements that are dicts.
+            let mut count = if fixed { 1 } else { 0 };
+            for item in arr.iter_mut() {
+                if let Object::Dictionary(inner) = item {
+                    count += fix_inline_devicen_in_dict(inner);
+                }
+            }
+            count
+        }
+        Object::Dictionary(inner) => fix_inline_devicen_in_dict(inner),
+        _ => 0,
+    }
+}
+
+/// Try to fix an inline DeviceN colorspace array `arr` that is missing its
+/// Colorants entry. Returns true if arr was modified.
+///
+/// A DeviceN colorspace array has 4–5 elements:
+///   [/DeviceN [colorant-names...] altCS tintFn (optional-attrs)]
+fn try_fix_inline_devicen_array(arr: &mut Vec<Object>) -> bool {
+    if arr.len() < 4 {
+        return false;
+    }
+    match &arr[0] {
+        Object::Name(n) if n == b"DeviceN" || n == b"NChannel" => {}
+        _ => return false,
+    }
+
+    // Extract spot colorant names (skip process colors).
+    let process_names: &[&[u8]] = &[
+        b"Cyan", b"Magenta", b"Yellow", b"Black", b"Red", b"Green", b"Blue", b"None", b"All",
+    ];
+    let spot_names: Vec<Vec<u8>> = match &arr[1] {
+        Object::Array(names) => names
+            .iter()
+            .filter_map(|o| {
+                if let Object::Name(n) = o {
+                    if !process_names.contains(&n.as_slice()) {
+                        Some(n.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        _ => return false,
+    };
+    if spot_names.is_empty() {
+        return false;
+    }
+
+    // Check if an attrs dict at arr[4] already has all Colorants entries.
+    if arr.len() > 4 {
+        if let Object::Dictionary(attrs) = &arr[4] {
+            let all_present = spot_names.iter().all(|n| match attrs.get(b"Colorants").ok() {
+                Some(Object::Dictionary(cd)) => cd.has(n.as_slice()),
+                _ => false,
+            });
+            if all_present {
+                return false;
+            }
+        }
+    }
+
+    // Build Separation arrays for each missing spot color.
+    let alt_cs = arr[2].clone();
+    let tint_fn = arr[3].clone();
+    let mut colorant_dict = lopdf::Dictionary::new();
+    for name in &spot_names {
+        let sep = Object::Array(vec![
+            Object::Name(b"Separation".to_vec()),
+            Object::Name(name.clone()),
+            alt_cs.clone(),
+            tint_fn.clone(),
+        ]);
+        colorant_dict.set(String::from_utf8_lossy(name).to_string(), sep);
+    }
+
+    if arr.len() > 4 {
+        // Update existing attrs dict.
+        if let Object::Dictionary(ref mut attrs) = arr[4] {
+            let mut existing_cd = match attrs.get(b"Colorants").ok() {
+                Some(Object::Dictionary(cd)) => cd.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            for name in &spot_names {
+                if !existing_cd.has(name.as_slice()) {
+                    let key = String::from_utf8_lossy(name).to_string();
+                    if let Some(sep) = colorant_dict.get(name.as_slice()).ok().cloned() {
+                        existing_cd.set(key, sep);
+                    }
+                }
+            }
+            attrs.set("Colorants", Object::Dictionary(existing_cd));
+            return true;
+        }
+    }
+
+    // No attrs dict yet — add one.
+    let attrs = lopdf::dictionary! {
+        "Colorants" => Object::Dictionary(colorant_dict),
+    };
+    arr.push(Object::Dictionary(attrs));
+    true
 }
 
 fn analyze_devicen_colorants(doc: &Document, id: ObjectId) -> Option<Vec<Vec<u8>>> {
@@ -4996,6 +5152,163 @@ fn fix_odd_hex_strings_in_streams(doc: &mut Document) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// §6.2.6:1 — Invalid rendering intent in content streams
+// ---------------------------------------------------------------------------
+//
+// PDF/A-2 allows only four rendering intent names: RelativeColorimetric,
+// AbsoluteColorimetric, Perceptual, Saturation. Some PDFs include vendor-
+// specific names (e.g. "FICL:RI_to_be_removed" from Enfocus PitStop) via the
+// `ri` operator. veraPDF fails §6.2.6:1 for any non-standard intent name.
+//
+// Fix: scan content streams for `/<name> ri` where name is not in the valid
+// set; replace the operand with /RelativeColorimetric. (#gen-168)
+
+fn fix_invalid_rendering_intents(doc: &mut Document) -> usize {
+    const VALID_INTENTS: &[&[u8]] = &[
+        b"RelativeColorimetric",
+        b"AbsoluteColorimetric",
+        b"Perceptual",
+        b"Saturation",
+    ];
+
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let decoded = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: contains "ri" at all?
+        if !decoded.windows(2).any(|w| w == b"ri") {
+            continue;
+        }
+
+        let mut new_content = Vec::with_capacity(decoded.len());
+        let mut i = 0;
+        let len = decoded.len();
+        let mut fixed = false;
+
+        while i < len {
+            // Look for '/' which starts a Name token.
+            if decoded[i] == b'/' {
+                // Scan to end of name: any byte that is not whitespace or PDF delimiter.
+                let name_start = i + 1;
+                let mut j = name_start;
+                while j < len && !is_pdf_delimiter(decoded[j]) {
+                    j += 1;
+                }
+                let name = &decoded[name_start..j];
+
+                // Skip whitespace after name.
+                let mut k = j;
+                while k < len && decoded[k].is_ascii_whitespace() {
+                    k += 1;
+                }
+
+                // Check if next token is "ri" followed by whitespace/delimiter/EOF.
+                if k + 2 <= len
+                    && &decoded[k..k + 2] == b"ri"
+                    && (k + 2 >= len || is_pdf_delimiter(decoded[k + 2]))
+                {
+                    // This is an `ri` operator call.
+                    if !VALID_INTENTS.contains(&name) {
+                        // Replace with /RelativeColorimetric ri (preserving trailing
+                        // whitespace that follows the original "ri" token).
+                        new_content.extend_from_slice(b"/RelativeColorimetric ri");
+                        // Copy whatever follows "ri" (whitespace etc.)
+                        i = k + 2;
+                        fixed = true;
+                        count += 1;
+                        continue;
+                    }
+                }
+            }
+            new_content.push(decoded[i]);
+            i += 1;
+        }
+
+        if fixed {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.remove(b"Filter");
+                s.dict.remove(b"DecodeParms");
+                s.set_content(new_content);
+                let _ = s.compress_with_level(1);
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// §6.2.4.2:2 — OPM (Overprint Mode) must be 0 for ICCBased CMYK colorspaces
+// ---------------------------------------------------------------------------
+//
+// veraPDF §6.2.4.2:2 fails when ExtGState has OPM=1 and overprinting is
+// enabled with an ICCBased CMYK colorspace. PDF/A-2 allows OPM only when the
+// colorspace is DeviceCMYK with OPM=1. Setting OPM=0 everywhere is safe — it
+// is the default and disables the special overprint behavior. (#gen-631)
+
+fn fix_extgstate_opm(doc: &mut Document) -> usize {
+    // Walk every document object. For each Dictionary or Stream object,
+    // recursively set OPM=0 on any inline ExtGState dict with OPM=1.
+    // Standalone ExtGState objects and inline dicts in Form XObject /Resources
+    // are both handled by walking the dict (or stream dict) recursively.
+    // Form XObjects store /Resources in the STREAM DICT (s.dict), not in
+    // their own Object::Dictionary — both must be walked. (#gen-631, §6.2.4.2:2)
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut count = 0;
+
+    for id in ids {
+        match doc.objects.get_mut(&id) {
+            Some(Object::Dictionary(d)) => {
+                count += fix_opm_in_dict_recursive(d);
+            }
+            Some(Object::Stream(s)) => {
+                count += fix_opm_in_dict_recursive(&mut s.dict);
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+/// Recursively set OPM=0 in any dict or inline sub-dict that has OPM=1.
+/// Returns the number of OPM values changed.
+fn fix_opm_in_dict_recursive(d: &mut lopdf::Dictionary) -> usize {
+    let mut count = 0;
+    if d.has(b"OPM") {
+        if let Ok(Object::Integer(v)) = d.get(b"OPM") {
+            if *v == 1 {
+                d.set("OPM", Object::Integer(0));
+                count += 1;
+            }
+        }
+    }
+    for (_, val) in d.iter_mut() {
+        match val {
+            Object::Dictionary(inner) => {
+                count += fix_opm_in_dict_recursive(inner);
+            }
+            Object::Array(arr) => {
+                for item in arr.iter_mut() {
+                    if let Object::Dictionary(inner) = item {
+                        count += fix_opm_in_dict_recursive(inner);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
 // Fix concatenated PDF operators (e.g. "Qq" → "Q q")
 // ---------------------------------------------------------------------------
 //
@@ -5008,6 +5321,26 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
     let content_stream_ids = collect_content_stream_ids(doc);
     let mut count = 0;
 
+    // Patterns: (bytes_to_match, replacement)
+    // Each pattern is checked at the current position; replacement is emitted if
+    // the token boundary guards pass (preceded by whitespace/SOF/delimiter,
+    // followed by whitespace/delimiter/EOF).
+    //
+    // cmBI: old PDF generators emit "cm" and "BI" without a separating space.
+    //   Split to "cm BI" so the BI keyword is recognised. (#gen-389, §6.2.2)
+    //
+    // DoQq: "Do" + "Q" + "q" → "Do Q q". (#gen-389)
+    // DoQ:  "Do" + "Q"       → "Do Q".
+    // Qq:   "Q" + "q"        → "Q q".
+    // BDCBT: "BDC" + "BT"   → "BDC BT". (#gen-389)
+    const PATTERNS: &[(&[u8], &[u8])] = &[
+        (b"cmBI", b"cm BI"),
+        (b"BDCBT", b"BDC BT"),
+        (b"DoQq", b"Do Q q"),
+        (b"DoQ", b"Do Q"),
+        (b"Qq", b"Q q"),
+    ];
+
     for id in content_stream_ids {
         let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
             match s.decompressed_content() {
@@ -5018,31 +5351,63 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
             continue;
         };
 
-        // Quick check: does this stream contain "Qq" at all?
-        if !decompressed.windows(2).any(|w| w == b"Qq") {
+        // Quick check: does this stream contain any of the patterns?
+        // Also check for "ref" (re+f concatenation, #gen-389).
+        let has_match = PATTERNS
+            .iter()
+            .any(|(pat, _)| decompressed.windows(pat.len()).any(|w| w == *pat))
+            || decompressed.windows(3).any(|w| w == b"ref");
+        if !has_match {
             continue;
         }
 
-        // Replace "Qq" with "Q q" only when it appears as a standalone operator
-        // sequence (preceded by whitespace/newline/SOF and followed by
-        // whitespace/newline/EOF).
         let mut new_content = Vec::with_capacity(decompressed.len() + 64);
         let mut i = 0;
         let len = decompressed.len();
         let mut fixed = false;
 
-        while i < len {
-            if i + 2 <= len && &decompressed[i..i + 2] == b"Qq" {
-                let before_ok = i == 0 || decompressed[i - 1].is_ascii_whitespace();
-                let after_ok = i + 2 >= len || decompressed[i + 2].is_ascii_whitespace();
-                if before_ok && after_ok {
-                    new_content.extend_from_slice(b"Q q");
-                    i += 2;
-                    fixed = true;
-                    count += 1;
-                    continue;
+        'outer: while i < len {
+            for (pat, repl) in PATTERNS {
+                let plen = pat.len();
+                if i + plen <= len && &decompressed[i..i + plen] == *pat {
+                    let before_ok = i == 0 || is_pdf_delimiter_or_ws(decompressed[i - 1]);
+                    let after_ok =
+                        i + plen >= len || is_pdf_delimiter_or_ws(decompressed[i + plen]);
+                    if before_ok && after_ok {
+                        new_content.extend_from_slice(repl);
+                        i += plen;
+                        fixed = true;
+                        count += 1;
+                        continue 'outer;
+                    }
                 }
             }
+            // Special case: "ref" = "re" + "f" concatenated without whitespace.
+            // The standard PATTERNS boundary check requires a PDF delimiter/whitespace
+            // after the last byte of the pattern. Here "f" may be immediately followed
+            // by a number operand starting with a digit, '.', '-', or '+' — none of
+            // which are PDF delimiters. Handle this with a looser after-check that
+            // also accepts number-start chars. Example: "ref354.48" → "re f 354.48".
+            // (#gen-389, §6.2.2:1)
+            if i + 3 <= len && &decompressed[i..i + 3] == b"ref" {
+                let before_ok = i == 0 || is_pdf_delimiter_or_ws(decompressed[i - 1]);
+                let after_ok = i + 3 >= len || {
+                    let a = decompressed[i + 3];
+                    is_pdf_delimiter_or_ws(a)
+                        || a.is_ascii_digit()
+                        || a == b'-'
+                        || a == b'+'
+                        || a == b'.'
+                };
+                if before_ok && after_ok {
+                    new_content.extend_from_slice(b"re f");
+                    i += 3;
+                    fixed = true;
+                    count += 1;
+                    continue 'outer;
+                }
+            }
+
             new_content.push(decompressed[i]);
             i += 1;
         }
