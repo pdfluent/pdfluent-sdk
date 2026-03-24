@@ -4065,6 +4065,74 @@ pub fn fix_mislabeled_truetype_as_cff(doc: &mut Document) -> usize {
     fd_to_fix.len()
 }
 
+/// Fix simple fonts that are declared as `/Subtype /TrueType` but whose
+/// FontDescriptor embeds a CFF program (`/FontFile3` with `/Subtype /Type1C`).
+///
+/// PDF/A-2 §6.2.11.4.1:1 `containsFontFile` is `false` for TrueType fonts
+/// unless the embedded file is `FontFile2` or `FontFile3/OpenType`.  A
+/// `FontFile3/Type1C` stream satisfies `containsFontFile` only for Type1 fonts.
+/// These malformed font dicts (TrueType container, CFF program) appear in
+/// PDFs authored by some older PostScript drivers.
+///
+/// Fix: change the font dict's `/Subtype` from `/TrueType` to `/Type1`.
+/// The embedded CFF program is unchanged.  Downstream fixes (`fix_type1_charset`,
+/// `fix_font_width_mismatches`, etc.) will then treat the font correctly.
+///
+/// Returns the number of font dicts corrected.
+pub fn fix_truetype_with_cff_program(doc: &mut Document) -> usize {
+    // Collect font object IDs where Subtype=TrueType but FontDescriptor has FontFile3/Type1C.
+    let to_fix: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            let Object::Dictionary(d) = obj else {
+                return None;
+            };
+            if !matches!(get_name(d, b"Type").as_deref(), Some("Font")) {
+                return None;
+            }
+            if !matches!(get_name(d, b"Subtype").as_deref(), Some("TrueType")) {
+                return None;
+            }
+            // Resolve FontDescriptor.
+            let fd = match d.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Dictionary(fd)) => fd.clone(),
+                    _ => return None,
+                },
+                Some(Object::Dictionary(fd)) => fd.clone(),
+                _ => return None,
+            };
+            // Must have FontFile3 (not FontFile2).
+            if fd.has(b"FontFile2") || !fd.has(b"FontFile3") {
+                return None;
+            }
+            // FontFile3 stream must have Subtype=Type1C (CFF).
+            let ff3_subtype = match fd.get(b"FontFile3").ok() {
+                Some(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Stream(s)) => {
+                        get_name(&s.dict, b"Subtype").unwrap_or_default()
+                    }
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            if ff3_subtype != "Type1C" {
+                return None;
+            }
+            Some(*id)
+        })
+        .collect();
+
+    let count = to_fix.len();
+    for id in to_fix {
+        if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&id) {
+            d.set(b"Subtype", Object::Name(b"Type1".to_vec()));
+        }
+    }
+    count
+}
+
 /// Fix non-standard `/CharStrings` dict syntax in Type1 font eexec sections.
 ///
 /// Some old fonts (e.g. Keycap) use:
@@ -8942,17 +9010,15 @@ fn compute_cff_corrections_by_name(
         let rounded_w = frac_w.round() as i64;
         if rounded_w != pdf_w as i64 {
             // Cross-validate: if the CFF encoding maps this code to GID 0
-            // (.notdef) AND the current /Widths value already matches .notdef
-            // or defaultWidthX, don't apply a correction that moves it AWAY.
-            // The name lookup may find a glyph stored under a custom SID that
-            // veraPDF's SID-based lookup doesn't reach, producing a wrong width.
-            // Only block when pdf_w is already correct (matches .notdef/dwx).
-            // When pdf_w is wrong, allow the correction — it may be improving
-            // the value toward what veraPDF expects. (#fix-cff-xval-gid0)
-            // Exempt code 173 (U+00AD soft hyphen): veraPDF normalizes
-            // soft hyphen → U+002D hyphen for §6.2.11.5 width comparison.
-            // The CFF encoding maps 173 → GID 0, but veraPDF uses "hyphen"
-            // charstring width, not .notdef. (#fix-cff-softhyphen-exempt)
+            // (.notdef), the name lookup may disagree with veraPDF's path.
+            // Block when: (1) the correction target does NOT match .notdef/dwx
+            // (it's a real glyph width), AND (2) pdf_w already matches .notdef/dwx.
+            // This means the correction would move a correct .notdef-aligned value
+            // to a wrong name-based value (custom SID glyph that veraPDF can't find).
+            // Allow when: correction target matches .notdef/dwx (both agree), or
+            // pdf_w doesn't match .notdef (correction is improving a wrong value).
+            // Exempt code 173: veraPDF uses "hyphen" not .notdef for soft hyphen.
+            // (#fix-cff-xval-gid0, #fix-cff-softhyphen-exempt)
             if code <= 255 && code != 173 {
                 let cff_gid = cff.glyph_index(code as u8).map(|g| g.0).unwrap_or(0);
                 if cff_gid == 0 {
@@ -8962,12 +9028,18 @@ fn compute_cff_corrections_by_name(
                     let dwx_w = cff
                         .default_width_x()
                         .map(|w| (w as f64 * scale).round() as i64);
-                    let pdf_matches_notdef =
-                        matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
-                    let pdf_matches_dwx =
-                        matches!(dwx_w, Some(dw) if (pdf_w.round() as i64 - dw).abs() <= 1);
-                    if pdf_matches_notdef || pdf_matches_dwx {
-                        continue; // pdf_w already correct for .notdef — don't worsen it
+                    let corr_is_notdef = matches!(notdef_w, Some(nw) if (rounded_w - nw).abs() <= 1);
+                    let corr_is_dwx = matches!(dwx_w, Some(dw) if (rounded_w - dw).abs() <= 1);
+                    if !corr_is_notdef && !corr_is_dwx {
+                        // Correction targets a real glyph width, not .notdef/dwx.
+                        // Block if pdf_w already matches .notdef/dwx (already correct).
+                        let pdf_matches_notdef =
+                            matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
+                        let pdf_matches_dwx =
+                            matches!(dwx_w, Some(dw) if (pdf_w.round() as i64 - dw).abs() <= 1);
+                        if pdf_matches_notdef || pdf_matches_dwx {
+                            continue;
+                        }
                     }
                 }
             }
@@ -12696,11 +12768,11 @@ pub fn strip_control_chars_from_streams(doc: &mut Document) -> usize {
             continue;
         }
 
-        // Mixed simple-font and Type0 pages are sensitive to aggressive byte-level
-        // stream rewrites; keep original text byte structure there.
-        if has_type0_font {
-            continue;
-        }
+        // Note: pages that also have Type0 fonts are NOT skipped — we still process
+        // simple-font operators on such pages.  The inner logic is safe: Type0 entries
+        // have can_strip=false in font_map, so their text operators are left untouched.
+        // strip_control_bytes is called with allow_collapse=!has_type0_font so 2-byte
+        // sentinel pairs (malformed simple fonts on mixed pages) are handled correctly.
 
         let content_ids = crate::content_editor::get_content_stream_ids(doc, page_id);
         let mut current_font = String::new();
