@@ -8910,26 +8910,26 @@ fn compute_cff_corrections_by_name(
         let rounded_w = frac_w.round() as i64;
         if rounded_w != pdf_w as i64 {
             // Cross-validate: if the CFF encoding maps this code to GID 0
-            // (.notdef), veraPDF uses .notdef/defaultWidthX — NOT the name-
-            // based charstring width. The name lookup may find a glyph stored
-            // under a custom SID that veraPDF's SID-based lookup doesn't reach.
-            // Block corrections that would change a correct .notdef-aligned width
-            // to a wrong name-based width. (#fix-cff-xval-gid0)
+            // (.notdef) AND the current /Widths value already matches .notdef
+            // or defaultWidthX, don't apply a correction that moves it AWAY.
+            // The name lookup may find a glyph stored under a custom SID that
+            // veraPDF's SID-based lookup doesn't reach, producing a wrong width.
+            // Only block when pdf_w is already correct (matches .notdef/dwx).
+            // When pdf_w is wrong, allow the correction — it may be improving
+            // the value toward what veraPDF expects. (#fix-cff-xval-gid0)
             if code <= 255 {
                 let cff_gid = cff.glyph_index(code as u8).map(|g| g.0).unwrap_or(0);
                 if cff_gid == 0 {
-                    // CFF encoding → GID 0. veraPDF uses .notdef or defaultWidthX.
-                    // Only allow correction if it targets .notdef/defaultWidthX.
                     let notdef_w = cff
                         .glyph_width(cff_parser::GlyphId(0))
                         .map(|w| (w as f64 * scale).round() as i64);
                     let dwx_w = cff
                         .default_width_x()
                         .map(|w| (w as f64 * scale).round() as i64);
-                    let targets_notdef = matches!(notdef_w, Some(nw) if nw == rounded_w);
-                    let targets_dwx = matches!(dwx_w, Some(dw) if dw == rounded_w);
-                    if !targets_notdef && !targets_dwx {
-                        continue; // name-based width disagrees with veraPDF's .notdef path
+                    let pdf_matches_notdef = matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
+                    let pdf_matches_dwx = matches!(dwx_w, Some(dw) if (pdf_w.round() as i64 - dw).abs() <= 1);
+                    if pdf_matches_notdef || pdf_matches_dwx {
+                        continue; // pdf_w already correct for .notdef — don't worsen it
                     }
                 }
             }
