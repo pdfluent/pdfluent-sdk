@@ -342,11 +342,15 @@ impl ToRgb for ColorSpace {
     fn convert_f32(&self, input: &[f32], output: &mut [u8], manual_scale: bool) -> Option<()> {
         match self.0.as_ref() {
             ColorSpaceType::DeviceCmyk => {
-                // PDF spec (§10.3.5): R = 1 − min(1, C+K), G = 1 − min(1, M+K), B = 1 − min(1, Y+K).
-                // Using an ICC profile instead produces wrong results for out-of-gamut CMYK values
-                // (e.g. C=0.72 K=0.66 should clamp to black, but the ICC gives dark gray).
-                // Iterate over all pixels — previous code only converted the first pixel, leaving
-                // all remaining image pixels black. (#544-cmyk)
+                // Use the CGATS001Compat ICC profile (same family as MuPDF's built-in DeviceCMYK
+                // profile) to match MuPDF rendering.  The PDF spec §10.3.5 algebraic formula
+                // R=1−min(1,C+K) hard-clamps to black for rich-black CMYK values (e.g.
+                // C=0.72 K=0.66 → 0), while the ICC gives the perceptually correct dark
+                // charcoal (~RGB 41,42,43) that MuPDF renders.
+                if let Some(profile) = default_cmyk_profile() {
+                    return profile.convert_f32(input, output, manual_scale);
+                }
+                // Fallback (profile load failed): PDF spec formula.
                 for (input, output) in input.chunks_exact(4).zip(output.chunks_exact_mut(3)) {
                     let (c, m, y, k) = (input[0], input[1], input[2], input[3]);
                     output[0] = f32_to_u8(1.0 - (c + k).min(1.0));
@@ -401,9 +405,11 @@ impl ToRgb for ColorSpace {
     fn convert_u8(&self, input: &[u8], output: &mut [u8]) -> Option<()> {
         match self.0.as_ref() {
             ColorSpaceType::DeviceCmyk => {
-                // PDF spec §10.3.5 formula (u8 domain: sum then saturating-subtract from 255).
-                // Iterate over all pixels — previous code only converted the first pixel, leaving
-                // all remaining image pixels black. (#544-cmyk)
+                // Use ICC profile (see convert_f32 comment above).
+                if let Some(profile) = default_cmyk_profile() {
+                    return profile.convert_u8(input, output);
+                }
+                // Fallback: PDF spec §10.3.5 formula (u8 domain).
                 for (input, output) in input.chunks_exact(4).zip(output.chunks_exact_mut(3)) {
                     let (c, m, y, k) = (
                         input[0] as u16,
