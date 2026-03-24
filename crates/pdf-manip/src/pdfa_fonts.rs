@@ -8917,7 +8917,11 @@ fn compute_cff_corrections_by_name(
             // Only block when pdf_w is already correct (matches .notdef/dwx).
             // When pdf_w is wrong, allow the correction — it may be improving
             // the value toward what veraPDF expects. (#fix-cff-xval-gid0)
-            if code <= 255 {
+            // Exempt code 173 (U+00AD soft hyphen): veraPDF normalizes
+            // soft hyphen → U+002D hyphen for §6.2.11.5 width comparison.
+            // The CFF encoding maps 173 → GID 0, but veraPDF uses "hyphen"
+            // charstring width, not .notdef. (#fix-cff-softhyphen-exempt)
+            if code <= 255 && code != 173 {
                 let cff_gid = cff.glyph_index(code as u8).map(|g| g.0).unwrap_or(0);
                 if cff_gid == 0 {
                     let notdef_w = cff
