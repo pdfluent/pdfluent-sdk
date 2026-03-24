@@ -70,8 +70,6 @@ fn main() {
 
 #[cfg(feature = "ocr")]
 fn run_accuracy_tests(fixtures_dir: &std::path::Path, backend: &pdf_engine::OcrsBackend) {
-    use pdf_engine::OcrBackend;
-
     let mut entries: Vec<_> = std::fs::read_dir(fixtures_dir)
         .expect("read fixtures/scanned")
         .filter_map(|e| e.ok())
@@ -196,7 +194,6 @@ fn ocr_page(
     path: &std::path::Path,
     backend: &pdf_engine::OcrsBackend,
 ) -> Option<String> {
-    use pdf_engine::OcrBackend;
     let data = std::fs::read(path).ok()?;
     let doc = pdf_engine::PdfDocument::open(data).ok()?;
     let result = doc.ocr_page(0, backend, 150.0).ok()?;
