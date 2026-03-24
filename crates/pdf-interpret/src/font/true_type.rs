@@ -3,7 +3,7 @@ use crate::font::generated::{glyph_names, mac_os_roman, mac_roman, standard};
 use crate::font::standard_font::StandardKind;
 use crate::font::{
     Encoding, FallbackFontQuery, FontFlags, glyph_name_to_unicode, read_to_unicode,
-    strip_subset_prefix, unicode_from_name,
+    strip_subset_prefix, synthesize_unicode_map_from_encoding, unicode_from_name,
 };
 use crate::util::OptionLog;
 use crate::{CMapResolverFn, CacheKey, FontResolverFn};
@@ -30,6 +30,7 @@ pub(crate) struct TrueTypeFont {
     cache_key: u128,
     kind: Kind,
     to_unicode: Option<CMap>,
+    encoding_unicode: Option<[Option<char>; 256]>,
 }
 
 #[derive(Debug)]
@@ -46,12 +47,17 @@ impl TrueTypeFont {
     ) -> Option<Self> {
         let cache_key = dict.cache_key();
         let to_unicode = read_to_unicode(dict, cmap_resolver);
+        let encoding_unicode = to_unicode
+            .is_none()
+            .then(|| synthesize_unicode_map_from_encoding(dict))
+            .flatten();
 
         if let Some(embedded) = EmbeddedKind::new(dict) {
             return Some(Self {
                 cache_key,
                 kind: Kind::Embedded(embedded),
                 to_unicode,
+                encoding_unicode,
             });
         }
 
@@ -76,6 +82,7 @@ impl TrueTypeFont {
                     font_resolver,
                 )?),
                 to_unicode: to_unicode.clone(),
+                encoding_unicode,
             })
         };
 
@@ -84,6 +91,7 @@ impl TrueTypeFont {
                 cache_key,
                 kind: Kind::Standard(standard),
                 to_unicode,
+                encoding_unicode,
             })
         } else {
             fallback()
@@ -188,6 +196,16 @@ impl TrueTypeFont {
             && let Some(c) = to_unicode.lookup_bf_string(code)
         {
             return Some(c);
+        }
+
+        if let Some(map) = &self.encoding_unicode
+            && let Some(ch) = usize::try_from(code)
+                .ok()
+                .and_then(|char_code| map.get(char_code))
+                .copied()
+                .flatten()
+        {
+            return Some(BfString::Char(ch));
         }
 
         match &self.kind {

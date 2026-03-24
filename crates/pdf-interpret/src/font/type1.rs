@@ -4,6 +4,7 @@ use crate::font::standard_font::{StandardFont, StandardKind, select_standard_fon
 use crate::font::true_type::{Width, read_encoding, read_widths};
 use crate::font::{
     Encoding, FallbackFontQuery, glyph_name_to_unicode, normalized_glyph_name, read_to_unicode,
+    synthesize_unicode_map_from_encoding,
 };
 use crate::{CMapResolverFn, CacheKey, FontResolverFn};
 use kurbo::BezPath;
@@ -17,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug)]
-pub(crate) struct Type1Font(u128, Kind, Option<CMap>);
+pub(crate) struct Type1Font(u128, Kind, Option<CMap>, Option<[Option<char>; 256]>);
 
 impl Type1Font {
     pub(crate) fn new(
@@ -28,6 +29,10 @@ impl Type1Font {
         let cache_key = dict.cache_key();
 
         let to_unicode = read_to_unicode(dict, cmap_resolver);
+        let encoding_unicode = to_unicode
+            .is_none()
+            .then(|| synthesize_unicode_map_from_encoding(dict))
+            .flatten();
 
         let fallback = || {
             // TODO: Actually use fallback fonts
@@ -51,23 +56,29 @@ impl Type1Font {
                     resolver,
                 )?),
                 to_unicode.clone(),
+                encoding_unicode,
             ))
         };
 
         let inner = if is_cff(dict) {
             if let Some(cff) = CffKind::new(dict) {
-                Self(cache_key, Kind::Cff(cff), to_unicode)
+                Self(cache_key, Kind::Cff(cff), to_unicode, encoding_unicode)
             } else {
                 return fallback();
             }
         } else if is_type1(dict) {
             if let Some(f) = Type1Kind::new(dict) {
-                Self(cache_key, Kind::Type1(f), to_unicode)
+                Self(cache_key, Kind::Type1(f), to_unicode, encoding_unicode)
             } else {
                 return fallback();
             }
         } else if let Some(standard) = StandardKind::new(dict, resolver) {
-            Self(cache_key, Kind::Standard(standard), to_unicode)
+            Self(
+                cache_key,
+                Kind::Standard(standard),
+                to_unicode,
+                encoding_unicode,
+            )
         } else {
             return fallback();
         };
@@ -79,7 +90,7 @@ impl Type1Font {
         let dict = Dict::default();
         let standard = StandardKind::new_with_standard(&dict, font, true, resolver)?;
 
-        Some(Self(0, Kind::Standard(standard), None))
+        Some(Self(0, Kind::Standard(standard), None, None))
     }
 
     pub(crate) fn map_code(&self, code: u8) -> GlyphId {
@@ -116,6 +127,16 @@ impl Type1Font {
             if c != BfString::Char('\0') {
                 return Some(c);
             }
+        }
+
+        if let Some(map) = &self.3
+            && let Some(ch) = usize::try_from(char_code)
+                .ok()
+                .and_then(|code| map.get(code))
+                .copied()
+                .flatten()
+        {
+            return Some(BfString::Char(ch));
         }
 
         let code = char_code as u8;
