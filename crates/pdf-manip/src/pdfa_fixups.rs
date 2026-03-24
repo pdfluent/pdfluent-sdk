@@ -49,7 +49,8 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let ascii85_inline_images_fixed = fix_ascii85_inline_images(doc);
     let invalid_ri_fixed = fix_invalid_rendering_intents(doc);
     let opm_fixed = fix_extgstate_opm(doc);
-    let concatenated_operators_fixed = fix_concatenated_operators(doc) + invalid_ri_fixed + opm_fixed;
+    let concatenated_operators_fixed =
+        fix_concatenated_operators(doc) + invalid_ri_fixed + opm_fixed;
     let unknown_operators_stripped = strip_unknown_content_stream_operators(doc);
     let page_boundary_fixed = fix_page_boundary_sizes(doc);
     // Add /Group to pages using transparency without one (6.2.10-tgroup).
@@ -476,10 +477,12 @@ fn try_fix_inline_devicen_array(arr: &mut Vec<Object>) -> bool {
     // Check if an attrs dict at arr[4] already has all Colorants entries.
     if arr.len() > 4 {
         if let Object::Dictionary(attrs) = &arr[4] {
-            let all_present = spot_names.iter().all(|n| match attrs.get(b"Colorants").ok() {
-                Some(Object::Dictionary(cd)) => cd.has(n.as_slice()),
-                _ => false,
-            });
+            let all_present = spot_names
+                .iter()
+                .all(|n| match attrs.get(b"Colorants").ok() {
+                    Some(Object::Dictionary(cd)) => cd.has(n.as_slice()),
+                    _ => false,
+                });
             if all_present {
                 return false;
             }
@@ -5400,7 +5403,10 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
                         || a == b'.'
                 };
                 if before_ok && after_ok {
-                    new_content.extend_from_slice(b"re f");
+                    // Always add trailing space so "f" isn't concatenated with
+                    // a following number-start char (digit, '.', '-', '+').
+                    // "ref354.48" → "re f 354.48", not "re f354.48". (#gen-389)
+                    new_content.extend_from_slice(b"re f ");
                     i += 3;
                     fixed = true;
                     count += 1;
