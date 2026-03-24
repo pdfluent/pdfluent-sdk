@@ -214,6 +214,23 @@ impl<'a> LayoutEngine<'a> {
                         page_height: child.box_model.height.unwrap_or(792.0),
                     });
                 }
+                // XFA's canonical nesting: <subform layout="paginate"> wraps
+                // <pageSet> and content siblings.  Look one level deeper so the
+                // inner pageSet defines the page geometry and the remaining
+                // children become the content nodes.  If no pageSet is found
+                // inside, fall through and treat the subform as content.
+                // (Fixes xl_02_row_layout.pdf and xl_09_field_types.pdf blank
+                // render: the pageSet's 792pt height was consuming the full page
+                // and pushing form content to page 2.)
+                FormNodeType::Subform if child.layout == LayoutStrategy::TopToBottom => {
+                    let (inner_areas, inner_content) = self.extract_page_structure(child)?;
+                    if !inner_areas.is_empty() {
+                        page_areas.extend(inner_areas);
+                        content_nodes.extend(inner_content);
+                    } else {
+                        content_nodes.push(child_id);
+                    }
+                }
                 _ => {
                     content_nodes.push(child_id);
                 }
