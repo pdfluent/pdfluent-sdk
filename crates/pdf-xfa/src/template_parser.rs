@@ -13,7 +13,9 @@ use roxmltree::Node;
 
 use xfa_layout_engine::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree, Occur};
 use xfa_layout_engine::text::FontMetrics;
-use xfa_layout_engine::types::{BoxModel, Caption, CaptionPlacement, LayoutStrategy, Measurement};
+use xfa_layout_engine::types::{
+    BoxModel, Caption, CaptionPlacement, LayoutStrategy, Measurement, TextAlign,
+};
 
 use crate::error::{Result, XfaError};
 
@@ -128,7 +130,11 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     };
 
     // Extract caption text (from <caption><value><text>…</text></value>).
-    let caption_text = if hidden { None } else { extract_caption_text(elem) };
+    let caption_text = if hidden {
+        None
+    } else {
+        extract_caption_text(elem)
+    };
     let mut bm_with_caption = bm.clone();
     if let Some(ref cap_text) = caption_text {
         bm_with_caption.caption = Some(Caption {
@@ -142,7 +148,9 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     // Map them to Draw nodes with empty content — Draw nodes don't render
     // borders, keeping the visual output clean. (#557)
     let node_type = if hidden {
-        FormNodeType::Draw { content: String::new() }
+        FormNodeType::Draw {
+            content: String::new(),
+        }
     } else {
         FormNodeType::Field { value }
     };
@@ -202,14 +210,27 @@ fn is_hidden(elem: Node<'_, '_>) -> bool {
     )
 }
 
-/// Parse font size from `<font size="…">` child element (if present).
-/// Returns `FontMetrics::default()` when no `<font>` element or `size` attr found.
+/// Parse font size and text alignment from `<font size="…">` and `<para hAlign="…">` child
+/// elements (XFA 3.3 §7.1). Returns `FontMetrics::default()` when no matching elements found.
 fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
     let size = find_first_child_by_name(elem, "font")
         .and_then(|f| attr(f, "size"))
         .and_then(parse_dim)
         .unwrap_or(FontMetrics::default().size);
-    FontMetrics::new(size)
+    let text_align = find_first_child_by_name(elem, "para")
+        .and_then(|p| attr(p, "hAlign"))
+        .map(|a| match a {
+            "center" => TextAlign::Center,
+            "right" => TextAlign::Right,
+            "justify" => TextAlign::Justify,
+            _ => TextAlign::Left,
+        })
+        .unwrap_or_default();
+    FontMetrics {
+        size,
+        text_align,
+        ..FontMetrics::default()
+    }
 }
 
 fn parse_page_set(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
@@ -283,11 +304,11 @@ fn add_children(tree: &mut FormTree, node: &mut FormNode, elem: Node<'_, '_>) ->
                 node.children.push(child_id);
             }
             // Ignore XML elements that are layout metadata, not form nodes.
-            "caption" | "value" | "ui" | "font" | "border" | "margin" | "para"
-            | "format" | "items" | "medium" | "contentArea" | "desc" | "occur"
-            | "event" | "bind" | "calculate" | "validate" | "assist" | "toolTip"
-            | "fill" | "edge" | "corner" | "linear" | "radial" | "pattern"
-            | "stipple" | "color" | "extras" | "traversal" | "proto" | "overflow" => {
+            "caption" | "value" | "ui" | "font" | "border" | "margin" | "para" | "format"
+            | "items" | "medium" | "contentArea" | "desc" | "occur" | "event" | "bind"
+            | "calculate" | "validate" | "assist" | "toolTip" | "fill" | "edge" | "corner"
+            | "linear" | "radial" | "pattern" | "stipple" | "color" | "extras" | "traversal"
+            | "proto" | "overflow" => {
                 // Handled elsewhere or not needed for layout.
             }
             _ => {
@@ -358,9 +379,7 @@ fn parse_dim(s: &str) -> Option<f64> {
 /// Parse the `occur` child element.
 fn parse_occur(elem: Node<'_, '_>) -> Occur {
     if let Some(occur) = find_first_child_by_name(elem, "occur") {
-        let min: u32 = attr(occur, "min")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
+        let min: u32 = attr(occur, "min").and_then(|s| s.parse().ok()).unwrap_or(1);
         let max: Option<u32> = attr(occur, "max")
             .map(|s| if s == "-1" { None } else { s.parse().ok() })
             .unwrap_or(Some(1));
@@ -481,7 +500,9 @@ fn extract_caption_text(elem: Node<'_, '_>) -> Option<String> {
 
 /// Get an attribute value by local name, ignoring namespace prefixes.
 fn attr<'a>(elem: Node<'a, '_>, name: &str) -> Option<&'a str> {
-    elem.attributes().find(|a| a.name() == name).map(|a| a.value())
+    elem.attributes()
+        .find(|a| a.name() == name)
+        .map(|a| a.value())
 }
 
 /// Find the first direct child element with a given local tag name.
@@ -568,7 +589,9 @@ mod tests {
     }
 
     fn parse_layout_str(s: &str) -> LayoutStrategy {
-        let xml = format!(r#"<?xml version="1.0"?><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform layout="{s}"/></template>"#);
+        let xml = format!(
+            r#"<?xml version="1.0"?><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform layout="{s}"/></template>"#
+        );
         let doc = roxmltree::Document::parse(&xml).unwrap();
         let root = doc.root_element();
         let subform = root.children().filter(|n| n.is_element()).next().unwrap();
@@ -619,8 +642,8 @@ mod tests {
   </subform>
 </template>"#;
         let (tree, root_id) = parse_template(xml).unwrap();
-        let node = find_node_by_name(&tree, root_id, "instructions")
-            .expect("instructions draw not found");
+        let node =
+            find_node_by_name(&tree, root_id, "instructions").expect("instructions draw not found");
         match &node.node_type {
             FormNodeType::Draw { content } => {
                 assert!(
@@ -670,7 +693,10 @@ mod tests {
         let hidden_draw = find_node_by_name(&tree, root_id, "hidden_draw").unwrap();
         match &hidden_draw.node_type {
             FormNodeType::Draw { content } => {
-                assert!(content.is_empty(), "hidden draw should have no content, got: {content:?}")
+                assert!(
+                    content.is_empty(),
+                    "hidden draw should have no content, got: {content:?}"
+                )
             }
             other => panic!("expected Draw, got {other:?}"),
         }
@@ -687,5 +713,59 @@ mod tests {
             }
             other => panic!("expected Draw (remapped from hidden Field), got {other:?}"),
         }
+    }
+
+    /// `<para hAlign="center/right/justify">` on draw/field elements must be
+    /// reflected in `FontMetrics.text_align` so the renderer can align text
+    /// within the element's bounding box. (#557)
+    #[test]
+    fn para_halign_parsed_into_font_metrics() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="body" layout="tb" w="7.5in">
+      <draw name="left_draw" w="7in" h="0.5in">
+        <value><text>Left</text></value>
+        <para hAlign="left"/>
+      </draw>
+      <draw name="center_draw" w="7in" h="0.5in">
+        <value><text>Centered</text></value>
+        <para hAlign="center"/>
+      </draw>
+      <draw name="right_draw" w="7in" h="0.5in">
+        <value><text>Right</text></value>
+        <para hAlign="right"/>
+      </draw>
+    </subform>
+  </subform>
+</template>"#;
+        let (tree, root_id) = parse_template(xml).unwrap();
+
+        let left = find_node_by_name(&tree, root_id, "left_draw").unwrap();
+        assert_eq!(
+            left.font.text_align,
+            TextAlign::Left,
+            "left_draw should be Left"
+        );
+
+        let center = find_node_by_name(&tree, root_id, "center_draw").unwrap();
+        assert_eq!(
+            center.font.text_align,
+            TextAlign::Center,
+            "center_draw should be Center"
+        );
+
+        let right = find_node_by_name(&tree, root_id, "right_draw").unwrap();
+        assert_eq!(
+            right.font.text_align,
+            TextAlign::Right,
+            "right_draw should be Right"
+        );
     }
 }

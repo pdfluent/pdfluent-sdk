@@ -92,7 +92,9 @@ fn render_node(
     }
 
     match &node.content {
-        LayoutContent::WrappedText { lines, font_size } => {
+        LayoutContent::WrappedText {
+            lines, font_size, ..
+        } => {
             // Draw field/text background
             let fill = lighten(config.field_color, 200);
             draw_filled_rect(img, x, y, w, h, fill);
@@ -270,6 +272,7 @@ mod tests {
                     content: LayoutContent::WrappedText {
                         lines: vec!["Hello".to_string()],
                         font_size: 10.0,
+                        text_align: xfa_layout_engine::types::TextAlign::Left,
                     },
                     children: vec![],
                 }],
@@ -297,6 +300,7 @@ mod tests {
                     content: LayoutContent::WrappedText {
                         lines: vec!["AB".to_string()],
                         font_size: 10.0,
+                        text_align: xfa_layout_engine::types::TextAlign::Left,
                     },
                     children: vec![],
                 }],

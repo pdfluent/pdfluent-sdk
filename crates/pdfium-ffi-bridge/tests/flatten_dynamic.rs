@@ -733,6 +733,7 @@ fn flatten_pdfa_no_javascript_or_embedded_files() {
                 content: LayoutContent::WrappedText {
                     lines: vec!["Test".to_string()],
                     font_size: 12.0,
+                    text_align: xfa_layout_engine::types::TextAlign::Left,
                 },
                 children: vec![],
             }],

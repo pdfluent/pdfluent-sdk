@@ -296,7 +296,9 @@ fn collect_appearances(
                 let appearance = draw_appearance(text, width, height, config);
                 result.push((node.name.clone(), abs_x, abs_y, appearance));
             }
-            LayoutContent::WrappedText { lines, font_size } => {
+            LayoutContent::WrappedText {
+                lines, font_size, ..
+            } => {
                 let line_height = font_size * 1.2;
                 let appearance =
                     multiline_appearance(lines, *font_size, line_height, width, height, config);

@@ -8,6 +8,7 @@
 
 use crate::error::Result;
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
+use xfa_layout_engine::types::TextAlign;
 
 /// Configuration for PDF overlay rendering.
 #[derive(Debug, Clone)]
@@ -98,9 +99,22 @@ fn render_nodes(
         match &node.content {
             LayoutContent::Field { value } => render_field(abs_x, pdf_y, w, h, value, config, ops),
             LayoutContent::Text(text) => render_text(abs_x, pdf_y, text, config, ops),
-            LayoutContent::WrappedText { lines, font_size } => {
-                render_multiline(abs_x, pdf_y, lines, *font_size, mapper, abs_y, config, ops)
-            }
+            LayoutContent::WrappedText {
+                lines,
+                font_size,
+                text_align,
+            } => render_multiline(
+                abs_x,
+                pdf_y,
+                w,
+                lines,
+                *font_size,
+                *text_align,
+                mapper,
+                abs_y,
+                config,
+                ops,
+            ),
             LayoutContent::None => {}
         }
 
@@ -188,8 +202,10 @@ fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &m
 fn render_multiline(
     x: f64,
     pdf_y: f64,
+    container_width: f64,
     lines: &[String],
     font_size: f64,
+    text_align: TextAlign,
     mapper: &CoordinateMapper,
     abs_y_xfa: f64,
     config: &XfaRenderConfig,
@@ -200,6 +216,8 @@ fn render_multiline(
     }
     let p = config.text_padding;
     let line_height = font_size * 1.2;
+    // Estimated character width coefficient for Helvetica (≈0.5 of font size).
+    let avg_char_w = font_size * 0.5;
     write_ops(
         ops,
         format_args!(
@@ -208,17 +226,28 @@ fn render_multiline(
         ),
     );
     let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + p + font_size, 0.0);
-    let text_x = x + p;
+    let content_w = (container_width - p * 2.0).max(0.0);
+    let mut prev_x = x + p;
     for (i, line) in lines.iter().enumerate() {
         let line_y = first_line_pdf_y - (i as f64 * line_height);
         if line_y < pdf_y {
             break;
         }
+        // Compute x position for alignment. We estimate line width using average char width.
+        let line_w = line.len() as f64 * avg_char_w;
+        let text_x = match text_align {
+            TextAlign::Center => x + p + ((content_w - line_w) / 2.0).max(0.0),
+            TextAlign::Right => x + p + (content_w - line_w).max(0.0),
+            _ => x + p,
+        };
         if i == 0 {
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
         } else {
-            write_ops(ops, format_args!("{:.2} {:.2} Td\n", 0.0, -line_height));
+            // Td is relative to previous text position; compute delta from previous x.
+            let dx = text_x - prev_x;
+            write_ops(ops, format_args!("{:.2} {:.2} Td\n", dx, -line_height));
         }
+        prev_x = text_x;
         write_ops(ops, format_args!("({}) Tj\n", pdf_escape(line)));
     }
     ops.extend_from_slice(b"ET\n");

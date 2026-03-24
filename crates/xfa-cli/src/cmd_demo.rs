@@ -235,6 +235,7 @@ fn print_layout_tree(nodes: &[xfa_layout_engine::layout::LayoutNode], indent: us
             xfa_layout_engine::layout::LayoutContent::WrappedText {
                 ref lines,
                 font_size,
+                ..
             } => {
                 format!(" wrapped_text[{}lines, {font_size}pt]", lines.len())
             }
