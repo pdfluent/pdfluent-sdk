@@ -325,6 +325,69 @@ mod tests {
         assert!(found_content, "all content streams are empty after flatten");
     }
 
+    /// Tests the canonical XFA nesting: <subform layout="paginate"> wraps
+    /// <pageSet> + lr-tb content rows.  Verifies the flatten produces a single
+    /// page with visible field content (border operators in the content stream).
+    /// Before the extract_page_structure fix this produced 2 pages: page 1
+    /// was blank (pageSet occupied 792pt) and page 2 had the actual fields.
+    #[test]
+    fn flatten_paginate_subform_with_nested_pageset_produces_visible_content() {
+        const LR_TB_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="row1" layout="lr-tb" w="7.5in" h="0.4in">
+      <field name="firstName" w="3.5in" h="0.4in">
+        <caption><value><text>First</text></value></caption>
+        <ui><textEdit/></ui>
+        <value><text>John</text></value>
+      </field>
+      <field name="lastName" w="3.5in" h="0.4in">
+        <caption><value><text>Last</text></value></caption>
+        <ui><textEdit/></ui>
+        <value><text>Doe</text></value>
+      </field>
+    </subform>
+  </subform>
+</template>
+</xdp:xdp>"#;
+
+        let pdf_bytes = build_xfa_pdf(LR_TB_XDP);
+        let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+
+        let doc = Document::load_mem(&result).expect("load flattened PDF");
+        let pages: Vec<ObjectId> = doc.page_iter().collect();
+
+        // Must produce exactly 1 page (not 2 as with the blank-first-page bug).
+        assert_eq!(pages.len(), 1, "expected 1 page, got {}", pages.len());
+
+        // Page 1 must contain visible text operators from the field values.
+        // (Fields with non-empty values produce WrappedText → BT/ET operators.)
+        if let Ok(page_dict) = doc.get_dictionary(pages[0]) {
+            if let Ok(lopdf::Object::Reference(stream_id)) = page_dict.get(b"Contents") {
+                if let Ok(obj) = doc.get_object(*stream_id) {
+                    if let Ok(stream) = obj.as_stream() {
+                        let content = String::from_utf8_lossy(&stream.content);
+                        assert!(
+                            content.contains("BT\n"),
+                            "no text operators in page 1 content stream (should have BT from field values)"
+                        );
+                        assert!(
+                            content.contains("Tj\n"),
+                            "no text show operators in page 1 content stream"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn flatten_removes_acroform() {
         let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
