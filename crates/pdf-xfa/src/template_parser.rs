@@ -210,12 +210,26 @@ fn is_hidden(elem: Node<'_, '_>) -> bool {
     )
 }
 
+/// Parse a font size string where bare numbers are in **points** (not inches).
+///
+/// XFA `<font size="…">` uses points as the default unit — a bare number like `"10"`
+/// means 10pt, not 10 inches.  General dimension attributes (w, h, x, y) use inches
+/// as the default, so they go through `parse_dim` instead.
+fn parse_font_size(s: &str) -> Option<f64> {
+    // Bare number → points (XFA default for font sizes).
+    if let Ok(v) = s.trim().parse::<f64>() {
+        return if v > 0.0 { Some(v) } else { None };
+    }
+    // Explicit unit ("10pt", "3mm", …) → convert to points.
+    Measurement::parse(s).map(|m| m.to_points())
+}
+
 /// Parse font size and text alignment from `<font size="…">` and `<para hAlign="…">` child
 /// elements (XFA 3.3 §7.1). Returns `FontMetrics::default()` when no matching elements found.
 fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
     let size = find_first_child_by_name(elem, "font")
         .and_then(|f| attr(f, "size"))
-        .and_then(parse_dim)
+        .and_then(parse_font_size)
         .unwrap_or(FontMetrics::default().size);
     let text_align = find_first_child_by_name(elem, "para")
         .and_then(|p| attr(p, "hAlign"))
@@ -713,6 +727,21 @@ mod tests {
             }
             other => panic!("expected Draw (remapped from hidden Field), got {other:?}"),
         }
+    }
+
+    /// Font sizes given as bare numbers (`<font size="10">`) must be treated as
+    /// **points**, not inches.  A bare "10" used to go through `parse_dim` which
+    /// added the "in" suffix, turning 10pt → 720pt and making text enormous. (#557)
+    #[test]
+    fn font_size_bare_number_is_points() {
+        // parse_font_size must not multiply by 72.
+        assert_eq!(parse_font_size("10"), Some(10.0));
+        assert_eq!(parse_font_size("8"), Some(8.0));
+        assert_eq!(parse_font_size("12"), Some(12.0));
+        // Explicit unit must still work.
+        assert!((parse_font_size("10pt").unwrap() - 10.0).abs() < 0.01);
+        // Zero/negative → None.
+        assert_eq!(parse_font_size("0"), None);
     }
 
     /// `<para hAlign="center/right/justify">` on draw/field elements must be
