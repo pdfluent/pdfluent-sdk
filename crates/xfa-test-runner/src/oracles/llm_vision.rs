@@ -6,7 +6,7 @@
 //!
 //! Requires the `OPENROUTER_API_KEY` environment variable.
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use reqwest::blocking::Client;
 use serde_json::Value;
 use std::time::Duration;
@@ -129,10 +129,7 @@ fn parse_review(content: &str) -> Result<LlmReview, String> {
 fn strip_code_fences(s: &str) -> &str {
     let s = s.trim();
     // ```json\n...\n``` or ```\n...\n```
-    if let Some(inner) = s
-        .strip_prefix("```json")
-        .or_else(|| s.strip_prefix("```"))
-    {
+    if let Some(inner) = s.strip_prefix("```json").or_else(|| s.strip_prefix("```")) {
         if let Some(end) = inner.rfind("```") {
             return inner[..end].trim();
         }

@@ -1060,7 +1060,10 @@ mod tests {
         assert!(result.is_ok(), "extract_cms failed: {:?}", result.err());
         let (angle_start, hex_len, cms_der) = result.unwrap();
         assert!(angle_start > 0);
-        assert!(hex_len >= 16384, "default placeholder should be 8192 bytes = 16384 hex chars");
+        assert!(
+            hex_len >= 16384,
+            "default placeholder should be 8192 bytes = 16384 hex chars"
+        );
         assert!(!cms_der.is_empty());
         // CMS ContentInfo starts with SEQUENCE tag 0x30.
         assert_eq!(cms_der[0], 0x30, "CMS must start with SEQUENCE");
@@ -1106,7 +1109,9 @@ mod tests {
     #[test]
     fn parse_der_outer_length_basic() {
         // Short form: SEQUENCE of 10 bytes → total 12.
-        let data = [0x30u8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let data = [
+            0x30u8, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
         assert_eq!(parse_der_outer_length(&data), Some(12));
 
         // Long form: SEQUENCE, 2-byte length = 300 → total 304.

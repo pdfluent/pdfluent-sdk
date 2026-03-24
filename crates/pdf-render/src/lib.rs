@@ -305,4 +305,3 @@ pub(crate) fn derive_settings(settings: &vello_cpu::RenderSettings) -> vello_cpu
         ..*settings
     }
 }
-

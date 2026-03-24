@@ -78,12 +78,7 @@ pub trait OcrBackend: Send + Sync {
     /// * `image_data` — raw RGB pixels, row-major, 3 bytes per pixel.
     /// * `width`  — image width in pixels.
     /// * `height` — image height in pixels.
-    fn recognize(
-        &self,
-        image_data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<OcrResult, OcrError>;
+    fn recognize(&self, image_data: &[u8], width: u32, height: u32) -> Result<OcrResult, OcrError>;
 
     /// Short identifier shown in test metadata (e.g. `"ocrs"`, `"tesseract"`).
     fn name(&self) -> &str;
@@ -123,10 +118,8 @@ impl OcrsBackend {
     /// Suitable for WASM where filesystem access is unavailable.
     /// Pass the raw `.rten` file bytes for each model.
     pub fn from_bytes(detection: &[u8], recognition: &[u8]) -> Result<Self, OcrError> {
-        let det = rten::Model::load(detection.to_vec())
-            .map_err(|_| OcrError::NoEngine)?;
-        let rec = rten::Model::load(recognition.to_vec())
-            .map_err(|_| OcrError::NoEngine)?;
+        let det = rten::Model::load(detection.to_vec()).map_err(|_| OcrError::NoEngine)?;
+        let rec = rten::Model::load(recognition.to_vec()).map_err(|_| OcrError::NoEngine)?;
         Self::build(det, rec)
     }
 
@@ -138,10 +131,8 @@ impl OcrsBackend {
         detection_path: impl AsRef<std::path::Path>,
         recognition_path: impl AsRef<std::path::Path>,
     ) -> Result<Self, OcrError> {
-        let det = rten::Model::load_file(detection_path)
-            .map_err(|_| OcrError::NoEngine)?;
-        let rec = rten::Model::load_file(recognition_path)
-            .map_err(|_| OcrError::NoEngine)?;
+        let det = rten::Model::load_file(detection_path).map_err(|_| OcrError::NoEngine)?;
+        let rec = rten::Model::load_file(recognition_path).map_err(|_| OcrError::NoEngine)?;
         Self::build(det, rec)
     }
 
@@ -154,18 +145,16 @@ impl OcrsBackend {
     /// Not available on WASM (use [`OcrsBackend::from_bytes`] instead).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn try_default() -> Result<Self, OcrError> {
-        let det_path: std::path::PathBuf =
-            std::env::var("OCRS_DETECTION_MODEL")
-                .ok()
-                .map(std::path::PathBuf::from)
-                .or_else(|| default_model_path("text-detection.rten"))
-                .ok_or(OcrError::NoEngine)?;
-        let rec_path: std::path::PathBuf =
-            std::env::var("OCRS_RECOGNITION_MODEL")
-                .ok()
-                .map(std::path::PathBuf::from)
-                .or_else(|| default_model_path("text-recognition.rten"))
-                .ok_or(OcrError::NoEngine)?;
+        let det_path: std::path::PathBuf = std::env::var("OCRS_DETECTION_MODEL")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| default_model_path("text-detection.rten"))
+            .ok_or(OcrError::NoEngine)?;
+        let rec_path: std::path::PathBuf = std::env::var("OCRS_RECOGNITION_MODEL")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| default_model_path("text-recognition.rten"))
+            .ok_or(OcrError::NoEngine)?;
         if !det_path.exists() || !rec_path.exists() {
             return Err(OcrError::NoEngine);
         }
@@ -192,15 +181,9 @@ fn default_model_path(filename: &str) -> Option<std::path::PathBuf> {
 
 #[cfg(feature = "ocr")]
 impl OcrBackend for OcrsBackend {
-    fn recognize(
-        &self,
-        image_data: &[u8],
-        width: u32,
-        height: u32,
-    ) -> Result<OcrResult, OcrError> {
-        let image_source =
-            ocrs::ImageSource::from_bytes(image_data, (width, height))
-                .map_err(|e| OcrError::ImageError(e.to_string()))?;
+    fn recognize(&self, image_data: &[u8], width: u32, height: u32) -> Result<OcrResult, OcrError> {
+        let image_source = ocrs::ImageSource::from_bytes(image_data, (width, height))
+            .map_err(|e| OcrError::ImageError(e.to_string()))?;
 
         let input = self
             .engine
@@ -243,11 +226,7 @@ impl OcrBackend for OcrsBackend {
 /// For repeated use, create an `OcrsBackend` once and call
 /// `ocr_page` with a reference to it.
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
-pub fn ocr_page_default(
-    image_data: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<OcrResult, OcrError> {
+pub fn ocr_page_default(image_data: &[u8], width: u32, height: u32) -> Result<OcrResult, OcrError> {
     let backend = OcrsBackend::try_default()?;
     backend.recognize(image_data, width, height)
 }

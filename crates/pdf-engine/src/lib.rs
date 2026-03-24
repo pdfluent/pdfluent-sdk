@@ -70,7 +70,7 @@ pub use render::{RenderOptions, RenderedPage};
 pub use text::{TextBlock, TextSpan};
 pub use thumbnail::ThumbnailOptions;
 
-#[cfg(feature = "ocr")]
-pub use ocr::OcrsBackend;
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
 pub use ocr::ocr_page_default;
+#[cfg(feature = "ocr")]
+pub use ocr::OcrsBackend;

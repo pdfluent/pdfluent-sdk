@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use lopdf::{Document, Object, Stream, dictionary};
+use lopdf::{dictionary, Document, Object, Stream};
 
 // ---------------------------------------------------------------------------
 // FormCalc test cases: (filename_suffix, description, formcalc_script)
@@ -256,8 +256,7 @@ Round(monthlyPmt + futureVal + presentVal, 2)"#,
 ];
 
 fn main() {
-    let out_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/formcalc");
+    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/formcalc");
     std::fs::create_dir_all(&out_dir).expect("create formcalc fixtures dir");
 
     for (i, &(suffix, desc, script)) in CASES.iter().enumerate() {
@@ -268,7 +267,11 @@ fn main() {
         println!("  {filename}  ({} bytes)  — {desc}", bytes.len());
     }
 
-    println!("\n{} FormCalc fixture PDFs written to {}", CASES.len(), out_dir.display());
+    println!(
+        "\n{} FormCalc fixture PDFs written to {}",
+        CASES.len(),
+        out_dir.display()
+    );
 }
 
 /// Build a minimal XFA PDF whose <template> contains a single FormCalc script.

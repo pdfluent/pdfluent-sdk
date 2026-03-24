@@ -24,35 +24,74 @@
 
 use std::path::PathBuf;
 
-use lopdf::{Document, Object, Stream, dictionary};
+use lopdf::{dictionary, Document, Object, Stream};
 
 fn main() {
-    let out_dir =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/xfa-data");
+    let out_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/xfa-data");
     std::fs::create_dir_all(&out_dir).expect("create xfa-data fixtures dir");
 
     // Static cases: (suffix, description, template_body, data_body)
     let mut cases: Vec<(&str, &str, String, String)> = vec![
-        ("personal_info", "Personal info: name, email, phone",
-            TMPL_PERSONAL.to_string(), DATA_PERSONAL.to_string()),
-        ("address", "Address fields: street, city, postal code, country",
-            TMPL_ADDRESS.to_string(), DATA_ADDRESS.to_string()),
-        ("date_fields", "Date fields: birth date, issue date, expiry date",
-            TMPL_DATES.to_string(), DATA_DATES.to_string()),
-        ("repeating_rows", "Repeating rows: 3 invoice line items",
-            TMPL_ROWS.to_string(), DATA_ROWS.to_string()),
-        ("combined", "Combined: personal + address + dates",
-            TMPL_COMBINED.to_string(), DATA_COMBINED.to_string()),
-        ("nested_groups", "Nested groups: company → department → employee",
-            TMPL_NESTED.to_string(), DATA_NESTED.to_string()),
-        ("unicode_values", "Unicode values: accented chars and symbols",
-            TMPL_UNICODE.to_string(), DATA_UNICODE.to_string()),
-        ("numeric_values", "Numeric values: integers and decimals",
-            TMPL_NUMERIC.to_string(), DATA_NUMERIC.to_string()),
-        ("multipage_data", "Multi-page: 10 data-bound fields",
-            TMPL_MULTIPAGE.to_string(), DATA_MULTIPAGE.to_string()),
-        ("mixed_empty", "Mix: some fields filled, some empty",
-            TMPL_MIXED.to_string(), DATA_MIXED.to_string()),
+        (
+            "personal_info",
+            "Personal info: name, email, phone",
+            TMPL_PERSONAL.to_string(),
+            DATA_PERSONAL.to_string(),
+        ),
+        (
+            "address",
+            "Address fields: street, city, postal code, country",
+            TMPL_ADDRESS.to_string(),
+            DATA_ADDRESS.to_string(),
+        ),
+        (
+            "date_fields",
+            "Date fields: birth date, issue date, expiry date",
+            TMPL_DATES.to_string(),
+            DATA_DATES.to_string(),
+        ),
+        (
+            "repeating_rows",
+            "Repeating rows: 3 invoice line items",
+            TMPL_ROWS.to_string(),
+            DATA_ROWS.to_string(),
+        ),
+        (
+            "combined",
+            "Combined: personal + address + dates",
+            TMPL_COMBINED.to_string(),
+            DATA_COMBINED.to_string(),
+        ),
+        (
+            "nested_groups",
+            "Nested groups: company → department → employee",
+            TMPL_NESTED.to_string(),
+            DATA_NESTED.to_string(),
+        ),
+        (
+            "unicode_values",
+            "Unicode values: accented chars and symbols",
+            TMPL_UNICODE.to_string(),
+            DATA_UNICODE.to_string(),
+        ),
+        (
+            "numeric_values",
+            "Numeric values: integers and decimals",
+            TMPL_NUMERIC.to_string(),
+            DATA_NUMERIC.to_string(),
+        ),
+        (
+            "multipage_data",
+            "Multi-page: 10 data-bound fields",
+            TMPL_MULTIPAGE.to_string(),
+            DATA_MULTIPAGE.to_string(),
+        ),
+        (
+            "mixed_empty",
+            "Mix: some fields filled, some empty",
+            TMPL_MIXED.to_string(),
+            DATA_MIXED.to_string(),
+        ),
     ];
 
     // Edge cases with dynamically generated content

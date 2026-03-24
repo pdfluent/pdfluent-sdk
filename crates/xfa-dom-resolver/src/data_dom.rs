@@ -405,7 +405,9 @@ impl DataDom {
 
     /// Returns `true` if any `DataValue` in the tree has `is_null = true`.
     fn has_any_null(&self) -> bool {
-        self.nodes.iter().any(|n| matches!(n, DataNode::DataValue { is_null: true, .. }))
+        self.nodes
+            .iter()
+            .any(|n| matches!(n, DataNode::DataValue { is_null: true, .. }))
     }
 
     fn write_xml_node(&self, id: DataNodeId, out: &mut String, depth: usize, add_xsi_ns: bool) {

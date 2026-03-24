@@ -58,7 +58,10 @@ impl PdfTest for RenderLlmReviewTest {
         // Skip XFA-only PDFs — they render blank without the flatten pipeline.
         // Rendering quality of XFA PDFs is covered by xfa_flatten, not here.
         if pdf_data.windows(4).any(|w| w == b"/XFA") {
-            return skip("XFA-only PDF: rendering quality covered by xfa_flatten", start);
+            return skip(
+                "XFA-only PDF: rendering quality covered by xfa_flatten",
+                start,
+            );
         }
 
         // Open and render page 0.
@@ -77,16 +80,12 @@ impl PdfTest for RenderLlmReviewTest {
         };
 
         // Encode rendered RGBA pixels to PNG bytes.
-        let img =
-            match image::RgbaImage::from_raw(render.width, render.height, render.pixels) {
-                Some(i) => i,
-                None => return skip("RGBA image construction failed", start),
-            };
+        let img = match image::RgbaImage::from_raw(render.width, render.height, render.pixels) {
+            Some(i) => i,
+            None => return skip("RGBA image construction failed", start),
+        };
         let mut png_bytes: Vec<u8> = Vec::new();
-        if let Err(e) = img.write_to(
-            &mut Cursor::new(&mut png_bytes),
-            image::ImageFormat::Png,
-        ) {
+        if let Err(e) = img.write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png) {
             return skip(&format!("PNG encode: {e}"), start);
         }
 

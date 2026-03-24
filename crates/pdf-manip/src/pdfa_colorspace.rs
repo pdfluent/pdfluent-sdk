@@ -1783,7 +1783,14 @@ fn collect_separations_recursive(
         Object::Reference(ref_id) => {
             if visited_refs.insert(*ref_id) {
                 if let Ok(resolved) = doc.get_object(*ref_id) {
-                    collect_separations_recursive(doc, *ref_id, resolved, map, visited_refs, depth + 1);
+                    collect_separations_recursive(
+                        doc,
+                        *ref_id,
+                        resolved,
+                        map,
+                        visited_refs,
+                        depth + 1,
+                    );
                 }
             }
         }
@@ -1792,7 +1799,12 @@ fn collect_separations_recursive(
 }
 
 /// Recursively replace all Reference(old_id) with Reference(new_id) in an object tree.
-fn redirect_references_recursive(obj: &mut Object, old_id: ObjectId, new_id: ObjectId, depth: usize) {
+fn redirect_references_recursive(
+    obj: &mut Object,
+    old_id: ObjectId,
+    new_id: ObjectId,
+    depth: usize,
+) {
     if depth > MAX_OBJECT_DEPTH {
         return;
     }
@@ -1821,7 +1833,13 @@ fn redirect_references_recursive(obj: &mut Object, old_id: ObjectId, new_id: Obj
     }
 }
 
-fn fix_separation_recursive(obj: &mut Object, name: &[u8], alt: &Object, tint: &Object, depth: usize) {
+fn fix_separation_recursive(
+    obj: &mut Object,
+    name: &[u8],
+    alt: &Object,
+    tint: &Object,
+    depth: usize,
+) {
     if depth > MAX_OBJECT_DEPTH {
         return;
     }

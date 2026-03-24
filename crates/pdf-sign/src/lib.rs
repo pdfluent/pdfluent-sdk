@@ -30,9 +30,9 @@ pub use crypto::{verify_cms_signature, SignatureAlgorithm};
 pub use docmdp::*;
 pub use ltv::*;
 pub use sig_dict::*;
-pub use sign::{sign_pdf, sign_pdf_incremental, SignOptions};
 #[cfg(feature = "tsa")]
 pub use sign::sign_pdf_ltv;
+pub use sign::{sign_pdf, sign_pdf_incremental, SignOptions};
 pub use signer::{PdfSigner, Pkcs12Signer, SignError};
 pub use types::*;
 pub use x509::X509Certificate;
