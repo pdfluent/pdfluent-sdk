@@ -4338,6 +4338,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "formcalc-interpreter",
  "log",
+ "lopdf",
  "pdf-font",
  "pdf-interpret",
  "pdf-syntax",

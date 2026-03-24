@@ -13,6 +13,10 @@ pub enum XfaError {
     FontError(String),
     #[error("layout error: {0}")]
     LayoutError(String),
+    #[error("layout failed: {0}")]
+    LayoutFailed(String),
+    #[error("XML parse failed: {0}")]
+    ParseFailed(String),
     #[error("FormCalc error: {0}")]
     FormCalcError(String),
     #[error("IO error: {0}")]
