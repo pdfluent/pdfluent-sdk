@@ -172,6 +172,87 @@ endfor
 var payment = principal * monthly_rate * factor / (factor - 1)
 Round(payment, 2)"#,
     ),
+    // ── Edge cases ────────────────────────────────────────────
+    (
+        "div_zero",
+        "Division by zero → graceful eval error (no panic)",
+        // DivisionByZero is a Result::Err, caught by evaluate_formcalc, not a panic.
+        r#"var x = 0
+1 / x"#,
+    ),
+    (
+        "nested_builtins",
+        "Deeply nested built-in function calls",
+        r#"var x = -3.7
+var a = Round(Abs(Floor(x)), 1)
+var b = Abs(Round(x, 0))
+a + b"#,
+    ),
+    (
+        "host_method",
+        "SOM member access and host method calls return Null (no DOM)",
+        // Dotted names (xfa.host.*, xfa.resolveNode) silently return Null.
+        // The final numeric expression is the script result.
+        r#"var page = xfa.host.currentPage
+var ver = xfa.version
+var dummy = xfa.host.resetData()
+42"#,
+    ),
+    (
+        "user_func",
+        "User-defined function declaration and recursive call",
+        // FormCalc supports func…endfunc. The last expression in the body is the return value.
+        r#"func square(n)
+  n * n
+endfunc
+func sumSquares(limit)
+  var total = 0
+  for i = 1 upto limit do
+    total = total + square(i)
+  endfor
+  total
+endfunc
+sumSquares(5)"#,
+    ),
+    (
+        "large_loop",
+        "Loop over 500 iterations — stress test interpreter",
+        r#"var total = 0
+for i = 1 upto 500 do
+  total = total + i
+endfor
+total"#,
+    ),
+    (
+        "type_coerce",
+        "Type coercion: string-to-number, null-to-number",
+        // to_number("42") = 42.0, to_number(null) = 0.0 per spec.
+        r#"var numStr = "42"
+var result = numStr + 8
+var nul = null
+var nulAdd = nul + 100
+result + nulAdd"#,
+    ),
+    (
+        "null_ops",
+        "Null value propagation and comparison",
+        r#"var x = null
+var isNull = (x == null)
+var notNull = (x <> null)
+var asNum = x + 0
+if isNull then
+  asNum = 999
+endif
+asNum"#,
+    ),
+    (
+        "financial_builtins",
+        "Financial functions: Pmt, FV, PV, NPV",
+        r#"var monthlyPmt = Pmt(10000, 0.005, 24)
+var futureVal = FV(100, 0.005, 12)
+var presentVal = PV(100, 0.005, 12)
+Round(monthlyPmt + futureVal + presentVal, 2)"#,
+    ),
 ];
 
 fn main() {

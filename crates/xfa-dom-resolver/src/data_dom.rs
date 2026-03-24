@@ -395,12 +395,20 @@ impl DataDom {
     pub fn to_xml(&self) -> String {
         let mut out = String::new();
         if let Some(root) = self.root {
-            self.write_xml_node(root, &mut out, 0);
+            // If any descendant carries xsi:nil="true", declare the xsi namespace on
+            // the root element so the re-serialized XML is self-contained and parsable.
+            let needs_xsi = self.has_any_null();
+            self.write_xml_node(root, &mut out, 0, needs_xsi);
         }
         out
     }
 
-    fn write_xml_node(&self, id: DataNodeId, out: &mut String, depth: usize) {
+    /// Returns `true` if any `DataValue` in the tree has `is_null = true`.
+    fn has_any_null(&self) -> bool {
+        self.nodes.iter().any(|n| matches!(n, DataNode::DataValue { is_null: true, .. }))
+    }
+
+    fn write_xml_node(&self, id: DataNodeId, out: &mut String, depth: usize, add_xsi_ns: bool) {
         let node = match self.get(id) {
             Some(n) => n,
             None => return,
@@ -408,12 +416,17 @@ impl DataDom {
         let indent = "  ".repeat(depth);
         match node {
             DataNode::DataGroup { name, children, .. } => {
-                if children.is_empty() {
-                    out.push_str(&format!("{indent}<{name}/>\n"));
+                let ns_attr = if add_xsi_ns && depth == 0 {
+                    " xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\""
                 } else {
-                    out.push_str(&format!("{indent}<{name}>\n"));
+                    ""
+                };
+                if children.is_empty() {
+                    out.push_str(&format!("{indent}<{name}{ns_attr}/>\n"));
+                } else {
+                    out.push_str(&format!("{indent}<{name}{ns_attr}>\n"));
                     for &child in children {
-                        self.write_xml_node(child, out, depth + 1);
+                        self.write_xml_node(child, out, depth + 1, false);
                     }
                     out.push_str(&format!("{indent}</{name}>\n"));
                 }

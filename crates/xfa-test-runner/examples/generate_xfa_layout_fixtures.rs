@@ -80,6 +80,32 @@ fn main() {
             "Mixed paginate+tb layout with multiple content areas",
             build_mixed_layout(),
         ),
+        // ── Edge cases ────────────────────────────────────────
+        (
+            "rtl_layout",
+            "RTL locale and right-to-left field order",
+            build_rtl_layout(),
+        ),
+        (
+            "keep_together",
+            "Keep-together: subform that must not be split across pages",
+            build_keep_together(),
+        ),
+        (
+            "dynamic_table",
+            "Dynamic table with occur min/max for growing rows",
+            build_dynamic_table(),
+        ),
+        (
+            "nested_page_breaks",
+            "Nested subforms each triggering a page break",
+            build_nested_page_breaks(),
+        ),
+        (
+            "relevance_expr",
+            "Conditional relevance expressions on fields and subforms",
+            build_relevance_expr(),
+        ),
     ];
 
     for (i, (suffix, desc, xdp)) in cases.iter().enumerate() {
@@ -496,6 +522,177 @@ fn build_mixed_layout() -> String {
     </subform>
   </subform>"#;
     xdp_wrap("Mixed paginate+tb layout with multiple content areas", body)
+}
+
+fn build_rtl_layout() -> String {
+    // RTL locale + Arabic-style field labelling.
+    // XFA layout direction is controlled by the locale; fields still flow lr-tb
+    // in our minimal fixture but the locale string exercises locale parsing.
+    let body = r#"<subform name="form1" layout="paginate" locale="ar_AE">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="rtlSection" layout="rl-tb" w="7.5in">
+      <field name="familyName" w="3.5in" h="0.3in">
+        <caption placement="right"><value><text>اسم العائلة</text></value></caption>
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="givenName" w="3.5in" h="0.3in">
+        <caption placement="right"><value><text>الاسم الأول</text></value></caption>
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+      <field name="idNumber" w="3in" h="0.3in">
+        <caption placement="right"><value><text>رقم الهوية</text></value></caption>
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+    </subform>
+  </subform>"#;
+    xdp_wrap("RTL locale and right-to-left field order", body)
+}
+
+fn build_keep_together() -> String {
+    // keep="contentArea" on a subform prevents it from being split across pages.
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="3in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <!-- This section fills most of the first page -->
+    <subform name="filler" layout="tb" w="7.5in">
+      <field name="f1" w="7in" h="0.8in"><ui><textEdit multiLine="1"/></ui><value><text/></value></field>
+      <field name="f2" w="7in" h="0.8in"><ui><textEdit multiLine="1"/></ui><value><text/></value></field>
+    </subform>
+    <!-- keep="contentArea" forces this block to start on a new page if it won't fit -->
+    <subform name="keepBlock" layout="tb" w="7.5in" keep="contentArea">
+      <field name="header" w="7in" h="0.3in"><ui><textEdit/></ui><value><text>Keep-together block</text></value></field>
+      <field name="line1" w="7in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="line2" w="7in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+      <field name="line3" w="7in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Keep-together: subform that must not be split across pages", body)
+}
+
+fn build_dynamic_table() -> String {
+    // occur element allows a subform to repeat min/max times (dynamic table row).
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="invoiceTable" layout="tb" w="7.5in">
+      <!-- Header row (static) -->
+      <subform name="headerRow" layout="lr-tb" w="7.5in" h="0.35in">
+        <field name="hProduct" w="3in" h="0.35in"><ui><textEdit/></ui><value><text>Product</text></value></field>
+        <field name="hQty" w="1.5in" h="0.35in"><ui><textEdit/></ui><value><text>Qty</text></value></field>
+        <field name="hPrice" w="1.5in" h="0.35in"><ui><textEdit/></ui><value><text>Unit Price</text></value></field>
+        <field name="hTotal" w="1.5in" h="0.35in"><ui><textEdit/></ui><value><text>Total</text></value></field>
+      </subform>
+      <!-- Repeating data row: occur min=1 max=-1 means 1 to unlimited -->
+      <subform name="dataRow" layout="lr-tb" w="7.5in" h="0.3in">
+        <occur min="1" max="-1"/>
+        <field name="product" w="3in" h="0.3in"><ui><textEdit/></ui><value><text/></value></field>
+        <field name="qty" w="1.5in" h="0.3in"><ui><numericEdit/></ui><value><float>0</float></value></field>
+        <field name="unitPrice" w="1.5in" h="0.3in"><ui><numericEdit/></ui><value><float>0</float></value></field>
+        <field name="lineTotal" w="1.5in" h="0.3in"><ui><numericEdit/></ui><value><float>0</float></value></field>
+      </subform>
+      <!-- Footer row (static) -->
+      <subform name="footerRow" layout="lr-tb" w="7.5in" h="0.35in">
+        <field name="fLabel" w="6in" h="0.35in"><ui><textEdit/></ui><value><text>Grand Total:</text></value></field>
+        <field name="fTotal" w="1.5in" h="0.35in"><ui><numericEdit/></ui><value><float>0</float></value></field>
+      </subform>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Dynamic table with occur min/max for growing rows", body)
+}
+
+fn build_nested_page_breaks() -> String {
+    // Multiple nested subforms, each with enough content to overflow.
+    let many_fields: String = (1..=8)
+        .map(|i| {
+            format!(
+                r#"<field name="f{i}" w="7in" h="0.5in">
+          <ui><textEdit multiLine="1"/></ui><value><text>Field {i} content</text></value>
+        </field>"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let body = format!(
+        r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet>
+      <pageArea name="Page1" id="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="4in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+      <pageArea name="PageN" id="PageN">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="section1" layout="tb" w="7.5in">
+      <draw name="h1" w="7in" h="0.3in"><value><text>Section 1</text></value></draw>
+      {many_fields}
+    </subform>
+    <subform name="section2" layout="tb" w="7.5in">
+      <draw name="h2" w="7in" h="0.3in"><value><text>Section 2 (on overflow page)</text></value></draw>
+      <field name="sec2f1" w="7in" h="0.3in"><ui><textEdit/></ui><value><text>Section 2 data</text></value></field>
+    </subform>
+  </subform>"#
+    );
+    xdp_wrap("Nested subforms each triggering a page break", &body)
+}
+
+fn build_relevance_expr() -> String {
+    // relevant attribute controls conditional visibility via a SOM expression.
+    // "+1" means visible, "-1" means hidden. Can also be a SOM path expression.
+    let body = r#"<subform name="form1" layout="paginate" locale="en_US">
+    <pageSet><pageArea name="Page1" id="Page1">
+      <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      <medium stock="default" short="8.5in" long="11in"/>
+    </pageArea></pageSet>
+    <subform name="section" layout="tb" w="7.5in">
+      <!-- Always visible -->
+      <field name="accountType" w="4in" h="0.3in">
+        <caption><value><text>Account Type</text></value></caption>
+        <ui><choiceList open="userControl"/></ui>
+        <value><text>personal</text></value>
+        <items><text>personal</text><text>business</text></items>
+      </field>
+      <!-- Only visible for business accounts (relevant expression) -->
+      <subform name="businessSection" layout="tb" w="7.5in" relevant="+business -personal">
+        <field name="companyReg" w="4in" h="0.3in">
+          <caption><value><text>Company Registration</text></value></caption>
+          <ui><textEdit/></ui><value><text/></value>
+        </field>
+        <field name="vatNumber" w="4in" h="0.3in">
+          <caption><value><text>VAT Number</text></value></caption>
+          <ui><textEdit/></ui><value><text/></value>
+        </field>
+      </subform>
+      <!-- Only visible for personal accounts -->
+      <subform name="personalSection" layout="tb" w="7.5in" relevant="+personal -business">
+        <field name="nationalId" w="4in" h="0.3in">
+          <caption><value><text>National ID</text></value></caption>
+          <ui><textEdit/></ui><value><text/></value>
+        </field>
+      </subform>
+      <!-- Field with presence controlled by calculate script -->
+      <field name="extraField" w="4in" h="0.3in" presence="hidden">
+        <caption><value><text>Conditional Extra Field</text></value></caption>
+        <ui><textEdit/></ui><value><text/></value>
+      </field>
+    </subform>
+  </subform>"#;
+    xdp_wrap("Conditional relevance expressions on fields and subforms", body)
 }
 
 // ---------------------------------------------------------------------------
