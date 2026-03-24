@@ -7,6 +7,8 @@ use crate::render::{self, RenderOptions, RenderedPage};
 use crate::text::{TextBlock, TextExtractionDevice};
 use crate::thumbnail::ThumbnailOptions;
 
+use pdf_forms::parse::parse_acroform;
+use pdf_forms::tree::FieldValue;
 use pdf_render::pdf_interpret::PageExt;
 use pdf_render::pdf_interpret::{interpret_page, Context, InterpreterSettings};
 use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
@@ -156,6 +158,41 @@ impl PdfDocument {
         let mut ctx = self.create_context(page);
         interpret_page(page, &mut ctx, &mut device);
         Ok(device.into_blocks())
+    }
+
+    /// Extract text values from AcroForm fields (text and choice fields only).
+    ///
+    /// Returns a single string concatenating all non-empty field values separated
+    /// by newlines. Useful when the document stores its readable content in form
+    /// field values rather than (or in addition to) page content streams.
+    pub fn extract_acroform_text(&self) -> String {
+        let Some(tree) = parse_acroform(&self.pdf) else {
+            return String::new();
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for id in tree.all_ids() {
+            let node = tree.get(id);
+            if node.children.is_empty() {
+                // Terminal (widget) — collect text-like values.
+                let value_str = match &node.value {
+                    Some(FieldValue::Text(s)) if !s.is_empty() => Some(s.clone()),
+                    Some(FieldValue::StringArray(arr)) => {
+                        let joined = arr
+                            .iter()
+                            .filter(|s| !s.is_empty())
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        if joined.is_empty() { None } else { Some(joined) }
+                    }
+                    _ => None,
+                };
+                if let Some(s) = value_str {
+                    parts.push(s);
+                }
+            }
+        }
+        parts.join("\n")
     }
 
     /// Simple text search: returns page indices containing the query string.

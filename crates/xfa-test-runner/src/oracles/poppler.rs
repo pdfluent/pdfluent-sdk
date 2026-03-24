@@ -110,9 +110,22 @@ impl PopplerOracle {
     }
 }
 
-/// Normalize text for comparison: collapse whitespace, lowercase, trim.
+/// Normalize text for comparison: strip non-printable control characters,
+/// collapse whitespace, lowercase, trim.
+///
+/// Non-printable ASCII control characters (C0 range 0x00-0x1F except whitespace,
+/// and DEL 0x7F) are removed before splitting. This prevents PDFs with custom
+/// symbolic encodings — where pdftotext outputs raw glyph code bytes instead of
+/// actual Unicode — from artificially inflating the char count and triggering the
+/// comparison threshold.
 pub fn normalize_text(text: &str) -> String {
-    text.replace('\r', "")
+    // Keep only printable chars and standard whitespace (space, tab, LF, CR).
+    let filtered: String = text
+        .chars()
+        .filter(|&c| !c.is_control() || matches!(c, ' ' | '\t' | '\n' | '\r'))
+        .collect();
+    filtered
+        .replace('\r', "")
         .replace('\t', " ")
         .split_whitespace()
         .collect::<Vec<_>>()
