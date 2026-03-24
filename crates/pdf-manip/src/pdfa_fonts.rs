@@ -6237,7 +6237,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
             first_char,
             existing_widths,
             enc_info,
-            widths_ref,
+            _widths_ref,
             _has_explicit_encoding,
             to_unicode_map,
         ) = info;
@@ -9737,9 +9737,22 @@ fn cff_width_for_code(
             true
         };
         let code_in_cff_enc = code < 128 || from_differences || in_cff_enc_map;
-        if code_in_cff_enc && !glyph_name.is_empty() && glyph_name != ".notdef" {
+        if code_in_cff_enc && !glyph_name.is_empty() {
+            // Phase 1: PDF encoding → glyph name → CFF charset name lookup.
+            // Includes ".notdef": when Differences maps a code to ".notdef",
+            // veraPDF uses the actual GID 0 width (not defaultWidthX). The
+            // lookup_name call resolves ".notdef" → GID 0 via charset.sid_to_gid(0).
+            // Without this, we fall to defaultWidthX=0 and generate a false
+            // correction (e.g. gen-783 XVPBKO+Garamond-Light code 32 → 250→0).
+            // (#gen-783, §6.2.11.5)
             if let Some(w) = lookup_name(&glyph_name) {
                 return Some(w);
+            }
+            if glyph_name == ".notdef" {
+                // .notdef not found via glyph_index_by_name — return None so
+                // the caller leaves the existing Widths entry unchanged rather
+                // than applying a wrong defaultWidthX "correction".
+                return None;
             }
             if !differences.contains_key(&code) && !name_from_cff_se_override {
                 let ch = encoding_to_char(code, enc_name);
