@@ -10792,19 +10792,25 @@ fn tt_build_symbol_cmap_mappings(data: &[u8]) -> Vec<(u16, u16)> {
     // (#6.2.11.5-sym-cmap-build)
     let mac_map = tt_read_mac_cmap(data);
     if mac_map.is_empty() {
-        // Fallback: Unicode codepoint lookup (less accurate, but better than nothing).
+        // Fallback for fonts without Mac (1,0) cmap (e.g. Windows-authored Symbol
+        // subsets). Windows Symbol fonts store glyphs under PUA codepoints 0xF000+code
+        // in the (3,1) Unicode cmap. Try PUA lookup first; fall back to raw code
+        // (handles legacy Symbol variants where codes ≤127 are ASCII-range glyphs).
         let Ok(face) = ttf_parser::Face::parse(data, 0) else {
             return Vec::new();
         };
         let mut mappings = Vec::new();
         for code in 0u16..=255 {
-            let Some(ch) = char::from_u32(code as u32) else {
-                continue;
-            };
-            let Some(gid) = face
-                .glyph_index(ch)
+            // Try PUA first (0xF000+code), then raw code as Unicode.
+            let gid = char::from_u32(0xF000u32 + code as u32)
+                .and_then(|ch| face.glyph_index(ch))
                 .filter(|gid| gid.0 > 0 && tt_glyph_has_data(&face, *gid))
-            else {
+                .or_else(|| {
+                    char::from_u32(code as u32)
+                        .and_then(|ch| face.glyph_index(ch))
+                        .filter(|gid| gid.0 > 0 && tt_glyph_has_data(&face, *gid))
+                });
+            let Some(gid) = gid else {
                 continue;
             };
             mappings.push((0xF000u16 + code, gid.0));
