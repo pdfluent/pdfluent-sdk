@@ -225,7 +225,11 @@ fn render_multiline(
             config.text_color[0], config.text_color[1], config.text_color[2], font_size
         ),
     );
-    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + p + font_size, 0.0);
+    // Place the first-line baseline at `font_size` below the element's XFA top.
+    // Do NOT add text_padding vertically: draw elements often have tight height
+    // budgets (h ≈ font_size), and adding padding would push the baseline below
+    // the element boundary, causing the clip-guard below to suppress all text.
+    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + font_size, 0.0);
     let content_w = (container_width - p * 2.0).max(0.0);
     let mut prev_x = x + p;
     for (i, line) in lines.iter().enumerate() {
