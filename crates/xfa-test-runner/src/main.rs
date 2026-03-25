@@ -1146,8 +1146,7 @@ fn main() {
                             let mut h = Sha256::new();
                             h.update(&input_data);
                             let hex = format!("{:x}", h.finalize());
-                            std::env::temp_dir()
-                                .join(format!("{}_oracle_conv.pdf", &hex[..16]))
+                            std::env::temp_dir().join(format!("{}_oracle_conv.pdf", &hex[..16]))
                         };
                         let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
                         let exe_c = current_exe.clone();

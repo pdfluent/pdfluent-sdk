@@ -2,7 +2,8 @@ use crate::font::blob::{CffFontBlob, OpenTypeFontBlob, Type1FontBlob};
 use crate::font::generated::glyph_names;
 use crate::font::standard_font::select_standard_font;
 use crate::font::{
-    FallbackFontQuery, FontFlags, FontQuery, read_to_unicode, stretch_glyph, strip_subset_prefix,
+    FallbackFontQuery, FontFlags, FontQuery, glyph_name_to_unicode, read_to_unicode, stretch_glyph,
+    strip_subset_prefix,
 };
 use crate::{CMapResolverFn, CacheKey, FontResolverFn};
 use kurbo::{BezPath, Vec2};
@@ -108,9 +109,10 @@ impl Type0Font {
         let mut to_unicode = read_to_unicode(dict, cmap_resolver);
         let mut to_unicode_is_cid_indexed = false;
 
-        // If there is no ToUnicode map, try to get the UCS2 CMap.
-        if fallback
-            && to_unicode.is_none()
+        // If there is no explicit ToUnicode map, try the predefined UCS2
+        // CMap for the descendant character collection. This works for both
+        // embedded and fallback CID fonts.
+        if to_unicode.is_none()
             && let Some(cc) = cmap.metadata().character_collection.as_ref()
             && cc.family != CidFamily::AdobeIdentity
             && let Some(ucs2_name) = cc.family.ucs2_cmap()
@@ -400,14 +402,48 @@ impl Type0Font {
     pub(crate) fn char_code_to_unicode(&self, code: u32) -> Option<BfString> {
         if let Some(to_unicode) = &self.to_unicode {
             let key = if self.to_unicode_is_cid_indexed {
-                self.code_to_cid(code).unwrap_or(0)
+                match self.code_to_cid(code) {
+                    Some(cid) => cid,
+                    None => return self.unicode_from_font_program(code).map(BfString::Char),
+                }
             } else {
                 code
             };
-            return to_unicode.lookup_bf_string(key);
+
+            if let Some(mapped) = to_unicode.lookup_bf_string(key) {
+                return Some(mapped);
+            }
         }
 
-        None
+        self.unicode_from_font_program(code).map(BfString::Char)
+    }
+
+    fn unicode_from_font_program(&self, code: u32) -> Option<char> {
+        let glyph = self.map_code(code);
+        if glyph == GlyphId::NOTDEF {
+            return None;
+        }
+
+        match &self.font_type {
+            FontType::OpenType(t) => t.glyph_id_to_unicode(glyph),
+            FontType::Cff(c) => {
+                let table = c.table();
+
+                if table.is_cid() {
+                    None
+                } else {
+                    table
+                        .glyph_name(pdf_font::GlyphId(glyph.to_u32() as u16))
+                        .and_then(glyph_name_to_unicode)
+                }
+            }
+            FontType::Type1(t) => t
+                .table()
+                .charstring_names()
+                .get(glyph.to_u32() as usize)
+                .map(|n| n.as_str())
+                .and_then(glyph_name_to_unicode),
+        }
     }
 }
 

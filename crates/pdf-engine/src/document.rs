@@ -405,6 +405,80 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::{Document as LoDocument, Object};
+    use std::path::PathBuf;
+
+    fn corpus_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus")
+            .join(name)
+    }
+
+    fn normalize_text(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn strip_type0_tounicode(data: &[u8]) -> (Vec<u8>, usize) {
+        fn get_name(dict: &lopdf::Dictionary, key: &[u8]) -> Option<Vec<u8>> {
+            match dict.get(key).ok()? {
+                Object::Name(name) => Some(name.clone()),
+                _ => None,
+            }
+        }
+
+        fn descendant_is_cidfont_type2(doc: &LoDocument, type0: &lopdf::Dictionary) -> bool {
+            let Some(Object::Array(descendants)) = type0.get(b"DescendantFonts").ok() else {
+                return false;
+            };
+            let Some(Object::Reference(desc_id)) = descendants.first() else {
+                return false;
+            };
+            let Ok(Object::Dictionary(descendant)) = doc.get_object(*desc_id) else {
+                return false;
+            };
+            matches!(
+                descendant.get(b"Subtype").ok(),
+                Some(Object::Name(name)) if name.as_slice() == b"CIDFontType2"
+            )
+        }
+
+        let mut doc = LoDocument::load_mem(data).expect("load stripped-to-unicode fixture");
+        let ids: Vec<_> = doc.objects.keys().copied().collect();
+        let mut removed = 0usize;
+
+        for id in ids {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            if !matches!(
+                dict.get(b"Subtype").ok(),
+                Some(Object::Name(name)) if name.as_slice() == b"Type0"
+            ) {
+                continue;
+            }
+            if !matches!(
+                get_name(dict, b"Encoding").as_deref(),
+                Some(b"Identity-H") | Some(b"Identity-V")
+            ) {
+                continue;
+            }
+            if !descendant_is_cidfont_type2(&doc, dict) {
+                continue;
+            }
+
+            if let Some(Object::Dictionary(type0)) = doc.objects.get_mut(&id) {
+                if type0.has(b"ToUnicode") {
+                    type0.remove(b"ToUnicode");
+                    removed += 1;
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        doc.save_to(&mut out)
+            .expect("save stripped-to-unicode fixture");
+        (out, removed)
+    }
 
     #[test]
     fn bytes_to_string_utf8() {
@@ -444,5 +518,47 @@ mod tests {
         };
         assert_eq!(item.children.len(), 1);
         assert_eq!(item.children[0].title, "Child");
+    }
+
+    #[test]
+    fn extract_text_type0_without_tounicode_uses_font_program_fallback() {
+        let original = std::fs::read(corpus_path("sf181.pdf")).expect("read sf181 fixture");
+        let expected = PdfDocument::open(original.clone())
+            .expect("open original sf181")
+            .extract_text(0)
+            .expect("extract original sf181 text");
+        assert!(
+            expected.contains("Guide to Personnel Data Standards"),
+            "unexpected baseline extraction: {expected}"
+        );
+
+        let (stripped, removed) = strip_type0_tounicode(&original);
+        assert!(
+            removed > 0,
+            "expected to strip at least one Type0 ToUnicode"
+        );
+
+        let actual = PdfDocument::open(stripped)
+            .expect("open stripped sf181")
+            .extract_text(0)
+            .expect("extract stripped sf181 text");
+
+        let actual_norm = normalize_text(&actual);
+        let expected_norm = normalize_text(&expected);
+
+        assert!(
+            actual_norm.contains("Guide to Personnel Data Standards"),
+            "missing main heading after stripping ToUnicode: {actual_norm}"
+        );
+        assert!(
+            actual_norm.contains("Privacy Act Statement"),
+            "missing body text after stripping ToUnicode: {actual_norm}"
+        );
+        assert!(
+            actual_norm.len() + 32 >= expected_norm.len(),
+            "too much text lost after stripping ToUnicode: expected {} chars, got {}",
+            expected_norm.len(),
+            actual_norm.len()
+        );
     }
 }

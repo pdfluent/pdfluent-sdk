@@ -4110,9 +4110,7 @@ pub fn fix_truetype_with_cff_program(doc: &mut Document) -> usize {
             // FontFile3 stream must have Subtype=Type1C (CFF).
             let ff3_subtype = match fd.get(b"FontFile3").ok() {
                 Some(Object::Reference(r)) => match doc.objects.get(r) {
-                    Some(Object::Stream(s)) => {
-                        get_name(&s.dict, b"Subtype").unwrap_or_default()
-                    }
+                    Some(Object::Stream(s)) => get_name(&s.dict, b"Subtype").unwrap_or_default(),
                     _ => return None,
                 },
                 _ => return None,
@@ -8999,9 +8997,10 @@ fn compute_cff_corrections_for_custom_encoding(
                 if pdf_w == 0.0 {
                     continue;
                 }
-                cff.default_width_x()
-                    .map(|w| w as f64 * scale)
-                    .or_else(|| cff.glyph_width(cff_parser::GlyphId(0)).map(|w| w as f64 * scale))
+                cff.default_width_x().map(|w| w as f64 * scale).or_else(|| {
+                    cff.glyph_width(cff_parser::GlyphId(0))
+                        .map(|w| w as f64 * scale)
+                })
             }
         };
         let Some(frac_w) = frac_w else { continue };
@@ -9095,7 +9094,8 @@ fn compute_cff_corrections_by_name(
                     let dwx_w = cff
                         .default_width_x()
                         .map(|w| (w as f64 * scale).round() as i64);
-                    let corr_is_notdef = matches!(notdef_w, Some(nw) if (rounded_w - nw).abs() <= 1);
+                    let corr_is_notdef =
+                        matches!(notdef_w, Some(nw) if (rounded_w - nw).abs() <= 1);
                     let corr_is_dwx = matches!(dwx_w, Some(dw) if (rounded_w - dw).abs() <= 1);
                     if !corr_is_notdef && !corr_is_dwx {
                         // Correction targets a real glyph width, not .notdef/dwx.
@@ -9106,11 +9106,12 @@ fn compute_cff_corrections_by_name(
                         // standard SID). Only block when the width is NOT in the
                         // name map (came from a custom SID or encoding artifact).
                         // (#fix-cff-xval-sid-reachable)
-                        let corr_in_name_map = ctx.name_to_width.values()
+                        let corr_in_name_map = ctx
+                            .name_to_width
+                            .values()
                             .any(|&w| (w.round() as i64 - rounded_w).abs() <= 1);
                         if !corr_in_name_map {
-                            let pdf_matches_notdef =
-                                matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
+                            let pdf_matches_notdef = matches!(notdef_w, Some(nw) if (pdf_w.round() as i64 - nw).abs() <= 1);
                             let pdf_matches_dwx =
                                 matches!(dwx_w, Some(dw) if (pdf_w.round() as i64 - dw).abs() <= 1);
                             if pdf_matches_notdef || pdf_matches_dwx {

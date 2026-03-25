@@ -28,3 +28,4 @@ ocr = ["dep:ocrs", "dep:rten", "dep:dirs-sys"]
 
 [dev-dependencies]
 image = { workspace = true }
+lopdf = { workspace = true }

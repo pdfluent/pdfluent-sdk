@@ -16,6 +16,7 @@ log = "0.4"
 moxcms = "0.7.11"
 phf = { version = "0.13.1", features = ["macros"] }
 skrifa = "0.40.0"
+ttf-parser = { workspace = true }
 yoke = { version = "0.8", features = ["derive"] }
 siphasher = "1"
 bitflags = "2.10"

@@ -7,8 +7,9 @@ use skrifa::metrics::GlyphMetrics;
 use skrifa::outline::{DrawSettings, Engine, HintingInstance, HintingOptions, Target};
 use skrifa::raw::TableProvider;
 use skrifa::{FontRef, GlyphId, MetadataProvider, OutlineGlyphCollection};
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use yoke::{Yoke, Yokeable};
 
 type FontData = Arc<dyn AsRef<[u8]> + Send + Sync>;
@@ -92,7 +93,10 @@ impl CffFontBlob {
 
 /// A font blob for OpenType fonts.
 #[derive(Clone)]
-pub(crate) struct OpenTypeFontBlob(Arc<OpenTypeFontYoke>);
+pub(crate) struct OpenTypeFontBlob {
+    font: Arc<OpenTypeFontYoke>,
+    cmap_inverse: Arc<OnceLock<HashMap<u32, char>>>,
+}
 
 impl Debug for OpenTypeFontBlob {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -145,29 +149,46 @@ impl OpenTypeFontBlob {
                 }
             });
 
-        Some(Self(Arc::new(font_ref_yoke)))
+        Some(Self {
+            font: Arc::new(font_ref_yoke),
+            cmap_inverse: Arc::new(OnceLock::new()),
+        })
     }
 
     pub(crate) fn font_data(&self) -> FontData {
-        self.0.backing_cart().clone()
+        self.font.backing_cart().clone()
     }
 
     pub(crate) fn font_ref(&self) -> &FontRef<'_> {
-        &self.0.as_ref().get().font_ref
+        &self.font.as_ref().get().font_ref
     }
 
     pub(crate) fn glyph_metrics(&self) -> &GlyphMetrics<'_> {
-        &self.0.as_ref().get().glyph_metrics
+        &self.font.as_ref().get().glyph_metrics
     }
 
     fn outline_glyphs(&self) -> &OutlineGlyphCollection<'_> {
-        &self.0.as_ref().get().outline_glyphs
+        &self.font.as_ref().get().outline_glyphs
+    }
+
+    /// Resolve a glyph id back to Unicode via the embedded font's cmap table.
+    ///
+    /// We prefer the Windows BMP (3,1) cmap because that is the mapping most
+    /// PDFs rely on for CIDFontType2 subsets. If it is absent, fall back to any
+    /// Unicode cmap to avoid discarding otherwise-decodable text.
+    pub(crate) fn glyph_id_to_unicode(&self, glyph: GlyphId) -> Option<char> {
+        let inverse = self.cmap_inverse.get_or_init(|| {
+            let data = self.font_data();
+            build_truetype_cmap_inverse(data.as_ref().as_ref())
+        });
+
+        inverse.get(&glyph.to_u32()).copied()
     }
 
     pub(crate) fn outline_glyph(&self, glyph: GlyphId) -> BezPath {
         let mut path = OutlinePath::new();
 
-        let draw_settings = if let Some(instance) = self.0.get().hinting_instance.as_ref() {
+        let draw_settings = if let Some(instance) = self.font.get().hinting_instance.as_ref() {
             // Note: We always hint at the font size `UNITS_PER_EM`, which obviously isn't very useful. We don't do this
             // for better text quality (right now), but instead because there are some PDFs with obscure fonts that
             // actually render wrongly if hinting is disabled!
@@ -187,6 +208,44 @@ impl OpenTypeFontBlob {
     pub(crate) fn num_glyphs(&self) -> u16 {
         self.font_ref().maxp().map(|m| m.num_glyphs()).unwrap_or(0)
     }
+}
+
+fn build_truetype_cmap_inverse(font_data: &[u8]) -> HashMap<u32, char> {
+    let face = match ttf_parser::Face::parse(font_data, 0) {
+        Ok(face) => face,
+        Err(_) => return HashMap::new(),
+    };
+    let Some(cmap_table) = face.tables().cmap else {
+        return HashMap::new();
+    };
+
+    let mut preferred = None;
+    let mut fallback = None;
+
+    for subtable in cmap_table.subtables {
+        if subtable.platform_id == ttf_parser::PlatformId::Windows && subtable.encoding_id == 1 {
+            preferred = Some(subtable);
+            break;
+        }
+        if fallback.is_none() && subtable.is_unicode() {
+            fallback = Some(subtable);
+        }
+    }
+
+    let mut inverse = HashMap::new();
+
+    if let Some(subtable) = preferred.or(fallback) {
+        subtable.codepoints(|cp| {
+            if let Some(ch) = char::from_u32(cp)
+                && let Some(glyph_id) = subtable.glyph_index(cp)
+                && glyph_id.0 != 0
+            {
+                inverse.entry(glyph_id.0 as u32).or_insert(ch);
+            }
+        });
+    }
+
+    inverse
 }
 
 fn convert_matrix(matrix: Matrix) -> Affine {
