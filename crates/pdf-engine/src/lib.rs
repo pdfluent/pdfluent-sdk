@@ -45,8 +45,8 @@
 //! | Type | Description |
 //! |---|---|
 //! | [`PdfDocument`] | Main document handle |
-//! | [`RenderOptions`] | DPI, background colour, optional forced width/height |
-//! | [`RenderedPage`] | RGBA pixel data (row-major, 4 bytes per pixel) |
+//! | [`RenderConfig`] / [`RenderOptions`] | DPI, color mode, background colour, optional forced width/height |
+//! | [`RenderedPage`] | RGBA or CMYK pixel data (row-major, 4 bytes per pixel) |
 //! | [`PageGeometry`] | MediaBox, CropBox, TrimBox, BleedBox, rotation |
 //! | [`PageBox`] | A rectangle in PDF user-space points |
 //! | [`DocumentInfo`] | Title, author, subject, creator, producer |
@@ -66,7 +66,7 @@ pub use document::{BookmarkItem, DocumentInfo, PdfDocument};
 pub use error::{EngineError, Result};
 pub use geometry::{PageBox, PageGeometry, PageRotation};
 pub use ocr::{OcrBackend, OcrError, OcrResult, OcrWord};
-pub use render::{RenderOptions, RenderedPage};
+pub use render::{ColorMode, PixelFormat, RenderConfig, RenderOptions, RenderedPage};
 pub use text::{TextBlock, TextSpan};
 pub use thumbnail::ThumbnailOptions;
 
