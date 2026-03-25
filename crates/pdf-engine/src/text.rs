@@ -503,7 +503,7 @@ fn region_is_columnar(
         return false;
     }
 
-    if slices_per_column.iter().any(|count| *count == 0) {
+    if slices_per_column.contains(&0) {
         return false;
     }
 

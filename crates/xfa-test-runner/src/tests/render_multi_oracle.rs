@@ -287,8 +287,8 @@ impl PdfTest for RenderMultiOracleTest {
 
         // Pass/fail: pass if at least ONE oracle agrees (SSIM ≥ threshold).
         // Fail only when BOTH available oracles disagree with us.
-        let mu_passes = min_ssim_mutool.map_or(false, |s| s >= SSIM_PASS_THRESHOLD);
-        let pop_passes = min_ssim_poppler.map_or(false, |s| s >= SSIM_PASS_THRESHOLD);
+        let mu_passes = min_ssim_mutool.is_some_and(|s| s >= SSIM_PASS_THRESHOLD);
+        let pop_passes = min_ssim_poppler.is_some_and(|s| s >= SSIM_PASS_THRESHOLD);
         let mu_available = min_ssim_mutool.is_some();
         let pop_available = min_ssim_poppler.is_some();
 
