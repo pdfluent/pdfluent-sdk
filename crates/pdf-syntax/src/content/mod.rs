@@ -35,9 +35,10 @@ pub mod ops;
 
 use crate::content::ops::TypedInstruction;
 use crate::object::Stream;
+use crate::object::dict::keys::{ASCII85_DECODE_ABBREVIATION, F, FILTER};
 use crate::object::dict::InlineImageDict;
 use crate::object::name::{Name, skip_name_like};
-use crate::object::{Object, ObjectLike};
+use crate::object::{Array, Object, ObjectLike};
 use crate::reader::Reader;
 use crate::reader::{Readable, ReaderContext, ReaderExt, Skippable};
 use core::fmt::{Debug, Formatter};
@@ -49,6 +50,72 @@ use smallvec::SmallVec;
 // but anything above should be pretty rare (only for example for
 // DeviceN color spaces)
 const OPERANDS_THRESHOLD: usize = 6;
+
+/// For inline images encoded with ASCII85 (/A85 or /ASCII85Decode as the outermost
+/// filter), the end-of-stream is always `~>` followed by optional whitespace then `EI`.
+/// Scan for that pattern in `stream_data` and return `(image_data_end, advance)` where:
+///   - `image_data_end`: exclusive end of the raw image bytes (includes `~>`)
+///   - `advance`: how many bytes to advance the reader from `stream_data[0]` to land
+///     just past the `EI` (i.e., `image_data_end + whitespace + 2`)
+///
+/// Returns `None` if the pattern is not found or the inline image dict's outermost
+/// filter is not ASCII85.
+fn find_a85_inline_image_end(
+    stream_data: &[u8],
+    dict: &crate::object::dict::Dict<'_>,
+) -> Option<(usize, usize)> {
+    // Determine the outermost filter from /F or /Filter.
+    let outermost: Option<Vec<u8>> = dict
+        .get::<Name>(F)
+        .map(|n| n.as_ref().to_vec())
+        .or_else(|| dict.get::<Name>(FILTER).map(|n| n.as_ref().to_vec()))
+        .or_else(|| {
+            dict.get::<Array>(F)
+                .and_then(|a| a.iter::<Name>().next())
+                .map(|n| n.as_ref().to_vec())
+        })
+        .or_else(|| {
+            dict.get::<Array>(FILTER)
+                .and_then(|a| a.iter::<Name>().next())
+                .map(|n| n.as_ref().to_vec())
+        });
+
+    let is_a85 = matches!(
+        outermost.as_deref(),
+        Some(ASCII85_DECODE_ABBREVIATION) | Some(b"ASCII85Decode")
+    );
+    if !is_a85 {
+        return None;
+    }
+
+    // Find `~>` followed by optional whitespace then `EI` (+ whitespace or end).
+    let mut i = 0;
+    while i + 2 <= stream_data.len() {
+        if stream_data[i] == b'~' && stream_data[i + 1] == b'>' {
+            let eos_end = i + 2;
+            let mut ei_start = eos_end;
+            while ei_start < stream_data.len()
+                && matches!(stream_data[ei_start], b' ' | b'\t' | b'\n' | b'\r' | 0x0C)
+            {
+                ei_start += 1;
+            }
+            if stream_data.get(ei_start..ei_start + 2) == Some(b"EI") {
+                let after_ei = ei_start + 2;
+                let ei_delimited = after_ei >= stream_data.len()
+                    || matches!(
+                        stream_data[after_ei],
+                        b' ' | b'\t' | b'\n' | b'\r' | 0x0C
+                    );
+                if ei_delimited {
+                    return Some((eos_end, after_ei));
+                }
+            }
+            // `~>` found but not followed by EI — keep scanning (malformed, try further).
+        }
+        i += 1;
+    }
+    None
+}
 
 impl Debug for Operator {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -164,6 +231,24 @@ impl<'a> Iterator for UntypedIter<'a> {
 
                     let stream_data = self.reader.tail()?;
                     let start_offset = self.reader.offset();
+
+                    // Fast path for ASCII85-encoded inline images: scan for `~>` EI
+                    // instead of using the heuristic EI scanner, which fails for A85
+                    // data because all bytes are printable ASCII (no binary sentinel).
+                    if let Some((image_end, advance)) =
+                        find_a85_inline_image_end(stream_data, &dict)
+                    {
+                        let image_data = &stream_data[..image_end];
+                        let stream = Stream::new(image_data, dict.clone());
+                        self.stack.push(Object::Stream(stream));
+                        self.reader.read_bytes(advance)?;
+                        self.reader.skip_white_spaces();
+
+                        return Some(Instruction {
+                            operands: core::mem::take(&mut self.stack),
+                            operator,
+                        });
+                    }
 
                     'outer: while let Some(bytes) = self.reader.peek_bytes(2) {
                         if bytes == b"EI" {
