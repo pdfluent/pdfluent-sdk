@@ -1186,7 +1186,7 @@ version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys 0.5.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -1197,17 +1197,6 @@ checksum = "b98cf8ebf19c3d1b223e151f99a4f9f0690dca41414773390fc824184ac833e1"
 dependencies = [
  "cfg-if",
  "dirs-sys-next",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b1d1d91c932ef41c0f2663aa8b0ca0342d444d842c06914aa0a7e352d0bada6"
-dependencies = [
- "libc",
- "redox_users 0.4.6",
- "winapi",
 ]
 
 [[package]]
@@ -4140,11 +4129,12 @@ dependencies = [
 name = "pdf-engine"
 version = "1.0.0-beta.1"
 dependencies = [
- "dirs-sys 0.3.7",
+ "formcalc-interpreter",
  "image",
  "kurbo 0.13.0",
  "lopdf",
  "ocrs",
+ "ort",
  "pdf-forms",
  "pdf-interpret",
  "pdf-render",
@@ -4153,6 +4143,8 @@ dependencies = [
  "rayon",
  "rten",
  "thiserror 2.0.18",
+ "xfa-json",
+ "xfa-layout-engine",
 ]
 
 [[package]]

@@ -61,6 +61,8 @@ pub mod ocr;
 pub mod render;
 pub mod text;
 pub mod thumbnail;
+#[cfg(feature = "xfa")]
+pub mod xfa;
 
 pub use document::{BookmarkItem, DocumentInfo, PdfDocument};
 pub use error::{EngineError, Result};
@@ -74,3 +76,5 @@ pub use thumbnail::ThumbnailOptions;
 pub use ocr::ocr_page_default;
 #[cfg(feature = "ocr")]
 pub use ocr::OcrsBackend;
+#[cfg(all(feature = "ocr-onnx", not(target_arch = "wasm32")))]
+pub use ocr::PaddleOnnxBackend;
