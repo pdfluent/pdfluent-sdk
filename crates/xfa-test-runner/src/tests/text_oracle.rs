@@ -48,28 +48,7 @@ impl PdfTest for TextOracleTest {
             }
         };
 
-        let pages_to_extract = doc.page_count().min(5);
-        let mut our_text = String::new();
-        for i in 0..pages_to_extract {
-            match doc.extract_text(i) {
-                Ok(text) => our_text.push_str(&text),
-                Err(e) => {
-                    return TestResult {
-                        status: TestStatus::Pass,
-                        error_message: Some(format!("Our extraction page {i} failed: {e}")),
-                        duration_ms: start.elapsed().as_millis() as u64,
-                        oracle_score: Some(0.0),
-                        metadata: HashMap::new(),
-                    };
-                }
-            }
-        }
-        // Include AcroForm field values. pdftotext extracts these; so must we.
-        let acroform_text = doc.extract_acroform_text();
-        if !acroform_text.is_empty() {
-            our_text.push('\n');
-            our_text.push_str(&acroform_text);
-        }
+        let our_text = doc.extract_all_text();
 
         // 2. Extract with Poppler
         let poppler_text = match PopplerOracle::extract_all_text(path) {
@@ -113,7 +92,7 @@ impl PdfTest for TextOracleTest {
             "poppler_chars".to_string(),
             poppler_normalized.len().to_string(),
         );
-        metadata.insert("pages_compared".to_string(), pages_to_extract.to_string());
+        metadata.insert("pages_compared".to_string(), doc.page_count().to_string());
         metadata.insert("threshold".to_string(), format!("{FAIL_THRESHOLD:.2}"));
 
         // Fail when poppler extracts real text and our similarity is below threshold.

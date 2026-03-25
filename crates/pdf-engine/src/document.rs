@@ -199,6 +199,23 @@ impl PdfDocument {
         parts.join("\n")
     }
 
+    /// Extract all text from the document: page content streams plus AcroForm
+    /// field values.  Mirrors pdftotext behaviour.
+    pub fn extract_all_text(&self) -> String {
+        let mut text = String::new();
+        for i in 0..self.page_count() {
+            if let Ok(page_text) = self.extract_text(i) {
+                text.push_str(&page_text);
+            }
+        }
+        let acroform = self.extract_acroform_text();
+        if !acroform.is_empty() {
+            text.push('\n');
+            text.push_str(&acroform);
+        }
+        text
+    }
+
     /// Simple text search: returns page indices containing the query string.
     pub fn search_text(&self, query: &str) -> Vec<usize> {
         let pages = self.pdf.pages();
