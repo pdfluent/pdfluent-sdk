@@ -660,6 +660,28 @@ pub(crate) fn read_to_unicode(dict: &Dict<'_>, cmap_resolver: &CMapResolverFn) -
         })
 }
 
+/// Build a 256-entry Unicode map from the font's `/Encoding` entry.
+/// Used as a fallback when no `/ToUnicode` CMap is present.
+pub(crate) fn synthesize_unicode_map_from_encoding(dict: &Dict<'_>) -> Option<[Option<char>; 256]> {
+    let (base_encoding, differences) = true_type::read_encoding(dict);
+    // Only synthesize if there is something to map (encoding name or differences).
+    // For BuiltIn with no differences we cannot reliably guess the mapping.
+    if matches!(base_encoding, Encoding::BuiltIn) && differences.is_empty() {
+        return None;
+    }
+    let mut table: [Option<char>; 256] = [None; 256];
+    for code in 0u8..=255 {
+        let glyph_name = differences
+            .get(&code)
+            .map(String::as_str)
+            .or_else(|| base_encoding.map_code(code));
+        if let Some(name) = glyph_name {
+            table[code as usize] = glyph_name_to_unicode(name);
+        }
+    }
+    Some(table)
+}
+
 // When mapping to glyphs, some fonts might only have a glyph for the "normalized"
 // name.
 pub(crate) fn normalized_glyph_name(mut name: &str) -> &str {
