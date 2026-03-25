@@ -45,6 +45,27 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         }
     };
 
+    // 1b. Detect pre-rendered pages: if the PDF's existing pages already contain
+    // substantial static content (non-empty content streams), this is a "hybrid"
+    // XFA+static PDF.  iText 5 preserves the existing static rendering in this
+    // case rather than re-rendering from the template.  We do the same: strip the
+    // AcroForm and Widget annotations, keep the original page content.
+    //
+    // This handles government forms (gen-776, gen-778, r3-PDFBOX-2755-0, etc.)
+    // that carry both an XFA template and pre-flattened PDF page streams.
+    if let Ok(doc) = Document::load_mem(pdf_bytes) {
+        if pages_have_static_content(&doc) {
+            let mut doc_mut = Document::load_mem(pdf_bytes)
+                .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
+            strip_widgets_and_acroform(&mut doc_mut);
+            let mut out = Vec::new();
+            doc_mut
+                .save_to(&mut out)
+                .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
+            return Ok(out);
+        }
+    }
+
     // 2. Parse template → FormTree.
     let (tree, root_id) = parse_template(&template_xml)?;
 
@@ -119,6 +140,80 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Returns `true` when the PDF's pages already carry substantial static content.
+///
+/// An array /Contents entry (multiple streams) or any individual stream larger
+/// than 200 bytes indicates pre-flattened page content that should be preserved
+/// rather than replaced by XFA re-rendering.
+fn pages_have_static_content(doc: &Document) -> bool {
+    for page_id in doc.page_iter() {
+        let Ok(page_dict) = doc.get_dictionary(page_id) else {
+            continue;
+        };
+        match page_dict.get(b"Contents") {
+            Ok(Object::Array(arr)) if arr.len() > 1 => return true,
+            Ok(Object::Reference(r)) => {
+                if let Ok(Object::Stream(stream)) = doc.get_object(*r) {
+                    if stream.content.len() > 200 {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Remove Widget annotations from all pages and strip /AcroForm from the catalog.
+///
+/// This is the "static-strip" flatten path used for hybrid XFA+static PDFs:
+/// the original page content is preserved and only the interactive XFA/AcroForm
+/// layer is removed.
+fn strip_widgets_and_acroform(doc: &mut Document) {
+    // Collect Widget annotation object IDs.
+    let widget_ids: std::collections::HashSet<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            let dict = obj.as_dict().ok()?;
+            let subtype = dict.get(b"Subtype").ok()?;
+            if matches!(subtype, Object::Name(n) if n == b"Widget") {
+                Some(id)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Remove Widget refs from page /Annots arrays.
+    let page_ids: Vec<ObjectId> = doc.page_iter().collect();
+    for page_id in page_ids {
+        let annots_ref = {
+            let Ok(page_dict) = doc.get_dictionary(page_id) else {
+                continue;
+            };
+            match page_dict.get(b"Annots") {
+                Ok(Object::Reference(r)) => Some(*r),
+                _ => None,
+            }
+        };
+
+        if let Some(ref_id) = annots_ref {
+            if let Ok(Object::Array(arr)) = doc.get_object(ref_id).cloned() {
+                let filtered: Vec<Object> = arr
+                    .into_iter()
+                    .filter(|o| !matches!(o, Object::Reference(r) if widget_ids.contains(r)))
+                    .collect();
+                doc.objects.insert(ref_id, Object::Array(filtered));
+            }
+        }
+    }
+
+    // Strip /AcroForm from catalog.
+    remove_acroform(doc);
+}
 
 /// Replace a page's /Contents stream with XFA overlay bytes and add font resource.
 fn write_page_content(
