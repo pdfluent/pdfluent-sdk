@@ -296,6 +296,12 @@ fn parse_proper<'a>(r: &mut Reader<'a>, dict: &Dict<'a>) -> Option<Stream<'a>> {
 
     r.skip_white_spaces_and_comments();
     r.forward_tag(b"stream")?;
+    // Skip horizontal whitespace (spaces/tabs) between "stream" keyword and EOL.
+    // Some producers write "stream \r\n" (with a trailing space) which is technically
+    // non-conforming but tolerated by Acrobat and MuPDF.
+    while r.peek_byte().is_some_and(|b| b == b' ' || b == b'\t') {
+        r.forward();
+    }
     r.forward_tag(b"\n")
         .or_else(|| r.forward_tag(b"\r\n"))
         .or_else(|| r.forward_tag(b"\r"))?;
@@ -311,6 +317,11 @@ fn parse_fallback<'a>(r: &mut Reader<'a>, dict: &Dict<'a>) -> Option<Stream<'a>>
         r.read_byte()?;
     }
 
+    // Skip any horizontal whitespace between "stream" keyword and EOL (same lenience as
+    // parse_proper — some producers write "stream \r\n").
+    while r.peek_byte().is_some_and(|b| b == b' ' || b == b'\t') {
+        r.forward();
+    }
     r.forward_tag(b"\n")
         .or_else(|| r.forward_tag(b"\r\n"))
         // Technically not allowed, but no reason to not try it.
