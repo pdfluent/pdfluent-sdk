@@ -6,13 +6,15 @@
 //! for specific use cases:
 //!
 //! - **ocrs** (this crate, `ocr` feature): pure-Rust Tesseract-style engine.
-//!   WASM-compatible. Requires external model files (`.rten` format).
+//!   WASM-compatible. Requires external model files (`.rten` format). This
+//!   backend is currently beta: internal scanned-form benchmarks are still
+//!   below the 80% similarity target, so treat results as best-effort.
 //!
 //! - **Tesseract** (`ocr-tesseract` feature, planned): supports 100+ languages
 //!   including CJK and Arabic. Requires system Tesseract + leptonica.
 //!
-//! - **PaddleOCR** (`ocr-paddle` feature, legacy): highest accuracy on complex
-//!   documents. Requires PaddlePaddle C++ runtime.
+//! - **PaddleOCR ONNX** (`ocr-onnx` feature): higher-accuracy backend for
+//!   scanned documents. Uses the workspace `pdf-ocr` crate and ONNX Runtime.
 //!
 //! - **Custom**: implement [`OcrBackend`] directly for proprietary or
 //!   cloud-based OCR (Google Vision, AWS Textract, etc.).
@@ -88,6 +90,9 @@ pub trait OcrBackend: Send + Sync {
 
 /// Pure-Rust OCR backend backed by the [`ocrs`](https://crates.io/crates/ocrs)
 /// engine (which uses ONNX models via `rten`).
+///
+/// This backend is currently beta. It works on clean Latin-script scans, but
+/// scanned-form accuracy remains below the project target in internal testing.
 ///
 /// # Model files
 ///
@@ -215,6 +220,81 @@ impl OcrBackend for OcrsBackend {
 
     fn name(&self) -> &str {
         "ocrs"
+    }
+}
+
+// ── PaddleOCR ONNX backend ───────────────────────────────────────────────────
+
+/// PaddleOCR backend backed by the workspace `pdf-ocr` crate.
+///
+/// Models are downloaded on first use into `~/.cache/xfa/ocr-models/`.
+/// Runtime inference requires a loadable ONNX Runtime shared library; set
+/// `ORT_DYLIB_PATH` when your host does not expose it via the default loader.
+#[cfg(feature = "ocr-onnx")]
+pub struct PaddleOnnxBackend {
+    engine: pdf_ocr::PaddleOcrEngine,
+}
+
+#[cfg(feature = "ocr-onnx")]
+impl PaddleOnnxBackend {
+    /// Create a backend with the default PaddleOCR ONNX configuration.
+    pub fn new() -> Result<Self, OcrError> {
+        let engine = pdf_ocr::PaddleOcrEngine::new()
+            .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?;
+        Ok(Self { engine })
+    }
+
+    /// Create a backend with a custom PaddleOCR ONNX configuration.
+    pub fn with_config(config: pdf_ocr::paddle::PaddleOcrConfig) -> Result<Self, OcrError> {
+        let engine = pdf_ocr::PaddleOcrEngine::with_config(config)
+            .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?;
+        Ok(Self { engine })
+    }
+}
+
+#[cfg(feature = "ocr-onnx")]
+impl OcrBackend for PaddleOnnxBackend {
+    fn recognize(&self, image_data: &[u8], width: u32, height: u32) -> Result<OcrResult, OcrError> {
+        use pdf_ocr::OcrEngine as _;
+
+        let result = self
+            .engine
+            .recognize(image_data, width, height, 300)
+            .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?;
+
+        let confidence = result.confidence;
+        let words = result
+            .words
+            .into_iter()
+            .map(|word| {
+                let [x0, y0, x1, y1] = word.bbox_px;
+                OcrWord {
+                    text: word.text,
+                    bbox: [
+                        x0 as f32,
+                        y0 as f32,
+                        x1.saturating_sub(x0) as f32,
+                        y1.saturating_sub(y0) as f32,
+                    ],
+                    confidence: word.confidence,
+                }
+            })
+            .collect::<Vec<_>>();
+        let text = words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        Ok(OcrResult {
+            text,
+            words,
+            confidence,
+        })
+    }
+
+    fn name(&self) -> &str {
+        "paddle-onnx"
     }
 }
 
