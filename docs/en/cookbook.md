@@ -356,3 +356,200 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 **Dependencies:** `pdf-invoice`, `lopdf`, `chrono`
+
+---
+
+## 11. Incrementally save a PDF (preserve digital signatures)
+
+Incremental saves append a new revision to the original bytes. Any byte-range
+digital signatures that covered the original body remain cryptographically
+valid because the signed bytes are never rewritten.
+
+```rust
+use lopdf::{Document, IncrementalDocument, Object};
+
+fn main() -> lopdf::Result<()> {
+    // Keep the raw bytes — they become the base of the incremental chain.
+    let raw = std::fs::read("signed.pdf")?;
+    let prev = Document::load_mem(&raw)?;
+
+    let mut incr = IncrementalDocument::create_from(raw, prev);
+
+    // To modify an existing object, clone it into the new revision first.
+    // Here we update the document's modification date.
+    if let Ok(info_ref) = incr.get_prev_documents().trailer.get(b"Info") {
+        if let Ok(&info_id) = info_ref.as_reference() {
+            incr.opt_clone_object_to_new_document(info_id)?;
+            if let Ok(info) = incr
+                .new_document
+                .get_object_mut(info_id)
+                .and_then(Object::as_dict_mut)
+            {
+                info.set("ModDate", Object::string_literal("D:20260325000000Z"));
+            }
+        }
+    }
+
+    // Output = original bytes + new revision appended at the end.
+    incr.save("signed-updated.pdf")?;
+    println!("Incremental revision written. Prior signatures are still valid.");
+
+    Ok(())
+}
+```
+
+**Dependencies:** `lopdf`
+
+---
+
+## 12. Batch-process a directory of PDFs in parallel
+
+`process_batch` runs a closure on every PDF using a fixed-size worker pool.
+`PdfBatch` provides one-liner helpers for the most common tasks.
+
+```rust
+use pdf_engine::{BatchConfig, BatchResult, ErrorStrategy, PdfBatch, process_batch};
+use std::path::PathBuf;
+use std::time::Duration;
+
+fn main() {
+    // --- Option A: high-level helper (walks a directory tree) ---
+    let compliance = PdfBatch::validate_compliance(
+        "./archive",
+        BatchConfig {
+            workers: 8,
+            timeout: Duration::from_secs(60),
+            on_error: ErrorStrategy::Collect,
+            ..Default::default()
+        },
+    );
+    println!(
+        "Checked {} files in {:.1}s — {} passed, {} failed",
+        compliance.successes.len() + compliance.failures.len(),
+        compliance.duration.as_secs_f64(),
+        compliance.successes.len(),
+        compliance.failures.len(),
+    );
+
+    // --- Option B: custom processor on an explicit file list ---
+    let paths: Vec<PathBuf> = (1..=50)
+        .map(|i| PathBuf::from(format!("pages/page-{i:03}.pdf")))
+        .collect();
+
+    let result: BatchResult<usize> = process_batch(
+        &paths,
+        BatchConfig {
+            workers: 4,
+            timeout: Duration::from_secs(30),
+            on_error: ErrorStrategy::Collect,
+            on_progress: Some(Box::new(|done, total| eprint!("\r{done}/{total}"))),
+            ..Default::default()
+        },
+        |doc| Ok(doc.page_count()),
+    );
+
+    eprintln!();
+    for (path, n) in &result.successes {
+        println!("{}: {n} page(s)", path.display());
+    }
+    for (path, err) in &result.failures {
+        eprintln!("FAIL {}: {err}", path.display());
+    }
+}
+```
+
+**Dependencies:** `pdf-engine`
+
+---
+
+## 13. Linearize a PDF for fast web viewing
+
+A linearized PDF is structured so that browsers can render page 1 while the
+rest of the file is still downloading ("fast web view" / "optimized" flag in
+Acrobat). Use this before uploading large PDFs to a CDN or web server.
+
+```rust
+use lopdf::Document;
+use std::fs::File;
+use std::io::BufWriter;
+
+fn main() -> lopdf::Result<()> {
+    let data = std::fs::read("report.pdf")?;
+    let doc = Document::load_mem(&data)?;
+
+    let mut out = BufWriter::new(File::create("report-linear.pdf")?);
+    doc.save_linearized(&mut out)?;
+
+    println!("Linearized PDF written.");
+    Ok(())
+}
+```
+
+Alternatively, use `SaveOptions` when combining linearization with other save
+settings:
+
+```rust
+use lopdf::{Document, SaveOptions};
+use std::fs::File;
+use std::io::BufWriter;
+
+fn main() -> lopdf::Result<()> {
+    let data = std::fs::read("report.pdf")?;
+    let mut doc = Document::load_mem(&data)?;
+
+    let options = SaveOptions::builder().linearize(true).build();
+    let mut out = BufWriter::new(File::create("report-linear.pdf")?);
+    doc.save_with_options(&mut out, options)?;
+
+    Ok(())
+}
+```
+
+**Dependencies:** `lopdf`
+
+---
+
+## 14. Repair PDF/UA accessibility (remediation)
+
+`remediate_pdfua` applies a conservative, best-effort fix pass for common
+PDF/UA-1 (ISO 14289-1) failures: sets `MarkInfo/Marked`, adds catalog `/Lang`,
+fixes page tab order, tags untagged text runs as `<P>` elements, and adds
+`/Alt` text to untagged figures. Manual review is still recommended for complex
+documents.
+
+```rust
+use pdf_manip::pdfua::remediate_pdfua;
+use pdf_compliance::validate_pdfua;
+use pdf_syntax::Pdf;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let data = std::fs::read("document.pdf")?;
+
+    // Optional: inspect compliance before making any changes.
+    let before_report = validate_pdfua(&Pdf::new(data.clone())?);
+    println!("Before: {} error(s)", before_report.error_count());
+
+    // Apply remediation pass.
+    let mut doc = lopdf::Document::load_mem(&data)?;
+    let report = remediate_pdfua(&mut doc)?;
+    println!(
+        "Fixed {}/{} issue(s)",
+        report.issues_fixed, report.issues_found
+    );
+    for msg in &report.issues_unfixable {
+        println!("  unfixable: {msg}");
+    }
+
+    let mut out = Vec::new();
+    doc.save_to(&mut out)?;
+    std::fs::write("document-ua.pdf", &out)?;
+
+    // Verify the result.
+    let after_report = validate_pdfua(&Pdf::new(out)?);
+    println!("After: {} error(s)", after_report.error_count());
+
+    Ok(())
+}
+```
+
+**Dependencies:** `pdf-manip`, `pdf-compliance`, `pdf-syntax`, `lopdf`
