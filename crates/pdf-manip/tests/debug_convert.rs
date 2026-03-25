@@ -1302,7 +1302,7 @@ fn debug_round23_failures() {
         let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
-    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -4902,7 +4902,7 @@ fn debug_pdfa_fails_all_convert() {
         let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
-    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -5623,7 +5623,7 @@ fn debug_batch_6_2_11_5() {
         let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
-    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);
@@ -6963,7 +6963,7 @@ fn debug_w6211_batch() {
         let _ = pdf_manip::pdfa_fonts::fix_pfb_font_streams(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_stub_font_files(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_mislabeled_truetype_as_cff(&mut doc);
-    let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
+        let _ = pdf_manip::pdfa_fonts::fix_truetype_with_cff_program(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_cff_invalid_bcd(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_nonstandard_charstrings(&mut doc);
         let _ = pdf_manip::pdfa_fonts::fix_type1_eexec_space_prefix(&mut doc);

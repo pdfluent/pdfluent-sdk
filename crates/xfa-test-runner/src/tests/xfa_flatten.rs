@@ -170,8 +170,7 @@ impl PdfTest for XfaFlattenTest {
                     // more: iText 5 sometimes fails to paginate dynamic/data-driven
                     // XFA forms and silently returns the original single-page
                     // structure.  In that case our N-page output is likely correct.
-                    let skip_page_count = is_certified
-                        || (r.page_count == 1 && pages > 1);
+                    let skip_page_count = is_certified || (r.page_count == 1 && pages > 1);
                     if skip_page_count {
                         metadata
                             .insert("itext_skip_reason".to_string(), "certified_pdf".to_string());

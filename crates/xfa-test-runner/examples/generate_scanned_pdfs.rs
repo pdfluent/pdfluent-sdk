@@ -122,8 +122,7 @@ fn rgba_to_jpeg(pixels: &[u8], width: u32, height: u32, quality: u8) -> Option<V
     let mut buf_q = Vec::new();
     {
         use image::ImageEncoder;
-        let enc =
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf_q, quality);
+        let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf_q, quality);
         enc.write_image(
             rgb.as_raw(),
             rgb.width(),

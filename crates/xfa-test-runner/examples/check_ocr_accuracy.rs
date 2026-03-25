@@ -98,7 +98,11 @@ fn run_accuracy_tests(fixtures_dir: &std::path::Path, backend: &pdf_engine::Ocrs
     let mut passed = 0usize;
 
     for scanned_path in &entries {
-        let name = scanned_path.file_stem().unwrap().to_string_lossy().to_string();
+        let name = scanned_path
+            .file_stem()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
 
         // Find companion source PDF.
         let source_path = scanned_path
@@ -190,10 +194,7 @@ fn extract_text(path: &std::path::Path) -> Option<String> {
 }
 
 #[cfg(feature = "ocr")]
-fn ocr_page(
-    path: &std::path::Path,
-    backend: &pdf_engine::OcrsBackend,
-) -> Option<String> {
+fn ocr_page(path: &std::path::Path, backend: &pdf_engine::OcrsBackend) -> Option<String> {
     let data = std::fs::read(path).ok()?;
     let doc = pdf_engine::PdfDocument::open(data).ok()?;
     let result = doc.ocr_page(0, backend, 150.0).ok()?;

@@ -25,12 +25,7 @@ static DEFAULT_CMYK_PROFILE: OnceLock<Option<ICCProfile>> = OnceLock::new();
 
 fn default_cmyk_profile() -> Option<&'static ICCProfile> {
     DEFAULT_CMYK_PROFILE
-        .get_or_init(|| {
-            ICCProfile::new(
-                include_bytes!("../assets/CGATS001Compat-v2-micro.icc"),
-                4,
-            )
-        })
+        .get_or_init(|| ICCProfile::new(include_bytes!("../assets/CGATS001Compat-v2-micro.icc"), 4))
         .as_ref()
 }
 

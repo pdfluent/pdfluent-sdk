@@ -4143,6 +4143,7 @@ dependencies = [
  "dirs-sys 0.3.7",
  "image",
  "kurbo 0.13.0",
+ "lopdf",
  "ocrs",
  "pdf-forms",
  "pdf-interpret",
@@ -4199,6 +4200,7 @@ dependencies = [
  "siphasher 1.0.2",
  "skrifa 0.40.0",
  "smallvec",
+ "ttf-parser",
  "yoke",
 ]
 
