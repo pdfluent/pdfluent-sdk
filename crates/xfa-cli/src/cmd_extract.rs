@@ -61,6 +61,11 @@ pub fn run(input: &Path, pages: Option<&str>, json: bool) -> Result<()> {
             }
             println!("{text}");
         }
+        // Append AcroForm field values (pdftotext includes these).
+        let acroform_text = doc.extract_acroform_text();
+        if !acroform_text.is_empty() {
+            println!("{acroform_text}");
+        }
     }
 
     Ok(())
