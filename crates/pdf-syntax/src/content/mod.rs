@@ -35,10 +35,13 @@ pub mod ops;
 
 use crate::content::ops::TypedInstruction;
 use crate::object::Stream;
-use crate::object::dict::keys::{ASCII85_DECODE_ABBREVIATION, F, FILTER};
+use crate::object::dict::keys::{
+    ASCII85_DECODE_ABBREVIATION, BITS_PER_COMPONENT, BPC, COLORSPACE, CS, F, FILTER, H, HEIGHT,
+    IM, IMAGE_MASK, W, WIDTH,
+};
 use crate::object::dict::InlineImageDict;
 use crate::object::name::{Name, skip_name_like};
-use crate::object::{Array, Object, ObjectLike};
+use crate::object::{Array, Number, Object, ObjectLike};
 use crate::reader::Reader;
 use crate::reader::{Readable, ReaderContext, ReaderExt, Skippable};
 use core::fmt::{Debug, Formatter};
@@ -50,6 +53,61 @@ use smallvec::SmallVec;
 // but anything above should be pretty rare (only for example for
 // DeviceN color spaces)
 const OPERANDS_THRESHOLD: usize = 6;
+
+/// For unfiltered raw inline images, compute the exact byte count of the image data:
+///   `H × ceil(W × BPC × num_components / 8)`
+///
+/// Returns `None` when the image has any filter (can't use this formula) or when
+/// the required width/height parameters are missing or the color space is unrecognised.
+fn compute_raw_inline_image_size(dict: &crate::object::dict::Dict<'_>) -> Option<usize> {
+    // If there is any filter, the data is compressed — can't use raw size formula.
+    let has_filter = dict.get::<Name>(F).is_some()
+        || dict.get::<Name>(FILTER).is_some()
+        || dict.get::<Array>(F).is_some()
+        || dict.get::<Array>(FILTER).is_some();
+    if has_filter {
+        return None;
+    }
+
+    // /IM true → 1-component bilevel image, always 1 bpc.
+    let is_image_mask = dict.get::<bool>(IM).unwrap_or(false)
+        || dict.get::<bool>(IMAGE_MASK).unwrap_or(false);
+
+    let w = dict
+        .get::<Number>(W)
+        .or_else(|| dict.get::<Number>(WIDTH))?
+        .as_f64() as usize;
+    let h = dict
+        .get::<Number>(H)
+        .or_else(|| dict.get::<Number>(HEIGHT))?
+        .as_f64() as usize;
+
+    let (bpc, components): (usize, usize) = if is_image_mask {
+        (1, 1)
+    } else {
+        let bpc = dict
+            .get::<Number>(BPC)
+            .or_else(|| dict.get::<Number>(BITS_PER_COMPONENT))
+            .map(|n| n.as_f64() as usize)
+            .unwrap_or(8);
+        let cs_name: Option<Vec<u8>> = dict
+            .get::<Name>(CS)
+            .map(|n| n.as_ref().to_vec())
+            .or_else(|| dict.get::<Name>(COLORSPACE).map(|n| n.as_ref().to_vec()));
+        let components = match cs_name.as_deref() {
+            Some(b"G") | Some(b"DeviceGray") | Some(b"I") | Some(b"Indexed") => 1,
+            Some(b"RGB") | Some(b"DeviceRGB") => 3,
+            Some(b"CMYK") | Some(b"DeviceCMYK") => 4,
+            _ => return None, // Unknown color space — can't compute size
+        };
+        (bpc, components)
+    };
+
+    // Row stride in bytes (rounded up to byte boundary), total size = h * stride.
+    let bits_per_row = w * bpc * components;
+    let stride = bits_per_row.div_ceil(8);
+    Some(h * stride)
+}
 
 /// For inline images encoded with ASCII85 (/A85 or /ASCII85Decode as the outermost
 /// filter), the end-of-stream is always `~>` followed by optional whitespace then `EI`.
@@ -242,6 +300,30 @@ impl<'a> Iterator for UntypedIter<'a> {
                         let stream = Stream::new(image_data, dict.clone());
                         self.stack.push(Object::Stream(stream));
                         self.reader.read_bytes(advance)?;
+                        self.reader.skip_white_spaces();
+
+                        return Some(Instruction {
+                            operands: core::mem::take(&mut self.stack),
+                            operator,
+                        });
+                    }
+
+                    // Fast path for unfiltered (raw binary) inline images: the image
+                    // data size is exactly H × ceil(W × BPC × components / 8) bytes,
+                    // so we can seek past the data directly and look for EI there.
+                    // This avoids the heuristic EI scanner, which incorrectly skips
+                    // valid EI markers when subsequent images contain binary data.
+                    if let Some(raw_size) = compute_raw_inline_image_size(&dict)
+                        && stream_data.len() >= raw_size
+                    {
+                        let image_data = &stream_data[..raw_size];
+                        let stream = Stream::new(image_data, dict.clone());
+                        self.stack.push(Object::Stream(stream));
+                        // Skip past the raw data, then skip any whitespace before EI.
+                        self.reader.read_bytes(raw_size)?;
+                        self.reader.skip_white_spaces();
+                        // Consume the EI operator (2 bytes).
+                        let _ = self.reader.read_bytes(2);
                         self.reader.skip_white_spaces();
 
                         return Some(Instruction {

@@ -180,7 +180,7 @@ impl Renderer {
                     &src_image,
                     &mut dst_image,
                     &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(
-                        fast_image_resize::FilterType::CatmullRom,
+                        fast_image_resize::FilterType::Bilinear,
                     )),
                 )
                 .unwrap();
