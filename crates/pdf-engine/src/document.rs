@@ -3,7 +3,7 @@
 
 use crate::error::{EngineError, Result};
 use crate::geometry::{self, PageGeometry};
-use crate::render::{self, RenderOptions, RenderedPage};
+use crate::render::{self, ColorMode, RenderConfig, RenderOptions, RenderedPage};
 use crate::text::{TextBlock, TextExtractionDevice};
 use crate::thumbnail::ThumbnailOptions;
 
@@ -104,6 +104,31 @@ impl PdfDocument {
         Ok(render::render_page(page, options, &self.settings))
     }
 
+    /// Render a single page using the high-level render config.
+    pub fn render_page_with_config(
+        &self,
+        index: usize,
+        config: &RenderConfig,
+    ) -> Result<RenderedPage> {
+        let page = self.get_page(index)?;
+        Ok(render::render_page_with_config(
+            page,
+            config,
+            &self.settings,
+        ))
+    }
+
+    /// Render a single page to a CMYK buffer.
+    pub fn render_page_cmyk(&self, index: usize, dpi: u32) -> Result<RenderedPage> {
+        self.render_page_with_config(
+            index,
+            &RenderConfig {
+                color_mode: ColorMode::PreserveCmyk,
+                dpi,
+            },
+        )
+    }
+
     /// Render all pages, in parallel when the `parallel` feature is enabled.
     pub fn render_all(&self, options: &RenderOptions) -> Vec<RenderedPage> {
         let pages = self.pdf.pages();
@@ -115,6 +140,20 @@ impl PdfDocument {
         #[cfg(not(feature = "parallel"))]
         (0..pages.len())
             .map(|i| render::render_page(&pages[i], options, &self.settings))
+            .collect()
+    }
+
+    /// Render all pages using the high-level render config.
+    pub fn render_all_with_config(&self, config: &RenderConfig) -> Vec<RenderedPage> {
+        let pages = self.pdf.pages();
+        #[cfg(feature = "parallel")]
+        return (0..pages.len())
+            .into_par_iter()
+            .map(|i| render::render_page_with_config(&pages[i], config, &self.settings))
+            .collect();
+        #[cfg(not(feature = "parallel"))]
+        (0..pages.len())
+            .map(|i| render::render_page_with_config(&pages[i], config, &self.settings))
             .collect()
     }
 
@@ -405,6 +444,7 @@ fn bytes_to_string(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::render::{ColorMode, PixelFormat, RenderConfig, RenderOptions};
     use lopdf::{Document as LoDocument, Object};
     use std::path::PathBuf;
 
@@ -478,6 +518,56 @@ mod tests {
         doc.save_to(&mut out)
             .expect("save stripped-to-unicode fixture");
         (out, removed)
+    }
+
+    fn solid_fill_pdf_bytes(color_operator: &str) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        let content = format!("{color_operator}\n0 0 72 72 re f\n");
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content.into_bytes()));
+
+        doc.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Page".to_vec()),
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(0),
+                    Object::Integer(72),
+                    Object::Integer(72),
+                ]),
+                "Contents" => Object::Reference(content_id),
+            }),
+        );
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Pages".to_vec()),
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+
+        let catalog_id = doc.new_object_id();
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Catalog".to_vec()),
+                "Pages" => Object::Reference(pages_id),
+            }),
+        );
+
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save solid fill fixture");
+        bytes
     }
 
     #[test]
@@ -560,5 +650,71 @@ mod tests {
             expected_norm.len(),
             actual_norm.len()
         );
+    }
+
+    #[test]
+    fn render_page_with_config_srgb_matches_legacy_render_page() {
+        let doc = PdfDocument::open(solid_fill_pdf_bytes("1 0 0 rg")).expect("open rgb fixture");
+        let legacy = doc
+            .render_page(
+                0,
+                &RenderOptions {
+                    dpi: 72.0,
+                    ..Default::default()
+                },
+            )
+            .expect("legacy render succeeds");
+        let configured = doc
+            .render_page_with_config(
+                0,
+                &RenderConfig {
+                    color_mode: ColorMode::Srgb,
+                    dpi: 72,
+                },
+            )
+            .expect("configured render succeeds");
+
+        assert_eq!(legacy.width, configured.width);
+        assert_eq!(legacy.height, configured.height);
+        assert_eq!(legacy.pixel_format, PixelFormat::Rgba8);
+        assert_eq!(configured.pixel_format, PixelFormat::Rgba8);
+        assert_eq!(legacy.pixels, configured.pixels);
+    }
+
+    #[test]
+    fn render_page_with_config_preserve_cmyk_returns_cmyk_buffer() {
+        let doc = PdfDocument::open(solid_fill_pdf_bytes("1 0 0 0 k")).expect("open cmyk fixture");
+        let rendered = doc
+            .render_page_with_config(
+                0,
+                &RenderConfig {
+                    color_mode: ColorMode::PreserveCmyk,
+                    dpi: 72,
+                },
+            )
+            .expect("cmyk render succeeds");
+
+        assert_eq!(rendered.pixel_format, PixelFormat::Cmyk8);
+        assert_eq!(
+            rendered.pixels.len(),
+            rendered.width as usize * rendered.height as usize * 4
+        );
+    }
+
+    #[test]
+    fn render_page_with_config_simulate_cmyk_does_not_panic_on_cmyk_pdf() {
+        let doc = PdfDocument::open(solid_fill_pdf_bytes("1 0 0 0 k")).expect("open cmyk fixture");
+        let rendered = doc
+            .render_page_with_config(
+                0,
+                &RenderConfig {
+                    color_mode: ColorMode::SimulateCmyk,
+                    dpi: 72,
+                },
+            )
+            .expect("simulate cmyk render succeeds");
+
+        assert_eq!(rendered.pixel_format, PixelFormat::Rgba8);
+        assert!(!rendered.pixels.is_empty());
     }
 }
