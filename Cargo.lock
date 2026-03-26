@@ -4143,6 +4143,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "base64 0.22.1",
  "dirs-sys 0.3.7",
+ "formcalc-interpreter",
  "hmac",
  "image",
  "kurbo 0.13.0",
@@ -4164,6 +4165,8 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "time",
+ "xfa-json",
+ "xfa-layout-engine",
 ]
 
 [[package]]
