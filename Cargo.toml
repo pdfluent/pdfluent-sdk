@@ -123,3 +123,15 @@ pdf-invoice = { path = "crates/pdf-invoice" }
 pdf-extract = { path = "crates/pdf-extract" }
 pdf-redact = { path = "crates/pdf-redact" }
 pdf-ocr = { path = "crates/pdf-ocr" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+opt-level = "z"
+
+[profile.release-speed]
+inherits = "release"
+opt-level = 3
+strip = "symbols"

@@ -23,15 +23,31 @@ kurbo = "0.13.0"
 rayon = { version = "1", optional = true }
 ocrs = { version = "0.12", optional = true }
 rten = { version = "0.24", optional = true }
-ort = { version = "=2.0.0-rc.12", optional = true, default-features = false, features = ["std", "load-dynamic", "api-24"] }
+dirs-sys = { version = "0.3", optional = true }
+pdf-ocr = { workspace = true, optional = true, features = ["paddle"] }
+reqwest = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+rsa = { version = "0.9", default-features = false, features = ["sha2"], optional = true }
+pkcs8 = { version = "0.10", features = ["pem"], optional = true }
+time = { version = "0.3", features = ["formatting", "macros"], optional = true }
 
 [features]
 default = []
 parallel = ["dep:rayon"]
 xfa = ["dep:pdf-xfa", "dep:xfa-layout-engine", "dep:formcalc-interpreter", "dep:xfa-json"]
-ocr = ["dep:ocrs", "dep:rten"]
-ocr-onnx = ["dep:ort"]
-full = ["xfa", "ocr", "ocr-onnx"]
+ocr = ["dep:ocrs", "dep:rten", "dep:dirs-sys"]
+ocr-mistral = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json"]
+ocr-google = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json", "dep:rsa", "dep:pkcs8", "dep:sha2", "dep:time"]
+ocr-aws = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json", "dep:hmac", "dep:sha2", "dep:time"]
+ocr-azure = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json"]
+ocr-cloud = ["ocr-mistral", "ocr-google", "ocr-aws", "ocr-azure"]
+ocr-onnx = ["dep:pdf-ocr"]
+full = ["parallel", "xfa", "ocr", "ocr-onnx", "ocr-cloud"]
 
 [dev-dependencies]
 image = { workspace = true }

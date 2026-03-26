@@ -4137,6 +4137,7 @@ dependencies = [
  "ort",
  "pdf-forms",
  "pdf-interpret",
+ "pdf-ocr",
  "pdf-render",
  "pdf-syntax",
  "pdf-xfa",

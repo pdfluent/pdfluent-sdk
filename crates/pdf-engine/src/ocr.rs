@@ -6,24 +6,20 @@
 //! for specific use cases:
 //!
 //! - **ocrs** (this crate, `ocr` feature): pure-Rust Tesseract-style engine.
-//!   WASM-compatible. Requires external model files (`.rten` format).
+//!   WASM-compatible. Requires external model files (`.rten` format). This
+//!   backend is currently beta: internal scanned-form benchmarks are still
+//!   below the 80% similarity target, so treat results as best-effort.
 //!
 //! - **Tesseract** (`ocr-tesseract` feature, planned): supports 100+ languages
 //!   including CJK and Arabic. Requires system Tesseract + leptonica.
 //!
-//! - **PaddleOCR ONNX** (`ocr-onnx` feature): native ONNX Runtime-backed
-//!   PaddleOCR loading pre-converted models from env vars or
-//!   `~/.cache/paddle-ocr/`.
-//!
-//! - **PaddleOCR** (`ocr-paddle` feature, legacy): highest accuracy on complex
-//!   documents. Requires PaddlePaddle C++ runtime.
+//! - **PaddleOCR ONNX** (`ocr-onnx` feature): higher-accuracy backend for
+//!   scanned documents. Uses the workspace `pdf-ocr` crate and ONNX Runtime.
 //!
 //! - **Custom**: implement [`OcrBackend`] directly for proprietary or
 //!   cloud-based OCR (Google Vision, AWS Textract, etc.).
 
 use std::fmt;
-#[cfg(all(feature = "ocr-onnx", not(target_arch = "wasm32")))]
-use std::{path::PathBuf, sync::Mutex};
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -94,6 +90,9 @@ pub trait OcrBackend: Send + Sync {
 
 /// Pure-Rust OCR backend backed by the [`ocrs`](https://crates.io/crates/ocrs)
 /// engine (which uses ONNX models via `rten`).
+///
+/// This backend is currently beta. It works on clean Latin-script scans, but
+/// scanned-form accuracy remains below the project target in internal testing.
 ///
 /// # Model files
 ///
@@ -182,7 +181,7 @@ impl OcrsBackend {
 /// resolvable, `None` otherwise.
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
 fn default_model_path(filename: &str) -> Option<std::path::PathBuf> {
-    cache_root().map(|root| root.join("ocrs").join(filename))
+    dirs_sys::home_dir().map(|h: std::path::PathBuf| h.join(".cache").join("ocrs").join(filename))
 }
 
 #[cfg(feature = "ocr")]
@@ -226,131 +225,78 @@ impl OcrBackend for OcrsBackend {
 
 // ── PaddleOCR ONNX backend ───────────────────────────────────────────────────
 
-/// PaddleOCR backend powered by ONNX Runtime.
+/// PaddleOCR backend backed by the workspace `pdf-ocr` crate.
 ///
-/// This type is intentionally minimal in the feature-flag branch: it wires the
-/// model-loading surface and feature gating needed for modular builds, while
-/// keeping the heavy native inference path isolated behind `ocr-onnx`.
-#[cfg(all(feature = "ocr-onnx", not(target_arch = "wasm32")))]
+/// Models are downloaded on first use into `~/.cache/xfa/ocr-models/`.
+/// Runtime inference requires a loadable ONNX Runtime shared library; set
+/// `ORT_DYLIB_PATH` when your host does not expose it via the default loader.
+#[cfg(feature = "ocr-onnx")]
 pub struct PaddleOnnxBackend {
-    det_session: Mutex<ort::session::Session>,
-    rec_session: Mutex<ort::session::Session>,
-    dictionary: Vec<String>,
+    engine: pdf_ocr::PaddleOcrEngine,
 }
 
-#[cfg(all(feature = "ocr-onnx", not(target_arch = "wasm32")))]
+#[cfg(feature = "ocr-onnx")]
 impl PaddleOnnxBackend {
-    /// Load the ONNX backend from explicit model and dictionary paths.
-    pub fn new(det_model: &str, rec_model: &str, dict: &str) -> Result<Self, OcrError> {
-        let det_session = build_onnx_session(det_model)?;
-        let rec_session = build_onnx_session(rec_model)?;
-        let dictionary = std::fs::read_to_string(dict)
-            .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(|line| line.to_string())
-            .collect::<Vec<_>>();
-
-        Ok(Self {
-            det_session: Mutex::new(det_session),
-            rec_session: Mutex::new(rec_session),
-            dictionary,
-        })
+    /// Create a backend with the default PaddleOCR ONNX configuration.
+    pub fn new() -> Result<Self, OcrError> {
+        let engine = pdf_ocr::PaddleOcrEngine::new()
+            .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?;
+        Ok(Self { engine })
     }
 
-    /// Load model paths from env vars or `~/.cache/paddle-ocr/`.
-    ///
-    /// Supported env vars:
-    /// - `PADDLE_DET_MODEL`
-    /// - `PADDLE_REC_MODEL`
-    /// - `PADDLE_DICT`
-    pub fn from_env() -> Result<Self, OcrError> {
-        let cache = cache_root()
-            .map(|root| root.join("paddle-ocr"))
-            .ok_or(OcrError::NoEngine)?;
-        let det = std::env::var_os("PADDLE_DET_MODEL")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| cache.join("ch_PP-OCRv4_det.onnx"));
-        let rec = std::env::var_os("PADDLE_REC_MODEL")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| cache.join("ch_PP-OCRv4_rec.onnx"));
-        let dict = std::env::var_os("PADDLE_DICT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| cache.join("ppocr_keys_v1.txt"));
-
-        if !det.exists() || !rec.exists() || !dict.exists() {
-            return Err(OcrError::NoEngine);
-        }
-
-        let det = det.to_string_lossy();
-        let rec = rec.to_string_lossy();
-        let dict = dict.to_string_lossy();
-        Self::new(det.as_ref(), rec.as_ref(), dict.as_ref())
+    /// Create a backend with a custom PaddleOCR ONNX configuration.
+    pub fn with_config(config: pdf_ocr::paddle::PaddleOcrConfig) -> Result<Self, OcrError> {
+        let engine = pdf_ocr::PaddleOcrEngine::with_config(config)
+            .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?;
+        Ok(Self { engine })
     }
 }
 
-#[cfg(all(feature = "ocr-onnx", not(target_arch = "wasm32")))]
+#[cfg(feature = "ocr-onnx")]
 impl OcrBackend for PaddleOnnxBackend {
     fn recognize(&self, image_data: &[u8], width: u32, height: u32) -> Result<OcrResult, OcrError> {
-        let expected_len = width as usize * height as usize * 3;
-        if image_data.len() != expected_len {
-            return Err(OcrError::ImageError(format!(
-                "expected {expected_len} RGB bytes for {width}x{height}, got {}",
-                image_data.len()
-            )));
-        }
-        if self.dictionary.is_empty() {
-            return Err(OcrError::RecognitionFailed(
-                "recognition dictionary is empty".to_string(),
-            ));
-        }
+        use pdf_ocr::OcrEngine as _;
 
-        let _det_session = self
-            .det_session
-            .lock()
-            .map_err(|_| OcrError::RecognitionFailed("detection session lock poisoned".into()))?;
-        let _rec_session = self
-            .rec_session
-            .lock()
-            .map_err(|_| OcrError::RecognitionFailed("recognition session lock poisoned".into()))?;
+        let result = self
+            .engine
+            .recognize(image_data, width, height, 300)
+            .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?;
 
-        Err(OcrError::RecognitionFailed(
-            "PaddleOCR ONNX runtime is feature-gated but inference is not wired in this branch"
-                .to_string(),
-        ))
+        let confidence = result.confidence;
+        let words = result
+            .words
+            .into_iter()
+            .map(|word| {
+                let [x0, y0, x1, y1] = word.bbox_px;
+                OcrWord {
+                    text: word.text,
+                    bbox: [
+                        x0 as f32,
+                        y0 as f32,
+                        x1.saturating_sub(x0) as f32,
+                        y1.saturating_sub(y0) as f32,
+                    ],
+                    confidence: word.confidence,
+                }
+            })
+            .collect::<Vec<_>>();
+        let text = words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        Ok(OcrResult {
+            text,
+            words,
+            confidence,
+        })
     }
 
     fn name(&self) -> &str {
         "paddle-onnx"
     }
 }
-
-#[cfg(all(feature = "ocr-onnx", not(target_arch = "wasm32")))]
-fn build_onnx_session(model_path: &str) -> Result<ort::session::Session, OcrError> {
-    ort::session::Session::builder()
-        .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?
-        .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
-        .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?
-        .with_intra_threads(4)
-        .map_err(|e| OcrError::RecognitionFailed(e.to_string()))?
-        .commit_from_file(model_path)
-        .map_err(|e| OcrError::RecognitionFailed(format!("{model_path}: {e}")))
-}
-
-#[cfg(any(
-    all(feature = "ocr", not(target_arch = "wasm32")),
-    all(feature = "ocr-onnx", not(target_arch = "wasm32"))
-))]
-fn cache_root() -> Option<std::path::PathBuf> {
-    if let Some(dir) = std::env::var_os("XDG_CACHE_HOME") {
-        return Some(std::path::PathBuf::from(dir));
-    }
-    if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
-        return Some(std::path::PathBuf::from(dir));
-    }
-    std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache"))
-}
-
 // ── Convenience function ──────────────────────────────────────────────────────
 
 /// Run OCR on a rendered page image using the default `ocrs` backend.
