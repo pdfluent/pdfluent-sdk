@@ -73,6 +73,7 @@ pub mod pdfa_fixups;
 pub mod pdfa_fonts;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_xmp;
+pub mod pdfua;
 pub mod text_replace;
 pub mod text_run;
 pub mod watermark;
