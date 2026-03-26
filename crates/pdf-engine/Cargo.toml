@@ -11,21 +11,28 @@ pdf-interpret = { path = "../pdf-interpret" }
 pdf-render = { path = "../pdf-render" }
 pdf-forms = { path = "../pdf-forms" }
 pdf-xfa = { path = "../pdf-xfa" }
+pdf-ocr = { path = "../pdf-ocr", features = ["paddle"], optional = true }
 thiserror = { workspace = true }
 kurbo = "0.13.0"
 rayon = { version = "1", optional = true }
 ocrs = { version = "0.12", optional = true }
 rten = { version = "0.24", optional = true }
 dirs-sys = { version = "0.3", optional = true }
+reqwest = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [features]
 default = ["parallel"]
 parallel = ["dep:rayon"]
 # Pure-Rust OCR via ocrs (requires external .rten model files at ~/.cache/ocrs/).
 ocr = ["dep:ocrs", "dep:rten", "dep:dirs-sys"]
+ocr-mistral = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json"]
+ocr-onnx = ["dep:pdf-ocr"]
 # Planned: ocr-tesseract = ["leptess"]
 # Planned: ocr-paddle = ["paddle-ocr"]
 
 [dev-dependencies]
-image = { workspace = true }
 lopdf = { workspace = true }
