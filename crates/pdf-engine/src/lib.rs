@@ -75,9 +75,13 @@ pub use render::{ColorMode, PixelFormat, RenderConfig, RenderOptions, RenderedPa
 pub use text::{TextBlock, TextSpan};
 pub use thumbnail::ThumbnailOptions;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use ocr::best_available_backend;
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
 pub use ocr::ocr_page_default;
+#[cfg(feature = "ocr-mistral")]
+pub use ocr::MistralOcrBackend;
 #[cfg(feature = "ocr")]
 pub use ocr::OcrsBackend;
-#[cfg(all(feature = "ocr-onnx", not(target_arch = "wasm32")))]
+#[cfg(feature = "ocr-onnx")]
 pub use ocr::PaddleOnnxBackend;
