@@ -324,16 +324,6 @@ impl PdfDocument {
         parse_outline_items(&first)
     }
 
-    /// Flatten the document's XFA packets into a static PDF.
-    ///
-    /// Returns the flattened PDF bytes. Non-XFA PDFs are returned unchanged by
-    /// the underlying `pdf-xfa` bridge.
-    #[cfg(feature = "xfa")]
-    pub fn flatten_xfa(&self) -> Result<Vec<u8>> {
-        pdf_xfa::flatten_xfa_to_pdf(self.pdf.data().as_ref())
-            .map_err(|e| EngineError::RenderError(e.to_string()))
-    }
-
     /// Run OCR on a page and return the recognized text and word positions.
     ///
     /// The page is rendered at `dpi` (default 150) before recognition.
@@ -580,6 +570,166 @@ mod tests {
         bytes
     }
 
+    fn mixed_rgb_cmyk_pdf_bytes() -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        let content = b"1 0 0 rg\n0 0 36 72 re f\n1 0 0 0 k\n36 0 36 72 re f\n".to_vec();
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content));
+
+        doc.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page",
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => Object::Array(vec![0.into(), 0.into(), 72.into(), 72.into()]),
+                "Contents" => Object::Reference(content_id),
+            }),
+        );
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+        let catalog_id = doc.new_object_id();
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => Object::Reference(pages_id),
+            }),
+        );
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes)
+            .expect("save mixed rgb/cmyk fixture");
+        bytes
+    }
+
+    fn transparent_cmyk_pdf_bytes() -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        let gs_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "ExtGState",
+            "ca" => Object::Real(0.5),
+        }));
+        let content = b"/GS1 gs\n1 0 0 0 k\n0 0 72 72 re f\n".to_vec();
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content));
+
+        doc.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page",
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => Object::Array(vec![0.into(), 0.into(), 72.into(), 72.into()]),
+                "Resources" => dictionary! {
+                    "ExtGState" => dictionary! {
+                        "GS1" => Object::Reference(gs_id),
+                    },
+                },
+                "Contents" => Object::Reference(content_id),
+            }),
+        );
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+        let catalog_id = doc.new_object_id();
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => Object::Reference(pages_id),
+            }),
+        );
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes)
+            .expect("save transparent cmyk fixture");
+        bytes
+    }
+
+    fn cmyk_image_pdf_bytes() -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        let image_id = doc.add_object(Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Image",
+                "Width" => Object::Integer(2),
+                "Height" => Object::Integer(1),
+                "BitsPerComponent" => Object::Integer(8),
+                "ColorSpace" => "DeviceCMYK",
+            },
+            vec![255, 0, 0, 0, 0, 255, 0, 0],
+        ));
+        let content = b"q\n2 0 0 1 0 0 cm\n/Im1 Do\nQ\n".to_vec();
+        let content_id = doc.add_object(Stream::new(dictionary! {}, content));
+
+        doc.objects.insert(
+            page_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Page",
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => Object::Array(vec![0.into(), 0.into(), 2.into(), 1.into()]),
+                "Resources" => dictionary! {
+                    "XObject" => dictionary! {
+                        "Im1" => Object::Reference(image_id),
+                    },
+                },
+                "Contents" => Object::Reference(content_id),
+            }),
+        );
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+        let catalog_id = doc.new_object_id();
+        doc.objects.insert(
+            catalog_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => Object::Reference(pages_id),
+            }),
+        );
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("save cmyk image fixture");
+        bytes
+    }
+
+    fn pixel_at(rendered: &RenderedPage, x: u32, y: u32) -> [u8; 4] {
+        let idx = ((y * rendered.width + x) * 4) as usize;
+        [
+            rendered.pixels[idx],
+            rendered.pixels[idx + 1],
+            rendered.pixels[idx + 2],
+            rendered.pixels[idx + 3],
+        ]
+    }
+
     #[test]
     fn bytes_to_string_utf8() {
         assert_eq!(bytes_to_string(b"hello"), "hello");
@@ -709,6 +859,10 @@ mod tests {
             rendered.pixels.len(),
             rendered.width as usize * rendered.height as usize * 4
         );
+        assert_eq!(
+            pixel_at(&rendered, rendered.width / 2, rendered.height / 2),
+            crate::color::preserve_device_cmyk(1.0, 0.0, 0.0, 0.0)
+        );
     }
 
     #[test]
@@ -726,5 +880,68 @@ mod tests {
 
         assert_eq!(rendered.pixel_format, PixelFormat::Rgba8);
         assert!(!rendered.pixels.is_empty());
+    }
+
+    #[test]
+    fn render_page_with_config_preserve_cmyk_mixed_page_preserves_only_cmyk_region() {
+        let doc = PdfDocument::open(mixed_rgb_cmyk_pdf_bytes()).expect("open mixed fixture");
+        let rendered = doc
+            .render_page_with_config(
+                0,
+                &RenderConfig {
+                    color_mode: ColorMode::PreserveCmyk,
+                    dpi: 72,
+                },
+            )
+            .expect("mixed render succeeds");
+
+        assert_eq!(
+            pixel_at(&rendered, 54, 36),
+            crate::color::preserve_device_cmyk(1.0, 0.0, 0.0, 0.0)
+        );
+        assert_ne!(
+            pixel_at(&rendered, 18, 36),
+            crate::color::preserve_device_cmyk(1.0, 0.0, 0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn render_page_with_config_preserve_cmyk_transparent_page_does_not_crash() {
+        let doc =
+            PdfDocument::open(transparent_cmyk_pdf_bytes()).expect("open transparent cmyk fixture");
+        let rendered = doc
+            .render_page_with_config(
+                0,
+                &RenderConfig {
+                    color_mode: ColorMode::PreserveCmyk,
+                    dpi: 72,
+                },
+            )
+            .expect("transparent cmyk render succeeds");
+
+        assert_eq!(rendered.pixel_format, PixelFormat::Cmyk8);
+        assert_eq!(
+            rendered.pixels.len(),
+            rendered.width as usize * rendered.height as usize * 4
+        );
+    }
+
+    #[test]
+    fn render_page_with_config_preserve_cmyk_keeps_device_cmyk_image_bytes() {
+        let doc = PdfDocument::open(cmyk_image_pdf_bytes()).expect("open cmyk image fixture");
+        let rendered = doc
+            .render_page_with_config(
+                0,
+                &RenderConfig {
+                    color_mode: ColorMode::PreserveCmyk,
+                    dpi: 72,
+                },
+            )
+            .expect("cmyk image render succeeds");
+
+        assert_eq!(rendered.width, 2);
+        assert_eq!(rendered.height, 1);
+        assert_eq!(pixel_at(&rendered, 0, 0), [255, 0, 0, 0]);
+        assert_eq!(pixel_at(&rendered, 1, 0), [0, 255, 0, 0]);
     }
 }

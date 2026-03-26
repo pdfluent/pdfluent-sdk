@@ -56,6 +56,7 @@
 //! | [`ThumbnailOptions`] | Max-dimension constraint for thumbnail rendering |
 
 pub mod batch;
+pub mod color;
 pub mod document;
 pub mod error;
 pub mod geometry;
@@ -67,6 +68,7 @@ pub mod thumbnail;
 pub mod xfa;
 
 pub use batch::{process_batch, BatchConfig, BatchResult, ErrorStrategy, PdfBatch};
+pub use color::preserve_device_cmyk;
 pub use document::{BookmarkItem, DocumentInfo, PdfDocument};
 pub use error::{EngineError, Result};
 pub use geometry::{PageBox, PageGeometry, PageRotation};
