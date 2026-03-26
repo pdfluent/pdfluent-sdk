@@ -563,6 +563,9 @@ impl ZugferdInvoice {
             w_end(w, "ram:SpecifiedTradeSettlementPaymentMeans")?;
         }
 
+        // Tax breakdown (aggregate from line items or use totals)
+        self.write_tax_summary(w)?;
+
         if let Some(ref pt) = self.payment_terms {
             w_start(w, BytesStart::new("ram:SpecifiedTradePaymentTerms"))?;
             if let Some(ref desc) = pt.description {
@@ -573,9 +576,6 @@ impl ZugferdInvoice {
             }
             w_end(w, "ram:SpecifiedTradePaymentTerms")?;
         }
-
-        // Tax breakdown (aggregate from line items or use totals)
-        self.write_tax_summary(w)?;
 
         // Monetary summation
         w_start(
@@ -588,15 +588,6 @@ impl ZugferdInvoice {
             self.tax_basis_total,
             &self.currency,
         )?;
-        w_amount(
-            w,
-            "ram:TaxBasisTotalAmount",
-            self.tax_basis_total,
-            &self.currency,
-        )?;
-        w_amount(w, "ram:TaxTotalAmount", self.tax_total, &self.currency)?;
-        w_amount(w, "ram:GrandTotalAmount", self.grand_total, &self.currency)?;
-        w_amount(w, "ram:DuePayableAmount", self.due_payable, &self.currency)?;
         if self.charge_total.abs() > 0.000_001 {
             w_amount(
                 w,
@@ -613,6 +604,15 @@ impl ZugferdInvoice {
                 &self.currency,
             )?;
         }
+        w_amount(
+            w,
+            "ram:TaxBasisTotalAmount",
+            self.tax_basis_total,
+            &self.currency,
+        )?;
+        w_amount(w, "ram:TaxTotalAmount", self.tax_total, &self.currency)?;
+        w_amount(w, "ram:GrandTotalAmount", self.grand_total, &self.currency)?;
+        w_amount(w, "ram:DuePayableAmount", self.due_payable, &self.currency)?;
         w_end(w, "ram:SpecifiedTradeSettlementHeaderMonetarySummation")?;
 
         w_end(w, "ram:ApplicableHeaderTradeSettlement")?;
@@ -674,9 +674,11 @@ fn w_text_elem(w: &mut XmlWriter, name: &str, text: &str) -> Result<()> {
     w_end(w, name)
 }
 
-fn w_amount(w: &mut XmlWriter, name: &str, amount: f64, currency: &str) -> Result<()> {
+fn w_amount(w: &mut XmlWriter, name: &str, amount: f64, _currency: &str) -> Result<()> {
     let mut elem = BytesStart::new(name);
-    elem.push_attribute(("currencyID", currency));
+    if name == "ram:TaxTotalAmount" {
+        elem.push_attribute(("currencyID", _currency));
+    }
     w.write_event(Event::Start(elem))
         .map_err(|e| InvoiceError::Xml(e.to_string()))?;
     w.write_event(Event::Text(BytesText::new(&format_amount(amount))))
@@ -1324,5 +1326,59 @@ mod tests {
         };
         let xml = inv.to_xml().unwrap();
         assert!(xml.contains("<ram:TypeCode>381</ram:TypeCode>"));
+    }
+
+    #[test]
+    fn header_trade_settlement_follows_cii_element_order() {
+        let invoice = sample_invoice();
+        let xml = invoice.to_xml().unwrap();
+        let header_start = xml.find("<ram:ApplicableHeaderTradeSettlement>").unwrap();
+        let header_end = xml.find("</ram:ApplicableHeaderTradeSettlement>").unwrap();
+        let header_xml = &xml[header_start..header_end];
+
+        let payment_means = header_xml
+            .find("<ram:SpecifiedTradeSettlementPaymentMeans>")
+            .unwrap();
+        let trade_tax = header_xml.find("<ram:ApplicableTradeTax>").unwrap();
+        let payment_terms = header_xml.find("<ram:SpecifiedTradePaymentTerms>").unwrap();
+        let monetary = header_xml
+            .find("<ram:SpecifiedTradeSettlementHeaderMonetarySummation>")
+            .unwrap();
+
+        assert!(payment_means < trade_tax);
+        assert!(trade_tax < payment_terms);
+        assert!(payment_terms < monetary);
+    }
+
+    #[test]
+    fn monetary_summation_writes_charge_and_allowance_before_due_amount() {
+        let mut invoice = sample_invoice();
+        invoice.charge_total = 15.0;
+        invoice.allowance_total = 5.0;
+        invoice.tax_basis_total = 7410.0;
+        invoice.tax_total = 1556.1;
+        invoice.grand_total = 8966.1;
+        invoice.due_payable = 8966.1;
+
+        let xml = invoice.to_xml().unwrap();
+
+        let line_total = xml.find("<ram:LineTotalAmount").unwrap();
+        let charge_total = xml.find("<ram:ChargeTotalAmount").unwrap();
+        let allowance_total = xml.find("<ram:AllowanceTotalAmount").unwrap();
+        let tax_basis = xml.find("<ram:TaxBasisTotalAmount").unwrap();
+        let due_payable = xml.find("<ram:DuePayableAmount").unwrap();
+
+        assert!(line_total < charge_total);
+        assert!(charge_total < allowance_total);
+        assert!(allowance_total < tax_basis);
+        assert!(tax_basis < due_payable);
+    }
+
+    #[test]
+    fn cii_amounts_only_emit_currency_for_tax_total_amount() {
+        let xml = sample_invoice().to_xml().unwrap();
+
+        assert!(xml.contains("<ram:TaxTotalAmount currencyID=\"EUR\">1554.00</ram:TaxTotalAmount>"));
+        assert_eq!(xml.matches("currencyID=").count(), 1);
     }
 }
