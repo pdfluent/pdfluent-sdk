@@ -20,4 +20,7 @@ pub mod xml_form;
 pub mod zugferd;
 
 pub use error::{InvoiceError, Result};
-pub use validation::{validate_invoice, Severity, ValidationIssue, ValidationReport};
+pub use validation::{
+    validate_en16931, validate_invoice, En16931ValidationResult, Severity, ValidationIssue,
+    ValidationReport,
+};

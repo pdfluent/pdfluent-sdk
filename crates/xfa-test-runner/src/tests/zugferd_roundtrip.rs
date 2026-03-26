@@ -233,6 +233,7 @@ pub(crate) fn make_invoice_for_profile(
             quantity: 1.0,
             unit_code: "C62".into(),
             unit_price: 100.0,
+            price_base_quantity: 1.0,
             line_total: 100.0,
             tax_rate: 21.0,
             tax_category: TaxCategory::Standard,
@@ -265,9 +266,9 @@ pub(crate) fn make_invoice_for_profile(
         buyer: TradeParty {
             name: "Test Buyer GmbH".into(),
             address: Address {
-                street: None,
+                street: Some("Musterstrasse 5".into()),
                 city: Some("Berlin".into()),
-                postal_code: None,
+                postal_code: Some("10115".into()),
                 country_code: "DE".into(),
             },
             tax_id: None,
@@ -280,8 +281,14 @@ pub(crate) fn make_invoice_for_profile(
         tax_total: 21.0,
         grand_total: 121.0,
         due_payable: 121.0,
+        charge_total: 0.0,
+        allowance_total: 0.0,
+        payment_means: Some(PaymentMeans {
+            type_code: "58".into(),
+            information: Some("SEPA credit transfer".into()),
+        }),
         payment_terms: None,
-        buyer_reference: None,
+        buyer_reference: Some("PO-TEST-001".into()),
     }
 }
 
