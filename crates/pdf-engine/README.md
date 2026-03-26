@@ -1,7 +1,6 @@
-# pdf-engine Feature Flags
+# pdf-engine
 
-`pdf-engine` builds a small core by default and gates heavier capabilities
-behind explicit Cargo features.
+Unified PDF rendering engine for rendering, text extraction, thumbnails, XFA handling, and OCR integration.
 
 ## Features
 
@@ -11,7 +10,12 @@ behind explicit Cargo features.
 | XFA | `xfa` | `pdf_xfa` bridge, `PdfDocument::flatten_xfa()`, `pdf_engine::xfa` helpers |
 | OCR (pure Rust) | `ocr` | `OcrsBackend`, pure-Rust OCR, WASM-compatible |
 | OCR (native ONNX) | `ocr-onnx` | `PaddleOnnxBackend` surface and native ONNX Runtime wiring |
-| Full | `full` | `xfa`, `ocr`, and `ocr-onnx` together |
+| OCR (Mistral) | `ocr-mistral` | Hosted Mistral OCR adapter |
+| OCR (Google Vision) | `ocr-google` | Hosted Google Vision adapter |
+| OCR (AWS Textract) | `ocr-aws` | Hosted AWS Textract adapter |
+| OCR (Azure Doc Intel) | `ocr-azure` | Hosted Azure Document Intelligence adapter |
+| OCR (All cloud) | `ocr-cloud` | All hosted OCR adapters |
+| Full | `full` | `xfa`, `ocr`, `ocr-onnx`, and `ocr-cloud` together |
 
 ## Build matrix
 
@@ -42,6 +46,27 @@ Notes:
 - `ocr-onnx` is native-only and is not built for `wasm32-unknown-unknown`.
 - PaddleOCR model files are not bundled into the crate.
 
+## OCR Cloud Providers
+
+| Provider | Feature | Env Vars | Auth |
+|----------|---------|----------|------|
+| Mistral | `ocr-mistral` | `MISTRAL_API_KEY` | API key |
+| Google Vision | `ocr-google` | `GOOGLE_VISION_API_KEY` or `GOOGLE_APPLICATION_CREDENTIALS` | API key or service account |
+| AWS Textract | `ocr-aws` | `AWS_REGION` + `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | IAM credentials |
+| Azure Doc Intel | `ocr-azure` | `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` + `AZURE_DOCUMENT_INTELLIGENCE_KEY` | API key |
+
+Enable all hosted OCR adapters together with:
+
+```bash
+CARGO_TARGET_DIR=/tmp/codex-features-target cargo test -p pdf-engine --features ocr-cloud
+```
+
+Notes:
+
+- `best_available_backend()` prefers cloud providers before local OCR fallbacks.
+- Google auto-detection checks `GOOGLE_VISION_API_KEY` first, then `GOOGLE_APPLICATION_CREDENTIALS`, then gcloud application-default credentials when `GOOGLE_CLOUD_PROJECT` is set.
+- Azure uses API version `2024-11-30` by default. Override with `AZURE_DOCUMENT_INTELLIGENCE_API_VERSION` if your deployment requires a different version.
+
 ## OCR model discovery
 
 `ocr-onnx` checks these inputs in order:
@@ -63,6 +88,10 @@ Expected default filenames:
 - `xfa`: enables `pdf_engine::xfa` plus `PdfDocument::flatten_xfa()`.
 - `ocr`: enables `OcrsBackend` and `ocr_page_default()`.
 - `ocr-onnx`: enables `PaddleOnnxBackend` on native targets.
+- `ocr-mistral`: enables `MistralOcrBackend`.
+- `ocr-google`: enables `GoogleVisionBackend`.
+- `ocr-aws`: enables `AwsTextractBackend`.
+- `ocr-azure`: enables `AzureDocIntelBackend`.
 
 ## Runtime notes
 

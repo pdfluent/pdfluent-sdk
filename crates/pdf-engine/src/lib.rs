@@ -79,6 +79,12 @@ pub use thumbnail::ThumbnailOptions;
 pub use ocr::best_available_backend;
 #[cfg(all(feature = "ocr", not(target_arch = "wasm32")))]
 pub use ocr::ocr_page_default;
+#[cfg(feature = "ocr-aws")]
+pub use ocr::AwsTextractBackend;
+#[cfg(feature = "ocr-azure")]
+pub use ocr::AzureDocIntelBackend;
+#[cfg(feature = "ocr-google")]
+pub use ocr::GoogleVisionBackend;
 #[cfg(feature = "ocr-mistral")]
 pub use ocr::MistralOcrBackend;
 #[cfg(feature = "ocr")]
