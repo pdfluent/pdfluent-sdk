@@ -93,9 +93,15 @@ pub struct ZugferdInvoice {
     pub grand_total: f64,
     /// Amount due.
     pub due_payable: f64,
+    /// Document-level charges added to the line total.
+    pub charge_total: f64,
+    /// Document-level allowances deducted from the line total.
+    pub allowance_total: f64,
+    /// Payment means (required for EN16931/XRechnung).
+    pub payment_means: Option<PaymentMeans>,
     /// Payment terms (optional).
     pub payment_terms: Option<PaymentTerms>,
-    /// Buyer order reference number (optional).
+    /// Buyer reference or order reference number.
     pub buyer_reference: Option<String>,
 }
 
@@ -143,7 +149,9 @@ pub struct LineItem {
     pub unit_code: String,
     /// Net unit price (excluding tax).
     pub unit_price: f64,
-    /// Line total (quantity * unit_price).
+    /// Base quantity the net unit price applies to.
+    pub price_base_quantity: f64,
+    /// Line total (quantity * unit_price / price_base_quantity).
     pub line_total: f64,
     /// Applicable tax rate as percentage (e.g., 21.0 for 21%).
     pub tax_rate: f64,
@@ -211,6 +219,16 @@ impl TaxCategory {
 /// Payment terms.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PaymentMeans {
+    /// UNTDID 4461 payment means code (e.g. "58" for SEPA credit transfer).
+    pub type_code: String,
+    /// Optional payment instructions shown to the buyer.
+    pub information: Option<String>,
+}
+
+/// Payment terms.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PaymentTerms {
     /// Human-readable description (e.g., "Net 30 days").
     pub description: Option<String>,
@@ -227,8 +245,11 @@ impl ZugferdInvoice {
 
         let mut issues = Vec::new();
 
-        if self.invoice_number.is_empty() {
+        if self.invoice_number.trim().is_empty() {
             issues.push("invoice_number is required".into());
+        }
+        if self.issue_date == NaiveDate::MIN {
+            issues.push("issue_date is required".into());
         }
         if !is_valid_currency(&self.currency) {
             issues.push(format!(
@@ -236,10 +257,10 @@ impl ZugferdInvoice {
                 self.currency
             ));
         }
-        if self.seller.name.is_empty() {
+        if self.seller.name.trim().is_empty() {
             issues.push("seller.name is required".into());
         }
-        if self.buyer.name.is_empty() {
+        if self.buyer.name.trim().is_empty() {
             issues.push("buyer.name is required".into());
         }
 
@@ -256,6 +277,68 @@ impl ZugferdInvoice {
         ) {
             if self.seller.tax_id.is_none() {
                 issues.push("seller.tax_id is required for EN16931/Extended".into());
+            }
+            if self
+                .buyer_reference
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                issues.push("buyer_reference is required for EN16931/Extended".into());
+            }
+            if self
+                .payment_means
+                .as_ref()
+                .map(|means| means.type_code.trim())
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                issues.push("payment_means.type_code is required for EN16931/Extended".into());
+            }
+            if self
+                .seller
+                .address
+                .street
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                issues.push("seller.address.street is required for EN16931/Extended".into());
+            }
+            if self
+                .seller
+                .address
+                .city
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                issues.push("seller.address.city is required for EN16931/Extended".into());
+            }
+            if self
+                .buyer
+                .address
+                .street
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                issues.push("buyer.address.street is required for EN16931/Extended".into());
+            }
+            if self
+                .buyer
+                .address
+                .city
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+            {
+                issues.push("buyer.address.city is required for EN16931/Extended".into());
             }
             if !is_valid_country(&self.seller.address.country_code) {
                 issues.push(format!(
@@ -288,6 +371,21 @@ impl ZugferdInvoice {
         let issues = self.validate();
         if !issues.is_empty() {
             return Err(InvoiceError::ProfileValidation(issues.join("; ")));
+        }
+        if matches!(
+            self.profile,
+            ZugferdProfile::EN16931 | ZugferdProfile::Extended
+        ) {
+            let report = crate::validation::validate_en16931(self);
+            if !report.failed.is_empty() {
+                let summary = report
+                    .failed
+                    .iter()
+                    .map(|(rule, message)| format!("{rule}: {message}"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(InvoiceError::ProfileValidation(summary));
+            }
         }
 
         let mut writer = Writer::new_with_indent(Cursor::new(Vec::new()), b' ', 2);
@@ -372,7 +470,14 @@ impl ZugferdInvoice {
         let tax_total = float_of(&monetary, "TaxTotalAmount");
         let grand_total = float_of(&monetary, "GrandTotalAmount");
         let due_payable = float_of(&monetary, "DuePayableAmount");
+        let charge_total = float_of(&monetary, "ChargeTotalAmount");
+        let allowance_total = float_of(&monetary, "AllowanceTotalAmount");
 
+        let payment_means = find_descendant(&settlement, "SpecifiedTradeSettlementPaymentMeans")
+            .map(|pm| PaymentMeans {
+                type_code: text_of(&Some(pm), "TypeCode").unwrap_or_default(),
+                information: text_of(&Some(pm), "Information"),
+            });
         let payment_terms =
             find_descendant(&settlement, "SpecifiedTradePaymentTerms").map(|pt| PaymentTerms {
                 description: text_of(&Some(pt), "Description"),
@@ -383,9 +488,7 @@ impl ZugferdInvoice {
             profile,
             invoice_number,
             type_code,
-            issue_date: issue_date.unwrap_or_else(|| {
-                NaiveDate::from_ymd_opt(2000, 1, 1).expect("2000-01-01 is valid")
-            }),
+            issue_date: issue_date.unwrap_or(NaiveDate::MIN),
             seller: seller.unwrap_or_else(default_party),
             buyer: buyer.unwrap_or_else(default_party),
             line_items,
@@ -394,6 +497,9 @@ impl ZugferdInvoice {
             tax_total,
             grand_total,
             due_payable,
+            charge_total,
+            allowance_total,
+            payment_means,
             payment_terms,
             buyer_reference,
         })
@@ -445,6 +551,18 @@ impl ZugferdInvoice {
         w_start(w, BytesStart::new("ram:ApplicableHeaderTradeSettlement"))?;
         w_text_elem(w, "ram:InvoiceCurrencyCode", &self.currency)?;
 
+        if let Some(ref means) = self.payment_means {
+            w_start(
+                w,
+                BytesStart::new("ram:SpecifiedTradeSettlementPaymentMeans"),
+            )?;
+            w_text_elem(w, "ram:TypeCode", &means.type_code)?;
+            if let Some(ref info) = means.information {
+                w_text_elem(w, "ram:Information", info)?;
+            }
+            w_end(w, "ram:SpecifiedTradeSettlementPaymentMeans")?;
+        }
+
         if let Some(ref pt) = self.payment_terms {
             w_start(w, BytesStart::new("ram:SpecifiedTradePaymentTerms"))?;
             if let Some(ref desc) = pt.description {
@@ -479,6 +597,22 @@ impl ZugferdInvoice {
         w_amount(w, "ram:TaxTotalAmount", self.tax_total, &self.currency)?;
         w_amount(w, "ram:GrandTotalAmount", self.grand_total, &self.currency)?;
         w_amount(w, "ram:DuePayableAmount", self.due_payable, &self.currency)?;
+        if self.charge_total.abs() > 0.000_001 {
+            w_amount(
+                w,
+                "ram:ChargeTotalAmount",
+                self.charge_total,
+                &self.currency,
+            )?;
+        }
+        if self.allowance_total.abs() > 0.000_001 {
+            w_amount(
+                w,
+                "ram:AllowanceTotalAmount",
+                self.allowance_total,
+                &self.currency,
+            )?;
+        }
         w_end(w, "ram:SpecifiedTradeSettlementHeaderMonetarySummation")?;
 
         w_end(w, "ram:ApplicableHeaderTradeSettlement")?;
@@ -629,6 +763,17 @@ fn write_line_item(w: &mut XmlWriter, item: &LineItem, currency: &str) -> Result
     w_start(w, BytesStart::new("ram:SpecifiedLineTradeAgreement"))?;
     w_start(w, BytesStart::new("ram:NetPriceProductTradePrice"))?;
     w_amount(w, "ram:ChargeAmount", item.unit_price, currency)?;
+    if (item.price_base_quantity - 1.0).abs() > 1e-9 {
+        let mut basis_quantity = BytesStart::new("ram:BasisQuantity");
+        basis_quantity.push_attribute(("unitCode", item.unit_code.as_str()));
+        w.write_event(Event::Start(basis_quantity))
+            .map_err(|e| InvoiceError::Xml(e.to_string()))?;
+        w.write_event(Event::Text(BytesText::new(&format_amount(
+            item.price_base_quantity,
+        ))))
+        .map_err(|e| InvoiceError::Xml(e.to_string()))?;
+        w_end(w, "ram:BasisQuantity")?;
+    }
     w_end(w, "ram:NetPriceProductTradePrice")?;
     w_end(w, "ram:SpecifiedLineTradeAgreement")?;
 
@@ -746,9 +891,11 @@ fn parse_trade_party(agreement: &Option<roxmltree::Node>, tag: &str) -> Option<T
     let addr_parent = address_node;
     let address = Address {
         street: addr_parent.and_then(|a| {
-            a.descendants()
-                .find(|n| n.has_tag_name("LineOne"))
-                .and_then(|n| n.text().map(String::from))
+            ["LineOne", "LineTwo", "LineThree"].iter().find_map(|tag| {
+                a.descendants()
+                    .find(|n| n.has_tag_name(*tag))
+                    .and_then(|n| n.text().map(String::from))
+            })
         }),
         city: addr_parent.and_then(|a| {
             a.descendants()
@@ -821,7 +968,17 @@ fn parse_line_item(node: roxmltree::Node) -> Option<LineItem> {
         .and_then(|n| n.attribute("unitCode").map(String::from))
         .unwrap_or_else(|| "C62".into());
 
-    let unit_price = float_of(&parent, "ChargeAmount");
+    let agreement = find_descendant(&parent, "SpecifiedLineTradeAgreement");
+    let price_node = find_descendant(&agreement, "NetPriceProductTradePrice")
+        .or_else(|| find_descendant(&agreement, "GrossPriceProductTradePrice"));
+    let unit_price = float_of(&price_node, "ChargeAmount");
+    let price_base_quantity = price_node
+        .and_then(|node| {
+            node.descendants()
+                .find(|child| child.has_tag_name("BasisQuantity"))
+        })
+        .and_then(|node| node.text().and_then(|text| text.trim().parse::<f64>().ok()))
+        .unwrap_or(1.0);
     let line_total = float_of(&parent, "LineTotalAmount");
 
     let tax_rate = float_of(&parent, "RateApplicablePercent");
@@ -835,6 +992,7 @@ fn parse_line_item(node: roxmltree::Node) -> Option<LineItem> {
         quantity,
         unit_code,
         unit_price,
+        price_base_quantity,
         line_total,
         tax_rate,
         tax_category,
@@ -897,6 +1055,7 @@ mod tests {
                     quantity: 1.0,
                     unit_code: "C62".into(),
                     unit_price: 5000.0,
+                    price_base_quantity: 1.0,
                     line_total: 5000.0,
                     tax_rate: 21.0,
                     tax_category: TaxCategory::Standard,
@@ -907,6 +1066,7 @@ mod tests {
                     quantity: 12.0,
                     unit_code: "MON".into(),
                     unit_price: 200.0,
+                    price_base_quantity: 1.0,
                     line_total: 2400.0,
                     tax_rate: 21.0,
                     tax_category: TaxCategory::Standard,
@@ -917,6 +1077,12 @@ mod tests {
             tax_total: 1554.0,
             grand_total: 8954.0,
             due_payable: 8954.0,
+            charge_total: 0.0,
+            allowance_total: 0.0,
+            payment_means: Some(PaymentMeans {
+                type_code: "58".into(),
+                information: Some("SEPA credit transfer".into()),
+            }),
             payment_terms: Some(PaymentTerms {
                 description: Some("Net 30 days".into()),
                 due_date: Some(NaiveDate::from_ymd_opt(2026, 4, 5).unwrap()),
@@ -951,6 +1117,13 @@ mod tests {
         assert_eq!(parsed.currency, "EUR");
         assert_eq!(parsed.line_items.len(), 2);
         assert_eq!(parsed.line_items[0].description, "PDF Engine License");
+        assert_eq!(
+            parsed
+                .payment_means
+                .as_ref()
+                .map(|means| means.type_code.as_str()),
+            Some("58")
+        );
         assert!((parsed.grand_total - 8954.0).abs() < 0.01);
     }
 
@@ -991,6 +1164,9 @@ mod tests {
             tax_total: 21.0,
             grand_total: 121.0,
             due_payable: 121.0,
+            charge_total: 0.0,
+            allowance_total: 0.0,
+            payment_means: None,
             payment_terms: None,
             buyer_reference: None,
         };
@@ -1039,6 +1215,9 @@ mod tests {
             tax_total: 0.0,
             grand_total: 0.0,
             due_payable: 0.0,
+            charge_total: 0.0,
+            allowance_total: 0.0,
+            payment_means: None,
             payment_terms: None,
             buyer_reference: None,
         };
@@ -1047,6 +1226,8 @@ mod tests {
         assert!(issues.iter().any(|i| i.contains("invoice_number")));
         assert!(issues.iter().any(|i| i.contains("seller.name")));
         assert!(issues.iter().any(|i| i.contains("seller.tax_id")));
+        assert!(issues.iter().any(|i| i.contains("payment_means.type_code")));
+        assert!(issues.iter().any(|i| i.contains("buyer_reference")));
         assert!(issues.iter().any(|i| i.contains("line item")));
     }
 
@@ -1135,6 +1316,9 @@ mod tests {
             tax_total: -10.5,
             grand_total: -60.5,
             due_payable: -60.5,
+            charge_total: 0.0,
+            allowance_total: 0.0,
+            payment_means: None,
             payment_terms: None,
             buyer_reference: None,
         };
