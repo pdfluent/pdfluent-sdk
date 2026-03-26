@@ -41,15 +41,14 @@ fn test_02_render_page() {
 
 // ---------- Scenario 3: Extract text ----------
 
-// Text extraction is not available in WASM (pdf-engine requires rayon).
-// PdfDoc only exposes metadata/signatures/compliance, not text extraction.
 #[wasm_bindgen_test]
-fn test_03_text_extraction_not_available() {
-    // TODO: text extraction requires pdf-engine which depends on rayon.
-    // When a WASM-safe text extraction API is added, enable this test.
-    // For now, verify the document opens successfully.
+fn test_03_text_extraction() {
     let doc = PdfDoc::open(SAMPLE_PDF).expect("open");
-    assert!(doc.page_count() >= 1);
+    let text = doc.text(0);
+    assert!(
+        text.contains("Test page"),
+        "unexpected text extraction: {text}"
+    );
 }
 
 // ---------- Scenario 4: Read metadata ----------

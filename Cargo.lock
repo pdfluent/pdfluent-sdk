@@ -8681,7 +8681,7 @@ dependencies = [
  "lopdf",
  "pdf-annot",
  "pdf-compliance",
- "pdf-extract",
+ "pdf-engine",
  "pdf-render",
  "pdf-sign",
  "pdf-syntax",
