@@ -44,6 +44,7 @@
 //!
 //! | Type | Description |
 //! |---|---|
+//! | [`BatchConfig`] / [`BatchResult`] | Worker-pool processing for many PDFs |
 //! | [`PdfDocument`] | Main document handle |
 //! | [`RenderConfig`] / [`RenderOptions`] | DPI, color mode, background colour, optional forced width/height |
 //! | [`RenderedPage`] | RGBA or CMYK pixel data (row-major, 4 bytes per pixel) |
@@ -54,6 +55,7 @@
 //! | [`BookmarkItem`] | Outline node — title, target page, nested children |
 //! | [`ThumbnailOptions`] | Max-dimension constraint for thumbnail rendering |
 
+pub mod batch;
 pub mod document;
 pub mod error;
 pub mod geometry;
@@ -62,6 +64,7 @@ pub mod render;
 pub mod text;
 pub mod thumbnail;
 
+pub use batch::{process_batch, BatchConfig, BatchResult, ErrorStrategy, PdfBatch};
 pub use document::{BookmarkItem, DocumentInfo, PdfDocument};
 pub use error::{EngineError, Result};
 pub use geometry::{PageBox, PageGeometry, PageRotation};
