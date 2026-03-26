@@ -51,3 +51,4 @@ full = ["parallel", "xfa", "ocr", "ocr-onnx", "ocr-cloud"]
 
 [dev-dependencies]
 image = { workspace = true }
+lopdf = { workspace = true }
