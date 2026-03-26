@@ -243,8 +243,14 @@ impl ColorSpace {
         Self(Arc::new(ColorSpaceType::DeviceCmyk))
     }
 
-    pub(crate) fn is_device_rgb(&self) -> bool {
+    /// Return `true` if the current color space is DeviceRGB.
+    pub fn is_device_rgb(&self) -> bool {
         matches!(*self.0, ColorSpaceType::DeviceRgb)
+    }
+
+    /// Return `true` if the current color space is DeviceCMYK.
+    pub fn is_device_cmyk(&self) -> bool {
+        matches!(*self.0, ColorSpaceType::DeviceCmyk)
     }
 
     /// Return the pattern color space.
@@ -1083,6 +1089,25 @@ impl Color {
     /// Returns the opacity of this color (0.0 = fully transparent, 1.0 = fully opaque).
     pub fn opacity(&self) -> f32 {
         self.opacity
+    }
+
+    /// Return `true` if this color is expressed in the DeviceCMYK color space.
+    pub fn is_device_cmyk(&self) -> bool {
+        self.color_space.is_device_cmyk()
+    }
+
+    /// Return the raw DeviceCMYK components, if this color is DeviceCMYK.
+    pub fn device_cmyk_components(&self) -> Option<[f32; 4]> {
+        if !self.color_space.is_device_cmyk() || self.components.len() != 4 {
+            return None;
+        }
+
+        Some([
+            self.components[0],
+            self.components[1],
+            self.components[2],
+            self.components[3],
+        ])
     }
 }
 

@@ -93,6 +93,21 @@ impl RasterImage<'_> {
         }
     }
 
+    /// Perform some operation with the original CMYK bytes of a DeviceCMYK image.
+    pub fn with_device_cmyk(
+        &self,
+        func: impl FnOnce(CmykData, Option<LumaData>),
+        target_dimension: Option<(u32, u32)>,
+    ) {
+        let decoded = self.0.decoded_object(target_dimension);
+
+        if let Some(decoded) = decoded
+            && let Some(cmyk) = decoded.cmyk_data
+        {
+            func(cmyk, decoded.luma_data);
+        }
+    }
+
     // These are hidden since clients are supposed to call get the
     // width/height from `LumaData` instead.
     #[doc(hidden)]
@@ -174,6 +189,21 @@ pub struct RgbData {
     ///
     /// The first number indicates the x scaling factor, the second number the
     /// y scaling factor.
+    pub scale_factors: (f32, f32),
+}
+
+/// A structure holding 4-channel CMYK data.
+#[derive(Clone)]
+pub struct CmykData {
+    /// The actual data. It is guaranteed to have the length width * height * 4.
+    pub data: Vec<u8>,
+    /// The width.
+    pub width: u32,
+    /// The height.
+    pub height: u32,
+    /// Whether the image should be interpolated.
+    pub interpolate: bool,
+    /// Additional scaling factors to apply to the image.
     pub scale_factors: (f32, f32),
 }
 

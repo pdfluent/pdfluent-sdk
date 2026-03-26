@@ -5,7 +5,7 @@ use crate::device::Device;
 use crate::function::{Function, interpolate};
 use crate::interpret::path::get_paint;
 use crate::interpret::state::ActiveTransferFunction;
-use crate::{BlendMode, CacheKey, ClipPath, Image, RasterImage, StencilImage};
+use crate::{BlendMode, CacheKey, ClipPath, CmykData, Image, RasterImage, StencilImage};
 use crate::{FillRule, InterpreterWarning, WarningSinkFn, interpret};
 use crate::{LumaData, RgbData};
 use kurbo::{Affine, Rect, Shape};
@@ -355,6 +355,7 @@ impl<'a> ImageXObject<'a> {
 
 pub(crate) struct DecodedImageXObject {
     pub(crate) rgb_data: Option<RgbData>,
+    pub(crate) cmyk_data: Option<CmykData>,
     pub(crate) luma_data: Option<LumaData>,
 }
 
@@ -463,6 +464,7 @@ impl DecodedImageXObject {
             .unwrap_or(color_space.default_decode_arr(bits_per_component as f32));
 
         let mut luma_data = None;
+        let mut cmyk_data = None;
 
         let rgb_data = if is_luma {
             let components = get_components(
@@ -499,6 +501,7 @@ impl DecodedImageXObject {
 
             return Some(Self {
                 rgb_data: None,
+                cmyk_data: None,
                 luma_data,
             });
         } else if bits_per_component == 8
@@ -515,6 +518,15 @@ impl DecodedImageXObject {
             // f32 back to u8 and just return the raw decoded data, which will already be in
             // RGB8 with values between 0 and 255.
             fix_image_length(&mut decoded.data, width, &mut height, 0, &color_space)?;
+            if color_space.is_device_cmyk() {
+                cmyk_data = Some(CmykData {
+                    data: decoded.data.clone(),
+                    width,
+                    height,
+                    interpolate: obj.interpolate,
+                    scale_factors: (scale_x, scale_y),
+                });
+            }
             let mut output_buf = vec![0; width as usize * height as usize * 3];
             color_space.convert_u8(&decoded.data, &mut output_buf)?;
 
@@ -654,6 +666,7 @@ impl DecodedImageXObject {
 
         Some(Self {
             rgb_data,
+            cmyk_data,
             luma_data,
         })
     }
