@@ -1928,8 +1928,8 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
     use std::thread;
 
-    #[cfg(feature = "ocr-google")]
-    const GOOGLE_TEST_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\nn[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]\ntiV2yXNWxdaGAN0j0vWg5MQ1\n-----END PRIVATE KEY-----\n";
+    // Tests use GOOGLE_APPLICATION_CREDENTIALS env var pointing to a real service account JSON.
+    // Never hardcode private keys in source — set the env var before running ocr-google tests.
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -2340,7 +2340,7 @@ mod tests {
                 "private_key": {private_key:?},
                 "token_uri": {token_uri:?}
             }}"#,
-            private_key = GOOGLE_TEST_PRIVATE_KEY,
+            private_key = "-----BEGIN PRIVATE KEY-----\nTEST_PLACEHOLDER_NOT_A_REAL_KEY\n-----END PRIVATE KEY-----\n",
             token_uri = server.url("/token"),
         );
 
