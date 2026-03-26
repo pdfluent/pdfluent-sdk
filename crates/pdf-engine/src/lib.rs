@@ -54,6 +54,7 @@
 //! | [`BookmarkItem`] | Outline node — title, target page, nested children |
 //! | [`ThumbnailOptions`] | Max-dimension constraint for thumbnail rendering |
 
+pub mod color;
 pub mod document;
 pub mod error;
 pub mod geometry;
@@ -62,6 +63,7 @@ pub mod render;
 pub mod text;
 pub mod thumbnail;
 
+pub use color::preserve_device_cmyk;
 pub use document::{BookmarkItem, DocumentInfo, PdfDocument};
 pub use error::{EngineError, Result};
 pub use geometry::{PageBox, PageGeometry, PageRotation};
