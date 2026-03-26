@@ -3,9 +3,8 @@
 //!
 //! For each `fixtures/scanned/scan_NN_<name>.pdf`, the companion
 //! `scan_NN_<name>.source.pdf` provides ground-truth text via text
-//! extraction. The scanned PDF is OCR'd with the first available
-//! `pdf-engine` backend (`mistral`, `paddle-onnx`, or `ocrs`) and the result
-//! is compared character-by-character.
+//! extraction.  The scanned PDF is OCR'd with `OcrsBackend::try_default()`
+//! and the result is compared character-by-character.
 //!
 //! Accuracy metric: character bag overlap
 //!   overlap  = sum of min(count_ocr[c], count_gt[c])  for each Latin char c
@@ -16,14 +15,10 @@
 //!
 //! Prerequisites:
 //!   1. Run `cargo run -p xfa-test-runner --example generate_scanned_pdfs`
-//!   2. Either:
-//!      - set `MISTRAL_API_KEY` and build with `--features ocr-mistral`, or
-//!      - build with `--features ocr-onnx`, or
-//!      - download OCRS models (see pdf-engine/src/ocr.rs for URLs) to
-//!        `~/.cache/ocrs/` and build with `--features ocr`.
+//!   2. Download OCR models (see pdf-engine/src/ocr.rs for URLs) to
+//!      ~/.cache/ocrs/ or set OCRS_DETECTION_MODEL / OCRS_RECOGNITION_MODEL.
 //!
 //! Run with:
-//!   cargo run -p xfa-test-runner --features ocr-mistral --example check_ocr_accuracy
 //!   cargo run -p xfa-test-runner --features ocr --example check_ocr_accuracy
 
 use std::collections::HashMap;
@@ -43,40 +38,38 @@ fn main() {
     }
 
     // Check OCR backend availability.
-    #[cfg(not(any(feature = "ocr-mistral", feature = "ocr-onnx", feature = "ocr")))]
+    #[cfg(not(feature = "ocr"))]
     {
         eprintln!(
-            "No OCR backend feature compiled — build with one of:\n  \
-             cargo run -p xfa-test-runner --features ocr-mistral --example check_ocr_accuracy\n  \
-             cargo run -p xfa-test-runner --features ocr-onnx --example check_ocr_accuracy\n  \
+            "OCR feature not compiled — build with:\n  \
              cargo run -p xfa-test-runner --features ocr --example check_ocr_accuracy"
         );
         std::process::exit(1);
     }
 
-    #[cfg(any(feature = "ocr-mistral", feature = "ocr-onnx", feature = "ocr"))]
+    #[cfg(feature = "ocr")]
     {
-        let backend = match pdf_engine::best_available_backend() {
+        let backend = match pdf_engine::OcrsBackend::try_default() {
             Ok(b) => b,
-            Err(e) => {
+            Err(_) => {
                 eprintln!(
-                    "No OCR backend available: {e}\n\
-                     Options:\n  \
-                     - set MISTRAL_API_KEY and build with --features ocr-mistral\n  \
-                     - build with --features ocr-onnx\n  \
-                     - download OCRS models to ~/.cache/ocrs/ and build with --features ocr"
+                    "OCR models not found.\n\
+                     Download to ~/.cache/ocrs/:\n  \
+                     curl -fsSL https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten \
+                     -o ~/.cache/ocrs/text-detection.rten\n  \
+                     curl -fsSL https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten \
+                     -o ~/.cache/ocrs/text-recognition.rten"
                 );
                 std::process::exit(1);
             }
         };
 
-        println!("Using OCR backend: {}", backend.name());
-        run_accuracy_tests(&fixtures_dir, backend.as_ref());
+        run_accuracy_tests(&fixtures_dir, &backend);
     }
 }
 
-#[cfg(any(feature = "ocr-mistral", feature = "ocr-onnx", feature = "ocr"))]
-fn run_accuracy_tests(fixtures_dir: &std::path::Path, backend: &dyn pdf_engine::OcrBackend) {
+#[cfg(feature = "ocr")]
+fn run_accuracy_tests(fixtures_dir: &std::path::Path, backend: &pdf_engine::OcrsBackend) {
     let mut entries: Vec<_> = std::fs::read_dir(fixtures_dir)
         .expect("read fixtures/scanned")
         .filter_map(|e| e.ok())
@@ -200,8 +193,8 @@ fn extract_text(path: &std::path::Path) -> Option<String> {
     doc.extract_text(0).ok()
 }
 
-#[cfg(any(feature = "ocr-mistral", feature = "ocr-onnx", feature = "ocr"))]
-fn ocr_page(path: &std::path::Path, backend: &dyn pdf_engine::OcrBackend) -> Option<String> {
+#[cfg(feature = "ocr")]
+fn ocr_page(path: &std::path::Path, backend: &pdf_engine::OcrsBackend) -> Option<String> {
     let data = std::fs::read(path).ok()?;
     let doc = pdf_engine::PdfDocument::open(data).ok()?;
     let result = doc.ocr_page(0, backend, 150.0).ok()?;

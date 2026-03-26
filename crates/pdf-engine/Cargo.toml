@@ -23,6 +23,11 @@ base64 = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", optional = true }
+rsa = { version = "0.9", default-features = false, features = ["sha2"], optional = true }
+pkcs8 = { version = "0.10", features = ["pem"], optional = true }
+time = { version = "0.3", features = ["formatting", "macros"], optional = true }
 
 [features]
 default = ["parallel"]
@@ -30,6 +35,29 @@ parallel = ["dep:rayon"]
 # Pure-Rust OCR via ocrs (requires external .rten model files at ~/.cache/ocrs/).
 ocr = ["dep:ocrs", "dep:rten", "dep:dirs-sys"]
 ocr-mistral = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json"]
+ocr-google = [
+    "dep:reqwest",
+    "dep:base64",
+    "dep:image",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:rsa",
+    "dep:pkcs8",
+    "dep:sha2",
+    "dep:time",
+]
+ocr-aws = [
+    "dep:reqwest",
+    "dep:base64",
+    "dep:image",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:hmac",
+    "dep:sha2",
+    "dep:time",
+]
+ocr-azure = ["dep:reqwest", "dep:base64", "dep:image", "dep:serde", "dep:serde_json"]
+ocr-cloud = ["ocr-mistral", "ocr-google", "ocr-aws", "ocr-azure"]
 ocr-onnx = ["dep:pdf-ocr"]
 # Planned: ocr-tesseract = ["leptess"]
 # Planned: ocr-paddle = ["paddle-ocr"]

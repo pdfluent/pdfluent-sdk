@@ -7,11 +7,9 @@ use super::{PdfTest, TestResult, TestStatus};
 /// is recognized.
 ///
 /// Backend selection (in priority order):
-/// 1. `ocr-mistral` feature — Mistral cloud OCR via `pdf-engine`
-/// 2. `ocr-onnx` feature — Paddle ONNX adapter via `pdf-engine`
-/// 3. `ocr` feature — pure-Rust `ocrs` engine (requires model files)
-/// 4. `paddle-ocr` feature — legacy PaddleOCR engine
-/// 5. Neither — detects scanned pages, but skips inference
+/// 1. `ocr` feature — pure-Rust `ocrs` engine (requires model files)
+/// 2. `paddle-ocr` feature — legacy PaddleOCR engine
+/// 3. Neither — detects scanned pages, but skips inference
 pub struct OcrTest;
 
 /// Check if a page needs OCR (has fewer than `threshold` text characters).
@@ -55,22 +53,22 @@ fn page_needs_ocr(doc: &lopdf::Document, page_id: lopdf::ObjectId, threshold: us
     char_count < threshold
 }
 
-// ── Preferred pdf-engine backend init ────────────────────────────────────────
+// ── ocrs backend init ─────────────────────────────────────────────────────────
 
-/// Try to initialize the first available `pdf-engine` OCR backend once.
-#[cfg(any(feature = "ocr-mistral", feature = "ocr-onnx", feature = "ocr"))]
-fn get_best_engine() -> Option<&'static dyn pdf_engine::OcrBackend> {
+/// Try to initialize the ocrs engine once (shared across all PDFs).
+#[cfg(feature = "ocr")]
+fn get_ocrs_engine() -> Option<&'static pdf_engine::OcrsBackend> {
     use std::sync::OnceLock;
-    static ENGINE: OnceLock<Option<Box<dyn pdf_engine::OcrBackend>>> = OnceLock::new();
+    static ENGINE: OnceLock<Option<pdf_engine::OcrsBackend>> = OnceLock::new();
     ENGINE
-        .get_or_init(|| match pdf_engine::best_available_backend() {
-            Ok(engine) => Some(engine),
+        .get_or_init(|| match pdf_engine::OcrsBackend::try_default() {
+            Ok(e) => Some(e),
             Err(e) => {
-                eprintln!("OCR backend init: {e}");
+                eprintln!("ocrs init: {e}");
                 None
             }
         })
-        .as_deref()
+        .as_ref()
 }
 
 // ── PaddleOCR backend init (legacy) ──────────────────────────────────────────
@@ -197,19 +195,18 @@ fn run_ocr_inference(
     mut metadata: HashMap<String, String>,
     elapsed: impl Fn() -> u64,
 ) -> TestResult {
-    // ── pdf-engine backends (Mistral / Paddle ONNX / ocrs) ──────────────────
-    #[cfg(any(feature = "ocr-mistral", feature = "ocr-onnx", feature = "ocr"))]
+    // ── ocrs (pure-Rust, preferred when feature = "ocr") ─────────────────────
+    #[cfg(feature = "ocr")]
     {
-        let engine = match get_best_engine() {
+        let engine: &dyn pdf_engine::OcrBackend = match get_ocrs_engine() {
             Some(e) => e,
             None => {
-                metadata.insert("ocr_engine".into(), "unavailable".into());
+                metadata.insert("ocr_engine".into(), "ocrs".into());
                 return TestResult {
                     status: TestStatus::Skip,
                     error_message: Some(
-                        "no configured OCR backend available — set MISTRAL_API_KEY \
-                         for `ocr-mistral`, enable `ocr-onnx` for Paddle ONNX, or \
-                         configure OCRS_DETECTION_MODEL / OCRS_RECOGNITION_MODEL for `ocr`"
+                        "ocrs models not found — set OCRS_DETECTION_MODEL / \
+                         OCRS_RECOGNITION_MODEL or place models in ~/.cache/ocrs/"
                             .into(),
                     ),
                     duration_ms: elapsed(),
@@ -218,15 +215,12 @@ fn run_ocr_inference(
                 };
             }
         };
-        metadata.insert("ocr_engine".into(), engine.name().into());
+        metadata.insert("ocr_engine".into(), "ocrs".into());
         return run_with_engine_new(pdf, target_page, engine, metadata, elapsed);
     }
 
     // ── PaddleOCR (legacy) ───────────────────────────────────────────────────
-    #[cfg(all(
-        feature = "paddle-ocr",
-        not(any(feature = "ocr-mistral", feature = "ocr-onnx", feature = "ocr"))
-    ))]
+    #[cfg(all(feature = "paddle-ocr", not(feature = "ocr")))]
     {
         use pdf_ocr::OcrEngine;
         let engine = match get_paddle_engine() {
@@ -247,12 +241,7 @@ fn run_ocr_inference(
     }
 
     // ── No backend compiled ──────────────────────────────────────────────────
-    #[cfg(not(any(
-        feature = "ocr-mistral",
-        feature = "ocr-onnx",
-        feature = "ocr",
-        feature = "paddle-ocr"
-    )))]
+    #[cfg(not(any(feature = "ocr", feature = "paddle-ocr")))]
     {
         let _ = (pdf, target_page);
         metadata.insert("ocr_engine".into(), "none".into());
@@ -260,7 +249,8 @@ fn run_ocr_inference(
             status: TestStatus::Skip,
             error_message: Some(
                 "OCR: skipped — no OCR backend compiled \
-                 (build with --features ocr-mistral, ocr-onnx, ocr, or paddle-ocr)"
+                 (build with --features ocr for pure-Rust ocrs, \
+                 or --features paddle-ocr for legacy PaddleOCR)"
                     .into(),
             ),
             duration_ms: elapsed(),
@@ -271,7 +261,7 @@ fn run_ocr_inference(
 }
 
 /// Run OCR using the new `OcrBackend` trait (ocrs or any custom impl).
-#[cfg(any(feature = "ocr-mistral", feature = "ocr-onnx", feature = "ocr"))]
+#[cfg(feature = "ocr")]
 fn run_with_engine_new(
     pdf: Vec<u8>,
     target_page: u32,
@@ -400,12 +390,7 @@ fn run_with_paddle(
 // ── Shared render helper ──────────────────────────────────────────────────────
 
 /// Render a PDF page to RGB pixels (3 bytes per pixel, row-major) using pdf-engine.
-#[cfg(any(
-    feature = "ocr-mistral",
-    feature = "ocr-onnx",
-    feature = "ocr",
-    feature = "paddle-ocr"
-))]
+#[cfg(any(feature = "ocr", feature = "paddle-ocr"))]
 fn render_page_rgb(pdf_data: &[u8], page_num: u32) -> Result<(Vec<u8>, u32, u32), String> {
     let doc =
         pdf_engine::PdfDocument::open(pdf_data.to_vec()).map_err(|e| format!("open: {e:?}"))?;
