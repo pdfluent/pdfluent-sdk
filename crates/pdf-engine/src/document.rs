@@ -324,6 +324,16 @@ impl PdfDocument {
         parse_outline_items(&first)
     }
 
+    /// Flatten the document's XFA packets into a static PDF.
+    ///
+    /// Returns the flattened PDF bytes. Non-XFA PDFs are returned unchanged by
+    /// the underlying `pdf-xfa` bridge.
+    #[cfg(feature = "xfa")]
+    pub fn flatten_xfa(&self) -> Result<Vec<u8>> {
+        pdf_xfa::flatten_xfa_to_pdf(self.pdf.data().as_ref())
+            .map_err(|e| EngineError::RenderError(e.to_string()))
+    }
+
     /// Run OCR on a page and return the recognized text and word positions.
     ///
     /// The page is rendered at `dpi` (default 150) before recognition.
