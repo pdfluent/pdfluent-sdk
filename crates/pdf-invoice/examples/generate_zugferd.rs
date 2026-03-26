@@ -11,7 +11,7 @@ use chrono::NaiveDate;
 use lopdf::{Dictionary, Document, Object};
 use pdf_invoice::embed::{embed_xml_attachment, AfRelationship};
 use pdf_invoice::zugferd::{
-    Address, LineItem, TaxCategory, TradeParty, ZugferdInvoice, ZugferdProfile,
+    Address, LineItem, PaymentMeans, TaxCategory, TradeParty, ZugferdInvoice, ZugferdProfile,
 };
 
 fn main() {
@@ -84,6 +84,7 @@ fn make_invoice(profile: ZugferdProfile) -> ZugferdInvoice {
                 quantity: 1.0,
                 unit_code: "C62".into(),
                 unit_price: 500.0,
+                price_base_quantity: 1.0,
                 line_total: 500.0,
                 tax_rate: 21.0,
                 tax_category: TaxCategory::Standard,
@@ -94,6 +95,7 @@ fn make_invoice(profile: ZugferdProfile) -> ZugferdInvoice {
                 quantity: 12.0,
                 unit_code: "MON".into(),
                 unit_price: 50.0,
+                price_base_quantity: 1.0,
                 line_total: 600.0,
                 tax_rate: 21.0,
                 tax_category: TaxCategory::Standard,
@@ -142,6 +144,12 @@ fn make_invoice(profile: ZugferdProfile) -> ZugferdInvoice {
         tax_total: 231.0,
         grand_total: 1331.0,
         due_payable: 1331.0,
+        charge_total: 0.0,
+        allowance_total: 0.0,
+        payment_means: Some(PaymentMeans {
+            type_code: "58".into(),
+            information: Some("SEPA credit transfer".into()),
+        }),
         payment_terms: Some(pdf_invoice::zugferd::PaymentTerms {
             description: Some("Net 30 days".into()),
             due_date: Some(NaiveDate::from_ymd_opt(2026, 4, 1).unwrap()),

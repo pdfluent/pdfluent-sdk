@@ -1,7 +1,8 @@
 //! ZUGFeRD / Factur-X EN 16931 validation corpus test.
 //!
 //! For PDFs that contain a ZUGFeRD XML attachment, parses the invoice and
-//! validates it against EN 16931 business rules using `pdf_invoice::validate_invoice`.
+//! validates it against EN 16931 business rules using
+//! `pdf_invoice::validate_en16931`.
 //!
 //! Skip policy:
 //! - lopdf cannot load the PDF → Skip
@@ -9,10 +10,10 @@
 //! - XML parsing fails (malformed invoice) → Skip (tested by zugferd_roundtrip)
 //!
 //! Fail conditions:
-//! - EN 16931 validation returns errors (Severity::Error)
+//! - XRechnung/EN16931 profiles return mandatory EN 16931 business rule failures
 //!
 //! Pass with metadata:
-//! - Validation passes (0 errors), reports warning count and profile
+//! - Validation completes, reports failures, warning count and profile
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -97,15 +98,20 @@ impl PdfTest for ZugferdValidateTest {
         };
 
         // Validate against EN 16931 business rules.
-        let report = pdf_invoice::validate_invoice(&invoice);
+        let report = pdf_invoice::validate_en16931(&invoice);
+        let is_xrechnung = matches!(
+            invoice.profile,
+            pdf_invoice::zugferd::ZugferdProfile::EN16931
+        );
 
         let mut metadata = HashMap::new();
         metadata.insert("filename".to_string(), found_filename.to_string());
         metadata.insert("errors".to_string(), report.error_count().to_string());
         metadata.insert("warnings".to_string(), report.warning_count().to_string());
         metadata.insert("profile".to_string(), format!("{:?}", invoice.profile));
+        metadata.insert("xrechnung".to_string(), is_xrechnung.to_string());
 
-        if report.is_valid() {
+        if !is_xrechnung || report.is_valid() {
             TestResult {
                 status: TestStatus::Pass,
                 error_message: None,
@@ -115,10 +121,9 @@ impl PdfTest for ZugferdValidateTest {
             }
         } else {
             let error_rules: Vec<String> = report
-                .issues
+                .failed
                 .iter()
-                .filter(|i| i.severity == pdf_invoice::Severity::Error)
-                .map(|i| format!("{}: {}", i.rule, i.message))
+                .map(|(rule, message)| format!("{rule}: {message}"))
                 .collect();
             TestResult {
                 status: TestStatus::Fail,
