@@ -1122,6 +1122,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid",
+ "pem-rfc7468",
  "zeroize",
 ]
 
@@ -4142,6 +4143,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "base64 0.22.1",
  "dirs-sys 0.3.7",
+ "hmac",
  "image",
  "kurbo 0.13.0",
  "lopdf",
@@ -4152,12 +4154,16 @@ dependencies = [
  "pdf-render",
  "pdf-syntax",
  "pdf-xfa",
+ "pkcs8",
  "rayon",
  "reqwest 0.12.28",
+ "rsa",
  "rten",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
+ "time",
 ]
 
 [[package]]
@@ -4457,6 +4463,15 @@ name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
+
+[[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
+]
 
 [[package]]
 name = "peniko"
