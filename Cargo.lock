@@ -4140,6 +4140,7 @@ dependencies = [
 name = "pdf-engine"
 version = "1.0.0-beta.1"
 dependencies = [
+ "base64 0.22.1",
  "dirs-sys 0.3.7",
  "image",
  "kurbo 0.13.0",
@@ -4147,11 +4148,15 @@ dependencies = [
  "ocrs",
  "pdf-forms",
  "pdf-interpret",
+ "pdf-ocr",
  "pdf-render",
  "pdf-syntax",
  "pdf-xfa",
  "rayon",
+ "reqwest 0.12.28",
  "rten",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
