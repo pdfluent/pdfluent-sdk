@@ -23,6 +23,10 @@ REPO_ROOT = BENCH_DIR.parent.parent
 CORPUS_PATH = BENCH_DIR / "corpus.json"
 RESULTS_PATH = BENCH_DIR / "results.json"
 CARGO_TARGET_DIR = "/tmp/codex-ocr-corpus-target"
+PADDLE_CARGO_TARGET_DIR = "/tmp/codex-ocr-paddle-target"
+ORT_DYLIB_PATH = (
+    "/tmp/onnxruntime-arm64/onnxruntime-osx-arm64-1.24.2/lib/libonnxruntime.dylib"
+)
 
 
 def load_dotenv() -> None:
@@ -189,6 +193,41 @@ def ocr_ocrs(image_path: str) -> str:
     return result.stdout.strip()
 
 
+def ocr_paddle_onnx(image_path: str) -> str:
+    """OCR via the repository's PaddleOCR ONNX backend."""
+    result = subprocess.run(
+        [
+            "cargo",
+            "run",
+            "--release",
+            "--target",
+            "aarch64-apple-darwin",
+            "-p",
+            "pdf-engine",
+            "--features",
+            "ocr-onnx",
+            "--example",
+            "ocr_single_image",
+            "--",
+            image_path,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        cwd=REPO_ROOT,
+        env={
+            **os.environ,
+            "CARGO_TARGET_DIR": PADDLE_CARGO_TARGET_DIR,
+            "ORT_DYLIB_PATH": ORT_DYLIB_PATH,
+        },
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or result.stdout.strip()
+        raise RuntimeError(stderr or "cargo example failed")
+    return result.stdout.strip()
+
+
 def summarize_scores(scores: list[dict]) -> tuple[float, int]:
     valid = [item["similarity"] for item in scores if "error" not in item]
     average = sum(valid) / len(valid) if valid else 0.0
@@ -204,6 +243,8 @@ def build_engines(requested: list[str]) -> dict[str, callable]:
     for name in requested:
         if name == "ocrs":
             engines[name] = ocr_ocrs
+        elif name == "paddle-onnx":
+            engines[name] = ocr_paddle_onnx
         elif name == "tesseract":
             engines[name] = ocr_tesseract
         elif name == "mistral":
@@ -231,7 +272,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--engines",
         default="ocrs,tesseract",
-        help="Comma-separated engine list: ocrs,tesseract,mistral,openrouter",
+        help="Comma-separated engine list: ocrs,tesseract,paddle-onnx,mistral,openrouter",
     )
     parser.add_argument("--limit", type=int, default=20, help="Maximum number of corpus pairs to evaluate")
     parser.add_argument("--source", help="Optional corpus source filter, for example: funsd or sroie")
@@ -262,6 +303,8 @@ def main() -> int:
             "source": args.source,
             "sample_size": len(sample),
             "cargo_target_dir": CARGO_TARGET_DIR,
+            "paddle_cargo_target_dir": PADDLE_CARGO_TARGET_DIR,
+            "ort_dylib_path": ORT_DYLIB_PATH,
         },
         "results": {engine: [] for engine in engines},
     }

@@ -52,6 +52,8 @@ OPENROUTER_MODEL=...
 ```bash
 python3 data/ocr-benchmark/prepare_corpus.py
 python3 data/ocr-benchmark/benchmark.py --engines ocrs,tesseract
+python3 data/ocr-benchmark/benchmark.py --engines ocrs,tesseract,paddle-onnx
 ```
 
 `benchmark.py` forces `CARGO_TARGET_DIR=/tmp/codex-ocr-corpus-target` for the `ocrs` engine subprocess.
+For the Paddle ONNX backend it uses `CARGO_TARGET_DIR=/tmp/codex-ocr-paddle-target` plus `ORT_DYLIB_PATH=/tmp/onnxruntime-arm64/onnxruntime-osx-arm64-1.24.2/lib/libonnxruntime.dylib`.
