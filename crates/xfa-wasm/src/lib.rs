@@ -27,6 +27,8 @@
 //! engine.importJson('{"form1.Name": "Bob"}');
 //! ```
 
+use pdf_engine::PdfDocument;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occur};
 use xfa_layout_engine::scripting;
@@ -403,23 +405,24 @@ fn set_field_value_by_path(tree: &mut FormTree, root: FormNodeId, path: &str, va
 
 // --- PdfDoc: PDF analysis via pdf-syntax (WASM-safe, no rayon) ---
 
-/// PDF document handle for analysis (metadata, signatures, compliance).
+/// PDF document handle for analysis and text extraction.
 ///
-/// Uses pdf-syntax directly (pure Rust, no rayon) for WASM compatibility.
+/// Uses `pdf-syntax` for metadata/geometry/signatures/compliance and
+/// `pdf-engine` for text extraction so the WASM path matches native decoding.
 #[wasm_bindgen]
 pub struct PdfDoc {
     pdf: pdf_syntax::Pdf,
-    /// Raw bytes kept for lopdf-based text extraction.
-    raw: Vec<u8>,
+    engine: PdfDocument,
 }
 
 #[wasm_bindgen]
 impl PdfDoc {
     /// Open a PDF from raw bytes.
     pub fn open(data: &[u8]) -> Result<PdfDoc, JsError> {
-        let raw = data.to_vec();
+        let raw = Arc::new(data.to_vec());
         let pdf = pdf_syntax::Pdf::new(raw.clone()).map_err(|e| JsError::new(&format!("{e:?}")))?;
-        Ok(PdfDoc { pdf, raw })
+        let engine = PdfDocument::open(raw).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(PdfDoc { pdf, engine })
     }
 
     /// Number of pages.
@@ -433,11 +436,7 @@ impl PdfDoc {
     /// Returns an empty string if the page index is out of range or text
     /// extraction fails.
     pub fn text(&self, page_index: usize) -> String {
-        let doc = match lopdf::Document::load_mem(&self.raw) {
-            Ok(d) => d,
-            Err(_) => return String::new(),
-        };
-        pdf_extract::extract_page_text(&doc, (page_index + 1) as u32).unwrap_or_default()
+        self.engine.extract_text(page_index).unwrap_or_default()
     }
 
     /// Document metadata as JSON.
@@ -809,6 +808,80 @@ fn bytes_to_pdf_string(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::{Document as LoDocument, Object};
+    use std::path::PathBuf;
+
+    fn corpus_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus")
+            .join(name)
+    }
+
+    fn normalize_text(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn strip_type0_tounicode(data: &[u8]) -> (Vec<u8>, usize) {
+        fn get_name(dict: &lopdf::Dictionary, key: &[u8]) -> Option<Vec<u8>> {
+            match dict.get(key).ok()? {
+                Object::Name(name) => Some(name.clone()),
+                _ => None,
+            }
+        }
+
+        fn descendant_is_cidfont_type2(doc: &LoDocument, type0: &lopdf::Dictionary) -> bool {
+            let Some(Object::Array(descendants)) = type0.get(b"DescendantFonts").ok() else {
+                return false;
+            };
+            let Some(Object::Reference(desc_id)) = descendants.first() else {
+                return false;
+            };
+            let Ok(Object::Dictionary(descendant)) = doc.get_object(*desc_id) else {
+                return false;
+            };
+            matches!(
+                descendant.get(b"Subtype").ok(),
+                Some(Object::Name(name)) if name.as_slice() == b"CIDFontType2"
+            )
+        }
+
+        let mut doc = LoDocument::load_mem(data).expect("load stripped-to-unicode fixture");
+        let ids: Vec<_> = doc.objects.keys().copied().collect();
+        let mut removed = 0usize;
+
+        for id in ids {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            if !matches!(
+                dict.get(b"Subtype").ok(),
+                Some(Object::Name(name)) if name.as_slice() == b"Type0"
+            ) {
+                continue;
+            }
+            if !matches!(
+                get_name(dict, b"Encoding").as_deref(),
+                Some(b"Identity-H") | Some(b"Identity-V")
+            ) {
+                continue;
+            }
+            if !descendant_is_cidfont_type2(&doc, dict) {
+                continue;
+            }
+
+            if let Some(Object::Dictionary(type0)) = doc.objects.get_mut(&id) {
+                if type0.has(b"ToUnicode") {
+                    type0.remove(b"ToUnicode");
+                    removed += 1;
+                }
+            }
+        }
+
+        let mut out = Vec::new();
+        doc.save_to(&mut out)
+            .expect("save stripped-to-unicode fixture");
+        (out, removed)
+    }
 
     #[test]
     fn from_fields_basic() {
@@ -923,6 +996,31 @@ mod tests {
         let v = XfaEngine::version();
         assert!(!v.is_empty());
     }
+
+    #[test]
+    fn pdf_doc_text_handles_type0_without_tounicode() {
+        let original = std::fs::read(corpus_path("sf181.pdf")).expect("read sf181 fixture");
+        let (stripped, removed) = strip_type0_tounicode(&original);
+        assert!(
+            removed > 0,
+            "expected to strip at least one Type0 ToUnicode"
+        );
+
+        let actual = PdfDoc::open(&stripped)
+            .expect("open stripped sf181")
+            .text(0);
+        let actual_norm = normalize_text(&actual);
+
+        assert!(
+            actual_norm.contains("Guide to Personnel Data Standards"),
+            "missing main heading after stripping ToUnicode: {actual_norm}"
+        );
+        assert!(
+            actual_norm.contains("Privacy Act Statement"),
+            "missing body text after stripping ToUnicode: {actual_norm}"
+        );
+    }
+
     #[test]
     fn bytes_to_pdf_string_utf8() {
         assert_eq!(bytes_to_pdf_string(b"hello"), "hello");
