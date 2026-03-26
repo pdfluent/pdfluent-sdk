@@ -1,5 +1,10 @@
 /target
 .env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
 *.swp
 *.swo
 .DS_Store
