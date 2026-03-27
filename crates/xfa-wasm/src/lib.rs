@@ -625,6 +625,86 @@ impl PdfDoc {
         self.render_page(page_index, scale)
     }
 
+    /// Render a page directly to an HTML canvas element (wasm32 only).
+    ///
+    /// Calls `canvas.getContext("2d")`, sets the canvas dimensions to the
+    /// rendered pixel size, and calls `putImageData` — no round-trip through
+    /// a JS Uint8Array.  XFA documents are auto-flattened before rendering.
+    ///
+    /// ```js
+    /// const canvas = document.getElementById('viewer');
+    /// await doc.renderPageToCanvas(canvas, 0, 1.5);  // page 0, 108 DPI
+    /// ```
+    #[cfg(all(feature = "render", target_arch = "wasm32"))]
+    #[wasm_bindgen(js_name = "renderPageToCanvas")]
+    pub fn render_page_to_canvas(
+        &self,
+        canvas: &web_sys::HtmlCanvasElement,
+        page_index: usize,
+        scale: f32,
+    ) -> Result<(), JsError> {
+        use wasm_bindgen::JsCast;
+        let options = pdf_engine::RenderOptions {
+            dpi: (scale * 72.0) as f64,
+            ..Default::default()
+        };
+        let rendered = self
+            .engine
+            .render_page(page_index, &options)
+            .map_err(|e| JsError::new(&format!("render failed: {e}")))?;
+        canvas.set_width(rendered.width);
+        canvas.set_height(rendered.height);
+        let ctx = canvas
+            .get_context("2d")
+            .map_err(|e| JsError::new(&format!("getContext: {e:?}")))?
+            .ok_or_else(|| JsError::new("no 2d context"))?;
+        let ctx: web_sys::CanvasRenderingContext2d = ctx
+            .dyn_into()
+            .map_err(|_| JsError::new("context is not CanvasRenderingContext2d"))?;
+        let image_data = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+            wasm_bindgen::Clamped(&rendered.pixels),
+            rendered.width,
+            rendered.height,
+        )
+        .map_err(|e| JsError::new(&format!("ImageData: {e:?}")))?;
+        ctx.put_image_data(&image_data, 0.0, 0.0)
+            .map_err(|e| JsError::new(&format!("putImageData: {e:?}")))?;
+        Ok(())
+    }
+
+    /// Character-level text positions for a page.
+    ///
+    /// Returns a JSON array of `{ch, x0, y0, x1, y1}` objects in PDF
+    /// coordinate space (origin at bottom-left, points).  Use to build a
+    /// transparent text-selection overlay on top of the rendered canvas.
+    ///
+    /// ```js
+    /// const chars = JSON.parse(doc.getTextPositions(0));
+    /// // chars[i] = { ch: "A", x0: 72.0, y0: 720.0, x1: 79.2, y1: 732.0 }
+    /// ```
+    #[wasm_bindgen(js_name = "getTextPositions")]
+    pub fn get_text_positions(&self, page_index: usize) -> Result<String, JsError> {
+        let data = self.pdf.data();
+        let doc = lopdf::Document::load_mem(data.as_ref())
+            .map_err(|e| JsError::new(&format!("lopdf: {e}")))?;
+        let page_num = (page_index + 1) as u32;
+        let chars = pdf_extract::extract_positioned_chars(&doc, page_num)
+            .map_err(|e| JsError::new(&format!("text extract: {e}")))?;
+        let result: Vec<_> = chars
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "ch": c.ch.to_string(),
+                    "x0": c.bbox[0],
+                    "y0": c.bbox[1],
+                    "x1": c.bbox[2],
+                    "y1": c.bbox[3],
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string(&result).unwrap_or_default())
+    }
+
     // ---- Annotation reading ----
 
     /// Parse existing annotations on a page as JSON.
