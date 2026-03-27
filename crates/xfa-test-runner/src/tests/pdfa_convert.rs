@@ -13,6 +13,12 @@ pub struct PdfAConvertTest {
     progress: Arc<Mutex<String>>,
 }
 
+impl Default for PdfAConvertTest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PdfAConvertTest {
     pub fn new() -> Self {
         Self {
@@ -650,6 +656,13 @@ impl PdfTest for PdfAConvertTest {
                         metadata.insert("verapdf_failed_rules".into(), failed_rules.join("|"));
                         if let Some(first) = failed_rules.first() {
                             metadata.insert("verapdf_first_rule".into(), first.clone());
+                        }
+                        // Store first failure description for diagnosis.
+                        if let Some(first_rf) = verapdf_report.rule_failures.first() {
+                            metadata.insert(
+                                "verapdf_message".into(),
+                                first_rf.description.chars().take(300).collect(),
+                            );
                         }
                     }
 

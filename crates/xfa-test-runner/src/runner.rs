@@ -43,6 +43,7 @@ fn single_pdf_timeout(test_name: &str, base_secs: u64) -> Duration {
         "bookmarks" | "annotations" | "form_fields" | "signatures" | "sign_verify" => {
             (base_secs / 3).max(5)
         }
+        "render_multi_oracle" => base_secs * 3,
         "ocr" => base_secs * 2,
         "pdfa_convert" => base_secs * 3,
         _ => base_secs,
@@ -62,7 +63,7 @@ fn run_test_with_timeout(
     let test_name = test.name().to_string();
     let (tx, rx) = std::sync::mpsc::channel();
 
-    std::thread::Builder::new()
+    match std::thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(move || {
             let start = Instant::now();
@@ -90,8 +91,18 @@ fn run_test_with_timeout(
                 }
             };
             let _ = tx.send(test_result);
-        })
-        .expect("failed to spawn test thread");
+        }) {
+        Ok(_handle) => {}
+        Err(e) => {
+            return TestResult {
+                status: TestStatus::Crash,
+                error_message: Some(format!("failed to spawn test thread: {e}")),
+                duration_ms: 0,
+                oracle_score: None,
+                metadata: Default::default(),
+            };
+        }
+    }
 
     match rx.recv_timeout(timeout) {
         Ok(result) => result,
