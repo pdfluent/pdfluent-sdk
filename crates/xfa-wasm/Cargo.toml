@@ -15,7 +15,7 @@ formcalc-interpreter.workspace = true
 xfa-layout-engine.workspace = true
 xfa-json.workspace = true
 pdf-syntax.workspace = true
-pdf-engine.workspace = true
+pdf-engine = { workspace = true, features = ["xfa"] }
 pdf-sign.workspace = true
 pdf-compliance.workspace = true
 pdf-render = { path = "../pdf-render", optional = true }
@@ -40,9 +40,9 @@ getrandom = { version = "0.2", features = ["js"] }
 default = ["render", "annotate"]
 render = ["dep:pdf-render"]
 annotate = ["dep:pdf-annot"]
-# wasm: core bindings only — no render (PDFium) or annotate (native-only features).
-# Use: cargo build -p xfa-wasm --target wasm32-unknown-unknown --no-default-features --features wasm
-wasm = []
+# wasm: browser build — includes vello_cpu render (wasm32-safe), excludes annotate (native-only).
+# Use: wasm-pack build --target web --no-default-features --features wasm
+wasm = ["render"]
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
