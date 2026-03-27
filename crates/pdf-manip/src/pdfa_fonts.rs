@@ -361,44 +361,53 @@ fn repair_invalid_font_names(doc: &mut Document, info: &NonEmbeddedFont, fd_id: 
 ///
 /// Returns the number of inline font dicts promoted.
 pub fn promote_inline_font_dicts(doc: &mut Document) -> usize {
-    // Collect Resources-dict object IDs and their inline font dict entries.
-    // Structure: Vec<(resources_id, font_alias_name, font_dict_clone)>
-    let mut to_promote: Vec<(ObjectId, Vec<u8>, lopdf::Dictionary)> = Vec::new();
+    // Collect (owner_id, path, font_alias, font_dict) for inline font entries.
+    // "path" is whether the /Font dict was found directly or via /Resources.
+    // Structure: Vec<(object_id_to_mutate, via_resources, font_alias, font_dict)>
+    let mut to_promote: Vec<(ObjectId, bool, Vec<u8>, lopdf::Dictionary)> = Vec::new();
 
     for (id, obj) in &doc.objects {
-        // Look for any dict that has a /Font sub-dict.
-        let fonts_dict = match obj {
-            Object::Dictionary(d) => match d.get(b"Font").ok() {
-                Some(Object::Dictionary(f)) => f.clone(),
-                _ => continue,
-            },
-            _ => continue,
-        };
-        // Collect inline (non-Reference) font entries.
-        for (alias, font_val) in fonts_dict.iter() {
-            if let Object::Dictionary(_) = font_val {
-                to_promote.push((*id, alias.to_vec(), {
+        let Object::Dictionary(d) = obj else { continue };
+
+        // Case 1: object has /Font directly (e.g., XObject Form, Type3 font).
+        if let Ok(Object::Dictionary(fonts_dict)) = d.get(b"Font") {
+            let fonts_dict = fonts_dict.clone();
+            for (alias, font_val) in fonts_dict.iter() {
+                if let Object::Dictionary(fd) = font_val {
+                    to_promote.push((*id, false, alias.to_vec(), fd.clone()));
+                }
+            }
+        }
+
+        // Case 2: object has /Resources → /Font (e.g., Page, ContentStream).
+        if let Ok(Object::Dictionary(res)) = d.get(b"Resources") {
+            if let Ok(Object::Dictionary(fonts_dict)) = res.get(b"Font") {
+                let fonts_dict = fonts_dict.clone();
+                for (alias, font_val) in fonts_dict.iter() {
                     if let Object::Dictionary(fd) = font_val {
-                        fd.clone()
-                    } else {
-                        unreachable!()
+                        to_promote.push((*id, true, alias.to_vec(), fd.clone()));
                     }
-                }));
+                }
             }
         }
     }
 
     let mut promoted = 0usize;
-    for (res_id, alias, font_dict) in to_promote {
-        // Add new object for the font dict.
+    for (owner_id, via_resources, alias, font_dict) in to_promote {
         let new_id = doc.add_object(Object::Dictionary(font_dict));
-        // Replace inline dict in the Resources /Font sub-dict with a Reference.
-        if let Some(Object::Dictionary(res_d)) = doc.objects.get_mut(&res_id) {
-            if let Ok(Object::Dictionary(fonts)) = res_d.get_mut(b"Font") {
+        if let Some(Object::Dictionary(owner)) = doc.objects.get_mut(&owner_id) {
+            if via_resources {
+                if let Ok(Object::Dictionary(res)) = owner.get_mut(b"Resources") {
+                    if let Ok(Object::Dictionary(fonts)) = res.get_mut(b"Font") {
+                        fonts.set(alias.as_slice(), Object::Reference(new_id));
+                        promoted += 1;
+                    }
+                }
+            } else if let Ok(Object::Dictionary(fonts)) = owner.get_mut(b"Font") {
                 fonts.set(alias.as_slice(), Object::Reference(new_id));
+                promoted += 1;
             }
         }
-        promoted += 1;
     }
     promoted
 }
@@ -432,7 +441,80 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
         }
     }
 
+    // Second pass: embed fonts via their FontDescriptor objects directly.
+    // This handles PDFs where font dicts are inline (not separate objects) and
+    // are therefore not found by find_non_embedded_fonts_detailed, but their
+    // FontDescriptor objects ARE indirect and can be updated.
+    let fd_embedded = embed_via_font_descriptors(doc);
+    report.fonts_embedded += fd_embedded;
+
     Ok(report)
+}
+
+/// Embed fonts by scanning FontDescriptor objects without a font program.
+/// FontDescriptor objects are always indirect (separate PDF objects) even when
+/// the parent font dict is inline. We can embed a font program directly into
+/// the FontDescriptor using its /FontName entry.
+fn embed_via_font_descriptors(doc: &mut Document) -> usize {
+    // Collect (fd_id, font_name) for descriptors without font programs.
+    let mut to_embed: Vec<(ObjectId, String)> = Vec::new();
+    for (id, obj) in &doc.objects {
+        let Object::Dictionary(d) = obj else { continue };
+        if get_name(d, b"Type").as_deref() != Some("FontDescriptor") {
+            continue;
+        }
+        if has_valid_font_file(doc, d) {
+            continue;
+        }
+        let Some(font_name) = get_name(d, b"FontName") else { continue };
+        let base = strip_subset_prefix(&font_name).to_owned();
+        // Skip Standard 14 fonts — they don't need embedding in PDF/A.
+        if is_standard_14(&base) {
+            continue;
+        }
+        to_embed.push((*id, base));
+    }
+
+    let mut embedded = 0usize;
+    for (fd_id, font_name) in to_embed {
+        let Some(path) = find_system_font(&font_name).or_else(find_fallback_font) else {
+            continue;
+        };
+        let Ok(font_data) = std::fs::read(&path) else { continue };
+
+        // Detect font type: TrueType (.ttf/.otf with TT outlines) or CFF.
+        let ext = std::path::Path::new(&path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let is_truetype = ext.eq_ignore_ascii_case("ttf")
+            || font_data.starts_with(b"\x00\x01\x00\x00")
+            || font_data.starts_with(b"true");
+
+        let (ff_key, subtype): (&[u8], Option<&[u8]>) = if is_truetype {
+            (b"FontFile2", None)
+        } else {
+            (b"FontFile3", Some(b"OpenType"))
+        };
+
+        let mut stream = lopdf::Stream::new(
+            lopdf::dictionary! {
+                "Length" => Object::Integer(font_data.len() as i64),
+            },
+            font_data,
+        );
+        if let Some(sub) = subtype {
+            stream.dict.set("Subtype", Object::Name(sub.to_vec()));
+        }
+        let _ = stream.compress();
+        let ff_id = doc.add_object(Object::Stream(stream));
+
+        if let Some(Object::Dictionary(fd)) = doc.objects.get_mut(&fd_id) {
+            fd.set(ff_key, Object::Reference(ff_id));
+            embedded += 1;
+        }
+    }
+    embedded
 }
 
 /// Check if this is a Standard 14 font.
@@ -5299,18 +5381,25 @@ pub fn fix_symbolic_flags(doc: &mut Document) -> usize {
             _ => None,
         };
         if let Some(fd_id) = tt_sym_fd {
-            let needs_fix = match doc.objects.get(&fd_id) {
+            let (needs_flag_fix, has_encoding) = match doc.objects.get(&fd_id) {
                 Some(Object::Dictionary(fd)) => {
                     let has_ff2 = fd.has(b"FontFile2");
                     let flags = match fd.get(b"Flags").ok() {
                         Some(Object::Integer(f)) => *f,
                         _ => 0,
                     };
-                    has_ff2 && ((flags & 4 == 0) || (flags & 32 != 0))
+                    let flag_fix = has_ff2 && ((flags & 4 == 0) || (flags & 32 != 0));
+                    let enc = doc
+                        .objects
+                        .get(&font_id)
+                        .and_then(|o| o.as_dict().ok())
+                        .map(|d| d.has(b"Encoding"))
+                        .unwrap_or(false);
+                    (flag_fix, enc)
                 }
-                _ => false,
+                _ => (false, false),
             };
-            if needs_fix {
+            if needs_flag_fix {
                 if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
                     let flags = match fd.get(b"Flags").ok() {
                         Some(Object::Integer(f)) => *f,
@@ -5318,11 +5407,17 @@ pub fn fix_symbolic_flags(doc: &mut Document) -> usize {
                     };
                     fd.set("Flags", Object::Integer((flags | 4) & !32));
                 }
-                // Remove Encoding — symbolic TrueType must not have one.
+                fixed += 1;
+            }
+            // Symbolic TrueType fonts must NOT have /Encoding (6.2.11.6:3),
+            // regardless of whether the flags also needed fixing.
+            if has_encoding {
                 if let Some(Object::Dictionary(ref mut fdict)) = doc.objects.get_mut(&font_id) {
                     fdict.remove(b"Encoding");
                 }
-                fixed += 1;
+                if !needs_flag_fix {
+                    fixed += 1;
+                }
             }
             continue;
         }
@@ -7088,6 +7183,15 @@ fn get_truetype_glyph_width_fractional(
     // subtables and may find a mapping in (1,0) Mac Roman that doesn't exist
     // in (3,1), causing width mismatches.
     //
+    // Apply canonical Unicode normalization BEFORE the (3,1) cmap lookup.
+    // veraPDF normalizes certain Unicode codepoints before width comparison:
+    // U+00AD (soft hyphen) → U+002D (hyphen-minus). This is applied ALWAYS,
+    // not as a fallback — even if the font has a soft-hyphen glyph with a
+    // different advance than the hyphen, veraPDF uses the hyphen advance.
+    // Applying it here (before the cmap lookup) ensures we generate a width
+    // correction when the PDF dict still has the soft-hyphen advance.
+    // (#fix-tt-cmap-soft-hyphen-pre-lookup)
+    //
     // Use a tri-state raw lookup to distinguish:
     //   Some(gid) gid != 0 → real glyph, use its advance
     //   Some(GID(0))       → (3,1) explicitly maps to notdef; veraPDF uses the
@@ -7095,6 +7199,10 @@ fn get_truetype_glyph_width_fractional(
     //   None               → truly absent from (3,1); may fall through to Mac
     // (#fix-tt-cmap31-notdef-vs-absent)
     let ch = encoding_to_char(code, enc_name);
+    let ch = match ch {
+        '\u{00AD}' => '-', // soft hyphen → hyphen-minus (veraPDF canonical)
+        other => other,
+    };
     match lookup_unicode_cmap_31_raw(face, ch as u32) {
         Some(gid) if gid.0 != 0 => {
             return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
@@ -7123,21 +7231,6 @@ fn get_truetype_glyph_width_fractional(
         return face
             .glyph_hor_advance(ttf_parser::GlyphId(0))
             .map(|w| w as f64 * scale);
-    }
-
-    // Some Unicode formatting characters are rendered using a canonical base glyph.
-    // veraPDF normalizes these when looking up glyph widths in the (3,1) cmap:
-    // U+00AD (soft hyphen) → U+002D (hyphen); the font's soft-hyphen slot reuses
-    // the hyphen glyph, so veraPDF reports the hyphen advance for §6.2.11.5.
-    // (#fix-tt-cmap-soft-hyphen)
-    let canonical_fallback: Option<char> = match ch {
-        '\u{00AD}' => Some('-'), // soft hyphen → hyphen-minus
-        _ => None,
-    };
-    if let Some(fb_ch) = canonical_fallback {
-        if let Some(gid) = lookup_unicode_cmap_31(face, fb_ch as u32) {
-            return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
-        }
     }
 
     // veraPDF §6.2.11.5 locates TrueType glyphs via glyph-name lookup:
@@ -12058,14 +12151,14 @@ fn is_font_symbolic(doc: &Document, font_dict: &lopdf::Dictionary) -> bool {
             if symbolic && !nonsymbolic {
                 return true;
             }
-            // If both bits are set, use the font name as a tiebreaker.
-            // This occurs in real-world Symbol fonts where validators still
-            // treat the font as symbolic for 6.2.11.6 checks.
+            // If both bits are set, the PDF is malformed (they are mutually
+            // exclusive per ISO 32000 Table 122).  veraPDF treats the Symbolic
+            // bit (4) as dominant for §6.2.11.6:3 validation — i.e. if bit 3
+            // is set, the font is considered symbolic regardless of bit 6, so
+            // an Encoding entry is forbidden.  Return true so our pipeline
+            // strips Encoding from these fonts and avoids the violation.
             if symbolic && nonsymbolic {
-                if let Some(name) = get_name(font_dict, b"BaseFont") {
-                    return is_symbolic_font_name(&name);
-                }
-                return false;
+                return true;
             }
         }
     }
