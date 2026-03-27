@@ -16,6 +16,17 @@ pub fn extract_packets(document: &PdfDocument) -> Result<XfaPackets, XfaError> {
     pdf_xfa::extract::extract_xfa(document.pdf())
 }
 
+/// Returns `true` if the document has an XFA template packet.
+///
+/// XFA PDFs without a template are treated as non-XFA (they have no content
+/// to flatten), so this returns `false` for those documents.
+pub fn has_xfa(document: &PdfDocument) -> bool {
+    match pdf_xfa::extract::extract_xfa(document.pdf()) {
+        Ok(packets) => packets.template().is_some(),
+        Err(_) => false,
+    }
+}
+
 /// Flatten an XFA document into static PDF bytes.
 pub fn flatten(document: &PdfDocument) -> Result<Vec<u8>, XfaError> {
     pdf_xfa::flatten_xfa_to_pdf(document.pdf().data().as_ref())
