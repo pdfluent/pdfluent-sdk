@@ -145,25 +145,80 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 ///
 /// An array /Contents entry (multiple streams) or any individual stream larger
 /// than 200 bytes indicates pre-flattened page content that should be preserved
-/// rather than replaced by XFA re-rendering.
+/// rather than replaced by XFA re-rendering. Adobe's default XFA fallback
+/// page ("Please wait..." / Adobe Reader upgrade text) is explicitly ignored:
+/// those bytes are not real pre-rendered form content and must not suppress
+/// XFA flattening.
 fn pages_have_static_content(doc: &Document) -> bool {
     for page_id in doc.page_iter() {
-        let Ok(page_dict) = doc.get_dictionary(page_id) else {
+        let streams = page_content_streams(doc, page_id);
+        if streams.is_empty() {
             continue;
-        };
-        match page_dict.get(b"Contents") {
-            Ok(Object::Array(arr)) if arr.len() > 1 => return true,
-            Ok(Object::Reference(r)) => {
-                if let Ok(Object::Stream(stream)) = doc.get_object(*r) {
-                    if stream.content.len() > 200 {
-                        return true;
-                    }
-                }
-            }
-            _ => {}
         }
+
+        let has_substantial_content =
+            streams.len() > 1 || streams.iter().any(|stream| stream.len() > 200);
+        if !has_substantial_content {
+            continue;
+        }
+
+        if streams
+            .iter()
+            .all(|stream| is_xfa_placeholder_stream(stream))
+        {
+            continue;
+        }
+
+        return true;
     }
     false
+}
+
+fn page_content_streams(doc: &Document, page_id: ObjectId) -> Vec<Vec<u8>> {
+    let Ok(page_dict) = doc.get_dictionary(page_id) else {
+        return Vec::new();
+    };
+
+    match page_dict.get(b"Contents") {
+        Ok(Object::Array(arr)) => arr
+            .iter()
+            .filter_map(|object| resolve_stream_content(doc, object))
+            .collect(),
+        Ok(object) => resolve_stream_content(doc, object).into_iter().collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn resolve_stream_content(doc: &Document, object: &Object) -> Option<Vec<u8>> {
+    let stream = match object {
+        Object::Reference(id) => doc.get_object(*id).ok()?.as_stream().ok()?,
+        Object::Stream(stream) => stream,
+        _ => return None,
+    };
+
+    stream
+        .get_plain_content()
+        .ok()
+        .or_else(|| Some(stream.content.clone()))
+}
+
+fn is_xfa_placeholder_stream(stream: &[u8]) -> bool {
+    const PLACEHOLDER_MARKERS: [&[u8]; 4] = [
+        b"Please wait",
+        b"Adobe Reader",
+        b"reader_download",
+        b"display this type of document",
+    ];
+
+    PLACEHOLDER_MARKERS
+        .iter()
+        .any(|marker| contains_ascii_case_insensitive(stream, marker))
+}
+
+fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 /// Remove Widget annotations from all pages and strip /AcroForm from the catalog.
@@ -325,7 +380,7 @@ mod tests {
     use super::*;
 
     /// Build a minimal XFA PDF in memory (same as generate_xfa_layout_fixtures).
-    fn build_xfa_pdf(xdp: &str) -> Vec<u8> {
+    fn build_xfa_pdf_with_content(xdp: &str, page_content: Vec<u8>) -> Vec<u8> {
         use lopdf::{dictionary, Document, Object, Stream};
         let mut doc = Document::with_version("1.4");
         let xdp_bytes = xdp.as_bytes().to_vec();
@@ -335,7 +390,10 @@ mod tests {
         );
         let xfa_id = doc.add_object(Object::Stream(xfa_stream));
         let pages_id = doc.new_object_id();
-        let content_stream = Stream::new(dictionary! { "Length" => Object::Integer(0i64) }, vec![]);
+        let content_stream = Stream::new(
+            dictionary! { "Length" => Object::Integer(page_content.len() as i64) },
+            page_content,
+        );
         let content_id = doc.add_object(Object::Stream(content_stream));
         let page_id = doc.add_object(Object::Dictionary(dictionary! {
             "Type"     => Object::Name(b"Page".to_vec()),
@@ -367,6 +425,10 @@ mod tests {
         let mut out = Vec::new();
         doc.save_to(&mut out).unwrap();
         out
+    }
+
+    fn build_xfa_pdf(xdp: &str) -> Vec<u8> {
+        build_xfa_pdf_with_content(xdp, Vec::new())
     }
 
     const SIMPLE_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -528,5 +590,49 @@ mod tests {
         // flatten_xfa_to_pdf should return Ok (with the same bytes).
         let result = flatten_xfa_to_pdf(&raw).expect("flatten non-XFA failed");
         assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn placeholder_only_page_does_not_trigger_static_strip_path() {
+        const PLACEHOLDER_STREAM: &str = r#"BT
+/Helv 24 Tf
+72 720 Td
+(Please wait...) Tj
+0 -32 Td
+(If this message is not eventually replaced by the proper contents of the document,) Tj
+0 -32 Td
+(your PDF viewer may not be able to display this type of document.) Tj
+0 -32 Td
+(You can upgrade to the latest version of Adobe Reader by visiting reader_download.) Tj
+ET
+"#;
+
+        let pdf_bytes =
+            build_xfa_pdf_with_content(SIMPLE_XDP, PLACEHOLDER_STREAM.as_bytes().to_vec());
+        let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+
+        let doc = Document::load_mem(&result).expect("load flattened PDF");
+        let page_id = doc.page_iter().next().expect("flattened page");
+        let page_dict = doc.get_dictionary(page_id).expect("page dict");
+        let contents_id = page_dict
+            .get(b"Contents")
+            .ok()
+            .and_then(|object| object.as_reference().ok())
+            .expect("contents ref");
+        let stream = doc
+            .get_object(contents_id)
+            .expect("contents object")
+            .as_stream()
+            .expect("contents stream");
+        let content = String::from_utf8_lossy(&stream.content);
+
+        assert!(
+            content.contains("John"),
+            "flattened page should contain XFA-rendered field content"
+        );
+        assert!(
+            !content.contains("Please wait"),
+            "placeholder text should not survive XFA flattening"
+        );
     }
 }
