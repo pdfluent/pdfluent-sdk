@@ -415,6 +415,17 @@ pub struct PdfDoc {
     engine: PdfDocument,
 }
 
+#[derive(serde::Serialize)]
+struct TextRun {
+    text: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    #[serde(rename = "fontSize")]
+    font_size: f64,
+}
+
 #[wasm_bindgen]
 impl PdfDoc {
     /// Open a PDF from raw bytes.
@@ -436,6 +447,11 @@ impl PdfDoc {
     /// Returns an empty string if the page index is out of range or text
     /// extraction fails.
     pub fn text(&self, page_index: usize) -> String {
+        if let Some(flattened_engine) = self.open_flattened_xfa_engine() {
+            return flattened_engine
+                .extract_text(page_index)
+                .unwrap_or_default();
+        }
         self.engine.extract_text(page_index).unwrap_or_default()
     }
 
@@ -475,7 +491,11 @@ impl PdfDoc {
     /// Validate against a PDF/A level. Returns compliance report as JSON.
     #[wasm_bindgen(js_name = "validatePdfA")]
     pub fn validate_pdfa(&self, level: &str) -> Result<String, JsError> {
-        let pdfa_level = match level.to_lowercase().replace(['-', '/', '_', ' '], "").as_str() {
+        let pdfa_level = match level
+            .to_lowercase()
+            .replace(['-', '/', '_', ' '], "")
+            .as_str()
+        {
             "pdfa1a" | "a1a" | "1a" => pdf_compliance::PdfALevel::A1a,
             "pdfa1b" | "a1b" | "1b" => pdf_compliance::PdfALevel::A1b,
             "pdfa2a" | "a2a" | "2a" => pdf_compliance::PdfALevel::A2a,
@@ -484,12 +504,14 @@ impl PdfDoc {
             "pdfa3a" | "a3a" | "3a" => pdf_compliance::PdfALevel::A3a,
             "pdfa3b" | "a3b" | "3b" => pdf_compliance::PdfALevel::A3b,
             "pdfa3u" | "a3u" | "3u" => pdf_compliance::PdfALevel::A3u,
-            "pdfa4"  | "a4"  | "4"  => pdf_compliance::PdfALevel::A4,
+            "pdfa4" | "a4" | "4" => pdf_compliance::PdfALevel::A4,
             "pdfa4f" | "a4f" | "4f" => pdf_compliance::PdfALevel::A4f,
             "pdfa4e" | "a4e" | "4e" => pdf_compliance::PdfALevel::A4e,
-            other => return Err(JsError::new(&format!(
-                "unknown PDF/A level: {other:?} — expected e.g. \"2b\", \"3b\", \"1b\""
-            ))),
+            other => {
+                return Err(JsError::new(&format!(
+                    "unknown PDF/A level: {other:?} — expected e.g. \"2b\", \"3b\", \"1b\""
+                )))
+            }
         };
         let report = pdf_compliance::validate_pdfa(&self.pdf, pdfa_level);
         let result = serde_json::json!({
@@ -540,23 +562,19 @@ impl PdfDoc {
     /// Get page width in PDF points.
     #[wasm_bindgen(js_name = "pageWidth")]
     pub fn page_width(&self, page_index: usize) -> f64 {
-        let pages = self.pdf.pages();
-        if page_index >= pages.len() {
-            return 0.0;
-        }
-        let mb = pages[page_index].media_box();
-        (mb.x1 - mb.x0).abs()
+        self.engine
+            .page_geometry(page_index)
+            .map(|geometry| geometry.effective_dimensions().0)
+            .unwrap_or(0.0)
     }
 
     /// Get page height in PDF points.
     #[wasm_bindgen(js_name = "pageHeight")]
     pub fn page_height(&self, page_index: usize) -> f64 {
-        let pages = self.pdf.pages();
-        if page_index >= pages.len() {
-            return 0.0;
-        }
-        let mb = pages[page_index].media_box();
-        (mb.y1 - mb.y0).abs()
+        self.engine
+            .page_geometry(page_index)
+            .map(|geometry| geometry.effective_dimensions().1)
+            .unwrap_or(0.0)
     }
 
     // ---- Page rendering (feature: render) ----
@@ -577,16 +595,7 @@ impl PdfDoc {
     #[cfg(feature = "render")]
     #[wasm_bindgen(js_name = "renderPage")]
     pub fn render_page(&self, page_index: usize, scale: f32) -> Result<Vec<u8>, JsError> {
-        // Route through pdf-engine so XFA documents are auto-flattened before
-        // rendering.  Scale maps to DPI: 1.0 = 72 DPI (1 pt = 1 px).
-        let options = pdf_engine::RenderOptions {
-            dpi: (scale * 72.0) as f64,
-            ..Default::default()
-        };
-        let page = self
-            .engine
-            .render_page(page_index, &options)
-            .map_err(|e| JsError::new(&format!("render failed: {e}")))?;
+        let page = Self::render_engine_page(&self.engine, page_index, scale)?;
         let mut buf = Vec::with_capacity(8 + page.pixels.len());
         buf.extend_from_slice(&page.width.to_le_bytes());
         buf.extend_from_slice(&page.height.to_le_bytes());
@@ -643,66 +652,77 @@ impl PdfDoc {
         page_index: usize,
         scale: f32,
     ) -> Result<(), JsError> {
-        use wasm_bindgen::JsCast;
-        let options = pdf_engine::RenderOptions {
-            dpi: (scale * 72.0) as f64,
-            ..Default::default()
-        };
-        let rendered = self
-            .engine
-            .render_page(page_index, &options)
-            .map_err(|e| JsError::new(&format!("render failed: {e}")))?;
-        canvas.set_width(rendered.width);
-        canvas.set_height(rendered.height);
-        let ctx = canvas
-            .get_context("2d")
-            .map_err(|e| JsError::new(&format!("getContext: {e:?}")))?
-            .ok_or_else(|| JsError::new("no 2d context"))?;
-        let ctx: web_sys::CanvasRenderingContext2d = ctx
-            .dyn_into()
-            .map_err(|_| JsError::new("context is not CanvasRenderingContext2d"))?;
-        let image_data = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
-            wasm_bindgen::Clamped(&rendered.pixels),
-            rendered.width,
-            rendered.height,
-        )
-        .map_err(|e| JsError::new(&format!("ImageData: {e:?}")))?;
-        ctx.put_image_data(&image_data, 0.0, 0.0)
-            .map_err(|e| JsError::new(&format!("putImageData: {e:?}")))?;
-        Ok(())
+        let has_xfa = pdf_engine::xfa::has_xfa(&self.engine);
+        web_sys::console::log_1(&format!("has_xfa: {has_xfa}").into());
+
+        if has_xfa {
+            web_sys::console::log_1(&"XFA detected, flattening...".into());
+            match pdf_engine::xfa::flatten(&self.engine) {
+                Ok(flattened_bytes) => {
+                    web_sys::console::log_1(
+                        &format!("Flattened: {} bytes", flattened_bytes.len()).into(),
+                    );
+                    match PdfDocument::open(Arc::new(flattened_bytes)) {
+                        Ok(flattened_engine) => {
+                            return self.render_engine_to_canvas(
+                                &flattened_engine,
+                                canvas,
+                                page_index,
+                                scale,
+                            );
+                        }
+                        Err(error) => {
+                            web_sys::console::log_1(
+                                &format!("flatten open failed: {error}").into(),
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    web_sys::console::log_1(&format!("Flatten failed: {error}").into());
+                }
+            }
+        }
+
+        web_sys::console::log_1(&"Rendering original PDF bytes".into());
+        self.render_engine_to_canvas(&self.engine, canvas, page_index, scale)
     }
 
-    /// Character-level text positions for a page.
+    /// Text-run positions for a page.
     ///
-    /// Returns a JSON array of `{ch, x0, y0, x1, y1}` objects in PDF
-    /// coordinate space (origin at bottom-left, points).  Use to build a
-    /// transparent text-selection overlay on top of the rendered canvas.
+    /// Returns a JSON array of `{text, x, y, width, height, fontSize}`
+    /// objects in page space with origin at the top-left.  Each entry is a
+    /// contiguous text run emitted by the same PDF interpreter that drives the
+    /// renderer, which keeps the selection overlay aligned with the canvas.
     ///
     /// ```js
-    /// const chars = JSON.parse(doc.getTextPositions(0));
-    /// // chars[i] = { ch: "A", x0: 72.0, y0: 720.0, x1: 79.2, y1: 732.0 }
+    /// const runs = JSON.parse(doc.getTextPositions(0));
+    /// // runs[i] = { text: "Hello world", x: 72.0, y: 100.0, width: 96.0, height: 12.0, fontSize: 12.0 }
     /// ```
     #[wasm_bindgen(js_name = "getTextPositions")]
     pub fn get_text_positions(&self, page_index: usize) -> Result<String, JsError> {
-        let data = self.pdf.data();
-        let doc = lopdf::Document::load_mem(data.as_ref())
-            .map_err(|e| JsError::new(&format!("lopdf: {e}")))?;
-        let page_num = (page_index + 1) as u32;
-        let chars = pdf_extract::extract_positioned_chars(&doc, page_num)
-            .map_err(|e| JsError::new(&format!("text extract: {e}")))?;
-        let result: Vec<_> = chars
-            .iter()
-            .map(|c| {
-                serde_json::json!({
-                    "ch": c.ch.to_string(),
-                    "x0": c.bbox[0],
-                    "y0": c.bbox[1],
-                    "x1": c.bbox[2],
-                    "y1": c.bbox[3],
-                })
+        let text_engine = self.open_flattened_xfa_engine();
+        let engine = text_engine.as_ref().unwrap_or(&self.engine);
+        let page_height = engine
+            .page_geometry(page_index)
+            .map(|geometry| geometry.effective_dimensions().1)
+            .unwrap_or(0.0);
+        let runs: Vec<TextRun> = engine
+            .extract_text_blocks(page_index)
+            .map_err(|e| JsError::new(&format!("text extract: {e}")))?
+            .into_iter()
+            .flat_map(|block| block.spans.into_iter())
+            .filter(|span| !span.text.is_empty())
+            .map(|span| TextRun {
+                text: span.text,
+                x: span.x.max(0.0),
+                y: (page_height - span.y - span.height).max(0.0),
+                width: span.width.max(1.0),
+                height: span.height.max(1.0),
+                font_size: span.font_size.max(1.0),
             })
             .collect();
-        Ok(serde_json::to_string(&result).unwrap_or_default())
+        serde_json::to_string(&runs).map_err(|e| JsError::new(&format!("serialize text runs: {e}")))
     }
 
     // ---- Annotation reading ----
@@ -867,6 +887,63 @@ impl PdfDoc {
             })
             .collect();
         serde_json::to_string(&results).unwrap_or_default()
+    }
+}
+
+impl PdfDoc {
+    fn open_flattened_xfa_engine(&self) -> Option<PdfDocument> {
+        if !pdf_engine::xfa::has_xfa(&self.engine) {
+            return None;
+        }
+
+        let flattened_bytes = pdf_engine::xfa::flatten(&self.engine).ok()?;
+        PdfDocument::open(Arc::new(flattened_bytes)).ok()
+    }
+
+    #[cfg(feature = "render")]
+    fn render_engine_page(
+        engine: &PdfDocument,
+        page_index: usize,
+        scale: f32,
+    ) -> Result<pdf_engine::RenderedPage, JsError> {
+        let options = pdf_engine::RenderOptions {
+            dpi: (scale * 72.0) as f64,
+            ..Default::default()
+        };
+        engine
+            .render_page(page_index, &options)
+            .map_err(|e| JsError::new(&format!("render failed: {e}")))
+    }
+
+    #[cfg(all(feature = "render", target_arch = "wasm32"))]
+    fn render_engine_to_canvas(
+        &self,
+        engine: &PdfDocument,
+        canvas: &web_sys::HtmlCanvasElement,
+        page_index: usize,
+        scale: f32,
+    ) -> Result<(), JsError> {
+        use wasm_bindgen::JsCast;
+
+        let rendered = Self::render_engine_page(engine, page_index, scale)?;
+        canvas.set_width(rendered.width);
+        canvas.set_height(rendered.height);
+        let ctx = canvas
+            .get_context("2d")
+            .map_err(|e| JsError::new(&format!("getContext: {e:?}")))?
+            .ok_or_else(|| JsError::new("no 2d context"))?;
+        let ctx: web_sys::CanvasRenderingContext2d = ctx
+            .dyn_into()
+            .map_err(|_| JsError::new("context is not CanvasRenderingContext2d"))?;
+        let image_data = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+            wasm_bindgen::Clamped(&rendered.pixels),
+            rendered.width,
+            rendered.height,
+        )
+        .map_err(|e| JsError::new(&format!("ImageData: {e:?}")))?;
+        ctx.put_image_data(&image_data, 0.0, 0.0)
+            .map_err(|e| JsError::new(&format!("putImageData: {e:?}")))?;
+        Ok(())
     }
 }
 
