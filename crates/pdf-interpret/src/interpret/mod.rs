@@ -22,7 +22,7 @@ use pdf_syntax::object::dict::keys::{ANNOTS, AP, F, FT, MCID, N, OC, RECT};
 use pdf_syntax::object::{Array, Dict, Name, Object, Rect, Stream, dict_or_stream};
 use pdf_syntax::page::{Page, Resources};
 use smallvec::smallvec;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 pub(crate) mod path;
 pub(crate) mod state;
@@ -103,6 +103,48 @@ pub struct InterpreterSettings {
     pub render_annotations: bool,
 }
 
+/// Known paths for CJK fonts, ordered by preference.
+/// Covers macOS, Ubuntu/Debian, Fedora/RHEL, and Alpine Linux.
+#[cfg(feature = "embed-fonts")]
+const CJK_FONT_CANDIDATE_PATHS: &[&str] = &[
+    // macOS — ships with every installation
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    // Noto CJK — most common on Linux
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+    // WenQuanYi — fallback on older Ubuntu/Debian systems
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    // Arphic (traditional)
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    // Alpine Linux
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+];
+
+/// Lazily loaded CJK system font bytes.  `None` means no CJK font was found.
+#[cfg(feature = "embed-fonts")]
+static SYSTEM_CJK_FONT: OnceLock<Option<Arc<Vec<u8>>>> = OnceLock::new();
+
+/// Try to load a CJK font from the host system, returning its raw bytes.
+#[cfg(feature = "embed-fonts")]
+fn system_cjk_font() -> Option<FontData> {
+    SYSTEM_CJK_FONT
+        .get_or_init(|| {
+            for path in CJK_FONT_CANDIDATE_PATHS {
+                if let Ok(bytes) = std::fs::read(path) {
+                    log::debug!("CJK fallback font loaded from {path}");
+                    return Some(Arc::new(bytes));
+                }
+            }
+            log::warn!("no system CJK font found; non-embedded CJK fonts will render with a Latin fallback");
+            None
+        })
+        .as_ref()
+        .map(|data| -> FontData { data.clone() })
+}
+
 impl Default for InterpreterSettings {
     fn default() -> Self {
         Self {
@@ -111,7 +153,20 @@ impl Default for InterpreterSettings {
             #[cfg(feature = "embed-fonts")]
             font_resolver: Arc::new(|query| match query {
                 FontQuery::Standard(s) => Some(s.get_font_data()),
-                FontQuery::Fallback(f) => Some(f.pick_standard_font().get_font_data()),
+                FontQuery::Fallback(f) => {
+                    // For non-embedded CJK fonts (Adobe-GB1, CNS1, Japan1, Korea1)
+                    // try a system CJK font first so characters render correctly.
+                    // This avoids the situation where a Latin fallback font is used
+                    // and Chinese/Japanese/Korean glyphs appear as "d", "a", etc.
+                    if f.character_collection
+                        .as_ref()
+                        .is_some_and(|cc| cc.family.is_cjk())
+                        && let Some(data) = system_cjk_font()
+                    {
+                        return Some((data, 0));
+                    }
+                    Some(f.pick_standard_font().get_font_data())
+                }
             }),
             #[cfg(feature = "embed-cmaps")]
             cmap_resolver: Arc::new(pdf_font::cmap::load_embedded),
