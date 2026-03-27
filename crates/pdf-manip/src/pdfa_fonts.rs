@@ -16656,64 +16656,135 @@ pub fn fix_type3_notdef_charprocs(doc: &mut Document) -> usize {
     let mut fixed = 0;
 
     for font_id in font_ids {
-        // Identify Type3 fonts with a CharProcs dict that contains .notdef.
-        let (charprocs_id, encoding_info) = {
-            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
-                continue;
-            };
-            if !is_font_dict(dict) {
-                continue;
+        // Identify Type3 fonts.
+        let is_type3 = match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(dict)) => {
+                is_font_dict(dict)
+                    && get_name(dict, b"Subtype").as_deref() == Some("Type3")
             }
-            if get_name(dict, b"Subtype").as_deref() != Some("Type3") {
-                continue;
-            }
-            // CharProcs must be a reference to a dict.
-            let cp_id = match dict.get(b"CharProcs").ok() {
-                Some(Object::Reference(id)) => *id,
-                _ => continue,
-            };
-            // Encoding reference (if indirect) or inline dict.
-            let enc_ref = match dict.get(b"Encoding").ok() {
-                Some(Object::Reference(id)) => Some(*id),
-                _ => None,
-            };
-            (cp_id, enc_ref)
+            _ => false,
         };
-
-        // Check that CharProcs actually contains .notdef.
-        let charprocs_has_notdef = {
-            let Some(Object::Dictionary(cp)) = doc.objects.get(&charprocs_id) else {
-                continue;
-            };
-            cp.has(b".notdef")
-        };
-        if !charprocs_has_notdef {
+        if !is_type3 {
             continue;
         }
 
+        // Determine if CharProcs contains .notdef (indirect or inline).
+        enum CharProcsLoc {
+            Indirect(ObjectId),
+            Inline, // inline within the font dict
+        }
+        let cp_loc: Option<CharProcsLoc> = match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(dict)) => match dict.get(b"CharProcs").ok() {
+                Some(Object::Reference(id)) => {
+                    let has = doc
+                        .objects
+                        .get(id)
+                        .and_then(|o| o.as_dict().ok())
+                        .map(|d| d.has(b".notdef"))
+                        .unwrap_or(false);
+                    if has {
+                        Some(CharProcsLoc::Indirect(*id))
+                    } else {
+                        None
+                    }
+                }
+                Some(Object::Dictionary(cp)) => {
+                    if cp.has(b".notdef") {
+                        Some(CharProcsLoc::Inline)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(cp_loc) = cp_loc else {
+            continue;
+        };
+
         // Rename .notdef → gnotdef in CharProcs.
-        if let Some(Object::Dictionary(cp)) = doc.objects.get_mut(&charprocs_id) {
-            if let Some(val) = cp.remove(b".notdef") {
-                cp.set("gnotdef", val);
-                fixed += 1;
+        match cp_loc {
+            CharProcsLoc::Indirect(cp_id) => {
+                if let Some(Object::Dictionary(cp)) = doc.objects.get_mut(&cp_id) {
+                    if let Some(val) = cp.remove(b".notdef") {
+                        cp.set("gnotdef", val);
+                        fixed += 1;
+                    }
+                }
+            }
+            CharProcsLoc::Inline => {
+                // Clone font dict, mutate inline CharProcs, reinsert.
+                let mut font_dict = match doc.objects.get(&font_id).cloned() {
+                    Some(Object::Dictionary(d)) => d,
+                    _ => continue,
+                };
+                let modified = match font_dict.get_mut(b"CharProcs").ok() {
+                    Some(Object::Dictionary(cp)) => {
+                        if let Some(val) = cp.remove(b".notdef") {
+                            cp.set("gnotdef", val);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                };
+                if modified {
+                    doc.objects
+                        .insert(font_id, Object::Dictionary(font_dict.clone()));
+                    fixed += 1;
+                    // Reload for Encoding patch below.
+                    // (font_dict already has the updated CharProcs)
+                }
             }
         }
 
         // Update the Encoding /Differences array to replace .notdef with gnotdef.
-        let enc_id = match encoding_info {
-            Some(id) => id,
-            None => continue,
+        // Handles both indirect and inline Encoding.
+        let enc_ref = match doc.objects.get(&font_id) {
+            Some(Object::Dictionary(dict)) => match dict.get(b"Encoding").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            },
+            _ => None,
         };
-        let Some(Object::Dictionary(enc_dict)) = doc.objects.get_mut(&enc_id) else {
-            continue;
+
+        let rename_diffs = |diffs: &mut Vec<Object>| {
+            for item in diffs.iter_mut() {
+                if matches!(item, Object::Name(n) if n == b".notdef") {
+                    *item = Object::Name(b"gnotdef".to_vec());
+                }
+            }
         };
-        let diffs = match enc_dict.get_mut(b"Differences").ok() {
-            Some(Object::Array(arr)) => arr,
-            _ => continue,
-        };
-        for item in diffs.iter_mut() {
-            if matches!(item, Object::Name(n) if n == b".notdef") {
-                *item = Object::Name(b"gnotdef".to_vec());
+
+        if let Some(enc_id) = enc_ref {
+            if let Some(Object::Dictionary(enc_dict)) = doc.objects.get_mut(&enc_id) {
+                if let Ok(Object::Array(diffs)) = enc_dict.get_mut(b"Differences") {
+                    rename_diffs(diffs);
+                }
+            }
+        } else {
+            // Try inline Encoding within the font dict.
+            let mut font_dict = match doc.objects.get(&font_id).cloned() {
+                Some(Object::Dictionary(d)) => d,
+                _ => continue,
+            };
+            let modified = match font_dict.get_mut(b"Encoding").ok() {
+                Some(Object::Dictionary(enc)) => {
+                    match enc.get_mut(b"Differences").ok() {
+                        Some(Object::Array(diffs)) => {
+                            rename_diffs(diffs);
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            };
+            if modified {
+                doc.objects
+                    .insert(font_id, Object::Dictionary(font_dict));
             }
         }
     }
