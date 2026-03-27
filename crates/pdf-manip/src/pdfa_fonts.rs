@@ -7162,7 +7162,12 @@ fn get_truetype_glyph_width_fractional(
     // If Differences maps this code to a glyph name, try to use it.
     if let Some(glyph_name) = differences.get(&code) {
         if let Some(unicode) = glyph_name_to_unicode(glyph_name) {
-            if let Some(gid) = lookup_unicode_cmap_31(face, unicode as u32) {
+            // Apply canonical normalization (same as veraPDF): U+00AD → U+002D.
+            let canonical = match unicode as u32 {
+                0x00AD => '-' as u32, // soft hyphen → hyphen-minus
+                _ => unicode as u32,
+            };
+            if let Some(gid) = lookup_unicode_cmap_31(face, canonical) {
                 return face.glyph_hor_advance(gid).map(|w| w as f64 * scale);
             }
         }
@@ -15255,8 +15260,15 @@ fn fix_notdef_in_truetype(
             match ch.and_then(|c| face.glyph_index(c)) {
                 Some(gid) => !tt_glyph_has_data(&face, gid),
                 None => {
-                    // Try by post table name lookup.
-                    face.glyph_index_by_name(name).is_none()
+                    // Apply canonical normalization before deciding "missing":
+                    // U+00AD (soft hyphen) → U+002D (hyphen-minus).
+                    // veraPDF uses the same fallback for §6.2.11.8 presence checks.
+                    if ch == Some('\u{00AD}') && face.glyph_index('-').is_some() {
+                        false // Accessible via canonical fallback — not missing.
+                    } else {
+                        // Try by post table name lookup.
+                        face.glyph_index_by_name(name).is_none()
+                    }
                 }
             }
         };

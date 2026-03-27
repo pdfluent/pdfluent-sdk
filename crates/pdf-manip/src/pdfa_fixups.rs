@@ -59,10 +59,12 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let transparency_groups_added = fix_missing_transparency_groups(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
     let font_type_fixed = fix_font_type_entries(doc);
+    let form_xobject_bbox_fixed = fix_form_xobject_bbox(doc);
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
     FixupReport {
         font_type_fixed,
+        form_xobject_bbox_fixed,
         tt_encoding_diffs_fixed,
         devicen_colorants_fixed,
         forbidden_annots_removed,
@@ -130,6 +132,7 @@ pub struct FixupReport {
     pub page_boundary_fixed: usize,
     pub transparency_groups_added: usize,
     pub font_type_fixed: usize,
+    pub form_xobject_bbox_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -4356,14 +4359,17 @@ fn fix_inline_image_interpolate(doc: &mut Document) -> usize {
 
                 // Scan through the BI dictionary until ID.
                 while i < decompressed.len() {
-                    // Check for ID preceded by whitespace.
+                    // Check for ID preceded by whitespace.  Per ISO 32000-1 §8.9.7
+                    // the ID keyword is followed by "a single white-space character"
+                    // which can be any PDF white-space: SP HT LF FF CR NUL.
                     if i + 2 < decompressed.len()
                         && &decompressed[i..i + 2] == b"ID"
                         && (i == 0 || decompressed[i - 1].is_ascii_whitespace())
                         && (i + 2 >= decompressed.len()
-                            || decompressed[i + 2] == b' '
-                            || decompressed[i + 2] == b'\n'
-                            || decompressed[i + 2] == b'\r')
+                            || matches!(
+                                decompressed[i + 2],
+                                b' ' | b'\n' | b'\r' | b'\t' | 0x0C | 0x00
+                            ))
                     {
                         break;
                     }
@@ -6449,6 +6455,44 @@ fn get_named_resource_dict_from_stream_resources(
 // '' of Type entry instead of Font". Fix: set /Type /Font for all dicts that
 // look like font dicts (have /Subtype equal to a known font subtype) but have
 // a missing or non-"Font" /Type.
+
+// ---------------------------------------------------------------------------
+// 6.1.10:1 — Form XObject dictionaries shall include a BBox entry.
+// ISO 32000-1 Table 95 lists BBox as required for Form XObjects.
+// Some PDFs have Form XObjects (including appearance streams) that are missing
+// this required entry.  Add a default [0 0 612 792] bbox so veraPDF passes.
+// ---------------------------------------------------------------------------
+
+fn fix_form_xobject_bbox(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+    for id in ids {
+        let needs_fix = match doc.objects.get(&id) {
+            Some(Object::Stream(s)) => {
+                let is_form =
+                    s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"Form");
+                is_form && !s.dict.has(b"BBox")
+            }
+            _ => false,
+        };
+        if needs_fix {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                // Use US Letter as a safe default — any rect satisfies the requirement.
+                s.dict.set(
+                    "BBox",
+                    Object::Array(vec![
+                        Object::Integer(0),
+                        Object::Integer(0),
+                        Object::Integer(612),
+                        Object::Integer(792),
+                    ]),
+                );
+                fixed += 1;
+            }
+        }
+    }
+    fixed
+}
 
 fn fix_font_type_entries(doc: &mut Document) -> usize {
     const FONT_SUBTYPES: &[&[u8]] = &[
