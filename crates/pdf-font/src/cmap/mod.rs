@@ -677,6 +677,15 @@ impl CidFamily {
             Self::AdobeIdentity | Self::Custom { .. } => None,
         }
     }
+
+    /// Returns `true` for the four predefined CJK character collections
+    /// (Simplified Chinese, Traditional Chinese, Japanese, Korean).
+    pub fn is_cjk(&self) -> bool {
+        matches!(
+            self,
+            Self::AdobeGB1 | Self::AdobeCNS1 | Self::AdobeJapan1 | Self::AdobeKorea1
+        )
+    }
 }
 
 /// A CID character collection identifying the character set and ordering.

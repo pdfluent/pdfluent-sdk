@@ -121,40 +121,89 @@ impl Renderer {
         };
         let mut rgb_width = rgb_data.width;
         let mut rgb_height = rgb_data.height;
+        let interpolate = rgb_data.interpolate;
+        let in_type3 = self.in_type3_glyph;
 
-        let rgba_data = match alpha_data {
-            None => rgb_data
-                .data
-                .chunks_exact(3)
-                .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
-                .collect::<Vec<_>>(),
-            Some(a) => {
-                if a.width != rgb_data.width
-                    || a.height != rgb_data.height
-                    || a.interpolate != rgb_data.interpolate
-                {
-                    return self.draw_image_with_alpha_mask(rgb_data, a);
-                } else {
-                    rgb_data
+        // When downsampling with no alpha channel, resize in 3-channel RGB space first to
+        // avoid inflating to 4-channel RGBA before the resize. For documents with many large
+        // scanned images (e.g. 65× 2445×4724 thumbnails per page) this avoids ~3 GB of
+        // per-page allocation by resizing at ¾ the byte cost and skipping the RGBA step.
+        let (rgba_data, skip_resize) =
+            if (x_scale < 1.0 || y_scale < 1.0) && alpha_data.is_none() && !in_type3 {
+                let new_width = (rgb_width as f32 * x_scale)
+                    .ceil()
+                    .max(1.0)
+                    .min((u16::MAX / 2) as f32) as u32;
+                let new_height = (rgb_height as f32 * y_scale)
+                    .ceil()
+                    .max(1.0)
+                    .min((u16::MAX / 2) as f32) as u32;
+
+                let src =
+                    FirImage::from_vec_u8(rgb_width, rgb_height, rgb_data.data, PixelType::U8x3)
+                        .unwrap();
+                let mut dst = FirImage::new(new_width, new_height, PixelType::U8x3);
+                let mut resizer = Resizer::new();
+                resizer
+                    .resize(
+                        &src,
+                        &mut dst,
+                        &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(
+                            fast_image_resize::FilterType::Bilinear,
+                        )),
+                    )
+                    .unwrap();
+
+                let t_scale_x = rgb_width as f32 / new_width as f32;
+                let t_scale_y = rgb_height as f32 / new_height as f32;
+                additional_transform =
+                    Affine::scale_non_uniform(t_scale_x as f64, t_scale_y as f64);
+                rgb_width = new_width;
+                rgb_height = new_height;
+
+                let rgba = dst
+                    .into_vec()
+                    .chunks_exact(3)
+                    .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255u8])
+                    .collect::<Vec<_>>();
+                (rgba, true)
+            } else {
+                let rgba = match alpha_data {
+                    None => rgb_data
                         .data
                         .chunks_exact(3)
-                        .zip(a.data)
-                        .flat_map(|(rgb, a)| [rgb[0], rgb[1], rgb[2], a])
-                        .collect::<Vec<_>>()
-                }
-            }
-        };
+                        .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255u8])
+                        .collect::<Vec<_>>(),
+                    Some(a) => {
+                        if a.width != rgb_data.width
+                            || a.height != rgb_data.height
+                            || a.interpolate != rgb_data.interpolate
+                        {
+                            return self.draw_image_with_alpha_mask(rgb_data, a);
+                        } else {
+                            rgb_data
+                                .data
+                                .chunks_exact(3)
+                                .zip(a.data)
+                                .flat_map(|(rgb, a)| [rgb[0], rgb[1], rgb[2], a])
+                                .collect::<Vec<_>>()
+                        }
+                    }
+                };
+                (rgba, false)
+            };
 
-        let mut quality = if rgb_data.interpolate {
+        let mut quality = if interpolate {
             ImageQuality::Medium
         } else {
             ImageQuality::Low
         };
 
-        let mut rgba_data = if x_scale >= 1.0 && y_scale >= 1.0 {
+        let mut rgba_data = if skip_resize || x_scale >= 1.0 && y_scale >= 1.0 {
             rgba_data
         } else {
-            // Resize the image, either doing down- or upsampling.
+            // Resize RGBA — only reached for images with a separate alpha channel
+            // or type3 glyphs where per-glyph quality is important.
             let new_width = (rgb_width as f32 * x_scale)
                 .ceil()
                 .max(1.0)
@@ -165,7 +214,7 @@ impl Renderer {
                 .min((u16::MAX / 2) as f32) as u32;
 
             // For bitmap glyphs, quality is particularly important, so use `High` here.
-            if self.in_type3_glyph {
+            if in_type3 {
                 quality = ImageQuality::High;
             };
 
