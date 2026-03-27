@@ -26,3 +26,4 @@ metadata.sqlite
 !/fuzz/corpus/*/seed_*
 node_modules/
 package-lock.json
+!/test-data/xfa-golden/*.pdf
