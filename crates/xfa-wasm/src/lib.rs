@@ -475,16 +475,21 @@ impl PdfDoc {
     /// Validate against a PDF/A level. Returns compliance report as JSON.
     #[wasm_bindgen(js_name = "validatePdfA")]
     pub fn validate_pdfa(&self, level: &str) -> Result<String, JsError> {
-        let pdfa_level = match level.to_lowercase().replace(['-', '/'], "").as_str() {
-            "pdfa1a" | "a1a" => pdf_compliance::PdfALevel::A1a,
-            "pdfa1b" | "a1b" => pdf_compliance::PdfALevel::A1b,
-            "pdfa2a" | "a2a" => pdf_compliance::PdfALevel::A2a,
-            "pdfa2b" | "a2b" => pdf_compliance::PdfALevel::A2b,
-            "pdfa2u" | "a2u" => pdf_compliance::PdfALevel::A2u,
-            "pdfa3a" | "a3a" => pdf_compliance::PdfALevel::A3a,
-            "pdfa3b" | "a3b" => pdf_compliance::PdfALevel::A3b,
-            "pdfa3u" | "a3u" => pdf_compliance::PdfALevel::A3u,
-            other => return Err(JsError::new(&format!("unknown PDF/A level: {other}"))),
+        let pdfa_level = match level.to_lowercase().replace(['-', '/', '_', ' '], "").as_str() {
+            "pdfa1a" | "a1a" | "1a" => pdf_compliance::PdfALevel::A1a,
+            "pdfa1b" | "a1b" | "1b" => pdf_compliance::PdfALevel::A1b,
+            "pdfa2a" | "a2a" | "2a" => pdf_compliance::PdfALevel::A2a,
+            "pdfa2b" | "a2b" | "2b" => pdf_compliance::PdfALevel::A2b,
+            "pdfa2u" | "a2u" | "2u" => pdf_compliance::PdfALevel::A2u,
+            "pdfa3a" | "a3a" | "3a" => pdf_compliance::PdfALevel::A3a,
+            "pdfa3b" | "a3b" | "3b" => pdf_compliance::PdfALevel::A3b,
+            "pdfa3u" | "a3u" | "3u" => pdf_compliance::PdfALevel::A3u,
+            "pdfa4"  | "a4"  | "4"  => pdf_compliance::PdfALevel::A4,
+            "pdfa4f" | "a4f" | "4f" => pdf_compliance::PdfALevel::A4f,
+            "pdfa4e" | "a4e" | "4e" => pdf_compliance::PdfALevel::A4e,
+            other => return Err(JsError::new(&format!(
+                "unknown PDF/A level: {other:?} — expected e.g. \"2b\", \"3b\", \"1b\""
+            ))),
         };
         let report = pdf_compliance::validate_pdfa(&self.pdf, pdfa_level);
         let result = serde_json::json!({
@@ -518,6 +523,16 @@ impl PdfDoc {
             "vri_entries": dss.vri_entries.len(),
         });
         Some(serde_json::to_string(&result).unwrap_or_default())
+    }
+
+    /// Flatten XFA form fields into static PDF content.
+    ///
+    /// Returns the flattened PDF as a `Uint8Array`.
+    /// Throws if the document has no XFA stream or flattening fails.
+    #[wasm_bindgen(js_name = "flattenXfa")]
+    pub fn flatten_xfa(&self) -> Result<Vec<u8>, JsError> {
+        pdf_engine::xfa::flatten(&self.engine)
+            .map_err(|e| JsError::new(&format!("XFA flatten failed: {e}")))
     }
 
     // ---- Page geometry ----
@@ -562,28 +577,20 @@ impl PdfDoc {
     #[cfg(feature = "render")]
     #[wasm_bindgen(js_name = "renderPage")]
     pub fn render_page(&self, page_index: usize, scale: f32) -> Result<Vec<u8>, JsError> {
-        let pages = self.pdf.pages();
-        if page_index >= pages.len() {
-            return Err(JsError::new(&format!(
-                "page index {page_index} out of range (0..{})",
-                pages.len()
-            )));
-        }
-        let page = &pages[page_index];
-        let interp_settings = pdf_render::pdf_interpret::InterpreterSettings::default();
-        let render_settings = pdf_render::RenderSettings {
-            x_scale: scale,
-            y_scale: scale,
+        // Route through pdf-engine so XFA documents are auto-flattened before
+        // rendering.  Scale maps to DPI: 1.0 = 72 DPI (1 pt = 1 px).
+        let options = pdf_engine::RenderOptions {
+            dpi: (scale * 72.0) as f64,
             ..Default::default()
         };
-        let pixmap = pdf_render::render(page, &interp_settings, &render_settings);
-        let w = pixmap.width() as u32;
-        let h = pixmap.height() as u32;
-        let rgba = pixmap.data_as_u8_slice();
-        let mut buf = Vec::with_capacity(8 + rgba.len());
-        buf.extend_from_slice(&w.to_le_bytes());
-        buf.extend_from_slice(&h.to_le_bytes());
-        buf.extend_from_slice(rgba);
+        let page = self
+            .engine
+            .render_page(page_index, &options)
+            .map_err(|e| JsError::new(&format!("render failed: {e}")))?;
+        let mut buf = Vec::with_capacity(8 + page.pixels.len());
+        buf.extend_from_slice(&page.width.to_le_bytes());
+        buf.extend_from_slice(&page.height.to_le_bytes());
+        buf.extend_from_slice(&page.pixels);
         Ok(buf)
     }
 
@@ -597,17 +604,18 @@ impl PdfDoc {
         page_index: usize,
         max_dimension: u32,
     ) -> Result<Vec<u8>, JsError> {
-        let pages = self.pdf.pages();
-        if page_index >= pages.len() {
+        let page_count = self.engine.page_count();
+        if page_index >= page_count {
             return Err(JsError::new(&format!(
-                "page index {page_index} out of range (0..{})",
-                pages.len()
+                "page index {page_index} out of range (0..{page_count})"
             )));
         }
-        let page = &pages[page_index];
-        let media_box = page.media_box();
-        let pw = (media_box.x1 - media_box.x0).abs() as f32;
-        let ph = (media_box.y1 - media_box.y0).abs() as f32;
+        let geom = self
+            .engine
+            .page_geometry(page_index)
+            .map_err(|e| JsError::new(&format!("geometry failed: {e}")))?;
+        let pw = geom.media_box.width().abs() as f32;
+        let ph = geom.media_box.height().abs() as f32;
         let max_side = pw.max(ph);
         let scale = if max_side > 0.0 {
             max_dimension as f32 / max_side

@@ -99,17 +99,38 @@ impl PdfDocument {
     }
 
     /// Render a single page.
+    ///
+    /// If the document contains an XFA template, it is automatically flattened
+    /// to static PDF content before rendering.  This prevents the "Please wait"
+    /// placeholder page that Adobe Reader would show when rendering an XFA PDF
+    /// with a conventional renderer.
     pub fn render_page(&self, index: usize, options: &RenderOptions) -> Result<RenderedPage> {
+        #[cfg(feature = "xfa")]
+        if crate::xfa::has_xfa(self) {
+            let flat_bytes = crate::xfa::flatten(self)
+                .map_err(|e| EngineError::RenderError(format!("XFA flatten: {e}")))?;
+            let flat_doc = Self::open(flat_bytes)?;
+            return flat_doc.render_page(index, options);
+        }
         let page = self.get_page(index)?;
         Ok(render::render_page(page, options, &self.settings))
     }
 
     /// Render a single page using the high-level render config.
+    ///
+    /// XFA documents are auto-flattened before rendering (same as `render_page`).
     pub fn render_page_with_config(
         &self,
         index: usize,
         config: &RenderConfig,
     ) -> Result<RenderedPage> {
+        #[cfg(feature = "xfa")]
+        if crate::xfa::has_xfa(self) {
+            let flat_bytes = crate::xfa::flatten(self)
+                .map_err(|e| EngineError::RenderError(format!("XFA flatten: {e}")))?;
+            let flat_doc = Self::open(flat_bytes)?;
+            return flat_doc.render_page_with_config(index, config);
+        }
         let page = self.get_page(index)?;
         Ok(render::render_page_with_config(
             page,
