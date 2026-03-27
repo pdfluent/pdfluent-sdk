@@ -36,6 +36,12 @@ pub struct PdfXValidateTest {
     pub verapdf_oracle: Option<Arc<VeraPdfOracle>>,
 }
 
+impl Default for PdfXValidateTest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PdfXValidateTest {
     pub fn new() -> Self {
         Self {

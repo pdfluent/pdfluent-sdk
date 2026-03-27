@@ -155,6 +155,9 @@ impl Config {
             "bookmarks" | "annotations" | "form_fields" | "signatures" | "sign_verify" => {
                 (base / 3).max(5)
             }
+            // Multi-oracle render test runs three renderers sequentially (ours + mutool +
+            // pdftoppm) — allow 3× base to accommodate documents with many large images.
+            "render_multi_oracle" => base * 3,
             // OCR can be heavier: allow 2× base so the inner 25s budget has room
             // and actual OCR inference (when enabled) does not get cut short.
             "ocr" => base * 2,

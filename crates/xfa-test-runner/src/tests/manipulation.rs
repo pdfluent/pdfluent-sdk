@@ -20,14 +20,23 @@ impl PdfTest for ManipulationTest {
         // corrupt PDFs (page-tree loops, infinite decompression, etc.). #452
         let pdf_owned = pdf_data.to_vec();
         let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
+        if std::thread::Builder::new()
             .stack_size(64 * 1024 * 1024)
             .spawn(move || {
                 let r =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_inner(pdf_owned)));
                 let _ = tx.send(r);
             })
-            .expect("thread spawn");
+            .is_err()
+        {
+            return TestResult {
+                status: TestStatus::Fail,
+                error_message: Some("thread spawn failed (resource limit)".into()),
+                duration_ms: 0,
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
         match rx.recv_timeout(std::time::Duration::from_secs(25)) {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => TestResult {

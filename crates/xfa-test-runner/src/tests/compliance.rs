@@ -10,6 +10,12 @@ pub struct ComplianceTest {
     progress: Arc<Mutex<String>>,
 }
 
+impl Default for ComplianceTest {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ComplianceTest {
     pub fn new() -> Self {
         Self {
