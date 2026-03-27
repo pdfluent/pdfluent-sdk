@@ -56,7 +56,8 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     };
 
     // Force PDF version to 1.7 for PDF/A-2 compliance (6.1.2).
-    if doc.version.starts_with('2') {
+    // PDF/A-2 requires version 1.0–1.7; downgrade 2.x and the unofficial 1.8.
+    if doc.version.starts_with('2') || doc.version == "1.8" {
         doc.version = "1.7".to_string();
     }
 
@@ -2783,6 +2784,10 @@ pub fn fix_pdf_header(data: &mut Vec<u8>) {
         // Fix version 2.x → 1.7
         if data[5] == b'2' {
             data[5] = b'1';
+            data[7] = b'7';
+        }
+        // Fix version 1.8 (unofficial) → 1.7; §6.1.2:1 requires n in 0–7.
+        if data[5] == b'1' && data[7] == b'8' {
             data[7] = b'7';
         }
         // Ensure version is at least 1.4 for PDF/A-2.

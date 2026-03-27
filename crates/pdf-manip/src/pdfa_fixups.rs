@@ -58,9 +58,11 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     // /Group << /S /Transparency >> without /CS is valid. (#496)
     let transparency_groups_added = fix_missing_transparency_groups(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
+    let font_type_fixed = fix_font_type_entries(doc);
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
     FixupReport {
+        font_type_fixed,
         tt_encoding_diffs_fixed,
         devicen_colorants_fixed,
         forbidden_annots_removed,
@@ -127,6 +129,7 @@ pub struct FixupReport {
     pub unknown_operators_stripped: usize,
     pub page_boundary_fixed: usize,
     pub transparency_groups_added: usize,
+    pub font_type_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -6435,4 +6438,54 @@ fn get_named_resource_dict_from_stream_resources(
         },
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.11.2:1 — Font dictionary /Type entry repair
+// ---------------------------------------------------------------------------
+//
+// Some PDFs have font dicts with an empty or wrong /Type entry (e.g. "" or
+// an empty name), causing veraPDF §6.2.11.2:1 "A Font dictionary has value
+// '' of Type entry instead of Font". Fix: set /Type /Font for all dicts that
+// look like font dicts (have /Subtype equal to a known font subtype) but have
+// a missing or non-"Font" /Type.
+
+fn fix_font_type_entries(doc: &mut Document) -> usize {
+    const FONT_SUBTYPES: &[&[u8]] = &[
+        b"Type1", b"MMType1", b"TrueType", b"Type3", b"CIDFontType0", b"CIDFontType2",
+        b"Type0",
+    ];
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+    for id in ids {
+        let needs_fix = match doc.objects.get(&id) {
+            Some(Object::Dictionary(d)) => {
+                let subtype_ok = d.get(b"Subtype").ok().and_then(|o| match o {
+                    Object::Name(n) => Some(FONT_SUBTYPES.contains(&n.as_slice())),
+                    _ => None,
+                }).unwrap_or(false);
+                if !subtype_ok {
+                    false
+                } else {
+                    match d.get(b"Type") {
+                        Ok(Object::Name(n)) => n.as_slice() != b"Font",
+                        Ok(Object::String(s, _)) => {
+                            // Empty string or wrong string value.
+                            s.is_empty() || s.as_slice() != b"Font"
+                        }
+                        Err(_) => true, // Missing /Type.
+                        _ => false,
+                    }
+                }
+            }
+            _ => false,
+        };
+        if needs_fix {
+            if let Some(Object::Dictionary(d)) = doc.objects.get_mut(&id) {
+                d.set("Type", Object::Name(b"Font".to_vec()));
+                fixed += 1;
+            }
+        }
+    }
+    fixed
 }
