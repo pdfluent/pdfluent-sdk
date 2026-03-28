@@ -58,15 +58,56 @@ fn parse_node(tree: &mut FormTree, elem: Node<'_, '_>, is_root: bool) -> Result<
         "pageSet" => parse_page_set(tree, elem)?,
         "pageArea" => parse_page_area(tree, elem)?,
         _ => {
-            // Unknown element — create a minimal placeholder so traversal
-            // can continue to collect child nodes.
             let mut node = blank_node(tag);
             add_children(tree, &mut node, elem)?;
             node
         }
     };
 
-    Ok(tree.add_node(node))
+    // Detect page-break-before from <breakBefore> or <break> first-child.
+    let (page_break, break_target) = detect_page_break(elem);
+    let pres = attr(elem, "presence");
+    let meta = xfa_layout_engine::form::FormNodeMeta {
+        xfa_id: attr(elem, "id").map(|s| s.to_string()),
+        presence_hidden: matches!(pres, Some("hidden") | Some("inactive") | Some("invisible")),
+        presence_invisible: pres == Some("invisible"),
+        page_break_before: page_break,
+        break_target,
+        ..Default::default()
+    };
+    Ok(tree.add_node_with_meta(node, meta))
+}
+
+/// Detect page-area breaks from `<breakBefore>` or `<break>` child elements.
+/// Returns `(is_break, target_name)`.
+fn detect_page_break(elem: Node<'_, '_>) -> (bool, Option<String>) {
+    for child in elem.children().filter(|n| n.is_element()) {
+        let tag = child.tag_name().name();
+        // Stop at first content child — inline breaks handled by add_children.
+        if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
+            break;
+        }
+        if tag == "breakBefore" && attr(child, "targetType") == Some("pageArea") {
+            return (true, parse_break_target(child));
+        }
+        if tag == "break" && attr(child, "before") == Some("pageArea") {
+            return (true, parse_break_target(child));
+        }
+    }
+    (false, None)
+}
+
+/// Parse break target from `target` or `beforeTarget` attribute.
+/// Handles: "MP3", "#MP3", "som(#pageArea[2])", "#Page4_ID".
+fn parse_break_target(elem: Node<'_, '_>) -> Option<String> {
+    let raw = attr(elem, "target")?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if let Some(inner) = raw.strip_prefix("som(").and_then(|s| s.strip_suffix(')')) {
+        return Some(inner.trim_start_matches('#').to_string());
+    }
+    Some(raw.trim_start_matches('#').to_string())
 }
 
 fn parse_root(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
@@ -309,25 +350,52 @@ fn parse_page_area(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> 
 // ---------------------------------------------------------------------------
 
 /// Recursively add child form nodes (subform, field, draw, pageSet, pageArea).
+/// Inline `<breakBefore>` / `<break>` elements BETWEEN content children are
+/// propagated as `page_break_before` on the next content sibling's metadata.
+/// Breaks that appear BEFORE the first content child are handled by
+/// `detect_page_break` (on the parent element's own metadata) and must NOT
+/// be double-counted here.
 fn add_children(tree: &mut FormTree, node: &mut FormNode, elem: Node<'_, '_>) -> Result<()> {
+    let mut pending_break = false;
+    let mut pending_target: Option<String> = None;
+    let mut seen_content = false;
     for child in elem.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
         match tag {
             "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" => {
                 let child_id = parse_node(tree, child, false)?;
+                if pending_break {
+                    let m = tree.meta_mut(child_id);
+                    m.page_break_before = true;
+                    if m.break_target.is_none() {
+                        m.break_target = pending_target.take();
+                    }
+                    pending_break = false;
+                    pending_target = None;
+                }
                 node.children.push(child_id);
+                seen_content = true;
             }
-            // Ignore XML elements that are layout metadata, not form nodes.
+            // Only propagate breaks that appear AFTER the first content child
+            // (inline breaks). Pre-content breaks are handled by detect_page_break.
+            "breakBefore" => {
+                if seen_content && attr(child, "targetType") == Some("pageArea") {
+                    pending_break = true;
+                    pending_target = parse_break_target(child);
+                }
+            }
+            "break" => {
+                if seen_content && attr(child, "before") == Some("pageArea") {
+                    pending_break = true;
+                    pending_target = parse_break_target(child);
+                }
+            }
             "caption" | "value" | "ui" | "font" | "border" | "margin" | "para" | "format"
             | "items" | "medium" | "contentArea" | "desc" | "occur" | "event" | "bind"
             | "calculate" | "validate" | "assist" | "toolTip" | "fill" | "edge" | "corner"
             | "linear" | "radial" | "pattern" | "stipple" | "color" | "extras" | "traversal"
-            | "proto" | "overflow" => {
-                // Handled elsewhere or not needed for layout.
-            }
-            _ => {
-                // Unknown element — skip silently.
-            }
+            | "proto" | "overflow" => {}
+            _ => {}
         }
     }
     Ok(())
