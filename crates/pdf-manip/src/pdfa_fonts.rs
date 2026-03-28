@@ -477,6 +477,13 @@ fn embed_via_font_descriptors(doc: &mut Document) -> usize {
             continue;
         };
         let base = strip_subset_prefix(&font_name).to_owned();
+        // Skip Standard 14 fonts in the second pass — they cause stack overflow
+        // in embed_font_on_target → update_metrics_from_font for certain PDFs.
+        // Standard 14 fonts are handled by the first pass (find_non_embedded_fonts_detailed)
+        // which has proper error handling. (#stack-overflow-std14)
+        if is_standard_14(&base) {
+            continue;
+        }
         // Standard 14 fonts DO need embedding in PDF/A (ISO 19005 requires all fonts
         // to be embedded, no exceptions for the base 14). The previous skip caused
         // §6.2.11.4.1:1 violations when Standard 14 fonts were referenced but not
