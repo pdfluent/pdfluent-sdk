@@ -564,13 +564,23 @@ pub fn sync_subtypes_from_fontfile(doc: &mut Document) {
                     bf.len() > 7 && bf.as_bytes()[6] == b'+'
                 };
                 if expected == b"TrueType" && !fd_is_symbolic && !is_subset {
-                    let needs_enc = match d.get(b"Encoding").ok() {
-                        None => true,
-                        Some(Object::Name(n)) if n != b"WinAnsiEncoding" => true,
-                        _ => false,
-                    };
-                    if needs_enc {
-                        d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                    match d.get(b"Encoding").ok() {
+                        None => {
+                            // No encoding at all — add WinAnsi
+                            d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                        }
+                        Some(Object::Name(n)) if n != b"WinAnsiEncoding" => {
+                            // Simple name encoding (e.g., MacRomanEncoding) — override
+                            d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                        }
+                        Some(Object::Dictionary(enc_dict)) => {
+                            // Encoding dict with Differences — update BaseEncoding
+                            // but preserve the Differences array
+                            let mut enc = enc_dict.clone();
+                            enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                            d.set("Encoding", Object::Dictionary(enc));
+                        }
+                        _ => {} // Already WinAnsi or reference
                     }
                 }
             }
