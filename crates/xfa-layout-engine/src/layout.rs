@@ -141,27 +141,52 @@ impl<'a> LayoutEngine<'a> {
                 pages.push(page);
             }
         } else {
-            // Layout content across page areas, then repeat last template for overflow
+            // Layout content across page areas, then repeat last template for overflow.
+            // Multiple contentAreas on the same pageArea share one physical page.
+            // Content flows through content areas sequentially: when one fills
+            // up, the remaining flows to the next.  However, very small
+            // "decorative" content areas (< 10% of the largest) are skipped to
+            // prevent body content from spilling into tiny lock/eSign slots.
             let mut remaining = content_queued;
             for pa in &page_areas {
                 if remaining.is_empty() {
                     break;
                 }
+
+                let max_area = pa
+                    .content_areas
+                    .iter()
+                    .map(|ca| ca.width * ca.height)
+                    .fold(0.0_f64, f64::max);
+
+                let mut page_nodes = Vec::new();
                 for ca in &pa.content_areas {
                     if remaining.is_empty() {
                         break;
                     }
+                    // Skip decorative content areas that are much smaller than
+                    // the main body area (< 10% of area).
+                    let ca_area = ca.width * ca.height;
+                    if ca_area < max_area * 0.10 && pa.content_areas.len() > 1 {
+                        continue;
+                    }
                     let (placed, rest, consumed_break_only) =
                         self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                     if consumed_break_only {
-                        // Break-only page: skip blank, continue with rest
-                        remaining = rest;
-                    } else if !placed.nodes.is_empty() {
-                        pages.push(placed);
                         remaining = rest;
                     } else {
+                        if !placed.nodes.is_empty() {
+                            page_nodes.extend(placed.nodes);
+                        }
                         remaining = rest;
                     }
+                }
+                if !page_nodes.is_empty() {
+                    pages.push(LayoutPage {
+                        width: pa.page_width,
+                        height: pa.page_height,
+                        nodes: page_nodes,
+                    });
                 }
             }
 
@@ -368,11 +393,30 @@ impl<'a> LayoutEngine<'a> {
                 // (Fixes xl_02_row_layout.pdf and xl_09_field_types.pdf blank
                 // render: the pageSet's 792pt height was consuming the full page
                 // and pushing form content to page 2.)
-                FormNodeType::Subform if child.layout == LayoutStrategy::TopToBottom => {
-                    let (inner_areas, inner_content) = self.extract_page_structure(child)?;
-                    if !inner_areas.is_empty() {
+                FormNodeType::Subform => {
+                    // Only recurse into subforms that directly contain a
+                    // PageSet child.  Blind recursion into content subforms
+                    // (especially Positioned ones) would shatter their
+                    // internal structure and lose breakBefore/overflow
+                    // semantics.
+                    let has_pageset = child
+                        .children
+                        .iter()
+                        .any(|&cid| matches!(self.form.get(cid).node_type, FormNodeType::PageSet));
+                    if has_pageset {
+                        let (inner_areas, inner_content) = self.extract_page_structure(child)?;
                         page_areas.extend(inner_areas);
                         content_nodes.extend(inner_content);
+                    } else if child.layout == LayoutStrategy::TopToBottom {
+                        // TB subform without inner PageSet — still recurse in
+                        // case an inner TB child wraps a PageSet.
+                        let (inner_areas, inner_content) = self.extract_page_structure(child)?;
+                        if !inner_areas.is_empty() {
+                            page_areas.extend(inner_areas);
+                            content_nodes.extend(inner_content);
+                        } else {
+                            content_nodes.push(child_id);
+                        }
                     } else {
                         content_nodes.push(child_id);
                     }
