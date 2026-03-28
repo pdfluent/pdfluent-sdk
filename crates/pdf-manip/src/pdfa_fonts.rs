@@ -380,12 +380,56 @@ pub fn promote_inline_font_dicts(doc: &mut Document) -> usize {
         }
 
         // Case 2: object has /Resources → /Font (e.g., Page, ContentStream).
-        if let Ok(Object::Dictionary(res)) = d.get(b"Resources") {
-            if let Ok(Object::Dictionary(fonts_dict)) = res.get(b"Font") {
-                let fonts_dict = fonts_dict.clone();
+        // Resources may be inline or an indirect reference.
+        let res_dict = match d.get(b"Resources") {
+            Ok(Object::Dictionary(res)) => Some((res.clone(), false)),
+            Ok(Object::Reference(res_ref)) => {
+                if let Some(Object::Dictionary(res)) = doc.objects.get(res_ref) {
+                    Some((res.clone(), true))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some((res, res_is_indirect)) = res_dict {
+            // Font dict inside Resources may also be inline or indirect.
+            let fonts_dict = match res.get(b"Font") {
+                Ok(Object::Dictionary(fd)) => Some((fd.clone(), false)),
+                Ok(Object::Reference(fd_ref)) => {
+                    if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
+                        Some((fd.clone(), true))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some((fonts_dict, fonts_is_indirect)) = fonts_dict {
                 for (alias, font_val) in fonts_dict.iter() {
                     if let Object::Dictionary(fd) = font_val {
-                        to_promote.push((*id, true, alias.to_vec(), fd.clone()));
+                        // Store the object that owns the Font dict for mutation.
+                        // If Resources is indirect, mutate the Resources object.
+                        // If Font dict is indirect, mutate the Font dict object.
+                        let (owner, via_res) = if fonts_is_indirect {
+                            // Font dict is a separate object — no need to promote,
+                            // the font entries inside it might be inline though.
+                            // We need the Font dict's reference to mutate it.
+                            if let Ok(Object::Reference(fd_ref)) = res.get(b"Font") {
+                                (*fd_ref, false)
+                            } else {
+                                continue;
+                            }
+                        } else if res_is_indirect {
+                            if let Ok(Object::Reference(res_ref)) = d.get(b"Resources") {
+                                (*res_ref, true)
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            (*id, true)
+                        };
+                        to_promote.push((owner, via_res, alias.to_vec(), fd.clone()));
                     }
                 }
             }
@@ -448,14 +492,73 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     let fd_embedded = embed_via_font_descriptors(doc);
     report.fonts_embedded += fd_embedded;
 
-    // Third pass: embed fonts that lack a FontDescriptor entirely.
-    // Temporarily disabled — embed_bare_fonts triggers stack overflow on some
-    // PDFs due to the Type1→TrueType Subtype change interacting with other
-    // pipeline stages. Needs further investigation.
-    // let bare_embedded = embed_bare_fonts(doc);
-    // report.fonts_embedded += bare_embedded;
+    // Synchronize Subtype for all font dicts that share a FontDescriptor.
+    // When embed_font_on_target changes one font dict's Subtype (e.g.,
+    // Type1→TrueType after embedding a .ttf), other dicts pointing to the
+    // same FD must also be updated. Otherwise fix_truetype_encoding skips
+    // them (it only processes Subtype=TrueType) and fix_font_width_mismatches
+    // uses the wrong computation path.
+    sync_subtypes_from_fontfile(doc);
 
     Ok(report)
+}
+
+/// Synchronize font dict Subtype with the actual embedded font program type.
+/// When a TrueType font is embedded via FontFile2 but the font dict still says
+/// /Subtype /Type1, update it to /Subtype /TrueType. Needed for font dicts
+/// that share a FontDescriptor where only ONE dict was updated by embed_font_on_target.
+fn sync_subtypes_from_fontfile(doc: &mut Document) {
+    // Build map: FD id → expected Subtype based on FontFile key
+    let mut fd_fonttype: std::collections::HashMap<ObjectId, &'static [u8]> = Default::default();
+    for (&id, obj) in doc.objects.iter() {
+        let Object::Dictionary(d) = obj else { continue };
+        if get_name(d, b"Type").as_deref() != Some("FontDescriptor") {
+            continue;
+        }
+        if d.has(b"FontFile2") {
+            fd_fonttype.insert(id, b"TrueType");
+        } else if d.has(b"FontFile3") {
+            fd_fonttype.insert(id, b"Type1");
+        }
+    }
+    if fd_fonttype.is_empty() {
+        return;
+    }
+
+    // Update font dicts that have mismatched Subtype
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let (fd_ref, current_subtype) = {
+            let Some(Object::Dictionary(d)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let sub = match get_name(d, b"Subtype") {
+                Some(s) if s == "Type1" || s == "TrueType" || s == "MMType1" => s,
+                _ => continue,
+            };
+            let fd = match d.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(r)) => *r,
+                _ => continue,
+            };
+            (fd, sub)
+        };
+
+        if let Some(&expected) = fd_fonttype.get(&fd_ref) {
+            let expected_str = std::str::from_utf8(expected).unwrap_or("");
+            if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
+                if current_subtype != expected_str {
+                    d.set("Subtype", Object::Name(expected.to_vec()));
+                }
+                // Also add WinAnsiEncoding to TrueType fonts without encoding.
+                // This ensures fix_font_width_mismatches uses the correct
+                // encoding→Unicode→cmap path instead of the default identity
+                // mapping which can diverge from veraPDF's interpretation.
+                if expected == b"TrueType" && !d.has(b"Encoding") {
+                    d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                }
+            }
+        }
+    }
 }
 
 /// Embed fonts by scanning FontDescriptor objects without a font program.
@@ -643,6 +746,57 @@ fn embed_bare_fonts(doc: &mut Document) -> usize {
         }
     }
     embedded
+}
+
+/// Ensure all non-symbolic TrueType fonts with FontFile2 have an Encoding entry.
+/// Without Encoding, veraPDF may use font-internal cmap tables that differ
+/// between the original and substitute fonts, causing width mismatches.
+/// Must run AFTER embed_fonts and fix_font_width_mismatches.
+pub fn ensure_truetype_encoding(doc: &mut Document) -> usize {
+    // Build set of FD IDs that have FontFile2
+    let mut ff2_fds: std::collections::HashSet<ObjectId> = Default::default();
+    for (&id, obj) in doc.objects.iter() {
+        let Object::Dictionary(d) = obj else { continue };
+        if get_name(d, b"Type").as_deref() == Some("FontDescriptor") && d.has(b"FontFile2") {
+            ff2_fds.insert(id);
+        }
+    }
+
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+    for id in ids {
+        let needs_enc = {
+            let Some(Object::Dictionary(d)) = doc.objects.get(&id) else {
+                continue;
+            };
+            if get_name(d, b"Subtype").as_deref() != Some("TrueType") {
+                continue;
+            }
+            if d.has(b"Encoding") {
+                continue;
+            }
+            // Check if FD has FontFile2
+            let fd = match d.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(r)) => *r,
+                _ => continue,
+            };
+            if !ff2_fds.contains(&fd) {
+                continue;
+            }
+            // Skip symbolic fonts
+            if is_font_symbolic(doc, d) {
+                continue;
+            }
+            true
+        };
+        if needs_enc {
+            if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
+                d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                fixed += 1;
+            }
+        }
+    }
+    fixed
 }
 
 /// Check if this is a Standard 14 font.
@@ -6610,14 +6764,31 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                 continue;
             }
 
-            // Get encoding info.
-            let enc_info = get_simple_encoding_info(doc, dict);
+            // Get encoding info. For non-symbolic TrueType fonts without encoding
+            // that have an embedded font program (FontFile2), use WinAnsiEncoding.
+            // This matches veraPDF's expectation for substitute fonts.
+            let enc_info = {
+                let mut ei = get_simple_encoding_info(doc, dict);
+                if ei.0.is_empty() && subtype == "TrueType" && !is_font_symbolic(doc, dict) {
+                    // Check if the FD has FontFile2 (embedded TrueType)
+                    let fd_has_ff2 = match dict.get(b"FontDescriptor").ok() {
+                        Some(Object::Reference(fd_ref)) => {
+                            matches!(
+                                doc.objects.get(fd_ref),
+                                Some(Object::Dictionary(fd)) if fd.has(b"FontFile2")
+                            )
+                        }
+                        _ => false,
+                    };
+                    if fd_has_ff2 {
+                        ei.0 = "WinAnsiEncoding".to_string();
+                    }
+                }
+                ei
+            };
 
             // Track whether the font has an explicit PDF-level Encoding entry.
-            // Fonts without explicit encoding rely on a defaulted mapping that
-            // may not match veraPDF's interpretation — large corrections are
-            // unreliable in that case.
-            let has_explicit_encoding = dict.has(b"Encoding");
+            let has_explicit_encoding = dict.has(b"Encoding") || !enc_info.0.is_empty();
 
             // Extract ToUnicode map for codes undefined in the PDF encoding.
             // Used to mirror veraPDF's fallback: when WinAnsiEncoding leaves a
@@ -7141,6 +7312,12 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
         // Writing inline gives each font its own copy. (#fix-shared-widths)
         if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
             font.set("Widths", Object::Array(new_widths));
+            // Also write the encoding to the PDF dict if we inferred it.
+            // Without this, veraPDF uses its own encoding detection which may
+            // differ from our width computation, causing persistent mismatches.
+            if !enc_info.0.is_empty() && !font.has(b"Encoding") {
+                font.set("Encoding", Object::Name(enc_info.0.as_bytes().to_vec()));
+            }
         }
         // Update FirstChar if prepended.
         if new_first_char < first_char {

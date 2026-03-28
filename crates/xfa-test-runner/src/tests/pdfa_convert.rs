@@ -952,6 +952,13 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_font_width_mismatches(&mut doc)
     }));
+    // Ensure all TrueType fonts with FontFile2 but no Encoding get WinAnsiEncoding.
+    // This must run AFTER width mismatches so that veraPDF uses the same encoding
+    // as our width computation. Without this, veraPDF uses font-internal cmaps for
+    // TrueType fonts without encoding, which may differ from the substitute font.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::ensure_truetype_encoding(&mut doc)
+    }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc)
     }));
