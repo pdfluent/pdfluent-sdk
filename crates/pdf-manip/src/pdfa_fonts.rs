@@ -507,7 +507,7 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
 /// When a TrueType font is embedded via FontFile2 but the font dict still says
 /// /Subtype /Type1, update it to /Subtype /TrueType. Needed for font dicts
 /// that share a FontDescriptor where only ONE dict was updated by embed_font_on_target.
-fn sync_subtypes_from_fontfile(doc: &mut Document) {
+pub fn sync_subtypes_from_fontfile(doc: &mut Document) {
     // Build map: FD id → expected Subtype based on FontFile key
     let mut fd_fonttype: std::collections::HashMap<ObjectId, &'static [u8]> = Default::default();
     for (&id, obj) in doc.objects.iter() {
@@ -555,9 +555,23 @@ fn sync_subtypes_from_fontfile(doc: &mut Document) {
                 if current_subtype != expected_str {
                     d.set("Subtype", Object::Name(expected.to_vec()));
                 }
-                // Add WinAnsiEncoding to non-symbolic TrueType fonts without encoding.
-                if expected == b"TrueType" && !d.has(b"Encoding") && !fd_is_symbolic {
-                    d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                // Ensure non-symbolic, non-subset TrueType substitute fonts use
+                // WinAnsiEncoding. Some dicts get MacRomanEncoding from
+                // fix_truetype_encoding, creating inconsistent width computation
+                // across dicts sharing the same FD. Standardize on WinAnsi.
+                let is_subset = {
+                    let bf = get_name(d, b"BaseFont").unwrap_or_default();
+                    bf.len() > 7 && bf.as_bytes()[6] == b'+'
+                };
+                if expected == b"TrueType" && !fd_is_symbolic && !is_subset {
+                    let needs_enc = match d.get(b"Encoding").ok() {
+                        None => true,
+                        Some(Object::Name(n)) if n != b"WinAnsiEncoding" => true,
+                        _ => false,
+                    };
+                    if needs_enc {
+                        d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                    }
                 }
             }
         }
