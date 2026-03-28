@@ -2658,6 +2658,18 @@ pub fn check_info_xmp_consistency(pdf: &Pdf, report: &mut ComplianceReport) {
     // handle specific property-level inconsistencies. veraPDF only fires §6.7.3
     // when both Info and XMP have conflicting values for the SAME property.
 
+    // Check Title (/Info Title vs dc:title) — §6.7.3.2
+    if metadata.title.is_some() {
+        let has_dc_title = xmp_text.contains("dc:title");
+        if !has_dc_title {
+            error(
+                report,
+                "6.7.3.2",
+                "/Info has Title but XMP is missing dc:title",
+            );
+        }
+    }
+
     // Check Creator (/Info Creator vs xmp:CreatorTool) — §6.7.3.6
     // Also accept legacy xap: alias. (#FP-6.7.3)
     if metadata.creator.is_some() {
@@ -15857,6 +15869,18 @@ pub fn check_xref_syntax(pdf: &Pdf, report: &mut ComplianceReport) {
     let data = pdf.data().as_ref();
     let len = data.len();
     let mut pos = 0;
+
+    // §6.1.4:3 — PDF/A-1: cross-reference streams (/Type /XRef) are forbidden.
+    for i in 0..len.saturating_sub(11) {
+        if data[i..].starts_with(b"/Type /XRef") || data[i..].starts_with(b"/Type/XRef") {
+            error(
+                report,
+                "6.1.4",
+                "Cross-reference streams (/Type /XRef) shall not be used in PDF/A-1",
+            );
+            break;
+        }
+    }
 
     while pos + 4 < len {
         if &data[pos..pos + 4] != b"xref" {
