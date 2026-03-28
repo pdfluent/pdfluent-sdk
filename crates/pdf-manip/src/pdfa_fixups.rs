@@ -5,7 +5,7 @@
 
 use flate2::read::ZlibDecoder;
 use lopdf::{dictionary, Document, Object, ObjectId};
-use std::io::Read;
+use std::io::{Read, Write};
 
 /// Run all supplementary PDF/A fixups.
 pub fn run_fixups(doc: &mut Document) -> FixupReport {
@@ -47,6 +47,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     // data (printable ASCII), causing it to treat subsequent bytes as content stream operators.
     // Converting to FlateDecode (binary) eliminates the false EI detection. (#fix-ascii85-inline)
     let ascii85_inline_images_fixed = fix_ascii85_inline_images(doc);
+    let lzw_inline_images_fixed = fix_lzw_inline_images(doc);
     let invalid_ri_fixed = fix_invalid_rendering_intents(doc);
     let opm_fixed = fix_extgstate_opm(doc);
     let concatenated_operators_fixed =
@@ -90,6 +91,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         non_ascii_names_fixed,
         inline_image_interpolate_fixed,
         ascii85_inline_images_fixed,
+        lzw_inline_images_fixed,
         jpx_colorspace_fixed,
         concatenated_operators_fixed,
         unknown_operators_stripped,
@@ -126,6 +128,7 @@ pub struct FixupReport {
     pub non_ascii_names_fixed: usize,
     pub inline_image_interpolate_fixed: usize,
     pub ascii85_inline_images_fixed: usize,
+    pub lzw_inline_images_fixed: usize,
     pub jpx_colorspace_fixed: usize,
     pub concatenated_operators_fixed: usize,
     pub unknown_operators_stripped: usize,
@@ -3918,6 +3921,31 @@ fn collect_content_stream_ids(doc: &Document) -> std::collections::HashSet<Objec
                 ids.insert(id);
             }
         }
+        // Type 3 font CharProcs — each value is a content stream reference.
+        if let Object::Dictionary(dict) = obj {
+            let is_type3 =
+                dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"Type3");
+            if is_type3 {
+                let charprocs_dict = match dict.get(b"CharProcs").ok() {
+                    Some(Object::Dictionary(d)) => Some(d),
+                    Some(Object::Reference(rid)) => {
+                        if let Some(Object::Dictionary(d)) = doc.objects.get(rid) {
+                            Some(d)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(charprocs) = charprocs_dict {
+                    for (_, val) in charprocs.iter() {
+                        if let Object::Reference(sid) = val {
+                            ids.insert(*sid);
+                        }
+                    }
+                }
+            }
+        }
     }
     ids
 }
@@ -5329,29 +5357,17 @@ fn fix_opm_in_dict_recursive(d: &mut lopdf::Dictionary) -> usize {
 // graphics state). This is not a valid single operator, causing veraPDF to flag
 // rule 6.2.2:1 ("operator not defined in ISO 32000-1").
 
+const CONCATENATED_OPERATOR_PATTERNS: &[(&[u8], &[u8])] = &[
+    (b"cmBI", b"cm BI"),
+    (b"BDCBT", b"BDC BT"),
+    (b"DoQq", b"Do Q q"),
+    (b"DoQ", b"Do Q"),
+    (b"Qq", b"Q q"),
+];
+
 fn fix_concatenated_operators(doc: &mut Document) -> usize {
     let content_stream_ids = collect_content_stream_ids(doc);
     let mut count = 0;
-
-    // Patterns: (bytes_to_match, replacement)
-    // Each pattern is checked at the current position; replacement is emitted if
-    // the token boundary guards pass (preceded by whitespace/SOF/delimiter,
-    // followed by whitespace/delimiter/EOF).
-    //
-    // cmBI: old PDF generators emit "cm" and "BI" without a separating space.
-    //   Split to "cm BI" so the BI keyword is recognised. (#gen-389, §6.2.2)
-    //
-    // DoQq: "Do" + "Q" + "q" → "Do Q q". (#gen-389)
-    // DoQ:  "Do" + "Q"       → "Do Q".
-    // Qq:   "Q" + "q"        → "Q q".
-    // BDCBT: "BDC" + "BT"   → "BDC BT". (#gen-389)
-    const PATTERNS: &[(&[u8], &[u8])] = &[
-        (b"cmBI", b"cm BI"),
-        (b"BDCBT", b"BDC BT"),
-        (b"DoQq", b"Do Q q"),
-        (b"DoQ", b"Do Q"),
-        (b"Qq", b"Q q"),
-    ];
 
     for id in content_stream_ids {
         let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
@@ -5365,7 +5381,7 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
 
         // Quick check: does this stream contain any of the patterns?
         // Also check for "ref" (re+f concatenation, #gen-389).
-        let has_match = PATTERNS
+        let has_match = CONCATENATED_OPERATOR_PATTERNS
             .iter()
             .any(|(pat, _)| decompressed.windows(pat.len()).any(|w| w == *pat))
             || decompressed.windows(3).any(|w| w == b"ref");
@@ -5373,70 +5389,219 @@ fn fix_concatenated_operators(doc: &mut Document) -> usize {
             continue;
         }
 
-        let mut new_content = Vec::with_capacity(decompressed.len() + 64);
-        let mut i = 0;
-        let len = decompressed.len();
-        let mut fixed = false;
-
-        'outer: while i < len {
-            for (pat, repl) in PATTERNS {
-                let plen = pat.len();
-                if i + plen <= len && &decompressed[i..i + plen] == *pat {
-                    let before_ok = i == 0 || is_pdf_delimiter_or_ws(decompressed[i - 1]);
-                    let after_ok =
-                        i + plen >= len || is_pdf_delimiter_or_ws(decompressed[i + plen]);
-                    if before_ok && after_ok {
-                        new_content.extend_from_slice(repl);
-                        i += plen;
-                        fixed = true;
-                        count += 1;
-                        continue 'outer;
-                    }
-                }
-            }
-            // Special case: "ref" = "re" + "f" concatenated without whitespace.
-            // The standard PATTERNS boundary check requires a PDF delimiter/whitespace
-            // after the last byte of the pattern. Here "f" may be immediately followed
-            // by a number operand starting with a digit, '.', '-', or '+' — none of
-            // which are PDF delimiters. Handle this with a looser after-check that
-            // also accepts number-start chars. Example: "ref354.48" → "re f 354.48".
-            // (#gen-389, §6.2.2:1)
-            if i + 3 <= len && &decompressed[i..i + 3] == b"ref" {
-                let before_ok = i == 0 || is_pdf_delimiter_or_ws(decompressed[i - 1]);
-                let after_ok = i + 3 >= len || {
-                    let a = decompressed[i + 3];
-                    is_pdf_delimiter_or_ws(a)
-                        || a.is_ascii_digit()
-                        || a == b'-'
-                        || a == b'+'
-                        || a == b'.'
-                };
-                if before_ok && after_ok {
-                    // Always add trailing space so "f" isn't concatenated with
-                    // a following number-start char (digit, '.', '-', '+').
-                    // "ref354.48" → "re f 354.48", not "re f354.48". (#gen-389)
-                    new_content.extend_from_slice(b"re f ");
-                    i += 3;
-                    fixed = true;
-                    count += 1;
-                    continue 'outer;
-                }
-            }
-
-            new_content.push(decompressed[i]);
-            i += 1;
-        }
-
-        if fixed {
+        if let Some((new_content, fixed_count)) = rewrite_concatenated_operators(&decompressed) {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.dict.remove(b"Filter");
                 s.dict.remove(b"DecodeParms");
                 s.set_content(new_content); // also updates /Length (#FP-6.1.7.1-len)
                 let _ = s.compress_with_level(1); // level 1: fast intermediate pass (#534 perf)
             }
+            count += fixed_count;
         }
     }
     count
+}
+
+fn rewrite_concatenated_operators(data: &[u8]) -> Option<(Vec<u8>, usize)> {
+    let mut out = Vec::with_capacity(data.len() + 64);
+    let mut i = 0;
+    let len = data.len();
+    let mut count = 0usize;
+
+    'outer: while i < len {
+        match data[i] {
+            b'%' => {
+                let start = i;
+                while i < len && data[i] != b'\n' && data[i] != b'\r' {
+                    i += 1;
+                }
+                out.extend_from_slice(&data[start..i]);
+                continue;
+            }
+            b'(' => {
+                let start = i;
+                i += 1;
+                let mut depth = 1u32;
+                while i < len && depth > 0 {
+                    match data[i] {
+                        b'\\' => {
+                            i += 1;
+                            if i < len {
+                                i += 1;
+                            }
+                        }
+                        b'(' => {
+                            depth += 1;
+                            i += 1;
+                        }
+                        b')' => {
+                            depth -= 1;
+                            i += 1;
+                        }
+                        _ => i += 1,
+                    }
+                }
+                out.extend_from_slice(&data[start..i]);
+                continue;
+            }
+            b'<' if i + 1 < len && data[i + 1] == b'<' => {
+                let start = i;
+                i += 2;
+                let mut depth = 1u32;
+                while i + 1 < len && depth > 0 {
+                    if data[i] == b'<' && data[i + 1] == b'<' {
+                        depth += 1;
+                        i += 2;
+                    } else if data[i] == b'>' && data[i + 1] == b'>' {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                if depth > 0 {
+                    i = len;
+                }
+                out.extend_from_slice(&data[start..i]);
+                continue;
+            }
+            b'<' => {
+                let start = i;
+                i += 1;
+                while i < len && data[i] != b'>' {
+                    i += 1;
+                }
+                if i < len {
+                    i += 1;
+                }
+                out.extend_from_slice(&data[start..i]);
+                continue;
+            }
+            b'/' => {
+                let start = i;
+                i += 1;
+                while i < len && !is_pdf_delimiter_or_ws(data[i]) {
+                    i += 1;
+                }
+                out.extend_from_slice(&data[start..i]);
+                continue;
+            }
+            b'[' => {
+                let start = i;
+                i += 1;
+                let mut depth = 1u32;
+                while i < len && depth > 0 {
+                    match data[i] {
+                        b'[' => {
+                            depth += 1;
+                            i += 1;
+                        }
+                        b']' => {
+                            depth -= 1;
+                            i += 1;
+                        }
+                        b'(' => {
+                            i += 1;
+                            let mut str_depth = 1u32;
+                            while i < len && str_depth > 0 {
+                                match data[i] {
+                                    b'\\' => {
+                                        i += 1;
+                                        if i < len {
+                                            i += 1;
+                                        }
+                                    }
+                                    b'(' => {
+                                        str_depth += 1;
+                                        i += 1;
+                                    }
+                                    b')' => {
+                                        str_depth -= 1;
+                                        i += 1;
+                                    }
+                                    _ => i += 1,
+                                }
+                            }
+                        }
+                        _ => i += 1,
+                    }
+                }
+                out.extend_from_slice(&data[start..i]);
+                continue;
+            }
+            _ => {}
+        }
+
+        for (pat, repl) in CONCATENATED_OPERATOR_PATTERNS {
+            let plen = pat.len();
+            if i + plen <= len && &data[i..i + plen] == *pat {
+                let before_ok = i == 0 || is_pdf_delimiter_or_ws(data[i - 1]);
+                let after_ok = i + plen >= len || is_pdf_delimiter_or_ws(data[i + plen]);
+                if before_ok && after_ok {
+                    out.extend_from_slice(repl);
+                    i += plen;
+                    count += 1;
+                    continue 'outer;
+                }
+            }
+        }
+
+        // Special case: "ref" = "re" + "f" concatenated without whitespace.
+        // Only rewrite it in operator position, never inside string operands.
+        if i + 3 <= len && &data[i..i + 3] == b"ref" {
+            let before_ok = i == 0 || is_pdf_delimiter_or_ws(data[i - 1]);
+            let after_ok = i + 3 >= len || {
+                let a = data[i + 3];
+                is_pdf_delimiter_or_ws(a)
+                    || a.is_ascii_digit()
+                    || a == b'-'
+                    || a == b'+'
+                    || a == b'.'
+            };
+            if before_ok && after_ok {
+                out.extend_from_slice(b"re f ");
+                i += 3;
+                count += 1;
+                continue;
+            }
+        }
+
+        out.push(data[i]);
+        i += 1;
+    }
+
+    if count > 0 {
+        Some((out, count))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_concatenated_operators;
+
+    #[test]
+    fn concatenated_operator_fix_skips_literal_strings() {
+        let data = b"(see ref. 17) Tj";
+        assert!(rewrite_concatenated_operators(data).is_none());
+    }
+
+    #[test]
+    fn concatenated_operator_fix_preserves_strings_but_splits_operator() {
+        let data = b"(see ref. 17) Qq";
+        let (fixed, count) = rewrite_concatenated_operators(data).expect("rewrite");
+        assert_eq!(count, 1);
+        assert_eq!(fixed, b"(see ref. 17) Q q");
+    }
+
+    #[test]
+    fn concatenated_operator_fix_still_handles_ref_number_pattern() {
+        let data = b"10 20 30 40 ref354.48";
+        let (fixed, count) = rewrite_concatenated_operators(data).expect("rewrite");
+        assert_eq!(count, 1);
+        assert_eq!(fixed, b"10 20 30 40 re f 354.48");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5760,6 +5925,288 @@ fn remove_a85_from_inline_image_dict(dict: &[u8]) -> Vec<u8> {
             new.extend_from_slice(&result[pos + pattern.len()..]);
             result = new;
             return result; // only one filter key per dict
+        }
+    }
+    result // no recognised pattern — return unchanged
+}
+
+// ---------------------------------------------------------------------------
+// §6.1.10:1 — LZW compression forbidden in inline images
+// ---------------------------------------------------------------------------
+//
+// PDF/A forbids LZWDecode in inline images (same as in regular streams).
+// This pass re-encodes LZW-compressed inline images to FlateDecode.
+// Pattern mirrors fix_ascii85_inline_images above.
+// ---------------------------------------------------------------------------
+
+fn fix_lzw_inline_images(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let decoded = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: must have both BI and LZW in the stream
+        if !decoded.windows(2).any(|w| w == b"BI") {
+            continue;
+        }
+        if !decoded.windows(3).any(|w| w == b"LZW") {
+            continue;
+        }
+
+        if let Some(new_content) = reencode_lzw_inline_images_in_stream(&decoded) {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.set_plain_content(new_content);
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Scans a decompressed content stream for BI blocks that use LZWDecode
+/// filter, decodes LZW, re-encodes as FlateDecode, and returns the modified
+/// stream. Returns `None` if no LZW inline images are found.
+fn reencode_lzw_inline_images_in_stream(data: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    let mut modified = false;
+
+    while i < data.len() {
+        // Look for "BI" preceded by a PDF delimiter/whitespace (or at start).
+        if i + 2 <= data.len()
+            && &data[i..i + 2] == b"BI"
+            && (i == 0 || is_pdf_delimiter_or_ws(data[i - 1]))
+            && (i + 2 >= data.len() || data[i + 2].is_ascii_whitespace())
+        {
+            let bi_content_start = i + 2;
+
+            // Scan for " ID " (whitespace + "ID" + whitespace)
+            let mut id_at = None;
+            let mut j = bi_content_start;
+            while j < data.len() {
+                if j + 3 <= data.len()
+                    && data[j].is_ascii_whitespace()
+                    && &data[j + 1..j + 3] == b"ID"
+                    && (j + 3 >= data.len() || data[j + 3].is_ascii_whitespace())
+                {
+                    id_at = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+
+            let Some(id_pos) = id_at else {
+                out.extend_from_slice(b"BI");
+                i = bi_content_start;
+                continue;
+            };
+
+            let dict_bytes = &data[bi_content_start..id_pos];
+
+            // Check if this inline image uses LZW filter
+            let has_lzw = dict_bytes.windows(4).any(|w| w == b"/LZW")
+                || dict_bytes.windows(10).any(|w| w == b"/LZWDecode");
+
+            if !has_lzw {
+                // Not LZW: copy verbatim BI…EI block
+                out.extend_from_slice(b"BI");
+                out.extend_from_slice(dict_bytes);
+                out.extend_from_slice(&data[id_pos..id_pos + 3]);
+                i = id_pos + 3;
+                if i < data.len() && data[i].is_ascii_whitespace() {
+                    out.push(data[i]);
+                    i += 1;
+                }
+                while i < data.len() {
+                    if data[i].is_ascii_whitespace()
+                        && i + 3 <= data.len()
+                        && &data[i + 1..i + 3] == b"EI"
+                        && (i + 3 >= data.len()
+                            || data[i + 3].is_ascii_whitespace()
+                            || data[i + 3] == b'Q')
+                    {
+                        out.extend_from_slice(&data[i..i + 3]);
+                        i += 3;
+                        break;
+                    }
+                    out.push(data[i]);
+                    i += 1;
+                }
+                continue;
+            }
+
+            // LZW inline image — re-encode to FlateDecode.
+            // After " ID" there is one mandatory whitespace byte (§8.9.7).
+            let mut data_start = id_pos + 3;
+            if data_start < data.len() && data[data_start].is_ascii_whitespace() {
+                data_start += 1;
+            }
+
+            // Find the EI marker. LZW data is binary, so use heuristic:
+            // scan for whitespace + "EI" + (whitespace | Q | EOF).
+            // Collect all candidates and pick the right one by trying LZW decode.
+            let mut ei_candidates: Vec<usize> = Vec::new();
+            let mut k = data_start;
+            while k < data.len() {
+                if data[k].is_ascii_whitespace()
+                    && k + 3 <= data.len()
+                    && &data[k + 1..k + 3] == b"EI"
+                    && (k + 3 >= data.len()
+                        || data[k + 3].is_ascii_whitespace()
+                        || data[k + 3] == b'Q')
+                {
+                    ei_candidates.push(k);
+                }
+                k += 1;
+            }
+
+            // Try each candidate: decode LZW, pick the first that succeeds
+            let mut decoded_data = None;
+            let mut ei_end = 0usize;
+            for &ei_ws_pos in &ei_candidates {
+                let lzw_bytes = &data[data_start..ei_ws_pos];
+                if let Some(dec) = inline_lzw_decode(lzw_bytes) {
+                    decoded_data = Some(dec);
+                    ei_end = ei_ws_pos + 3; // skip ws + "EI"
+                    break;
+                }
+            }
+
+            if decoded_data.is_none() {
+                // LZW decode failed for all candidates. Use last candidate
+                // and just strip the filter (safe fallback — image may be broken
+                // but the PDF won't have a forbidden filter).
+                if let Some(&last_ei) = ei_candidates.last() {
+                    let lzw_bytes = &data[data_start..last_ei];
+                    // Flate-compress the raw LZW bytes as fallback
+                    if let Some(compressed) = inline_flate_compress(lzw_bytes) {
+                        let new_dict = remove_lzw_from_inline_image_dict(dict_bytes);
+                        out.extend_from_slice(b"BI");
+                        out.extend_from_slice(&new_dict);
+                        out.extend_from_slice(b"\nID ");
+                        out.extend_from_slice(&compressed);
+                        out.extend_from_slice(b"\nEI");
+                        modified = true;
+                        i = last_ei + 3;
+                        continue;
+                    }
+                }
+                // Total failure: copy verbatim
+                out.extend_from_slice(b"BI");
+                out.extend_from_slice(dict_bytes);
+                out.extend_from_slice(&data[id_pos..data_start]);
+                i = data_start;
+                while i < data.len() {
+                    if data[i].is_ascii_whitespace()
+                        && i + 3 <= data.len()
+                        && &data[i + 1..i + 3] == b"EI"
+                        && (i + 3 >= data.len()
+                            || data[i + 3].is_ascii_whitespace()
+                            || data[i + 3] == b'Q')
+                    {
+                        out.extend_from_slice(&data[i..i + 3]);
+                        i += 3;
+                        break;
+                    }
+                    out.push(data[i]);
+                    i += 1;
+                }
+                continue;
+            }
+
+            let raw_pixels = decoded_data.unwrap();
+
+            // Flate-compress the decoded data
+            let Some(compressed) = inline_flate_compress(&raw_pixels) else {
+                // Compression failed — copy verbatim
+                out.extend_from_slice(b"BI");
+                out.extend_from_slice(dict_bytes);
+                out.extend_from_slice(&data[id_pos..data_start]);
+                out.extend_from_slice(&data[data_start..ei_end]);
+                i = ei_end;
+                continue;
+            };
+
+            // Build new dict: replace LZW with Fl
+            let new_dict = remove_lzw_from_inline_image_dict(dict_bytes);
+
+            // Write new inline image block
+            out.extend_from_slice(b"BI");
+            out.extend_from_slice(&new_dict);
+            out.extend_from_slice(b"\nID ");
+            out.extend_from_slice(&compressed);
+            out.extend_from_slice(b"\nEI");
+            modified = true;
+            i = ei_end;
+            continue;
+        }
+
+        out.push(data[i]);
+        i += 1;
+    }
+
+    if modified {
+        Some(out)
+    } else {
+        None
+    }
+}
+
+/// LZW-decode inline image data. Uses MSB byte order, min code size = 8.
+fn inline_lzw_decode(data: &[u8]) -> Option<Vec<u8>> {
+    let mut decoder = weezl::decode::Decoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8);
+    decoder.decode(data).ok()
+}
+
+/// Flate-compress data for inline image re-encoding.
+fn inline_flate_compress(data: &[u8]) -> Option<Vec<u8>> {
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    if encoder.write_all(data).is_ok() {
+        encoder.finish().ok()
+    } else {
+        None
+    }
+}
+
+/// Removes LZWDecode (`/LZW` or `/LZWDecode`) from the inline image dict
+/// bytes, replacing with FlateDecode (`/Fl`).
+fn remove_lzw_from_inline_image_dict(dict: &[u8]) -> Vec<u8> {
+    // Single filter patterns (most common)
+    const REPLACEMENTS: &[(&[u8], &[u8])] = &[
+        // Abbreviated: /F /LZW → /F /Fl
+        (b"/F /LZW", b"/F /Fl"),
+        (b"/F/LZW", b"/F /Fl"),
+        // Full name: /Filter /LZWDecode → /Filter /FlateDecode
+        (b"/Filter /LZWDecode", b"/Filter /FlateDecode"),
+        (b"/Filter/LZWDecode", b"/Filter /FlateDecode"),
+        // Array forms: [/LZW /Fl] → /Fl (remove LZW layer)
+        (b"[/LZW /Fl]", b"/Fl"),
+        (b"[/LZW  /Fl]", b"/Fl"),
+        (b"[ /LZW /Fl]", b"/Fl"),
+        (b"[ /LZW /Fl ]", b"/Fl"),
+        (b"[/LZWDecode /FlateDecode]", b"/FlateDecode"),
+        (b"[/LZWDecode /Fl]", b"/Fl"),
+        // Reversed order
+        (b"[/Fl /LZW]", b"/Fl"),
+        (b"[/FlateDecode /LZWDecode]", b"/FlateDecode"),
+    ];
+
+    let result = dict.to_vec();
+    for (pattern, replacement) in REPLACEMENTS {
+        if let Some(pos) = result.windows(pattern.len()).position(|w| w == *pattern) {
+            let mut new = Vec::with_capacity(result.len() - pattern.len() + replacement.len());
+            new.extend_from_slice(&result[..pos]);
+            new.extend_from_slice(replacement);
+            new.extend_from_slice(&result[pos + pattern.len()..]);
+            return new;
         }
     }
     result // no recognised pattern — return unchanged
@@ -6496,7 +6943,12 @@ fn fix_form_xobject_bbox(doc: &mut Document) -> usize {
 
 fn fix_font_type_entries(doc: &mut Document) -> usize {
     const FONT_SUBTYPES: &[&[u8]] = &[
-        b"Type1", b"MMType1", b"TrueType", b"Type3", b"CIDFontType0", b"CIDFontType2",
+        b"Type1",
+        b"MMType1",
+        b"TrueType",
+        b"Type3",
+        b"CIDFontType0",
+        b"CIDFontType2",
         b"Type0",
     ];
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
@@ -6504,10 +6956,14 @@ fn fix_font_type_entries(doc: &mut Document) -> usize {
     for id in ids {
         let needs_fix = match doc.objects.get(&id) {
             Some(Object::Dictionary(d)) => {
-                let subtype_ok = d.get(b"Subtype").ok().and_then(|o| match o {
-                    Object::Name(n) => Some(FONT_SUBTYPES.contains(&n.as_slice())),
-                    _ => None,
-                }).unwrap_or(false);
+                let subtype_ok = d
+                    .get(b"Subtype")
+                    .ok()
+                    .and_then(|o| match o {
+                        Object::Name(n) => Some(FONT_SUBTYPES.contains(&n.as_slice())),
+                        _ => None,
+                    })
+                    .unwrap_or(false);
                 if !subtype_ok {
                     false
                 } else {
