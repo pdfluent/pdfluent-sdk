@@ -561,20 +561,15 @@ fn transform_rect_for_rotation(
     let page_w = media_box[2] - media_box[0];
     let page_h = media_box[3] - media_box[1];
 
+    // Inverse of the viewer's rotation (content→visual):
+    //   Rotate=90:  visual(x,y) = content(cy, W-cx) → content(cx,cy) = (W-vy, vx)
+    //   Rotate=180: visual(x,y) = content(W-cx, H-cy) → content(cx,cy) = (W-vx, H-vy)
+    //   Rotate=270: visual(x,y) = content(H-cy, cx)   → content(cx,cy) = (vy, H-vx)
     match rotate % 360 {
         0 => (x0, y0, x1, y1),
-        90 | -270 => {
-            // 90° CW: visual (x,y) → content (y, page_w - x)
-            (y0, page_w - x1, y1, page_w - x0)
-        }
-        180 | -180 => {
-            // 180°: visual (x,y) → content (page_w - x, page_h - y)
-            (page_w - x1, page_h - y1, page_w - x0, page_h - y0)
-        }
-        270 | -90 => {
-            // 270° CW: visual (x,y) → content (page_h - y, x)
-            (page_h - y1, x0, page_h - y0, x1)
-        }
+        90 | -270 => (page_w - y1, x0, page_w - y0, x1),
+        180 | -180 => (page_w - x1, page_h - y1, page_w - x0, page_h - y0),
+        270 | -90 => (y0, page_h - x1, y1, page_h - x0),
         _ => (x0, y0, x1, y1),
     }
 }
