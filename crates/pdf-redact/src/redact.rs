@@ -212,18 +212,35 @@ fn redact_page_content(
 }
 
 /// Draw redaction overlay rectangles on the page.
+///
+/// The overlay is drawn in a clean graphics state to prevent interference
+/// from the page's existing CTM, opacity, or blend modes.  Existing content
+/// is wrapped in `q … Q` so its state is fully isolated.
 fn draw_redaction_overlays(
     doc: &mut Document,
     page_id: ObjectId,
     areas: &[&RedactionArea],
 ) -> Result<()> {
+    // Wrap existing content in q/Q to isolate the graphics state.
+    // Without this, a dirty CTM or non-unit opacity from previous content
+    // would affect our overlay (causing "too light" or misplaced rects).
+    wrap_existing_content_in_save_restore(doc, page_id);
+
+    // Read page Rotate and MediaBox to transform overlay coordinates
+    // for rotated pages.
+    let (rotate, media_box) = page_rotation_and_media_box(doc, page_id);
+
     let mut ops = Vec::new();
 
     for area in areas {
         let [r, g, b] = area.fill_color;
         let [x0, y0, x1, y1] = area.rect;
-        let w = x1 - x0;
-        let h = y1 - y0;
+
+        // Transform coordinates for page rotation.
+        let (tx0, ty0, tx1, ty1) =
+            transform_rect_for_rotation(x0, y0, x1, y1, rotate, &media_box);
+        let w = tx1 - tx0;
+        let h = ty1 - ty0;
 
         // Save state, set color, draw filled rectangle.
         ops.push(Operation::new("q", vec![]));
@@ -238,8 +255,8 @@ fn draw_redaction_overlays(
         ops.push(Operation::new(
             "re",
             vec![
-                Object::Real(x0 as f32),
-                Object::Real(y0 as f32),
+                Object::Real(tx0 as f32),
+                Object::Real(ty0 as f32),
                 Object::Real(w as f32),
                 Object::Real(h as f32),
             ],
@@ -249,7 +266,7 @@ fn draw_redaction_overlays(
         // Draw overlay text if specified.
         if let Some(ref text) = area.overlay_text {
             // Calculate font size to fit within the rectangle.
-            let max_font_size = h * 0.7;
+            let max_font_size = h.abs() * 0.7;
             let font_size = max_font_size.clamp(4.0, 12.0) as f32;
 
             ops.push(Operation::new("BT", vec![]));
@@ -265,8 +282,8 @@ fn draw_redaction_overlays(
             ops.push(Operation::new(
                 "Td",
                 vec![
-                    Object::Real((x0 + 2.0) as f32),
-                    Object::Real((y0 + 2.0) as f32),
+                    Object::Real((tx0 + 2.0) as f32),
+                    Object::Real((ty0 + 2.0) as f32),
                 ],
             ));
             ops.push(Operation::new(
@@ -437,6 +454,128 @@ fn append_content_to_page(doc: &mut Document, page_id: ObjectId, content_id: Obj
 
     if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
         d.set("Contents", new_contents);
+    }
+}
+
+/// Wrap existing page content in q/Q to isolate graphics state.
+///
+/// This prevents the page's CTM, opacity, or blend mode from leaking into
+/// the overlay content stream we append afterwards.
+fn wrap_existing_content_in_save_restore(doc: &mut Document, page_id: ObjectId) {
+    // Create a tiny stream containing just "q\n"
+    let q_stream = Stream::new(dictionary! {}, b"q\n".to_vec());
+    let q_id = doc.add_object(Object::Stream(q_stream));
+
+    // Create a tiny stream containing just "\nQ\n"
+    let big_q_stream = Stream::new(dictionary! {}, b"\nQ\n".to_vec());
+    let big_q_id = doc.add_object(Object::Stream(big_q_stream));
+
+    // Read existing Contents
+    let existing = {
+        let page_obj = match doc.get_object(page_id) {
+            Ok(obj) => obj,
+            Err(_) => return,
+        };
+        let page_dict = match page_obj {
+            Object::Dictionary(ref d) => d,
+            _ => return,
+        };
+        page_dict.get(b"Contents").ok().cloned()
+    };
+
+    // Wrap: [q_stream, ...existing..., Q_stream]
+    let wrapped = match existing {
+        Some(Object::Reference(existing_id)) => Object::Array(vec![
+            Object::Reference(q_id),
+            Object::Reference(existing_id),
+            Object::Reference(big_q_id),
+        ]),
+        Some(Object::Array(arr)) => {
+            let mut new_arr = Vec::with_capacity(arr.len() + 2);
+            new_arr.push(Object::Reference(q_id));
+            new_arr.extend(arr);
+            new_arr.push(Object::Reference(big_q_id));
+            Object::Array(new_arr)
+        }
+        _ => return, // No existing content — nothing to wrap
+    };
+
+    if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+        d.set("Contents", wrapped);
+    }
+}
+
+/// Read page rotation (0, 90, 180, 270) and MediaBox [x0, y0, x1, y1].
+fn page_rotation_and_media_box(doc: &Document, page_id: ObjectId) -> (i64, [f64; 4]) {
+    let default_box = [0.0, 0.0, 612.0, 792.0];
+
+    let page_obj = match doc.get_object(page_id) {
+        Ok(obj) => obj,
+        Err(_) => return (0, default_box),
+    };
+    let page_dict = match page_obj {
+        Object::Dictionary(ref d) => d,
+        _ => return (0, default_box),
+    };
+
+    let rotate = page_dict
+        .get(b"Rotate")
+        .ok()
+        .and_then(|r| match r {
+            Object::Integer(i) => Some(*i),
+            _ => None,
+        })
+        .unwrap_or(0);
+
+    let media_box = page_dict
+        .get(b"MediaBox")
+        .ok()
+        .and_then(|mb| {
+            if let Object::Array(arr) = mb {
+                if arr.len() >= 4 {
+                    let vals: Vec<f64> = arr.iter().filter_map(as_number).collect();
+                    if vals.len() >= 4 {
+                        return Some([vals[0], vals[1], vals[2], vals[3]]);
+                    }
+                }
+            }
+            None
+        })
+        .unwrap_or(default_box);
+
+    (rotate, media_box)
+}
+
+/// Transform a rect from user-space coordinates to the rotated page's
+/// coordinate system.  Overlay rects are in "visual" coordinates (what the
+/// user sees), but the page's content stream uses the MediaBox coordinate
+/// system with /Rotate applied by the viewer.
+fn transform_rect_for_rotation(
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    rotate: i64,
+    media_box: &[f64; 4],
+) -> (f64, f64, f64, f64) {
+    let page_w = media_box[2] - media_box[0];
+    let page_h = media_box[3] - media_box[1];
+
+    match rotate % 360 {
+        0 => (x0, y0, x1, y1),
+        90 | -270 => {
+            // 90° CW: visual (x,y) → content (y, page_w - x)
+            (y0, page_w - x1, y1, page_w - x0)
+        }
+        180 | -180 => {
+            // 180°: visual (x,y) → content (page_w - x, page_h - y)
+            (page_w - x1, page_h - y1, page_w - x0, page_h - y0)
+        }
+        270 | -90 => {
+            // 270° CW: visual (x,y) → content (page_h - y, x)
+            (page_h - y1, x0, page_h - y0, x1)
+        }
+        _ => (x0, y0, x1, y1),
     }
 }
 
