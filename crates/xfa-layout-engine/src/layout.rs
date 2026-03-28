@@ -58,6 +58,14 @@ pub enum LayoutContent {
     },
 }
 
+/// A content node queued for pagination, carrying page-break flags.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+struct QueuedNode {
+    id: FormNodeId,
+    break_before: bool,
+}
+
 /// The layout engine.
 pub struct LayoutEngine<'a> {
     form: &'a FormTree,
@@ -77,9 +85,8 @@ impl<'a> LayoutEngine<'a> {
         let root_node = self.form.get(root);
 
         let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
-        // Expand occur rules for top-level content used by layout_content_fitting
-        // (layout_content_on_page uses layout_children which expands internally)
-        let content_nodes_expanded = self.expand_occur(&raw_content_nodes);
+        // Build queued nodes with break_before flags and occur expansion.
+        let content_queued = self.queue_content(&raw_content_nodes);
 
         let mut pages = Vec::new();
 
@@ -99,21 +106,24 @@ impl<'a> LayoutEngine<'a> {
 
             if root_node.layout == LayoutStrategy::TopToBottom {
                 // TB layout supports pagination: split content across pages
-                let mut remaining = content_nodes_expanded;
+                let mut remaining = content_queued;
                 while !remaining.is_empty() {
-                    let (page, rest) =
+                    let (page, rest, consumed_break_only) =
                         self.layout_content_fitting(&area, &remaining, page_w, page_h)?;
-                    if page.nodes.is_empty() {
+                    if page.nodes.is_empty() && !consumed_break_only {
                         // Force place one item to prevent infinite loop
                         let forced = self.layout_content_on_page(
                             &area,
                             page_w,
                             page_h,
-                            &remaining[..1],
+                            &[remaining[0].id],
                             root_node.layout,
                         )?;
                         pages.push(forced);
                         remaining = remaining[1..].to_vec();
+                    } else if consumed_break_only {
+                        // Break-only page: skip the blank page, continue with rest
+                        remaining = rest;
                     } else {
                         pages.push(page);
                         remaining = rest;
@@ -132,7 +142,7 @@ impl<'a> LayoutEngine<'a> {
             }
         } else {
             // Layout content across page areas, then repeat last template for overflow
-            let mut remaining = content_nodes_expanded;
+            let mut remaining = content_queued;
             for pa in &page_areas {
                 if remaining.is_empty() {
                     break;
@@ -141,12 +151,17 @@ impl<'a> LayoutEngine<'a> {
                     if remaining.is_empty() {
                         break;
                     }
-                    let (placed, rest) =
+                    let (placed, rest, consumed_break_only) =
                         self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
-                    if !placed.nodes.is_empty() {
+                    if consumed_break_only {
+                        // Break-only page: skip blank, continue with rest
+                        remaining = rest;
+                    } else if !placed.nodes.is_empty() {
                         pages.push(placed);
+                        remaining = rest;
+                    } else {
+                        remaining = rest;
                     }
-                    remaining = rest;
                 }
             }
 
@@ -159,23 +174,26 @@ impl<'a> LayoutEngine<'a> {
                     .ok_or(LayoutError::NoMatchingPageArea)?;
 
                 while !remaining.is_empty() {
-                    let (page, rest) = self.layout_content_fitting(
+                    let (page, rest, consumed_break_only) = self.layout_content_fitting(
                         ca,
                         &remaining,
                         last_pa.page_width,
                         last_pa.page_height,
                     )?;
-                    if page.nodes.is_empty() {
+                    if page.nodes.is_empty() && !consumed_break_only {
                         // Force place one item to prevent infinite loop
                         let forced = self.layout_content_on_page(
                             ca,
                             last_pa.page_width,
                             last_pa.page_height,
-                            &remaining[..1],
+                            &[remaining[0].id],
                             LayoutStrategy::TopToBottom,
                         )?;
                         pages.push(forced);
                         remaining = remaining[1..].to_vec();
+                    } else if consumed_break_only {
+                        // Break-only page: skip blank, continue with rest
+                        remaining = rest;
                     } else {
                         pages.push(page);
                         remaining = rest;
@@ -185,6 +203,130 @@ impl<'a> LayoutEngine<'a> {
         }
 
         Ok(LayoutDom { pages })
+    }
+
+    // -------------------------------------------------------------------
+    // Helper methods for queued/hidden-aware pagination
+    // -------------------------------------------------------------------
+
+    /// Returns true if the node should be completely skipped during layout
+    /// (XFA `presence="hidden"` — no layout space consumed).
+    /// `presence="invisible"` still takes space, so it is NOT hidden for layout.
+    fn is_layout_hidden(&self, id: FormNodeId) -> bool {
+        let meta = self.form.meta(id);
+        meta.presence_hidden && !meta.presence_invisible
+    }
+
+    /// Build a queue of `QueuedNode`s from a list of child IDs, skipping
+    /// nodes that are layout-hidden and expanding occur rules.
+    fn queue_content(&self, children: &[FormNodeId]) -> Vec<QueuedNode> {
+        let expanded = self.expand_occur(children);
+        expanded
+            .into_iter()
+            .filter(|&id| !self.is_layout_hidden(id))
+            .map(|id| QueuedNode {
+                id,
+                break_before: self.form.meta(id).page_break_before,
+            })
+            .collect()
+    }
+
+    /// Returns true when a node and its entire subtree produce no visible
+    /// content (used for blank-page detection).
+    fn subtree_is_blank(&self, id: FormNodeId) -> bool {
+        let node = self.form.get(id);
+        match &node.node_type {
+            FormNodeType::Field { value } => value.is_empty(),
+            FormNodeType::Draw { content } => content.is_empty(),
+            FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => true,
+            FormNodeType::Subform => node.children.iter().all(|&c| self.subtree_is_blank(c)),
+        }
+    }
+
+    /// Whether `current_id` has a keep-with-next constraint relative to
+    /// `next_id`, or `next_id` has keep-with-previous.
+    #[allow(dead_code)]
+    fn keep_links_content(&self, current_id: FormNodeId, next_id: FormNodeId) -> bool {
+        let cur_meta = self.form.meta(current_id);
+        let nxt_meta = self.form.meta(next_id);
+        cur_meta.keep_next_content_area
+            || nxt_meta.keep_previous_content_area
+            || self.is_spacer_keep_with_next(current_id)
+    }
+
+    /// Compute the cumulative height of a keep-chain starting at
+    /// `start_idx` within `children`.
+    #[allow(dead_code)]
+    fn keep_chain_height(&self, children: &[FormNodeId], start_idx: usize, available: Size) -> f64 {
+        let mut total = 0.0;
+        for i in start_idx..children.len() {
+            let sz = self.compute_extent_with_available(children[i], Some(available));
+            total += sz.height;
+            if i + 1 < children.len() && !self.keep_links_content(children[i], children[i + 1]) {
+                break;
+            }
+        }
+        total
+    }
+
+    /// Compute the cumulative height of a keep-chain starting at
+    /// `start_idx` within a queued-node slice.
+    #[allow(dead_code)]
+    fn queued_keep_chain_height(
+        &self,
+        children: &[QueuedNode],
+        start_idx: usize,
+        available: Size,
+    ) -> f64 {
+        let mut total = 0.0;
+        for i in start_idx..children.len() {
+            let sz = self.compute_extent_with_available(children[i].id, Some(available));
+            total += sz.height;
+            if i + 1 < children.len()
+                && !self.keep_links_content(children[i].id, children[i + 1].id)
+            {
+                break;
+            }
+        }
+        total
+    }
+
+    /// Returns true when the node is a blank spacer with a keep-intact
+    /// constraint (used as a "glue" between siblings).
+    fn is_spacer_keep_with_next(&self, id: FormNodeId) -> bool {
+        let meta = self.form.meta(id);
+        meta.keep_intact_content_area && self.subtree_is_blank(id)
+    }
+
+    /// Compute the cumulative height of a keep-chain starting at index
+    /// `start_idx` within a filtered visible-ids list. The chain extends
+    /// as long as consecutive nodes have `keep_next_content_area` or the
+    /// next node has `keep_previous_content_area`.
+    fn visible_keep_chain_height(
+        &self,
+        visible_ids: &[(usize, FormNodeId)],
+        start_idx: usize,
+        available: Size,
+    ) -> f64 {
+        let mut total = 0.0;
+        for i in start_idx..visible_ids.len() {
+            let (_, id) = visible_ids[i];
+            let sz = self.compute_extent_with_available(id, Some(available));
+            total += sz.height;
+            // Check if the chain continues to the next node.
+            if i + 1 < visible_ids.len() {
+                let (_, next_id) = visible_ids[i + 1];
+                let cur_meta = self.form.meta(id);
+                let nxt_meta = self.form.meta(next_id);
+                let keep = cur_meta.keep_next_content_area
+                    || nxt_meta.keep_previous_content_area
+                    || (cur_meta.keep_intact_content_area && self.subtree_is_blank(id));
+                if !keep {
+                    break;
+                }
+            }
+        }
+        total
     }
 
     fn extract_page_structure(
@@ -205,6 +347,7 @@ impl<'a> LayoutEngine<'a> {
                                 content_areas: content_areas.clone(),
                                 page_width: pa_node.box_model.width.unwrap_or(612.0),
                                 page_height: pa_node.box_model.height.unwrap_or(792.0),
+                                fixed_nodes: Vec::new(),
                             });
                         }
                     }
@@ -214,6 +357,7 @@ impl<'a> LayoutEngine<'a> {
                         content_areas: content_areas.clone(),
                         page_width: child.box_model.width.unwrap_or(612.0),
                         page_height: child.box_model.height.unwrap_or(792.0),
+                        fixed_nodes: Vec::new(),
                     });
                 }
                 // XFA's canonical nesting: <subform layout="paginate"> wraps
@@ -276,10 +420,10 @@ impl<'a> LayoutEngine<'a> {
     fn layout_content_fitting(
         &self,
         content_area: &ContentArea,
-        content_ids: &[FormNodeId],
+        content_ids: &[QueuedNode],
         page_width: f64,
         page_height: f64,
-    ) -> Result<(LayoutPage, Vec<FormNodeId>)> {
+    ) -> Result<(LayoutPage, Vec<QueuedNode>, bool)> {
         let mut page = LayoutPage {
             width: page_width,
             height: page_height,
@@ -323,17 +467,68 @@ impl<'a> LayoutEngine<'a> {
 
         let mut y_cursor = leader_height;
         let mut placed_count = 0;
-        let mut split_remaining: Vec<FormNodeId> = Vec::new();
+        let mut split_remaining: Vec<QueuedNode> = Vec::new();
         let content_bottom = leader_height + content_height;
+        let mut consumed_break_only = false;
 
-        for &child_id in content_ids {
+        // Count leader/trailer nodes placed so far (for force-place detection).
+        let header_node_count = (if content_area.leader.is_some() { 1 } else { 0 })
+            + (if content_area.trailer.is_some() { 1 } else { 0 });
+
+        // Pre-compute a visible-node list for keep-chain look-ahead.
+        // Each entry is (index-into-content_ids, FormNodeId).
+        let visible_ids: Vec<(usize, FormNodeId)> = content_ids
+            .iter()
+            .enumerate()
+            .filter(|(_, qn)| !self.is_layout_hidden(qn.id))
+            .map(|(i, qn)| (i, qn.id))
+            .collect();
+        let mut vis_pos = 0; // current position in visible_ids
+
+        for (idx, qn) in content_ids.iter().enumerate() {
+            let child_id = qn.id;
+
+            // Skip layout-hidden nodes — they consume no space.
+            if self.is_layout_hidden(child_id) {
+                placed_count += 1;
+                continue;
+            }
+
+            // Handle break_before: if this node requests a page break and
+            // we already placed content on this page, stop here so the
+            // caller starts a new page with this node.
+            if qn.break_before && placed_count > 0 {
+                // Check if all placed content is blank spacers — if so,
+                // fold the blank page: mark as consumed_break_only so the
+                // caller skips the empty page.
+                let only_blanks = page.nodes.len() <= header_node_count;
+                if only_blanks {
+                    consumed_break_only = true;
+                }
+                break;
+            }
+
             let child = self.form.get(child_id);
             let child_size = self.compute_extent_with_available(child_id, Some(available));
+
+            // Keep-chain look-ahead: if this node starts a keep chain and
+            // the chain doesn't fit in remaining space (but WOULD fit on a
+            // fresh page), break now so the chain starts on the next page.
+            if placed_count > 0 && vis_pos < visible_ids.len() {
+                let chain_height = self.visible_keep_chain_height(&visible_ids, vis_pos, available);
+                let remaining_on_page = content_bottom - y_cursor;
+                if chain_height > remaining_on_page && chain_height <= content_height {
+                    // Chain fits on a fresh page — break now.
+                    break;
+                }
+                // Unsatisfiable keep chain (exceeds page height):
+                // fall through and use child's own height for placement.
+            }
 
             if y_cursor + child_size.height > content_bottom {
                 let remaining_height = content_bottom - y_cursor;
 
-                // Try to split this node if it's a splittable tb-layout container
+                // Try to split this node if it's a splittable tb-layout container.
                 if remaining_height > 0.0 && self.can_split(child_id) {
                     let (partial, rest_children) =
                         self.split_tb_node(child_id, y_cursor, remaining_height, available)?;
@@ -343,10 +538,16 @@ impl<'a> LayoutEngine<'a> {
                         offset_node.rect.y += content_area.y;
                         page.nodes.push(offset_node);
                         placed_count += 1;
-                        split_remaining = rest_children;
+                        split_remaining = rest_children
+                            .into_iter()
+                            .map(|cid| QueuedNode {
+                                id: cid,
+                                break_before: self.form.meta(cid).page_break_before,
+                            })
+                            .collect();
                     }
-                } else if placed_count == 0 {
-                    // First item too large and can't split — force place it
+                } else if idx == 0 || page.nodes.len() <= header_node_count {
+                    // First content item too large and can't split — force place it
                     let node = self.layout_single_node_with_extent(
                         child_id, child, 0.0, y_cursor, child_size,
                     )?;
@@ -355,6 +556,47 @@ impl<'a> LayoutEngine<'a> {
                     offset_node.rect.y += content_area.y;
                     page.nodes.push(offset_node);
                     placed_count += 1;
+                }
+                break;
+            }
+
+            // Proactive split: if the child fits on the page but contains
+            // inner page-break-before children, split it using the FULL
+            // content height so the inner break is detected.
+            if self.has_inner_break(child_id) && self.can_split(child_id) {
+                let (partial, rest_children) =
+                    self.split_tb_node(child_id, y_cursor, content_height, available)?;
+                let remaining_on_page = content_bottom - y_cursor;
+                if !partial.children.is_empty() && partial.rect.height <= remaining_on_page {
+                    let mut offset_node = partial;
+                    offset_node.rect.x += content_area.x;
+                    offset_node.rect.y += content_area.y;
+                    page.nodes.push(offset_node);
+                    placed_count += 1;
+                    split_remaining = rest_children
+                        .into_iter()
+                        .map(|cid| QueuedNode {
+                            id: cid,
+                            break_before: self.form.meta(cid).page_break_before,
+                        })
+                        .collect();
+                } else if placed_count > 0 {
+                    break;
+                } else {
+                    if !partial.children.is_empty() {
+                        let mut offset_node = partial;
+                        offset_node.rect.x += content_area.x;
+                        offset_node.rect.y += content_area.y;
+                        page.nodes.push(offset_node);
+                    }
+                    placed_count += 1;
+                    split_remaining = rest_children
+                        .into_iter()
+                        .map(|cid| QueuedNode {
+                            id: cid,
+                            break_before: self.form.meta(cid).page_break_before,
+                        })
+                        .collect();
                 }
                 break;
             }
@@ -368,11 +610,12 @@ impl<'a> LayoutEngine<'a> {
 
             y_cursor += child_size.height;
             placed_count += 1;
+            vis_pos += 1;
         }
 
         let mut remaining = split_remaining;
-        remaining.extend_from_slice(&content_ids[placed_count..]);
-        Ok((page, remaining))
+        remaining.extend(content_ids[placed_count..].iter().copied());
+        Ok((page, remaining, consumed_break_only))
     }
 
     /// Check if a node can be split across pages.
@@ -383,8 +626,26 @@ impl<'a> LayoutEngine<'a> {
         node.layout == LayoutStrategy::TopToBottom && !node.children.is_empty()
     }
 
+    /// Check if any direct (expanded) child of a tb-layout subform has
+    /// `page_break_before` set, meaning the node must be split at that
+    /// point even if it fits in the remaining space.
+    fn has_inner_break(&self, id: FormNodeId) -> bool {
+        let node = self.form.get(id);
+        if node.layout != LayoutStrategy::TopToBottom {
+            return false;
+        }
+        let expanded = self.expand_occur(&node.children);
+        expanded
+            .iter()
+            .any(|&cid| self.form.meta(cid).page_break_before)
+    }
+
     /// Split a tb-layout node: place children that fit in `remaining_height`,
     /// return a partial layout node and the remaining child IDs.
+    ///
+    /// Respects keep constraints: if a child has `keep_next_content_area`,
+    /// the split will not occur between that child and its successor.
+    /// Also respects `page_break_before` on children as mandatory split points.
     fn split_tb_node(
         &self,
         id: FormNodeId,
@@ -398,20 +659,68 @@ impl<'a> LayoutEngine<'a> {
         let mut placed_children = Vec::new();
         let mut child_y = 0.0;
         let mut split_idx = 0;
+        // Track the last valid split point (respecting keep constraints).
+        let mut last_valid_split = 0;
+        let mut last_valid_y = 0.0_f64;
 
         for (i, &child_id) in expanded_children.iter().enumerate() {
             let child = self.form.get(child_id);
             let child_size = self.compute_extent(child_id);
+            let child_meta = self.form.meta(child_id);
 
-            if child_y + child_size.height > remaining_height && !placed_children.is_empty() {
+            // page_break_before on a child → split point (if we already placed content).
+            if child_meta.page_break_before && !placed_children.is_empty() {
                 split_idx = i;
                 break;
             }
+
+            // If this child has keep_intact and doesn't fit, split BEFORE it
+            // so it moves to the next page entirely.
+            if child_meta.keep_intact_content_area
+                && child_y + child_size.height > remaining_height
+                && !placed_children.is_empty()
+            {
+                split_idx = i;
+                break;
+            }
+
+            // Overflow detection: child doesn't fit in remaining space.
+            if child_y + child_size.height > remaining_height && !placed_children.is_empty() {
+                // Overflow: split at the last valid split point.
+                if last_valid_split > 0 && last_valid_split < placed_children.len() {
+                    // Trim placed_children to the last valid split point.
+                    placed_children.truncate(last_valid_split);
+                    child_y = last_valid_y;
+                    split_idx = last_valid_split;
+                } else {
+                    split_idx = i;
+                }
+                break;
+            }
+
+            // When child_y > 0 (content already placed) and the child overflows,
+            // we already handled that above. Now also try splitting even if
+            // fits_on_fresh_page when there's already content.
+            // (This is handled by the overflow check above being >= not >.)
 
             let child_node = self.layout_single_node(child_id, child, 0.0, child_y)?;
             placed_children.push(child_node);
             child_y += child_size.height;
             split_idx = i + 1;
+
+            // Check if this is a valid split point (no keep constraint).
+            let has_keep = child_meta.keep_next_content_area;
+            let next_has_keep_prev = if i + 1 < expanded_children.len() {
+                self.form
+                    .meta(expanded_children[i + 1])
+                    .keep_previous_content_area
+            } else {
+                false
+            };
+            if !has_keep && !next_has_keep_prev {
+                last_valid_split = split_idx;
+                last_valid_y = child_y;
+            }
         }
 
         let content = match &node.node_type {
@@ -464,9 +773,16 @@ impl<'a> LayoutEngine<'a> {
     /// A child with `occur.count() == 3` produces three entries in the output.
     /// Each entry refers to the same FormNodeId (the template), which the layout
     /// engine treats as separate instances at different positions.
+    ///
+    /// Nodes with `presence="hidden"` (not `"invisible"`) are skipped entirely
+    /// because they consume no layout space (XFA 3.3 §3.2.8).
     fn expand_occur(&self, children: &[FormNodeId]) -> Vec<FormNodeId> {
         let mut expanded = Vec::new();
         for &child_id in children {
+            // Skip layout-hidden nodes — they occupy no space (XFA 3.3 §3.2.8).
+            if self.is_layout_hidden(child_id) {
+                continue;
+            }
             let child = self.form.get(child_id);
             let count = child.occur.count();
             for _ in 0..count {
@@ -956,6 +1272,10 @@ struct PageAreaInfo {
     content_areas: Vec<ContentArea>,
     page_width: f64,
     page_height: f64,
+    /// Fixed-position nodes (e.g., page-level headers/footers) placed on every
+    /// page that uses this page area.
+    #[allow(dead_code)]
+    fixed_nodes: Vec<FormNodeId>,
 }
 
 #[cfg(test)]

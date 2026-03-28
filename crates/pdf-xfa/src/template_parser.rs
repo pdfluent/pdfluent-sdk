@@ -44,7 +44,7 @@ pub fn parse_template(xml: &str, datasets_xml: Option<&str>) -> Result<(FormTree
     };
 
     let mut tree = FormTree::new();
-    let root_id = parse_node(&mut tree, template_elem, true)?;
+    let (root_id, _trailing) = parse_node(&mut tree, template_elem, true)?;
 
     // Data binding: merge field values from datasets XML.
     if let Some(ds_xml) = datasets_xml {
@@ -62,31 +62,48 @@ pub fn parse_template(xml: &str, datasets_xml: Option<&str>) -> Result<(FormTree
 // Recursive node parser
 // ---------------------------------------------------------------------------
 
-fn parse_node(tree: &mut FormTree, elem: Node<'_, '_>, is_root: bool) -> Result<FormNodeId> {
+/// Parse an XML element into a form node and add it to the tree.
+///
+/// Returns `(FormNodeId, trailing_break)` where `trailing_break` is true when
+/// the node's `add_children` ended with a pending breakBefore that could not
+/// be consumed within the node (i.e. the breakBefore appeared after the last
+/// content child and should propagate to the next sibling at the parent level).
+fn parse_node(
+    tree: &mut FormTree,
+    elem: Node<'_, '_>,
+    is_root: bool,
+) -> Result<(FormNodeId, bool)> {
     let tag = elem.tag_name().name();
 
-    let node = match tag {
-        "template" => parse_root(tree, elem)?,
-        "subform" | "exclGroup" => parse_subform(tree, elem, is_root)?,
-        "field" => parse_field(tree, elem)?,
-        "draw" => parse_draw(tree, elem)?,
-        "pageSet" => parse_page_set(tree, elem)?,
-        "pageArea" => parse_page_area(tree, elem)?,
+    let (node, trailing_break) = match tag {
+        "template" => {
+            let mut n = parse_root_node(tree, elem)?;
+            let tb = add_children(tree, &mut n, elem)?;
+            (n, tb)
+        }
+        "subform" | "exclGroup" => {
+            let mut n = parse_subform_node(tree, elem, is_root)?;
+            let tb = add_children(tree, &mut n, elem)?;
+            (n, tb)
+        }
+        "field" => (parse_field(tree, elem)?, false),
+        "draw" => (parse_draw(tree, elem)?, false),
+        "pageSet" => (parse_page_set(tree, elem)?, false),
+        "pageArea" => (parse_page_area(tree, elem)?, false),
         _ => {
-            // Unknown element — create a minimal placeholder so traversal
-            // can continue to collect child nodes.
-            let mut node = blank_node(tag);
-            add_children(tree, &mut node, elem)?;
-            node
+            let mut n = blank_node(tag);
+            let tb = add_children(tree, &mut n, elem)?;
+            (n, tb)
         }
     };
 
     let meta = parse_node_meta(elem);
-    Ok(tree.add_node_with_meta(node, meta))
+    Ok((tree.add_node_with_meta(node, meta), trailing_break))
 }
 
-fn parse_root(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
-    let mut node = FormNode {
+/// Build the root FormNode (without children — `parse_node` calls `add_children`).
+fn parse_root_node(_tree: &mut FormTree, _elem: Node<'_, '_>) -> Result<FormNode> {
+    Ok(FormNode {
         name: "root".to_string(),
         node_type: FormNodeType::Root,
         box_model: BoxModel::default(),
@@ -98,12 +115,15 @@ fn parse_root(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         validate: None,
         column_widths: Vec::new(),
         col_span: 1,
-    };
-    add_children(tree, &mut node, elem)?;
-    Ok(node)
+    })
 }
 
-fn parse_subform(tree: &mut FormTree, elem: Node<'_, '_>, _is_root: bool) -> Result<FormNode> {
+/// Build a subform FormNode (without children — `parse_node` calls `add_children`).
+fn parse_subform_node(
+    _tree: &mut FormTree,
+    elem: Node<'_, '_>,
+    _is_root: bool,
+) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let layout = parse_layout_attr(elem);
     let mut bm = parse_box_model(elem);
@@ -113,7 +133,7 @@ fn parse_subform(tree: &mut FormTree, elem: Node<'_, '_>, _is_root: bool) -> Res
         bm.width = Some(612.0);
     }
 
-    let mut node = FormNode {
+    Ok(FormNode {
         name,
         node_type: FormNodeType::Subform,
         box_model: bm,
@@ -125,31 +145,25 @@ fn parse_subform(tree: &mut FormTree, elem: Node<'_, '_>, _is_root: bool) -> Res
         validate: None,
         column_widths: Vec::new(),
         col_span: 1,
-    };
-    add_children(tree, &mut node, elem)?;
-    Ok(node)
+    })
 }
 
 fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let bm = parse_box_model(elem);
 
-    // Hidden/invisible/inactive fields keep their layout space but render no
-    // content or borders. We represent this by returning an empty value. (#557)
-    let hidden = is_hidden(elem);
-
-    // Extract the field value (from <value><text>…</text></value>).
-    let value = if hidden {
-        String::new()
-    } else {
-        extract_value_text(elem).unwrap_or_default()
-    };
+    // Always extract the field value and preserve the Field node type.
+    // Visibility is controlled by FormNodeMeta.presence_hidden — the layout
+    // engine skips hidden nodes, and the renderer checks metadata.
+    // Dynamic scripts can later toggle presence to "visible", so we must
+    // preserve the content for all fields.
+    let value = extract_value_text(elem).unwrap_or_default();
 
     // Extract caption text (from <caption><value><text>…</text></value>).
-    let caption_text = if hidden {
-        None
-    } else {
+    let caption_text = if !is_hidden(elem) {
         extract_caption_text(elem)
+    } else {
+        None
     };
     let mut bm_with_caption = bm.clone();
     if let Some(ref cap_text) = caption_text {
@@ -160,20 +174,9 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         });
     }
 
-    // Hidden fields keep layout space but render neither content nor borders.
-    // Map them to Draw nodes with empty content — Draw nodes don't render
-    // borders, keeping the visual output clean. (#557)
-    let node_type = if hidden {
-        FormNodeType::Draw {
-            content: String::new(),
-        }
-    } else {
-        FormNodeType::Field { value }
-    };
-
     let node = FormNode {
         name,
-        node_type,
+        node_type: FormNodeType::Field { value },
         box_model: bm_with_caption,
         layout: LayoutStrategy::Positioned,
         children: Vec::new(),
@@ -192,12 +195,8 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
 fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let bm = parse_box_model(elem);
-    // Hidden/invisible/inactive draw elements keep layout space but show nothing.
-    let content = if is_hidden(elem) {
-        String::new()
-    } else {
-        extract_value_text(elem).unwrap_or_default()
-    };
+    // Always extract content — visibility is controlled by metadata.
+    let content = extract_value_text(elem).unwrap_or_default();
 
     let node = FormNode {
         name,
@@ -281,7 +280,7 @@ fn parse_page_set(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     // Children of pageSet are pageArea elements.
     for child in elem.children().filter(|n| n.is_element()) {
         if child.tag_name().name() == "pageArea" {
-            let child_id = parse_node(tree, child, false)?;
+            let (child_id, _) = parse_node(tree, child, false)?;
             node.children.push(child_id);
         }
     }
@@ -383,23 +382,27 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     }
 }
 
-/// Detect page breaks: look for a child element named `breakBefore`.
-/// If it has `targetType="pageArea"` and `startNew="1"`, always break.
-/// For bare `<breakBefore/>`, only break if parent layout is lr-tb or rl-tb.
+/// Detect page breaks: look for a child element named `breakBefore` or `break`.
+///
+/// Only considers breakBefore/break elements that appear BEFORE the first
+/// content child (subform/field/draw/exclGroup). Inline breakBefore elements
+/// between content children are handled by `add_children` which propagates
+/// them to the next sibling's metadata.
 fn detect_page_break_before(elem: Node<'_, '_>) -> bool {
-    if let Some(brk) = find_first_child_by_name(elem, "breakBefore") {
-        let target_type = attr(brk, "targetType");
-        let start_new = attr(brk, "startNew");
-        // Only force a page break when both targetType="pageArea" and
-        // startNew="1" are explicitly set. A bare <breakBefore/> does NOT
-        // force a break (XFA 3.3 default: startNew=0).
-        if target_type == Some("pageArea") && start_new == Some("1") {
-            return true;
+    for child in elem.children().filter(|n| n.is_element()) {
+        let tag = child.tag_name().name();
+        // Stop scanning once we hit the first content child.
+        if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
+            break;
         }
-    }
-    // Also check the legacy <break> element with before="pageArea".
-    if let Some(brk) = find_first_child_by_name(elem, "break") {
-        if attr(brk, "before") == Some("pageArea") {
+        if tag == "breakBefore" {
+            let target_type = attr(child, "targetType");
+            let start_new = attr(child, "startNew");
+            if target_type == Some("pageArea") && start_new == Some("1") {
+                return true;
+            }
+        }
+        if tag == "break" && attr(child, "before") == Some("pageArea") {
             return true;
         }
     }
@@ -575,13 +578,52 @@ fn find_child_element_by_name<'a, 'input>(
 // ---------------------------------------------------------------------------
 
 /// Recursively add child form nodes (subform, field, draw, pageSet, pageArea).
-fn add_children(tree: &mut FormTree, node: &mut FormNode, elem: Node<'_, '_>) -> Result<()> {
+///
+/// When a `<breakBefore>` element appears between content children (inline
+/// break), it is propagated as `page_break_before` on the next content
+/// sibling's metadata.
+///
+/// Returns `true` if a pending break remains (i.e. a `breakBefore` was found
+/// after the last content child), meaning the NEXT sibling at the parent
+/// level should receive the break.
+fn add_children(
+    tree: &mut FormTree,
+    node: &mut FormNode,
+    elem: Node<'_, '_>,
+) -> std::result::Result<bool, crate::error::XfaError> {
+    let mut pending_break = false;
     for child in elem.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
         match tag {
             "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" => {
-                let child_id = parse_node(tree, child, false)?;
+                let (child_id, trailing_break) = parse_node(tree, child, false)?;
+                // Propagate an inline breakBefore to this sibling's metadata.
+                if pending_break {
+                    tree.meta_mut(child_id).page_break_before = true;
+                    pending_break = false;
+                }
                 node.children.push(child_id);
+                // If the child node ended with a trailing break (breakBefore
+                // after its last content child), propagate as pending break
+                // so the NEXT sibling at this level gets page_break_before.
+                if trailing_break {
+                    pending_break = true;
+                }
+            }
+            // Inline breakBefore between content children.
+            "breakBefore" => {
+                // Only propagate explicit page-area breaks.
+                let target_type = attr(child, "targetType");
+                let start_new = attr(child, "startNew");
+                if target_type == Some("pageArea") && start_new == Some("1") {
+                    pending_break = true;
+                }
+            }
+            // Legacy <break> element between content children.
+            "break" => {
+                if attr(child, "before") == Some("pageArea") {
+                    pending_break = true;
+                }
             }
             // Ignore XML elements that are layout metadata, not form nodes.
             "caption" | "value" | "ui" | "font" | "border" | "margin" | "para" | "format"
@@ -596,7 +638,7 @@ fn add_children(tree: &mut FormTree, node: &mut FormNode, elem: Node<'_, '_>) ->
             }
         }
     }
-    Ok(())
+    Ok(pending_break)
 }
 
 fn blank_node(tag: &str) -> FormNode {
@@ -895,6 +937,18 @@ mod tests {
         None
     }
 
+    fn find_node_id_by_name(tree: &FormTree, id: FormNodeId, name: &str) -> Option<FormNodeId> {
+        if tree.get(id).name == name {
+            return Some(id);
+        }
+        for &child_id in &tree.get(id).children.clone() {
+            if let Some(found) = find_node_id_by_name(tree, child_id, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
     /// <exData contentType="text/html"> rich-text draw nodes must have their
     /// HTML stripped and plain text extracted so LayoutEngine can render them.
     #[test]
@@ -964,35 +1018,32 @@ mod tests {
 </template>"#;
         let (tree, root_id) = parse_template(xml, None).unwrap();
 
+        // Visible draw retains its content.
         let visible = find_node_by_name(&tree, root_id, "visible_draw").unwrap();
         match &visible.node_type {
             FormNodeType::Draw { content } => assert_eq!(content, "Visible text"),
             other => panic!("expected Draw, got {other:?}"),
         }
 
+        // Hidden draw preserves content (scripts may make it visible).
+        // Visibility is tracked in FormNodeMeta.
         let hidden_draw = find_node_by_name(&tree, root_id, "hidden_draw").unwrap();
         match &hidden_draw.node_type {
-            FormNodeType::Draw { content } => {
-                assert!(
-                    content.is_empty(),
-                    "hidden draw should have no content, got: {content:?}"
-                )
-            }
+            FormNodeType::Draw { content } => assert_eq!(content, "DRAFT"),
             other => panic!("expected Draw, got {other:?}"),
         }
+        let hidden_draw_id = find_node_id_by_name(&tree, root_id, "hidden_draw").unwrap();
+        assert!(tree.meta(hidden_draw_id).presence_hidden);
 
-        // Hidden fields are remapped to Draw with empty content so the
-        // renderer skips both text and border drawing. (#557)
+        // Hidden fields preserve content and remain Field type — layout
+        // engine skips them via metadata.
         let hidden_field = find_node_by_name(&tree, root_id, "hidden_field").unwrap();
         match &hidden_field.node_type {
-            FormNodeType::Draw { content } => {
-                assert!(
-                    content.is_empty(),
-                    "hidden field (remapped to Draw) should have no content, got: {content:?}"
-                )
-            }
-            other => panic!("expected Draw (remapped from hidden Field), got {other:?}"),
+            FormNodeType::Field { value } => assert_eq!(value, "secret"),
+            other => panic!("expected Field, got {other:?}"),
         }
+        let hidden_field_id = find_node_id_by_name(&tree, root_id, "hidden_field").unwrap();
+        assert!(tree.meta(hidden_field_id).presence_hidden);
     }
 
     /// Font sizes given as bare numbers (`<font size="10">`) must be treated as
