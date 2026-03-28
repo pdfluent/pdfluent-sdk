@@ -16823,15 +16823,12 @@ fn fix_notdef_in_truetype(
 
         // For codes below 32: these are control characters that standard
         // encodings (WinAnsi, MacRoman) don't map to real glyphs.
+        // For codes below 32: these are control characters that standard
+        // encodings (WinAnsi, MacRoman) don't map to real glyphs.
         // If the font uses codes < 32, the content stream references them,
-        // so they WILL trigger .notdef. Map them to "space" only if the
-        // font has the space glyph. For subset fonts without space, skip
-        // to avoid introducing a §6.2.11.4.1:2 missing-glyph violation.
+        // so they WILL trigger .notdef. Map them to "space".
         if code < 32 {
-            let has_space = face.glyph_index(' ').is_some_and(|gid| gid.0 != 0);
-            if has_space {
-                new_diffs.push((code, "space".to_string()));
-            }
+            new_diffs.push((code, "space".to_string()));
             continue;
         }
 
@@ -16882,14 +16879,7 @@ fn fix_notdef_in_truetype(
             if printable_standard_code {
                 continue;
             }
-            // Only add "space" if the font actually has the space glyph.
-            let has_space = face.glyph_index(' ').is_some_and(|gid| gid.0 != 0);
-            if has_space {
-                new_diffs.push((code, "space".to_string()));
-            }
-            // If no space glyph, skip — leave the encoding unchanged.
-            // The code may trigger .notdef but that's better than introducing
-            // a missing glyph reference.
+            new_diffs.push((code, "space".to_string()));
             continue;
         }
 
