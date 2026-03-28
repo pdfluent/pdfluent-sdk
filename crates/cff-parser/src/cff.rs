@@ -1123,6 +1123,39 @@ impl<'a> Table<'a> {
         }
     }
 
+    /// Returns the glyph width as a signed `f32` value.
+    ///
+    /// Unlike [`glyph_width`] which returns `u16` (and `None` for negative
+    /// widths), this preserves the full CFF charstring advance including
+    /// negative values that can arise from nominalWidthX offsets.
+    pub fn glyph_width_f32(&self, glyph_id: GlyphId) -> Option<f32> {
+        match self.kind {
+            FontKind::SID(ref sid) => {
+                let data = self.char_strings.get(u32::from(glyph_id.0))?;
+                let (_, width) =
+                    parse_char_string(data, self, glyph_id, true, &mut DummyOutline).ok()?;
+                let width = width
+                    .map(|w| sid.nominal_width + w)
+                    .unwrap_or(sid.default_width);
+                Some(width)
+            }
+            FontKind::CID(ref cid) => {
+                let cs_data = self.char_strings.get(u32::from(glyph_id.0))?;
+                let (_, width) =
+                    parse_char_string(cs_data, self, glyph_id, true, &mut DummyOutline).ok()?;
+                let font_dict_index = cid.fd_select.font_dict_index(glyph_id)?;
+                let font_dict_data = cid.fd_array.get(u32::from(font_dict_index))?;
+                let private_dict_range = parse_font_dict(font_dict_data)?;
+                let private_dict_data = self.table_data.get(private_dict_range)?;
+                let private_dict = parse_private_dict(private_dict_data);
+                let nominal_width = private_dict.nominal_width.unwrap_or(0.0);
+                let default_width = private_dict.default_width.unwrap_or(0.0);
+                let width = width.map(|w| nominal_width + w).unwrap_or(default_width);
+                Some(width)
+            }
+        }
+    }
+
     /// Returns a glyph ID by a name.
     pub fn glyph_index_by_name(&self, name: &str) -> Option<GlyphId> {
         match self.kind {
