@@ -9786,20 +9786,14 @@ fn compute_cff_corrections_for_custom_encoding(
                 // Codes with pdf_w==0 are unused placeholder slots (PDF spec §9.6.2).
                 // veraPDF skips w==0 entries — changing 0 to a synthesized width would
                 // introduce violations for unused codes. (#6.2.11.5-gid0-uses-defaultwidthx)
-                if pdf_w == 0.0 {
-                    continue;
-                }
-                // Per CFF spec, defaultWidthX defaults to 0 when not present.
-                // Do NOT fall back to .notdef charstring width — that's a different
-                // value and using it generates wrong corrections (e.g., CMSY10
-                // code 2: defaultWidthX=0 but .notdef charstring=782, causing
-                // dict 385→782 regression). veraPDF uses defaultWidthX=0 for
-                // codes absent from the CFF encoding.
-                Some(
-                    cff.default_width_x()
-                        .map(|w| w as f64 * scale)
-                        .unwrap_or(0.0),
-                )
+                // Code maps to .notdef or is absent from CFF encoding.
+                // Skip: veraPDF handles these codes differently depending on
+                // the context. The original Widths entry was likely correct.
+                // Generating corrections here (to defaultWidthX or .notdef)
+                // typically INTRODUCES regressions (e.g., CMSY10 code 2:
+                // original width 385 is correct but glyph_index returns GID 0,
+                // leading to wrong correction 385→0 or 385→782).
+                continue;
             }
         };
         let Some(frac_w) = frac_w else { continue };
