@@ -549,9 +549,21 @@ fn embed_bare_fonts(doc: &mut Document) -> usize {
             Some(n) => n,
             None => continue,
         };
-        // Skip if FontDescriptor already exists (handled by pass 1/2).
+        // Skip if FontDescriptor already exists AND points to a valid dict
+        // (handled by pass 1/2). Some PDFs have FontDescriptor references
+        // that point to null objects — these must be replaced.
         if d.has(b"FontDescriptor") {
-            continue;
+            let fd_is_valid = match d.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(fd_ref)) => {
+                    matches!(doc.objects.get(fd_ref), Some(Object::Dictionary(_)))
+                }
+                Some(Object::Dictionary(_)) => true, // inline FD
+                _ => false,
+            };
+            if fd_is_valid {
+                continue;
+            }
+            // FontDescriptor exists but is null/invalid — fall through to create a new one
         }
         let base = strip_subset_prefix(&base_font).to_owned();
         to_embed.push((id, base));
@@ -1556,8 +1568,13 @@ fn get_or_create_font_descriptor(doc: &mut Document, font_id: ObjectId) -> Resul
         }
     };
 
+    // Only reuse existing FD if it's a valid Dictionary (not null or other type).
+    // Some legacy PDFs have FontDescriptor references that point to null objects.
     if let Some(fd_id) = existing {
-        return Ok(fd_id);
+        if matches!(doc.objects.get(&fd_id), Some(Object::Dictionary(_))) {
+            return Ok(fd_id);
+        }
+        // FD reference points to null/invalid — fall through to create a new one
     }
 
     let font_name = {
