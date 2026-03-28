@@ -692,10 +692,17 @@ impl<'a> LayoutEngine<'a> {
             let child_size = self.compute_extent(child_id);
             let child_meta = self.form.meta(child_id);
 
-            // page_break_before on a child → split point (if we already placed content).
+            // page_break_before on a child → split point, but ONLY when the
+            // content placed so far has filled a significant portion of the
+            // remaining height.  Early breaks (< 50% of page used) waste
+            // space and produce extra pages; let the overflow mechanism handle
+            // those naturally.
             if child_meta.page_break_before && !placed_children.is_empty() {
-                split_idx = i;
-                break;
+                let used_ratio = child_y / remaining_height;
+                if used_ratio >= 0.5 || child_y + child_size.height > remaining_height {
+                    split_idx = i;
+                    break;
+                }
             }
 
             // If this child has keep_intact and doesn't fit, split BEFORE it
