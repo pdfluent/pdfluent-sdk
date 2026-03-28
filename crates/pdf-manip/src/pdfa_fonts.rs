@@ -1570,13 +1570,8 @@ fn get_or_create_font_descriptor(doc: &mut Document, font_id: ObjectId) -> Resul
         }
     };
 
-    // Only reuse existing FD if it's a valid Dictionary (not null or other type).
-    // Some legacy PDFs have FontDescriptor references that point to null objects.
     if let Some(fd_id) = existing {
-        if matches!(doc.objects.get(&fd_id), Some(Object::Dictionary(_))) {
-            return Ok(fd_id);
-        }
-        // FD reference points to null/invalid — fall through to create a new one
+        return Ok(fd_id);
     }
 
     let font_name = {
