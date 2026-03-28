@@ -1577,7 +1577,12 @@ fn get_or_create_font_descriptor(doc: &mut Document, font_id: ObjectId) -> Resul
     };
 
     if let Some(fd_id) = existing {
-        return Ok(fd_id);
+        // Verify the FD reference points to a valid Dictionary. Some legacy
+        // PDFs have FontDescriptor references that point to null objects.
+        if matches!(doc.objects.get(&fd_id), Some(Object::Dictionary(_))) {
+            return Ok(fd_id);
+        }
+        // FD is null/invalid — fall through to create a new one.
     }
 
     let font_name = {
