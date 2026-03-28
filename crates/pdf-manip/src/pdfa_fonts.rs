@@ -553,17 +553,21 @@ fn embed_bare_fonts(doc: &mut Document) -> usize {
         // (handled by pass 1/2). Some PDFs have FontDescriptor references
         // that point to null objects — these must be replaced.
         if d.has(b"FontDescriptor") {
-            let fd_is_valid = match d.get(b"FontDescriptor").ok() {
+            let fd_has_fontfile = match d.get(b"FontDescriptor").ok() {
                 Some(Object::Reference(fd_ref)) => {
-                    matches!(doc.objects.get(fd_ref), Some(Object::Dictionary(_)))
+                    if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_ref) {
+                        has_valid_font_file(doc, fd)
+                    } else {
+                        false // null or non-dict
+                    }
                 }
-                Some(Object::Dictionary(_)) => true, // inline FD
+                Some(Object::Dictionary(fd)) => has_valid_font_file(doc, fd),
                 _ => false,
             };
-            if fd_is_valid {
+            if fd_has_fontfile {
                 continue;
             }
-            // FontDescriptor exists but is null/invalid — fall through to create a new one
+            // FD missing, null, or lacks FontFile — fall through to create/replace
         }
         let base = strip_subset_prefix(&base_font).to_owned();
         to_embed.push((id, base));
