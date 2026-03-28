@@ -3,6 +3,8 @@
 //! These represent the merged Form DOM nodes that the layout engine processes.
 //! In a full implementation, these would come from xfa-dom-resolver's merge step.
 
+use std::collections::HashMap;
+
 use crate::text::FontMetrics;
 use crate::types::{BoxModel, LayoutStrategy};
 
@@ -14,16 +16,37 @@ pub struct FormNodeId(pub usize);
 #[derive(Debug)]
 pub struct FormTree {
     pub nodes: Vec<FormNode>,
+    /// Per-node metadata (parallel to `nodes`).
+    pub metadata: Vec<FormNodeMeta>,
+    /// Lookup table: XFA `id` attribute → `FormNodeId`.
+    pub node_ids: HashMap<String, FormNodeId>,
 }
 
 impl FormTree {
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            nodes: Vec::new(),
+            metadata: Vec::new(),
+            node_ids: HashMap::new(),
+        }
     }
 
     pub fn add_node(&mut self, node: FormNode) -> FormNodeId {
         let id = FormNodeId(self.nodes.len());
         self.nodes.push(node);
+        self.metadata.push(FormNodeMeta::default());
+        id
+    }
+
+    /// Add a node together with its metadata. If the meta has an `xfa_id`,
+    /// it is registered in the `node_ids` lookup table.
+    pub fn add_node_with_meta(&mut self, node: FormNode, meta: FormNodeMeta) -> FormNodeId {
+        let id = FormNodeId(self.nodes.len());
+        if let Some(ref xfa_id) = meta.xfa_id {
+            self.node_ids.insert(xfa_id.clone(), id);
+        }
+        self.nodes.push(node);
+        self.metadata.push(meta);
         id
     }
 
@@ -33,6 +56,21 @@ impl FormTree {
 
     pub fn get_mut(&mut self, id: FormNodeId) -> &mut FormNode {
         &mut self.nodes[id.0]
+    }
+
+    /// Access the metadata for a node.
+    pub fn meta(&self, id: FormNodeId) -> &FormNodeMeta {
+        &self.metadata[id.0]
+    }
+
+    /// Mutably access the metadata for a node.
+    pub fn meta_mut(&mut self, id: FormNodeId) -> &mut FormNodeMeta {
+        &mut self.metadata[id.0]
+    }
+
+    /// Look up a node by its XFA `id` attribute.
+    pub fn find_by_xfa_id(&self, id: &str) -> Option<FormNodeId> {
+        self.node_ids.get(id).copied()
     }
 }
 
@@ -165,4 +203,85 @@ impl Default for ContentArea {
             trailer: None,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Metadata, style, and kind types
+// ---------------------------------------------------------------------------
+
+/// Extended metadata for a form node.
+///
+/// Carries XFA attributes that the layout engine and dynamic scripting
+/// system need but that are not part of the core `FormNode` shape.
+#[derive(Debug, Clone, Default)]
+pub struct FormNodeMeta {
+    /// Optional XFA `id` attribute.
+    pub xfa_id: Option<String>,
+    /// Whether the element has `presence="hidden"` or `"inactive"`.
+    pub presence_hidden: bool,
+    /// Whether the element has `presence="invisible"` (layout space kept, not rendered).
+    pub presence_invisible: bool,
+    /// Whether a page break should be inserted before this node.
+    pub page_break_before: bool,
+    /// Overflow leader reference name.
+    pub overflow_leader: Option<String>,
+    /// Overflow trailer reference name.
+    pub overflow_trailer: Option<String>,
+    /// Keep with next content area.
+    pub keep_next_content_area: bool,
+    /// Keep with previous content area.
+    pub keep_previous_content_area: bool,
+    /// Keep intact within content area.
+    pub keep_intact_content_area: bool,
+    /// Layout-ready script (XFA §14.3).
+    pub layout_ready_script: Option<String>,
+    /// Event scripts collected from `<event>` and `<calculate>` children.
+    pub event_scripts: Vec<String>,
+    /// Visual style (font, colors, borders).
+    pub style: FormNodeStyle,
+    /// The kind of field (text, checkbox, radio, etc.).
+    pub field_kind: FieldKind,
+    /// The kind of group (none or exclusive choice).
+    pub group_kind: GroupKind,
+    /// Item value for fields inside an exclGroup.
+    pub item_value: Option<String>,
+    /// Check box / radio button size in points.
+    pub check_size: Option<f64>,
+}
+
+/// The kind of group container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GroupKind {
+    #[default]
+    None,
+    ExclusiveChoice,
+}
+
+/// The kind of form field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FieldKind {
+    #[default]
+    Text,
+    Checkbox,
+    Radio,
+    Button,
+    Dropdown,
+    Signature,
+    DateTimePicker,
+    NumericEdit,
+    PasswordEdit,
+    ImageEdit,
+}
+
+/// Visual style properties for a form node.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FormNodeStyle {
+    pub font_family: Option<String>,
+    pub font_size: Option<f64>,
+    pub font_weight: Option<String>,
+    pub font_style: Option<String>,
+    pub text_color: Option<(u8, u8, u8)>,
+    pub bg_color: Option<(u8, u8, u8)>,
+    pub border_color: Option<(u8, u8, u8)>,
+    pub border_width_pt: Option<f64>,
 }
