@@ -57,8 +57,10 @@ fn openssl_smime_verify(
     };
 
     let sigs = pdf_sign::signature_fields(signed_pdf);
+    // Use the LAST signature — that's ours.  Pre-existing signatures (from the
+    // original PDF) appear first and are invalidated by our incremental save.
     let first = sigs
-        .first()
+        .last()
         .ok_or_else(|| "no signatures found for openssl verify".to_string())?;
 
     let [off1, len1, off2, len2] = first
@@ -79,11 +81,10 @@ fn openssl_smime_verify(
     content.extend_from_slice(&signed_bytes[off1..off1 + len1]);
     content.extend_from_slice(&signed_bytes[off2..off2 + len2]);
 
-    // Unique temp-file suffix per thread so parallel corpus runs don't collide.
-    let uid: String = format!("{:?}", std::thread::current().id())
-        .chars()
-        .filter(|c| c.is_alphanumeric())
-        .collect();
+    // Unique temp-file suffix per invocation — use a monotonic counter to avoid
+    // any possibility of collision between concurrent workers.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let uid = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmpdir = std::env::temp_dir();
     let sig_path = tmpdir.join(format!("xfa_sig_{uid}.der"));
     let content_path = tmpdir.join(format!("xfa_sig_{uid}.bin"));
