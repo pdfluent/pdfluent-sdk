@@ -397,8 +397,11 @@ fn detect_page_break_before(elem: Node<'_, '_>) -> bool {
         }
         if tag == "breakBefore" {
             let target_type = attr(child, "targetType");
-            let start_new = attr(child, "startNew");
-            if target_type == Some("pageArea") && start_new == Some("1") {
+            // XFA 3.3: breakBefore with targetType="pageArea" triggers a page
+            // break regardless of startNew.  startNew controls whether to force
+            // a new instance of the *same* page area — it is NOT required for
+            // the break itself to fire.
+            if target_type == Some("pageArea") {
                 return true;
             }
         }
@@ -612,10 +615,8 @@ fn add_children(
             }
             // Inline breakBefore between content children.
             "breakBefore" => {
-                // Only propagate explicit page-area breaks.
                 let target_type = attr(child, "targetType");
-                let start_new = attr(child, "startNew");
-                if target_type == Some("pageArea") && start_new == Some("1") {
+                if target_type == Some("pageArea") {
                     pending_break = true;
                 }
             }
