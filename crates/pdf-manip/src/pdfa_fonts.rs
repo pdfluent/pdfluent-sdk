@@ -449,12 +449,11 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     report.fonts_embedded += fd_embedded;
 
     // Third pass: embed fonts that lack a FontDescriptor entirely.
-    // Standard 14 fonts (Helvetica, Times, Courier, etc.) in many PDFs have
-    // bare font dicts with /BaseFont but no /FontDescriptor. For PDF/A all
-    // fonts must be embedded, so we create a FontDescriptor + FontFile2 and
-    // add them to these font dicts.
-    let bare_embedded = embed_bare_fonts(doc);
-    report.fonts_embedded += bare_embedded;
+    // Temporarily disabled — embed_bare_fonts triggers stack overflow on some
+    // PDFs due to the Type1→TrueType Subtype change interacting with other
+    // pipeline stages. Needs further investigation.
+    // let bare_embedded = embed_bare_fonts(doc);
+    // report.fonts_embedded += bare_embedded;
 
     Ok(report)
 }
