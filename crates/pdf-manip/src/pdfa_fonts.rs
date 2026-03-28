@@ -545,15 +545,18 @@ fn sync_subtypes_from_fontfile(doc: &mut Document) {
 
         if let Some(&expected) = fd_fonttype.get(&fd_ref) {
             let expected_str = std::str::from_utf8(expected).unwrap_or("");
+            // Pre-check: is the FD symbolic? (read before mutable borrow)
+            let fd_is_symbolic = matches!(
+                doc.objects.get(&fd_ref),
+                Some(Object::Dictionary(fd)) if fd.get(b"Flags").ok()
+                    .and_then(|f| f.as_i64().ok()).unwrap_or(0) & 4 != 0
+            );
             if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
                 if current_subtype != expected_str {
                     d.set("Subtype", Object::Name(expected.to_vec()));
                 }
-                // Also add WinAnsiEncoding to TrueType fonts without encoding.
-                // This ensures fix_font_width_mismatches uses the correct
-                // encoding→Unicode→cmap path instead of the default identity
-                // mapping which can diverge from veraPDF's interpretation.
-                if expected == b"TrueType" && !d.has(b"Encoding") {
+                // Add WinAnsiEncoding to non-symbolic TrueType fonts without encoding.
+                if expected == b"TrueType" && !d.has(b"Encoding") && !fd_is_symbolic {
                     d.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
                 }
             }
