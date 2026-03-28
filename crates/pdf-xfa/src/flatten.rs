@@ -66,8 +66,12 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         }
     }
 
-    // 2. Parse template → FormTree.
-    let (tree, root_id) = parse_template(&template_xml)?;
+    // 2. Parse template → FormTree (with data binding from datasets packet).
+    let (mut tree, root_id) = parse_template(&template_xml, packets.datasets())?;
+
+    // 2b. Apply dynamic event scripts (presence toggles, value propagation).
+    use crate::dynamic::apply_dynamic_scripts;
+    let _ = apply_dynamic_scripts(&mut tree, root_id);
 
     // 3. Layout.
     let engine = LayoutEngine::new(&tree);
