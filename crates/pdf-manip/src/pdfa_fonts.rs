@@ -538,6 +538,7 @@ fn embed_via_font_descriptors(doc: &mut Document) -> usize {
 /// Third-pass font embedding: find font dicts without a FontDescriptor and
 /// create one with an embedded font program. This handles Standard 14 fonts
 /// that are referenced without any FontDescriptor (common in legacy PDFs).
+#[allow(dead_code)]
 fn embed_bare_fonts(doc: &mut Document) -> usize {
     // Collect (font_dict_id, base_font_name) for fonts lacking FontDescriptor.
     let mut to_embed: Vec<(ObjectId, String)> = Vec::new();
@@ -9461,6 +9462,7 @@ pub fn cff_matrix_scale(matrix_sx: f32) -> f64 {
 /// Get CFF glyph width as f64, using the signed `glyph_width_f32` to handle
 /// negative widths that arise from nominalWidthX offsets. Falls back to the
 /// unsigned `glyph_width` for compatibility.
+#[allow(dead_code)]
 fn cff_glyph_width_f64(
     cff: &cff_parser::Table,
     gid: cff_parser::GlyphId,
