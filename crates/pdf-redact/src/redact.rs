@@ -226,19 +226,21 @@ fn draw_redaction_overlays(
     // would affect our overlay (causing "too light" or misplaced rects).
     wrap_existing_content_in_save_restore(doc, page_id);
 
-    // Read page Rotate and MediaBox to transform overlay coordinates
-    // for rotated pages.
-    let (rotate, media_box) = page_rotation_and_media_box(doc, page_id);
-
     let mut ops = Vec::new();
 
     for area in areas {
         let [r, g, b] = area.fill_color;
         let [x0, y0, x1, y1] = area.rect;
 
-        // Transform coordinates for page rotation.
-        let (tx0, ty0, tx1, ty1) =
-            transform_rect_for_rotation(x0, y0, x1, y1, rotate, &media_box);
+        // Use content-space coordinates directly.  The text positions from
+        // extract_positioned_chars are already in the content stream's
+        // coordinate system.  Our overlay is appended AFTER the existing
+        // content (which is wrapped in q…Q), so the CTM is restored to the
+        // page default.  For rotated pages, the renderer applies Rotate to
+        // all content streams uniformly — both the original text and our
+        // overlay — so the overlay covers the correct visual position
+        // without us needing to transform coordinates.
+        let (tx0, ty0, tx1, ty1) = (x0, y0, x1, y1);
         let w = tx1 - tx0;
         let h = ty1 - ty0;
 
@@ -506,6 +508,7 @@ fn wrap_existing_content_in_save_restore(doc: &mut Document, page_id: ObjectId) 
 }
 
 /// Read page rotation (0, 90, 180, 270) and MediaBox [x0, y0, x1, y1].
+#[allow(dead_code)]
 fn page_rotation_and_media_box(doc: &Document, page_id: ObjectId) -> (i64, [f64; 4]) {
     let default_box = [0.0, 0.0, 612.0, 792.0];
 
@@ -550,6 +553,7 @@ fn page_rotation_and_media_box(doc: &Document, page_id: ObjectId) -> (i64, [f64;
 /// coordinate system.  Overlay rects are in "visual" coordinates (what the
 /// user sees), but the page's content stream uses the MediaBox coordinate
 /// system with /Rotate applied by the viewer.
+#[allow(dead_code)]
 fn transform_rect_for_rotation(
     x0: f64,
     y0: f64,

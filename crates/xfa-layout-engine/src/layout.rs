@@ -3,7 +3,7 @@
 //! Implements XFA 3.3 §4 (Box Model) and §8 (Layout for Growable Objects).
 //! Supports positioned layout and flowed layout (tb, lr-tb, rl-tb).
 
-use crate::error::{LayoutError, Result};
+use crate::error::Result;
 use crate::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree};
 use crate::text;
 use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
@@ -60,7 +60,6 @@ pub enum LayoutContent {
 
 /// A content node queued for pagination, carrying page-break flags.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 struct QueuedNode {
     id: FormNodeId,
     break_before: bool,
@@ -142,82 +141,45 @@ impl<'a> LayoutEngine<'a> {
             }
         } else {
             // Layout content across page areas, then repeat last template for overflow.
-            // Multiple contentAreas on the same pageArea share one physical page.
-            // Content flows through content areas sequentially: when one fills
-            // up, the remaining flows to the next.  However, very small
-            // "decorative" content areas (< 10% of the largest) are skipped to
-            // prevent body content from spilling into tiny lock/eSign slots.
             let mut remaining = content_queued;
             for pa in &page_areas {
                 if remaining.is_empty() {
                     break;
                 }
-
-                let max_area = pa
-                    .content_areas
-                    .iter()
-                    .map(|ca| ca.width * ca.height)
-                    .fold(0.0_f64, f64::max);
-
-                let mut page_nodes = Vec::new();
-                for ca in &pa.content_areas {
-                    if remaining.is_empty() {
-                        break;
-                    }
-                    // Skip decorative content areas that are much smaller than
-                    // the main body area (< 10% of area).
-                    let ca_area = ca.width * ca.height;
-                    if ca_area < max_area * 0.10 && pa.content_areas.len() > 1 {
-                        continue;
-                    }
-                    let (placed, rest, consumed_break_only) =
-                        self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
-                    if consumed_break_only {
-                        remaining = rest;
-                    } else {
-                        if !placed.nodes.is_empty() {
-                            page_nodes.extend(placed.nodes);
-                        }
-                        remaining = rest;
-                    }
-                }
-                if !page_nodes.is_empty() {
-                    pages.push(LayoutPage {
-                        width: pa.page_width,
-                        height: pa.page_height,
-                        nodes: page_nodes,
-                    });
+                let ca = primary_content_area(pa);
+                let (placed, rest, consumed_break_only) =
+                    self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
+                if consumed_break_only {
+                    remaining = rest;
+                } else if !placed.nodes.is_empty() {
+                    pages.push(placed);
+                    remaining = rest;
+                } else {
+                    remaining = rest;
                 }
             }
 
-            // Overflow: repeat last page template until all content is placed
+            // Overflow: repeat page templates until all content is placed.
             if !remaining.is_empty() {
-                let last_pa = page_areas.last().unwrap();
-                let ca = last_pa
-                    .content_areas
-                    .first()
-                    .ok_or(LayoutError::NoMatchingPageArea)?;
-
+                let last_idx = page_areas.len() - 1;
                 while !remaining.is_empty() {
-                    let (page, rest, consumed_break_only) = self.layout_content_fitting(
-                        ca,
-                        &remaining,
-                        last_pa.page_width,
-                        last_pa.page_height,
-                    )?;
+                    let pa_idx = last_idx;
+                    let pa = &page_areas[pa_idx];
+                    let ca = primary_content_area(pa);
+
+                    let (page, rest, consumed_break_only) =
+                        self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                     if page.nodes.is_empty() && !consumed_break_only {
-                        // Force place one item to prevent infinite loop
                         let forced = self.layout_content_on_page(
                             ca,
-                            last_pa.page_width,
-                            last_pa.page_height,
+                            pa.page_width,
+                            pa.page_height,
                             &[remaining[0].id],
                             LayoutStrategy::TopToBottom,
                         )?;
                         pages.push(forced);
                         remaining = remaining[1..].to_vec();
                     } else if consumed_break_only {
-                        // Break-only page: skip blank, continue with rest
                         remaining = rest;
                     } else {
                         pages.push(page);
@@ -249,9 +211,12 @@ impl<'a> LayoutEngine<'a> {
         expanded
             .into_iter()
             .filter(|&id| !self.is_layout_hidden(id))
-            .map(|id| QueuedNode {
-                id,
-                break_before: self.form.meta(id).page_break_before,
+            .map(|id| {
+                let meta = self.form.meta(id);
+                QueuedNode {
+                    id,
+                    break_before: meta.page_break_before,
+                }
             })
             .collect()
     }
@@ -368,7 +333,10 @@ impl<'a> LayoutEngine<'a> {
                     for &pa_id in &child.children {
                         let pa_node = self.form.get(pa_id);
                         if let FormNodeType::PageArea { content_areas } = &pa_node.node_type {
+                            let pa_meta = self.form.meta(pa_id);
                             page_areas.push(PageAreaInfo {
+                                name: pa_node.name.clone(),
+                                xfa_id: pa_meta.xfa_id.clone(),
                                 content_areas: content_areas.clone(),
                                 page_width: pa_node.box_model.width.unwrap_or(612.0),
                                 page_height: pa_node.box_model.height.unwrap_or(792.0),
@@ -378,7 +346,10 @@ impl<'a> LayoutEngine<'a> {
                     }
                 }
                 FormNodeType::PageArea { content_areas } => {
+                    let pa_meta = self.form.meta(child_id);
                     page_areas.push(PageAreaInfo {
+                        name: child.name.clone(),
+                        xfa_id: pa_meta.xfa_id.clone(),
                         content_areas: content_areas.clone(),
                         page_width: child.box_model.width.unwrap_or(612.0),
                         page_height: child.box_model.height.unwrap_or(792.0),
@@ -584,9 +555,12 @@ impl<'a> LayoutEngine<'a> {
                         placed_count += 1;
                         split_remaining = rest_children
                             .into_iter()
-                            .map(|cid| QueuedNode {
-                                id: cid,
-                                break_before: self.form.meta(cid).page_break_before,
+                            .map(|cid| {
+                                let m = self.form.meta(cid);
+                                QueuedNode {
+                                    id: cid,
+                                    break_before: m.page_break_before,
+                                }
                             })
                             .collect();
                     }
@@ -619,9 +593,12 @@ impl<'a> LayoutEngine<'a> {
                     placed_count += 1;
                     split_remaining = rest_children
                         .into_iter()
-                        .map(|cid| QueuedNode {
-                            id: cid,
-                            break_before: self.form.meta(cid).page_break_before,
+                        .map(|cid| {
+                            let m = self.form.meta(cid);
+                            QueuedNode {
+                                id: cid,
+                                break_before: m.page_break_before,
+                            }
                         })
                         .collect();
                 } else if placed_count > 0 {
@@ -636,9 +613,12 @@ impl<'a> LayoutEngine<'a> {
                     placed_count += 1;
                     split_remaining = rest_children
                         .into_iter()
-                        .map(|cid| QueuedNode {
-                            id: cid,
-                            break_before: self.form.meta(cid).page_break_before,
+                        .map(|cid| {
+                            let m = self.form.meta(cid);
+                            QueuedNode {
+                                id: cid,
+                                break_before: m.page_break_before,
+                            }
                         })
                         .collect();
                 }
@@ -1310,9 +1290,59 @@ impl<'a> LayoutEngine<'a> {
     }
 }
 
-/// Internal helper for page structure extraction.
-#[derive(Debug)]
+/// Find a page area by break target string. The target can match the page
+/// area's `name`, its `xfa_id`, or a `pageArea[N]` index reference.
+#[allow(dead_code)]
+fn find_page_area_by_target(page_areas: &[PageAreaInfo], target: &str) -> Option<usize> {
+    // Try matching by name first (e.g. "MP3").
+    if let Some(idx) = page_areas.iter().position(|pa| pa.name == target) {
+        return Some(idx);
+    }
+    // Try matching by xfa_id (e.g. "Page4_ID").
+    if let Some(idx) = page_areas
+        .iter()
+        .position(|pa| pa.xfa_id.as_deref() == Some(target))
+    {
+        return Some(idx);
+    }
+    // Try matching "pageArea[N]" index reference.
+    if let Some(rest) = target.strip_prefix("pageArea") {
+        if let Some(idx_str) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                if idx < page_areas.len() {
+                    return Some(idx);
+                }
+            }
+        }
+        // "pageArea" without index → first.
+        if rest.is_empty() && !page_areas.is_empty() {
+            return Some(0);
+        }
+    }
+    None
+}
+
+/// Get the primary (largest) content area from a page area.
+fn primary_content_area(pa: &PageAreaInfo) -> &ContentArea {
+    let max_area = pa
+        .content_areas
+        .iter()
+        .map(|ca| ca.width * ca.height)
+        .fold(0.0_f64, f64::max);
+    pa.content_areas
+        .iter()
+        .find(|ca| {
+            let a = ca.width * ca.height;
+            a >= max_area * 0.90 || pa.content_areas.len() == 1
+        })
+        .unwrap_or(&pa.content_areas[0])
+}
+
 struct PageAreaInfo {
+    /// Name of the page area (e.g. "MP1", "MP3") for break targeting.
+    name: String,
+    /// XFA id attribute (e.g. "Page1", "Page4_ID") for break targeting.
+    xfa_id: Option<String>,
     content_areas: Vec<ContentArea>,
     page_width: f64,
     page_height: f64,
