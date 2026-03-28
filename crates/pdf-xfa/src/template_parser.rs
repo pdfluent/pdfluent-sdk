@@ -11,7 +11,9 @@
 
 use roxmltree::Node;
 
-use xfa_layout_engine::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree, Occur};
+use xfa_layout_engine::form::{
+    ContentArea, FormNode, FormNodeId, FormNodeMeta, FormNodeType, FormTree, GroupKind, Occur,
+};
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{
     BoxModel, Caption, CaptionPlacement, LayoutStrategy, Measurement, TextAlign,
@@ -23,7 +25,10 @@ use crate::error::{Result, XfaError};
 ///
 /// `xml` should be the raw content of the template packet, starting with
 /// the `<template …>` element (with or without an XML declaration).
-pub fn parse_template(xml: &str) -> Result<(FormTree, FormNodeId)> {
+///
+/// If `datasets_xml` is provided, field values are merged from the
+/// `<xfa:data>` section of the datasets packet.
+pub fn parse_template(xml: &str, datasets_xml: Option<&str>) -> Result<(FormTree, FormNodeId)> {
     let doc = roxmltree::Document::parse(xml)
         .map_err(|e| XfaError::ParseFailed(format!("template XML parse error: {e}")))?;
 
@@ -39,7 +44,17 @@ pub fn parse_template(xml: &str) -> Result<(FormTree, FormNodeId)> {
     };
 
     let mut tree = FormTree::new();
-    let root_id = parse_node(&mut tree, template_elem, true)?;
+    let (root_id, _trailing) = parse_node(&mut tree, template_elem, true)?;
+
+    // Data binding: merge field values from datasets XML.
+    if let Some(ds_xml) = datasets_xml {
+        if let Ok(ds_doc) = roxmltree::Document::parse(ds_xml) {
+            if let Some(data_root) = find_data_root(ds_doc.root_element()) {
+                bind_data(&mut tree, root_id, &data_root);
+            }
+        }
+    }
+
     Ok((tree, root_id))
 }
 
@@ -47,71 +62,48 @@ pub fn parse_template(xml: &str) -> Result<(FormTree, FormNodeId)> {
 // Recursive node parser
 // ---------------------------------------------------------------------------
 
-fn parse_node(tree: &mut FormTree, elem: Node<'_, '_>, is_root: bool) -> Result<FormNodeId> {
+/// Parse an XML element into a form node and add it to the tree.
+///
+/// Returns `(FormNodeId, trailing_break)` where `trailing_break` is true when
+/// the node's `add_children` ended with a pending breakBefore that could not
+/// be consumed within the node (i.e. the breakBefore appeared after the last
+/// content child and should propagate to the next sibling at the parent level).
+fn parse_node(
+    tree: &mut FormTree,
+    elem: Node<'_, '_>,
+    is_root: bool,
+) -> Result<(FormNodeId, bool)> {
     let tag = elem.tag_name().name();
 
-    let node = match tag {
-        "template" => parse_root(tree, elem)?,
-        "subform" | "exclGroup" => parse_subform(tree, elem, is_root)?,
-        "field" => parse_field(tree, elem)?,
-        "draw" => parse_draw(tree, elem)?,
-        "pageSet" => parse_page_set(tree, elem)?,
-        "pageArea" => parse_page_area(tree, elem)?,
+    let (node, trailing_break) = match tag {
+        "template" => {
+            let mut n = parse_root_node(tree, elem)?;
+            let tb = add_children(tree, &mut n, elem)?;
+            (n, tb)
+        }
+        "subform" | "exclGroup" => {
+            let mut n = parse_subform_node(tree, elem, is_root)?;
+            let tb = add_children(tree, &mut n, elem)?;
+            (n, tb)
+        }
+        "field" => (parse_field(tree, elem)?, false),
+        "draw" => (parse_draw(tree, elem)?, false),
+        "pageSet" => (parse_page_set(tree, elem)?, false),
+        "pageArea" => (parse_page_area(tree, elem)?, false),
         _ => {
-            let mut node = blank_node(tag);
-            add_children(tree, &mut node, elem)?;
-            node
+            let mut n = blank_node(tag);
+            let tb = add_children(tree, &mut n, elem)?;
+            (n, tb)
         }
     };
 
-    // Detect page-break-before from <breakBefore> or <break> first-child.
-    let (page_break, break_target) = detect_page_break(elem);
-    let pres = attr(elem, "presence");
-    let meta = xfa_layout_engine::form::FormNodeMeta {
-        xfa_id: attr(elem, "id").map(|s| s.to_string()),
-        presence_hidden: matches!(pres, Some("hidden") | Some("inactive") | Some("invisible")),
-        presence_invisible: pres == Some("invisible"),
-        page_break_before: page_break,
-        break_target,
-        ..Default::default()
-    };
-    Ok(tree.add_node_with_meta(node, meta))
+    let meta = parse_node_meta(elem);
+    Ok((tree.add_node_with_meta(node, meta), trailing_break))
 }
 
-/// Detect page-area breaks from `<breakBefore>` or `<break>` child elements.
-/// Returns `(is_break, target_name)`.
-fn detect_page_break(elem: Node<'_, '_>) -> (bool, Option<String>) {
-    for child in elem.children().filter(|n| n.is_element()) {
-        let tag = child.tag_name().name();
-        // Stop at first content child — inline breaks handled by add_children.
-        if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
-            break;
-        }
-        if tag == "breakBefore" && attr(child, "targetType") == Some("pageArea") {
-            return (true, parse_break_target(child));
-        }
-        if tag == "break" && attr(child, "before") == Some("pageArea") {
-            return (true, parse_break_target(child));
-        }
-    }
-    (false, None)
-}
-
-/// Parse break target from `target` or `beforeTarget` attribute.
-/// Handles: "MP3", "#MP3", "som(#pageArea[2])", "#Page4_ID".
-fn parse_break_target(elem: Node<'_, '_>) -> Option<String> {
-    let raw = attr(elem, "target")?.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    if let Some(inner) = raw.strip_prefix("som(").and_then(|s| s.strip_suffix(')')) {
-        return Some(inner.trim_start_matches('#').to_string());
-    }
-    Some(raw.trim_start_matches('#').to_string())
-}
-
-fn parse_root(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
-    let mut node = FormNode {
+/// Build the root FormNode (without children — `parse_node` calls `add_children`).
+fn parse_root_node(_tree: &mut FormTree, _elem: Node<'_, '_>) -> Result<FormNode> {
+    Ok(FormNode {
         name: "root".to_string(),
         node_type: FormNodeType::Root,
         box_model: BoxModel::default(),
@@ -123,12 +115,15 @@ fn parse_root(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         validate: None,
         column_widths: Vec::new(),
         col_span: 1,
-    };
-    add_children(tree, &mut node, elem)?;
-    Ok(node)
+    })
 }
 
-fn parse_subform(tree: &mut FormTree, elem: Node<'_, '_>, _is_root: bool) -> Result<FormNode> {
+/// Build a subform FormNode (without children — `parse_node` calls `add_children`).
+fn parse_subform_node(
+    _tree: &mut FormTree,
+    elem: Node<'_, '_>,
+    _is_root: bool,
+) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let layout = parse_layout_attr(elem);
     let mut bm = parse_box_model(elem);
@@ -138,7 +133,7 @@ fn parse_subform(tree: &mut FormTree, elem: Node<'_, '_>, _is_root: bool) -> Res
         bm.width = Some(612.0);
     }
 
-    let mut node = FormNode {
+    Ok(FormNode {
         name,
         node_type: FormNodeType::Subform,
         box_model: bm,
@@ -150,31 +145,25 @@ fn parse_subform(tree: &mut FormTree, elem: Node<'_, '_>, _is_root: bool) -> Res
         validate: None,
         column_widths: Vec::new(),
         col_span: 1,
-    };
-    add_children(tree, &mut node, elem)?;
-    Ok(node)
+    })
 }
 
 fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let bm = parse_box_model(elem);
 
-    // Hidden/invisible/inactive fields keep their layout space but render no
-    // content or borders. We represent this by returning an empty value. (#557)
-    let hidden = is_hidden(elem);
-
-    // Extract the field value (from <value><text>…</text></value>).
-    let value = if hidden {
-        String::new()
-    } else {
-        extract_value_text(elem).unwrap_or_default()
-    };
+    // Always extract the field value and preserve the Field node type.
+    // Visibility is controlled by FormNodeMeta.presence_hidden — the layout
+    // engine skips hidden nodes, and the renderer checks metadata.
+    // Dynamic scripts can later toggle presence to "visible", so we must
+    // preserve the content for all fields.
+    let value = extract_value_text(elem).unwrap_or_default();
 
     // Extract caption text (from <caption><value><text>…</text></value>).
-    let caption_text = if hidden {
-        None
-    } else {
+    let caption_text = if !is_hidden(elem) {
         extract_caption_text(elem)
+    } else {
+        None
     };
     let mut bm_with_caption = bm.clone();
     if let Some(ref cap_text) = caption_text {
@@ -185,20 +174,9 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         });
     }
 
-    // Hidden fields keep layout space but render neither content nor borders.
-    // Map them to Draw nodes with empty content — Draw nodes don't render
-    // borders, keeping the visual output clean. (#557)
-    let node_type = if hidden {
-        FormNodeType::Draw {
-            content: String::new(),
-        }
-    } else {
-        FormNodeType::Field { value }
-    };
-
     let node = FormNode {
         name,
-        node_type,
+        node_type: FormNodeType::Field { value },
         box_model: bm_with_caption,
         layout: LayoutStrategy::Positioned,
         children: Vec::new(),
@@ -217,12 +195,8 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
 fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let bm = parse_box_model(elem);
-    // Hidden/invisible/inactive draw elements keep layout space but show nothing.
-    let content = if is_hidden(elem) {
-        String::new()
-    } else {
-        extract_value_text(elem).unwrap_or_default()
-    };
+    // Always extract content — visibility is controlled by metadata.
+    let content = extract_value_text(elem).unwrap_or_default();
 
     let node = FormNode {
         name,
@@ -306,7 +280,7 @@ fn parse_page_set(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     // Children of pageSet are pageArea elements.
     for child in elem.children().filter(|n| n.is_element()) {
         if child.tag_name().name() == "pageArea" {
-            let child_id = parse_node(tree, child, false)?;
+            let (child_id, _) = parse_node(tree, child, false)?;
             node.children.push(child_id);
         }
     }
@@ -346,59 +320,326 @@ fn parse_page_area(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> 
 }
 
 // ---------------------------------------------------------------------------
+// Metadata parsing
+// ---------------------------------------------------------------------------
+
+/// Build `FormNodeMeta` from XFA element attributes and child elements.
+fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
+    let tag = elem.tag_name().name();
+
+    // (a) Presence attribute.
+    let presence = attr(elem, "presence");
+    let presence_hidden = matches!(
+        presence,
+        Some("hidden") | Some("inactive") | Some("invisible")
+    );
+    let presence_invisible = presence == Some("invisible");
+
+    // (b) Page break detection: look for <breakBefore> child.
+    let page_break_before = detect_page_break_before(elem);
+
+    // (c) Event scripts.
+    let event_scripts = collect_event_scripts(elem);
+
+    // (d) Keep child attributes.
+    let (keep_next_content_area, keep_previous_content_area, keep_intact_content_area) =
+        parse_keep(elem);
+
+    // (e) Overflow leader/trailer.
+    let (overflow_leader, overflow_trailer) = parse_overflow(elem);
+
+    // (f) Group kind: exclGroup → ExclusiveChoice.
+    let group_kind = if tag == "exclGroup" {
+        GroupKind::ExclusiveChoice
+    } else {
+        GroupKind::None
+    };
+
+    // (g) Item value for field elements: <items><text>VALUE</text></items>.
+    let item_value = if tag == "field" {
+        parse_item_value(elem)
+    } else {
+        None
+    };
+
+    // (h) XFA id attribute.
+    let xfa_id = attr(elem, "id").map(|s| s.to_string());
+
+    FormNodeMeta {
+        xfa_id,
+        presence_hidden,
+        presence_invisible,
+        page_break_before,
+        overflow_leader,
+        overflow_trailer,
+        keep_next_content_area,
+        keep_previous_content_area,
+        keep_intact_content_area,
+        event_scripts,
+        group_kind,
+        item_value,
+        ..Default::default()
+    }
+}
+
+/// Detect page breaks: look for a child element named `breakBefore` or `break`.
+///
+/// Only considers breakBefore/break elements that appear BEFORE the first
+/// content child (subform/field/draw/exclGroup). Inline breakBefore elements
+/// between content children are handled by `add_children` which propagates
+/// them to the next sibling's metadata.
+fn detect_page_break_before(elem: Node<'_, '_>) -> bool {
+    for child in elem.children().filter(|n| n.is_element()) {
+        let tag = child.tag_name().name();
+        // Stop scanning once we hit the first content child.
+        if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
+            break;
+        }
+        if tag == "breakBefore" {
+            let target_type = attr(child, "targetType");
+            // XFA 3.3: breakBefore with targetType="pageArea" triggers a page
+            // break regardless of startNew.  startNew controls whether to force
+            // a new instance of the *same* page area — it is NOT required for
+            // the break itself to fire.
+            if target_type == Some("pageArea") {
+                return true;
+            }
+        }
+        if tag == "break" && attr(child, "before") == Some("pageArea") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Collect event scripts from `<event>` and `<calculate>` children.
+fn collect_event_scripts(elem: Node<'_, '_>) -> Vec<String> {
+    let mut scripts = Vec::new();
+    for child in elem.children().filter(|n| n.is_element()) {
+        let child_tag = child.tag_name().name();
+        if child_tag == "event" {
+            // Skip layout-ready events (activity="ready" ref="$layout").
+            let activity = attr(child, "activity");
+            let event_ref = attr(child, "ref");
+            if activity == Some("ready") && event_ref == Some("$layout") {
+                continue;
+            }
+            // Look for a <script> child.
+            if let Some(script_elem) = find_first_child_by_name(child, "script") {
+                if let Some(text) = script_elem.text() {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        scripts.push(trimmed.to_string());
+                    }
+                }
+            }
+        } else if child_tag == "calculate" {
+            // Direct <calculate><script>...</script></calculate>
+            if let Some(script_elem) = find_first_child_by_name(child, "script") {
+                if let Some(text) = script_elem.text() {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        scripts.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+    scripts
+}
+
+/// Parse `<keep>` child element attributes.
+fn parse_keep(elem: Node<'_, '_>) -> (bool, bool, bool) {
+    if let Some(keep) = find_first_child_by_name(elem, "keep") {
+        let next = attr(keep, "next") == Some("contentArea");
+        let prev = attr(keep, "previous") == Some("contentArea");
+        let intact = attr(keep, "intact") == Some("contentArea");
+        (next, prev, intact)
+    } else {
+        (false, false, false)
+    }
+}
+
+/// Parse `<overflow>` child element leader/trailer.
+fn parse_overflow(elem: Node<'_, '_>) -> (Option<String>, Option<String>) {
+    if let Some(overflow) = find_first_child_by_name(elem, "overflow") {
+        let leader = attr(overflow, "leader").map(|s| s.to_string());
+        let trailer = attr(overflow, "trailer").map(|s| s.to_string());
+        (leader, trailer)
+    } else {
+        (None, None)
+    }
+}
+
+/// Parse item value from `<items><text>VALUE</text></items>`.
+fn parse_item_value(elem: Node<'_, '_>) -> Option<String> {
+    let items = find_first_child_by_name(elem, "items")?;
+    let text_elem = find_first_child_by_name(items, "text")?;
+    let text = text_elem.text()?.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Data binding
+// ---------------------------------------------------------------------------
+
+/// Find the data root element from a datasets document.
+/// Datasets packet: `<xfa:datasets><xfa:data>...</xfa:data></xfa:datasets>`.
+fn find_data_root<'a, 'input>(root: Node<'a, 'input>) -> Option<Node<'a, 'input>> {
+    // Look for a child named "data".
+    for child in root.children().filter(|n| n.is_element()) {
+        if child.tag_name().name() == "data" {
+            // Return first element child of <data>, or <data> itself.
+            return child.children().find(|n| n.is_element()).or(Some(child));
+        }
+    }
+    // If root is the data element itself.
+    if root.tag_name().name() == "data" {
+        return root.children().find(|n| n.is_element()).or(Some(root));
+    }
+    // Fall back to first element child.
+    root.children().find(|n| n.is_element())
+}
+
+/// Recursively walk the form tree and bind data values from the datasets.
+fn bind_data(tree: &mut FormTree, node_id: FormNodeId, data_node: &Node<'_, '_>) {
+    let name = tree.get(node_id).name.clone();
+    let children: Vec<FormNodeId> = tree.get(node_id).children.clone();
+    let group_kind = tree.meta(node_id).group_kind;
+
+    // For exclGroups: look up group value, set matching child, clear others.
+    if group_kind == GroupKind::ExclusiveChoice && !name.is_empty() {
+        let data_value = lookup_data_text(data_node, &name);
+        // Pre-collect item values to avoid borrow conflicts.
+        let child_item_vals: Vec<(FormNodeId, Option<String>)> = children
+            .iter()
+            .map(|&cid| (cid, tree.meta(cid).item_value.clone()))
+            .collect();
+        for (child_id, item_val) in child_item_vals {
+            if let FormNodeType::Field { ref mut value } = tree.get_mut(child_id).node_type {
+                if let Some(ref dv) = data_value {
+                    if item_val.as_deref() == Some(dv.as_str()) {
+                        *value = dv.clone();
+                    } else {
+                        *value = String::new();
+                    }
+                } else {
+                    // No data found: clear all children to prevent template defaults
+                    // from firing wrong scripts.
+                    *value = String::new();
+                }
+            }
+        }
+        return;
+    }
+
+    // For fields: look up data value directly.
+    if let FormNodeType::Field { ref mut value } = tree.get_mut(node_id).node_type {
+        if !name.is_empty() {
+            if let Some(dv) = lookup_data_text(data_node, &name) {
+                *value = dv;
+            }
+        }
+        return; // Fields are leaf nodes.
+    }
+
+    // For subforms: find matching data child and recurse.
+    let child_data_node = if !name.is_empty() {
+        find_child_element_by_name(data_node, &name)
+    } else {
+        None
+    };
+    let effective_data = child_data_node.as_ref().unwrap_or(data_node);
+
+    for &child_id in &children {
+        bind_data(tree, child_id, effective_data);
+    }
+}
+
+/// Look up a text value for a named element in the data node.
+fn lookup_data_text(data_node: &Node<'_, '_>, name: &str) -> Option<String> {
+    let child = find_child_element_by_name(data_node, name)?;
+    child.text().map(|s| s.to_string())
+}
+
+/// Find a direct child element by name.
+fn find_child_element_by_name<'a, 'input>(
+    node: &Node<'a, 'input>,
+    name: &str,
+) -> Option<Node<'a, 'input>> {
+    node.children()
+        .filter(|n| n.is_element())
+        .find(|n| n.tag_name().name() == name)
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /// Recursively add child form nodes (subform, field, draw, pageSet, pageArea).
-/// Inline `<breakBefore>` / `<break>` elements BETWEEN content children are
-/// propagated as `page_break_before` on the next content sibling's metadata.
-/// Breaks that appear BEFORE the first content child are handled by
-/// `detect_page_break` (on the parent element's own metadata) and must NOT
-/// be double-counted here.
-fn add_children(tree: &mut FormTree, node: &mut FormNode, elem: Node<'_, '_>) -> Result<()> {
+///
+/// When a `<breakBefore>` element appears between content children (inline
+/// break), it is propagated as `page_break_before` on the next content
+/// sibling's metadata.
+///
+/// Returns `true` if a pending break remains (i.e. a `breakBefore` was found
+/// after the last content child), meaning the NEXT sibling at the parent
+/// level should receive the break.
+fn add_children(
+    tree: &mut FormTree,
+    node: &mut FormNode,
+    elem: Node<'_, '_>,
+) -> std::result::Result<bool, crate::error::XfaError> {
     let mut pending_break = false;
-    let mut pending_target: Option<String> = None;
-    let mut seen_content = false;
     for child in elem.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
         match tag {
             "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" => {
-                let child_id = parse_node(tree, child, false)?;
+                let (child_id, trailing_break) = parse_node(tree, child, false)?;
+                // Propagate an inline breakBefore to this sibling's metadata.
                 if pending_break {
-                    let m = tree.meta_mut(child_id);
-                    m.page_break_before = true;
-                    if m.break_target.is_none() {
-                        m.break_target = pending_target.take();
-                    }
+                    tree.meta_mut(child_id).page_break_before = true;
                     pending_break = false;
-                    pending_target = None;
                 }
                 node.children.push(child_id);
-                seen_content = true;
+                // If the child node ended with a trailing break (breakBefore
+                // after its last content child), propagate as pending break
+                // so the NEXT sibling at this level gets page_break_before.
+                if trailing_break {
+                    pending_break = true;
+                }
             }
-            // Only propagate breaks that appear AFTER the first content child
-            // (inline breaks). Pre-content breaks are handled by detect_page_break.
+            // Inline breakBefore between content children.
             "breakBefore" => {
-                if seen_content && attr(child, "targetType") == Some("pageArea") {
+                let target_type = attr(child, "targetType");
+                if target_type == Some("pageArea") {
                     pending_break = true;
-                    pending_target = parse_break_target(child);
                 }
             }
+            // Legacy <break> element between content children.
             "break" => {
-                if seen_content && attr(child, "before") == Some("pageArea") {
+                if attr(child, "before") == Some("pageArea") {
                     pending_break = true;
-                    pending_target = parse_break_target(child);
                 }
             }
+            // Ignore XML elements that are layout metadata, not form nodes.
             "caption" | "value" | "ui" | "font" | "border" | "margin" | "para" | "format"
             | "items" | "medium" | "contentArea" | "desc" | "occur" | "event" | "bind"
             | "calculate" | "validate" | "assist" | "toolTip" | "fill" | "edge" | "corner"
             | "linear" | "radial" | "pattern" | "stipple" | "color" | "extras" | "traversal"
-            | "proto" | "overflow" => {}
-            _ => {}
+            | "proto" | "overflow" => {
+                // Handled elsewhere or not needed for layout.
+            }
+            _ => {
+                // Unknown element — skip silently.
+            }
         }
     }
-    Ok(())
+    Ok(pending_break)
 }
 
 fn blank_node(tag: &str) -> FormNode {
@@ -633,7 +874,7 @@ mod tests {
 
     #[test]
     fn parse_simple_form() {
-        let (tree, root_id) = parse_template(SIMPLE_TEMPLATE).unwrap();
+        let (tree, root_id) = parse_template(SIMPLE_TEMPLATE, None).unwrap();
         let root = tree.get(root_id);
         // Root should have children (the paginate subform)
         assert!(!root.children.is_empty(), "root has no children");
@@ -641,7 +882,7 @@ mod tests {
 
     #[test]
     fn field_with_default_value() {
-        let (tree, root_id) = parse_template(SIMPLE_TEMPLATE).unwrap();
+        let (tree, root_id) = parse_template(SIMPLE_TEMPLATE, None).unwrap();
         // Walk to find lastName field
         let found = find_node_by_name(&tree, root_id, "lastName");
         assert!(found.is_some(), "lastName field not found");
@@ -697,6 +938,18 @@ mod tests {
         None
     }
 
+    fn find_node_id_by_name(tree: &FormTree, id: FormNodeId, name: &str) -> Option<FormNodeId> {
+        if tree.get(id).name == name {
+            return Some(id);
+        }
+        for &child_id in &tree.get(id).children.clone() {
+            if let Some(found) = find_node_id_by_name(tree, child_id, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
     /// <exData contentType="text/html"> rich-text draw nodes must have their
     /// HTML stripped and plain text extracted so LayoutEngine can render them.
     #[test]
@@ -723,7 +976,7 @@ mod tests {
     </subform>
   </subform>
 </template>"#;
-        let (tree, root_id) = parse_template(xml).unwrap();
+        let (tree, root_id) = parse_template(xml, None).unwrap();
         let node =
             find_node_by_name(&tree, root_id, "instructions").expect("instructions draw not found");
         match &node.node_type {
@@ -764,37 +1017,34 @@ mod tests {
     </subform>
   </subform>
 </template>"#;
-        let (tree, root_id) = parse_template(xml).unwrap();
+        let (tree, root_id) = parse_template(xml, None).unwrap();
 
+        // Visible draw retains its content.
         let visible = find_node_by_name(&tree, root_id, "visible_draw").unwrap();
         match &visible.node_type {
             FormNodeType::Draw { content } => assert_eq!(content, "Visible text"),
             other => panic!("expected Draw, got {other:?}"),
         }
 
+        // Hidden draw preserves content (scripts may make it visible).
+        // Visibility is tracked in FormNodeMeta.
         let hidden_draw = find_node_by_name(&tree, root_id, "hidden_draw").unwrap();
         match &hidden_draw.node_type {
-            FormNodeType::Draw { content } => {
-                assert!(
-                    content.is_empty(),
-                    "hidden draw should have no content, got: {content:?}"
-                )
-            }
+            FormNodeType::Draw { content } => assert_eq!(content, "DRAFT"),
             other => panic!("expected Draw, got {other:?}"),
         }
+        let hidden_draw_id = find_node_id_by_name(&tree, root_id, "hidden_draw").unwrap();
+        assert!(tree.meta(hidden_draw_id).presence_hidden);
 
-        // Hidden fields are remapped to Draw with empty content so the
-        // renderer skips both text and border drawing. (#557)
+        // Hidden fields preserve content and remain Field type — layout
+        // engine skips them via metadata.
         let hidden_field = find_node_by_name(&tree, root_id, "hidden_field").unwrap();
         match &hidden_field.node_type {
-            FormNodeType::Draw { content } => {
-                assert!(
-                    content.is_empty(),
-                    "hidden field (remapped to Draw) should have no content, got: {content:?}"
-                )
-            }
-            other => panic!("expected Draw (remapped from hidden Field), got {other:?}"),
+            FormNodeType::Field { value } => assert_eq!(value, "secret"),
+            other => panic!("expected Field, got {other:?}"),
         }
+        let hidden_field_id = find_node_id_by_name(&tree, root_id, "hidden_field").unwrap();
+        assert!(tree.meta(hidden_field_id).presence_hidden);
     }
 
     /// Font sizes given as bare numbers (`<font size="10">`) must be treated as
@@ -842,7 +1092,7 @@ mod tests {
     </subform>
   </subform>
 </template>"#;
-        let (tree, root_id) = parse_template(xml).unwrap();
+        let (tree, root_id) = parse_template(xml, None).unwrap();
 
         let left = find_node_by_name(&tree, root_id, "left_draw").unwrap();
         assert_eq!(
