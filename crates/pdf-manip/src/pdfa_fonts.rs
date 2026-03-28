@@ -448,6 +448,14 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     let fd_embedded = embed_via_font_descriptors(doc);
     report.fonts_embedded += fd_embedded;
 
+    // Third pass: embed fonts that lack a FontDescriptor entirely.
+    // Standard 14 fonts (Helvetica, Times, Courier, etc.) in many PDFs have
+    // bare font dicts with /BaseFont but no /FontDescriptor. For PDF/A all
+    // fonts must be embedded, so we create a FontDescriptor + FontFile2 and
+    // add them to these font dicts.
+    let bare_embedded = embed_bare_fonts(doc);
+    report.fonts_embedded += bare_embedded;
+
     Ok(report)
 }
 
@@ -515,6 +523,101 @@ fn embed_via_font_descriptors(doc: &mut Document) -> usize {
 
         if let Some(Object::Dictionary(fd)) = doc.objects.get_mut(&fd_id) {
             fd.set(ff_key, Object::Reference(ff_id));
+            embedded += 1;
+        }
+    }
+    embedded
+}
+
+/// Third-pass font embedding: find font dicts without a FontDescriptor and
+/// create one with an embedded font program. This handles Standard 14 fonts
+/// that are referenced without any FontDescriptor (common in legacy PDFs).
+fn embed_bare_fonts(doc: &mut Document) -> usize {
+    // Collect (font_dict_id, base_font_name) for fonts lacking FontDescriptor.
+    let mut to_embed: Vec<(ObjectId, String)> = Vec::new();
+    for (&id, obj) in doc.objects.iter() {
+        let Object::Dictionary(d) = obj else { continue };
+        let subtype = match d.get(b"Subtype").ok() {
+            Some(Object::Name(n)) => n.clone(),
+            _ => continue,
+        };
+        if subtype != b"Type1" && subtype != b"TrueType" && subtype != b"MMType1" {
+            continue;
+        }
+        // Must have BaseFont.
+        let base_font = match get_name(d, b"BaseFont") {
+            Some(n) => n,
+            None => continue,
+        };
+        // Skip if FontDescriptor already exists (handled by pass 1/2).
+        if d.has(b"FontDescriptor") {
+            continue;
+        }
+        let base = strip_subset_prefix(&base_font).to_owned();
+        to_embed.push((id, base));
+    }
+
+    let mut embedded = 0usize;
+    for (font_dict_id, font_name) in to_embed {
+        let Some(path) = find_system_font(&font_name).or_else(find_fallback_font) else {
+            continue;
+        };
+        let Ok(font_data) = std::fs::read(&path) else {
+            continue;
+        };
+
+        // Detect font type.
+        let is_truetype = font_data.starts_with(b"\x00\x01\x00\x00")
+            || font_data.starts_with(b"true")
+            || path.ends_with(".ttf")
+            || path.ends_with(".TTF");
+
+        let (ff_key, ff_subtype): (&[u8], Option<&[u8]>) = if is_truetype {
+            (b"FontFile2", None)
+        } else {
+            (b"FontFile3", Some(b"OpenType"))
+        };
+
+        // Create font file stream.
+        let mut stream = lopdf::Stream::new(
+            lopdf::dictionary! {
+                "Length" => Object::Integer(font_data.len() as i64),
+            },
+            font_data,
+        );
+        if let Some(sub) = ff_subtype {
+            stream.dict.set("Subtype", Object::Name(sub.to_vec()));
+        }
+        let _ = stream.compress();
+        let ff_id = doc.add_object(Object::Stream(stream));
+
+        // Create FontDescriptor.
+        let mut fd_dict = lopdf::dictionary! {
+            "Type" => Object::Name(b"FontDescriptor".to_vec()),
+            "FontName" => Object::Name(font_name.as_bytes().to_vec()),
+            "Flags" => Object::Integer(32), // NonSymbolic
+            "ItalicAngle" => Object::Integer(0),
+            "Ascent" => Object::Integer(800),
+            "Descent" => Object::Integer(-200),
+            "CapHeight" => Object::Integer(700),
+            "StemV" => Object::Integer(80),
+            "FontBBox" => Object::Array(vec![
+                Object::Integer(-200),
+                Object::Integer(-300),
+                Object::Integer(1200),
+                Object::Integer(900),
+            ]),
+        };
+        fd_dict.set(ff_key, Object::Reference(ff_id));
+        let fd_id = doc.add_object(Object::Dictionary(fd_dict));
+
+        // Add FontDescriptor reference to the font dict.
+        if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&font_dict_id) {
+            d.set("FontDescriptor", Object::Reference(fd_id));
+            // If Subtype is Type1 but we embedded TrueType, update Subtype.
+            if is_truetype {
+                d.set("Subtype", Object::Name(b"TrueType".to_vec()));
+            }
             embedded += 1;
         }
     }
