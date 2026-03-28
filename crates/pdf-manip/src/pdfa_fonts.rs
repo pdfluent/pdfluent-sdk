@@ -7731,14 +7731,12 @@ fn get_truetype_glyph_width_fractional_inner(
         }
     }
 
-    // Mapped nowhere: use .notdef advance for printable codes.
-    if code >= 32 && code != 127 {
-        return face
-            .glyph_hor_advance(ttf_parser::GlyphId(0))
-            .map(|w| w as f64 * scale);
-    }
-
-    None
+    // Mapped nowhere: use .notdef advance. veraPDF uses .notdef for all
+    // codes that don't map to a glyph, including control codes (< 32).
+    // Previously we returned None for codes < 32, leaving dict width=0
+    // uncorrected when veraPDF expected .notdef width. (#dict-zero-fix)
+    face.glyph_hor_advance(ttf_parser::GlyphId(0))
+        .map(|w| w as f64 * scale)
 }
 
 /// Look up a Unicode code point in the (3,1) Windows Unicode BMP cmap only.
