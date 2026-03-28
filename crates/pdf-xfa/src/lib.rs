@@ -1,7 +1,6 @@
 //! XFA engine — extraction, layout rendering, font resolution.
 
 pub mod appearance_bridge;
-pub mod dynamic;
 pub mod error;
 pub mod extract;
 pub mod flatten;
