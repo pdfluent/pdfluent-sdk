@@ -7,7 +7,7 @@
 
 use crate::error::{Result, XfaError};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A resolved font ready for use in PDF rendering.
 #[derive(Debug, Clone)]
@@ -257,23 +257,33 @@ fn load_system_font(path: &PathBuf, name: &str) -> Option<ResolvedFont> {
 fn scan_system_fonts() -> HashMap<String, PathBuf> {
     let mut fonts = HashMap::new();
     for dir in system_font_dirs() {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                if matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
-                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                        fonts.insert(name.to_lowercase(), path);
-                    }
-                }
+        scan_font_dir_recursive(&dir, &mut fonts, 3);
+    }
+    fonts
+}
+
+fn scan_font_dir_recursive(dir: &Path, fonts: &mut HashMap<String, PathBuf>, depth: u8) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() && depth > 0 {
+            scan_font_dir_recursive(&path, fonts, depth - 1);
+            continue;
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
+            if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+                fonts.insert(name.to_lowercase(), path.clone());
             }
         }
     }
-    fonts
 }
 
 fn system_font_dirs() -> Vec<PathBuf> {
