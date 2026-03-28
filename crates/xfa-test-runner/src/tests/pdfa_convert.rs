@@ -910,6 +910,13 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
     }));
+    // Re-sync Subtype + encoding AFTER fix_truetype_encoding: ensures all font dicts
+    // sharing the same FD get consistent WinAnsiEncoding for substitute fonts.
+    // fix_truetype_encoding may set MacRomanEncoding on some dicts; we override
+    // to WinAnsi for non-subset, non-symbolic TrueType fonts.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::sync_subtypes_from_fontfile(&mut doc)
+    }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_existing_symbolic_truetype_cmaps(&mut doc)
     }));
