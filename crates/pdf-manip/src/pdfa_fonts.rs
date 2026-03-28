@@ -470,10 +470,10 @@ fn embed_via_font_descriptors(doc: &mut Document) -> usize {
             continue;
         };
         let base = strip_subset_prefix(&font_name).to_owned();
-        // Skip Standard 14 fonts — they don't need embedding in PDF/A.
-        if is_standard_14(&base) {
-            continue;
-        }
+        // Standard 14 fonts DO need embedding in PDF/A (ISO 19005 requires all fonts
+        // to be embedded, no exceptions for the base 14). The previous skip caused
+        // §6.2.11.4.1:1 violations when Standard 14 fonts were referenced but not
+        // embedded by the first pass (e.g. Helvetica in Form XObjects).
         to_embed.push((*id, base));
     }
 
@@ -1576,7 +1576,9 @@ fn standard14_system_path(clean_name: &str) -> Option<String> {
         | "TrebuchetMS"
         | "LucidaGrande"
         | "HelveticaNeue"
-        | "HelveticaLTStd-Roman" => &[
+        | "HelveticaLTStd-Roman"
+        | "NimbusSanL-Regu"
+        | "NimbusSans-Regular" => &[
             lib!("LiberationSans-Regular.ttf"),
             urw!("NimbusSans-Regular.otf"),
             noto!("NotoSans-Regular.ttf"),
@@ -1622,8 +1624,19 @@ fn standard14_system_path(clean_name: &str) -> Option<String> {
             mac!("Arial Bold Italic.ttf"),
         ],
         // --- Serif (Times family) ---
-        "Times-Roman" | "TimesNewRomanPSMT" | "TimesNewRoman" | "TimesNewRomanPS" | "Georgia"
-        | "BookAntiqua" | "Cambria" | "Garamond" | "Palatino" | "PalatinoLinotype" => &[
+        "Times-Roman"
+        | "TimesNewRomanPSMT"
+        | "TimesNewRoman"
+        | "TimesNewRomanPS"
+        | "Georgia"
+        | "BookAntiqua"
+        | "Cambria"
+        | "Garamond"
+        | "Palatino"
+        | "PalatinoLinotype"
+        | "NimbusRomanNo9L-Regu"
+        | "NimbusRomNo9L-Regu"
+        | "NimbusRoman-Regular" => &[
             lib!("LiberationSerif-Regular.ttf"),
             urw!("NimbusRoman-Regular.otf"),
             noto!("NotoSerif-Regular.ttf"),
@@ -1869,8 +1882,7 @@ fn heuristic_font_match(name: &str) -> Option<String> {
         || lower.contains("code")
         || lower.contains("console")
         || lower.contains("typewriter");
-    let is_serif =
-        (lower.contains("serif") && !lower.contains("sansserif") && !lower.contains("sans-serif"))
+    let is_serif = (lower.contains("serif") && !lower.contains("sansserif") && !lower.contains("sans-serif"))
             || lower.contains("roman")
             || lower.contains("times")
             || lower.contains("garamond")
@@ -1879,7 +1891,12 @@ fn heuristic_font_match(name: &str) -> Option<String> {
             || lower.contains("century")
             || lower.contains("palatino")
             || lower.contains("cambria")
-            || lower.contains("minion");
+            || lower.contains("minion")
+            || lower.contains("melior")
+            || lower.contains("nimbusroman")  // NimbusRomanNo9L (URW)
+            || lower.contains("goudy")
+            || lower.contains("schoolbook")
+            || lower.contains("schlbk");
 
     let key = if is_mono {
         match (is_bold, is_italic) {
