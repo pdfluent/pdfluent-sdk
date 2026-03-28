@@ -9789,10 +9789,17 @@ fn compute_cff_corrections_for_custom_encoding(
                 if pdf_w == 0.0 {
                     continue;
                 }
-                cff.default_width_x().map(|w| w as f64 * scale).or_else(|| {
-                    cff.glyph_width(cff_parser::GlyphId(0))
+                // Per CFF spec, defaultWidthX defaults to 0 when not present.
+                // Do NOT fall back to .notdef charstring width — that's a different
+                // value and using it generates wrong corrections (e.g., CMSY10
+                // code 2: defaultWidthX=0 but .notdef charstring=782, causing
+                // dict 385→782 regression). veraPDF uses defaultWidthX=0 for
+                // codes absent from the CFF encoding.
+                Some(
+                    cff.default_width_x()
                         .map(|w| w as f64 * scale)
-                })
+                        .unwrap_or(0.0),
+                )
             }
         };
         let Some(frac_w) = frac_w else { continue };
