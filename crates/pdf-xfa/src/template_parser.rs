@@ -11,7 +11,9 @@
 
 use roxmltree::Node;
 
-use xfa_layout_engine::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree, Occur};
+use xfa_layout_engine::form::{
+    ContentArea, FormNode, FormNodeId, FormNodeMeta, FormNodeType, FormTree, GroupKind, Occur,
+};
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{
     BoxModel, Caption, CaptionPlacement, LayoutStrategy, Measurement, TextAlign,
@@ -23,7 +25,10 @@ use crate::error::{Result, XfaError};
 ///
 /// `xml` should be the raw content of the template packet, starting with
 /// the `<template …>` element (with or without an XML declaration).
-pub fn parse_template(xml: &str) -> Result<(FormTree, FormNodeId)> {
+///
+/// If `datasets_xml` is provided, field values are merged from the
+/// `<xfa:data>` section of the datasets packet.
+pub fn parse_template(xml: &str, datasets_xml: Option<&str>) -> Result<(FormTree, FormNodeId)> {
     let doc = roxmltree::Document::parse(xml)
         .map_err(|e| XfaError::ParseFailed(format!("template XML parse error: {e}")))?;
 
@@ -40,6 +45,16 @@ pub fn parse_template(xml: &str) -> Result<(FormTree, FormNodeId)> {
 
     let mut tree = FormTree::new();
     let root_id = parse_node(&mut tree, template_elem, true)?;
+
+    // Data binding: merge field values from datasets XML.
+    if let Some(ds_xml) = datasets_xml {
+        if let Ok(ds_doc) = roxmltree::Document::parse(ds_xml) {
+            if let Some(data_root) = find_data_root(ds_doc.root_element()) {
+                bind_data(&mut tree, root_id, &data_root);
+            }
+        }
+    }
+
     Ok((tree, root_id))
 }
 
@@ -66,7 +81,8 @@ fn parse_node(tree: &mut FormTree, elem: Node<'_, '_>, is_root: bool) -> Result<
         }
     };
 
-    Ok(tree.add_node(node))
+    let meta = parse_node_meta(elem);
+    Ok(tree.add_node_with_meta(node, meta))
 }
 
 fn parse_root(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
@@ -302,6 +318,256 @@ fn parse_page_area(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> 
     };
     let _ = tree;
     Ok(node)
+}
+
+// ---------------------------------------------------------------------------
+// Metadata parsing
+// ---------------------------------------------------------------------------
+
+/// Build `FormNodeMeta` from XFA element attributes and child elements.
+fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
+    let tag = elem.tag_name().name();
+
+    // (a) Presence attribute.
+    let presence = attr(elem, "presence");
+    let presence_hidden = matches!(
+        presence,
+        Some("hidden") | Some("inactive") | Some("invisible")
+    );
+    let presence_invisible = presence == Some("invisible");
+
+    // (b) Page break detection: look for <breakBefore> child.
+    let page_break_before = detect_page_break_before(elem);
+
+    // (c) Event scripts.
+    let event_scripts = collect_event_scripts(elem);
+
+    // (d) Keep child attributes.
+    let (keep_next_content_area, keep_previous_content_area, keep_intact_content_area) =
+        parse_keep(elem);
+
+    // (e) Overflow leader/trailer.
+    let (overflow_leader, overflow_trailer) = parse_overflow(elem);
+
+    // (f) Group kind: exclGroup → ExclusiveChoice.
+    let group_kind = if tag == "exclGroup" {
+        GroupKind::ExclusiveChoice
+    } else {
+        GroupKind::None
+    };
+
+    // (g) Item value for field elements: <items><text>VALUE</text></items>.
+    let item_value = if tag == "field" {
+        parse_item_value(elem)
+    } else {
+        None
+    };
+
+    // (h) XFA id attribute.
+    let xfa_id = attr(elem, "id").map(|s| s.to_string());
+
+    FormNodeMeta {
+        xfa_id,
+        presence_hidden,
+        presence_invisible,
+        page_break_before,
+        overflow_leader,
+        overflow_trailer,
+        keep_next_content_area,
+        keep_previous_content_area,
+        keep_intact_content_area,
+        event_scripts,
+        group_kind,
+        item_value,
+        ..Default::default()
+    }
+}
+
+/// Detect page breaks: look for a child element named `breakBefore`.
+/// If it has `targetType="pageArea"` and `startNew="1"`, always break.
+/// For bare `<breakBefore/>`, only break if parent layout is lr-tb or rl-tb.
+fn detect_page_break_before(elem: Node<'_, '_>) -> bool {
+    if let Some(brk) = find_first_child_by_name(elem, "breakBefore") {
+        let target_type = attr(brk, "targetType");
+        let start_new = attr(brk, "startNew");
+        // Only force a page break when both targetType="pageArea" and
+        // startNew="1" are explicitly set. A bare <breakBefore/> does NOT
+        // force a break (XFA 3.3 default: startNew=0).
+        if target_type == Some("pageArea") && start_new == Some("1") {
+            return true;
+        }
+    }
+    // Also check the legacy <break> element with before="pageArea".
+    if let Some(brk) = find_first_child_by_name(elem, "break") {
+        if attr(brk, "before") == Some("pageArea") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Collect event scripts from `<event>` and `<calculate>` children.
+fn collect_event_scripts(elem: Node<'_, '_>) -> Vec<String> {
+    let mut scripts = Vec::new();
+    for child in elem.children().filter(|n| n.is_element()) {
+        let child_tag = child.tag_name().name();
+        if child_tag == "event" {
+            // Skip layout-ready events (activity="ready" ref="$layout").
+            let activity = attr(child, "activity");
+            let event_ref = attr(child, "ref");
+            if activity == Some("ready") && event_ref == Some("$layout") {
+                continue;
+            }
+            // Look for a <script> child.
+            if let Some(script_elem) = find_first_child_by_name(child, "script") {
+                if let Some(text) = script_elem.text() {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        scripts.push(trimmed.to_string());
+                    }
+                }
+            }
+        } else if child_tag == "calculate" {
+            // Direct <calculate><script>...</script></calculate>
+            if let Some(script_elem) = find_first_child_by_name(child, "script") {
+                if let Some(text) = script_elem.text() {
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        scripts.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+    scripts
+}
+
+/// Parse `<keep>` child element attributes.
+fn parse_keep(elem: Node<'_, '_>) -> (bool, bool, bool) {
+    if let Some(keep) = find_first_child_by_name(elem, "keep") {
+        let next = attr(keep, "next") == Some("contentArea");
+        let prev = attr(keep, "previous") == Some("contentArea");
+        let intact = attr(keep, "intact") == Some("contentArea");
+        (next, prev, intact)
+    } else {
+        (false, false, false)
+    }
+}
+
+/// Parse `<overflow>` child element leader/trailer.
+fn parse_overflow(elem: Node<'_, '_>) -> (Option<String>, Option<String>) {
+    if let Some(overflow) = find_first_child_by_name(elem, "overflow") {
+        let leader = attr(overflow, "leader").map(|s| s.to_string());
+        let trailer = attr(overflow, "trailer").map(|s| s.to_string());
+        (leader, trailer)
+    } else {
+        (None, None)
+    }
+}
+
+/// Parse item value from `<items><text>VALUE</text></items>`.
+fn parse_item_value(elem: Node<'_, '_>) -> Option<String> {
+    let items = find_first_child_by_name(elem, "items")?;
+    let text_elem = find_first_child_by_name(items, "text")?;
+    let text = text_elem.text()?.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Data binding
+// ---------------------------------------------------------------------------
+
+/// Find the data root element from a datasets document.
+/// Datasets packet: `<xfa:datasets><xfa:data>...</xfa:data></xfa:datasets>`.
+fn find_data_root<'a, 'input>(root: Node<'a, 'input>) -> Option<Node<'a, 'input>> {
+    // Look for a child named "data".
+    for child in root.children().filter(|n| n.is_element()) {
+        if child.tag_name().name() == "data" {
+            // Return first element child of <data>, or <data> itself.
+            return child.children().find(|n| n.is_element()).or(Some(child));
+        }
+    }
+    // If root is the data element itself.
+    if root.tag_name().name() == "data" {
+        return root.children().find(|n| n.is_element()).or(Some(root));
+    }
+    // Fall back to first element child.
+    root.children().find(|n| n.is_element())
+}
+
+/// Recursively walk the form tree and bind data values from the datasets.
+fn bind_data(tree: &mut FormTree, node_id: FormNodeId, data_node: &Node<'_, '_>) {
+    let name = tree.get(node_id).name.clone();
+    let children: Vec<FormNodeId> = tree.get(node_id).children.clone();
+    let group_kind = tree.meta(node_id).group_kind;
+
+    // For exclGroups: look up group value, set matching child, clear others.
+    if group_kind == GroupKind::ExclusiveChoice && !name.is_empty() {
+        let data_value = lookup_data_text(data_node, &name);
+        // Pre-collect item values to avoid borrow conflicts.
+        let child_item_vals: Vec<(FormNodeId, Option<String>)> = children
+            .iter()
+            .map(|&cid| (cid, tree.meta(cid).item_value.clone()))
+            .collect();
+        for (child_id, item_val) in child_item_vals {
+            if let FormNodeType::Field { ref mut value } = tree.get_mut(child_id).node_type {
+                if let Some(ref dv) = data_value {
+                    if item_val.as_deref() == Some(dv.as_str()) {
+                        *value = dv.clone();
+                    } else {
+                        *value = String::new();
+                    }
+                } else {
+                    // No data found: clear all children to prevent template defaults
+                    // from firing wrong scripts.
+                    *value = String::new();
+                }
+            }
+        }
+        return;
+    }
+
+    // For fields: look up data value directly.
+    if let FormNodeType::Field { ref mut value } = tree.get_mut(node_id).node_type {
+        if !name.is_empty() {
+            if let Some(dv) = lookup_data_text(data_node, &name) {
+                *value = dv;
+            }
+        }
+        return; // Fields are leaf nodes.
+    }
+
+    // For subforms: find matching data child and recurse.
+    let child_data_node = if !name.is_empty() {
+        find_child_element_by_name(data_node, &name)
+    } else {
+        None
+    };
+    let effective_data = child_data_node.as_ref().unwrap_or(data_node);
+
+    for &child_id in &children {
+        bind_data(tree, child_id, effective_data);
+    }
+}
+
+/// Look up a text value for a named element in the data node.
+fn lookup_data_text(data_node: &Node<'_, '_>, name: &str) -> Option<String> {
+    let child = find_child_element_by_name(data_node, name)?;
+    child.text().map(|s| s.to_string())
+}
+
+/// Find a direct child element by name.
+fn find_child_element_by_name<'a, 'input>(
+    node: &Node<'a, 'input>,
+    name: &str,
+) -> Option<Node<'a, 'input>> {
+    node.children()
+        .filter(|n| n.is_element())
+        .find(|n| n.tag_name().name() == name)
 }
 
 // ---------------------------------------------------------------------------
@@ -565,7 +831,7 @@ mod tests {
 
     #[test]
     fn parse_simple_form() {
-        let (tree, root_id) = parse_template(SIMPLE_TEMPLATE).unwrap();
+        let (tree, root_id) = parse_template(SIMPLE_TEMPLATE, None).unwrap();
         let root = tree.get(root_id);
         // Root should have children (the paginate subform)
         assert!(!root.children.is_empty(), "root has no children");
@@ -573,7 +839,7 @@ mod tests {
 
     #[test]
     fn field_with_default_value() {
-        let (tree, root_id) = parse_template(SIMPLE_TEMPLATE).unwrap();
+        let (tree, root_id) = parse_template(SIMPLE_TEMPLATE, None).unwrap();
         // Walk to find lastName field
         let found = find_node_by_name(&tree, root_id, "lastName");
         assert!(found.is_some(), "lastName field not found");
@@ -655,7 +921,7 @@ mod tests {
     </subform>
   </subform>
 </template>"#;
-        let (tree, root_id) = parse_template(xml).unwrap();
+        let (tree, root_id) = parse_template(xml, None).unwrap();
         let node =
             find_node_by_name(&tree, root_id, "instructions").expect("instructions draw not found");
         match &node.node_type {
@@ -696,7 +962,7 @@ mod tests {
     </subform>
   </subform>
 </template>"#;
-        let (tree, root_id) = parse_template(xml).unwrap();
+        let (tree, root_id) = parse_template(xml, None).unwrap();
 
         let visible = find_node_by_name(&tree, root_id, "visible_draw").unwrap();
         match &visible.node_type {
@@ -774,7 +1040,7 @@ mod tests {
     </subform>
   </subform>
 </template>"#;
-        let (tree, root_id) = parse_template(xml).unwrap();
+        let (tree, root_id) = parse_template(xml, None).unwrap();
 
         let left = find_node_by_name(&tree, root_id, "left_draw").unwrap();
         assert_eq!(
