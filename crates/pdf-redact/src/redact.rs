@@ -428,30 +428,56 @@ fn get_content_stream_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
     }
 }
 
+/// Resolve page /Contents to a flat list of stream ObjectIds.
+///
+/// Handles all valid PDF structures including indirect references to
+/// arrays (common in incrementally-updated PDFs where an update replaces
+/// a single content stream with an array).
+fn resolve_content_streams(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
+    let page_obj = match doc.get_object(page_id) {
+        Ok(obj) => obj,
+        Err(_) => return Vec::new(),
+    };
+    let page_dict = match page_obj {
+        Object::Dictionary(ref d) => d,
+        _ => return Vec::new(),
+    };
+    match page_dict.get(b"Contents").ok() {
+        Some(c) => flatten_content_refs(doc, c),
+        None => Vec::new(),
+    }
+}
+
+fn flatten_content_refs(doc: &Document, obj: &Object) -> Vec<ObjectId> {
+    match obj {
+        Object::Reference(id) => {
+            if let Ok(resolved) = doc.get_object(*id) {
+                if let Object::Array(arr) = resolved {
+                    return arr
+                        .iter()
+                        .flat_map(|o| flatten_content_refs(doc, o))
+                        .collect();
+                }
+            }
+            vec![*id]
+        }
+        Object::Array(arr) => arr
+            .iter()
+            .flat_map(|o| flatten_content_refs(doc, o))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Append a content stream reference to a page's Contents array.
 fn append_content_to_page(doc: &mut Document, page_id: ObjectId, content_id: ObjectId) {
-    let existing = {
-        let page_obj = match doc.get_object(page_id) {
-            Ok(obj) => obj,
-            Err(_) => return,
-        };
-        let page_dict = match page_obj {
-            Object::Dictionary(ref d) => d,
-            _ => return,
-        };
-        page_dict.get(b"Contents").ok().cloned()
-    };
-
-    let new_contents = match existing {
-        Some(Object::Reference(existing_id)) => Object::Array(vec![
-            Object::Reference(existing_id),
-            Object::Reference(content_id),
-        ]),
-        Some(Object::Array(mut arr)) => {
-            arr.push(Object::Reference(content_id));
-            Object::Array(arr)
-        }
-        _ => Object::Reference(content_id),
+    let existing = resolve_content_streams(doc, page_id);
+    let new_contents = if existing.is_empty() {
+        Object::Reference(content_id)
+    } else {
+        let mut arr: Vec<Object> = existing.into_iter().map(Object::Reference).collect();
+        arr.push(Object::Reference(content_id));
+        Object::Array(arr)
     };
 
     if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
@@ -464,43 +490,25 @@ fn append_content_to_page(doc: &mut Document, page_id: ObjectId, content_id: Obj
 /// This prevents the page's CTM, opacity, or blend mode from leaking into
 /// the overlay content stream we append afterwards.
 fn wrap_existing_content_in_save_restore(doc: &mut Document, page_id: ObjectId) {
-    // Create a tiny stream containing just "q\n"
+    let existing = resolve_content_streams(doc, page_id);
+    if existing.is_empty() {
+        return;
+    }
+
     let q_stream = Stream::new(dictionary! {}, b"q\n".to_vec());
     let q_id = doc.add_object(Object::Stream(q_stream));
 
-    // Create a tiny stream containing just "\nQ\n"
     let big_q_stream = Stream::new(dictionary! {}, b"\nQ\n".to_vec());
     let big_q_id = doc.add_object(Object::Stream(big_q_stream));
 
-    // Read existing Contents
-    let existing = {
-        let page_obj = match doc.get_object(page_id) {
-            Ok(obj) => obj,
-            Err(_) => return,
-        };
-        let page_dict = match page_obj {
-            Object::Dictionary(ref d) => d,
-            _ => return,
-        };
-        page_dict.get(b"Contents").ok().cloned()
-    };
-
-    // Wrap: [q_stream, ...existing..., Q_stream]
-    let wrapped = match existing {
-        Some(Object::Reference(existing_id)) => Object::Array(vec![
-            Object::Reference(q_id),
-            Object::Reference(existing_id),
-            Object::Reference(big_q_id),
-        ]),
-        Some(Object::Array(arr)) => {
-            let mut new_arr = Vec::with_capacity(arr.len() + 2);
-            new_arr.push(Object::Reference(q_id));
-            new_arr.extend(arr);
-            new_arr.push(Object::Reference(big_q_id));
-            Object::Array(new_arr)
-        }
-        _ => return, // No existing content — nothing to wrap
-    };
+    // Build flat array: [q, ...existing streams..., Q]
+    let mut new_arr = Vec::with_capacity(existing.len() + 2);
+    new_arr.push(Object::Reference(q_id));
+    for id in existing {
+        new_arr.push(Object::Reference(id));
+    }
+    new_arr.push(Object::Reference(big_q_id));
+    let wrapped = Object::Array(new_arr);
 
     if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
         d.set("Contents", wrapped);
