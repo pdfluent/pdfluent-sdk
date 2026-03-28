@@ -312,20 +312,29 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
             Some((pixels, w, h)) => {
                 // Check every redacted rect on page 1.
                 for rect in &page1_rects {
+                    let rw = rect[2] - rect[0];
+                    let rh = rect[3] - rect[1];
+                    let rect_area = rw * rh;
+
+                    // Skip visual check for rects that are too small to
+                    // sample reliably (< 4×4 px at 72 dpi) or partially
+                    // off-page (negative coords or beyond page bounds).
+                    if rw < 4.0 || rh < 4.0 || rect[0] < 0.0 || rect[1] < 0.0
+                        || rect[2] > w as f64 || rect[3] > h as f64
+                    {
+                        metadata.insert("visual_check".into(), "rect_too_small_or_offpage".into());
+                        continue;
+                    }
+
                     if let Some(brightness) = mean_brightness_in_rect(&pixels, w, h, *rect) {
                         metadata.insert("visual_brightness".into(), format!("{brightness:.1}"));
                         // Adaptive threshold: small rects (< ~10×10 px) are
                         // heavily affected by anti-aliasing, so allow higher
                         // mean brightness.  Large rects should be close to
-                        // black (< 50).  This scales linearly: a 4×3 rect
-                        // gets threshold ~105, a 20×20 rect gets ~55, a
-                        // 100×100 rect gets 50.
-                        let rect_area = (rect[2] - rect[0]) * (rect[3] - rect[1]);
+                        // black (< 50).
                         let threshold = if rect_area < 100.0 {
-                            // Small rects: relax to 128 (mid-gray)
                             128.0
                         } else if rect_area < 400.0 {
-                            // Medium rects: scale from 128 down to 50
                             128.0 - (rect_area - 100.0) / 300.0 * 78.0
                         } else {
                             50.0

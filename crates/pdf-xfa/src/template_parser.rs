@@ -227,12 +227,10 @@ fn parse_font_size(s: &str) -> Option<f64> {
 /// Parse font size and text alignment from `<font size="…">` and `<para hAlign="…">` child
 /// elements (XFA 3.3 §7.1). Returns `FontMetrics::default()` when no matching elements found.
 fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
-    let font_elem = find_first_child_by_name(elem, "font");
-    let size = font_elem
+    let size = find_first_child_by_name(elem, "font")
         .and_then(|f| attr(f, "size"))
         .and_then(parse_font_size)
         .unwrap_or(FontMetrics::default().size);
-    let typeface = font_elem.and_then(|f| attr(f, "typeface")).unwrap_or("");
     let text_align = find_first_child_by_name(elem, "para")
         .and_then(|p| attr(p, "hAlign"))
         .map(|a| match a {
@@ -245,31 +243,7 @@ fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
     FontMetrics {
         size,
         text_align,
-        avg_char_width: avg_char_width_for_typeface(typeface),
         ..FontMetrics::default()
-    }
-}
-
-/// Estimated average character width as a fraction of font size.
-///
-/// Derived from actual average advance widths of ASCII alphanumeric characters.
-/// Using per-font estimates prevents text wrapping mismatches when the template
-/// specifies a narrow font like Times New Roman.
-fn avg_char_width_for_typeface(typeface: &str) -> f64 {
-    let lower = typeface.to_ascii_lowercase();
-    if lower.contains("times")
-        || lower.contains("georgia")
-        || lower.contains("garamond")
-        || lower.contains("palatino")
-        || lower.contains("cambria")
-    {
-        0.44
-    } else if lower.contains("courier") || lower.contains("consola") || lower.contains("mono") {
-        0.60
-    } else if lower.contains("narrow") || lower.contains("condensed") {
-        0.40
-    } else {
-        0.50
     }
 }
 
