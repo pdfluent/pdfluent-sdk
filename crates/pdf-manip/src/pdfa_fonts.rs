@@ -16832,9 +16832,14 @@ fn fix_notdef_in_truetype(
         // For codes below 32: these are control characters that standard
         // encodings (WinAnsi, MacRoman) don't map to real glyphs.
         // If the font uses codes < 32, the content stream references them,
-        // so they WILL trigger .notdef. Map them to "space".
+        // so they WILL trigger .notdef. Map them to "space" only if the
+        // font has the space glyph. For subset fonts without space, skip
+        // to avoid introducing a §6.2.11.4.1:2 missing-glyph violation.
         if code < 32 {
-            new_diffs.push((code, "space".to_string()));
+            let has_space = face.glyph_index(' ').is_some_and(|gid| gid.0 != 0);
+            if has_space {
+                new_diffs.push((code, "space".to_string()));
+            }
             continue;
         }
 
@@ -16877,19 +16882,22 @@ fn fix_notdef_in_truetype(
         }
 
         // For subset fonts where the cmap has an entry but the outline
-        // was stripped, map directly to "space" (don't try to find another
-        // glyph name which might also be stripped).
+        // was stripped, map directly to "space" IF the font has a space glyph.
+        // Don't try to find another glyph name which might also be stripped.
+        // §6.2.11.4.1:2: adding a Differences entry for a glyph not in the
+        // subset (e.g. "space") causes a missing-glyph violation.
         if is_subset && gid_opt.is_some() {
-            // Standard printable punctuation/letters often remain valid after
-            // fix_truetype_encoding even when the subset's Unicode cmap is
-            // incomplete. Remapping them to /space here creates false
-            // punctuation→space width regressions (e.g. code 33 in Times New
-            // Roman subsets). Leave them untouched and let the width fixer use
-            // the standard encoding path instead. (#pdfa-tt-printable-space-remap)
             if printable_standard_code {
                 continue;
             }
-            new_diffs.push((code, "space".to_string()));
+            // Only add "space" if the font actually has the space glyph.
+            let has_space = face.glyph_index(' ').is_some_and(|gid| gid.0 != 0);
+            if has_space {
+                new_diffs.push((code, "space".to_string()));
+            }
+            // If no space glyph, skip — leave the encoding unchanged.
+            // The code may trigger .notdef but that's better than introducing
+            // a missing glyph reference.
             continue;
         }
 
