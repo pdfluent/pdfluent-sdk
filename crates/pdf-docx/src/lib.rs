@@ -19,6 +19,18 @@ use writer::write_docx;
 ///
 /// Returns the DOCX file contents as bytes.
 pub fn pdf_to_docx(doc: &Document) -> Result<Vec<u8>> {
+    pdf_to_docx_inner(doc, false)
+}
+
+/// Convert a PDF document to DOCX format, text only (no images).
+///
+/// Skips image extraction for faster conversion when only text content
+/// is needed (e.g. text-similarity tests).
+pub fn pdf_to_docx_text_only(doc: &Document) -> Result<Vec<u8>> {
+    pdf_to_docx_inner(doc, true)
+}
+
+fn pdf_to_docx_inner(doc: &Document, skip_images: bool) -> Result<Vec<u8>> {
     let pages = doc.get_pages();
     let total_pages = pages.len() as u32;
 
@@ -39,31 +51,33 @@ pub fn pdf_to_docx(doc: &Document) -> Result<Vec<u8>> {
         // Layout analysis.
         let mut elements = analyze_page(&page_blocks);
 
-        // Extract images for this page.
-        if let Ok(images) = extract_page_images(doc, page_num) {
-            for img in images {
-                let (content_type, ext) = match img.filter {
-                    ImageFilter::Jpeg => ("image/jpeg", "jpeg"),
-                    _ => ("image/png", "png"),
-                };
+        // Extract images for this page (unless skip_images is set).
+        if !skip_images {
+            if let Ok(images) = extract_page_images(doc, page_num) {
+                for img in images {
+                    let (content_type, ext) = match img.filter {
+                        ImageFilter::Jpeg => ("image/jpeg", "jpeg"),
+                        _ => ("image/png", "png"),
+                    };
 
-                let id = format!("image{}_{}.{}", page_num, all_images.len(), ext);
+                    let id = format!("image{}_{}.{}", page_num, all_images.len(), ext);
 
-                all_images.push(DocxImage {
-                    data: img.data,
-                    width: img.width,
-                    height: img.height,
-                    content_type: content_type.to_string(),
-                    id: id.clone(),
-                });
+                    all_images.push(DocxImage {
+                        data: img.data,
+                        width: img.width,
+                        height: img.height,
+                        content_type: content_type.to_string(),
+                        id: id.clone(),
+                    });
 
-                elements.push(PageElement::Img(layout::DocxImage {
-                    data: Vec::new(), // data stored in all_images
-                    width: img.width,
-                    height: img.height,
-                    content_type: content_type.to_string(),
-                    id,
-                }));
+                    elements.push(PageElement::Img(layout::DocxImage {
+                        data: Vec::new(), // data stored in all_images
+                        width: img.width,
+                        height: img.height,
+                        content_type: content_type.to_string(),
+                        id,
+                    }));
+                }
             }
         }
 

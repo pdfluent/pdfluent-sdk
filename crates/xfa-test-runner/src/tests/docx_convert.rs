@@ -24,6 +24,9 @@ use super::{PdfTest, TestResult, TestStatus};
 const SIMILARITY_THRESHOLD: f64 = 0.50;
 /// Skip similarity check when the PDF has fewer than this many characters.
 const MIN_PDF_CHARS: usize = 50;
+/// Cap text length before computing Levenshtein to avoid O(n²) blowup.
+/// Same approach as the poppler oracle (10 000 chars → max 100M ops).
+const MAX_SIMILARITY_CHARS: usize = 10_000;
 
 pub struct DocxConvertTest;
 
@@ -77,15 +80,36 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     let start = std::time::Instant::now();
     let elapsed = || start.elapsed().as_millis() as u64;
 
-    match pdf_docx::convert_pdf_bytes_to_docx(&pdf) {
-        // lopdf could not parse the PDF — not a DOCX conversion failure.
-        Err(pdf_docx::DocxError::Pdf(_)) => TestResult {
-            status: TestStatus::Skip,
-            error_message: Some("lopdf could not load PDF".into()),
-            duration_ms: elapsed(),
-            oracle_score: None,
-            metadata: HashMap::new(),
-        },
+    // Load PDF once — reused for both conversion and reference text extraction.
+    let doc = match lopdf::Document::load_mem(&pdf) {
+        Ok(d) => d,
+        Err(_) => {
+            return TestResult {
+                status: TestStatus::Skip,
+                error_message: Some("lopdf could not load PDF".into()),
+                duration_ms: elapsed(),
+                oracle_score: None,
+                metadata: HashMap::new(),
+            };
+        }
+    };
+
+    // Extract reference text from the source PDF (reuses the loaded document).
+    let pdf_text = {
+        let blocks = pdf_extract::extract_text(&doc);
+        let raw: String = blocks
+            .into_iter()
+            .map(|b| b.text)
+            .collect::<Vec<_>>()
+            .join(" ");
+        raw.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+
+    // Text-only conversion — skip image extraction for speed.
+    match pdf_docx::pdf_to_docx_text_only(&doc) {
         Err(e) => TestResult {
             status: TestStatus::Fail,
             error_message: Some(format!("DOCX conversion failed: {e}")),
@@ -141,9 +165,6 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
                 }
             };
 
-            // Extract text from the source PDF for comparison.
-            let pdf_text = extract_pdf_text(&pdf);
-
             let mut metadata = HashMap::new();
             metadata.insert("docx_size_bytes".to_string(), docx_bytes.len().to_string());
             metadata.insert("pdf_chars".to_string(), pdf_text.len().to_string());
@@ -155,7 +176,7 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
 
             // Only compare when the PDF has meaningful text content.
             if pdf_text.len() >= MIN_PDF_CHARS {
-                let similarity = strsim::normalized_levenshtein(&pdf_text, &docx_text);
+                let similarity = capped_similarity(&pdf_text, &docx_text);
                 metadata.insert("similarity".to_string(), format!("{similarity:.4}"));
 
                 if similarity < SIMILARITY_THRESHOLD {
@@ -198,12 +219,23 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
 
 /// Extract plain text from DOCX `word/document.xml` by collecting `<w:t>` element content.
 /// Handles both `<w:t>text</w:t>` and `<w:t xml:space="preserve"> text</w:t>` forms.
+///
+/// IMPORTANT: The search matches `<w:t>` and `<w:t ` only — NOT `<w:tbl>`, `<w:tc>`,
+/// `<w:tr>`, etc. Without this guard, table markup is captured as text content,
+/// causing massive text expansion and O(n²) similarity blowup (#597).
 fn extract_docx_text(xml: &str) -> String {
     let mut result = String::new();
     let mut rest = xml;
     while let Some(start) = rest.find("<w:t") {
-        rest = &rest[start + 4..]; // skip past "<w:t"
-                                   // Find the closing '>' of the opening tag (may have attributes).
+        let after = &rest[start + 4..]; // bytes after "<w:t"
+                                        // Only match <w:t> or <w:t ...> — skip <w:tbl>, <w:tc>, <w:tr>, <w:top>, etc.
+        let next_ch = after.as_bytes().first().copied().unwrap_or(0);
+        if next_ch != b'>' && next_ch != b' ' && next_ch != b'/' {
+            rest = after;
+            continue;
+        }
+        rest = after;
+        // Find the closing '>' of the opening tag (may have attributes).
         let Some(tag_end) = rest.find('>') else {
             break;
         };
@@ -221,15 +253,45 @@ fn extract_docx_text(xml: &str) -> String {
         result.push(' ');
         rest = &rest[close + 6..];
     }
+    // Unescape XML entities that quick-xml inserts during write.
+    let unescaped = result
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'");
     // Normalize: collapse whitespace, lowercase (matching poppler normalize_text).
-    result
+    unescaped
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
 }
 
+/// Compute text similarity with a character cap to avoid O(n²) blowup.
+///
+/// For texts under [`MAX_SIMILARITY_CHARS`] this is identical to
+/// `strsim::normalized_levenshtein`. For longer texts the inputs are
+/// truncated to the cap first — the same strategy as the poppler oracle.
+fn capped_similarity(a: &str, b: &str) -> f64 {
+    let a = if a.len() > MAX_SIMILARITY_CHARS {
+        &a[..a.floor_char_boundary(MAX_SIMILARITY_CHARS)]
+    } else {
+        a
+    };
+    let b = if b.len() > MAX_SIMILARITY_CHARS {
+        &b[..b.floor_char_boundary(MAX_SIMILARITY_CHARS)]
+    } else {
+        b
+    };
+    if a.is_empty() && b.is_empty() {
+        return 1.0;
+    }
+    strsim::normalized_levenshtein(a, b)
+}
+
 /// Extract and normalize text from a PDF using lopdf + pdf-extract.
+#[allow(dead_code)]
 fn extract_pdf_text(pdf: &[u8]) -> String {
     let doc = match lopdf::Document::load_mem(pdf) {
         Ok(d) => d,
@@ -263,6 +325,15 @@ mod tests {
         let xml = r#"<w:body><w:t/>normal<w:t>text</w:t></w:body>"#;
         let text = extract_docx_text(xml);
         assert_eq!(text, "text");
+    }
+
+    #[test]
+    fn extract_docx_text_ignores_table_tags() {
+        // <w:tbl>, <w:tc>, <w:tr> must NOT be matched as <w:t> elements (#597).
+        let xml =
+            r#"<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>"#;
+        let text = extract_docx_text(xml);
+        assert_eq!(text, "cell");
     }
 
     #[test]
