@@ -423,6 +423,15 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc)
         }));
 
+        // 3a3c. Final-pass TrueType width enforcement: reads actual glyph
+        // advances from FontFile2 and corrects /Widths for any remaining
+        // mismatches not caught by fix_font_width_mismatches (which has
+        // conservative filters that skip certain codes). (#598)
+        set_progress("simple_tt_widths");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_simple_truetype_widths(&mut doc)
+        }));
+
         // 3a5. Fix CIDSet for CID fonts.
         set_progress("cidset");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -968,6 +977,9 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_symbolic_font_widths(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_simple_truetype_widths(&mut doc)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_cidset(&mut doc)
