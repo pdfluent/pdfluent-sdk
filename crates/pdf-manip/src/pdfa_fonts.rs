@@ -14492,6 +14492,130 @@ fn get_name_lossy_resolved(doc: &Document, dict: &lopdf::Dictionary, key: &[u8])
 /// program provably contains the correct glyph.
 ///
 /// Returns the number of fonts fixed.
+
+/// Final-pass width correction for TrueType fonts.
+///
+/// Runs after all other width fixes. For each simple font with an embedded
+/// TrueType program, reads the actual glyph advance for each code (using
+/// Differences + BaseEncoding) and corrects /Widths entries that differ.
+///
+/// KEY SAFETY RULE: only corrects a width when the glyph IS present in the
+/// font program (face.glyph_index returns Some). Codes where the glyph is
+/// absent are left as-is to avoid destroying correct original widths.
+pub fn fix_remaining_tt_width_mismatches(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut fixed = 0;
+
+    for font_id in font_ids {
+        let (fd_id, enc_name, diff_map) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            if get_name(dict, b"Subtype").as_deref() != Some("TrueType") {
+                continue;
+            }
+            if is_font_symbolic(doc, dict) {
+                continue;
+            }
+            let fd_id = match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            };
+            let has_ff2 = matches!(
+                doc.objects.get(&fd_id),
+                Some(Object::Dictionary(d)) if d.has(b"FontFile2")
+            );
+            if !has_ff2 {
+                continue;
+            }
+            let enc = match dict.get(b"Encoding").ok() {
+                Some(Object::Name(n)) => String::from_utf8(n.clone()).ok(),
+                Some(Object::Dictionary(d)) => get_name(d, b"BaseEncoding"),
+                Some(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Dictionary(d)) => get_name(d, b"BaseEncoding"),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let enc = match enc.as_deref() {
+                Some("WinAnsiEncoding") | Some("MacRomanEncoding") => enc.unwrap(),
+                Some("StandardEncoding") => "WinAnsiEncoding".to_string(),
+                _ => continue,
+            };
+            let dm = parse_differences_to_char_map(doc, dict);
+            (fd_id, enc, dm)
+        };
+
+        let font_data = read_embedded_font_data(doc, fd_id);
+        let Some(font_data) = font_data else { continue };
+        let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+            continue;
+        };
+        let upem = face.units_per_em() as f64;
+        if upem == 0.0 {
+            continue;
+        }
+        let scale = 1000.0 / upem;
+
+        // Read existing Widths.
+        let (fc, widths) = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let fc = match dict.get(b"FirstChar").ok() {
+                Some(Object::Integer(i)) => *i as u32,
+                _ => continue,
+            };
+            let w = match dict.get(b"Widths").ok() {
+                Some(Object::Array(arr)) => arr.clone(),
+                Some(Object::Reference(r)) => match doc.get_object(*r) {
+                    Ok(Object::Array(arr)) => arr.clone(),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            (fc, w)
+        };
+
+        let mut new_widths = widths.clone();
+        let mut any_changed = false;
+        for (i, obj) in widths.iter().enumerate() {
+            let pdf_w = match obj {
+                Object::Integer(w) => *w,
+                Object::Real(r) => *r as i64,
+                _ => continue,
+            };
+            let code = fc + i as u32;
+            let ch = diff_map
+                .get(&code)
+                .copied()
+                .unwrap_or_else(|| encoding_to_char(code, &enc_name));
+
+            // SAFETY: only correct if the glyph IS present in the font.
+            let Some(gid) = face.glyph_index(ch) else {
+                continue; // glyph absent → leave original width
+            };
+            let expected = face
+                .glyph_hor_advance(gid)
+                .map(|w| (w as f64 * scale).round() as i64)
+                .unwrap_or(pdf_w); // fallback to current width if advance unknown
+
+            if expected != pdf_w {
+                new_widths[i] = Object::Integer(expected);
+                any_changed = true;
+            }
+        }
+
+        if any_changed {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
+                dict.set("Widths", Object::Array(new_widths));
+                fixed += 1;
+            }
+        }
+    }
+    fixed
+}
+
 pub fn fix_notdef_glyph_refs(doc: &mut Document) -> usize {
     let font_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     let used_simple_codes = collect_simple_font_used_codes(doc);
