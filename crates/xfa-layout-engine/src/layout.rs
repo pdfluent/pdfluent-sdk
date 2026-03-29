@@ -51,6 +51,7 @@ pub enum LayoutContent {
     Field {
         value: String,
         field_kind: crate::form::FieldKind,
+        font_size: f64,
     },
     /// Pre-wrapped text lines for rendering.
     WrappedText {
@@ -824,6 +825,7 @@ impl<'a> LayoutEngine<'a> {
             FormNodeType::Field { value } => LayoutContent::Field {
                 value: value.clone(),
                 field_kind: self.form.meta(id).field_kind,
+                font_size: node.font.size,
             },
             FormNodeType::Draw { content } => LayoutContent::Text(content.clone()),
             _ => LayoutContent::None,
@@ -1213,6 +1215,7 @@ impl<'a> LayoutEngine<'a> {
                     LayoutContent::Field {
                         value: value.clone(),
                         field_kind: self.form.meta(id).field_kind,
+                        font_size: node.font.size,
                     }
                 }
             }
