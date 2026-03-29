@@ -878,6 +878,11 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }
 
     dbg_step!("font_fixes");
+    // Snapshot font encodings BEFORE font fixes. The pipeline can strip
+    // encodings from subset fonts, causing .notdef / missing-glyph / width
+    // violations. We restore any encoding that was removed after the pipeline.
+    let encoding_snapshot = pdf_manip::pdfa_fonts::snapshot_font_encodings(&doc);
+
     // Font fixes (best-effort, all wrapped in catch_unwind).
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::promote_inline_font_dicts(&mut doc)
@@ -985,6 +990,13 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_missing_cidtogidmap(&mut doc)
+    }));
+
+    // Restore encodings that were stripped by the font pipeline.
+    // This is a conservative guard: only restores encodings that EXISTED
+    // before the pipeline and were REMOVED (not modified) during processing.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::restore_stripped_encodings(&mut doc, &encoding_snapshot);
     }));
 
     dbg_step!("colorspace");

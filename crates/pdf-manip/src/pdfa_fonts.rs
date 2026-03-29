@@ -12,6 +12,58 @@ use crate::error::{ManipError, Result};
 use lopdf::{dictionary, Document, Object, ObjectId, Stream};
 use std::path::PathBuf;
 
+/// Snapshot all font encodings before the font pipeline runs.
+/// Returns a map of font_id → original Encoding object for all simple fonts
+/// that have an Encoding entry.
+pub fn snapshot_font_encodings(doc: &Document) -> std::collections::HashMap<ObjectId, Object> {
+    let mut snapshot = std::collections::HashMap::new();
+    for (&id, obj) in doc.objects.iter() {
+        let Object::Dictionary(d) = obj else { continue };
+        // Only snapshot simple font dicts (Type1, TrueType, MMType1)
+        let subtype = match d.get(b"Subtype").ok() {
+            Some(Object::Name(n)) => n.clone(),
+            _ => continue,
+        };
+        if subtype != b"Type1" && subtype != b"TrueType" && subtype != b"MMType1" {
+            continue;
+        }
+        // Must have BaseFont (font dict, not FontDescriptor)
+        if d.get(b"BaseFont").is_err() {
+            continue;
+        }
+        if let Ok(enc) = d.get(b"Encoding") {
+            snapshot.insert(id, enc.clone());
+        }
+    }
+    snapshot
+}
+
+/// Restore encodings that were stripped by the font pipeline.
+/// Only restores encodings that EXISTED before the pipeline and were REMOVED
+/// (not modified) during processing. This is a conservative guard.
+pub fn restore_stripped_encodings(
+    doc: &mut Document,
+    original_encodings: &std::collections::HashMap<ObjectId, Object>,
+) -> usize {
+    let mut restored = 0;
+    for (&font_id, original_enc) in original_encodings {
+        let needs_restore = {
+            let Some(Object::Dictionary(d)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            // Only restore if encoding is now MISSING
+            !d.has(b"Encoding")
+        };
+        if needs_restore {
+            if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&font_id) {
+                d.set("Encoding", original_enc.clone());
+                restored += 1;
+            }
+        }
+    }
+    restored
+}
+
 /// Report from font embedding pass.
 #[derive(Debug, Clone)]
 pub struct FontEmbedReport {
@@ -14492,7 +14544,7 @@ fn get_name_lossy_resolved(doc: &Document, dict: &lopdf::Dictionary, key: &[u8])
 /// program provably contains the correct glyph.
 ///
 /// Returns the number of fonts fixed.
-
+///
 /// Final-pass width correction for TrueType fonts.
 ///
 /// Runs after all other width fixes. For each simple font with an embedded
