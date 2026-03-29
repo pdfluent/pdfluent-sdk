@@ -17044,14 +17044,15 @@ fn fix_notdef_in_truetype(
             continue;
         }
 
-        // For codes below 32: these are control characters that standard
-        // encodings (WinAnsi, MacRoman) don't map to real glyphs.
-        // For codes below 32: these are control characters that standard
-        // encodings (WinAnsi, MacRoman) don't map to real glyphs.
-        // If the font uses codes < 32, the content stream references them,
-        // so they WILL trigger .notdef. Map them to "space".
+        // For codes below 32: control characters. For NON-subset fonts,
+        // map them to "space". For subset fonts, skip — adding "space"
+        // causes §6.2.11.4.1:2 when the subset doesn't contain "space",
+        // and changing the Encoding from a simple name to a dict with
+        // Differences can break the glyph lookup path.
         if code < 32 {
-            new_diffs.push((code, "space".to_string()));
+            if !is_subset {
+                new_diffs.push((code, "space".to_string()));
+            }
             continue;
         }
 
