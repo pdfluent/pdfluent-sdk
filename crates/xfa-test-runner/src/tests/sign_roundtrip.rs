@@ -81,13 +81,15 @@ fn openssl_smime_verify(
     content.extend_from_slice(&signed_bytes[off1..off1 + len1]);
     content.extend_from_slice(&signed_bytes[off2..off2 + len2]);
 
-    // Unique temp-file suffix per invocation — use a monotonic counter to avoid
-    // any possibility of collision between concurrent workers.
+    // Unique temp-file suffix per invocation — use PID + monotonic counter to
+    // avoid collisions between concurrent pool workers (each child process has
+    // its own PID, and the counter handles multiple calls within one process).
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let uid = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = std::process::id();
     let tmpdir = std::env::temp_dir();
-    let sig_path = tmpdir.join(format!("xfa_sig_{uid}.der"));
-    let content_path = tmpdir.join(format!("xfa_sig_{uid}.bin"));
+    let sig_path = tmpdir.join(format!("xfa_sig_{pid}_{uid}.der"));
+    let content_path = tmpdir.join(format!("xfa_sig_{pid}_{uid}.bin"));
 
     std::fs::write(&sig_path, &der).map_err(|e| format!("write sig.der: {e}"))?;
     std::fs::write(&content_path, &content).map_err(|e| format!("write data.bin: {e}"))?;
