@@ -702,6 +702,8 @@ fn bind_data(tree: &mut FormTree, node_id: FormNodeId, data_node: &Node<'_, '_>)
     }
 
     // For subforms: find matching data child and recurse.
+    // When occur max > 1 and data has multiple matching children,
+    // clone the subform for each additional data instance.
     let child_data_node = if !name.is_empty() {
         find_child_element_by_name(data_node, &name)
     } else {
@@ -709,9 +711,80 @@ fn bind_data(tree: &mut FormTree, node_id: FormNodeId, data_node: &Node<'_, '_>)
     };
     let effective_data = child_data_node.as_ref().unwrap_or(data_node);
 
-    for &child_id in &children {
-        bind_data(tree, child_id, effective_data);
+    // Check for repeating subform instances in the data.
+    let occur = tree.get(node_id).occur.clone();
+    let max_occur = occur.max.unwrap_or(1);
+    if max_occur > 1 && !name.is_empty() {
+        let data_instances: Vec<_> = data_node
+            .children()
+            .filter(|c| c.is_element() && c.tag_name().name() == name)
+            .collect();
+
+        if data_instances.len() > 1 {
+            // Bind the first instance to the existing subform node.
+            bind_data_children(tree, node_id, &children, &data_instances[0]);
+
+            // Clone the subform for each additional data instance.
+            let parent_id = tree
+                .nodes
+                .iter()
+                .enumerate()
+                .find(|(_, n)| n.children.contains(&node_id))
+                .map(|(i, _)| FormNodeId(i));
+
+            for data_inst in &data_instances[1..data_instances.len().min(max_occur as usize)] {
+                let cloned_id = clone_subtree(tree, node_id);
+                bind_data_children(
+                    tree,
+                    cloned_id,
+                    &tree.get(cloned_id).children.clone(),
+                    data_inst,
+                );
+                // Insert clone after the original in the parent's children list.
+                if let Some(pid) = parent_id {
+                    let parent = tree.get_mut(pid);
+                    if let Some(pos) = parent.children.iter().position(|&c| c == node_id) {
+                        parent.children.insert(pos + 1, cloned_id);
+                    } else {
+                        parent.children.push(cloned_id);
+                    }
+                }
+            }
+            return;
+        }
     }
+
+    bind_data_children(tree, node_id, &children, effective_data);
+}
+
+/// Bind data to a subform's children.
+fn bind_data_children(
+    tree: &mut FormTree,
+    _parent_id: FormNodeId,
+    children: &[FormNodeId],
+    data_node: &Node<'_, '_>,
+) {
+    for &child_id in children {
+        bind_data(tree, child_id, data_node);
+    }
+}
+
+/// Deep-clone a subtree in the FormTree, returning the new root's ID.
+fn clone_subtree(tree: &mut FormTree, source_id: FormNodeId) -> FormNodeId {
+    let source = tree.get(source_id).clone();
+    let source_meta = tree.meta(source_id).clone();
+
+    // Clone children recursively first.
+    let new_children: Vec<FormNodeId> = source
+        .children
+        .iter()
+        .map(|&child_id| clone_subtree(tree, child_id))
+        .collect();
+
+    let mut new_node = source;
+    new_node.children = new_children;
+    let new_id = tree.add_node_with_meta(new_node, source_meta);
+    new_id
 }
 
 /// Look up a text value for a named element in the data node.
