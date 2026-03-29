@@ -81,6 +81,66 @@ pub fn restore_stripped_encodings(
     restored
 }
 
+// ---------------------------------------------------------------------------
+// Font Descriptor Isolation — prevent FD-sharing corruption
+// ---------------------------------------------------------------------------
+
+/// Isolate shared FontDescriptors by cloning them before any mutations.
+/// When multiple font dicts point to the same FD, mutations for one font
+/// (e.g., embedding a substitute TrueType) corrupt the other font's data.
+/// After isolation, each font dict has its own private FD.
+pub fn isolate_font_descriptors(doc: &mut Document) {
+    // Build map: FD id → list of font dict ids that reference it
+    let mut fd_owners: std::collections::HashMap<ObjectId, Vec<ObjectId>> =
+        std::collections::HashMap::new();
+
+    for (&id, obj) in doc.objects.iter() {
+        let Object::Dictionary(d) = obj else { continue };
+        // Only process simple font dicts (Type1, TrueType, MMType1)
+        let subtype = match d.get(b"Subtype").ok() {
+            Some(Object::Name(n)) => n.clone(),
+            _ => continue,
+        };
+        if subtype != b"Type1"
+            && subtype != b"TrueType"
+            && subtype != b"MMType1"
+            && subtype != b"Type0"
+            && subtype != b"CIDFontType0"
+            && subtype != b"CIDFontType2"
+        {
+            continue;
+        }
+        // Must have FontDescriptor reference
+        let fd_id = match d.get(b"FontDescriptor").ok() {
+            Some(Object::Reference(r)) => *r,
+            _ => continue,
+        };
+        fd_owners.entry(fd_id).or_default().push(id);
+    }
+
+    // Clone FDs that are shared by multiple fonts
+    for (fd_id, owners) in &fd_owners {
+        if owners.len() <= 1 {
+            continue;
+        }
+        // Keep the first owner's reference intact, clone for the rest
+        for &owner_id in owners.iter().skip(1) {
+            // Deep-clone the FD dictionary
+            let cloned_fd = {
+                let Some(Object::Dictionary(fd)) = doc.objects.get(fd_id) else {
+                    continue;
+                };
+                fd.clone()
+            };
+            let new_fd_id = doc.add_object(Object::Dictionary(cloned_fd));
+            // Update the font dict to point to the cloned FD
+            if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&owner_id) {
+                font.set("FontDescriptor", Object::Reference(new_fd_id));
+            }
+        }
+    }
+}
+
 /// Report from font embedding pass.
 #[derive(Debug, Clone)]
 pub struct FontEmbedReport {
@@ -527,6 +587,10 @@ pub fn promote_inline_font_dicts(doc: &mut Document) -> usize {
 
 /// Embed fonts from system font files into the document.
 pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
+    // FIRST: Isolate shared FontDescriptors to prevent cross-font corruption.
+    // Must run before ANY font mutations.
+    isolate_font_descriptors(doc);
+
     let mut report = FontEmbedReport {
         fonts_inspected: 0,
         non_embedded_found: 0,
