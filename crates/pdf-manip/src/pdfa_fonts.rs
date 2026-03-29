@@ -38,9 +38,10 @@ pub fn snapshot_font_encodings(doc: &Document) -> std::collections::HashMap<Obje
     snapshot
 }
 
-/// Restore encodings that were stripped by the font pipeline.
-/// Only restores encodings that EXISTED before the pipeline and were REMOVED
-/// (not modified) during processing. This is a conservative guard.
+/// Restore encodings that were stripped or modified by the font pipeline.
+/// For subset fonts: restores the original encoding if it was removed OR
+/// changed (e.g., from a simple /MacRomanEncoding to a dict with Differences).
+/// For non-subset fonts: only restores if encoding was completely removed.
 pub fn restore_stripped_encodings(
     doc: &mut Document,
     original_encodings: &std::collections::HashMap<ObjectId, Object>,
@@ -51,8 +52,25 @@ pub fn restore_stripped_encodings(
             let Some(Object::Dictionary(d)) = doc.objects.get(&font_id) else {
                 continue;
             };
-            // Only restore if encoding is now MISSING
-            !d.has(b"Encoding")
+            let is_subset = get_name(d, b"BaseFont")
+                .map(|n| n.len() > 7 && n.as_bytes()[6] == b'+')
+                .unwrap_or(false);
+
+            if !d.has(b"Encoding") {
+                // Encoding removed entirely → always restore
+                true
+            } else if is_subset {
+                // For subset fonts: restore if the encoding TYPE changed
+                // (e.g., Name → Dictionary). Subset encodings from the
+                // original authoring tool are correct; our pipeline's
+                // Differences additions can break the glyph lookup.
+                let original_is_name = matches!(original_enc, Object::Name(_));
+                let current_is_dict =
+                    matches!(d.get(b"Encoding").ok(), Some(Object::Dictionary(_)));
+                original_is_name && current_is_dict
+            } else {
+                false
+            }
         };
         if needs_restore {
             if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&font_id) {
