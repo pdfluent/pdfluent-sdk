@@ -13,6 +13,8 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let tt_encoding_diffs_fixed = fix_truetype_encoding_differences(doc);
     let devicen_colorants_fixed = fix_devicen_colorants(doc);
     let forbidden_annots_removed = fix_forbidden_annotations_extra(doc);
+    let forbidden_actions_removed = fix_forbidden_actions(doc);
+    let _ = forbidden_actions_removed;
     let annotation_opacity_fixed = fix_annotation_opacity(doc);
     let crypt_filters_removed = fix_crypt_filters(doc);
     let file_spec_ef_stripped = fix_file_spec_ef_extra(doc);
@@ -1288,6 +1290,89 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
 // 6.5.3 — Annotation opacity (CA must be 1.0)
 // ---------------------------------------------------------------------------
 //
+// ---------------------------------------------------------------------------
+// §6.5.1 — Strip forbidden actions from annotations and outlines.
+// ---------------------------------------------------------------------------
+// PDF/A forbids: Launch, Sound, Movie, ResetForm, ImportData, Hide,
+// SetOCGState, Rendition, Trans, GoTo3DView, JavaScript.
+// Named actions: only NextPage, PrevPage, FirstPage, LastPage are allowed.
+
+fn fix_forbidden_actions(doc: &mut Document) -> usize {
+    const FORBIDDEN_TYPES: &[&[u8]] = &[
+        b"Launch",
+        b"Sound",
+        b"Movie",
+        b"ResetForm",
+        b"ImportData",
+        b"Hide",
+        b"SetOCGState",
+        b"Rendition",
+        b"Trans",
+        b"GoTo3DView",
+        b"JavaScript",
+    ];
+    const ALLOWED_NAMED: &[&[u8]] = &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
+
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let should_remove_action = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            // Check /A (Action) dict
+            let action = match dict.get(b"A").ok() {
+                Some(Object::Dictionary(a)) => Some(a.clone()),
+                Some(Object::Reference(r)) => {
+                    if let Some(Object::Dictionary(a)) = doc.objects.get(r) {
+                        Some(a.clone())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(action) = action {
+                let s = action.get(b"S").ok().and_then(|o| {
+                    if let Object::Name(n) = o {
+                        Some(n.clone())
+                    } else {
+                        None
+                    }
+                });
+                match s {
+                    None => true, // No S key → unknown action type → remove
+                    Some(ref s) if FORBIDDEN_TYPES.iter().any(|f| s == *f) => true,
+                    Some(ref s) if s == b"Named" => {
+                        // Check N key for named action
+                        let n = action.get(b"N").ok().and_then(|o| {
+                            if let Object::Name(n) = o {
+                                Some(n.clone())
+                            } else {
+                                None
+                            }
+                        });
+                        match n {
+                            None => true, // Missing N → remove
+                            Some(ref n) => !ALLOWED_NAMED.iter().any(|a| n == *a),
+                        }
+                    }
+                    _ => false, // Allowed action type
+                }
+            } else {
+                false // No /A key
+            }
+        };
+        if should_remove_action {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"A");
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 // PDF/A-2 §6.5.3 requires annotation /CA to be 1.0 (fully opaque).
 // Annotations with CA < 1.0 violate this rule. Remove the /CA key
 // (default value is 1.0 per PDF spec) to satisfy veraPDF. Fixes #482.
