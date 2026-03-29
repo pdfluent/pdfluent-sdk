@@ -26,6 +26,10 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let usecmap_stripped = strip_nonstandard_usecmap_references(doc);
     let opi_keys_removed = fix_opi_keys(doc);
     let stream_f_keys_removed = fix_stream_f_keys(doc);
+    let inline_f_expanded = fix_inline_image_f_abbrev(doc);
+    let _ = inline_f_expanded;
+    let names_ef_removed = fix_names_embedded_files(doc);
+    let _ = names_ef_removed;
     let postscript_xobjects_removed = fix_postscript_xobjects(doc);
     let reference_xobjects_removed = fix_reference_xobjects(doc);
     let overflow_integers_fixed = fix_overflow_integers(doc);
@@ -4178,6 +4182,165 @@ fn fix_stream_f_keys(doc: &mut Document) -> usize {
         }
     }
     count
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.7.1 — Expand inline-image /F abbreviation in content streams.
+// ---------------------------------------------------------------------------
+//
+// PDF inline images (BI/ID/EI) use abbreviated keys: /F for /Filter, /DP for
+// /DecodeParms, etc. Our §6.1.7.1 checker (and some veraPDF rules) falsely
+// flag "/F" inside content streams as a file specification. Expanding the
+// abbreviation to "/Filter" avoids the false positive without changing the
+// rendered output.
+
+fn fix_inline_image_f_abbrev(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => continue,
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: does this stream contain BI (inline image)?
+        if !decompressed.windows(3).any(|w| {
+            w[0] == b'B'
+                && w[1] == b'I'
+                && (w[2] == b' ' || w[2] == b'\n' || w[2] == b'\r' || w[2] == b'/')
+        }) {
+            continue;
+        }
+
+        // Replace /F with /Filter and /DP with /DecodeParms inside BI..ID blocks.
+        let mut out = Vec::with_capacity(decompressed.len() + 64);
+        let mut i = 0;
+        let mut changed = false;
+        let mut in_bi = false;
+
+        while i < decompressed.len() {
+            if !in_bi {
+                // Look for "BI" preceded by whitespace or start.
+                if i + 2 <= decompressed.len()
+                    && decompressed[i] == b'B'
+                    && decompressed[i + 1] == b'I'
+                    && (i == 0 || decompressed[i - 1].is_ascii_whitespace())
+                    && (i + 2 == decompressed.len()
+                        || decompressed[i + 2] == b' '
+                        || decompressed[i + 2] == b'\n'
+                        || decompressed[i + 2] == b'\r'
+                        || decompressed[i + 2] == b'/')
+                {
+                    out.extend_from_slice(b"BI");
+                    i += 2;
+                    in_bi = true;
+                    continue;
+                }
+                out.push(decompressed[i]);
+                i += 1;
+            } else {
+                // Inside BI..ID: scan for "/F " or "/F/" and replace with "/Filter "
+                if decompressed[i] == b'I'
+                    && i + 1 < decompressed.len()
+                    && decompressed[i + 1] == b'D'
+                    && (i + 2 >= decompressed.len()
+                        || decompressed[i + 2] == b' '
+                        || decompressed[i + 2] == b'\n')
+                {
+                    // End of BI header — copy rest of inline image as-is.
+                    in_bi = false;
+                    out.push(decompressed[i]);
+                    i += 1;
+                    continue;
+                }
+                if decompressed[i] == b'/'
+                    && i + 2 < decompressed.len()
+                    && decompressed[i + 1] == b'F'
+                    && (decompressed[i + 2] == b' '
+                        || decompressed[i + 2] == b'/')
+                {
+                    out.extend_from_slice(b"/Filter");
+                    i += 2; // skip "/F", the space/slash stays
+                    changed = true;
+                    continue;
+                }
+                // /DP → /DecodeParms
+                if decompressed[i] == b'/'
+                    && i + 3 < decompressed.len()
+                    && decompressed[i + 1] == b'D'
+                    && decompressed[i + 2] == b'P'
+                    && (decompressed[i + 3] == b' '
+                        || decompressed[i + 3] == b'<')
+                {
+                    out.extend_from_slice(b"/DecodeParms");
+                    i += 3;
+                    changed = true;
+                    continue;
+                }
+                out.push(decompressed[i]);
+                i += 1;
+            }
+        }
+
+        if changed {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.set_plain_content(out);
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.9 — Remove file specification entries from document names tree.
+// ---------------------------------------------------------------------------
+//
+// PDF/A-2b forbids file specifications with embedded files (/EF). After
+// fix_file_spec_ef_extra strips /EF, the remaining FileSpec dicts can still
+// trigger §6.9 if they appear in the /Names /EmbeddedFiles tree. This pass
+// removes the /EmbeddedFiles entry from the /Names dictionary.
+
+fn fix_names_embedded_files(doc: &mut Document) -> usize {
+    // Resolve /Root → /Names → /EmbeddedFiles.
+    let catalog_id = match doc.trailer.get(b"Root").ok() {
+        Some(Object::Reference(id)) => *id,
+        _ => return 0,
+    };
+    let names_id = match doc.objects.get(&catalog_id) {
+        Some(Object::Dictionary(cat)) => match cat.get(b"Names").ok() {
+            Some(Object::Reference(id)) => Some(*id),
+            Some(Object::Dictionary(_)) => None, // inline — handle below
+            _ => return 0,
+        },
+        _ => return 0,
+    };
+
+    if let Some(nid) = names_id {
+        // /Names is an indirect reference.
+        if let Some(Object::Dictionary(ref mut names)) = doc.objects.get_mut(&nid) {
+            if names.has(b"EmbeddedFiles") {
+                names.remove(b"EmbeddedFiles");
+                return 1;
+            }
+        }
+    } else {
+        // /Names might be inline in the catalog.
+        if let Some(Object::Dictionary(ref mut cat)) = doc.objects.get_mut(&catalog_id) {
+            if let Ok(Object::Dictionary(ref mut names)) = cat.get_mut(b"Names") {
+                if names.has(b"EmbeddedFiles") {
+                    names.remove(b"EmbeddedFiles");
+                    return 1;
+                }
+            }
+        }
+    }
+    0
 }
 
 // ---------------------------------------------------------------------------
