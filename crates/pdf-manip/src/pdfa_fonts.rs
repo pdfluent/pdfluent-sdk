@@ -5105,16 +5105,25 @@ pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
                 continue;
             }
 
-            // Only process fonts with explicit standard encoding.
+            // Only process fonts with a known encoding (WinAnsi, MacRoman,
+            // or StandardEncoding — the latter is treated as WinAnsi for width
+            // lookup since our pipeline replaces it later).
             let enc = match dict.get(b"Encoding").ok() {
                 Some(Object::Name(n)) => String::from_utf8(n.clone()).ok(),
                 Some(Object::Dictionary(enc_dict)) => get_name(enc_dict, b"BaseEncoding"),
+                Some(Object::Reference(enc_id)) => match doc.objects.get(enc_id) {
+                    Some(Object::Dictionary(enc_dict)) => get_name(enc_dict, b"BaseEncoding"),
+                    _ => None,
+                },
                 _ => None,
             };
             let enc = match enc.as_deref() {
                 Some("WinAnsiEncoding") | Some("MacRomanEncoding") => {
                     enc.expect("matched arm guarantees enc is Some")
                 }
+                // Treat StandardEncoding as WinAnsi for width lookup — they're
+                // identical for codes 32-126 (the common range).
+                Some("StandardEncoding") => "WinAnsiEncoding".to_string(),
                 _ => continue, // Skip fonts without standard encoding.
             };
 
@@ -5155,6 +5164,14 @@ pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
         }
         let scale = 1000.0 / units_per_em;
 
+        // Build Differences map: code → glyph name → Unicode char.
+        let diff_map: std::collections::HashMap<u32, char> = {
+            let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            parse_differences_to_char_map(doc, font)
+        };
+
         // Check for mismatches.
         let has_mismatch = {
             let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
@@ -5181,7 +5198,11 @@ pub fn fix_simple_truetype_widths(doc: &mut Document) -> usize {
                     _ => continue,
                 };
                 let code = fc + i as u32;
-                let ch = encoding_to_char(code, &encoding_name);
+                // Use Differences mapping if available, else base encoding.
+                let ch = diff_map
+                    .get(&code)
+                    .copied()
+                    .unwrap_or_else(|| encoding_to_char(code, &encoding_name));
                 let expected = if let Some(gid) = face.glyph_index(ch) {
                     face.glyph_hor_advance(gid)
                         .map(|w| (w as f64 * scale).round() as i64)
@@ -7448,6 +7469,34 @@ fn get_simple_encoding_info(
 }
 
 /// Parse /Differences array from an encoding dictionary.
+/// Parse Encoding Differences into a code→char map for width lookup.
+/// Returns only codes that have Differences entries — other codes use the base encoding.
+fn parse_differences_to_char_map(
+    doc: &Document,
+    font_dict: &lopdf::Dictionary,
+) -> std::collections::HashMap<u32, char> {
+    let mut diffs = std::collections::HashMap::new();
+    let enc_dict = match font_dict.get(b"Encoding").ok() {
+        Some(Object::Dictionary(d)) => Some(d.clone()),
+        Some(Object::Reference(r)) => match doc.objects.get(r) {
+            Some(Object::Dictionary(d)) => Some(d.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let Some(enc_dict) = enc_dict else {
+        return std::collections::HashMap::new();
+    };
+    let mut name_map = std::collections::HashMap::new();
+    parse_differences(doc, &enc_dict, &mut name_map);
+    for (code, name) in name_map {
+        if let Some(ch) = glyph_name_to_unicode(&name) {
+            diffs.insert(code, ch);
+        }
+    }
+    diffs
+}
+
 fn parse_differences(
     doc: &Document,
     enc_dict: &lopdf::Dictionary,
