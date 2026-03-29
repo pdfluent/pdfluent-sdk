@@ -173,14 +173,23 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
             ) {
                 continue;
             }
-            // Skip symbolic fonts — they use internal encodings.
-            if is_symbolic(doc, dict) {
-                continue;
-            }
+            // For direct /Encoding /StandardEncoding (Name), skip symbolic fonts —
+            // they should use internal encodings. But for Encoding *dicts* with
+            // /BaseEncoding /StandardEncoding, ALWAYS replace: PDF/A §6.2.11.6
+            // requires BaseEncoding = WinAnsiEncoding or MacRomanEncoding regardless
+            // of symbolic status. TeX CM fonts (CMSS, CMBX, CMMI) are flagged
+            // symbolic but still use StandardEncoding in their Encoding dict.
+            let symbolic = is_symbolic(doc, dict);
             match dict.get(b"Encoding").ok() {
-                // /Encoding /StandardEncoding
-                Some(Object::Name(n)) if n == b"StandardEncoding" => StdEncAction::ReplaceName,
-                // /Encoding << /BaseEncoding /StandardEncoding ... >>
+                // /Encoding /StandardEncoding — only fix non-symbolic
+                Some(Object::Name(n)) if n == b"StandardEncoding" => {
+                    if symbolic {
+                        StdEncAction::None
+                    } else {
+                        StdEncAction::ReplaceName
+                    }
+                }
+                // /Encoding << /BaseEncoding /StandardEncoding ... >> — always fix
                 Some(Object::Dictionary(enc)) => {
                     if matches!(enc.get(b"BaseEncoding").ok(), Some(Object::Name(n)) if n == b"StandardEncoding")
                     {
@@ -189,7 +198,7 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
                         StdEncAction::None
                     }
                 }
-                // /Encoding is an indirect reference
+                // /Encoding is an indirect reference — always fix BaseEncoding
                 Some(Object::Reference(enc_id)) => match doc.objects.get(enc_id) {
                     Some(Object::Dictionary(enc)) => {
                         if matches!(enc.get(b"BaseEncoding").ok(), Some(Object::Name(n)) if n == b"StandardEncoding")
@@ -1229,19 +1238,65 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
         }
     }
 
-    // Fix Stamp annotations where AP.N is a sub-appearance-states dict instead
-    // of a direct stream (6.3.3/4). veraPDF requires N to be a single stream.
+    // Fix non-Btn annotations where AP.N is a sub-appearance-states dict
+    // instead of a direct stream (§6.3.3:4). veraPDF requires N to be a
+    // single stream for all annotations except Btn widgets.
     // Collapse the dict by picking the first stream value and pointing N there.
     for id in &ids {
         let fix = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(id) else {
                 continue;
             };
-            let is_stamp = matches!(
-                dict.get(b"Subtype").ok(),
-                Some(Object::Name(ref n)) if n == b"Stamp"
-            );
-            if !is_stamp {
+            // Skip Btn widgets — they NEED AP.N to be a subdictionary (§6.3.3:3).
+            let is_btn_widget = {
+                let is_widget = matches!(
+                    dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"Widget"
+                );
+                if is_widget {
+                    // Check /FT directly or via /Parent chain.
+                    if matches!(dict.get(b"FT").ok(), Some(Object::Name(ref n)) if n == b"Btn")
+                    {
+                        true
+                    } else {
+                        let mut found = false;
+                        let mut cur = dict.get(b"Parent").ok().and_then(|o| {
+                            if let Object::Reference(r) = o {
+                                Some(*r)
+                            } else {
+                                None
+                            }
+                        });
+                        let mut depth = 0;
+                        while let Some(pid) = cur {
+                            depth += 1;
+                            if depth > 20 {
+                                break;
+                            }
+                            if let Some(Object::Dictionary(pd)) = doc.objects.get(&pid) {
+                                if matches!(pd.get(b"FT").ok(), Some(Object::Name(ref n)) if n == b"Btn")
+                                {
+                                    found = true;
+                                    break;
+                                }
+                                cur = pd.get(b"Parent").ok().and_then(|o| {
+                                    if let Object::Reference(r) = o {
+                                        Some(*r)
+                                    } else {
+                                        None
+                                    }
+                                });
+                            } else {
+                                break;
+                            }
+                        }
+                        found
+                    }
+                } else {
+                    false
+                }
+            };
+            if is_btn_widget {
                 continue;
             }
             // Get the AP dict.
@@ -1305,10 +1360,35 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
                 continue;
             }
             // Check if it's a Btn field (directly or via inherited /FT).
-            let is_btn = matches!(
+            let is_btn = if matches!(
                 dict.get(b"FT").ok(),
                 Some(Object::Name(ref n)) if n == b"Btn"
-            );
+            ) {
+                true
+            } else {
+                // Follow /Parent chain to find inherited /FT.
+                let mut found = false;
+                let mut cur = dict.get(b"Parent").ok().and_then(|o| {
+                    if let Object::Reference(r) = o { Some(*r) } else { None }
+                });
+                let mut depth = 0;
+                while let Some(pid) = cur {
+                    depth += 1;
+                    if depth > 20 { break; } // prevent loops
+                    if let Some(Object::Dictionary(pd)) = doc.objects.get(&pid) {
+                        if matches!(pd.get(b"FT").ok(), Some(Object::Name(ref n)) if n == b"Btn") {
+                            found = true;
+                            break;
+                        }
+                        cur = pd.get(b"Parent").ok().and_then(|o| {
+                            if let Object::Reference(r) = o { Some(*r) } else { None }
+                        });
+                    } else {
+                        break;
+                    }
+                }
+                found
+            };
             if !is_btn {
                 continue;
             }
@@ -1544,6 +1624,8 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
     // Some PDFs store annotations as inline dicts in the page Annots array,
     // not as indirect references. These are invisible to Strategy 1/2 which
     // only iterate doc.objects.
+    // Also handles the case where /A is a Reference to an action that
+    // pdfa_cleanup::remove_forbidden_actions already stripped /S from.
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     for page_id in &page_ids {
         let annots_ref: Option<ObjectId> = match doc.objects.get(page_id) {
@@ -1562,10 +1644,7 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
             for i in 0..len {
                 let needs_fix = match doc.objects.get(&arr_id) {
                     Some(Object::Array(arr)) => match &arr[i] {
-                        Object::Dictionary(annot) => match annot.get(b"A").ok() {
-                            Some(Object::Dictionary(a)) => is_action_forbidden(a),
-                            _ => false,
-                        },
+                        Object::Dictionary(annot) => is_annot_action_forbidden(annot, doc),
                         _ => false,
                     },
                     _ => false,
@@ -1592,10 +1671,7 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
             let needs_fix = match doc.objects.get(page_id) {
                 Some(Object::Dictionary(d)) => match d.get(b"Annots").ok() {
                     Some(Object::Array(arr)) => match &arr[i] {
-                        Object::Dictionary(annot) => match annot.get(b"A").ok() {
-                            Some(Object::Dictionary(a)) => is_action_forbidden(a),
-                            _ => false,
-                        },
+                        Object::Dictionary(annot) => is_annot_action_forbidden(annot, doc),
                         _ => false,
                     },
                     _ => false,
@@ -1616,6 +1692,26 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
     }
 
     count
+}
+
+/// Check if an annotation dict's /A action is forbidden.
+/// Handles inline action dicts, indirect references, and actions
+/// that had /S stripped by the cleanup phase (leaving invalid state).
+fn is_annot_action_forbidden(annot: &lopdf::Dictionary, doc: &Document) -> bool {
+    match annot.get(b"A").ok() {
+        Some(Object::Dictionary(a)) => is_action_forbidden(a),
+        Some(Object::Reference(r)) => match doc.objects.get(r) {
+            Some(Object::Dictionary(a)) => {
+                // If /S was removed (by cleanup), the action is invalid → remove.
+                if !a.has(b"S") {
+                    return true;
+                }
+                is_action_forbidden(a)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 // PDF/A-2 §6.5.3 requires annotation /CA to be 1.0 (fully opaque).
