@@ -181,15 +181,13 @@ fn pages_have_static_content(doc: &Document) -> bool {
             continue;
         }
 
-        // Require a MUCH higher byte threshold — simple form chrome
-        // (borders, labels, headers) can easily exceed 200 bytes without
-        // containing actual field data.  Use 20 KB as the threshold:
-        // only truly pre-rendered pages (with full form data embedded)
-        // would be this large.  This prevents the early-return path from
-        // suppressing XFA flatten for forms like USCIS I-765 where the
-        // static rendering has layout but no data values.
-        let has_substantial_content = streams.iter().map(|s| s.len()).sum::<usize>() > 20_000;
-        if !has_substantial_content {
+        // Check for real text content (Tj/TJ operators), not just byte size.
+        // A byte-size threshold is unreliable: 200 bytes catches form chrome
+        // as "static", 20KB misses real pre-rendered pages.  Instead, look
+        // for actual text-drawing operators which indicate the page has been
+        // pre-rendered with real content (not just borders/lines).
+        let has_text_operators = streams.iter().any(|s| stream_has_text_operators(s));
+        if !has_text_operators {
             continue;
         }
 
@@ -231,6 +229,22 @@ fn resolve_stream_content(doc: &Document, object: &Object) -> Option<Vec<u8>> {
         .get_plain_content()
         .ok()
         .or_else(|| Some(stream.content.clone()))
+}
+
+/// Check if a content stream contains text-drawing operators (Tj or TJ).
+/// This is a better heuristic than byte-size for detecting pre-rendered pages.
+fn stream_has_text_operators(stream: &[u8]) -> bool {
+    // Look for " Tj" or " TJ" preceded by whitespace/closing paren
+    // to avoid false positives on random byte sequences.
+    for window in stream.windows(3) {
+        if (window[0] == b' ' || window[0] == b')' || window[0] == b']')
+            && window[1] == b'T'
+            && (window[2] == b'j' || window[2] == b'J')
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn is_xfa_placeholder_stream(stream: &[u8]) -> bool {
