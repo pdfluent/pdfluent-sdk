@@ -14577,15 +14577,6 @@ pub fn fix_remaining_tt_width_mismatches(doc: &mut Document) -> usize {
             (fc, w)
         };
 
-        eprintln!(
-            "[fix_remaining_tt] font {:?} enc={} diffs={} fc={} widths={}",
-            font_id,
-            enc_name,
-            diff_map.len(),
-            fc,
-            widths.len()
-        );
-
         let mut new_widths = widths.clone();
         let mut any_changed = false;
         for (i, obj) in widths.iter().enumerate() {
