@@ -1409,6 +1409,146 @@ fn fix_device_colorspaces_in_deep_structures(
     // Fix DeviceN/NChannel colorspaces: replace DeviceCMYK/DeviceRGB in the
     // alternate colorspace and in the Process/ColorSpace attribute (6.2.4.3:3).
     fix_devicen_process_colors(doc, cmyk_cs_id, rgb_cs_id);
+
+    // Ensure all DeviceN spot colorants have entries in the Colorants dictionary.
+    // This must run AFTER fix_devicen_process_colors which may rebuild attrs dicts
+    // and lose Colorants entries that were added earlier by fix_devicen_colorants.
+    ensure_devicen_colorants(doc);
+}
+
+/// Ensure all DeviceN/NChannel spot colorants have Colorants dict entries.
+/// Scans all DeviceN array objects, identifies spot color names (not process
+/// colors like Cyan/Magenta/Yellow/Black/None), and adds missing Colorants
+/// entries to the attributes dict.
+fn ensure_devicen_colorants(doc: &mut Document) {
+    let process_names: &[&[u8]] = &[
+        b"Cyan", b"Magenta", b"Yellow", b"Black", b"Red", b"Green", b"Blue", b"None", b"All",
+    ];
+
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        // Read DeviceN array info
+        let info = {
+            let Some(Object::Array(arr)) = doc.objects.get(&id) else {
+                continue;
+            };
+            if arr.len() < 4 {
+                continue;
+            }
+            let is_dn = matches!(&arr[0], Object::Name(n) if n == b"DeviceN" || n == b"NChannel");
+            if !is_dn {
+                continue;
+            }
+
+            // Get spot color names
+            let names: Vec<Vec<u8>> = match &arr[1] {
+                Object::Array(na) => na
+                    .iter()
+                    .filter_map(|o| {
+                        if let Object::Name(n) = o {
+                            Some(n.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+                _ => continue,
+            };
+            let spots: Vec<Vec<u8>> = names
+                .into_iter()
+                .filter(|n| !process_names.contains(&n.as_slice()))
+                .collect();
+            if spots.is_empty() {
+                continue;
+            }
+
+            // Get alternateCS and tintTransform for building Separation entries
+            let alt = arr.get(2).cloned();
+            let tint = arr.get(3).cloned();
+
+            // Get attrs dict ref
+            let attrs_ref = if arr.len() > 4 {
+                match &arr[4] {
+                    Object::Reference(r) => Some(*r),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            (spots, alt, tint, attrs_ref)
+        };
+
+        let (spots, alt, tint, attrs_ref) = info;
+        let (Some(alt_cs), Some(tint_fn)) = (alt, tint) else {
+            continue;
+        };
+
+        if let Some(attrs_id) = attrs_ref {
+            // Get or create Colorants dict inside the attrs
+            let existing_colorants: Option<lopdf::Dictionary> = {
+                if let Some(Object::Dictionary(d)) = doc.objects.get(&attrs_id) {
+                    match d.get(b"Colorants").ok() {
+                        Some(Object::Dictionary(cd)) => Some(cd.clone()),
+                        Some(Object::Reference(r)) => {
+                            if let Some(Object::Dictionary(cd)) = doc.objects.get(r) {
+                                Some(cd.clone())
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            };
+
+            let mut cd = existing_colorants.unwrap_or_default();
+            let mut added = false;
+            for name in &spots {
+                if !cd.has(name.as_slice()) {
+                    let sep = Object::Array(vec![
+                        Object::Name(b"Separation".to_vec()),
+                        Object::Name(name.clone()),
+                        alt_cs.clone(),
+                        tint_fn.clone(),
+                    ]);
+                    let key = String::from_utf8_lossy(name).to_string();
+                    cd.set(key, sep);
+                    added = true;
+                }
+            }
+            if added {
+                if let Some(Object::Dictionary(ref mut attrs)) = doc.objects.get_mut(&attrs_id) {
+                    attrs.set("Colorants", Object::Dictionary(cd));
+                }
+            }
+        }
+        // For DeviceN without attrs ref: create attrs dict with Colorants
+        else {
+            let mut cd = lopdf::Dictionary::new();
+            for name in &spots {
+                let sep = Object::Array(vec![
+                    Object::Name(b"Separation".to_vec()),
+                    Object::Name(name.clone()),
+                    alt_cs.clone(),
+                    tint_fn.clone(),
+                ]);
+                let key = String::from_utf8_lossy(name).to_string();
+                cd.set(key, sep);
+            }
+            let attrs = lopdf::dictionary! {
+                "Colorants" => Object::Dictionary(cd),
+            };
+            let attrs_id = doc.add_object(Object::Dictionary(attrs));
+            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&id) {
+                if arr.len() == 4 {
+                    arr.push(Object::Reference(attrs_id));
+                }
+            }
+        }
+    }
 }
 
 /// Fix DeviceN/NChannel colorspace arrays that reference DeviceCMYK or DeviceRGB
