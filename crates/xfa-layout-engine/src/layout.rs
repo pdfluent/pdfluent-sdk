@@ -5,7 +5,7 @@
 
 use crate::error::Result;
 use crate::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree};
-use crate::text;
+use crate::text::{self, FontFamily};
 use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
 
 /// A unique identifier for a layout node.
@@ -39,6 +39,8 @@ pub struct LayoutNode {
     pub content: LayoutContent,
     /// Children laid out within this node.
     pub children: Vec<LayoutNode>,
+    /// Per-node visual style (colors, borders) from the XFA template.
+    pub style: crate::form::FormNodeStyle,
 }
 
 /// Content type for layout leaf nodes.
@@ -48,6 +50,7 @@ pub enum LayoutContent {
     Text(String),
     Field {
         value: String,
+        field_kind: crate::form::FieldKind,
     },
     /// Pre-wrapped text lines for rendering.
     WrappedText {
@@ -55,6 +58,8 @@ pub enum LayoutContent {
         font_size: f64,
         /// Horizontal text alignment (from XFA `<para hAlign>`).
         text_align: TextAlign,
+        /// Font family for selecting the correct PDF font resource.
+        font_family: FontFamily,
     },
 }
 
@@ -818,6 +823,7 @@ impl<'a> LayoutEngine<'a> {
         let content = match &node.node_type {
             FormNodeType::Field { value } => LayoutContent::Field {
                 value: value.clone(),
+                field_kind: self.form.meta(id).field_kind,
             },
             FormNodeType::Draw { content } => LayoutContent::Text(content.clone()),
             _ => LayoutContent::None,
@@ -834,6 +840,7 @@ impl<'a> LayoutEngine<'a> {
             name: node.name.clone(),
             content,
             children: placed_children,
+            style: self.form.meta(id).style.clone(),
         };
 
         let rest = expanded_children[split_idx..].to_vec();
@@ -1071,6 +1078,7 @@ impl<'a> LayoutEngine<'a> {
                 name: row_node.name.clone(),
                 content: LayoutContent::None,
                 children: cells,
+                style: self.form.meta(row_id).style.clone(),
             };
             nodes.push(row_layout);
 
@@ -1199,10 +1207,12 @@ impl<'a> LayoutEngine<'a> {
                         lines: wrapped.lines,
                         font_size: node.font.size,
                         text_align: node.font.text_align,
+                        font_family: node.font.typeface,
                     }
                 } else {
                     LayoutContent::Field {
                         value: value.clone(),
+                        field_kind: self.form.meta(id).field_kind,
                     }
                 }
             }
@@ -1216,6 +1226,7 @@ impl<'a> LayoutEngine<'a> {
                         lines: wrapped.lines,
                         font_size: node.font.size,
                         text_align: node.font.text_align,
+                        font_family: node.font.typeface,
                     }
                 } else {
                     LayoutContent::Text(content.clone())
@@ -1246,6 +1257,7 @@ impl<'a> LayoutEngine<'a> {
             name: node.name.clone(),
             content,
             children,
+            style: self.form.meta(id).style.clone(),
         })
     }
 

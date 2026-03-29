@@ -12,7 +12,8 @@
 use roxmltree::Node;
 
 use xfa_layout_engine::form::{
-    ContentArea, FormNode, FormNodeId, FormNodeMeta, FormNodeType, FormTree, GroupKind, Occur,
+    ContentArea, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle, FormNodeType,
+    FormTree, GroupKind, Occur,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
@@ -373,6 +374,12 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     // (h) XFA id attribute.
     let xfa_id = attr(elem, "id").map(|s| s.to_string());
 
+    // (i) Field UI kind: detect <checkButton>, <choiceList>, etc. inside <ui>.
+    let field_kind = detect_field_kind(elem);
+
+    // (j) Visual style: colors, borders, font from XFA template elements.
+    let style = parse_node_style(elem);
+
     FormNodeMeta {
         xfa_id,
         presence_hidden,
@@ -387,8 +394,121 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         event_scripts,
         group_kind,
         item_value,
+        field_kind,
+        style,
         ..Default::default()
     }
+}
+
+/// Parse visual style from XFA template elements.
+///
+/// Extracts colors from `<fill><color value="r,g,b"/>`, border from
+/// `<border><edge><color value="r,g,b"/>`, and font from `<font>`.
+fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
+    let mut style = FormNodeStyle::default();
+
+    // Parse <fill><color value="r,g,b"/> for background color.
+    if let Some(fill) = find_first_child_by_name(elem, "fill") {
+        if let Some(color) = find_first_child_by_name(fill, "color") {
+            if let Some(rgb) = parse_xfa_color(color) {
+                style.bg_color = Some(rgb);
+            }
+        }
+        // Also check <fill><solid><color .../> pattern.
+        if style.bg_color.is_none() {
+            if let Some(solid) = find_first_child_by_name(fill, "solid") {
+                if let Some(color) = find_first_child_by_name(solid, "color") {
+                    if let Some(rgb) = parse_xfa_color(color) {
+                        style.bg_color = Some(rgb);
+                    }
+                }
+            }
+        }
+    }
+
+    // Parse <border><edge><color value="r,g,b"/> for border color.
+    if let Some(border) = find_first_child_by_name(elem, "border") {
+        if let Some(edge) = find_first_child_by_name(border, "edge") {
+            if let Some(color) = find_first_child_by_name(edge, "color") {
+                if let Some(rgb) = parse_xfa_color(color) {
+                    style.border_color = Some(rgb);
+                }
+            }
+        }
+        // Also parse <border><fill><color .../> for border background (field bg).
+        if style.bg_color.is_none() {
+            if let Some(fill) = find_first_child_by_name(border, "fill") {
+                if let Some(color) = find_first_child_by_name(fill, "color") {
+                    if let Some(rgb) = parse_xfa_color(color) {
+                        style.bg_color = Some(rgb);
+                    }
+                }
+            }
+        }
+    }
+
+    // Parse <font typeface="..." size="..." weight="..."> for font properties.
+    if let Some(font) = find_first_child_by_name(elem, "font") {
+        if let Some(typeface) = attr(font, "typeface") {
+            style.font_family = Some(typeface.to_string());
+        }
+        if let Some(size_str) = attr(font, "size") {
+            if let Some(m) = Measurement::parse(size_str) {
+                style.font_size = Some(m.to_points());
+            }
+        }
+        if let Some(weight) = attr(font, "weight") {
+            style.font_weight = Some(weight.to_string());
+        }
+        if let Some(posture) = attr(font, "posture") {
+            style.font_style = Some(posture.to_string());
+        }
+        // <font><fill><color .../> for text color
+        if let Some(fill) = find_first_child_by_name(font, "fill") {
+            if let Some(color) = find_first_child_by_name(fill, "color") {
+                if let Some(rgb) = parse_xfa_color(color) {
+                    style.text_color = Some(rgb);
+                }
+            }
+        }
+    }
+
+    style
+}
+
+/// Parse XFA `<color value="r,g,b"/>` into (u8, u8, u8).
+fn parse_xfa_color(color_node: Node<'_, '_>) -> Option<(u8, u8, u8)> {
+    let value = attr(color_node, "value")?;
+    let parts: Vec<&str> = value.split(',').collect();
+    if parts.len() >= 3 {
+        let r = parts[0].trim().parse::<u8>().ok()?;
+        let g = parts[1].trim().parse::<u8>().ok()?;
+        let b = parts[2].trim().parse::<u8>().ok()?;
+        Some((r, g, b))
+    } else {
+        None
+    }
+}
+
+/// Detect field UI type from `<ui>` child element.
+fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
+    let Some(ui) = find_first_child_by_name(elem, "ui") else {
+        return FieldKind::Text;
+    };
+    for child in ui.children().filter(|n| n.is_element()) {
+        match child.tag_name().name() {
+            "checkButton" => return FieldKind::Checkbox,
+            "choiceList" => return FieldKind::Dropdown,
+            "dateTimeEdit" => return FieldKind::DateTimePicker,
+            "numericEdit" => return FieldKind::NumericEdit,
+            "passwordEdit" => return FieldKind::PasswordEdit,
+            "imageEdit" => return FieldKind::ImageEdit,
+            "signature" => return FieldKind::Signature,
+            "barcode" => return FieldKind::Barcode,
+            _ => {}
+        }
+    }
+    FieldKind::Text
 }
 
 /// Detect page breaks: look for a child element named `breakBefore` or `break`.
