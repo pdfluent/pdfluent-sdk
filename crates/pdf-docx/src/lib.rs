@@ -27,7 +27,52 @@ pub fn pdf_to_docx(doc: &Document) -> Result<Vec<u8>> {
 /// Skips image extraction for faster conversion when only text content
 /// is needed (e.g. text-similarity tests).
 pub fn pdf_to_docx_text_only(doc: &Document) -> Result<Vec<u8>> {
-    pdf_to_docx_inner(doc, true)
+    pdf_to_docx_sequential(doc)
+}
+
+/// Convert PDF to DOCX preserving text in extraction (content-stream) order.
+///
+/// Unlike `pdf_to_docx` which sorts text spatially for visual layout,
+/// this version writes text blocks in the order they appear in the content
+/// stream. This produces a DOCX whose text content matches `extract_text`
+/// ordering, improving roundtrip similarity scores.
+fn pdf_to_docx_sequential(doc: &Document) -> Result<Vec<u8>> {
+    let pages = doc.get_pages();
+    let total_pages = pages.len() as u32;
+    let text_blocks = extract_text(doc);
+
+    let mut all_elements: Vec<Vec<PageElement>> = Vec::new();
+
+    for page_num in 1..=total_pages {
+        let page_blocks: Vec<_> = text_blocks
+            .iter()
+            .filter(|b| b.page == page_num)
+            .cloned()
+            .collect();
+
+        // Write blocks in extraction order as individual paragraphs
+        // (no spatial sorting, no table detection).
+        let elements: Vec<PageElement> = page_blocks
+            .iter()
+            .map(|b| {
+                PageElement::Para(layout::Paragraph {
+                    runs: vec![layout::Run {
+                        text: b.text.clone(),
+                        font_name: String::new(),
+                        font_size: b.font_size,
+                        bold: false,
+                        italic: false,
+                    }],
+                })
+            })
+            .collect();
+
+        all_elements.push(elements);
+    }
+
+    let mut output = Vec::new();
+    write_docx(&all_elements, &[], &mut output)?;
+    Ok(output)
 }
 
 fn pdf_to_docx_inner(doc: &Document, skip_images: bool) -> Result<Vec<u8>> {
