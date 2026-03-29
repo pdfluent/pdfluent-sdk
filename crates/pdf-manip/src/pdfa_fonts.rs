@@ -528,7 +528,7 @@ pub fn sync_subtypes_from_fontfile(doc: &mut Document) {
     // Update font dicts that have mismatched Subtype
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let (fd_ref, current_subtype) = {
+        let (fd_ref, current_subtype, is_subset) = {
             let Some(Object::Dictionary(d)) = doc.objects.get(&id) else {
                 continue;
             };
@@ -540,8 +540,18 @@ pub fn sync_subtypes_from_fontfile(doc: &mut Document) {
                 Some(Object::Reference(r)) => *r,
                 _ => continue,
             };
-            (fd, sub)
+            let bf = get_name(d, b"BaseFont").unwrap_or_default();
+            let subset = bf.len() > 7 && bf.as_bytes()[6] == b'+';
+            (fd, sub, subset)
         };
+
+        // Skip subset fonts — their Subtype and encoding are correct from the
+        // original authoring tool. Changing Subtype from Type1 to TrueType
+        // (because a shared FD was re-embedded as TrueType for another font)
+        // breaks the encoding and glyph lookup path.
+        if is_subset {
+            continue;
+        }
 
         if let Some(&expected) = fd_fonttype.get(&fd_ref) {
             let expected_str = std::str::from_utf8(expected).unwrap_or("");
