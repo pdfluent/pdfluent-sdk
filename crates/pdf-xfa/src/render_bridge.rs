@@ -43,7 +43,7 @@ impl Default for XfaRenderConfig {
             border_color: [0.0, 0.0, 0.0],
             text_color: [0.0, 0.0, 0.0],
             background_color: None,
-            text_padding: 2.0,
+            text_padding: 1.0,
         }
     }
 }
@@ -150,10 +150,12 @@ fn render_nodes(
             // Borders: only when the XFA template explicitly set border_width_pt.
             if let Some(bw) = node.style.border_width_pt {
                 if bw > 0.0 && w > 0.0 && h > 0.0 {
-                    let bc = node.style.border_color.map_or(
-                        [0.0, 0.0, 0.0],
-                        |(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0],
-                    );
+                    let bc = node
+                        .style
+                        .border_color
+                        .map_or([0.0, 0.0, 0.0], |(r, g, b)| {
+                            [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]
+                        });
                     write_ops(
                         ops,
                         format_args!(
@@ -164,6 +166,13 @@ fn render_nodes(
                 }
             }
         }
+
+        // Check if this node's font is bold (from XFA template style).
+        let is_bold = node
+            .style
+            .font_weight
+            .as_deref()
+            .map_or(false, |w| w == "bold");
 
         match &node.content {
             LayoutContent::Field {
@@ -190,6 +199,7 @@ fn render_nodes(
                 *font_size,
                 *text_align,
                 *font_family,
+                is_bold,
                 mapper,
                 abs_y,
                 &node_config,
@@ -391,6 +401,7 @@ fn render_multiline(
     font_size: f64,
     text_align: TextAlign,
     font_family: FontFamily,
+    _is_bold: bool,
     mapper: &CoordinateMapper,
     abs_y_xfa: f64,
     config: &XfaRenderConfig,
