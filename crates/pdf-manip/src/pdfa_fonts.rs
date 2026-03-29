@@ -9756,11 +9756,16 @@ fn build_cff_font_ctx(cff: &cff_parser::Table, font_data: &[u8], scale: f64) -> 
 ///   (#6.2.11.5-gid0-uses-defaultwidthx)
 fn compute_cff_corrections_for_custom_encoding(
     cff: &cff_parser::Table,
-    _cff_bytes: &[u8],
+    cff_bytes: &[u8],
     first_char: u32,
     existing_widths: &[Object],
     scale: f64,
 ) -> Vec<(usize, i64)> {
+    // Use the raw CFF encoding map instead of cff.glyph_index(code).
+    // glyph_index() may use StandardEncoding fallback for codes not in the
+    // custom encoding, returning GID 0 for codes that ARE actually mapped.
+    let enc_map = parse_cff_encoding_map(cff_bytes);
+
     let mut corrections = Vec::new();
     for (i, obj) in existing_widths.iter().enumerate() {
         let pdf_w = match obj {
@@ -9772,29 +9777,23 @@ fn compute_cff_corrections_for_custom_encoding(
         if code > 255 {
             continue;
         }
-        let frac_w = match cff.glyph_index(code as u8) {
-            Some(gid) if gid.0 > 0 => {
-                // Code maps to a real glyph (non-.notdef) → use charstring advance.
-                // Use glyph_width_f32 to handle negative widths from nominalWidthX.
-                cff.glyph_width(gid).map(|w| w as f64 * scale)
-            }
-            Some(_) | None => {
-                // Code maps to .notdef (GID 0) or is absent from the CFF encoding.
-                // veraPDF uses defaultWidthX for custom-CFF codes that resolve to
-                // GID 0 or are absent from the encoding. Fall back to the .notdef
-                // charstring only when the Private DICT omits defaultWidthX.
-                //
-                // Codes with pdf_w==0 are unused placeholder slots (PDF spec §9.6.2).
-                // veraPDF skips w==0 entries — changing 0 to a synthesized width would
-                // introduce violations for unused codes. (#6.2.11.5-gid0-uses-defaultwidthx)
-                // Code maps to .notdef or is absent from CFF encoding.
-                // Skip: veraPDF handles these codes differently depending on
-                // the context. The original Widths entry was likely correct.
-                // Generating corrections here (to defaultWidthX or .notdef)
-                // typically INTRODUCES regressions (e.g., CMSY10 code 2:
-                // original width 385 is correct but glyph_index returns GID 0,
-                // leading to wrong correction 385→0 or 385→782).
-                continue;
+        // Look up GID from raw encoding map first, fall back to glyph_index.
+        let gid_from_map = enc_map.get(&(code as u8)).copied().unwrap_or(0);
+        let frac_w = if gid_from_map > 0 {
+            cff.glyph_width(cff_parser::GlyphId(gid_from_map))
+                .map(|w| w as f64 * scale)
+        } else {
+            // Try glyph_index as fallback (for fonts where the encoding map
+            // doesn't cover all codes but glyph_index does).
+            match cff.glyph_index(code as u8) {
+                Some(gid) if gid.0 > 0 => cff.glyph_width(gid).map(|w| w as f64 * scale),
+                _ => {
+                    // .notdef or absent — skip unless pdf_w is 0
+                    if pdf_w != 0.0 {
+                        continue;
+                    }
+                    None
+                }
             }
         };
         let Some(frac_w) = frac_w else { continue };
