@@ -199,7 +199,11 @@ fn render_field(
         );
     }
     if !value.is_empty() {
-        let fs = if font_size > 0.0 { font_size } else { config.default_font_size };
+        let fs = if font_size > 0.0 {
+            font_size
+        } else {
+            config.default_font_size
+        };
         let p = config.text_padding;
         write_ops(
             ops,
