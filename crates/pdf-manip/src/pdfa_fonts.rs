@@ -17093,17 +17093,16 @@ fn fix_notdef_in_truetype(
             }
         }
 
-        // For subset fonts where the cmap has an entry but the outline
-        // was stripped, map directly to "space" IF the font has a space glyph.
-        // Don't try to find another glyph name which might also be stripped.
-        // §6.2.11.4.1:2: adding a Differences entry for a glyph not in the
-        // subset (e.g. "space") causes a missing-glyph violation.
-        if is_subset && gid_opt.is_some() {
-            if printable_standard_code {
-                continue;
-            }
-            new_diffs.push((code, "space".to_string()));
-            continue;
+        // For subset fonts: don't add "space" for codes that already have a
+        // non-zero width. Those codes are USED in the content stream with the
+        // original glyph mapping, which was correct. Adding Differences[code]="space"
+        // introduces §6.2.11.4.1:2 when the subset doesn't contain "space".
+        if is_subset {
+            continue; // Skip ALL Phase 2 additions for subset fonts.
+                      // Subset font encodings were created by the original authoring tool
+                      // with correct glyph mappings. Our WinAnsi-based glyph check may
+                      // not find the glyph but it IS in the subset. Adding "space" only
+                      // causes missing glyph violations.
         }
 
         // The encoding maps this code to a Unicode char that the font
