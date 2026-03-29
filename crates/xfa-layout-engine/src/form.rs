@@ -278,6 +278,7 @@ pub enum FieldKind {
     NumericEdit,
     PasswordEdit,
     ImageEdit,
+    Barcode,
 }
 
 /// Visual style properties for a form node.
