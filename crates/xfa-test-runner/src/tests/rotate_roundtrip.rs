@@ -72,6 +72,16 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
         }
     };
 
+    if super::has_malformed_page_tree(&pdf) {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some("malformed page tree (duplicate/looping refs)".into()),
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata: HashMap::new(),
+        };
+    }
+
     let page_count = doc.get_pages().len();
     if page_count == 0 {
         return TestResult {
