@@ -794,6 +794,11 @@ fn add_default_cmyk_colorspace(doc: &mut Document) -> ObjectId {
         }
     }
 
+    // Also add DefaultCMYK to annotation appearance streams.
+    // Widget annotations may have AP streams using DeviceCMYK operators (K/k)
+    // with their own Resources that lack DefaultCMYK. (fixes §6.2.4.3:3 in APs)
+    add_default_cs_to_annotation_appearances(doc, b"DefaultCMYK", cs_id);
+
     cs_id
 }
 
@@ -996,6 +1001,9 @@ fn add_default_rgb_colorspace(doc: &mut Document) -> ObjectId {
             }
         }
     }
+
+    // Also add DefaultRGB to annotation appearance streams.
+    add_default_cs_to_annotation_appearances(doc, b"DefaultRGB", cs_id);
 
     cs_id
 }
@@ -1200,7 +1208,114 @@ fn add_default_gray_colorspace(doc: &mut Document) -> ObjectId {
         }
     }
 
+    // Also add DefaultGray to annotation appearance streams.
+    add_default_cs_to_annotation_appearances(doc, b"DefaultGray", cs_id);
+
     cs_id
+}
+
+/// Add a Default* colorspace entry to all annotation appearance streams.
+/// Annotations have their own Resources; the page Default* doesn't apply.
+fn add_default_cs_to_annotation_appearances(doc: &mut Document, name: &[u8], cs_id: ObjectId) {
+    // Collect all appearance stream IDs referenced from annotations.
+    let mut ap_stream_ids: Vec<ObjectId> = Vec::new();
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in &ids {
+        let ap_refs = match doc.objects.get(id) {
+            Some(Object::Dictionary(dict)) => {
+                // Check if this is an annotation (has /Subtype and /Rect or /Type=Annot).
+                let is_annot = dict.has(b"Rect")
+                    && (dict.has(b"Subtype") || dict.has(b"Type"));
+                if !is_annot {
+                    continue;
+                }
+                // Get /AP dict.
+                let ap = match dict.get(b"AP").ok() {
+                    Some(Object::Dictionary(ap)) => Some(ap.clone()),
+                    Some(Object::Reference(r)) => {
+                        if let Some(Object::Dictionary(ap)) = doc.objects.get(r) {
+                            Some(ap.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let Some(ap) = ap else { continue };
+                // Collect stream references from /N, /R, /D values.
+                let mut refs = Vec::new();
+                for key in &[b"N".as_slice(), b"R", b"D"] {
+                    match ap.get(key).ok() {
+                        Some(Object::Reference(r)) => refs.push(*r),
+                        Some(Object::Dictionary(sub)) => {
+                            // Sub-appearance states dict: values are stream refs.
+                            for (_, v) in sub.iter() {
+                                if let Object::Reference(r) = v {
+                                    refs.push(*r);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                refs
+            }
+            _ => continue,
+        };
+        ap_stream_ids.extend(ap_refs);
+    }
+
+    // Deduplicate.
+    ap_stream_ids.sort();
+    ap_stream_ids.dedup();
+
+    let name_str = String::from_utf8_lossy(name).to_string();
+    for ap_id in ap_stream_ids {
+        // Check if the AP stream is actually a stream.
+        let is_stream = matches!(doc.objects.get(&ap_id), Some(Object::Stream(_)));
+        if !is_stream {
+            continue;
+        }
+
+        // Check if it has Resources (either referenced or inline).
+        let res_ref_id = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&ap_id) {
+                match stream.dict.get(b"Resources").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(res_ref_id) = res_ref_id {
+            if let Some(Object::Dictionary(ref mut res)) = doc.objects.get_mut(&res_ref_id) {
+                let mut cs_dict = match res.get(b"ColorSpace") {
+                    Ok(Object::Dictionary(d)) => d.clone(),
+                    _ => lopdf::Dictionary::new(),
+                };
+                if !cs_dict.has(name) {
+                    cs_dict.set(name_str.clone(), Object::Reference(cs_id));
+                    res.set("ColorSpace", Object::Dictionary(cs_dict));
+                }
+            }
+        } else if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&ap_id) {
+            let mut res = match stream.dict.get(b"Resources") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            let mut cs_dict = match res.get(b"ColorSpace") {
+                Ok(Object::Dictionary(d)) => d.clone(),
+                _ => lopdf::Dictionary::new(),
+            };
+            if !cs_dict.has(name) {
+                cs_dict.set(name_str.clone(), Object::Reference(cs_id));
+                res.set("ColorSpace", Object::Dictionary(cs_dict));
+                stream.dict.set("Resources", Object::Dictionary(res));
+            }
+        }
+    }
 }
 
 /// Replace `/ColorSpace /DeviceCMYK` and `/ColorSpace /DeviceRGB` in Shading dicts
@@ -1586,8 +1701,13 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
                 continue;
             }
             // Check alternate colorspace (index 2).
+            // The alternate may be a direct Name or a Reference to a Name object.
             let alt_repl = match &arr[2] {
                 Object::Name(n) => replacement(n),
+                Object::Reference(ref_id) => match doc.objects.get(ref_id) {
+                    Some(Object::Name(n)) => replacement(n),
+                    _ => None,
+                },
                 _ => None,
             };
             // Check attributes dict (index 4 if present) for Process/ColorSpace.
@@ -1718,27 +1838,51 @@ fn fix_devicen_process_colors(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_i
 /// all occurrences of a Separation with the same name have an identical alternate
 /// object reference rather than a bare device colorspace name.
 fn fix_separation_device_alternates(doc: &mut Document, cmyk_cs_id: ObjectId, rgb_cs_id: ObjectId) {
+    let replacement = |name: &[u8]| -> Option<ObjectId> {
+        if name == b"DeviceCMYK" {
+            Some(cmyk_cs_id)
+        } else if name == b"DeviceRGB" {
+            Some(rgb_cs_id)
+        } else {
+            None
+        }
+    };
+
+    // Collect IDs to fix first, then mutate (two-pass for borrow safety).
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut to_fix: Vec<(ObjectId, ObjectId)> = Vec::new();
     for id in ids {
-        if let Some(Object::Array(arr)) = doc.objects.get_mut(&id) {
+        let repl = if let Some(Object::Array(arr)) = doc.objects.get(&id) {
             if arr.len() >= 4 {
                 if let Object::Name(cs_type) = &arr[0] {
                     if cs_type == b"Separation" {
-                        let repl = match &arr[2] {
-                            Object::Name(n) if n == b"DeviceCMYK" => {
-                                Some(Object::Reference(cmyk_cs_id))
-                            }
-                            Object::Name(n) if n == b"DeviceRGB" => {
-                                Some(Object::Reference(rgb_cs_id))
-                            }
+                        match &arr[2] {
+                            Object::Name(n) => replacement(n),
+                            Object::Reference(ref_id) => match doc.objects.get(ref_id) {
+                                Some(Object::Name(n)) => replacement(n),
+                                _ => None,
+                            },
                             _ => None,
-                        };
-                        if let Some(new_alt) = repl {
-                            arr[2] = new_alt;
                         }
+                    } else {
+                        None
                     }
+                } else {
+                    None
                 }
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        if let Some(repl) = repl {
+            to_fix.push((id, repl));
+        }
+    }
+    for (id, repl) in to_fix {
+        if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&id) {
+            arr[2] = Object::Reference(repl);
         }
     }
 }
