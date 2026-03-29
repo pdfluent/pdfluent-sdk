@@ -577,13 +577,10 @@ fn analyze_tt_differences(doc: &Document, font_id: ObjectId) -> TtDiffAction {
         return TtDiffAction::None;
     };
 
-    // Non-symbolic simple fonts: TrueType, Type1, MMType1.
-    let subtype = get_name_val(dict, b"Subtype");
-    let is_truetype = subtype.as_deref() == Some("TrueType");
-    if !matches!(
-        subtype.as_deref(),
-        Some("TrueType") | Some("Type1") | Some("MMType1")
-    ) {
+    // Only TrueType simple fonts — Type1 fonts have different §6.2.11.6 rules
+    // and sanitizing their Differences causes width/CharSet regressions.
+    let is_truetype = get_name_val(dict, b"Subtype").as_deref() == Some("TrueType");
+    if !is_truetype {
         return TtDiffAction::None;
     }
 
