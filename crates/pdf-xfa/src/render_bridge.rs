@@ -9,7 +9,7 @@
 use crate::error::Result;
 use xfa_layout_engine::form::{FieldKind, FormNodeStyle};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
-use xfa_layout_engine::text::FontFamily;
+use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::TextAlign;
 
 /// Configuration for PDF overlay rendering.
@@ -68,13 +68,32 @@ impl CoordinateMapper {
 /// global config. Returns the original config unchanged if the node has no
 /// style overrides (common case — avoids allocation).
 fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRenderConfig {
-    // NOTE: Background, border, and text colors from the XFA template are parsed
-    // and available in FormNodeStyle but NOT applied here yet. Enabling them caused
-    // SSIM regressions because white backgrounds cover underlying page content and
-    // color inheritance between parent/child nodes needs refinement.
-    // TODO(#601): Enable per-node colors with proper white/transparent handling.
-    let _ = style;
-    config.clone()
+    let mut cfg = config.clone();
+
+    // Apply background color — skip white (would cover underlying page content).
+    if let Some((r, g, b)) = style.bg_color {
+        if !(r >= 250 && g >= 250 && b >= 250) {
+            cfg.background_color = Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]);
+        }
+    }
+
+    // Apply border from the XFA template.
+    if let Some(bw) = style.border_width_pt {
+        if bw > 0.0 {
+            cfg.border_width = bw;
+            cfg.draw_borders = true;
+            if let Some((r, g, b)) = style.border_color {
+                cfg.border_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
+            }
+        }
+    }
+
+    // Apply text color — skip black (default).
+    if let Some((r, g, b)) = style.text_color {
+        cfg.text_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
+    }
+
+    cfg
 }
 
 /// Generate a PDF content stream overlay for a single page.
@@ -113,6 +132,38 @@ fn render_nodes(
 
         // Apply per-node style overrides from the XFA template.
         let node_config = apply_node_style(config, &node.style);
+
+        // Draw background fill and borders for non-Field nodes (Draw, Subform, etc.)
+        // Only when the XFA template explicitly defines bg/border styles.
+        // Fields handle their own bg/borders in render_field.
+        if !matches!(node.content, LayoutContent::Field { .. }) {
+            // Background: only from explicit node style (set by apply_node_style).
+            if let Some(bg) = &node_config.background_color {
+                write_ops(
+                    ops,
+                    format_args!(
+                        "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
+                        bg[0], bg[1], bg[2], abs_x, pdf_y, w, h
+                    ),
+                );
+            }
+            // Borders: only when the XFA template explicitly set border_width_pt.
+            if let Some(bw) = node.style.border_width_pt {
+                if bw > 0.0 && w > 0.0 && h > 0.0 {
+                    let bc = node.style.border_color.map_or(
+                        [0.0, 0.0, 0.0],
+                        |(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0],
+                    );
+                    write_ops(
+                        ops,
+                        format_args!(
+                            "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
+                            bw, bc[0], bc[1], bc[2], abs_x, pdf_y, w, h
+                        ),
+                    );
+                }
+            }
+        }
 
         match &node.content {
             LayoutContent::Field {
@@ -198,19 +249,58 @@ fn render_field(
             config.default_font_size
         };
         let p = config.text_padding;
-        write_ops(
-            ops,
-            format_args!(
-                "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-                config.text_color[0],
-                config.text_color[1],
-                config.text_color[2],
-                fs,
-                x + p,
-                pdf_y + p,
-                pdf_escape(value)
-            ),
-        );
+        let content_w = (w - p * 2.0).max(0.0);
+        let metrics = FontMetrics {
+            size: fs,
+            typeface: FontFamily::Serif,
+            ..Default::default()
+        };
+        let text_w = metrics.measure_width(value);
+
+        if text_w <= content_w || content_w <= 0.0 {
+            // Single line — fits within field.
+            write_ops(
+                ops,
+                format_args!(
+                    "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+                    config.text_color[0],
+                    config.text_color[1],
+                    config.text_color[2],
+                    fs,
+                    x + p,
+                    pdf_y + p,
+                    pdf_escape(value)
+                ),
+            );
+        } else {
+            // Multi-line: word-wrap within field width.
+            let lines = wrap_text(value, content_w, &metrics);
+            let line_height = fs * 1.2;
+            write_ops(
+                ops,
+                format_args!(
+                    "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n",
+                    config.text_color[0],
+                    config.text_color[1],
+                    config.text_color[2],
+                    fs,
+                    x + p,
+                    pdf_y + h - p - fs,
+                ),
+            );
+            for (i, line) in lines.iter().enumerate() {
+                if i > 0 {
+                    write_ops(ops, format_args!("0 {:.2} Td\n", -line_height));
+                }
+                // Stop if we'd go below the field bottom.
+                let line_top = h - p - fs - (i as f64 * line_height);
+                if line_top < -p {
+                    break;
+                }
+                write_ops(ops, format_args!("({}) Tj\n", pdf_escape(line)));
+            }
+            ops.extend_from_slice(b"ET\n");
+        }
     }
 }
 
@@ -356,6 +446,33 @@ fn render_multiline(
         write_ops(ops, format_args!("({}) Tj\n", pdf_escape(line)));
     }
     ops.extend_from_slice(b"ET\n");
+}
+
+/// Word-wrap text to fit within `max_width` using `metrics` for measurement.
+fn wrap_text(text: &str, max_width: f64, metrics: &FontMetrics) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current = word.to_string();
+        } else {
+            let candidate = format!("{} {}", current, word);
+            if metrics.measure_width(&candidate) <= max_width {
+                current = candidate;
+            } else {
+                lines.push(current);
+                current = word.to_string();
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() && !text.is_empty() {
+        lines.push(text.to_string());
+    }
+    lines
 }
 
 fn pdf_escape(s: &str) -> String {
