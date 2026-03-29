@@ -131,7 +131,7 @@ fn collect_appearances(
         let h = node.rect.height;
 
         let ap = match &node.content {
-            LayoutContent::Field { value } => Some(field_appearance(value, w, h, config)),
+            LayoutContent::Field { value, .. } => Some(field_appearance(value, w, h, config)),
             LayoutContent::Text(text) => Some(draw_appearance(text, w, h, config)),
             LayoutContent::WrappedText {
                 lines, font_size, ..
