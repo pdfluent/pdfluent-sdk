@@ -4667,6 +4667,23 @@ pub fn check_extgstate_restrictions(pdf: &Pdf, part: u8, report: &mut Compliance
                         );
                     }
                 }
+
+                // §6.2.8 — TR/TR2/HTP keys forbidden in PDF/A-1 ExtGState
+                for (key, rule) in [
+                    (b"TR" as &[u8], "6.2.8"),
+                    (b"TR2", "6.2.8"),
+                    (b"HTP", "6.2.8"),
+                ] {
+                    if gs.get::<Object<'_>>(key).is_some() {
+                        let key_str = std::str::from_utf8(key).unwrap_or("?");
+                        error_at(
+                            report,
+                            rule,
+                            format!("ExtGState {gs_str} contains forbidden /{key_str} key"),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
             }
 
             // §6.2.4.2 — OPM must not be 1 when ICCBased CMYK is in use with overprinting

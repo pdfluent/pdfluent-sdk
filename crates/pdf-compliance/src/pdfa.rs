@@ -84,6 +84,9 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // Stream structure check runs before the early-exit so that stream-syntax
     // violations (§6.1.7) are always reported even when XMP is missing. (#FN-6.1.7)
     check_stream_length_pdfa(pdf, &mut report);
+    // §6.1.4 — xref syntax check runs in Phase 1 so it fires even when the
+    // early exit triggers (e.g. PDF 1.6 claiming PDF/A-1b). (#FN-6.1.4)
+    check_xref_syntax_pdfa(pdf, &mut report);
 
     // Early exit: if critical structural checks already failed, skip content analysis.
     // "Critical" = missing XMP, encrypted, or wrong file header — these guarantee
