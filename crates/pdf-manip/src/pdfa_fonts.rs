@@ -212,7 +212,7 @@ fn compute_plan_widths(
     font_id: ObjectId,
     resolved_encoding: &ResolvedEncoding,
     has_ff2: bool,
-    _has_ff3: bool,
+    has_ff3: bool,
 ) -> Vec<(usize, i32)> {
     let dict = match doc.objects.get(&font_id) {
         Some(Object::Dictionary(d)) => d,
@@ -239,10 +239,6 @@ fn compute_plan_widths(
         _ => String::new(),
     };
 
-    if !has_ff2 {
-        return vec![]; // Only handle TrueType for now
-    }
-
     // Read font data
     let fd_id = match dict.get(b"FontDescriptor").ok() {
         Some(Object::Reference(r)) => *r,
@@ -253,27 +249,44 @@ fn compute_plan_widths(
         None => return vec![],
     };
 
-    let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
-        return vec![];
-    };
-    let upem = face.units_per_em() as f64;
-    if upem == 0.0 {
-        return vec![];
-    }
-    let _scale = 1000.0 / upem;
+    let base_font = get_name(dict, b"BaseFont").unwrap_or_default();
+    let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
 
-    let enc_info = (effective_enc, std::collections::HashMap::new());
-    let corrections = compute_truetype_width_corrections_inner(
-        &font_data,
-        first_char,
-        &existing_widths,
-        &enc_info,
-        false, // not symbolic (we already filtered)
-    );
-    corrections
-        .into_iter()
-        .map(|(idx, w)| (idx, w as i32))
-        .collect()
+    if has_ff2 {
+        // TrueType: use cmap-based width computation
+        let enc_info = (effective_enc, std::collections::HashMap::new());
+        let corrections = compute_truetype_width_corrections_inner(
+            &font_data,
+            first_char,
+            &existing_widths,
+            &enc_info,
+            false,
+        );
+        return corrections
+            .into_iter()
+            .map(|(idx, w)| (idx, w as i32))
+            .collect();
+    }
+
+    if has_ff3 {
+        // CFF/Type1C: use CFF charstring widths with f64 precision
+        let to_unicode = read_font_to_unicode_map(doc, dict);
+        let enc_info = get_simple_encoding_info(doc, dict);
+        let corrections = compute_cff_type1_width_corrections(
+            &font_data,
+            first_char,
+            &existing_widths,
+            &enc_info,
+            is_subset,
+            Some(&to_unicode),
+        );
+        return corrections
+            .into_iter()
+            .map(|(idx, w)| (idx, w as i32))
+            .collect();
+    }
+
+    vec![]
 }
 
 /// Apply a single font correction plan to the document.
