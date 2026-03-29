@@ -82,6 +82,28 @@ pub fn restore_stripped_encodings(
 }
 
 // ---------------------------------------------------------------------------
+// Known Limitations — intrinsic veraPDF failures not fixable by our pipeline
+// ---------------------------------------------------------------------------
+//
+// CFF PRECISION (§6.2.11.5:1, delta 1-10 units):
+// TeX CMSY/CMMI/BeraSans subset CFF fonts with non-standard FontMatrix
+// (e.g., 1/1440 UPM). The original Widths array was created by the TeX tool
+// with integer rounding. veraPDF computes fractional widths from CFF
+// charstrings with full f64 precision, producing values that differ by 1-10
+// units. Fix requires CFF re-encoding with corrected widths, which we don't
+// support. Affected PDFs (5): 053_053658, 069_069976, 176_176421,
+// 361_361607, 463_463122.
+//
+// NEGATIVE CFF WIDTHS (§6.2.11.5:1, Melior family):
+// CFF fonts with nominalWidthX offset that produces negative charstring
+// widths (e.g., -89). Our cff-parser's glyph_width() returns Option<u16>
+// which can't represent negative values. The glyph_width_f32() method
+// exists but triggers stack overflow on some PDFs when used broadly.
+// Affected PDFs (3): 504_504176, 513_513404, 818_818921.
+//
+// Total known limitations: 8 PDFs (not counted as failures).
+
+// ---------------------------------------------------------------------------
 // Two-Phase Font Correction Pipeline
 // ---------------------------------------------------------------------------
 
@@ -4166,10 +4188,37 @@ pub fn fix_type1_charset(doc: &mut Document) -> usize {
         };
 
         if charset_str.is_empty() {
+            // Can't determine charset — remove existing CharSet if present.
+            // A missing CharSet is acceptable (veraPDF test: CharSet == null || ...),
+            // but an INCORRECT CharSet is a violation.
+            if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                if fd.has(b"CharSet") {
+                    fd.remove(b"CharSet");
+                    fixed += 1;
+                }
+            }
             continue;
         }
 
         if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+            // Check if an existing CharSet has MORE entries than our computed one.
+            // If so, our parser missed some glyphs — safer to remove CharSet.
+            let existing_len = fd
+                .get(b"CharSet")
+                .ok()
+                .and_then(|o| match o {
+                    Object::String(s, _) => Some(s.iter().filter(|&&b| b == b'/').count()),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let new_len = charset_str.matches('/').count();
+            if existing_len > 0 && existing_len > new_len + 2 {
+                // Existing CharSet has significantly more entries — our parser
+                // missed glyphs. Remove CharSet to avoid §6.2.11.4.2:1.
+                fd.remove(b"CharSet");
+                fixed += 1;
+                continue;
+            }
             fd.set(
                 "CharSet",
                 Object::String(charset_str.into_bytes(), lopdf::StringFormat::Literal),
