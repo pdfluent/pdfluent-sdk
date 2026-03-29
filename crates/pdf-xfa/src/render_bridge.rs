@@ -7,7 +7,9 @@
 //! PDF uses bottom-left origin (y grows upward).
 
 use crate::error::Result;
+use xfa_layout_engine::form::{FieldKind, FormNodeStyle};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
+use xfa_layout_engine::text::FontFamily;
 use xfa_layout_engine::types::TextAlign;
 
 /// Configuration for PDF overlay rendering.
@@ -62,6 +64,26 @@ impl CoordinateMapper {
     }
 }
 
+/// Create a per-node config by applying XFA template style overrides to the
+/// global config. Returns the original config unchanged if the node has no
+/// style overrides (common case — avoids allocation).
+fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRenderConfig {
+    let mut c = config.clone();
+    if let Some((r, g, b)) = style.bg_color {
+        c.background_color = Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]);
+    }
+    if let Some((r, g, b)) = style.border_color {
+        c.border_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
+    }
+    if let Some((r, g, b)) = style.text_color {
+        c.text_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
+    }
+    if let Some(size) = style.font_size {
+        c.default_font_size = size;
+    }
+    c
+}
+
 /// Generate a PDF content stream overlay for a single page.
 pub fn generate_page_overlay(page: &LayoutPage, config: &XfaRenderConfig) -> Result<Vec<u8>> {
     let mapper = CoordinateMapper::new(page.height);
@@ -96,13 +118,24 @@ fn render_nodes(
         let h = node.rect.height;
         let pdf_y = mapper.xfa_to_pdf_y(abs_y, h);
 
+        // Apply per-node style overrides from the XFA template.
+        let node_config = apply_node_style(config, &node.style);
+
         match &node.content {
-            LayoutContent::Field { value } => render_field(abs_x, pdf_y, w, h, value, config, ops),
-            LayoutContent::Text(text) => render_text(abs_x, pdf_y, text, config, ops),
+            LayoutContent::Field {
+                value, field_kind, ..
+            } => match field_kind {
+                FieldKind::Checkbox | FieldKind::Radio => {
+                    render_checkbox(abs_x, pdf_y, w, h, value, &node_config, ops)
+                }
+                _ => render_field(abs_x, pdf_y, w, h, value, &node_config, ops),
+            },
+            LayoutContent::Text(text) => render_text(abs_x, pdf_y, text, &node_config, ops),
             LayoutContent::WrappedText {
                 lines,
                 font_size,
                 text_align,
+                font_family,
             } => render_multiline(
                 abs_x,
                 pdf_y,
@@ -110,16 +143,17 @@ fn render_nodes(
                 lines,
                 *font_size,
                 *text_align,
+                *font_family,
                 mapper,
                 abs_y,
-                config,
+                &node_config,
                 ops,
             ),
             LayoutContent::None => {}
         }
 
         if !node.children.is_empty() {
-            render_nodes(&node.children, abs_x, abs_y, mapper, config, ops);
+            render_nodes(&node.children, abs_x, abs_y, mapper, &node_config, ops);
         }
     }
 }
@@ -177,6 +211,63 @@ fn render_field(
     }
 }
 
+fn render_checkbox(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    value: &str,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    // Draw checkbox border (square box)
+    let bw = config.border_width.max(0.5);
+    write_ops(
+        ops,
+        format_args!(
+            "q\n{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
+            bw,
+            config.border_color[0],
+            config.border_color[1],
+            config.border_color[2],
+            x,
+            pdf_y,
+            w,
+            h
+        ),
+    );
+    // If checked (non-empty value, not "0" or "off"), draw a checkmark
+    let checked = !value.is_empty()
+        && !value.eq_ignore_ascii_case("0")
+        && !value.eq_ignore_ascii_case("off")
+        && !value.eq_ignore_ascii_case("false");
+    if checked {
+        // Draw an X mark inside the box
+        let m = w.min(h) * 0.15; // margin
+        write_ops(
+            ops,
+            format_args!(
+                "{:.2} w\n{:.3} {:.3} {:.3} RG\n\
+                 {:.2} {:.2} m {:.2} {:.2} l S\n\
+                 {:.2} {:.2} m {:.2} {:.2} l S\n",
+                bw.max(1.0),
+                config.text_color[0],
+                config.text_color[1],
+                config.text_color[2],
+                x + m,
+                pdf_y + m,
+                x + w - m,
+                pdf_y + h - m,
+                x + m,
+                pdf_y + h - m,
+                x + w - m,
+                pdf_y + m,
+            ),
+        );
+    }
+    write_ops(ops, format_args!("Q\n"));
+}
+
 fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &mut Vec<u8>) {
     if text.is_empty() {
         return;
@@ -206,6 +297,7 @@ fn render_multiline(
     lines: &[String],
     font_size: f64,
     text_align: TextAlign,
+    font_family: FontFamily,
     mapper: &CoordinateMapper,
     abs_y_xfa: f64,
     config: &XfaRenderConfig,
@@ -216,13 +308,23 @@ fn render_multiline(
     }
     let p = config.text_padding;
     let line_height = font_size * 1.2;
-    // Estimated character width coefficient for Helvetica (≈0.5 of font size).
-    let avg_char_w = font_size * 0.5;
+    // Select PDF font resource based on the template's font family.
+    let font_ref = match font_family {
+        FontFamily::Serif => "/F1",
+        FontFamily::SansSerif => "/F2",
+        FontFamily::Monospace => "/F3",
+    };
+    // Use per-character width measurement for alignment calculations.
+    let font_metrics = xfa_layout_engine::text::FontMetrics {
+        size: font_size,
+        typeface: font_family,
+        ..Default::default()
+    };
     write_ops(
         ops,
         format_args!(
-            "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n",
-            config.text_color[0], config.text_color[1], config.text_color[2], font_size
+            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+            config.text_color[0], config.text_color[1], config.text_color[2], font_ref, font_size
         ),
     );
     // Place the first-line baseline at `font_size` below the element's XFA top.
@@ -234,13 +336,7 @@ fn render_multiline(
     let mut prev_x = x + p;
     for (i, line) in lines.iter().enumerate() {
         let line_y = first_line_pdf_y - (i as f64 * line_height);
-        // Don't clip wrapped text that overflows the element box —
-        // XFA draw elements render all their text even when the explicit
-        // h is smaller than needed.  Clipping here truncates data values
-        // like "Expires 09/30/11" when the date wraps to a second line.
-        // PDF viewers clip via the page boundary, which is sufficient.
-        // Compute x position for alignment. We estimate line width using average char width.
-        let line_w = line.len() as f64 * avg_char_w;
+        let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => x + p + ((content_w - line_w) / 2.0).max(0.0),
             TextAlign::Right => x + p + (content_w - line_w).max(0.0),
@@ -298,8 +394,10 @@ mod tests {
             name: "field1".to_string(),
             content: LayoutContent::Field {
                 value: value.to_string(),
+                field_kind: xfa_layout_engine::form::FieldKind::Text,
             },
             children: vec![],
+            style: Default::default(),
         }
     }
 
