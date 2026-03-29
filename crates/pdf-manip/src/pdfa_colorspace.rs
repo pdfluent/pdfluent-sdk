@@ -1421,8 +1421,12 @@ fn fix_device_colorspaces_in_deep_structures(
 /// colors like Cyan/Magenta/Yellow/Black/None), and adds missing Colorants
 /// entries to the attributes dict.
 fn ensure_devicen_colorants(doc: &mut Document) {
+    // Only Cyan/Magenta/Yellow/Black and None/All are universally "process".
+    // Red/Green/Blue are only process in RGB alternate spaces but are spot
+    // colors in CMYK alternate spaces.  We exclude them from the default
+    // process list to avoid missing Colorants entries for spot "Blue" etc.
     let process_names: &[&[u8]] = &[
-        b"Cyan", b"Magenta", b"Yellow", b"Black", b"Red", b"Green", b"Blue", b"None", b"All",
+        b"Cyan", b"Magenta", b"Yellow", b"Black", b"None", b"All",
     ];
 
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
