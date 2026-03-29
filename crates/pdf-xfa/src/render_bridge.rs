@@ -123,12 +123,14 @@ fn render_nodes(
 
         match &node.content {
             LayoutContent::Field {
-                value, field_kind, ..
+                value,
+                field_kind,
+                font_size,
             } => match field_kind {
                 FieldKind::Checkbox | FieldKind::Radio => {
                     render_checkbox(abs_x, pdf_y, w, h, value, &node_config, ops)
                 }
-                _ => render_field(abs_x, pdf_y, w, h, value, &node_config, ops),
+                _ => render_field(abs_x, pdf_y, w, h, value, *font_size, &node_config, ops),
             },
             LayoutContent::Text(text) => render_text(abs_x, pdf_y, text, &node_config, ops),
             LayoutContent::WrappedText {
@@ -153,7 +155,10 @@ fn render_nodes(
         }
 
         if !node.children.is_empty() {
-            render_nodes(&node.children, abs_x, abs_y, mapper, &node_config, ops);
+            // Pass the GLOBAL config to children, not node_config — background_color
+            // and other style properties should not cascade from parent to children.
+            // Each child applies its own style via apply_node_style.
+            render_nodes(&node.children, abs_x, abs_y, mapper, config, ops);
         }
     }
 }
@@ -164,6 +169,7 @@ fn render_field(
     w: f64,
     h: f64,
     value: &str,
+    font_size: f64,
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
@@ -193,7 +199,7 @@ fn render_field(
         );
     }
     if !value.is_empty() {
-        let fs = config.default_font_size;
+        let fs = if font_size > 0.0 { font_size } else { config.default_font_size };
         let p = config.text_padding;
         write_ops(
             ops,
