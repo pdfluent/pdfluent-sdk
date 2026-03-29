@@ -112,7 +112,7 @@ fn emit_node_commands(
     );
 
     match &node.content {
-        LayoutContent::Field { value } => {
+        LayoutContent::Field { value, .. } => {
             if let Some(bg) = bg_color {
                 commands.push(XfaPaintCommand::FillRect {
                     x,
@@ -212,8 +212,10 @@ mod tests {
             name: name.into(),
             content: LayoutContent::Field {
                 value: value.into(),
+                field_kind: xfa_layout_engine::form::FieldKind::Text,
             },
             children: vec![],
+            style: Default::default(),
         }
     }
 
@@ -274,8 +276,10 @@ mod tests {
                     lines: vec!["Line 1".into(), "Line 2".into()],
                     font_size: 10.0,
                     text_align: xfa_layout_engine::types::TextAlign::Left,
+                    font_family: xfa_layout_engine::text::FontFamily::SansSerif,
                 },
                 children: vec![],
+                style: Default::default(),
             }],
         };
         let cmds = layout_to_commands(&page, &test_config());
