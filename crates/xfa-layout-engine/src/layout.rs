@@ -586,22 +586,35 @@ impl<'a> LayoutEngine<'a> {
                 if remaining_height > 0.0 && self.can_split(child_id) {
                     let (partial, rest_children) =
                         self.split_tb_node(child_id, y_cursor, remaining_height, available)?;
-                    if !partial.children.is_empty() {
+                    // Place the partial if it fits, OR if the split was
+                    // productive (multiple children placed — the overflow
+                    // is tolerable).  Only defer when the partial is a
+                    // single oversized child that didn't fit — re-splitting
+                    // on a fresh page with full height will do better.
+                    let partial_fits = partial.rect.height <= remaining_height + 1.0;
+                    let split_productive = partial.children.len() > 1;
+                    if !partial.children.is_empty() && (partial_fits || split_productive) {
                         let mut offset_node = partial;
                         offset_node.rect.x += content_area.x;
                         offset_node.rect.y += content_area.y;
                         page.nodes.push(offset_node);
                         placed_count += 1;
+                        // After a split, rest children go to a fresh page.
+                        // Clear break_before on ALL — the overflow mechanism
+                        // handles page transitions correctly; keeping break
+                        // flags causes premature splits that waste space.
                         split_remaining = rest_children
                             .into_iter()
-                            .map(|cid| {
-                                let m = self.form.meta(cid);
-                                QueuedNode {
-                                    id: cid,
-                                    break_before: m.page_break_before,
-                                }
+                            .map(|cid| QueuedNode {
+                                id: cid,
+                                break_before: false,
                             })
                             .collect();
+                    } else if placed_count > 0 {
+                        // Single oversized child doesn't fit and page has
+                        // content — defer to a fresh page where re-split
+                        // with full height can do better.
+                        break;
                     }
                 } else if idx == 0 || page.nodes.len() <= header_node_count {
                     // First content item too large and can't split — force place it
@@ -731,18 +744,13 @@ impl<'a> LayoutEngine<'a> {
             let child_size = self.compute_extent(child_id);
             let child_meta = self.form.meta(child_id);
 
-            // page_break_before on a child → split point, but ONLY when the
-            // content placed so far has filled a significant portion of the
-            // remaining height.  Early breaks (< 50% of page used) waste
-            // space and produce extra pages; let the overflow mechanism handle
-            // those naturally.
-            if child_meta.page_break_before && !placed_children.is_empty() {
-                let used_ratio = child_y / remaining_height;
-                if used_ratio >= 0.5 || child_y + child_size.height > remaining_height {
-                    split_idx = i;
-                    break;
-                }
-            }
+            // NOTE: page_break_before inside split_tb_node is intentionally
+            // NOT used as a mandatory split point.  The overflow check below
+            // already splits when content exceeds the page; honouring breaks
+            // in addition creates premature splits that waste space.  The
+            // break_before flag is respected at the TOP level in
+            // layout_content_fitting (line ~554) where it triggers a clean
+            // page transition between queued content items.
 
             // If this child has keep_intact and doesn't fit, split BEFORE it
             // so it moves to the next page entirely.
