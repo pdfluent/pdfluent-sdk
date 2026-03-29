@@ -958,11 +958,24 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     // /Title ↔ dc:title (§6.7.3.2)
     if let Some(ref title) = metadata.title {
         let info_str = decode_pdf_string(title);
-        // Empty /Title is trivially consistent with absent/empty dc:title.
-        // veraPDF does not flag §6.7.3.2 when /Title is an empty string.
-        // (#FP-6.7.3.2)
-        if !info_str.trim().is_empty() {
-            let dc_title = extract_rdf_alt_value(xmp, "dc:title");
+        let dc_title = extract_rdf_alt_value(xmp, "dc:title");
+        if info_str.trim().is_empty() {
+            // BOM-only or truly empty /Title:  veraPDF still requires dc:title
+            // to be absent or empty when /Title is present-but-empty.  If XMP
+            // dc:title has a non-empty value, that's a mismatch.  And if /Title
+            // is a non-empty byte sequence (like BOM-only <FEFF>) but dc:title
+            // is completely absent, veraPDF flags §6.7.3.
+            if !title.is_empty() {
+                // /Title has bytes (e.g. BOM-only) → dc:title must also exist.
+                if dc_title.is_none() {
+                    error(
+                        report,
+                        "6.7.3",
+                        "/Info has /Title (BOM-only or empty bytes) but XMP dc:title is absent",
+                    );
+                }
+            }
+        } else {
             match dc_title {
                 None => {
                     error(
