@@ -288,7 +288,7 @@ fn collect_appearances(
         let height = node.rect.height;
 
         match &node.content {
-            LayoutContent::Field { value } => {
+            LayoutContent::Field { value, .. } => {
                 let appearance = field_appearance(value, width, height, config);
                 result.push((node.name.clone(), abs_x, abs_y, appearance));
             }
@@ -539,8 +539,10 @@ mod tests {
                 name: "Field1".to_string(),
                 content: LayoutContent::Field {
                     value: "Hello".to_string(),
+                    field_kind: xfa_layout_engine::form::FieldKind::Text,
                 },
                 children: vec![],
+                style: Default::default(),
             },
             LayoutNode {
                 form_node: FormNodeId(1),
@@ -548,6 +550,7 @@ mod tests {
                 name: "Label1".to_string(),
                 content: LayoutContent::Text("Name:".to_string()),
                 children: vec![],
+                style: Default::default(),
             },
         ];
 
@@ -573,9 +576,12 @@ mod tests {
                 name: "ChildField".to_string(),
                 content: LayoutContent::Field {
                     value: "Nested".to_string(),
+                    field_kind: xfa_layout_engine::form::FieldKind::Text,
                 },
                 children: vec![],
+                style: Default::default(),
             }],
+            style: Default::default(),
         }];
 
         let result = generate_appearances(&nodes, &config).unwrap();

@@ -228,7 +228,7 @@ fn print_layout_tree(nodes: &[xfa_layout_engine::layout::LayoutNode], indent: us
     for node in nodes {
         let pad = " ".repeat(indent * 2);
         let content = match &node.content {
-            xfa_layout_engine::layout::LayoutContent::Field { value } => {
+            xfa_layout_engine::layout::LayoutContent::Field { value, .. } => {
                 format!(" = \"{value}\"")
             }
             xfa_layout_engine::layout::LayoutContent::Text(t) => format!(" text=\"{t}\""),

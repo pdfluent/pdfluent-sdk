@@ -2494,8 +2494,20 @@ fn content_has_implicit_gray(content: &[u8]) -> bool {
     let has_painting = tokens.iter().any(|&t| {
         matches!(
             t,
-            "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "S" | "s"
-                | "Tj" | "TJ" | "'" | "\"" | "Do" | "BT"
+            "f" | "F"
+                | "f*"
+                | "B"
+                | "B*"
+                | "b"
+                | "b*"
+                | "S"
+                | "s"
+                | "Tj"
+                | "TJ"
+                | "'"
+                | "\""
+                | "Do"
+                | "BT"
         )
     });
     let has_color = tokens.iter().any(|&t| {

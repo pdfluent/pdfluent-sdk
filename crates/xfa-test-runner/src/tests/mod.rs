@@ -99,8 +99,7 @@ pub fn has_malformed_page_tree(pdf_data: &[u8]) -> bool {
 
     // Collect all /Pages object numbers
     for i in 0..pdf_data.len().saturating_sub(20) {
-        if !pdf_data[i..].starts_with(b"/Type /Pages")
-            && !pdf_data[i..].starts_with(b"/Type/Pages")
+        if !pdf_data[i..].starts_with(b"/Type /Pages") && !pdf_data[i..].starts_with(b"/Type/Pages")
         {
             continue;
         }

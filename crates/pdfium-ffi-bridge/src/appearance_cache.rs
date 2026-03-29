@@ -80,7 +80,7 @@ fn hash_content(content: &LayoutContent) -> u64 {
     };
 
     match content {
-        LayoutContent::Field { value } => {
+        LayoutContent::Field { value, .. } => {
             mix(&mut h, b"field:");
             mix(&mut h, value.as_bytes());
         }
@@ -319,7 +319,7 @@ fn generate_appearance(
     config: &AppearanceConfig,
 ) -> AppearanceStream {
     match &node.content {
-        LayoutContent::Field { value } => field_appearance(value, width, height, config),
+        LayoutContent::Field { value, .. } => field_appearance(value, width, height, config),
         LayoutContent::Text(text) => draw_appearance(text, width, height, config),
         LayoutContent::WrappedText {
             lines, font_size, ..
@@ -348,8 +348,10 @@ mod tests {
             name: name.to_string(),
             content: LayoutContent::Field {
                 value: value.to_string(),
+                field_kind: xfa_layout_engine::form::FieldKind::Text,
             },
             children: vec![],
+            style: Default::default(),
         }
     }
 
@@ -474,6 +476,7 @@ mod tests {
                 make_field("A", "X", 10.0, 10.0),
                 make_field("B", "Y", 10.0, 40.0),
             ],
+            style: Default::default(),
         }];
 
         let result = cache.generate_cached(&nodes, &config);

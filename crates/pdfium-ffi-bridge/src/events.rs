@@ -294,8 +294,10 @@ mod tests {
                         name: "Name".to_string(),
                         content: LayoutContent::Field {
                             value: "Alice".to_string(),
+                            field_kind: xfa_layout_engine::form::FieldKind::Text,
                         },
                         children: vec![],
+                        style: Default::default(),
                     },
                     LayoutNode {
                         form_node: f2,
@@ -303,8 +305,10 @@ mod tests {
                         name: "Email".to_string(),
                         content: LayoutContent::Field {
                             value: String::new(),
+                            field_kind: xfa_layout_engine::form::FieldKind::Text,
                         },
                         children: vec![],
+                        style: Default::default(),
                     },
                 ],
             }],
