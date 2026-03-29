@@ -179,23 +179,21 @@ fn build_font_correction_plan(
     }
 
     // --- Resolve encoding ---
-    // Only change encoding when there's a clear mismatch. Don't override
-    // existing correct encodings — that causes regressions (e.g., 429_429425).
-    let current_enc = get_simple_encoding_info(doc, dict).0;
-    let resolved_encoding = if is_symbolic && subtype == "TrueType" && dict.has(b"Encoding") {
+    let resolved_encoding = if is_symbolic && subtype == "TrueType" {
         ResolvedEncoding::RemoveEntirely
-    } else if !is_subset && has_ff2 && !is_symbolic && current_enc.is_empty() {
-        // Non-subset TrueType substitute WITHOUT encoding: add WinAnsi
+    } else if !is_subset && has_ff2 && !is_symbolic {
+        // Non-subset TrueType substitute: enforce WinAnsi
         ResolvedEncoding::Enforce("WinAnsiEncoding".to_string())
     } else {
         ResolvedEncoding::NoChange
     };
 
     // --- Resolve Subtype ---
-    // Don't change Subtype here — sync_subtypes_from_fontfile already handles it.
-    // Changing Subtype in the plan causes cascading issues: subsequent pipeline
-    // steps see the new Subtype and make wrong encoding decisions.
-    let new_subtype: Option<Vec<u8>> = None;
+    let new_subtype = if has_ff2 && subtype == "Type1" && !is_subset {
+        Some(b"TrueType".to_vec())
+    } else {
+        None
+    };
 
     // --- Compute width corrections ---
     let width_corrections = compute_plan_widths(doc, font_id, &resolved_encoding, has_ff2, has_ff3);
