@@ -66,35 +66,42 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         }
     }
 
-    // 2. Parse template → FormTree (with data binding from datasets packet).
-    let (mut tree, root_id) = parse_template(&template_xml, packets.datasets())?;
+    // 2. Try XFA template → layout → render pipeline.
+    //    If this fails (parse error, empty template, layout 0 pages, lopdf error),
+    //    fall back to preserving the existing page content with AcroForm stripped.
+    match xfa_flatten_inner(pdf_bytes, &template_xml, packets.datasets()) {
+        Ok(out) => Ok(out),
+        Err(_) => static_fallback(pdf_bytes),
+    }
+}
 
-    // 2b. Apply dynamic event scripts (presence toggles, value propagation).
+/// Core XFA flatten pipeline: parse template, bind data, layout, render.
+fn xfa_flatten_inner(
+    pdf_bytes: &[u8],
+    template_xml: &str,
+    datasets_xml: Option<&str>,
+) -> Result<Vec<u8>> {
     use crate::dynamic::apply_dynamic_scripts;
+
+    let (mut tree, root_id) = parse_template(template_xml, datasets_xml)?;
     let _ = apply_dynamic_scripts(&mut tree, root_id);
 
-    // 3. Layout.
     let engine = LayoutEngine::new(&tree);
     let layout = engine
         .layout(root_id)
         .map_err(|e| XfaError::LayoutFailed(format!("{e:?}")))?;
 
     if layout.pages.is_empty() {
-        return Err(XfaError::LayoutFailed(
-            "layout produced 0 pages".to_string(),
-        ));
+        return Err(XfaError::LayoutFailed("layout produced 0 pages".into()));
     }
 
-    // 4. Generate content stream bytes for each layout page.
     let config = XfaRenderConfig::default();
     let overlays = generate_all_overlays(&layout, &config)
         .map_err(|e| XfaError::LayoutFailed(format!("overlay generation: {e:?}")))?;
 
-    // 5. Mutate the lopdf document.
     let mut doc = Document::load_mem(pdf_bytes)
         .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
 
-    // Build a font resource dictionary (Helvetica / Type 1).
     let font_dict = dictionary! {
         "Type"     => Object::Name(b"Font".to_vec()),
         "Subtype"  => Object::Name(b"Type1".to_vec()),
@@ -103,41 +110,45 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     };
     let font_id = doc.add_object(Object::Dictionary(font_dict));
 
-    // Get the ordered list of existing page IDs.
     let existing_page_ids: Vec<ObjectId> = doc.page_iter().collect();
     let n_layout = overlays.len();
     let n_existing = existing_page_ids.len();
 
-    // Reuse existing pages for the first `min(n_layout, n_existing)` layout pages.
     for (i, overlay_bytes) in overlays.iter().enumerate() {
         if i < n_existing {
-            let page_id = existing_page_ids[i];
-            // Replace content stream with the XFA overlay.
-            write_page_content(&mut doc, page_id, overlay_bytes, font_id)?;
+            write_page_content(&mut doc, existing_page_ids[i], overlay_bytes, font_id)?;
         } else {
-            // Create an additional page for overflow pages.
             let lp = &layout.pages[i];
-            let w = lp.width;
-            let h = lp.height;
-            add_new_page(&mut doc, w, h, overlay_bytes, font_id)?;
+            add_new_page(&mut doc, lp.width, lp.height, overlay_bytes, font_id)?;
         }
     }
 
-    // If layout produced fewer pages than the original PDF had, remove extras.
     if n_layout < n_existing {
-        // We leave surplus pages blank rather than delete them (simpler,
-        // and avoids page-tree corruption). They will render as white pages.
         for &page_id in &existing_page_ids[n_layout..n_existing] {
             write_page_content(&mut doc, page_id, &[], font_id)?;
         }
     }
 
-    // 6. Remove /AcroForm from catalog.
     remove_acroform(&mut doc);
 
     let mut out = Vec::new();
     doc.save_to(&mut out)
         .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
+    Ok(out)
+}
+
+/// Fallback: preserve existing page content, strip AcroForm/widgets only.
+/// If lopdf can't parse the PDF (corrupt xref), return the original bytes
+/// unchanged — the PDF is too corrupt for us to modify but still renderable.
+fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut doc = match Document::load_mem(pdf_bytes) {
+        Ok(d) => d,
+        Err(_) => return Ok(pdf_bytes.to_vec()), // Too corrupt — return as-is
+    };
+    strip_widgets_and_acroform(&mut doc);
+    let mut out = Vec::new();
+    doc.save_to(&mut out)
+        .map_err(|e| XfaError::LayoutFailed(format!("fallback save: {e}")))?;
     Ok(out)
 }
 
@@ -167,11 +178,7 @@ fn pages_have_static_content(doc: &Document) -> bool {
         // would be this large.  This prevents the early-return path from
         // suppressing XFA flatten for forms like USCIS I-765 where the
         // static rendering has layout but no data values.
-        let has_substantial_content = streams
-            .iter()
-            .map(|s| s.len())
-            .sum::<usize>()
-            > 20_000;
+        let has_substantial_content = streams.iter().map(|s| s.len()).sum::<usize>() > 20_000;
         if !has_substantial_content {
             continue;
         }
