@@ -160,8 +160,18 @@ fn pages_have_static_content(doc: &Document) -> bool {
             continue;
         }
 
-        let has_substantial_content =
-            streams.len() > 1 || streams.iter().any(|stream| stream.len() > 200);
+        // Require a MUCH higher byte threshold — simple form chrome
+        // (borders, labels, headers) can easily exceed 200 bytes without
+        // containing actual field data.  Use 20 KB as the threshold:
+        // only truly pre-rendered pages (with full form data embedded)
+        // would be this large.  This prevents the early-return path from
+        // suppressing XFA flatten for forms like USCIS I-765 where the
+        // static rendering has layout but no data values.
+        let has_substantial_content = streams
+            .iter()
+            .map(|s| s.len())
+            .sum::<usize>()
+            > 20_000;
         if !has_substantial_content {
             continue;
         }
