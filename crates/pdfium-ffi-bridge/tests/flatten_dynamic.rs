@@ -251,6 +251,7 @@ fn flatten_multipage_preserves_pagination() {
                         content: LayoutContent::Field {
                             value: "Alice".to_string(),
                             field_kind: xfa_layout_engine::form::FieldKind::Text,
+                            font_size: 0.0,
                         },
                         children: vec![],
                         style: Default::default(),
@@ -262,6 +263,7 @@ fn flatten_multipage_preserves_pagination() {
                         content: LayoutContent::Field {
                             value: "Amsterdam".to_string(),
                             field_kind: xfa_layout_engine::form::FieldKind::Text,
+                            font_size: 0.0,
                         },
                         children: vec![],
                         style: Default::default(),
@@ -278,6 +280,7 @@ fn flatten_multipage_preserves_pagination() {
                     content: LayoutContent::Field {
                         value: "Additional notes here".to_string(),
                         field_kind: xfa_layout_engine::form::FieldKind::Text,
+                        font_size: 0.0,
                     },
                     children: vec![],
                     style: Default::default(),

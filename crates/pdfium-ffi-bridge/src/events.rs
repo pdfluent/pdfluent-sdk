@@ -295,6 +295,7 @@ mod tests {
                         content: LayoutContent::Field {
                             value: "Alice".to_string(),
                             field_kind: xfa_layout_engine::form::FieldKind::Text,
+                            font_size: 0.0,
                         },
                         children: vec![],
                         style: Default::default(),
@@ -306,6 +307,7 @@ mod tests {
                         content: LayoutContent::Field {
                             value: String::new(),
                             field_kind: xfa_layout_engine::form::FieldKind::Text,
+                            font_size: 0.0,
                         },
                         children: vec![],
                         style: Default::default(),
