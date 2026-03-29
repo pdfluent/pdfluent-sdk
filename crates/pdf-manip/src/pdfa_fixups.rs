@@ -1298,18 +1298,15 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
 // Named actions: only NextPage, PrevPage, FirstPage, LastPage are allowed.
 
 fn fix_forbidden_actions(doc: &mut Document) -> usize {
-    const FORBIDDEN_TYPES: &[&[u8]] = &[
-        b"Launch",
-        b"Sound",
-        b"Movie",
-        b"ResetForm",
-        b"ImportData",
-        b"Hide",
-        b"SetOCGState",
-        b"Rendition",
-        b"Trans",
-        b"GoTo3DView",
-        b"JavaScript",
+    // PDF/A §6.5.1: only these action types are permitted.
+    const ALLOWED_ACTION_TYPES: &[&[u8]] = &[
+        b"GoTo",
+        b"GoToR",
+        b"GoToE",
+        b"Thread",
+        b"URI",
+        b"Named",
+        b"SubmitForm",
     ];
     const ALLOWED_NAMED: &[&[u8]] = &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
 
@@ -1342,7 +1339,7 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
                 });
                 match s {
                     None => true, // No S key → unknown action type → remove
-                    Some(ref s) if FORBIDDEN_TYPES.iter().any(|f| s == *f) => true,
+                    Some(ref s) if !ALLOWED_ACTION_TYPES.iter().any(|a| s == *a) => true,
                     Some(ref s) if s == b"Named" => {
                         // Check N key for named action
                         let n = action.get(b"N").ok().and_then(|o| {
@@ -1397,7 +1394,7 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
             });
             match s {
                 None => true,
-                Some(ref s) if FORBIDDEN_TYPES.iter().any(|f| s == *f) => true,
+                Some(ref s) if !ALLOWED_ACTION_TYPES.iter().any(|a| s == *a) => true,
                 Some(ref s) if s == b"Named" => {
                     let n = dict.get(b"N").ok().and_then(|o| {
                         if let Object::Name(n) = o {
