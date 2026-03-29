@@ -699,8 +699,10 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
         if let Some(content) = page.page_stream() {
             let ops = detect_device_color_ops(content);
             report_color_vs_profile_eff(&ops, eff_cmyk, eff_rgb, eff_gray, &loc, report);
-            // §6.2.4.3: implicit DeviceGray — painting operators with no prior color command
-            // use DeviceGray as the default. Fire when gray has no matching profile/Default*.
+            // Implicit DeviceGray: painting operators with no prior color command
+            // use DeviceGray as the default. Fire when gray has no matching
+            // profile/Default*.
+            // veraPDF reports §6.2.3.3 for this. (#FN-6.2.3.3)
             if eff_gray != 1
                 && eff_gray != 3
                 && eff_gray != 4
@@ -711,11 +713,22 @@ pub fn check_device_color_vs_output_intent(pdf: &Pdf, report: &mut ComplianceRep
             {
                 error_at(
                     report,
-                    "6.2.4.3",
-                    "Implicit DeviceGray (painting without explicit color) in page content",
+                    "6.2.3.3",
+                    "Implicit DeviceGray used without OutputIntent (painting without explicit color)",
                     loc.clone(),
                 );
             }
+        } else if eff_gray == 0 {
+            // No page content stream, but the page still has a default
+            // DeviceGray fill color.  If the page has annotations or
+            // form fields that use the default color space, this is a violation.
+            // veraPDF flags this at the page level. (#FN-6.2.3.3-no-content)
+            error_at(
+                report,
+                "6.2.3.3",
+                "No OutputIntent and no content stream (default DeviceGray applies)",
+                loc.clone(),
+            );
         }
 
         // Scan Form XObject content streams
@@ -2474,9 +2487,17 @@ fn detect_device_color_ops(content: &[u8]) -> DeviceColorOps {
 fn content_has_implicit_gray(content: &[u8]) -> bool {
     let text = String::from_utf8_lossy(content);
     let tokens: Vec<&str> = text.split_ascii_whitespace().collect();
-    let has_painting = tokens
-        .iter()
-        .any(|&t| matches!(t, "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "S" | "s"));
+    // Any operator that uses fill/stroke color: path painting, text, Do.
+    // BT begins a text object that uses the current fill color; even if no
+    // text-showing operator follows, the text state is established with the
+    // default DeviceGray fill.
+    let has_painting = tokens.iter().any(|&t| {
+        matches!(
+            t,
+            "f" | "F" | "f*" | "B" | "B*" | "b" | "b*" | "S" | "s"
+                | "Tj" | "TJ" | "'" | "\"" | "Do" | "BT"
+        )
+    });
     let has_color = tokens.iter().any(|&t| {
         matches!(
             t,

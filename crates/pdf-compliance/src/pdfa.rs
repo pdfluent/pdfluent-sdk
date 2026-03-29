@@ -91,7 +91,11 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     // Early exit: if critical structural checks already failed, skip content analysis.
     // "Critical" = missing XMP, encrypted, or wrong file header — these guarantee
     // non-compliance regardless of content.
+    // Before exiting, run device color checks — they're fast and veraPDF runs
+    // them regardless of structural failures. (#FN-6.2.3.3)
     if has_critical_structural_failure(&report) {
+        check_device_colorspaces(pdf, &mut report);
+        check_device_color_vs_output_intent(pdf, &mut report);
         remap_clause_numbers(&mut report, level);
         report.compliant = report.is_compliant();
         return report;
