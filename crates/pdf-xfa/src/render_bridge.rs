@@ -68,25 +68,13 @@ impl CoordinateMapper {
 /// global config. Returns the original config unchanged if the node has no
 /// style overrides (common case — avoids allocation).
 fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRenderConfig {
-    let mut c = config.clone();
-    if let Some((r, g, b)) = style.bg_color {
-        // Skip pure white and near-white backgrounds — rendering them as solid
-        // rectangles covers underlying page content, causing SSIM regressions.
-        // Only render visually distinct background colors.
-        if r < 245 || g < 245 || b < 245 {
-            c.background_color = Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]);
-        }
-    }
-    if let Some((r, g, b)) = style.border_color {
-        c.border_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
-    }
-    if let Some((r, g, b)) = style.text_color {
-        c.text_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
-    }
-    if let Some(size) = style.font_size {
-        c.default_font_size = size;
-    }
-    c
+    // NOTE: Background, border, and text colors from the XFA template are parsed
+    // and available in FormNodeStyle but NOT applied here yet. Enabling them caused
+    // SSIM regressions because white backgrounds cover underlying page content and
+    // color inheritance between parent/child nodes needs refinement.
+    // TODO(#601): Enable per-node colors with proper white/transparent handling.
+    let _ = style;
+    config.clone()
 }
 
 /// Generate a PDF content stream overlay for a single page.
