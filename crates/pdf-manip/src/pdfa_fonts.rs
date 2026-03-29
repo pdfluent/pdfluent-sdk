@@ -60,14 +60,13 @@ pub fn restore_stripped_encodings(
                 // Encoding removed entirely → always restore
                 true
             } else if is_subset {
-                // For subset fonts: restore if the encoding TYPE changed
-                // (e.g., Name → Dictionary). Subset encodings from the
-                // original authoring tool are correct; our pipeline's
-                // Differences additions can break the glyph lookup.
-                let original_is_name = matches!(original_enc, Object::Name(_));
-                let current_is_dict =
-                    matches!(d.get(b"Encoding").ok(), Some(Object::Dictionary(_)));
-                original_is_name && current_is_dict
+                // Don't restore modified encodings for subset fonts.
+                // The Differences added by fix_notdef_glyph_refs are
+                // intentional: they map .notdef codes (127, 0-31) to
+                // "space" to prevent §6.2.11.8:1 violations. Undoing
+                // them reintroduces those violations (e.g., 174_174612
+                // code 127 DELETE → .notdef after restoring MacRomanEncoding).
+                false
             } else {
                 false
             }
