@@ -13578,6 +13578,14 @@ pub fn fix_undefined_encoding_codes(doc: &mut Document) -> usize {
             if is_font_symbolic(doc, dict) || is_symbolic_font_name(&base_font) {
                 return None;
             }
+            // Skip subset fonts — adding Differences for undefined WinAnsi codes
+            // changes the Encoding from a simple name to a dict with Differences,
+            // which alters veraPDF's glyph lookup path and can trigger §6.2.11.4.1:2
+            // for unrelated codes in the subset.
+            let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
+            if is_subset {
+                return None;
+            }
             // Check if encoding is WinAnsiEncoding (with or without Differences).
             let enc = dict.get(b"Encoding").ok()?;
             let is_winansi = match enc {
