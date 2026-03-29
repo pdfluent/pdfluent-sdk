@@ -342,6 +342,7 @@ fn standard_encoding_glyph_name(code: u8) -> Option<&'static str> {
 }
 
 /// Glyph name for a code in WinAnsiEncoding (PDF spec Table D.1).
+#[allow(dead_code)]
 fn winansi_encoding_glyph_name(code: u8) -> Option<&'static str> {
     match code {
         32 => Some("space"),
