@@ -82,6 +82,252 @@ pub fn restore_stripped_encodings(
 }
 
 // ---------------------------------------------------------------------------
+// Two-Phase Font Correction Pipeline
+// ---------------------------------------------------------------------------
+
+/// Encoding decision for a font.
+#[derive(Debug, Clone)]
+pub enum ResolvedEncoding {
+    /// Symbolic font: remove /Encoding entirely (§6.2.11.6:3)
+    RemoveEntirely,
+    /// Non-symbolic: enforce a specific base encoding name
+    Enforce(String),
+    /// Keep existing encoding with specific Differences entries
+    RetainWithDifferences(Vec<(u8, String)>),
+    /// No change needed
+    NoChange,
+}
+
+/// Correction plan for a single font, computed without mutations.
+#[derive(Debug, Clone)]
+pub struct FontCorrectionPlan {
+    pub font_id: ObjectId,
+    pub resolved_encoding: ResolvedEncoding,
+    /// Width corrections: index in Widths array → new integer width
+    pub width_corrections: Vec<(usize, i32)>,
+    /// New Subtype if it needs changing (e.g., Type1 → TrueType)
+    pub new_subtype: Option<Vec<u8>>,
+}
+
+/// Run the two-phase font correction pipeline.
+/// Phase 1: Analyze all fonts and build correction plans (no mutations).
+/// Phase 2: Apply all plans in one pass (mutations).
+pub fn enforce_pdfa_font_compliance(doc: &mut Document) -> usize {
+    // Step 0: Isolate shared FontDescriptors
+    isolate_font_descriptors(doc);
+
+    // Step 1: Collect all simple font dicts
+    let font_ids: Vec<(ObjectId, String, String)> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            let dict = obj.as_dict().ok()?;
+            let subtype = get_name(dict, b"Subtype")?;
+            if subtype != "TrueType" && subtype != "Type1" && subtype != "MMType1" {
+                return None;
+            }
+            let base_font = get_name(dict, b"BaseFont").unwrap_or_default();
+            Some((id, subtype, base_font))
+        })
+        .collect();
+
+    // Step 2: Build correction plans (NO mutations)
+    let mut plans: Vec<FontCorrectionPlan> = Vec::new();
+    for (font_id, subtype, base_font) in &font_ids {
+        let plan = build_font_correction_plan(doc, *font_id, subtype, base_font);
+        if let Some(p) = plan {
+            plans.push(p);
+        }
+    }
+
+    // Step 3: Apply all plans (mutations)
+    let mut fixed = 0;
+    for plan in &plans {
+        if apply_font_correction_plan(doc, plan) {
+            fixed += 1;
+        }
+    }
+    fixed
+}
+
+/// Build a correction plan for a single font by analyzing its current state.
+fn build_font_correction_plan(
+    doc: &Document,
+    font_id: ObjectId,
+    subtype: &str,
+    base_font: &str,
+) -> Option<FontCorrectionPlan> {
+    let dict = doc.objects.get(&font_id)?.as_dict().ok()?;
+    let is_subset = base_font.len() > 7 && base_font.as_bytes()[6] == b'+';
+    let is_symbolic = is_font_symbolic(doc, dict);
+
+    // Get FontDescriptor info
+    let fd_id = match dict.get(b"FontDescriptor").ok() {
+        Some(Object::Reference(r)) => *r,
+        _ => return None,
+    };
+    let (has_ff1, has_ff2, has_ff3) = {
+        let fd = doc.objects.get(&fd_id)?.as_dict().ok()?;
+        (
+            fd.has(b"FontFile"),
+            fd.has(b"FontFile2"),
+            fd.has(b"FontFile3"),
+        )
+    };
+    if !has_ff1 && !has_ff2 && !has_ff3 {
+        return None; // No embedded font program
+    }
+
+    // --- Resolve encoding ---
+    let resolved_encoding = if is_symbolic && subtype == "TrueType" {
+        ResolvedEncoding::RemoveEntirely
+    } else if !is_subset && has_ff2 && !is_symbolic {
+        // Non-subset TrueType substitute: enforce WinAnsi
+        ResolvedEncoding::Enforce("WinAnsiEncoding".to_string())
+    } else {
+        ResolvedEncoding::NoChange
+    };
+
+    // --- Resolve Subtype ---
+    let new_subtype = if has_ff2 && subtype == "Type1" && !is_subset {
+        Some(b"TrueType".to_vec())
+    } else {
+        None
+    };
+
+    // --- Compute width corrections ---
+    let width_corrections = compute_plan_widths(doc, font_id, &resolved_encoding, has_ff2, has_ff3);
+
+    Some(FontCorrectionPlan {
+        font_id,
+        resolved_encoding,
+        width_corrections,
+        new_subtype,
+    })
+}
+
+/// Compute width corrections based on the RESOLVED (final) encoding state.
+fn compute_plan_widths(
+    doc: &Document,
+    font_id: ObjectId,
+    resolved_encoding: &ResolvedEncoding,
+    has_ff2: bool,
+    _has_ff3: bool,
+) -> Vec<(usize, i32)> {
+    let dict = match doc.objects.get(&font_id) {
+        Some(Object::Dictionary(d)) => d,
+        _ => return vec![],
+    };
+
+    let first_char = match dict.get(b"FirstChar").ok() {
+        Some(Object::Integer(i)) => *i as u32,
+        _ => return vec![],
+    };
+    let existing_widths = match dict.get(b"Widths").ok() {
+        Some(Object::Array(arr)) => arr.clone(),
+        Some(Object::Reference(r)) => match doc.get_object(*r) {
+            Ok(Object::Array(arr)) => arr.clone(),
+            _ => return vec![],
+        },
+        _ => return vec![],
+    };
+
+    // Determine the effective encoding name for width computation
+    let effective_enc = match resolved_encoding {
+        ResolvedEncoding::Enforce(name) => name.clone(),
+        ResolvedEncoding::NoChange => get_simple_encoding_info(doc, dict).0,
+        _ => String::new(),
+    };
+
+    if !has_ff2 {
+        return vec![]; // Only handle TrueType for now
+    }
+
+    // Read font data
+    let fd_id = match dict.get(b"FontDescriptor").ok() {
+        Some(Object::Reference(r)) => *r,
+        _ => return vec![],
+    };
+    let font_data = match read_embedded_font_data(doc, fd_id) {
+        Some(d) => d,
+        None => return vec![],
+    };
+
+    let Ok(face) = ttf_parser::Face::parse(&font_data, 0) else {
+        return vec![];
+    };
+    let upem = face.units_per_em() as f64;
+    if upem == 0.0 {
+        return vec![];
+    }
+    let _scale = 1000.0 / upem;
+
+    let enc_info = (effective_enc, std::collections::HashMap::new());
+    let corrections = compute_truetype_width_corrections_inner(
+        &font_data,
+        first_char,
+        &existing_widths,
+        &enc_info,
+        false, // not symbolic (we already filtered)
+    );
+    corrections
+        .into_iter()
+        .map(|(idx, w)| (idx, w as i32))
+        .collect()
+}
+
+/// Apply a single font correction plan to the document.
+fn apply_font_correction_plan(doc: &mut Document, plan: &FontCorrectionPlan) -> bool {
+    let mut changed = false;
+
+    // Apply Subtype change
+    if let Some(ref new_sub) = plan.new_subtype {
+        if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&plan.font_id) {
+            d.set("Subtype", Object::Name(new_sub.clone()));
+            changed = true;
+        }
+    }
+
+    // Apply encoding
+    match &plan.resolved_encoding {
+        ResolvedEncoding::RemoveEntirely => {
+            if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&plan.font_id) {
+                if d.has(b"Encoding") {
+                    d.remove(b"Encoding");
+                    changed = true;
+                }
+            }
+        }
+        ResolvedEncoding::Enforce(name) => {
+            if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&plan.font_id) {
+                d.set("Encoding", Object::Name(name.as_bytes().to_vec()));
+                changed = true;
+            }
+        }
+        ResolvedEncoding::RetainWithDifferences(_diffs) => {
+            // TODO: implement Differences application
+        }
+        ResolvedEncoding::NoChange => {}
+    }
+
+    // Apply width corrections
+    if !plan.width_corrections.is_empty() {
+        if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&plan.font_id) {
+            if let Ok(Object::Array(ref mut widths)) = d.get_mut(b"Widths") {
+                for &(idx, new_w) in &plan.width_corrections {
+                    if idx < widths.len() {
+                        widths[idx] = Object::Integer(new_w as i64);
+                    }
+                }
+                changed = true;
+            }
+        }
+    }
+
+    changed
+}
+
+// ---------------------------------------------------------------------------
 // Font Descriptor Isolation — prevent FD-sharing corruption
 // ---------------------------------------------------------------------------
 
