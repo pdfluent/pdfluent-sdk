@@ -9,6 +9,7 @@ use std::io::{Read, Write};
 
 /// Run all supplementary PDF/A fixups.
 pub fn run_fixups(doc: &mut Document) -> FixupReport {
+    let standard_encoding_fixed = fix_standard_encoding(doc);
     let tt_encoding_diffs_fixed = fix_truetype_encoding_differences(doc);
     let devicen_colorants_fixed = fix_devicen_colorants(doc);
     let forbidden_annots_removed = fix_forbidden_annotations_extra(doc);
@@ -64,6 +65,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let stream_lengths_fixed = fix_stream_lengths(doc);
 
     FixupReport {
+        standard_encoding_fixed,
         font_type_fixed,
         form_xobject_bbox_fixed,
         tt_encoding_diffs_fixed,
@@ -103,6 +105,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
 /// Report from supplementary fixups.
 #[derive(Debug, Clone, Default)]
 pub struct FixupReport {
+    pub standard_encoding_fixed: usize,
     pub tt_encoding_diffs_fixed: usize,
     pub devicen_colorants_fixed: usize,
     pub forbidden_annots_removed: usize,
@@ -136,6 +139,106 @@ pub struct FixupReport {
     pub transparency_groups_added: usize,
     pub font_type_fixed: usize,
     pub form_xobject_bbox_fixed: usize,
+}
+
+// ---------------------------------------------------------------------------
+// 6.2.11.6 — Replace /StandardEncoding with /WinAnsiEncoding
+// ---------------------------------------------------------------------------
+//
+// PDF/A §6.2.11.6 only allows /WinAnsiEncoding and /MacRomanEncoding as
+// BaseEncoding for non-symbolic simple fonts.  /StandardEncoding is forbidden.
+// This pass replaces it everywhere — both as a direct Encoding name and as a
+// BaseEncoding value inside an Encoding dictionary.
+
+fn fix_standard_encoding(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let action = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            // Only simple fonts (Type1, TrueType, MMType1).
+            let subtype = get_name_val(dict, b"Subtype");
+            if !matches!(
+                subtype.as_deref(),
+                Some("Type1") | Some("TrueType") | Some("MMType1")
+            ) {
+                continue;
+            }
+            // Skip symbolic fonts — they use internal encodings.
+            if is_symbolic(doc, dict) {
+                continue;
+            }
+            match dict.get(b"Encoding").ok() {
+                // /Encoding /StandardEncoding
+                Some(Object::Name(n)) if n == b"StandardEncoding" => StdEncAction::ReplaceName,
+                // /Encoding << /BaseEncoding /StandardEncoding ... >>
+                Some(Object::Dictionary(enc)) => {
+                    if matches!(enc.get(b"BaseEncoding").ok(), Some(Object::Name(n)) if n == b"StandardEncoding")
+                    {
+                        StdEncAction::ReplaceInlineBase
+                    } else {
+                        StdEncAction::None
+                    }
+                }
+                // /Encoding is an indirect reference
+                Some(Object::Reference(enc_id)) => {
+                    match doc.objects.get(enc_id) {
+                        Some(Object::Dictionary(enc)) => {
+                            if matches!(enc.get(b"BaseEncoding").ok(), Some(Object::Name(n)) if n == b"StandardEncoding")
+                            {
+                                StdEncAction::ReplaceRefBase(*enc_id)
+                            } else {
+                                StdEncAction::None
+                            }
+                        }
+                        _ => StdEncAction::None,
+                    }
+                }
+                _ => StdEncAction::None,
+            }
+        };
+
+        match action {
+            StdEncAction::None => {}
+            StdEncAction::ReplaceName => {
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                    count += 1;
+                }
+            }
+            StdEncAction::ReplaceInlineBase => {
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    if let Ok(Object::Dictionary(ref mut enc)) = dict.get_mut(b"Encoding") {
+                        enc.set(
+                            "BaseEncoding",
+                            Object::Name(b"WinAnsiEncoding".to_vec()),
+                        );
+                        count += 1;
+                    }
+                }
+            }
+            StdEncAction::ReplaceRefBase(enc_id) => {
+                if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&enc_id) {
+                    enc.set(
+                        "BaseEncoding",
+                        Object::Name(b"WinAnsiEncoding".to_vec()),
+                    );
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+enum StdEncAction {
+    None,
+    ReplaceName,
+    ReplaceInlineBase,
+    ReplaceRefBase(ObjectId),
 }
 
 // ---------------------------------------------------------------------------
@@ -6675,8 +6778,12 @@ fn fix_non_ascii_pdf_names(doc: &mut Document) -> usize {
     /// Truncates to 127 bytes to comply with ISO 19005-2 rule 6.1.13:4
     /// ("A conforming file shall not contain any name longer than 127 bytes").
     fn sanitize_name(name: &[u8]) -> Option<Vec<u8>> {
+        if name.iter().all(|&b| b <= 127) && name.len() <= 127 {
+            return None; // already ASCII-clean and within length limit
+        }
+        // Pure-ASCII but too long — truncate.
         if name.iter().all(|&b| b <= 127) {
-            return None; // already ASCII-clean
+            return Some(name[..127].to_vec());
         }
         let mut out = Vec::with_capacity(name.len() * 2);
         for &b in name {
