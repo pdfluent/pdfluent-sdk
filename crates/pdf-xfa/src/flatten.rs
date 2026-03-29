@@ -102,13 +102,27 @@ fn xfa_flatten_inner(
     let mut doc = Document::load_mem(pdf_bytes)
         .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
 
-    let font_dict = dictionary! {
-        "Type"     => Object::Name(b"Font".to_vec()),
-        "Subtype"  => Object::Name(b"Type1".to_vec()),
-        "BaseFont" => Object::Name(b"Helvetica".to_vec()),
-        "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec())
-    };
-    let font_id = doc.add_object(Object::Dictionary(font_dict));
+    // Register standard PDF fonts: F1=Times-Roman (serif), F2=Helvetica (sans), F3=Courier (mono).
+    let font_ids: [ObjectId; 3] = [
+        doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Font".to_vec()),
+            "Subtype"  => Object::Name(b"Type1".to_vec()),
+            "BaseFont" => Object::Name(b"Times-Roman".to_vec()),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec())
+        })),
+        doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Font".to_vec()),
+            "Subtype"  => Object::Name(b"Type1".to_vec()),
+            "BaseFont" => Object::Name(b"Helvetica".to_vec()),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec())
+        })),
+        doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Font".to_vec()),
+            "Subtype"  => Object::Name(b"Type1".to_vec()),
+            "BaseFont" => Object::Name(b"Courier".to_vec()),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec())
+        })),
+    ];
 
     let existing_page_ids: Vec<ObjectId> = doc.page_iter().collect();
     let n_layout = overlays.len();
@@ -116,16 +130,16 @@ fn xfa_flatten_inner(
 
     for (i, overlay_bytes) in overlays.iter().enumerate() {
         if i < n_existing {
-            write_page_content(&mut doc, existing_page_ids[i], overlay_bytes, font_id)?;
+            write_page_content(&mut doc, existing_page_ids[i], overlay_bytes, &font_ids)?;
         } else {
             let lp = &layout.pages[i];
-            add_new_page(&mut doc, lp.width, lp.height, overlay_bytes, font_id)?;
+            add_new_page(&mut doc, lp.width, lp.height, overlay_bytes, &font_ids)?;
         }
     }
 
     if n_layout < n_existing {
         for &page_id in &existing_page_ids[n_layout..n_existing] {
-            write_page_content(&mut doc, page_id, &[], font_id)?;
+            write_page_content(&mut doc, page_id, &[], &font_ids)?;
         }
     }
 
@@ -296,10 +310,9 @@ fn write_page_content(
     doc: &mut Document,
     page_id: ObjectId,
     content: &[u8],
-    font_id: ObjectId,
+    font_ids: &[ObjectId; 3],
 ) -> Result<()> {
-    // Build resources dict with Helvetica.
-    let resources = make_resources_dict(font_id);
+    let resources = make_resources_dict(font_ids);
 
     // Build content stream.
     let stream = Stream::new(
@@ -322,9 +335,9 @@ fn add_new_page(
     w: f64,
     h: f64,
     content: &[u8],
-    font_id: ObjectId,
+    font_ids: &[ObjectId; 3],
 ) -> Result<()> {
-    let resources = make_resources_dict(font_id);
+    let resources = make_resources_dict(font_ids);
     let stream = Stream::new(
         dictionary! { "Length" => Object::Integer(content.len() as i64) },
         content.to_vec(),
@@ -357,9 +370,11 @@ fn add_new_page(
     Ok(())
 }
 
-fn make_resources_dict(font_id: ObjectId) -> Dictionary {
+fn make_resources_dict(font_ids: &[ObjectId; 3]) -> Dictionary {
     let mut fonts = Dictionary::new();
-    fonts.set("F1", Object::Reference(font_id));
+    fonts.set("F1", Object::Reference(font_ids[0])); // Times-Roman (serif)
+    fonts.set("F2", Object::Reference(font_ids[1])); // Helvetica (sans-serif)
+    fonts.set("F3", Object::Reference(font_ids[2])); // Courier (monospace)
     let mut resources = Dictionary::new();
     resources.set("Font", Object::Dictionary(fonts));
     resources
