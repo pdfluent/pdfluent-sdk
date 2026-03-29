@@ -47,12 +47,8 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 
     // 1b. Detect pre-rendered pages: if the PDF's existing pages already contain
     // substantial static content (non-empty content streams), this is a "hybrid"
-    // XFA+static PDF.  iText 5 preserves the existing static rendering in this
-    // case rather than re-rendering from the template.  We do the same: strip the
+    // XFA+static PDF.  Preserve the existing static rendering — strip the
     // AcroForm and Widget annotations, keep the original page content.
-    //
-    // This handles government forms (gen-776, gen-778, r3-PDFBOX-2755-0, etc.)
-    // that carry both an XFA template and pre-flattened PDF page streams.
     if let Ok(doc) = Document::load_mem(pdf_bytes) {
         if pages_have_static_content(&doc) {
             let mut doc_mut = Document::load_mem(pdf_bytes)
