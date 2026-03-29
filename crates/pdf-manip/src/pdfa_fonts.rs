@@ -9652,10 +9652,11 @@ fn decrypt_charstring_width(
 /// causing sub-unit discrepancies that veraPDF flags.
 pub fn cff_matrix_scale(matrix_sx: f32) -> f64 {
     if matrix_sx.abs() > f32::EPSILON {
-        let raw = matrix_sx as f64 * 1000.0;
-        // Round to 6 decimal places — f32 has ~7 digits of precision,
-        // so the 7th+ digit is noise from the f32→f64 cast.
-        (raw * 1_000_000.0).round() / 1_000_000.0
+        // Use the raw f32→f64 cast without rounding. veraPDF uses the exact
+        // float value from the CFF, not a rounded version. Rounding to 6
+        // decimal places loses precision for non-standard FontMatrix values
+        // (e.g., 1/1440 for TeX CMSY fonts), causing 3-7 unit width mismatches.
+        matrix_sx as f64 * 1000.0
     } else {
         1.0
     }
