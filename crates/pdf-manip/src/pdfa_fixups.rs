@@ -184,19 +184,17 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
                     }
                 }
                 // /Encoding is an indirect reference
-                Some(Object::Reference(enc_id)) => {
-                    match doc.objects.get(enc_id) {
-                        Some(Object::Dictionary(enc)) => {
-                            if matches!(enc.get(b"BaseEncoding").ok(), Some(Object::Name(n)) if n == b"StandardEncoding")
-                            {
-                                StdEncAction::ReplaceRefBase(*enc_id)
-                            } else {
-                                StdEncAction::None
-                            }
+                Some(Object::Reference(enc_id)) => match doc.objects.get(enc_id) {
+                    Some(Object::Dictionary(enc)) => {
+                        if matches!(enc.get(b"BaseEncoding").ok(), Some(Object::Name(n)) if n == b"StandardEncoding")
+                        {
+                            StdEncAction::ReplaceRefBase(*enc_id)
+                        } else {
+                            StdEncAction::None
                         }
-                        _ => StdEncAction::None,
                     }
-                }
+                    _ => StdEncAction::None,
+                },
                 _ => StdEncAction::None,
             }
         };
@@ -204,34 +202,429 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
         match action {
             StdEncAction::None => {}
             StdEncAction::ReplaceName => {
+                // No Differences existed — build a dict with BaseEncoding + Differences
+                // that preserves the StandardEncoding mapping for all codes where
+                // Standard ≠ WinAnsi.
+                let diffs = build_std_to_winansi_differences(&[]);
+                let mut enc = lopdf::Dictionary::new();
+                enc.set("Type", Object::Name(b"Encoding".to_vec()));
+                enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                if !diffs.is_empty() {
+                    enc.set("Differences", Object::Array(diffs));
+                }
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
-                    dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                    dict.set("Encoding", Object::Dictionary(enc));
                     count += 1;
                 }
             }
             StdEncAction::ReplaceInlineBase => {
+                // Read existing Differences to avoid overriding them.
+                let existing_diff_codes = {
+                    let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                        continue;
+                    };
+                    let Ok(Object::Dictionary(enc)) = dict.get(b"Encoding") else {
+                        continue;
+                    };
+                    extract_differences_codes(enc)
+                };
+                let diffs = build_std_to_winansi_differences(&existing_diff_codes);
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                     if let Ok(Object::Dictionary(ref mut enc)) = dict.get_mut(b"Encoding") {
-                        enc.set(
-                            "BaseEncoding",
-                            Object::Name(b"WinAnsiEncoding".to_vec()),
-                        );
+                        enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                        merge_differences(enc, &diffs);
                         count += 1;
                     }
                 }
             }
             StdEncAction::ReplaceRefBase(enc_id) => {
+                let existing_diff_codes = {
+                    let Some(Object::Dictionary(enc)) = doc.objects.get(&enc_id) else {
+                        continue;
+                    };
+                    extract_differences_codes(enc)
+                };
+                let diffs = build_std_to_winansi_differences(&existing_diff_codes);
                 if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&enc_id) {
-                    enc.set(
-                        "BaseEncoding",
-                        Object::Name(b"WinAnsiEncoding".to_vec()),
-                    );
+                    enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                    merge_differences(enc, &diffs);
                     count += 1;
                 }
             }
         }
     }
     count
+}
+
+/// Extract the set of character codes that already have Differences entries.
+fn extract_differences_codes(enc: &lopdf::Dictionary) -> Vec<u8> {
+    let mut codes = Vec::new();
+    let Ok(Object::Array(arr)) = enc.get(b"Differences") else {
+        return codes;
+    };
+    let mut current_code: Option<u32> = None;
+    for obj in arr.iter() {
+        match obj {
+            Object::Integer(n) => current_code = Some(*n as u32),
+            Object::Name(_) => {
+                if let Some(c) = current_code {
+                    if c <= 255 {
+                        codes.push(c as u8);
+                    }
+                    current_code = Some(c + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    codes
+}
+
+/// Build Differences array entries for codes where StandardEncoding and
+/// WinAnsiEncoding disagree.  Skips codes already in `existing_codes`.
+fn build_std_to_winansi_differences(existing_codes: &[u8]) -> Vec<Object> {
+    use std::collections::HashSet;
+    let existing: HashSet<u8> = existing_codes.iter().copied().collect();
+    let mut diffs = Vec::new();
+    let mut need_code = true;
+
+    for code in 0u16..=255 {
+        let c = code as u8;
+        if existing.contains(&c) {
+            need_code = true; // break the run
+            continue;
+        }
+        let std_name = standard_encoding_glyph_name(c);
+        let win_name = winansi_encoding_glyph_name(c);
+        if std_name == win_name {
+            need_code = true;
+            continue;
+        }
+        // StandardEncoding defines this code differently from WinAnsi — add Differences.
+        if let Some(name) = std_name {
+            if need_code {
+                diffs.push(Object::Integer(code as i64));
+                need_code = false;
+            }
+            diffs.push(Object::Name(name.as_bytes().to_vec()));
+        } else {
+            // StandardEncoding has no glyph for this code but WinAnsi does.
+            // Add .notdef to suppress the WinAnsi mapping. However, .notdef
+            // in Differences can cause §6.2.11.8 — skip this code instead
+            // and let the WinAnsi glyph stand (it's better than .notdef).
+            need_code = true;
+        }
+    }
+    diffs
+}
+
+/// Merge new Differences entries into an existing Encoding dict.
+/// Appends `new_diffs` to any existing Differences array.
+fn merge_differences(enc: &mut lopdf::Dictionary, new_diffs: &[Object]) {
+    if new_diffs.is_empty() {
+        return;
+    }
+    match enc.get_mut(b"Differences") {
+        Ok(Object::Array(arr)) => arr.extend(new_diffs.iter().cloned()),
+        _ => enc.set("Differences", Object::Array(new_diffs.to_vec())),
+    }
+}
+
+/// Glyph name for a code in StandardEncoding (PDF spec Table D.1).
+fn standard_encoding_glyph_name(code: u8) -> Option<&'static str> {
+    match code {
+        32 => Some("space"),
+        33 => Some("exclam"),
+        34 => Some("quotedbl"),
+        35 => Some("numbersign"),
+        36 => Some("dollar"),
+        37 => Some("percent"),
+        38 => Some("ampersand"),
+        39 => Some("quoteright"),
+        40 => Some("parenleft"),
+        41 => Some("parenright"),
+        42 => Some("asterisk"),
+        43 => Some("plus"),
+        44 => Some("comma"),
+        45 => Some("hyphen"),
+        46 => Some("period"),
+        47 => Some("slash"),
+        48..=57 => {
+            const D: &[&str] = &[
+                "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+            ];
+            Some(D[(code - 48) as usize])
+        }
+        58 => Some("colon"),
+        59 => Some("semicolon"),
+        60 => Some("less"),
+        61 => Some("equal"),
+        62 => Some("greater"),
+        63 => Some("question"),
+        64 => Some("at"),
+        65..=90 => {
+            const U: &[&str] = &[
+                "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P",
+                "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+            ];
+            Some(U[(code - 65) as usize])
+        }
+        91 => Some("bracketleft"),
+        92 => Some("backslash"),
+        93 => Some("bracketright"),
+        94 => Some("asciicircum"),
+        95 => Some("underscore"),
+        96 => Some("quoteleft"),
+        97..=122 => {
+            const L: &[&str] = &[
+                "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
+                "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+            ];
+            Some(L[(code - 97) as usize])
+        }
+        123 => Some("braceleft"),
+        124 => Some("bar"),
+        125 => Some("braceright"),
+        126 => Some("asciitilde"),
+        161 => Some("exclamdown"),
+        162 => Some("cent"),
+        163 => Some("sterling"),
+        164 => Some("fraction"),
+        165 => Some("yen"),
+        166 => Some("florin"),
+        167 => Some("section"),
+        168 => Some("currency"),
+        169 => Some("quotesingle"),
+        170 => Some("quotedblleft"),
+        171 => Some("guillemotleft"),
+        172 => Some("guilsinglleft"),
+        173 => Some("guilsinglright"),
+        174 => Some("fi"),
+        175 => Some("fl"),
+        177 => Some("endash"),
+        178 => Some("dagger"),
+        179 => Some("daggerdbl"),
+        180 => Some("periodcentered"),
+        182 => Some("paragraph"),
+        183 => Some("bullet"),
+        184 => Some("quotesinglbase"),
+        185 => Some("quotedblbase"),
+        186 => Some("quotedblright"),
+        187 => Some("guillemotright"),
+        188 => Some("ellipsis"),
+        189 => Some("perthousand"),
+        191 => Some("questiondown"),
+        193 => Some("grave"),
+        194 => Some("acute"),
+        195 => Some("circumflex"),
+        196 => Some("tilde"),
+        197 => Some("macron"),
+        198 => Some("breve"),
+        199 => Some("dotaccent"),
+        200 => Some("dieresis"),
+        202 => Some("ring"),
+        203 => Some("cedilla"),
+        205 => Some("hungarumlaut"),
+        206 => Some("ogonek"),
+        207 => Some("caron"),
+        208 => Some("emdash"),
+        225 => Some("AE"),
+        227 => Some("ordfeminine"),
+        232 => Some("Lslash"),
+        233 => Some("Oslash"),
+        234 => Some("OE"),
+        235 => Some("ordmasculine"),
+        241 => Some("ae"),
+        245 => Some("dotlessi"),
+        248 => Some("lslash"),
+        249 => Some("oslash"),
+        250 => Some("oe"),
+        251 => Some("germandbls"),
+        _ => None,
+    }
+}
+
+/// Glyph name for a code in WinAnsiEncoding (PDF spec Table D.1).
+fn winansi_encoding_glyph_name(code: u8) -> Option<&'static str> {
+    match code {
+        32 => Some("space"),
+        33 => Some("exclam"),
+        34 => Some("quotedbl"),
+        35 => Some("numbersign"),
+        36 => Some("dollar"),
+        37 => Some("percent"),
+        38 => Some("ampersand"),
+        39 => Some("quotesingle"),
+        40 => Some("parenleft"),
+        41 => Some("parenright"),
+        42 => Some("asterisk"),
+        43 => Some("plus"),
+        44 => Some("comma"),
+        45 => Some("hyphen"),
+        46 => Some("period"),
+        47 => Some("slash"),
+        48..=57 => {
+            const D: &[&str] = &[
+                "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+            ];
+            Some(D[(code - 48) as usize])
+        }
+        58 => Some("colon"),
+        59 => Some("semicolon"),
+        60 => Some("less"),
+        61 => Some("equal"),
+        62 => Some("greater"),
+        63 => Some("question"),
+        64 => Some("at"),
+        65..=90 => {
+            const U: &[&str] = &[
+                "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P",
+                "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+            ];
+            Some(U[(code - 65) as usize])
+        }
+        91 => Some("bracketleft"),
+        92 => Some("backslash"),
+        93 => Some("bracketright"),
+        94 => Some("asciicircum"),
+        95 => Some("underscore"),
+        96 => Some("grave"),
+        97..=122 => {
+            const L: &[&str] = &[
+                "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p",
+                "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+            ];
+            Some(L[(code - 97) as usize])
+        }
+        123 => Some("braceleft"),
+        124 => Some("bar"),
+        125 => Some("braceright"),
+        126 => Some("asciitilde"),
+        128 => Some("Euro"),
+        130 => Some("quotesinglbase"),
+        131 => Some("florin"),
+        132 => Some("quotedblbase"),
+        133 => Some("ellipsis"),
+        134 => Some("dagger"),
+        135 => Some("daggerdbl"),
+        136 => Some("circumflex"),
+        137 => Some("perthousand"),
+        138 => Some("Scaron"),
+        139 => Some("guilsinglleft"),
+        140 => Some("OE"),
+        142 => Some("Zcaron"),
+        145 => Some("quoteleft"),
+        146 => Some("quoteright"),
+        147 => Some("quotedblleft"),
+        148 => Some("quotedblright"),
+        149 => Some("bullet"),
+        150 => Some("endash"),
+        151 => Some("emdash"),
+        152 => Some("tilde"),
+        153 => Some("trademark"),
+        154 => Some("scaron"),
+        155 => Some("guilsinglright"),
+        156 => Some("oe"),
+        158 => Some("zcaron"),
+        159 => Some("Ydieresis"),
+        160 => Some("space"),
+        161 => Some("exclamdown"),
+        162 => Some("cent"),
+        163 => Some("sterling"),
+        164 => Some("currency"),
+        165 => Some("yen"),
+        166 => Some("brokenbar"),
+        167 => Some("section"),
+        168 => Some("dieresis"),
+        169 => Some("copyright"),
+        170 => Some("ordfeminine"),
+        171 => Some("guillemotleft"),
+        172 => Some("logicalnot"),
+        173 => Some("hyphen"),
+        174 => Some("registered"),
+        175 => Some("macron"),
+        176 => Some("degree"),
+        177 => Some("plusminus"),
+        178 => Some("twosuperior"),
+        179 => Some("threesuperior"),
+        180 => Some("acute"),
+        181 => Some("mu"),
+        182 => Some("paragraph"),
+        183 => Some("periodcentered"),
+        184 => Some("cedilla"),
+        185 => Some("onesuperior"),
+        186 => Some("ordmasculine"),
+        187 => Some("guillemotright"),
+        188 => Some("onequarter"),
+        189 => Some("onehalf"),
+        190 => Some("threequarters"),
+        191 => Some("questiondown"),
+        192 => Some("Agrave"),
+        193 => Some("Aacute"),
+        194 => Some("Acircumflex"),
+        195 => Some("Atilde"),
+        196 => Some("Adieresis"),
+        197 => Some("Aring"),
+        198 => Some("AE"),
+        199 => Some("Ccedilla"),
+        200 => Some("Egrave"),
+        201 => Some("Eacute"),
+        202 => Some("Ecircumflex"),
+        203 => Some("Edieresis"),
+        204 => Some("Igrave"),
+        205 => Some("Iacute"),
+        206 => Some("Icircumflex"),
+        207 => Some("Idieresis"),
+        208 => Some("Eth"),
+        209 => Some("Ntilde"),
+        210 => Some("Ograve"),
+        211 => Some("Oacute"),
+        212 => Some("Ocircumflex"),
+        213 => Some("Otilde"),
+        214 => Some("Odieresis"),
+        215 => Some("multiply"),
+        216 => Some("Oslash"),
+        217 => Some("Ugrave"),
+        218 => Some("Uacute"),
+        219 => Some("Ucircumflex"),
+        220 => Some("Udieresis"),
+        221 => Some("Yacute"),
+        222 => Some("Thorn"),
+        223 => Some("germandbls"),
+        224 => Some("agrave"),
+        225 => Some("aacute"),
+        226 => Some("acircumflex"),
+        227 => Some("atilde"),
+        228 => Some("adieresis"),
+        229 => Some("aring"),
+        230 => Some("ae"),
+        231 => Some("ccedilla"),
+        232 => Some("egrave"),
+        233 => Some("eacute"),
+        234 => Some("ecircumflex"),
+        235 => Some("edieresis"),
+        236 => Some("igrave"),
+        237 => Some("iacute"),
+        238 => Some("icircumflex"),
+        239 => Some("idieresis"),
+        240 => Some("eth"),
+        241 => Some("ntilde"),
+        242 => Some("ograve"),
+        243 => Some("oacute"),
+        244 => Some("ocircumflex"),
+        245 => Some("otilde"),
+        246 => Some("odieresis"),
+        247 => Some("divide"),
+        248 => Some("oslash"),
+        249 => Some("ugrave"),
+        250 => Some("uacute"),
+        251 => Some("ucircumflex"),
+        252 => Some("udieresis"),
+        253 => Some("yacute"),
+        254 => Some("thorn"),
+        255 => Some("ydieresis"),
+        _ => None,
+    }
 }
 
 enum StdEncAction {
