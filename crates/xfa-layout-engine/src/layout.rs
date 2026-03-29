@@ -200,11 +200,25 @@ impl<'a> LayoutEngine<'a> {
     // -------------------------------------------------------------------
 
     /// Returns true if the node should be completely skipped during layout
-    /// (XFA `presence="hidden"` — no layout space consumed).
+    /// (XFA `presence="hidden"` — no layout space consumed, OR the node
+    /// targets a specific contentArea via `breakBefore targetType="contentArea"`
+    /// and should not participate in the primary content flow).
     /// `presence="invisible"` still takes space, so it is NOT hidden for layout.
     fn is_layout_hidden(&self, id: FormNodeId) -> bool {
         let meta = self.form.meta(id);
-        meta.presence_hidden && !meta.presence_invisible
+        if meta.presence_hidden && !meta.presence_invisible {
+            return true;
+        }
+        // Content-area-targeted nodes (breakBefore targetType="contentArea")
+        // are excluded from the primary flow ONLY when they are small
+        // decorative elements (< 50pt tall).  Large content subforms that
+        // target the primary contentArea should still be laid out.
+        if meta.content_area_break {
+            let node = self.form.get(id);
+            let h = node.box_model.height.unwrap_or(f64::MAX);
+            return h < 50.0;
+        }
+        false
     }
 
     /// Build a queue of `QueuedNode`s from a list of child IDs, skipping
