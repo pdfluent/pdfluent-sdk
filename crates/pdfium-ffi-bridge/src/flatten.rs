@@ -685,8 +685,10 @@ mod tests {
                 lines: vec![text.to_string()],
                 font_size: 12.0,
                 text_align: xfa_layout_engine::types::TextAlign::Left,
+                font_family: xfa_layout_engine::text::FontFamily::SansSerif,
             },
             children: vec![],
+            style: Default::default(),
         }
     }
 

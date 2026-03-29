@@ -138,7 +138,9 @@ fn system_cjk_font() -> Option<FontData> {
                     return Some(Arc::new(bytes));
                 }
             }
-            log::warn!("no system CJK font found; non-embedded CJK fonts will render with a Latin fallback");
+            log::warn!(
+                "no system CJK font found; non-embedded CJK fonts will render with a Latin fallback"
+            );
             None
         })
         .as_ref()

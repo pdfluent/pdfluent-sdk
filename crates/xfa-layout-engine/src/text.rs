@@ -336,10 +336,19 @@ mod tests {
 
     #[test]
     fn font_family_classification() {
-        assert_eq!(FontFamily::from_typeface("Times New Roman"), FontFamily::Serif);
+        assert_eq!(
+            FontFamily::from_typeface("Times New Roman"),
+            FontFamily::Serif
+        );
         assert_eq!(FontFamily::from_typeface("Arial"), FontFamily::SansSerif);
-        assert_eq!(FontFamily::from_typeface("Courier New"), FontFamily::Monospace);
-        assert_eq!(FontFamily::from_typeface("Myriad Pro"), FontFamily::SansSerif);
+        assert_eq!(
+            FontFamily::from_typeface("Courier New"),
+            FontFamily::Monospace
+        );
+        assert_eq!(
+            FontFamily::from_typeface("Myriad Pro"),
+            FontFamily::SansSerif
+        );
         assert_eq!(FontFamily::from_typeface("Verdana"), FontFamily::SansSerif);
         assert_eq!(FontFamily::from_typeface("Georgia"), FontFamily::Serif);
     }
@@ -394,8 +403,10 @@ mod tests {
         };
         let result = wrap_text("Given Name (First Name)", 140.0, &f);
         assert_eq!(
-            result.lines.len(), 1,
-            "Should fit on 1 line but got: {:?}", result.lines
+            result.lines.len(),
+            1,
+            "Should fit on 1 line but got: {:?}",
+            result.lines
         );
     }
 }

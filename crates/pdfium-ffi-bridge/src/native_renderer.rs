@@ -273,8 +273,10 @@ mod tests {
                         lines: vec!["Hello".to_string()],
                         font_size: 10.0,
                         text_align: xfa_layout_engine::types::TextAlign::Left,
+                        font_family: xfa_layout_engine::text::FontFamily::SansSerif,
                     },
                     children: vec![],
+                    style: Default::default(),
                 }],
             }],
         };
@@ -301,8 +303,10 @@ mod tests {
                         lines: vec!["AB".to_string()],
                         font_size: 10.0,
                         text_align: xfa_layout_engine::types::TextAlign::Left,
+                        font_family: xfa_layout_engine::text::FontFamily::SansSerif,
                     },
                     children: vec![],
+                    style: Default::default(),
                 }],
             }],
         };

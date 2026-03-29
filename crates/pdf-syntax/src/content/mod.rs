@@ -35,11 +35,11 @@ pub mod ops;
 
 use crate::content::ops::TypedInstruction;
 use crate::object::Stream;
-use crate::object::dict::keys::{
-    ASCII85_DECODE_ABBREVIATION, BITS_PER_COMPONENT, BPC, COLORSPACE, CS, F, FILTER, H, HEIGHT,
-    IM, IMAGE_MASK, W, WIDTH,
-};
 use crate::object::dict::InlineImageDict;
+use crate::object::dict::keys::{
+    ASCII85_DECODE_ABBREVIATION, BITS_PER_COMPONENT, BPC, COLORSPACE, CS, F, FILTER, H, HEIGHT, IM,
+    IMAGE_MASK, W, WIDTH,
+};
 use crate::object::name::{Name, skip_name_like};
 use crate::object::{Array, Number, Object, ObjectLike};
 use crate::reader::Reader;
@@ -70,8 +70,8 @@ fn compute_raw_inline_image_size(dict: &crate::object::dict::Dict<'_>) -> Option
     }
 
     // /IM true → 1-component bilevel image, always 1 bpc.
-    let is_image_mask = dict.get::<bool>(IM).unwrap_or(false)
-        || dict.get::<bool>(IMAGE_MASK).unwrap_or(false);
+    let is_image_mask =
+        dict.get::<bool>(IM).unwrap_or(false) || dict.get::<bool>(IMAGE_MASK).unwrap_or(false);
 
     let w = dict
         .get::<Number>(W)
@@ -160,10 +160,7 @@ fn find_a85_inline_image_end(
             if stream_data.get(ei_start..ei_start + 2) == Some(b"EI") {
                 let after_ei = ei_start + 2;
                 let ei_delimited = after_ei >= stream_data.len()
-                    || matches!(
-                        stream_data[after_ei],
-                        b' ' | b'\t' | b'\n' | b'\r' | 0x0C
-                    );
+                    || matches!(stream_data[after_ei], b' ' | b'\t' | b'\n' | b'\r' | 0x0C);
                 if ei_delimited {
                     return Some((eos_end, after_ei));
                 }

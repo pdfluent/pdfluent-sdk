@@ -250,8 +250,10 @@ fn flatten_multipage_preserves_pagination() {
                         name: "Page1Name".to_string(),
                         content: LayoutContent::Field {
                             value: "Alice".to_string(),
+                            field_kind: xfa_layout_engine::form::FieldKind::Text,
                         },
                         children: vec![],
+                        style: Default::default(),
                     },
                     LayoutNode {
                         form_node: FormNodeId(1),
@@ -259,8 +261,10 @@ fn flatten_multipage_preserves_pagination() {
                         name: "Page1City".to_string(),
                         content: LayoutContent::Field {
                             value: "Amsterdam".to_string(),
+                            field_kind: xfa_layout_engine::form::FieldKind::Text,
                         },
                         children: vec![],
+                        style: Default::default(),
                     },
                 ],
             },
@@ -273,8 +277,10 @@ fn flatten_multipage_preserves_pagination() {
                     name: "Page2Notes".to_string(),
                     content: LayoutContent::Field {
                         value: "Additional notes here".to_string(),
+                        field_kind: xfa_layout_engine::form::FieldKind::Text,
                     },
                     children: vec![],
+                    style: Default::default(),
                 }],
             },
             LayoutPage {
@@ -286,6 +292,7 @@ fn flatten_multipage_preserves_pagination() {
                     name: "Page3Footer".to_string(),
                     content: LayoutContent::Text("Page 3 of 3".to_string()),
                     children: vec![],
+                    style: Default::default(),
                 }],
             },
         ],
@@ -734,8 +741,10 @@ fn flatten_pdfa_no_javascript_or_embedded_files() {
                     lines: vec!["Test".to_string()],
                     font_size: 12.0,
                     text_align: xfa_layout_engine::types::TextAlign::Left,
+                    font_family: xfa_layout_engine::text::FontFamily::SansSerif,
                 },
                 children: vec![],
+                style: Default::default(),
             }],
         }],
     };

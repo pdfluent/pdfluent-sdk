@@ -128,70 +128,70 @@ impl Renderer {
         // avoid inflating to 4-channel RGBA before the resize. For documents with many large
         // scanned images (e.g. 65× 2445×4724 thumbnails per page) this avoids ~3 GB of
         // per-page allocation by resizing at ¾ the byte cost and skipping the RGBA step.
-        let (rgba_data, skip_resize) =
-            if (x_scale < 1.0 || y_scale < 1.0) && alpha_data.is_none() && !in_type3 {
-                let new_width = (rgb_width as f32 * x_scale)
-                    .ceil()
-                    .max(1.0)
-                    .min((u16::MAX / 2) as f32) as u32;
-                let new_height = (rgb_height as f32 * y_scale)
-                    .ceil()
-                    .max(1.0)
-                    .min((u16::MAX / 2) as f32) as u32;
+        let (rgba_data, skip_resize) = if (x_scale < 1.0 || y_scale < 1.0)
+            && alpha_data.is_none()
+            && !in_type3
+        {
+            let new_width = (rgb_width as f32 * x_scale)
+                .ceil()
+                .max(1.0)
+                .min((u16::MAX / 2) as f32) as u32;
+            let new_height = (rgb_height as f32 * y_scale)
+                .ceil()
+                .max(1.0)
+                .min((u16::MAX / 2) as f32) as u32;
 
-                let src =
-                    FirImage::from_vec_u8(rgb_width, rgb_height, rgb_data.data, PixelType::U8x3)
-                        .unwrap();
-                let mut dst = FirImage::new(new_width, new_height, PixelType::U8x3);
-                let mut resizer = Resizer::new();
-                resizer
-                    .resize(
-                        &src,
-                        &mut dst,
-                        &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(
-                            fast_image_resize::FilterType::Bilinear,
-                        )),
-                    )
-                    .unwrap();
+            let src = FirImage::from_vec_u8(rgb_width, rgb_height, rgb_data.data, PixelType::U8x3)
+                .unwrap();
+            let mut dst = FirImage::new(new_width, new_height, PixelType::U8x3);
+            let mut resizer = Resizer::new();
+            resizer
+                .resize(
+                    &src,
+                    &mut dst,
+                    &ResizeOptions::new().resize_alg(ResizeAlg::Convolution(
+                        fast_image_resize::FilterType::Bilinear,
+                    )),
+                )
+                .unwrap();
 
-                let t_scale_x = rgb_width as f32 / new_width as f32;
-                let t_scale_y = rgb_height as f32 / new_height as f32;
-                additional_transform =
-                    Affine::scale_non_uniform(t_scale_x as f64, t_scale_y as f64);
-                rgb_width = new_width;
-                rgb_height = new_height;
+            let t_scale_x = rgb_width as f32 / new_width as f32;
+            let t_scale_y = rgb_height as f32 / new_height as f32;
+            additional_transform = Affine::scale_non_uniform(t_scale_x as f64, t_scale_y as f64);
+            rgb_width = new_width;
+            rgb_height = new_height;
 
-                let rgba = dst
-                    .into_vec()
+            let rgba = dst
+                .into_vec()
+                .chunks_exact(3)
+                .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255u8])
+                .collect::<Vec<_>>();
+            (rgba, true)
+        } else {
+            let rgba = match alpha_data {
+                None => rgb_data
+                    .data
                     .chunks_exact(3)
                     .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255u8])
-                    .collect::<Vec<_>>();
-                (rgba, true)
-            } else {
-                let rgba = match alpha_data {
-                    None => rgb_data
-                        .data
-                        .chunks_exact(3)
-                        .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255u8])
-                        .collect::<Vec<_>>(),
-                    Some(a) => {
-                        if a.width != rgb_data.width
-                            || a.height != rgb_data.height
-                            || a.interpolate != rgb_data.interpolate
-                        {
-                            return self.draw_image_with_alpha_mask(rgb_data, a);
-                        } else {
-                            rgb_data
-                                .data
-                                .chunks_exact(3)
-                                .zip(a.data)
-                                .flat_map(|(rgb, a)| [rgb[0], rgb[1], rgb[2], a])
-                                .collect::<Vec<_>>()
-                        }
+                    .collect::<Vec<_>>(),
+                Some(a) => {
+                    if a.width != rgb_data.width
+                        || a.height != rgb_data.height
+                        || a.interpolate != rgb_data.interpolate
+                    {
+                        return self.draw_image_with_alpha_mask(rgb_data, a);
+                    } else {
+                        rgb_data
+                            .data
+                            .chunks_exact(3)
+                            .zip(a.data)
+                            .flat_map(|(rgb, a)| [rgb[0], rgb[1], rgb[2], a])
+                            .collect::<Vec<_>>()
                     }
-                };
-                (rgba, false)
+                }
             };
+            (rgba, false)
+        };
 
         let mut quality = if interpolate {
             ImageQuality::Medium
