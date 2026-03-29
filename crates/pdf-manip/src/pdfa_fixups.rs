@@ -1287,6 +1287,72 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
         }
     }
 
+    // Fix Button (Btn) widgets where AP.N is a single Stream instead of a
+    // subdictionary (§6.3.3:3). For radio buttons and checkboxes, /N must be
+    // a dict mapping state names (e.g. /Yes, /Off) to appearance streams.
+    // Wrap the stream in a dict: /N << /Yes <stream-ref> >>.
+    let ids3: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids3 {
+        let wrap_info: Option<(ObjectId, ObjectId)> = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let is_widget = matches!(
+                dict.get(b"Subtype").ok(),
+                Some(Object::Name(ref n)) if n == b"Widget"
+            );
+            if !is_widget {
+                continue;
+            }
+            // Check if it's a Btn field (directly or via inherited /FT).
+            let is_btn = matches!(
+                dict.get(b"FT").ok(),
+                Some(Object::Name(ref n)) if n == b"Btn"
+            );
+            if !is_btn {
+                continue;
+            }
+            // Get the AP dict.
+            let ap_id = match dict.get(b"AP").ok() {
+                Some(Object::Reference(r)) => *r,
+                _ => continue,
+            };
+            // Check if AP.N is a stream reference (not a dict).
+            match doc.objects.get(&ap_id) {
+                Some(Object::Dictionary(ap)) => match ap.get(b"N").ok() {
+                    Some(Object::Reference(n_id)) => {
+                        match doc.objects.get(n_id) {
+                            Some(Object::Stream(_)) => Some((ap_id, *n_id)),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some((ap_id, stream_id)) = wrap_info {
+            // Determine the "on" state name from /AS or default to "Yes".
+            let state_name = {
+                let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                    continue;
+                };
+                match dict.get(b"AS").ok() {
+                    Some(Object::Name(n)) if n != b"Off" => {
+                        String::from_utf8_lossy(n).to_string()
+                    }
+                    _ => "Yes".to_string(),
+                }
+            };
+            if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
+                let mut sub_dict = lopdf::Dictionary::new();
+                sub_dict.set(state_name, Object::Reference(stream_id));
+                ap.set("N", Object::Dictionary(sub_dict));
+                count += 1;
+            }
+        }
+    }
+
     count
 }
 
@@ -1300,6 +1366,56 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
 // PDF/A forbids: Launch, Sound, Movie, ResetForm, ImportData, Hide,
 // SetOCGState, Rendition, Trans, GoTo3DView, JavaScript.
 // Named actions: only NextPage, PrevPage, FirstPage, LastPage are allowed.
+
+/// Check if an action dictionary is forbidden by PDF/A §6.5.1.
+fn is_action_forbidden(action: &lopdf::Dictionary) -> bool {
+    const ALLOWED_ACTION_TYPES: &[&[u8]] = &[
+        b"GoTo",
+        b"GoToR",
+        b"GoToE",
+        b"Thread",
+        b"URI",
+        b"Named",
+        b"SubmitForm",
+    ];
+    const ALLOWED_NAMED: &[&[u8]] = &[b"NextPage", b"PrevPage", b"FirstPage", b"LastPage"];
+
+    let s = action.get(b"S").ok().and_then(|o| {
+        if let Object::Name(n) = o {
+            Some(n.clone())
+        } else {
+            None
+        }
+    });
+    match s {
+        None => true,
+        Some(ref s) if !ALLOWED_ACTION_TYPES.iter().any(|a| s == *a) => true,
+        Some(ref s) if s == b"Named" => {
+            let n = action.get(b"N").ok().and_then(|o| {
+                if let Object::Name(n) = o {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            });
+            match n {
+                None => true,
+                Some(ref n) => !ALLOWED_NAMED.iter().any(|a| n == *a),
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Replace a forbidden action dict with a harmless GoTo.
+fn neutralize_action(action: &mut lopdf::Dictionary) {
+    action.set("S", Object::Name(b"GoTo".to_vec()));
+    action.remove(b"N");
+    action.set(
+        "D",
+        Object::Array(vec![Object::Integer(0), Object::Name(b"Fit".to_vec())]),
+    );
+}
 
 fn fix_forbidden_actions(doc: &mut Document) -> usize {
     // PDF/A §6.5.1: only these action types are permitted.
@@ -1418,14 +1534,83 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
         if is_forbidden {
             // Replace with a harmless GoTo action that goes nowhere
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
-                dict.set("S", Object::Name(b"GoTo".to_vec()));
-                dict.remove(b"N");
-                // Set /D to go to page 0 (first page)
-                dict.set(
-                    "D",
-                    Object::Array(vec![Object::Integer(0), Object::Name(b"Fit".to_vec())]),
-                );
+                neutralize_action(dict);
                 count += 1;
+            }
+        }
+    }
+
+    // Strategy 3: Handle inline annotation dicts embedded in Annots arrays.
+    // Some PDFs store annotations as inline dicts in the page Annots array,
+    // not as indirect references. These are invisible to Strategy 1/2 which
+    // only iterate doc.objects.
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    for page_id in &page_ids {
+        let annots_ref: Option<ObjectId> = match doc.objects.get(page_id) {
+            Some(Object::Dictionary(d)) => match d.get(b"Annots").ok() {
+                Some(Object::Reference(r)) => Some(*r),
+                _ => None,
+            },
+            _ => None,
+        };
+        // Case 1: Annots is an indirect array.
+        if let Some(arr_id) = annots_ref {
+            let len = match doc.objects.get(&arr_id) {
+                Some(Object::Array(arr)) => arr.len(),
+                _ => continue,
+            };
+            for i in 0..len {
+                let needs_fix = match doc.objects.get(&arr_id) {
+                    Some(Object::Array(arr)) => match &arr[i] {
+                        Object::Dictionary(annot) => match annot.get(b"A").ok() {
+                            Some(Object::Dictionary(a)) => is_action_forbidden(a),
+                            _ => false,
+                        },
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if needs_fix {
+                    if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&arr_id) {
+                        if let Object::Dictionary(ref mut annot) = arr[i] {
+                            annot.remove(b"A");
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // Case 2: Annots is an inline array on the page dict.
+        let len = match doc.objects.get(page_id) {
+            Some(Object::Dictionary(d)) => match d.get(b"Annots").ok() {
+                Some(Object::Array(arr)) => arr.len(),
+                _ => 0,
+            },
+            _ => 0,
+        };
+        for i in 0..len {
+            let needs_fix = match doc.objects.get(page_id) {
+                Some(Object::Dictionary(d)) => match d.get(b"Annots").ok() {
+                    Some(Object::Array(arr)) => match &arr[i] {
+                        Object::Dictionary(annot) => match annot.get(b"A").ok() {
+                            Some(Object::Dictionary(a)) => is_action_forbidden(a),
+                            _ => false,
+                        },
+                        _ => false,
+                    },
+                    _ => false,
+                },
+                _ => false,
+            };
+            if needs_fix {
+                if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(page_id) {
+                    if let Ok(Object::Array(ref mut arr)) = d.get_mut(b"Annots") {
+                        if let Object::Dictionary(ref mut annot) = arr[i] {
+                            annot.remove(b"A");
+                            count += 1;
+                        }
+                    }
+                }
             }
         }
     }
