@@ -1368,57 +1368,41 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
         }
     }
 
-    // Strategy 1b: Scan arrays for inline annotation dicts with /A keys.
-    // Some PDFs store annotation arrays with inline dicts (not indirect refs),
-    // e.g. [<</Type/Annot/A<</S/Named/N/Quit>>>>]. These are not found by
-    // Strategy 1 which only scans top-level dictionary objects.
+    // Strategy 1b: Check ALL dict objects for inline /A actions (Object::Dictionary,
+    // not Object::Reference). Strategy 1 handles /A as Reference; this handles
+    // /A as inline Dictionary (common in annotation dicts from older producers).
     let ids_1b: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids_1b {
-        let mut fixes = Vec::new();
-        if let Some(Object::Array(arr)) = doc.objects.get(&id) {
-            for (idx, elem) in arr.iter().enumerate() {
-                if let Object::Dictionary(annot) = elem {
-                    if let Ok(Object::Dictionary(action)) = annot.get(b"A") {
-                        let s = action.get(b"S").ok().and_then(|o| {
-                            if let Object::Name(n) = o {
-                                Some(n.clone())
-                            } else {
-                                None
-                            }
-                        });
-                        let forbidden = match s {
-                            None => true,
-                            Some(ref s) if !ALLOWED_ACTION_TYPES.iter().any(|a| s == *a) => true,
-                            Some(ref s) if s == b"Named" => {
-                                let n = action.get(b"N").ok().and_then(|o| {
-                                    if let Object::Name(n) = o {
-                                        Some(n.clone())
-                                    } else {
-                                        None
-                                    }
-                                });
-                                match n {
-                                    None => true,
-                                    Some(ref n) => !ALLOWED_NAMED.iter().any(|a| n == *a),
-                                }
-                            }
-                            _ => false,
-                        };
-                        if forbidden {
-                            fixes.push(idx);
-                        }
+        let should_fix = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let action = match dict.get(b"A").ok() {
+                Some(Object::Dictionary(a)) => a,
+                _ => continue,
+            };
+            let s = action.get(b"S").ok().and_then(|o| {
+                if let Object::Name(n) = o { Some(n.clone()) } else { None }
+            });
+            match s {
+                None => true,
+                Some(ref s) if !ALLOWED_ACTION_TYPES.iter().any(|a| s == *a) => true,
+                Some(ref s) if s == b"Named" => {
+                    let n = action.get(b"N").ok().and_then(|o| {
+                        if let Object::Name(n) = o { Some(n.clone()) } else { None }
+                    });
+                    match n {
+                        None => true,
+                        Some(ref n) => !ALLOWED_NAMED.iter().any(|a| n == *a),
                     }
                 }
+                _ => false,
             }
-        }
-        if !fixes.is_empty() {
-            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&id) {
-                for &idx in &fixes {
-                    if let Some(Object::Dictionary(ref mut annot)) = arr.get_mut(idx) {
-                        annot.remove(b"A");
-                        count += 1;
-                    }
-                }
+        };
+        if should_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"A");
+                count += 1;
             }
         }
     }
