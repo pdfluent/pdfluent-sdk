@@ -1370,6 +1370,65 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
             }
         }
     }
+
+    // Strategy 2: Find action OBJECTS that are forbidden and replace their
+    // /S and /N with an allowed action type. This catches actions referenced
+    // via indirect references from annotations that our Strategy 1 missed.
+    let ids2: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids2 {
+        let is_forbidden = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let has_s = dict.has(b"S");
+            let has_type_action = matches!(
+                dict.get(b"Type").ok(),
+                Some(Object::Name(ref n)) if n == b"Action"
+            );
+            if !has_s && !has_type_action {
+                continue;
+            }
+            let s = dict.get(b"S").ok().and_then(|o| {
+                if let Object::Name(n) = o {
+                    Some(n.clone())
+                } else {
+                    None
+                }
+            });
+            match s {
+                None => true,
+                Some(ref s) if FORBIDDEN_TYPES.iter().any(|f| s == *f) => true,
+                Some(ref s) if s == b"Named" => {
+                    let n = dict.get(b"N").ok().and_then(|o| {
+                        if let Object::Name(n) = o {
+                            Some(n.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    match n {
+                        None => true,
+                        Some(ref n) => !ALLOWED_NAMED.iter().any(|a| n == *a),
+                    }
+                }
+                _ => false,
+            }
+        };
+        if is_forbidden {
+            // Replace with a harmless GoTo action that goes nowhere
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.set("S", Object::Name(b"GoTo".to_vec()));
+                dict.remove(b"N");
+                // Set /D to go to page 0 (first page)
+                dict.set(
+                    "D",
+                    Object::Array(vec![Object::Integer(0), Object::Name(b"Fit".to_vec())]),
+                );
+                count += 1;
+            }
+        }
+    }
+
     count
 }
 
