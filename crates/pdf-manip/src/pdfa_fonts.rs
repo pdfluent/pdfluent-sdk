@@ -902,14 +902,45 @@ fn embed_font_on_target(doc: &mut Document, info: &NonEmbeddedFont, font_path: &
     let stream_id = doc.add_object(Object::Stream(font_stream));
 
     // Get or create FontDescriptor on the target (CIDFont for Type0, font itself otherwise).
-    let fd_id = get_or_create_font_descriptor(doc, info.target_id)?;
+    let mut fd_id = get_or_create_font_descriptor(doc, info.target_id)?;
 
-    // Set the font file reference (remove old ones first to avoid conflicts).
-    if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
-        fd.remove(b"FontFile");
-        fd.remove(b"FontFile2");
-        fd.remove(b"FontFile3");
-        fd.set(font_file_key, Object::Reference(stream_id));
+    // If the FD already has an embedded font program (FontFile/FontFile2/FontFile3),
+    // it's shared with a subset font that already has correct data. Don't overwrite
+    // the subset's font program — create a NEW FontDescriptor for this non-subset font
+    // to avoid breaking §6.2.11.4.1:2 for the subset's glyphs.
+    let fd_already_has_fontfile = matches!(
+        doc.objects.get(&fd_id),
+        Some(Object::Dictionary(fd)) if fd.has(b"FontFile") || fd.has(b"FontFile2") || fd.has(b"FontFile3")
+    );
+    if fd_already_has_fontfile {
+        // Clone the FD and create a new one for this font
+        let new_fd = if let Some(Object::Dictionary(fd)) = doc.objects.get(&fd_id) {
+            let mut cloned = fd.clone();
+            cloned.remove(b"FontFile");
+            cloned.remove(b"FontFile2");
+            cloned.remove(b"FontFile3");
+            cloned.set(font_file_key, Object::Reference(stream_id));
+            cloned
+        } else {
+            lopdf::dictionary! {
+                "Type" => "FontDescriptor",
+                "FontName" => Object::Name(info.name.as_bytes().to_vec()),
+                "Flags" => Object::Integer(32),
+            }
+        };
+        fd_id = doc.add_object(Object::Dictionary(new_fd));
+        // Update the font dict to point to the new FD
+        if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&info.font_id) {
+            font.set("FontDescriptor", Object::Reference(fd_id));
+        }
+    } else {
+        // FD has no existing font file — safe to write directly
+        if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+            fd.remove(b"FontFile");
+            fd.remove(b"FontFile2");
+            fd.remove(b"FontFile3");
+            fd.set(font_file_key, Object::Reference(stream_id));
+        }
     }
 
     // Update font Subtype to match embedded program type.
