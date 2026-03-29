@@ -175,6 +175,12 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         });
     }
 
+    let mut font = parse_font_metrics(elem);
+    // Override font size from exData HTML if present.
+    if let Some(html_size) = extract_exdata_font_size(elem) {
+        font.size = html_size;
+    }
+
     let node = FormNode {
         name,
         node_type: FormNodeType::Field { value },
@@ -182,7 +188,7 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         layout: LayoutStrategy::Positioned,
         children: Vec::new(),
         occur: Occur::once(),
-        font: parse_font_metrics(elem),
+        font,
         calculate: None,
         validate: None,
         column_widths: Vec::new(),
@@ -199,6 +205,14 @@ fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     // Always extract content — visibility is controlled by metadata.
     let content = extract_value_text(elem).unwrap_or_default();
 
+    let mut font = parse_font_metrics(elem);
+    // If the content came from <exData contentType="text/html">, extract
+    // the dominant font size from the HTML <span style="font-size:Xpt">.
+    // This overrides the default 10pt when the HTML specifies differently.
+    if let Some(html_size) = extract_exdata_font_size(elem) {
+        font.size = html_size;
+    }
+
     let node = FormNode {
         name,
         node_type: FormNodeType::Draw { content },
@@ -206,7 +220,7 @@ fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
         layout: LayoutStrategy::Positioned,
         children: Vec::new(),
         occur: Occur::once(),
-        font: parse_font_metrics(elem),
+        font,
         calculate: None,
         validate: None,
         column_widths: Vec::new(),
@@ -955,6 +969,43 @@ fn extract_text_from_descendants(node: Node<'_, '_>) -> String {
         }
     }
     parts.join(" ")
+}
+
+/// Extract the dominant font size from `<exData contentType="text/html">` HTML.
+///
+/// Scans `<span style="font-size:Xpt">` attributes and returns the first
+/// (typically dominant) font size in points.  Returns `None` when the element
+/// has no exData HTML or no font-size is specified.
+fn extract_exdata_font_size(elem: Node<'_, '_>) -> Option<f64> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let ex = find_first_child_by_name(value, "exData")?;
+    // Walk all descendant elements looking for style="...font-size:Xpt..."
+    for desc in ex.descendants() {
+        if !desc.is_element() {
+            continue;
+        }
+        let style = desc
+            .attribute("style")
+            .or_else(|| desc.attribute("Style"))?;
+        // Parse font-size from CSS style string
+        for part in style.split(';') {
+            let part = part.trim();
+            if let Some(val) = part
+                .strip_prefix("font-size:")
+                .or_else(|| part.strip_prefix("font-size :"))
+            {
+                let val = val.trim();
+                if let Some(pt) = val.strip_suffix("pt") {
+                    if let Ok(size) = pt.trim().parse::<f64>() {
+                        if size > 0.0 {
+                            return Some(size);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Extract caption text from `<caption><value><text>…</text></value></caption>`.
