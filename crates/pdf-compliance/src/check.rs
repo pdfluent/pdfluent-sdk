@@ -4744,6 +4744,47 @@ pub fn check_extgstate_restrictions(pdf: &Pdf, part: u8, report: &mut Compliance
             }
         }
     }
+
+    // §6.2.8 — Scan ALL objects in the PDF for ExtGState dicts with
+    // forbidden TR/TR2/HTP keys.  The page-level scan above catches
+    // page resources, but the forbidden keys can also appear in
+    // annotation appearances, Form XObjects nested within annotations,
+    // or any other resource dict.  (#FN-6.2.8-annot)
+    if part == 1 {
+        for obj in pdf.objects() {
+            let d = match &obj {
+                Object::Dict(d) => d.clone(),
+                Object::Stream(s) => s.dict().clone(),
+                _ => continue,
+            };
+            // Quick filter: only look at ExtGState-like dicts (have /Type /ExtGState or TR/TR2/HTP)
+            for (key, rule) in [
+                (b"TR" as &[u8], "6.2.8"),
+                (b"TR2", "6.2.8"),
+                (b"HTP", "6.2.8"),
+            ] {
+                if d.contains_key(key) {
+                    let key_str = std::str::from_utf8(key).unwrap_or("?");
+                    // Verify this is actually an ExtGState (has typical GS keys)
+                    let looks_like_gs = d.contains_key(b"Type" as &[u8])
+                        || d.contains_key(b"BM" as &[u8])
+                        || d.contains_key(b"CA" as &[u8])
+                        || d.contains_key(b"ca" as &[u8])
+                        || d.contains_key(b"SA" as &[u8])
+                        || d.contains_key(b"OP" as &[u8])
+                        || d.contains_key(key);
+                    if looks_like_gs {
+                        error(
+                            report,
+                            rule,
+                            format!("ExtGState contains forbidden /{key_str} key"),
+                        );
+                        break; // One violation is enough
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Check if a ColorSpace dict contains any ICCBased CMYK color spaces.
@@ -4994,21 +5035,90 @@ fn check_encoding_differences_agl(
     };
     // Differences is [code name name name code name ...] — integers reset the
     // current code, Names are glyph names that must be in the AGL.
+    let mut current_code: i32 = 0;
+    let base_enc = enc_dict.get::<Name>(keys::BASE_ENCODING);
+    let is_winansi = base_enc
+        .as_ref()
+        .is_some_and(|b| b.as_ref() == b"WinAnsiEncoding");
+
     for item in diffs.iter::<Object<'_>>() {
-        let Object::Name(n) = item else { continue };
-        let glyph = n.as_ref();
-        if !is_valid_agl_glyph_name(glyph) {
-            let gstr = std::str::from_utf8(glyph).unwrap_or("?");
-            error_at(
-                report,
-                "6.2.11.6",
-                format!(
-                    "Font '{font_name}' Encoding /Differences contains glyph name \
-                     '/{gstr}' not listed in the Adobe Glyph List"
-                ),
-                format!("page {}", page_idx + 1),
-            );
+        match item {
+            Object::Number(n) => {
+                current_code = n.as_f64() as i32;
+            }
+            Object::Name(n) => {
+                let glyph = n.as_ref();
+                if !is_valid_agl_glyph_name(glyph) {
+                    let gstr = std::str::from_utf8(glyph).unwrap_or("?");
+                    error_at(
+                        report,
+                        "6.2.11.6",
+                        format!(
+                            "Font '{font_name}' Encoding /Differences contains glyph name \
+                             '/{gstr}' not listed in the Adobe Glyph List"
+                        ),
+                        format!("page {}", page_idx + 1),
+                    );
+                }
+                // §6.3.7: when WinAnsiEncoding is the base and Differences
+                // override codes 128-159 with names that DON'T match the
+                // standard WinAnsi assignment for those codes, the encoding
+                // does not define a correct mapping. veraPDF flags this as
+                // §6.3.7:1. (#FN-6.3.7)
+                if is_winansi && (128..160).contains(&current_code) {
+                    let expected = winansi_name_for_code(current_code as u8);
+                    if !expected.is_empty() && glyph != expected.as_bytes() {
+                        let gstr = std::str::from_utf8(glyph).unwrap_or("?");
+                        error_at(
+                            report,
+                            "6.2.11.6",
+                            format!(
+                                "Font '{font_name}' Encoding /Differences maps code {current_code} \
+                                 to '/{gstr}' but WinAnsiEncoding expects '/{expected}'"
+                            ),
+                            format!("page {}", page_idx + 1),
+                        );
+                    }
+                }
+                current_code += 1;
+            }
+            _ => {}
         }
+    }
+}
+
+/// Standard WinAnsiEncoding glyph names for codes 128-159.
+fn winansi_name_for_code(code: u8) -> &'static str {
+    match code {
+        128 => "Euro",
+        130 => "quotesinglbase",
+        131 => "florin",
+        132 => "quotedblbase",
+        133 => "ellipsis",
+        134 => "dagger",
+        135 => "daggerdbl",
+        136 => "circumflex",
+        137 => "perthousand",
+        138 => "Scaron",
+        139 => "guilsinglleft",
+        140 => "OE",
+        142 => "Zcaron",
+        145 => "quoteleft",
+        146 => "quoteright",
+        147 => "quotedblleft",
+        148 => "quotedblright",
+        149 => "bullet",
+        150 => "endash",
+        151 => "emdash",
+        152 => "tilde",
+        153 => "trademark",
+        154 => "scaron",
+        155 => "guilsinglright",
+        156 => "oe",
+        158 => "zcaron",
+        159 => "Ydieresis",
+        // Codes 129, 141, 143, 144, 157 are undefined in WinAnsi
+        _ => "",
     }
 }
 
