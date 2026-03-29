@@ -210,20 +210,14 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
             StdEncAction::ReplaceInlineBase => {
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                     if let Ok(Object::Dictionary(ref mut enc)) = dict.get_mut(b"Encoding") {
-                        enc.set(
-                            "BaseEncoding",
-                            Object::Name(b"WinAnsiEncoding".to_vec()),
-                        );
+                        enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
                         count += 1;
                     }
                 }
             }
             StdEncAction::ReplaceRefBase(enc_id) => {
                 if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&enc_id) {
-                    enc.set(
-                        "BaseEncoding",
-                        Object::Name(b"WinAnsiEncoding".to_vec()),
-                    );
+                    enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
                     count += 1;
                 }
             }
@@ -583,8 +577,13 @@ fn analyze_tt_differences(doc: &Document, font_id: ObjectId) -> TtDiffAction {
         return TtDiffAction::None;
     };
 
-    // Only TrueType simple fonts.
-    if get_name_val(dict, b"Subtype").as_deref() != Some("TrueType") {
+    // Non-symbolic simple fonts: TrueType, Type1, MMType1.
+    let subtype = get_name_val(dict, b"Subtype");
+    let is_truetype = subtype.as_deref() == Some("TrueType");
+    if !matches!(
+        subtype.as_deref(),
+        Some("TrueType") | Some("Type1") | Some("MMType1")
+    ) {
         return TtDiffAction::None;
     }
 
@@ -617,25 +616,27 @@ fn analyze_tt_differences(doc: &Document, font_id: ObjectId) -> TtDiffAction {
         _ => return TtDiffAction::None,
     };
 
-    // Check if font has (3,1) cmap. If not, Differences are forbidden.
-    let fd_id = match dict.get(b"FontDescriptor").ok() {
-        Some(Object::Reference(id)) => Some(*id),
-        _ => None,
-    };
+    // For TrueType: check if font has (3,1) cmap. If not, Differences are forbidden.
+    if is_truetype {
+        let fd_id = match dict.get(b"FontDescriptor").ok() {
+            Some(Object::Reference(id)) => Some(*id),
+            _ => None,
+        };
 
-    let has_31_cmap = fd_id
-        .and_then(|fid| read_font_data(doc, fid))
-        .map(|data| {
-            ttf_parser::Face::parse(&data, 0)
-                .ok()
-                .map(|face| face_has_31_cmap(&face))
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
+        let has_31_cmap = fd_id
+            .and_then(|fid| read_font_data(doc, fid))
+            .map(|data| {
+                ttf_parser::Face::parse(&data, 0)
+                    .ok()
+                    .map(|face| face_has_31_cmap(&face))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
 
-    if !has_31_cmap {
-        // Font lacks (3,1) cmap — strip all Differences.
-        return TtDiffAction::StripDifferences;
+        if !has_31_cmap {
+            // Font lacks (3,1) cmap — strip all Differences.
+            return TtDiffAction::StripDifferences;
+        }
     }
 
     // Font has (3,1) cmap — check if any Differences names are outside AGL.
