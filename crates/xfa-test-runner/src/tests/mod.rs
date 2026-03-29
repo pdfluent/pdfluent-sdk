@@ -91,10 +91,64 @@ pub fn has_malformed_page_tree(pdf_data: &[u8]) -> bool {
         }
         pos += bracket_start + bracket_end + 1;
     }
-    // Check for self-referential /Kids (page tree loop)
-    // Simplified: if /Type /Pages appears and /Kids references the same object
-    // This is hard to detect by bytes alone, so just check for very small page trees
-    // with suspiciously many pages (pages-loop.pdf: 1 /Pages node, 4+ pages)
+    // Check for page tree loops: a /Pages node referencing itself in /Kids.
+    // Look for patterns like "N 0 obj<<.../Type /Pages.../Kids[... N 0 R ...]"
+    // where the object number appears in its own /Kids array.
+    use std::collections::HashSet;
+    let mut pages_obj_nums: HashSet<Vec<u8>> = HashSet::new();
+
+    // Collect all /Pages object numbers
+    for i in 0..pdf_data.len().saturating_sub(20) {
+        if !pdf_data[i..].starts_with(b"/Type /Pages")
+            && !pdf_data[i..].starts_with(b"/Type/Pages")
+        {
+            continue;
+        }
+        // Walk backward to find "N 0 obj"
+        let search_start = i.saturating_sub(200);
+        let before = &pdf_data[search_start..i];
+        if let Some(obj_pos) = before
+            .windows(4)
+            .rposition(|w| w == b" obj" || w == b"\nobj")
+        {
+            // Extract "N 0" before "obj"
+            let line_start = before[..obj_pos]
+                .iter()
+                .rposition(|&b| b == b'\n' || b == b'\r')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let obj_header = &before[line_start..obj_pos];
+            // obj_header is like "2 0 " — extract just the number
+            if let Some(space) = obj_header.iter().position(|&b| b == b' ') {
+                let obj_num = &obj_header[..space];
+                pages_obj_nums.insert(obj_num.to_vec());
+            }
+        }
+    }
+
+    // Check if any /Kids array references a /Pages object number
+    for i in 0..pdf_data.len().saturating_sub(6) {
+        if !pdf_data[i..].starts_with(b"/Kids") {
+            continue;
+        }
+        let after = &pdf_data[i..pdf_data.len().min(i + 1000)];
+        let Some(bracket_start) = after.iter().position(|&b| b == b'[') else {
+            continue;
+        };
+        let Some(bracket_end) = after[bracket_start..].iter().position(|&b| b == b']') else {
+            continue;
+        };
+        let kids = &after[bracket_start + 1..bracket_start + bracket_end];
+        // Check if any /Pages object appears in this /Kids
+        for num in &pages_obj_nums {
+            // Look for "N 0 R" in /Kids
+            let pattern = [num.as_slice(), b" 0 R"].concat();
+            if kids.windows(pattern.len()).any(|w| w == pattern.as_slice()) {
+                return true; // /Pages node in /Kids = loop or structural issue
+            }
+        }
+    }
+
     false
 }
 
