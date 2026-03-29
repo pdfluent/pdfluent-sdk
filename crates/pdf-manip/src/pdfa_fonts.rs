@@ -879,6 +879,11 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     // uses the wrong computation path.
     sync_subtypes_from_fontfile(doc);
 
+    // Run the two-phase font correction pipeline. This handles encoding
+    // resolution, Subtype syncing, and width computation in a deterministic
+    // order, avoiding the interference between separate pipeline steps.
+    let _ = enforce_pdfa_font_compliance(doc);
+
     Ok(report)
 }
 
