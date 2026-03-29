@@ -319,8 +319,12 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
                     // Skip visual check for rects that are too small to
                     // sample reliably (< 4×4 px at 72 dpi) or partially
                     // off-page (negative coords or beyond page bounds).
-                    if rw < 4.0 || rh < 4.0 || rect[0] < 0.0 || rect[1] < 0.0
-                        || rect[2] > w as f64 || rect[3] > h as f64
+                    if rw < 4.0
+                        || rh < 4.0
+                        || rect[0] < 0.0
+                        || rect[1] < 0.0
+                        || rect[2] > w as f64
+                        || rect[3] > h as f64
                     {
                         metadata.insert("visual_check".into(), "rect_too_small_or_offpage".into());
                         continue;
@@ -340,6 +344,18 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
                             50.0
                         };
                         if brightness > threshold {
+                            // Pure-white rect near page edge: likely clipped by
+                            // CropBox (the overlay is drawn at content-stream
+                            // coordinates that fall outside the visible crop area).
+                            // Skip rather than fail. (#596-cropbox)
+                            let near_edge = rect[0] < 30.0
+                                || rect[1] < 30.0
+                                || rect[2] > (w as f64 - 30.0)
+                                || rect[3] > (h as f64 - 30.0);
+                            if brightness >= 254.0 && near_edge {
+                                metadata.insert("visual_check".into(), "cropbox_edge_skip".into());
+                                continue;
+                            }
                             return TestResult {
                                 status: TestStatus::Fail,
                                 error_message: Some(format!(

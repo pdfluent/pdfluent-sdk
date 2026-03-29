@@ -3562,8 +3562,8 @@ mod tests {
 
         let engine = LayoutEngine::new(&tree);
         let size = engine.compute_extent(draw);
-        // "Test" = 4 * 10 * 0.5 = 20pt wide, 1 line = 12pt tall
-        assert_eq!(size.width, 20.0);
+        // "Test" measured with Helvetica AFM widths: T=611 e=556 s=500 t=278 = 1945/1000*10 = 19.45
+        assert!((size.width - 19.45).abs() < 0.1, "width={}", size.width);
         assert_eq!(size.height, 12.0);
     }
 
@@ -3594,8 +3594,8 @@ mod tests {
 
         let engine = LayoutEngine::new(&tree);
         let size = engine.compute_extent(draw);
-        // "Hi" = 2 * 20 * 0.5 = 20pt wide, 1 line * 20 * 1.2 = 24pt tall
-        assert_eq!(size.width, 20.0);
+        // "Hi" measured with Helvetica AFM widths: H=722 i=222 = 944/1000*20 = 18.88
+        assert!((size.width - 18.88).abs() < 0.1, "width={}", size.width);
         assert_eq!(size.height, 24.0);
     }
 
