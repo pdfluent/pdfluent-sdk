@@ -14,7 +14,7 @@ use roxmltree::Node;
 use xfa_layout_engine::form::{
     ContentArea, FormNode, FormNodeId, FormNodeMeta, FormNodeType, FormTree, GroupKind, Occur,
 };
-use xfa_layout_engine::text::FontMetrics;
+use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
     BoxModel, Caption, CaptionPlacement, LayoutStrategy, Measurement, TextAlign,
 };
@@ -242,10 +242,15 @@ fn parse_font_size(s: &str) -> Option<f64> {
 /// Parse font size and text alignment from `<font size="…">` and `<para hAlign="…">` child
 /// elements (XFA 3.3 §7.1). Returns `FontMetrics::default()` when no matching elements found.
 fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
-    let size = find_first_child_by_name(elem, "font")
+    let font_elem = find_first_child_by_name(elem, "font");
+    let size = font_elem
         .and_then(|f| attr(f, "size"))
         .and_then(parse_font_size)
         .unwrap_or(FontMetrics::default().size);
+    let typeface = font_elem
+        .and_then(|f| attr(f, "typeface"))
+        .map(FontFamily::from_typeface)
+        .unwrap_or_default();
     let text_align = find_first_child_by_name(elem, "para")
         .and_then(|p| attr(p, "hAlign"))
         .map(|a| match a {
@@ -258,6 +263,7 @@ fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
     FontMetrics {
         size,
         text_align,
+        typeface,
         ..FontMetrics::default()
     }
 }
@@ -338,6 +344,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
 
     // (b) Page break detection: look for <breakBefore> child.
     let page_break_before = detect_page_break_before(elem);
+    let content_area_break = detect_content_area_break(elem);
 
     // (c) Event scripts.
     let event_scripts = collect_event_scripts(elem);
@@ -371,6 +378,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         presence_hidden,
         presence_invisible,
         page_break_before,
+        content_area_break,
         overflow_leader,
         overflow_trailer,
         keep_next_content_area,
@@ -392,21 +400,32 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
 fn detect_page_break_before(elem: Node<'_, '_>) -> bool {
     for child in elem.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
-        // Stop scanning once we hit the first content child.
         if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
             break;
         }
         if tag == "breakBefore" {
-            let target_type = attr(child, "targetType");
-            // XFA 3.3: breakBefore with targetType="pageArea" triggers a page
-            // break regardless of startNew.  startNew controls whether to force
-            // a new instance of the *same* page area — it is NOT required for
-            // the break itself to fire.
-            if target_type == Some("pageArea") {
+            if attr(child, "targetType") == Some("pageArea") {
                 return true;
             }
         }
         if tag == "break" && attr(child, "before") == Some("pageArea") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Detect `breakBefore targetType="contentArea"` — the node targets a
+/// specific named content area (e.g. "flatten", "eSign") and should be
+/// excluded from the primary content flow.
+///
+/// Scans ALL children (not just before the first content child) because
+/// contentArea breaks often appear as trailing elements inside subforms
+/// (DOT form pattern: eSign/lock break appears after their content fields).
+fn detect_content_area_break(elem: Node<'_, '_>) -> bool {
+    for child in elem.children().filter(|n| n.is_element()) {
+        let tag = child.tag_name().name();
+        if tag == "breakBefore" && attr(child, "targetType") == Some("contentArea") {
             return true;
         }
     }
@@ -596,29 +615,31 @@ fn add_children(
     elem: Node<'_, '_>,
 ) -> std::result::Result<bool, crate::error::XfaError> {
     let mut pending_break = false;
+    let mut pending_ca_break = false;
     for child in elem.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
         match tag {
             "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" => {
                 let (child_id, trailing_break) = parse_node(tree, child, false)?;
-                // Propagate an inline breakBefore to this sibling's metadata.
                 if pending_break {
                     tree.meta_mut(child_id).page_break_before = true;
                     pending_break = false;
                 }
+                if pending_ca_break {
+                    tree.meta_mut(child_id).content_area_break = true;
+                    pending_ca_break = false;
+                }
                 node.children.push(child_id);
-                // If the child node ended with a trailing break (breakBefore
-                // after its last content child), propagate as pending break
-                // so the NEXT sibling at this level gets page_break_before.
                 if trailing_break {
                     pending_break = true;
                 }
             }
-            // Inline breakBefore between content children.
             "breakBefore" => {
                 let target_type = attr(child, "targetType");
                 if target_type == Some("pageArea") {
                     pending_break = true;
+                } else if target_type == Some("contentArea") {
+                    pending_ca_break = true;
                 }
             }
             // Legacy <break> element between content children.

@@ -225,6 +225,11 @@ pub struct FormNodeMeta {
     pub page_break_before: bool,
     /// Target page area name/id for the break (e.g. "MP3", "Page4_ID").
     pub break_target: Option<String>,
+    /// Whether this node targets a specific content area via
+    /// `breakBefore targetType="contentArea"`.  Such nodes should be
+    /// excluded from the primary content flow (they go into small
+    /// decorative areas like "flatten" or "eSign").
+    pub content_area_break: bool,
     /// Overflow leader reference name.
     pub overflow_leader: Option<String>,
     /// Overflow trailer reference name.
