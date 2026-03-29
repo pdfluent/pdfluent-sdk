@@ -70,7 +70,12 @@ impl CoordinateMapper {
 fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRenderConfig {
     let mut c = config.clone();
     if let Some((r, g, b)) = style.bg_color {
-        c.background_color = Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]);
+        // Skip pure white and near-white backgrounds — rendering them as solid
+        // rectangles covers underlying page content, causing SSIM regressions.
+        // Only render visually distinct background colors.
+        if r < 245 || g < 245 || b < 245 {
+            c.background_color = Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]);
+        }
     }
     if let Some((r, g, b)) = style.border_color {
         c.border_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
@@ -405,6 +410,7 @@ mod tests {
             content: LayoutContent::Field {
                 value: value.to_string(),
                 field_kind: xfa_layout_engine::form::FieldKind::Text,
+                font_size: 0.0,
             },
             children: vec![],
             style: Default::default(),
