@@ -302,7 +302,7 @@ fn parse_page_area(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> 
         ..Default::default()
     };
 
-    let node = FormNode {
+    let mut node = FormNode {
         name,
         node_type: FormNodeType::PageArea { content_areas },
         box_model: bm,
@@ -315,7 +315,8 @@ fn parse_page_area(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> 
         column_widths: Vec::new(),
         col_span: 1,
     };
-    let _ = tree;
+    // Parse child draw/subform elements (page-level headers, footers, lines).
+    add_children(tree, &mut node, elem)?;
     Ok(node)
 }
 

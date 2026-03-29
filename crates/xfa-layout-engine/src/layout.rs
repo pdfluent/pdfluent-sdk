@@ -147,11 +147,12 @@ impl<'a> LayoutEngine<'a> {
                     break;
                 }
                 let ca = primary_content_area(pa);
-                let (placed, rest, consumed_break_only) =
+                let (mut placed, rest, consumed_break_only) =
                     self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                 if consumed_break_only {
                     remaining = rest;
                 } else if !placed.nodes.is_empty() {
+                    self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
                     pages.push(placed);
                     remaining = rest;
                 } else {
@@ -167,21 +168,23 @@ impl<'a> LayoutEngine<'a> {
                     let pa = &page_areas[pa_idx];
                     let ca = primary_content_area(pa);
 
-                    let (page, rest, consumed_break_only) =
+                    let (mut page, rest, consumed_break_only) =
                         self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                     if page.nodes.is_empty() && !consumed_break_only {
-                        let forced = self.layout_content_on_page(
+                        let mut forced = self.layout_content_on_page(
                             ca,
                             pa.page_width,
                             pa.page_height,
                             &[remaining[0].id],
                             LayoutStrategy::TopToBottom,
                         )?;
+                        self.prepend_fixed_nodes(&pa.fixed_nodes, &mut forced)?;
                         pages.push(forced);
                         remaining = remaining[1..].to_vec();
                     } else if consumed_break_only {
                         remaining = rest;
                     } else {
+                        self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
                         pages.push(page);
                         remaining = rest;
                     }
@@ -334,26 +337,48 @@ impl<'a> LayoutEngine<'a> {
                         let pa_node = self.form.get(pa_id);
                         if let FormNodeType::PageArea { content_areas } = &pa_node.node_type {
                             let pa_meta = self.form.meta(pa_id);
+                            let fixed: Vec<FormNodeId> = pa_node
+                                .children
+                                .iter()
+                                .copied()
+                                .filter(|&cid| {
+                                    matches!(
+                                        self.form.get(cid).node_type,
+                                        FormNodeType::Draw { .. } | FormNodeType::Subform
+                                    )
+                                })
+                                .collect();
                             page_areas.push(PageAreaInfo {
                                 name: pa_node.name.clone(),
                                 xfa_id: pa_meta.xfa_id.clone(),
                                 content_areas: content_areas.clone(),
                                 page_width: pa_node.box_model.width.unwrap_or(612.0),
                                 page_height: pa_node.box_model.height.unwrap_or(792.0),
-                                fixed_nodes: Vec::new(),
+                                fixed_nodes: fixed,
                             });
                         }
                     }
                 }
                 FormNodeType::PageArea { content_areas } => {
                     let pa_meta = self.form.meta(child_id);
+                    let fixed: Vec<FormNodeId> = child
+                        .children
+                        .iter()
+                        .copied()
+                        .filter(|&cid| {
+                            matches!(
+                                self.form.get(cid).node_type,
+                                FormNodeType::Draw { .. } | FormNodeType::Subform
+                            )
+                        })
+                        .collect();
                     page_areas.push(PageAreaInfo {
                         name: child.name.clone(),
                         xfa_id: pa_meta.xfa_id.clone(),
                         content_areas: content_areas.clone(),
                         page_width: child.box_model.width.unwrap_or(612.0),
                         page_height: child.box_model.height.unwrap_or(792.0),
-                        fixed_nodes: Vec::new(),
+                        fixed_nodes: fixed,
                     });
                 }
                 // XFA's canonical nesting: <subform layout="paginate"> wraps
@@ -430,6 +455,20 @@ impl<'a> LayoutEngine<'a> {
         }
 
         Ok(page)
+    }
+
+    /// Lay out page-area fixed nodes (headers, footers, lines) at their
+    /// absolute positions and prepend them to the page's node list so they
+    /// render behind flowing content.
+    fn prepend_fixed_nodes(&self, fixed_ids: &[FormNodeId], page: &mut LayoutPage) -> Result<()> {
+        if fixed_ids.is_empty() {
+            return Ok(());
+        }
+        let fixed_laid = self.layout_positioned(fixed_ids)?;
+        let mut merged = fixed_laid;
+        merged.append(&mut page.nodes);
+        page.nodes = merged;
+        Ok(())
     }
 
     fn layout_content_fitting(
@@ -1355,7 +1394,6 @@ struct PageAreaInfo {
     page_height: f64,
     /// Fixed-position nodes (e.g., page-level headers/footers) placed on every
     /// page that uses this page area.
-    #[allow(dead_code)]
     fixed_nodes: Vec<FormNodeId>,
 }
 
