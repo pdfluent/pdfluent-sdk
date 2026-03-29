@@ -201,13 +201,21 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     };
 
     // Also scan for DeviceCMYK usage in content streams and image XObjects.
-    let _has_cmyk =
+    let has_cmyk =
         unique_names.iter().any(|n| n.contains("DeviceCMYK")) || has_device_cmyk_in_objects(doc);
 
     let output_intent_added = if !had_output_intent {
-        // Always add sRGB OutputIntent — DeviceRGB is used implicitly by most PDFs.
-        // Only one GTS_PDFA1 OutputIntent is allowed, so we use sRGB.
-        add_srgb_output_intent(doc)?;
+        if has_cmyk {
+            // When DeviceCMYK is used, add a CMYK OutputIntent.
+            // Using sRGB when CMYK content exists causes §6.2.4.3:3 violations
+            // because the output intent color space doesn't cover CMYK.
+            // We add DefaultCMYK/DefaultRGB/DefaultGray later to handle all
+            // device CS references in content streams.
+            add_cmyk_output_intent(doc)?;
+        } else {
+            // No CMYK usage: sRGB OutputIntent covers DeviceRGB/DeviceGray.
+            add_srgb_output_intent(doc)?;
+        }
         true
     } else {
         false
@@ -1425,9 +1433,7 @@ fn ensure_devicen_colorants(doc: &mut Document) {
     // Red/Green/Blue are only process in RGB alternate spaces but are spot
     // colors in CMYK alternate spaces.  We exclude them from the default
     // process list to avoid missing Colorants entries for spot "Blue" etc.
-    let process_names: &[&[u8]] = &[
-        b"Cyan", b"Magenta", b"Yellow", b"Black", b"None", b"All",
-    ];
+    let process_names: &[&[u8]] = &[b"Cyan", b"Magenta", b"Yellow", b"Black", b"None", b"All"];
 
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {

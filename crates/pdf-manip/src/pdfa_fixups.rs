@@ -1368,6 +1368,61 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
         }
     }
 
+    // Strategy 1b: Scan arrays for inline annotation dicts with /A keys.
+    // Some PDFs store annotation arrays with inline dicts (not indirect refs),
+    // e.g. [<</Type/Annot/A<</S/Named/N/Quit>>>>]. These are not found by
+    // Strategy 1 which only scans top-level dictionary objects.
+    let ids_1b: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids_1b {
+        let mut fixes = Vec::new();
+        if let Some(Object::Array(arr)) = doc.objects.get(&id) {
+            for (idx, elem) in arr.iter().enumerate() {
+                if let Object::Dictionary(annot) = elem {
+                    if let Ok(Object::Dictionary(action)) = annot.get(b"A") {
+                        let s = action.get(b"S").ok().and_then(|o| {
+                            if let Object::Name(n) = o {
+                                Some(n.clone())
+                            } else {
+                                None
+                            }
+                        });
+                        let forbidden = match s {
+                            None => true,
+                            Some(ref s) if !ALLOWED_ACTION_TYPES.iter().any(|a| s == *a) => true,
+                            Some(ref s) if s == b"Named" => {
+                                let n = action.get(b"N").ok().and_then(|o| {
+                                    if let Object::Name(n) = o {
+                                        Some(n.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+                                match n {
+                                    None => true,
+                                    Some(ref n) => !ALLOWED_NAMED.iter().any(|a| n == *a),
+                                }
+                            }
+                            _ => false,
+                        };
+                        if forbidden {
+                            fixes.push(idx);
+                        }
+                    }
+                }
+            }
+        }
+        if !fixes.is_empty() {
+            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&id) {
+                for &idx in &fixes {
+                    if let Some(Object::Dictionary(ref mut annot)) = arr.get_mut(idx) {
+                        annot.remove(b"A");
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+
     // Strategy 2: Find action OBJECTS that are forbidden and replace their
     // /S and /N with an allowed action type. This catches actions referenced
     // via indirect references from annotations that our Strategy 1 missed.
