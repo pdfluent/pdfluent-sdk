@@ -201,7 +201,7 @@ fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &m
 #[allow(clippy::too_many_arguments)]
 fn render_multiline(
     x: f64,
-    pdf_y: f64,
+    _pdf_y: f64,
     container_width: f64,
     lines: &[String],
     font_size: f64,
@@ -234,9 +234,11 @@ fn render_multiline(
     let mut prev_x = x + p;
     for (i, line) in lines.iter().enumerate() {
         let line_y = first_line_pdf_y - (i as f64 * line_height);
-        if line_y < pdf_y {
-            break;
-        }
+        // Don't clip wrapped text that overflows the element box —
+        // XFA draw elements render all their text even when the explicit
+        // h is smaller than needed.  Clipping here truncates data values
+        // like "Expires 09/30/11" when the date wraps to a second line.
+        // PDF viewers clip via the page boundary, which is sufficient.
         // Compute x position for alignment. We estimate line width using average char width.
         let line_w = line.len() as f64 * avg_char_w;
         let text_x = match text_align {
