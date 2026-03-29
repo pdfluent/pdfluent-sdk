@@ -213,6 +213,7 @@ mod tests {
             content: LayoutContent::Field {
                 value: value.into(),
                 field_kind: xfa_layout_engine::form::FieldKind::Text,
+                font_size: 0.0,
             },
             children: vec![],
             style: Default::default(),
