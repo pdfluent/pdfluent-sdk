@@ -202,52 +202,28 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
         match action {
             StdEncAction::None => {}
             StdEncAction::ReplaceName => {
-                // No Differences existed — build a dict with BaseEncoding + Differences
-                // that preserves the StandardEncoding mapping for all codes where
-                // Standard ≠ WinAnsi.
-                let diffs = build_std_to_winansi_differences(&[]);
-                let mut enc = lopdf::Dictionary::new();
-                enc.set("Type", Object::Name(b"Encoding".to_vec()));
-                enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
-                if !diffs.is_empty() {
-                    enc.set("Differences", Object::Array(diffs));
-                }
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
-                    dict.set("Encoding", Object::Dictionary(enc));
+                    dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
                     count += 1;
                 }
             }
             StdEncAction::ReplaceInlineBase => {
-                // Read existing Differences to avoid overriding them.
-                let existing_diff_codes = {
-                    let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
-                        continue;
-                    };
-                    let Ok(Object::Dictionary(enc)) = dict.get(b"Encoding") else {
-                        continue;
-                    };
-                    extract_differences_codes(enc)
-                };
-                let diffs = build_std_to_winansi_differences(&existing_diff_codes);
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                     if let Ok(Object::Dictionary(ref mut enc)) = dict.get_mut(b"Encoding") {
-                        enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
-                        merge_differences(enc, &diffs);
+                        enc.set(
+                            "BaseEncoding",
+                            Object::Name(b"WinAnsiEncoding".to_vec()),
+                        );
                         count += 1;
                     }
                 }
             }
             StdEncAction::ReplaceRefBase(enc_id) => {
-                let existing_diff_codes = {
-                    let Some(Object::Dictionary(enc)) = doc.objects.get(&enc_id) else {
-                        continue;
-                    };
-                    extract_differences_codes(enc)
-                };
-                let diffs = build_std_to_winansi_differences(&existing_diff_codes);
                 if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&enc_id) {
-                    enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
-                    merge_differences(enc, &diffs);
+                    enc.set(
+                        "BaseEncoding",
+                        Object::Name(b"WinAnsiEncoding".to_vec()),
+                    );
                     count += 1;
                 }
             }
@@ -256,81 +232,8 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
     count
 }
 
-/// Extract the set of character codes that already have Differences entries.
-fn extract_differences_codes(enc: &lopdf::Dictionary) -> Vec<u8> {
-    let mut codes = Vec::new();
-    let Ok(Object::Array(arr)) = enc.get(b"Differences") else {
-        return codes;
-    };
-    let mut current_code: Option<u32> = None;
-    for obj in arr.iter() {
-        match obj {
-            Object::Integer(n) => current_code = Some(*n as u32),
-            Object::Name(_) => {
-                if let Some(c) = current_code {
-                    if c <= 255 {
-                        codes.push(c as u8);
-                    }
-                    current_code = Some(c + 1);
-                }
-            }
-            _ => {}
-        }
-    }
-    codes
-}
-
-/// Build Differences array entries for codes where StandardEncoding and
-/// WinAnsiEncoding disagree.  Skips codes already in `existing_codes`.
-fn build_std_to_winansi_differences(existing_codes: &[u8]) -> Vec<Object> {
-    use std::collections::HashSet;
-    let existing: HashSet<u8> = existing_codes.iter().copied().collect();
-    let mut diffs = Vec::new();
-    let mut need_code = true;
-
-    for code in 0u16..=255 {
-        let c = code as u8;
-        if existing.contains(&c) {
-            need_code = true; // break the run
-            continue;
-        }
-        let std_name = standard_encoding_glyph_name(c);
-        let win_name = winansi_encoding_glyph_name(c);
-        if std_name == win_name {
-            need_code = true;
-            continue;
-        }
-        // StandardEncoding defines this code differently from WinAnsi — add Differences.
-        if let Some(name) = std_name {
-            if need_code {
-                diffs.push(Object::Integer(code as i64));
-                need_code = false;
-            }
-            diffs.push(Object::Name(name.as_bytes().to_vec()));
-        } else {
-            // StandardEncoding has no glyph for this code but WinAnsi does.
-            // Add .notdef to suppress the WinAnsi mapping. However, .notdef
-            // in Differences can cause §6.2.11.8 — skip this code instead
-            // and let the WinAnsi glyph stand (it's better than .notdef).
-            need_code = true;
-        }
-    }
-    diffs
-}
-
-/// Merge new Differences entries into an existing Encoding dict.
-/// Appends `new_diffs` to any existing Differences array.
-fn merge_differences(enc: &mut lopdf::Dictionary, new_diffs: &[Object]) {
-    if new_diffs.is_empty() {
-        return;
-    }
-    match enc.get_mut(b"Differences") {
-        Ok(Object::Array(arr)) => arr.extend(new_diffs.iter().cloned()),
-        _ => enc.set("Differences", Object::Array(new_diffs.to_vec())),
-    }
-}
-
 /// Glyph name for a code in StandardEncoding (PDF spec Table D.1).
+#[allow(dead_code)]
 fn standard_encoding_glyph_name(code: u8) -> Option<&'static str> {
     match code {
         32 => Some("space"),
