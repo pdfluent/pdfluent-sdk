@@ -87,6 +87,22 @@ impl Default for TextState {
     }
 }
 
+/// Extract text blocks from a specific page.
+pub fn extract_page_blocks(doc: &Document, page_num: u32) -> Vec<TextBlock> {
+    let pages = doc.get_pages();
+    let Some(&page_id) = pages.get(&page_num) else {
+        return Vec::new();
+    };
+
+    if let Ok(content_bytes) = get_page_content_bytes(doc, page_id) {
+        if let Ok(content) = Content::decode(&content_bytes) {
+            return extract_blocks_from_ops(&content.operations, page_num);
+        }
+    }
+
+    Vec::new()
+}
+
 /// Extract text blocks from all pages of a document.
 pub fn extract_text(doc: &Document) -> Vec<TextBlock> {
     let pages = doc.get_pages();
