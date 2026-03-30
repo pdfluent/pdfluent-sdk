@@ -758,6 +758,7 @@ impl<'a> LayoutEngine<'a> {
         // Track the last valid split point (respecting keep constraints).
         let mut last_valid_split = 0;
         let mut last_valid_y = 0.0_f64;
+        let mut split_rest_override: Option<Vec<FormNodeId>> = None;
 
         for (i, &child_id) in expanded_children.iter().enumerate() {
             let child = self.form.get(child_id);
@@ -780,6 +781,37 @@ impl<'a> LayoutEngine<'a> {
             {
                 split_idx = i;
                 break;
+            }
+
+            // If the next child itself is a splittable TB container and it is
+            // the first overflowing child, split it recursively instead of
+            // forcing the entire container onto a single page.
+            if child_y + child_size.height > remaining_height
+                && !child_meta.keep_intact_content_area
+                && self.can_split(child_id)
+            {
+                let child_remaining = (remaining_height - child_y).max(0.0);
+                if child_remaining > 0.0 {
+                    let child_available = Size {
+                        width: child.box_model.content_width().min(child_size.width),
+                        height: child.box_model.content_height().min(child_size.height),
+                    };
+                    let (partial_child, child_rest) =
+                        self.split_tb_node(child_id, child_y, child_remaining, child_available)?;
+                    let partial_fits = partial_child.rect.height <= child_remaining + 1.0;
+                    let split_productive =
+                        !partial_child.children.is_empty() && (partial_fits || partial_child.children.len() > 1);
+                    if split_productive {
+                        placed_children.push(partial_child);
+                        child_y += placed_children.last().unwrap().rect.height;
+                        split_idx = i + 1;
+
+                        let mut rest = child_rest;
+                        rest.extend(expanded_children[i + 1..].iter().copied());
+                        split_rest_override = Some(rest);
+                        break;
+                    }
+                }
             }
 
             // Overflow detection: child doesn't fit in remaining space.
@@ -845,7 +877,7 @@ impl<'a> LayoutEngine<'a> {
             style: self.form.meta(id).style.clone(),
         };
 
-        let rest = expanded_children[split_idx..].to_vec();
+        let rest = split_rest_override.unwrap_or_else(|| expanded_children[split_idx..].to_vec());
         Ok((partial_node, rest))
     }
 
@@ -2969,6 +3001,84 @@ mod tests {
         assert_eq!(split_sub.children.len(), 2);
         assert_eq!(split_sub.children[0].rect.y, 0.0);
         assert_eq!(split_sub.children[1].rect.y, 25.0);
+    }
+
+    #[test]
+    fn split_recurses_into_oversized_first_child() {
+        let mut tree = FormTree::new();
+
+        let mut rows = Vec::new();
+        for i in 0..6 {
+            rows.push(make_field(&mut tree, &format!("Row{i}"), 300.0, 30.0));
+        }
+
+        let inner = tree.add_node(FormNode {
+            name: "InnerBlock".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(300.0),
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: rows,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let outer = tree.add_node(FormNode {
+            name: "OuterBlock".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(300.0),
+                height: None,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![inner],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(100.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![outer],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(result.pages[0].nodes[0].name, "OuterBlock");
+        assert_eq!(result.pages[0].nodes[0].children[0].name, "InnerBlock");
+        assert_eq!(result.pages[0].nodes[0].children[0].children.len(), 3);
     }
 
     #[test]

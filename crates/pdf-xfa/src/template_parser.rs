@@ -51,7 +51,7 @@ pub fn parse_template(xml: &str, datasets_xml: Option<&str>) -> Result<(FormTree
     if let Some(ds_xml) = datasets_xml {
         if let Ok(ds_doc) = roxmltree::Document::parse(ds_xml) {
             if let Some(data_root) = find_data_root(ds_doc.root_element()) {
-                bind_data(&mut tree, root_id, &data_root);
+                bind_data(&mut tree, root_id, &data_root, &data_root);
             }
         }
     }
@@ -393,6 +393,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
 
     // (j) Visual style: colors, borders, font from XFA template elements.
     let style = parse_node_style(elem);
+    let (data_bind_ref, data_bind_none) = parse_bind(elem);
 
     FormNodeMeta {
         xfa_id,
@@ -406,12 +407,28 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         keep_previous_content_area,
         keep_intact_content_area,
         event_scripts,
+        data_bind_ref,
+        data_bind_none,
         group_kind,
         item_value,
         field_kind,
         style,
         ..Default::default()
     }
+}
+
+fn parse_bind(elem: Node<'_, '_>) -> (Option<String>, bool) {
+    let Some(bind) = find_first_child_by_name(elem, "bind") else {
+        return (None, false);
+    };
+
+    let bind_none = attr(bind, "match") == Some("none");
+    let bind_ref = if bind_none {
+        None
+    } else {
+        attr(bind, "ref").map(|s| s.trim().to_string())
+    };
+    (bind_ref, bind_none)
 }
 
 /// Parse visual style from XFA template elements.
@@ -660,14 +677,20 @@ fn find_data_root<'a, 'input>(root: Node<'a, 'input>) -> Option<Node<'a, 'input>
 }
 
 /// Recursively walk the form tree and bind data values from the datasets.
-fn bind_data(tree: &mut FormTree, node_id: FormNodeId, data_node: &Node<'_, '_>) {
+fn bind_data(
+    tree: &mut FormTree,
+    node_id: FormNodeId,
+    data_root: &Node<'_, '_>,
+    data_node: &Node<'_, '_>,
+) {
     let name = tree.get(node_id).name.clone();
     let children: Vec<FormNodeId> = tree.get(node_id).children.clone();
-    let group_kind = tree.meta(node_id).group_kind;
+    let meta = tree.meta(node_id).clone();
+    let group_kind = meta.group_kind;
 
     // For exclGroups: look up group value, set matching child, clear others.
     if group_kind == GroupKind::ExclusiveChoice && !name.is_empty() {
-        let data_value = lookup_data_text(data_node, &name);
+        let data_value = lookup_bound_text(data_root, data_node, &meta, &name);
         // Pre-collect item values to avoid borrow conflicts.
         let child_item_vals: Vec<(FormNodeId, Option<String>)> = children
             .iter()
@@ -693,10 +716,8 @@ fn bind_data(tree: &mut FormTree, node_id: FormNodeId, data_node: &Node<'_, '_>)
 
     // For fields: look up data value directly.
     if let FormNodeType::Field { ref mut value } = tree.get_mut(node_id).node_type {
-        if !name.is_empty() {
-            if let Some(dv) = lookup_data_text(data_node, &name) {
-                *value = dv;
-            }
+        if let Some(dv) = lookup_bound_text(data_root, data_node, &meta, &name) {
+            *value = dv;
         }
         return; // Fields are leaf nodes.
     }
@@ -704,25 +725,31 @@ fn bind_data(tree: &mut FormTree, node_id: FormNodeId, data_node: &Node<'_, '_>)
     // For subforms: find matching data child and recurse.
     // When occur max > 1 and data has multiple matching children,
     // clone the subform for each additional data instance.
-    let child_data_node = if !name.is_empty() {
-        find_child_element_by_name(data_node, &name)
-    } else {
-        None
-    };
-    let effective_data = child_data_node.as_ref().unwrap_or(data_node);
+    let bound_nodes = resolve_bound_nodes(data_root, data_node, &meta, &name);
+    let effective_data = bound_nodes.first().copied().unwrap_or(*data_node);
 
     // Check for repeating subform instances in the data.
     let occur = tree.get(node_id).occur.clone();
-    let max_occur = occur.max.unwrap_or(1);
-    if max_occur > 1 && !name.is_empty() {
-        let data_instances: Vec<_> = data_node
-            .children()
-            .filter(|c| c.is_element() && c.tag_name().name() == name)
-            .collect();
+    let max_instances = occur.max.map(|max| max as usize).unwrap_or(usize::MAX);
+    if max_instances > 1 && !meta.data_bind_none {
+        let data_instances: Vec<_> = if let Some(bind_ref) = meta.data_bind_ref.as_deref() {
+            resolve_bind_nodes(data_root, data_node, bind_ref)
+        } else if !name.is_empty() {
+            data_node
+                .children()
+                .filter(|child| child.is_element() && child.tag_name().name() == name)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        if !data_instances.is_empty() {
+            tree.get_mut(node_id).occur.initial = 1;
+        }
 
         if data_instances.len() > 1 {
             // Bind the first instance to the existing subform node.
-            bind_data_children(tree, node_id, &children, &data_instances[0]);
+            bind_data_children(tree, node_id, &children, data_root, &data_instances[0]);
 
             // Clone the subform for each additional data instance.
             let parent_id = tree
@@ -731,30 +758,36 @@ fn bind_data(tree: &mut FormTree, node_id: FormNodeId, data_node: &Node<'_, '_>)
                 .enumerate()
                 .find(|(_, n)| n.children.contains(&node_id))
                 .map(|(i, _)| FormNodeId(i));
+            let mut insert_pos = parent_id.and_then(|pid| {
+                tree.get(pid)
+                    .children
+                    .iter()
+                    .position(|&c| c == node_id)
+                    .map(|pos| (pid, pos + 1))
+            });
 
-            for data_inst in &data_instances[1..data_instances.len().min(max_occur as usize)] {
+            for data_inst in &data_instances[1..data_instances.len().min(max_instances)] {
                 let cloned_id = clone_subtree(tree, node_id);
+                tree.get_mut(cloned_id).occur.initial = 1;
                 bind_data_children(
                     tree,
                     cloned_id,
                     &tree.get(cloned_id).children.clone(),
+                    data_root,
                     data_inst,
                 );
                 // Insert clone after the original in the parent's children list.
-                if let Some(pid) = parent_id {
-                    let parent = tree.get_mut(pid);
-                    if let Some(pos) = parent.children.iter().position(|&c| c == node_id) {
-                        parent.children.insert(pos + 1, cloned_id);
-                    } else {
-                        parent.children.push(cloned_id);
-                    }
+                if let Some((pid, pos)) = insert_pos.as_mut() {
+                    let parent = tree.get_mut(*pid);
+                    parent.children.insert(*pos, cloned_id);
+                    *pos += 1;
                 }
             }
             return;
         }
     }
 
-    bind_data_children(tree, node_id, &children, effective_data);
+    bind_data_children(tree, node_id, &children, data_root, &effective_data);
 }
 
 /// Bind data to a subform's children.
@@ -762,10 +795,11 @@ fn bind_data_children(
     tree: &mut FormTree,
     _parent_id: FormNodeId,
     children: &[FormNodeId],
+    data_root: &Node<'_, '_>,
     data_node: &Node<'_, '_>,
 ) {
     for &child_id in children {
-        bind_data(tree, child_id, data_node);
+        bind_data(tree, child_id, data_root, data_node);
     }
 }
 
@@ -791,6 +825,145 @@ fn clone_subtree(tree: &mut FormTree, source_id: FormNodeId) -> FormNodeId {
 fn lookup_data_text(data_node: &Node<'_, '_>, name: &str) -> Option<String> {
     let child = find_child_element_by_name(data_node, name)?;
     child.text().map(|s| s.to_string())
+}
+
+fn lookup_bound_text(
+    data_root: &Node<'_, '_>,
+    data_node: &Node<'_, '_>,
+    meta: &FormNodeMeta,
+    fallback_name: &str,
+) -> Option<String> {
+    if meta.data_bind_none {
+        return None;
+    }
+
+    if let Some(bind_ref) = meta.data_bind_ref.as_deref() {
+        return resolve_bind_nodes(data_root, data_node, bind_ref)
+            .into_iter()
+            .next()
+            .and_then(|node| node.text().map(|s| s.to_string()));
+    }
+
+    if fallback_name.is_empty() {
+        None
+    } else {
+        lookup_data_text(data_node, fallback_name)
+    }
+}
+
+fn resolve_bound_nodes<'a, 'input>(
+    data_root: &Node<'a, 'input>,
+    data_node: &Node<'a, 'input>,
+    meta: &FormNodeMeta,
+    fallback_name: &str,
+) -> Vec<Node<'a, 'input>> {
+    if meta.data_bind_none {
+        return Vec::new();
+    }
+
+    if let Some(bind_ref) = meta.data_bind_ref.as_deref() {
+        return resolve_bind_nodes(data_root, data_node, bind_ref);
+    }
+
+    if fallback_name.is_empty() {
+        Vec::new()
+    } else {
+        find_child_element_by_name(data_node, fallback_name)
+            .into_iter()
+            .collect()
+    }
+}
+
+fn resolve_bind_nodes<'a, 'input>(
+    data_root: &Node<'a, 'input>,
+    data_node: &Node<'a, 'input>,
+    bind_ref: &str,
+) -> Vec<Node<'a, 'input>> {
+    let mut path = bind_ref.trim();
+    if path.is_empty() {
+        return Vec::new();
+    }
+
+    let mut current = if let Some(rest) = path.strip_prefix("$record.") {
+        path = rest;
+        vec![*data_root]
+    } else if path == "$record" {
+        return vec![*data_root];
+    } else if let Some(rest) = path.strip_prefix("$.") {
+        path = rest;
+        vec![*data_node]
+    } else {
+        vec![*data_node]
+    };
+
+    let segments: Vec<&str> = path
+        .split('.')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if segments.is_empty() {
+        return current;
+    }
+
+    for segment in segments {
+        let (name, selector) = parse_bind_segment(segment);
+        if name.is_empty() {
+            continue;
+        }
+
+        let mut next = Vec::new();
+        for node in current {
+            let matches: Vec<Node<'a, 'input>> = node
+                .children()
+                .filter(|child| child.is_element() && child.tag_name().name() == name)
+                .collect();
+            match selector {
+                BindSelector::First => {
+                    if let Some(first) = matches.into_iter().next() {
+                        next.push(first);
+                    }
+                }
+                BindSelector::All => next.extend(matches),
+                BindSelector::Index(idx) => {
+                    if let Some(found) = matches.into_iter().nth(idx) {
+                        next.push(found);
+                    }
+                }
+            }
+        }
+        current = next;
+        if current.is_empty() {
+            break;
+        }
+    }
+
+    current
+}
+
+#[derive(Clone, Copy)]
+enum BindSelector {
+    First,
+    All,
+    Index(usize),
+}
+
+fn parse_bind_segment(segment: &str) -> (&str, BindSelector) {
+    let Some(start) = segment.find('[') else {
+        return (segment, BindSelector::First);
+    };
+    let name = &segment[..start];
+    let index = segment[start + 1..]
+        .strip_suffix(']')
+        .unwrap_or_default()
+        .trim();
+    match index {
+        "*" => (name, BindSelector::All),
+        "" => (name, BindSelector::First),
+        _ => index
+            .parse::<usize>()
+            .map(|idx| (name, BindSelector::Index(idx)))
+            .unwrap_or((name, BindSelector::First)),
+    }
 }
 
 /// Find a direct child element by name.
@@ -1158,6 +1331,118 @@ mod tests {
                 other => panic!("expected Field, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn unlimited_occur_expands_all_dataset_instances_in_order() {
+        let template = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="items" layout="tb" w="7in">
+      <subform name="row" layout="tb" w="7in">
+        <occur min="0" max="-1"/>
+        <field name="value" w="2in" h="0.3in">
+          <ui><textEdit/></ui>
+          <value><text/></value>
+        </field>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+        let datasets = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <items>
+        <row><value>A</value></row>
+        <row><value>B</value></row>
+        <row><value>C</value></row>
+      </items>
+    </form1>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let (tree, root_id) = parse_template(template, Some(datasets)).unwrap();
+        let items_id = find_node_id_by_name(&tree, root_id, "items").unwrap();
+        let row_ids = tree.get(items_id).children.clone();
+
+        assert_eq!(row_ids.len(), 3);
+        assert!(row_ids.iter().all(|&row_id| tree.get(row_id).occur.count() == 1));
+
+        let values: Vec<String> = row_ids
+            .iter()
+            .map(|&row_id| {
+                let field_id = tree.get(row_id).children[0];
+                match &tree.get(field_id).node_type {
+                    FormNodeType::Field { value } => value.clone(),
+                    other => panic!("expected Field, got {other:?}"),
+                }
+            })
+            .collect();
+
+        assert_eq!(values, vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn explicit_dataref_bind_repeats_subform_instances() {
+        let template = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="items" layout="tb" w="7in">
+      <subform name="entryRow" layout="tb" w="7in">
+        <occur min="0" max="-1"/>
+        <bind match="dataRef" ref="$.item[*]"/>
+        <field name="label" w="2in" h="0.3in">
+          <bind match="dataRef" ref="$.value"/>
+          <ui><textEdit/></ui>
+          <value><text/></value>
+        </field>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+        let datasets = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <items>
+        <item><value>One</value></item>
+        <item><value>Two</value></item>
+        <item><value>Three</value></item>
+      </items>
+    </form1>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let (tree, root_id) = parse_template(template, Some(datasets)).unwrap();
+        let items_id = find_node_id_by_name(&tree, root_id, "items").unwrap();
+        let row_ids = tree.get(items_id).children.clone();
+
+        assert_eq!(row_ids.len(), 3);
+        assert!(row_ids.iter().all(|&row_id| tree.get(row_id).occur.count() == 1));
+
+        let values: Vec<String> = row_ids
+            .iter()
+            .map(|&row_id| {
+                let field_id = tree.get(row_id).children[0];
+                match &tree.get(field_id).node_type {
+                    FormNodeType::Field { value } => value.clone(),
+                    other => panic!("expected Field, got {other:?}"),
+                }
+            })
+            .collect();
+
+        assert_eq!(values, vec!["One", "Two", "Three"]);
     }
 
     #[test]
