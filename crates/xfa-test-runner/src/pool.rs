@@ -39,6 +39,7 @@ const CHILD_RLIMIT_AS_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 /// Collect all `.pdf` files from `corpus_dir` (recursive).
 pub fn collect_pdfs_from_dir(corpus_dir: &Path) -> Vec<PathBuf> {
     walkdir::WalkDir::new(corpus_dir)
+        .follow_links(true)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {
