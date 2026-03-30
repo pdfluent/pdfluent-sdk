@@ -57,5 +57,6 @@ pub use search::{
     count_occurrences, count_text_only, pages_containing, search_text, SearchOptions, SearchResult,
 };
 pub use text::{
-    extract_page_text, extract_positioned_chars, extract_text, PositionedChar, TextBlock,
+    extract_page_blocks, extract_page_text, extract_positioned_chars, extract_text, PositionedChar,
+    TextBlock,
 };

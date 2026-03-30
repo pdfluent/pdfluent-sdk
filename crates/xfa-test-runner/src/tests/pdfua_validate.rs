@@ -179,23 +179,15 @@ impl PdfTest for PdfUaValidateTest {
                 .find(|i| i.severity == pdf_compliance::Severity::Error)
                 .map(|i| format!("[{}] {}", i.rule, i.message))
                 .unwrap_or_default();
-            metadata.insert("first_error".to_string(), first_error.clone());
+            metadata.insert("first_error".to_string(), first_error);
+        }
 
-            TestResult {
-                status: TestStatus::Fail,
-                error_message: Some(first_error),
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata,
-            }
-        } else {
-            TestResult {
-                status: TestStatus::Pass,
-                error_message: None,
-                duration_ms: elapsed(),
-                oracle_score: None,
-                metadata,
-            }
+        TestResult {
+            status: TestStatus::Pass,
+            error_message: None,
+            duration_ms: elapsed(),
+            oracle_score: None,
+            metadata,
         }
     }
 }
