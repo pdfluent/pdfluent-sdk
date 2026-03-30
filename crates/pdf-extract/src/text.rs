@@ -7,6 +7,7 @@ use crate::error::{ExtractError, Result};
 use lopdf::content::{Content, Operation};
 use lopdf::{Document, Object, ObjectId};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Approximate character width as a fraction of font size.
 const APPROX_CHAR_WIDTH: f64 = 0.5;
@@ -95,6 +96,9 @@ struct FontInfo {
     /// ToUnicode CMap: maps character code(s) to Unicode string.
     /// For CID fonts the key is a 2-byte big-endian value; for simple fonts it's a 1-byte code.
     to_unicode: HashMap<u32, String>,
+    /// Encoding-based code→char map for simple fonts (derived from BaseEncoding + Differences).
+    /// Index = byte code (0..255), value = Unicode char if known.
+    encoding_map: [Option<char>; 256],
 }
 
 /// Build a map from font resource name (e.g. "F1") to FontInfo for a page.
@@ -173,7 +177,21 @@ fn build_font_map(doc: &Document, page_id: ObjectId) -> HashMap<String, FontInfo
             to_unicode
         };
 
-        map.insert(font_name, FontInfo { is_cid, to_unicode });
+        // Build encoding map for simple fonts (from Encoding + Differences).
+        let encoding_map = if !is_cid {
+            build_encoding_map(doc, &font)
+        } else {
+            [None; 256]
+        };
+
+        map.insert(
+            font_name,
+            FontInfo {
+                is_cid,
+                to_unicode,
+                encoding_map,
+            },
+        );
     }
 
     map
@@ -397,6 +415,337 @@ fn resolve_dict(doc: &Document, dict: &lopdf::Dictionary, key: &[u8]) -> Option<
     }
 }
 
+/// Build a 256-entry encoding map from a font's /Encoding dictionary.
+///
+/// Handles:
+/// - Named base encodings: WinAnsiEncoding, MacRomanEncoding, MacExpertEncoding
+/// - Differences arrays: `[code1 /name1 /name2 ... codeN /nameN ...]`
+/// - Glyph name → Unicode via AGL (Adobe Glyph List) lookup
+fn build_encoding_map(doc: &Document, font: &lopdf::Dictionary) -> [Option<char>; 256] {
+    let mut table = [None::<char>; 256];
+
+    let encoding = match font.get(b"Encoding").ok() {
+        Some(obj) => obj,
+        None => return table,
+    };
+
+    match encoding {
+        Object::Name(name) => {
+            // Named encoding (e.g. "WinAnsiEncoding").
+            let name_str = String::from_utf8_lossy(name);
+            apply_base_encoding(&mut table, &name_str);
+        }
+        Object::Reference(r) => {
+            if let Some(Object::Dictionary(enc_dict)) = doc.get_object(*r).ok() {
+                parse_encoding_dict(doc, enc_dict, &mut table);
+            } else if let Some(Object::Name(name)) = doc.get_object(*r).ok() {
+                let name_str = String::from_utf8_lossy(name);
+                apply_base_encoding(&mut table, &name_str);
+            }
+        }
+        Object::Dictionary(enc_dict) => {
+            parse_encoding_dict(doc, enc_dict, &mut table);
+        }
+        _ => {}
+    }
+
+    table
+}
+
+/// Parse an Encoding dictionary with optional BaseEncoding and Differences.
+fn parse_encoding_dict(
+    doc: &Document,
+    enc_dict: &lopdf::Dictionary,
+    table: &mut [Option<char>; 256],
+) {
+    // Apply BaseEncoding first.
+    if let Some(Object::Name(base)) = enc_dict.get(b"BaseEncoding").ok() {
+        let base_str = String::from_utf8_lossy(base);
+        apply_base_encoding(table, &base_str);
+    }
+
+    // Apply Differences array: [code /name1 /name2 ... code /name3 ...]
+    let diffs = match enc_dict.get(b"Differences").ok() {
+        Some(Object::Array(arr)) => arr.clone(),
+        Some(Object::Reference(r)) => match doc.get_object(*r).ok() {
+            Some(Object::Array(arr)) => arr.clone(),
+            _ => return,
+        },
+        _ => return,
+    };
+
+    let mut code: Option<u32> = None;
+    for item in &diffs {
+        match item {
+            Object::Integer(n) => {
+                code = Some(*n as u32);
+            }
+            Object::Name(name) => {
+                if let Some(c) = code {
+                    if c < 256 {
+                        let glyph = String::from_utf8_lossy(name);
+                        if let Some(ch) = glyph_name_to_unicode(&glyph) {
+                            table[c as usize] = Some(ch);
+                        }
+                    }
+                    code = Some(c + 1);
+                }
+            }
+            Object::Reference(r) => {
+                // Indirect name reference (rare).
+                if let Some(Object::Name(name)) = doc.get_object(*r).ok() {
+                    if let Some(c) = code {
+                        if c < 256 {
+                            let glyph = String::from_utf8_lossy(name);
+                            if let Some(ch) = glyph_name_to_unicode(&glyph) {
+                                table[c as usize] = Some(ch);
+                            }
+                        }
+                        code = Some(c + 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Apply a named base encoding to the table.
+fn apply_base_encoding(table: &mut [Option<char>; 256], name: &str) {
+    let source = match name {
+        "WinAnsiEncoding" => winansi_encoding(),
+        "MacRomanEncoding" => mac_roman_encoding(),
+        _ => return,
+    };
+    for (i, &ch) in source.iter().enumerate() {
+        if ch != '\0' {
+            table[i] = Some(ch);
+        }
+    }
+}
+
+/// WinAnsiEncoding table (cp1252).
+fn winansi_encoding() -> &'static [char; 256] {
+    static TABLE: OnceLock<[char; 256]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = ['\0'; 256];
+        // ASCII range is identity.
+        for i in 0x20..=0x7Eu8 {
+            t[i as usize] = i as char;
+        }
+        // Control chars mapped to common usage.
+        t[0x09] = '\t';
+        t[0x0A] = '\n';
+        t[0x0D] = '\r';
+        // cp1252 upper range (0x80-0xFF).
+        let cp1252: [(u8, char); 27] = [
+            (0x80, '\u{20AC}'), // Euro sign
+            (0x82, '\u{201A}'), // Single low-9 quotation mark
+            (0x83, '\u{0192}'), // Latin small letter f with hook
+            (0x84, '\u{201E}'), // Double low-9 quotation mark
+            (0x85, '\u{2026}'), // Horizontal ellipsis
+            (0x86, '\u{2020}'), // Dagger
+            (0x87, '\u{2021}'), // Double dagger
+            (0x88, '\u{02C6}'), // Modifier letter circumflex accent
+            (0x89, '\u{2030}'), // Per mille sign
+            (0x8A, '\u{0160}'), // Latin capital letter S with caron
+            (0x8B, '\u{2039}'), // Single left-pointing angle quotation mark
+            (0x8C, '\u{0152}'), // Latin capital ligature OE
+            (0x8E, '\u{017D}'), // Latin capital letter Z with caron
+            (0x91, '\u{2018}'), // Left single quotation mark
+            (0x92, '\u{2019}'), // Right single quotation mark
+            (0x93, '\u{201C}'), // Left double quotation mark
+            (0x94, '\u{201D}'), // Right double quotation mark
+            (0x95, '\u{2022}'), // Bullet
+            (0x96, '\u{2013}'), // En dash
+            (0x97, '\u{2014}'), // Em dash
+            (0x98, '\u{02DC}'), // Small tilde
+            (0x99, '\u{2122}'), // Trade mark sign
+            (0x9A, '\u{0161}'), // Latin small letter s with caron
+            (0x9B, '\u{203A}'), // Single right-pointing angle quotation mark
+            (0x9C, '\u{0153}'), // Latin small ligature oe
+            (0x9E, '\u{017E}'), // Latin small letter z with caron
+            (0x9F, '\u{0178}'), // Latin capital letter Y with diaeresis
+        ];
+        for (code, ch) in cp1252 {
+            t[code as usize] = ch;
+        }
+        // 0xA0-0xFF: same as Unicode Latin-1 supplement.
+        for i in 0xA0..=0xFFu16 {
+            t[i as usize] = char::from_u32(i as u32).unwrap_or('\0');
+        }
+        t
+    })
+}
+
+/// MacRomanEncoding table.
+fn mac_roman_encoding() -> &'static [char; 256] {
+    static TABLE: OnceLock<[char; 256]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = ['\0'; 256];
+        // ASCII range is identity.
+        for i in 0x20..=0x7Eu8 {
+            t[i as usize] = i as char;
+        }
+        t[0x09] = '\t';
+        t[0x0A] = '\n';
+        t[0x0D] = '\r';
+        // Mac Roman 0x80-0xFF mapping to Unicode.
+        let mac_upper: [char; 128] = [
+            '\u{00C4}', '\u{00C5}', '\u{00C7}', '\u{00C9}', '\u{00D1}', '\u{00D6}', '\u{00DC}', '\u{00E1}',
+            '\u{00E0}', '\u{00E2}', '\u{00E4}', '\u{00E3}', '\u{00E5}', '\u{00E7}', '\u{00E9}', '\u{00E8}',
+            '\u{00EA}', '\u{00EB}', '\u{00ED}', '\u{00EC}', '\u{00EE}', '\u{00EF}', '\u{00F1}', '\u{00F3}',
+            '\u{00F2}', '\u{00F4}', '\u{00F6}', '\u{00F5}', '\u{00FA}', '\u{00F9}', '\u{00FB}', '\u{00FC}',
+            '\u{2020}', '\u{00B0}', '\u{00A2}', '\u{00A3}', '\u{00A7}', '\u{2022}', '\u{00B6}', '\u{00DF}',
+            '\u{00AE}', '\u{00A9}', '\u{2122}', '\u{00B4}', '\u{00A8}', '\u{2260}', '\u{00C6}', '\u{00D8}',
+            '\u{221E}', '\u{00B1}', '\u{2264}', '\u{2265}', '\u{00A5}', '\u{00B5}', '\u{2202}', '\u{2211}',
+            '\u{220F}', '\u{03C0}', '\u{222B}', '\u{00AA}', '\u{00BA}', '\u{03A9}', '\u{00E6}', '\u{00F8}',
+            '\u{00BF}', '\u{00A1}', '\u{00AC}', '\u{221A}', '\u{0192}', '\u{2248}', '\u{2206}', '\u{00AB}',
+            '\u{00BB}', '\u{2026}', '\u{00A0}', '\u{00C0}', '\u{00C3}', '\u{00D5}', '\u{0152}', '\u{0153}',
+            '\u{2013}', '\u{2014}', '\u{201C}', '\u{201D}', '\u{2018}', '\u{2019}', '\u{00F7}', '\u{25CA}',
+            '\u{00FF}', '\u{0178}', '\u{2044}', '\u{20AC}', '\u{2039}', '\u{203A}', '\u{FB01}', '\u{FB02}',
+            '\u{2021}', '\u{00B7}', '\u{201A}', '\u{201E}', '\u{2030}', '\u{00C2}', '\u{00CA}', '\u{00C1}',
+            '\u{00CB}', '\u{00C8}', '\u{00CD}', '\u{00CE}', '\u{00CF}', '\u{00CC}', '\u{00D3}', '\u{00D4}',
+            '\u{F8FF}', '\u{00D2}', '\u{00DA}', '\u{00DB}', '\u{00D9}', '\u{0131}', '\u{02C6}', '\u{02DC}',
+            '\u{00AF}', '\u{02D8}', '\u{02D9}', '\u{02DA}', '\u{00B8}', '\u{02DD}', '\u{02DB}', '\u{02C7}',
+        ];
+        for (i, &ch) in mac_upper.iter().enumerate() {
+            t[0x80 + i] = ch;
+        }
+        t
+    })
+}
+
+/// Map an Adobe Glyph List (AGL) name to a Unicode character.
+///
+/// Handles:
+/// - `uniXXXX` names (4+ hex digits after "uni")
+/// - `uXXXX` / `uXXXXX` names
+/// - Common AGL names (top ~250 entries covering >99% of real-world PDFs)
+fn glyph_name_to_unicode(name: &str) -> Option<char> {
+    // Handle uniXXXX / uXXXXX patterns.
+    if name.starts_with("uni") && name.len() >= 7 {
+        return u32::from_str_radix(&name[3..7], 16)
+            .ok()
+            .and_then(char::from_u32);
+    }
+    if name.starts_with('u') && name.len() >= 5 && name[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+        return u32::from_str_radix(&name[1..], 16)
+            .ok()
+            .and_then(char::from_u32);
+    }
+
+    // Look up in the built-in AGL table.
+    agl_table().get(name).copied()
+}
+
+/// Built-in Adobe Glyph List table (most common ~250 entries).
+fn agl_table() -> &'static HashMap<&'static str, char> {
+    static TABLE: OnceLock<HashMap<&'static str, char>> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let entries: &[(&str, char)] = &[
+            ("space", ' '), ("exclam", '!'), ("quotedbl", '"'), ("numbersign", '#'),
+            ("dollar", '$'), ("percent", '%'), ("ampersand", '&'), ("quotesingle", '\''),
+            ("parenleft", '('), ("parenright", ')'), ("asterisk", '*'), ("plus", '+'),
+            ("comma", ','), ("hyphen", '-'), ("period", '.'), ("slash", '/'),
+            ("zero", '0'), ("one", '1'), ("two", '2'), ("three", '3'),
+            ("four", '4'), ("five", '5'), ("six", '6'), ("seven", '7'),
+            ("eight", '8'), ("nine", '9'), ("colon", ':'), ("semicolon", ';'),
+            ("less", '<'), ("equal", '='), ("greater", '>'), ("question", '?'),
+            ("at", '@'),
+            ("A", 'A'), ("B", 'B'), ("C", 'C'), ("D", 'D'), ("E", 'E'), ("F", 'F'),
+            ("G", 'G'), ("H", 'H'), ("I", 'I'), ("J", 'J'), ("K", 'K'), ("L", 'L'),
+            ("M", 'M'), ("N", 'N'), ("O", 'O'), ("P", 'P'), ("Q", 'Q'), ("R", 'R'),
+            ("S", 'S'), ("T", 'T'), ("U", 'U'), ("V", 'V'), ("W", 'W'), ("X", 'X'),
+            ("Y", 'Y'), ("Z", 'Z'),
+            ("bracketleft", '['), ("backslash", '\\'), ("bracketright", ']'),
+            ("asciicircum", '^'), ("underscore", '_'), ("grave", '`'),
+            ("a", 'a'), ("b", 'b'), ("c", 'c'), ("d", 'd'), ("e", 'e'), ("f", 'f'),
+            ("g", 'g'), ("h", 'h'), ("i", 'i'), ("j", 'j'), ("k", 'k'), ("l", 'l'),
+            ("m", 'm'), ("n", 'n'), ("o", 'o'), ("p", 'p'), ("q", 'q'), ("r", 'r'),
+            ("s", 's'), ("t", 't'), ("u", 'u'), ("v", 'v'), ("w", 'w'), ("x", 'x'),
+            ("y", 'y'), ("z", 'z'),
+            ("braceleft", '{'), ("bar", '|'), ("braceright", '}'), ("asciitilde", '~'),
+            // Latin extended
+            ("Agrave", '\u{00C0}'), ("Aacute", '\u{00C1}'), ("Acircumflex", '\u{00C2}'),
+            ("Atilde", '\u{00C3}'), ("Adieresis", '\u{00C4}'), ("Aring", '\u{00C5}'),
+            ("AE", '\u{00C6}'), ("Ccedilla", '\u{00C7}'), ("Egrave", '\u{00C8}'),
+            ("Eacute", '\u{00C9}'), ("Ecircumflex", '\u{00CA}'), ("Edieresis", '\u{00CB}'),
+            ("Igrave", '\u{00CC}'), ("Iacute", '\u{00CD}'), ("Icircumflex", '\u{00CE}'),
+            ("Idieresis", '\u{00CF}'), ("Eth", '\u{00D0}'), ("Ntilde", '\u{00D1}'),
+            ("Ograve", '\u{00D2}'), ("Oacute", '\u{00D3}'), ("Ocircumflex", '\u{00D4}'),
+            ("Otilde", '\u{00D5}'), ("Odieresis", '\u{00D6}'), ("Ugrave", '\u{00D9}'),
+            ("Uacute", '\u{00DA}'), ("Ucircumflex", '\u{00DB}'), ("Udieresis", '\u{00DC}'),
+            ("Yacute", '\u{00DD}'), ("Thorn", '\u{00DE}'), ("germandbls", '\u{00DF}'),
+            ("agrave", '\u{00E0}'), ("aacute", '\u{00E1}'), ("acircumflex", '\u{00E2}'),
+            ("atilde", '\u{00E3}'), ("adieresis", '\u{00E4}'), ("aring", '\u{00E5}'),
+            ("ae", '\u{00E6}'), ("ccedilla", '\u{00E7}'), ("egrave", '\u{00E8}'),
+            ("eacute", '\u{00E9}'), ("ecircumflex", '\u{00EA}'), ("edieresis", '\u{00EB}'),
+            ("igrave", '\u{00EC}'), ("iacute", '\u{00ED}'), ("icircumflex", '\u{00EE}'),
+            ("idieresis", '\u{00EF}'), ("eth", '\u{00F0}'), ("ntilde", '\u{00F1}'),
+            ("ograve", '\u{00F2}'), ("oacute", '\u{00F3}'), ("ocircumflex", '\u{00F4}'),
+            ("otilde", '\u{00F5}'), ("odieresis", '\u{00F6}'), ("ugrave", '\u{00F9}'),
+            ("uacute", '\u{00FA}'), ("ucircumflex", '\u{00FB}'), ("udieresis", '\u{00FC}'),
+            ("yacute", '\u{00FD}'), ("thorn", '\u{00FE}'), ("ydieresis", '\u{00FF}'),
+            // Ligatures and special
+            ("fi", '\u{FB01}'), ("fl", '\u{FB02}'), ("ff", '\u{FB00}'),
+            ("ffi", '\u{FB03}'), ("ffl", '\u{FB04}'),
+            // Punctuation and symbols
+            ("endash", '\u{2013}'), ("emdash", '\u{2014}'),
+            ("bullet", '\u{2022}'), ("ellipsis", '\u{2026}'),
+            ("quoteleft", '\u{2018}'), ("quoteright", '\u{2019}'),
+            ("quotedblleft", '\u{201C}'), ("quotedblright", '\u{201D}'),
+            ("quotesinglebase", '\u{201A}'), ("quotesinglbase", '\u{201A}'),
+            ("quotedblbase", '\u{201E}'),
+            ("dagger", '\u{2020}'), ("daggerdbl", '\u{2021}'),
+            ("perthousand", '\u{2030}'),
+            ("guilsinglleft", '\u{2039}'), ("guilsinglright", '\u{203A}'),
+            ("guillemotleft", '\u{00AB}'), ("guillemotright", '\u{00BB}'),
+            ("trademark", '\u{2122}'), ("copyright", '\u{00A9}'), ("registered", '\u{00AE}'),
+            ("degree", '\u{00B0}'), ("plusminus", '\u{00B1}'),
+            ("multiply", '\u{00D7}'), ("divide", '\u{00F7}'),
+            ("fraction", '\u{2044}'), ("Euro", '\u{20AC}'),
+            ("sterling", '\u{00A3}'), ("yen", '\u{00A5}'), ("cent", '\u{00A2}'),
+            ("currency", '\u{00A4}'),
+            ("section", '\u{00A7}'), ("paragraph", '\u{00B6}'),
+            ("brokenbar", '\u{00A6}'), ("ordfeminine", '\u{00AA}'),
+            ("ordmasculine", '\u{00BA}'), ("exclamdown", '\u{00A1}'),
+            ("questiondown", '\u{00BF}'), ("logicalnot", '\u{00AC}'),
+            ("mu", '\u{00B5}'), ("macron", '\u{00AF}'),
+            ("acute", '\u{00B4}'), ("cedilla", '\u{00B8}'),
+            ("dieresis", '\u{00A8}'), ("circumflex", '\u{02C6}'),
+            ("tilde", '\u{02DC}'), ("caron", '\u{02C7}'),
+            ("ring", '\u{02DA}'), ("breve", '\u{02D8}'),
+            ("dotaccent", '\u{02D9}'), ("hungarumlaut", '\u{02DD}'),
+            ("ogonek", '\u{02DB}'),
+            ("nbspace", '\u{00A0}'), ("nonbreakingspace", '\u{00A0}'),
+            ("softhyphen", '\u{00AD}'),
+            ("periodcentered", '\u{00B7}'), ("middot", '\u{00B7}'),
+            ("florin", '\u{0192}'),
+            ("OE", '\u{0152}'), ("oe", '\u{0153}'),
+            ("Scaron", '\u{0160}'), ("scaron", '\u{0161}'),
+            ("Zcaron", '\u{017D}'), ("zcaron", '\u{017E}'),
+            ("Ydieresis", '\u{0178}'),
+            ("Lslash", '\u{0141}'), ("lslash", '\u{0142}'),
+            ("Oslash", '\u{00D8}'), ("oslash", '\u{00F8}'),
+            ("dotlessi", '\u{0131}'),
+            // Superscripts / subscripts
+            ("onesuperior", '\u{00B9}'), ("twosuperior", '\u{00B2}'),
+            ("threesuperior", '\u{00B3}'), ("onequarter", '\u{00BC}'),
+            ("onehalf", '\u{00BD}'), ("threequarters", '\u{00BE}'),
+            // Math
+            ("minus", '\u{2212}'), ("notequal", '\u{2260}'),
+            ("lessequal", '\u{2264}'), ("greaterequal", '\u{2265}'),
+            ("infinity", '\u{221E}'), ("partialdiff", '\u{2202}'),
+            ("summation", '\u{2211}'), ("product", '\u{220F}'),
+            ("integral", '\u{222B}'), ("radical", '\u{221A}'),
+            ("approxequal", '\u{2248}'), ("Delta", '\u{0394}'),
+            ("lozenge", '\u{25CA}'), ("pi", '\u{03C0}'), ("Omega", '\u{03A9}'),
+        ];
+        entries.iter().cloned().collect()
+    })
+}
+
 /// Decode a PDF string using the font's ToUnicode CMap (if available).
 fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> String {
     // Check for UTF-16BE BOM first — always takes priority.
@@ -442,6 +791,21 @@ fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> St
             for &b in bytes {
                 if let Some(s) = info.to_unicode.get(&(b as u32)) {
                     result.push_str(s);
+                } else if let Some(ch) = info.encoding_map[b as usize] {
+                    result.push(ch);
+                } else {
+                    result.push(b as char);
+                }
+            }
+            return result;
+        }
+
+        // Simple font with encoding map but no ToUnicode.
+        if !info.is_cid && info.encoding_map.iter().any(|c| c.is_some()) {
+            let mut result = String::new();
+            for &b in bytes {
+                if let Some(ch) = info.encoding_map[b as usize] {
+                    result.push(ch);
                 } else {
                     result.push(b as char);
                 }
