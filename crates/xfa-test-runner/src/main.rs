@@ -479,17 +479,28 @@ fn release_lock(lock_path: &PathBuf) {
 }
 
 fn main() {
+    let cli = Cli::parse();
+
     // Fix #461: lopdf uses rayon internally (reader.rs par_iter, object_stream.rs par_chunks)
     // via the *global* rayon thread pool, which defaults to 8 MB stacks. Our custom per-run
     // pool has 64 MB stacks but those threads are spawned outside that pool's scope, so lopdf's
     // internal par_iter falls back to the global pool. Deep recursion on pathological PDFs
     // overflows the 8 MB stack at ~2800 PDFs. Configure the global pool first.
-    rayon::ThreadPoolBuilder::new()
-        .stack_size(64 * 1024 * 1024) // 64 MB — matches our custom pool and per-test spawns
+    //
+    // Single-pdf child processes run under RLIMIT_AS=8 GB. Each rayon thread's 64 MB stack
+    // consumes virtual address space; with 12 cores that's 768 MB just for rayon. Reduce to
+    // 16 MB (sufficient for lopdf's par_iter) and cap at 4 threads to save ~500 MB virtual
+    // address space. The deep-recursion 64 MB stacks are on per-test threads, not rayon.
+    let is_child = matches!(&cli.command, Command::SinglePdf { .. });
+    let mut builder = rayon::ThreadPoolBuilder::new();
+    if is_child {
+        builder = builder.stack_size(16 * 1024 * 1024).num_threads(4);
+    } else {
+        builder = builder.stack_size(64 * 1024 * 1024);
+    }
+    builder
         .build_global()
         .expect("Failed to configure global rayon thread pool");
-
-    let cli = Cli::parse();
 
     match cli.command {
         Command::Run {
