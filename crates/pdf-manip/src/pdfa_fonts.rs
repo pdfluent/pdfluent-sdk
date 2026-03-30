@@ -1971,9 +1971,13 @@ fn update_simple_widths_cff_symbolic(
     let cff_data = extract_cff_table(font_data);
     let cff = cff_data.and_then(cff_parser::Table::parse);
 
-    // Parse PDF Encoding Differences (e.g., [1 /bullet]) so we can look up
-    // named glyphs that override the CFF internal encoding.
-    let (first_char, last_char, differences) = {
+    // Ignore PDF Encoding/Differences entirely for Symbol/ZapfDingbats.
+    // fix_classic_symbolic_base14_encoding will strip the Encoding later in
+    // the pipeline, so veraPDF will use the CFF internal encoding for width
+    // validation (§6.2.11.5). If we compute widths based on Differences now,
+    // they'll be wrong after the encoding is stripped. Use only the CFF
+    // internal encoding, which is the final source of truth.
+    let (first_char, last_char) = {
         let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
             return;
         };
@@ -1993,42 +1997,15 @@ fn update_simple_widths_cff_symbolic(
                 _ => None,
             })
             .unwrap_or(255);
-        let mut diffs = std::collections::HashMap::new();
-        match font.get(b"Encoding").ok() {
-            Some(Object::Dictionary(enc_dict)) => {
-                parse_differences(doc, enc_dict, &mut diffs);
-            }
-            Some(Object::Reference(enc_ref)) => {
-                if let Ok(Object::Dictionary(enc_dict)) = doc.get_object(*enc_ref) {
-                    parse_differences(doc, enc_dict, &mut diffs);
-                }
-            }
-            _ => {}
-        }
-        (fc, lc, diffs)
+        (fc, lc)
     };
 
     let mut widths = Vec::new();
     for code in first_char..=last_char {
         let width = if code > 255 {
             0
-        } else if let Some(glyph_name) = differences.get(&code) {
-            // Code is in Differences: look up glyph by name in the font.
-            // veraPDF resolves Differences names via CFF charset, then hmtx.
-            if let Some(gid) = face.glyph_index_by_name(glyph_name) {
-                face.glyph_hor_advance(gid)
-                    .map(|w| (w as f64 * scale).round() as i64)
-                    .unwrap_or(0)
-            } else {
-                // Glyph name not found — try via Unicode mapping.
-                glyph_name_to_unicode(glyph_name)
-                    .and_then(|u| face.glyph_index(u))
-                    .and_then(|gid| face.glyph_hor_advance(gid))
-                    .map(|w| (w as f64 * scale).round() as i64)
-                    .unwrap_or(0)
-            }
         } else if let Some(ref cff) = cff {
-            // No Differences entry: use CFF internal encoding.
+            // Use CFF internal encoding exclusively.
             let gid = cff
                 .encoding
                 .code_to_gid(&cff.charset, code as u8)
