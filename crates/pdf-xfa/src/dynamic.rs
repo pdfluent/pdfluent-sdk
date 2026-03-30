@@ -177,6 +177,15 @@ fn execute_assignment(
     line: &str,
 ) -> usize {
     let statement = line.trim().trim_end_matches(';').trim();
+
+    if statement == "Utils.hideIfEmpty(this)" {
+        return hide_if_empty(form, current_id);
+    }
+
+    if statement == "Utils.deleteContainerIfEmpty(this)" {
+        return delete_container_if_empty(form, parents, current_id);
+    }
+
     let Some(eq_pos) = find_assignment_operator(statement) else {
         return 0;
     };
@@ -204,6 +213,36 @@ fn execute_assignment(
     }
 
     0
+}
+
+fn hide_if_empty(form: &mut FormTree, node_id: FormNodeId) -> usize {
+    if !node_is_empty(form, node_id) {
+        return 0;
+    }
+    set_presence(form, node_id, ScriptValue::String("hidden".into()))
+}
+
+fn delete_container_if_empty(
+    form: &mut FormTree,
+    parents: &HashMap<FormNodeId, FormNodeId>,
+    node_id: FormNodeId,
+) -> usize {
+    if !node_is_empty(form, node_id) {
+        return 0;
+    }
+    let Some(parent_id) = parents.get(&node_id).copied() else {
+        return 0;
+    };
+    set_presence(form, parent_id, ScriptValue::String("hidden".into()))
+}
+
+fn node_is_empty(form: &FormTree, node_id: FormNodeId) -> bool {
+    match &form.get(node_id).node_type {
+        FormNodeType::Field { value } => value.trim().is_empty(),
+        FormNodeType::Draw { content } => content.trim().is_empty(),
+        FormNodeType::Subform => form.get(node_id).children.iter().all(|&child_id| node_is_empty(form, child_id)),
+        _ => false,
+    }
 }
 
 fn find_assignment_operator(statement: &str) -> Option<usize> {
@@ -812,6 +851,47 @@ mod tests {
         } else {
             panic!("expected field");
         }
+    }
+
+    #[test]
+    fn utils_hide_if_empty_hides_current_node() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let empty = add_node(
+            &mut tree,
+            "EmptyField",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+        tree.get_mut(root).children = vec![empty];
+        tree.meta_mut(empty).event_scripts = vec!["Utils.hideIfEmpty(this);".into()];
+
+        apply_dynamic_scripts(&mut tree, root);
+
+        assert!(tree.meta(empty).presence_hidden);
+    }
+
+    #[test]
+    fn utils_delete_container_if_empty_hides_parent_container() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let container = add_node(&mut tree, "Container", FormNodeType::Subform);
+        let empty = add_node(
+            &mut tree,
+            "EmptyField",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![container];
+        tree.get_mut(container).children = vec![empty];
+        tree.meta_mut(empty).event_scripts = vec!["Utils.deleteContainerIfEmpty(this);".into()];
+
+        apply_dynamic_scripts(&mut tree, root);
+
+        assert!(tree.meta(container).presence_hidden);
     }
 
     #[test]
