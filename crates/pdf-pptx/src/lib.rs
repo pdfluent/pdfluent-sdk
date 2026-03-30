@@ -10,29 +10,45 @@ pub use error::{PptxError, Result};
 pub use writer::{PptxImage, SlideData};
 
 use lopdf::Document;
-use pdf_extract::{extract_page_images, extract_text};
+use pdf_extract::{extract_page_blocks, extract_page_images};
 use writer::{extracted_to_pptx_image, write_pptx};
+
+/// Maximum number of pages to convert to PPTX. Massive documents (e.g. 1000+
+/// pages) are rarely useful as presentations and cause timeouts.
+const MAX_PPTX_PAGES: u32 = 500;
+
+/// Conversion timeout in seconds.
+const PPTX_TIMEOUT_SECS: u64 = 60;
 
 /// Convert a PDF document to PPTX format.
 ///
 /// Returns the PPTX file contents as bytes.
 pub fn pdf_to_pptx(doc: &Document) -> Result<Vec<u8>> {
+    let start = std::time::Instant::now();
     let pages = doc.get_pages();
     let total_pages = pages.len() as u32;
-    let text_blocks = extract_text(doc);
+
+    if total_pages > MAX_PPTX_PAGES {
+        return Err(PptxError::Other(format!(
+            "Document too large for PPTX conversion: {total_pages} pages (limit: {MAX_PPTX_PAGES})"
+        )));
+    }
 
     let mut slides = Vec::new();
     let mut img_counter = 0;
 
     for page_num in 1..=total_pages {
-        let page_blocks: Vec<_> = text_blocks
-            .iter()
-            .filter(|b| b.page == page_num)
-            .cloned()
-            .collect();
+        // Periodic timeout check.
+        if start.elapsed().as_secs() > PPTX_TIMEOUT_SECS {
+            return Err(PptxError::Other("PPTX conversion timed out".into()));
+        }
+
+        let page_blocks = extract_page_blocks(doc, page_num);
 
         // Get page dimensions.
-        let page_id = pages[&page_num];
+        let page_id = *pages.get(&page_num).ok_or(PptxError::Other(format!(
+            "Missing page dictionary for page {page_num}"
+        )))?;
         let (page_width, page_height) = get_page_dimensions(doc, page_id);
 
         // Extract images.
