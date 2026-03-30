@@ -218,7 +218,7 @@ fn build_font_correction_plan(
     };
 
     // --- Compute width corrections ---
-    let width_corrections = compute_plan_widths(doc, font_id, &resolved_encoding, has_ff2, has_ff3);
+    let width_corrections = compute_plan_widths(doc, font_id, &resolved_encoding, has_ff1, has_ff2, has_ff3);
 
     Some(FontCorrectionPlan {
         font_id,
@@ -233,6 +233,7 @@ fn compute_plan_widths(
     doc: &Document,
     font_id: ObjectId,
     resolved_encoding: &ResolvedEncoding,
+    has_ff1: bool,
     has_ff2: bool,
     has_ff3: bool,
 ) -> Vec<(usize, i32)> {
@@ -305,6 +306,21 @@ fn compute_plan_widths(
         return corrections
             .into_iter()
             .map(|(idx, w)| (idx, w as i32))
+            .collect();
+    }
+
+    if has_ff1 {
+        // Raw Type1 (PFB): parse charstring widths from the font program.
+        let enc_info = get_simple_encoding_info(doc, dict);
+        let corrections = compute_type1_fontfile_width_corrections(
+            &font_data,
+            first_char,
+            &existing_widths,
+            &enc_info,
+        );
+        return corrections
+            .into_iter()
+            .map(|(idx, w, _certain, _large)| (idx, w as i32))
             .collect();
     }
 
@@ -9436,6 +9452,8 @@ fn compute_type1_fontfile_width_corrections(
             continue;
         }
         // Look up width. For .notdef, always use 0 if charstring is absent.
+        // When a named glyph is absent from the font program, veraPDF uses
+        // the .notdef width for §6.2.11.5 comparison. We must do the same.
         let cs_width = if glyph_name == ".notdef" {
             parsed
                 .charstring_widths
@@ -9445,7 +9463,15 @@ fn compute_type1_fontfile_width_corrections(
         } else {
             match parsed.charstring_widths.get(glyph_name.as_str()).copied() {
                 Some(w) => w,
-                None => continue,
+                None => {
+                    // Glyph absent from font program — use .notdef width.
+                    is_certain_correction = true;
+                    parsed
+                        .charstring_widths
+                        .get(".notdef")
+                        .copied()
+                        .unwrap_or_default()
+                }
             }
         };
         let font_w = (cs_width as f64 * scale).round();
