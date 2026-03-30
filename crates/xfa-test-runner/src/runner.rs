@@ -181,6 +181,31 @@ pub fn run_single_pdf(
     let mut results = Vec::new();
 
     for test in &tests {
+        // Guard: if virtual memory is critically high, skip remaining tests instead
+        // of crashing. Under RLIMIT_AS, jemalloc retains virtual mappings even after
+        // free, so VmSize grows monotonically across tests. Threshold: 12 GB leaves
+        // headroom for thread stacks and allocations under 16 GB RLIMIT.
+        #[cfg(target_os = "linux")]
+        {
+            let vm_kb = virtual_size_kb();
+            if vm_kb > 12 * 1024 * 1024 {
+                // Skip this and all remaining tests.
+                for remaining in std::iter::once(test).chain(tests[results.len() + 1..].iter()) {
+                    results.push(SinglePdfResult {
+                        test_name: remaining.name().to_string(),
+                        status: "crash".to_string(),
+                        error_message: Some(format!(
+                            "virtual memory pressure ({:.1} GB), skipping to avoid OOM",
+                            vm_kb as f64 / (1024.0 * 1024.0)
+                        )),
+                        duration_ms: 0,
+                        metadata_json: None,
+                    });
+                }
+                break;
+            }
+        }
+
         let timeout = single_pdf_timeout(test.name(), timeout_secs);
         let result = run_test_with_timeout(
             Arc::clone(test),
@@ -886,6 +911,23 @@ fn hex_sha256(data: &[u8]) -> String {
 
 /// Read current process RSS in bytes.
 /// Returns `None` on unsupported platforms or if reading fails.
+/// Return the process's virtual memory size in KB (Linux only).
+/// Used by single-pdf children to detect memory pressure under RLIMIT_AS.
+#[cfg(target_os = "linux")]
+fn virtual_size_kb() -> u64 {
+    // /proc/self/status: VmSize line is in kB.
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status.lines().find_map(|line| {
+                line.strip_prefix("VmSize:")
+                    .and_then(|rest| rest.trim().strip_suffix("kB"))
+                    .and_then(|kb| kb.trim().parse::<u64>().ok())
+            })
+        })
+        .unwrap_or(0)
+}
+
 fn current_rss_bytes() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
