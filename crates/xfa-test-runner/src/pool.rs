@@ -28,11 +28,14 @@ use crate::runner::SinglePdfOutput;
 /// Hard wall-clock kill timeout per child process (seconds).
 const CHILD_KILL_TIMEOUT_SECS: u64 = 120;
 
-/// Virtual address space limit per child process (8 GB).
+/// Virtual address space limit per child process (16 GB).
 /// On Linux this is applied via RLIMIT_AS before exec so a runaway PDF can't
 /// cause a system-wide OOM — the child's allocator fails instead.
+/// Raised from 8 GB: pathological PDFs that decompress to >4 GB combined with
+/// jemalloc's retained virtual mappings and thread stacks exhausted 8 GB,
+/// causing thread-spawn EAGAIN or OOM on small allocations.
 #[cfg(target_os = "linux")]
-const CHILD_RLIMIT_AS_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+const CHILD_RLIMIT_AS_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 
 // ── PDF collection ──────────────────────────────────────────────────────────
 
