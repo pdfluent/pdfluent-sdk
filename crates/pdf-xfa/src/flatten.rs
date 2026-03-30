@@ -47,13 +47,18 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 
     // 1b. Detect pre-rendered pages: if the PDF's existing pages already contain
     // substantial static content (non-empty content streams), this is a "hybrid"
-    // XFA+static PDF.  Preserve the existing static rendering — strip the
-    // AcroForm and Widget annotations, keep the original page content.
+    // XFA+static PDF.  Preserve the existing static rendering and, when
+    // widget appearance streams are available, bake them into the page
+    // content before removing the interactive layer.
     if let Ok(doc) = Document::load_mem(pdf_bytes) {
         if pages_have_static_content(&doc) {
             let mut doc_mut = Document::load_mem(pdf_bytes)
                 .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
-            strip_widgets_and_acroform(&mut doc_mut);
+            if flatten_widget_appearances(&mut doc_mut) == 0 {
+                strip_widgets_and_acroform(&mut doc_mut);
+            } else {
+                remove_acroform(&mut doc_mut);
+            }
             let mut out = Vec::new();
             doc_mut
                 .save_to(&mut out)
@@ -264,6 +269,304 @@ fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+fn write_ops(buf: &mut Vec<u8>, args: std::fmt::Arguments<'_>) {
+    use std::fmt::Write as _;
+
+    let mut text = String::new();
+    let _ = text.write_fmt(args);
+    buf.extend_from_slice(text.as_bytes());
+}
+
+/// Flatten Widget annotation appearances onto their pages.
+///
+/// Hybrid XFA PDFs often already contain the correct visual representation in
+/// widget `/AP` streams. Stripping those widgets outright drops borders, text,
+/// checkboxes, and image buttons. This helper bakes the normal appearance onto
+/// the page content and removes only the widgets that were successfully
+/// flattened. Returns the number of widgets flattened.
+fn flatten_widget_appearances(doc: &mut Document) -> usize {
+    let page_ids: Vec<ObjectId> = doc.page_iter().collect();
+    let mut flattened = 0usize;
+
+    for page_id in page_ids {
+        let annots = page_annotations(doc, page_id);
+        if annots.is_empty() {
+            continue;
+        }
+
+        let mut retained = Vec::new();
+        let mut overlay_ops = Vec::new();
+
+        for annot in annots {
+            let Some(annot_id) = annot.as_reference().ok() else {
+                retained.push(annot);
+                continue;
+            };
+
+            let Ok(annot_dict) = doc.get_dictionary(annot_id).cloned() else {
+                retained.push(annot);
+                continue;
+            };
+
+            let is_widget = annot_dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|obj| obj.as_name().ok())
+                == Some(&b"Widget"[..]);
+            if !is_widget {
+                retained.push(annot);
+                continue;
+            }
+
+            let Some(rect) = annotation_rect(&annot_dict) else {
+                retained.push(Object::Reference(annot_id));
+                continue;
+            };
+            let Some(ap_id) = resolve_widget_normal_appearance(doc, &annot_dict) else {
+                retained.push(Object::Reference(annot_id));
+                continue;
+            };
+
+            let xobject_name = format!("XfaAp{}", flattened);
+            add_xobject_to_page_resources(doc, page_id, &xobject_name, ap_id);
+            write_ops(
+                &mut overlay_ops,
+                format_args!(
+                    "q 1 0 0 1 {:.3} {:.3} cm /{} Do Q\n",
+                    rect[0], rect[1], xobject_name
+                ),
+            );
+            flattened += 1;
+        }
+
+        if overlay_ops.is_empty() {
+            continue;
+        }
+
+        append_to_page_content(doc, page_id, &overlay_ops);
+        set_page_annotations(doc, page_id, retained);
+    }
+
+    flattened
+}
+
+fn page_annotations(doc: &Document, page_id: ObjectId) -> Vec<Object> {
+    let Ok(page_dict) = doc.get_dictionary(page_id) else {
+        return Vec::new();
+    };
+
+    match page_dict.get(b"Annots") {
+        Ok(Object::Array(arr)) => arr.clone(),
+        Ok(Object::Reference(id)) => doc
+            .get_object(*id)
+            .ok()
+            .and_then(|obj| obj.as_array().ok().cloned())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn set_page_annotations(doc: &mut Document, page_id: ObjectId, annots: Vec<Object>) {
+    if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
+        if annots.is_empty() {
+            page_dict.remove(b"Annots");
+        } else {
+            page_dict.set("Annots", Object::Array(annots));
+        }
+    }
+}
+
+fn annotation_rect(dict: &Dictionary) -> Option<[f32; 4]> {
+    let rect = dict.get(b"Rect").ok()?.as_array().ok()?;
+    if rect.len() != 4 {
+        return None;
+    }
+    Some([
+        rect[0].as_float().ok()?,
+        rect[1].as_float().ok()?,
+        rect[2].as_float().ok()?,
+        rect[3].as_float().ok()?,
+    ])
+}
+
+fn resolve_widget_normal_appearance(doc: &mut Document, annot_dict: &Dictionary) -> Option<ObjectId> {
+    let ap = annot_dict.get(b"AP").ok()?.as_dict().ok()?;
+    let normal = ap.get(b"N").ok()?;
+    resolve_appearance_object(doc, annot_dict, normal)
+}
+
+fn resolve_appearance_object(
+    doc: &mut Document,
+    annot_dict: &Dictionary,
+    object: &Object,
+) -> Option<ObjectId> {
+    match object {
+        Object::Reference(id) => match doc.get_object(*id).ok()?.clone() {
+            Object::Stream(_) => Some(*id),
+            Object::Dictionary(states) => resolve_appearance_state(doc, annot_dict, &states),
+            _ => None,
+        },
+        Object::Stream(stream) => Some(doc.add_object(Object::Stream(stream.clone()))),
+        Object::Dictionary(states) => resolve_appearance_state(doc, annot_dict, states),
+        _ => None,
+    }
+}
+
+fn resolve_appearance_state(
+    doc: &mut Document,
+    annot_dict: &Dictionary,
+    states: &Dictionary,
+) -> Option<ObjectId> {
+    if let Some(state) = selected_widget_state(annot_dict) {
+        if let Ok(object) = states.get(state) {
+            if let Some(id) = resolve_appearance_object(doc, annot_dict, object) {
+                return Some(id);
+            }
+        }
+    }
+
+    for fallback in [b"Yes".as_slice(), b"On".as_slice(), b"Off".as_slice()] {
+        if let Ok(object) = states.get(fallback) {
+            if let Some(id) = resolve_appearance_object(doc, annot_dict, object) {
+                return Some(id);
+            }
+        }
+    }
+
+    for (_name, object) in states.iter() {
+        if let Some(id) = resolve_appearance_object(doc, annot_dict, object) {
+            return Some(id);
+        }
+    }
+
+    None
+}
+
+fn selected_widget_state<'a>(annot_dict: &'a Dictionary) -> Option<&'a [u8]> {
+    annot_dict
+        .get(b"AS")
+        .ok()
+        .and_then(|obj| obj.as_name().ok())
+        .or_else(|| {
+            annot_dict
+                .get(b"V")
+                .ok()
+                .and_then(|obj| obj.as_name().ok())
+        })
+}
+
+fn add_xobject_to_page_resources(
+    doc: &mut Document,
+    page_id: ObjectId,
+    name: &str,
+    xobject_id: ObjectId,
+) {
+    let resources_ref = doc.get_dictionary(page_id).ok().and_then(|page_dict| {
+        page_dict
+            .get(b"Resources")
+            .ok()
+            .and_then(|obj| obj.as_reference().ok())
+    });
+
+    if let Some(resources_id) = resources_ref {
+        let xobject_ref = doc.get_dictionary(resources_id).ok().and_then(|resources| {
+            resources
+                .get(b"XObject")
+                .ok()
+                .and_then(|obj| obj.as_reference().ok())
+        });
+
+        if let Some(xobject_dict_id) = xobject_ref {
+            if let Ok(Object::Dictionary(ref mut xobjects)) = doc.get_object_mut(xobject_dict_id) {
+                xobjects.set(name, Object::Reference(xobject_id));
+                return;
+            }
+        }
+
+        if let Ok(Object::Dictionary(ref mut resources)) = doc.get_object_mut(resources_id) {
+            add_xobject_to_resources_dict(resources, name, xobject_id);
+            return;
+        }
+    }
+
+    let inline_xobject_ref = doc.get_dictionary(page_id).ok().and_then(|page_dict| {
+        page_dict
+            .get(b"Resources")
+            .ok()
+            .and_then(|obj| obj.as_dict().ok())
+            .and_then(|resources| {
+                resources
+                    .get(b"XObject")
+                    .ok()
+                    .and_then(|obj| obj.as_reference().ok())
+            })
+    });
+
+    if let Some(xobject_dict_id) = inline_xobject_ref {
+        if let Ok(Object::Dictionary(ref mut xobjects)) = doc.get_object_mut(xobject_dict_id) {
+            xobjects.set(name, Object::Reference(xobject_id));
+            return;
+        }
+    }
+
+    if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
+        if let Ok(Object::Dictionary(ref mut resources)) = page_dict.get_mut(b"Resources") {
+            add_xobject_to_resources_dict(resources, name, xobject_id);
+            return;
+        }
+
+        let mut resources = Dictionary::new();
+        add_xobject_to_resources_dict(&mut resources, name, xobject_id);
+        page_dict.set("Resources", Object::Dictionary(resources));
+    }
+}
+
+fn add_xobject_to_resources_dict(resources: &mut Dictionary, name: &str, xobject_id: ObjectId) {
+    if let Ok(Object::Dictionary(ref mut xobjects)) = resources.get_mut(b"XObject") {
+        xobjects.set(name, Object::Reference(xobject_id));
+    } else {
+        let mut xobjects = Dictionary::new();
+        xobjects.set(name, Object::Reference(xobject_id));
+        resources.set("XObject", Object::Dictionary(xobjects));
+    }
+}
+
+fn append_to_page_content(doc: &mut Document, page_id: ObjectId, data: &[u8]) {
+    let new_stream_id = doc.add_object(Object::Stream(Stream::new(
+        dictionary! {},
+        data.to_vec(),
+    )));
+
+    let contents = doc
+        .get_dictionary(page_id)
+        .ok()
+        .and_then(|page_dict| page_dict.get(b"Contents").ok().cloned());
+
+    let new_contents = match contents {
+        Some(Object::Reference(existing_id)) => Object::Array(vec![
+            Object::Reference(existing_id),
+            Object::Reference(new_stream_id),
+        ]),
+        Some(Object::Array(mut arr)) => {
+            arr.push(Object::Reference(new_stream_id));
+            Object::Array(arr)
+        }
+        Some(Object::Stream(stream)) => {
+            let existing_id = doc.add_object(Object::Stream(stream));
+            Object::Array(vec![
+                Object::Reference(existing_id),
+                Object::Reference(new_stream_id),
+            ])
+        }
+        Some(other) => Object::Array(vec![other, Object::Reference(new_stream_id)]),
+        None => Object::Reference(new_stream_id),
+    };
+
+    if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
+        page_dict.set("Contents", new_contents);
+    }
 }
 
 /// Remove Widget annotations from all pages and strip /AcroForm from the catalog.
@@ -477,6 +780,122 @@ mod tests {
         build_xfa_pdf_with_content(xdp, Vec::new())
     }
 
+    fn build_xfa_pdf_with_widget_appearance(
+        page_content: Vec<u8>,
+        normal_appearance: Object,
+        widget_extra: Dictionary,
+    ) -> Vec<u8> {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let mut doc = Document::with_version("1.4");
+        let xdp_bytes = SIMPLE_XDP.as_bytes().to_vec();
+        let xfa_stream = Stream::new(
+            dictionary! { "Length" => Object::Integer(xdp_bytes.len() as i64) },
+            xdp_bytes,
+        );
+        let xfa_id = doc.add_object(Object::Stream(xfa_stream));
+
+        let pages_id = doc.new_object_id();
+        let content_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! { "Length" => Object::Integer(page_content.len() as i64) },
+            page_content,
+        )));
+
+        let appearance_id = match normal_appearance {
+            Object::Reference(id) => id,
+            other => doc.add_object(other),
+        };
+
+        let widget_id = doc.new_object_id();
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Page".to_vec()),
+            "Parent"   => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+            "Annots"   => Object::Array(vec![Object::Reference(widget_id)]),
+            "Resources" => Object::Dictionary(dictionary! {})
+        }));
+
+        let mut widget = dictionary! {
+            "Type"    => Object::Name(b"Annot".to_vec()),
+            "Subtype" => Object::Name(b"Widget".to_vec()),
+            "Rect"    => Object::Array(vec![
+                Object::Integer(100), Object::Integer(700),
+                Object::Integer(220), Object::Integer(730),
+            ]),
+            "AP"      => Object::Dictionary(dictionary! {
+                "N" => Object::Reference(appearance_id)
+            }),
+            "P"       => Object::Reference(page_id)
+        };
+        for (key, value) in widget_extra {
+            widget.set(key, value);
+        }
+        doc.objects.insert(widget_id, Object::Dictionary(widget));
+
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1)
+            }),
+        );
+
+        let acroform_id = doc.add_object(Object::Dictionary(dictionary! {
+            "XFA"    => Object::Reference(xfa_id),
+            "Fields" => Object::Array(vec![Object::Reference(widget_id)])
+        }));
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Catalog".to_vec()),
+            "Pages"    => Object::Reference(pages_id),
+            "AcroForm" => Object::Reference(acroform_id)
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
+    }
+
+    fn find_last_content_stream<'a>(doc: &'a Document, page_id: ObjectId) -> &'a Stream {
+        let page_dict = doc.get_dictionary(page_id).expect("page dict");
+        match page_dict.get(b"Contents").expect("contents") {
+            Object::Reference(id) => doc
+                .get_object(*id)
+                .expect("contents object")
+                .as_stream()
+                .expect("contents stream"),
+            Object::Array(arr) => {
+                let last = arr.last().expect("last content stream");
+                let id = last.as_reference().expect("contents ref");
+                doc.get_object(id)
+                    .expect("contents object")
+                    .as_stream()
+                    .expect("contents stream")
+            }
+            other => other.as_stream().expect("contents stream"),
+        }
+    }
+
+    fn page_xobjects(doc: &Document, page_id: ObjectId) -> Dictionary {
+        let page_dict = doc.get_dictionary(page_id).expect("page dict");
+        let resources = page_dict
+            .get(b"Resources")
+            .expect("resources")
+            .as_dict()
+            .expect("resources dict");
+        resources
+            .get(b"XObject")
+            .expect("xobjects")
+            .as_dict()
+            .expect("xobject dict")
+            .clone()
+    }
+
     const SIMPLE_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
 <template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
@@ -679,6 +1098,190 @@ ET
         assert!(
             !content.contains("Please wait"),
             "placeholder text should not survive XFA flattening"
+        );
+    }
+
+    #[test]
+    fn hybrid_static_pdf_flattens_widget_appearance_into_page_content() {
+        let appearance = Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => Object::Name(b"XObject".to_vec()),
+                "Subtype" => Object::Name(b"Form".to_vec()),
+                "BBox" => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(120), Object::Integer(30),
+                ]),
+                "Matrix" => Object::Array(vec![
+                    Object::Integer(1), Object::Integer(0),
+                    Object::Integer(0), Object::Integer(1),
+                    Object::Integer(0), Object::Integer(0),
+                ]),
+                "Resources" => Object::Dictionary(dictionary! {}),
+            },
+            b"0 G\n0.5 0.5 119 29 re\ns\n".to_vec(),
+        ));
+        let page_content = b"BT /F1 12 Tf 72 720 Td (Static page text) Tj ET\n".to_vec();
+        let pdf_bytes = build_xfa_pdf_with_widget_appearance(
+            page_content,
+            appearance,
+            dictionary! {
+                "FT" => Object::Name(b"Tx".to_vec()),
+                "T" => Object::string_literal("field[0]"),
+            },
+        );
+
+        let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+        let doc = Document::load_mem(&result).expect("load flattened PDF");
+        let page_id = doc.page_iter().next().expect("page");
+        let page_dict = doc.get_dictionary(page_id).expect("page dict");
+
+        assert!(
+            page_dict.get(b"Annots").is_err(),
+            "flattened widgets should be removed from page annotations"
+        );
+
+        let stream = find_last_content_stream(&doc, page_id);
+        let content = String::from_utf8_lossy(&stream.content);
+        assert!(
+            content.contains("Do"),
+            "flattened page content should paint the widget appearance"
+        );
+
+        let xobjects = page_xobjects(&doc, page_id);
+        assert_eq!(xobjects.len(), 1, "expected one widget appearance XObject");
+    }
+
+    #[test]
+    fn hybrid_static_pdf_uses_selected_button_appearance_state() {
+        let yes_stream = Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => Object::Name(b"XObject".to_vec()),
+                "Subtype" => Object::Name(b"Form".to_vec()),
+                "BBox" => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(20), Object::Integer(20),
+                ]),
+                "Matrix" => Object::Array(vec![
+                    Object::Integer(1), Object::Integer(0),
+                    Object::Integer(0), Object::Integer(1),
+                    Object::Integer(0), Object::Integer(0),
+                ]),
+                "Resources" => Object::Dictionary(dictionary! {}),
+            },
+            b"BT /F1 8 Tf 1 1 Td (YES) Tj ET\n".to_vec(),
+        ));
+        let off_stream = Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => Object::Name(b"XObject".to_vec()),
+                "Subtype" => Object::Name(b"Form".to_vec()),
+                "BBox" => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(20), Object::Integer(20),
+                ]),
+                "Matrix" => Object::Array(vec![
+                    Object::Integer(1), Object::Integer(0),
+                    Object::Integer(0), Object::Integer(1),
+                    Object::Integer(0), Object::Integer(0),
+                ]),
+                "Resources" => Object::Dictionary(dictionary! {}),
+            },
+            b"BT /F1 8 Tf 1 1 Td (OFF) Tj ET\n".to_vec(),
+        ));
+
+        let mut doc = Document::with_version("1.4");
+        let state_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Yes" => yes_stream,
+            "Off" => off_stream,
+        }));
+        let annot = dictionary! {
+            "Subtype" => Object::Name(b"Widget".to_vec()),
+            "Rect" => Object::Array(vec![
+                Object::Integer(100), Object::Integer(700),
+                Object::Integer(120), Object::Integer(720),
+            ]),
+            "AP" => Object::Dictionary(dictionary! {
+                "N" => Object::Reference(state_id),
+            }),
+            "AS" => Object::Name(b"Yes".to_vec()),
+            "FT" => Object::Name(b"Btn".to_vec()),
+        };
+        let ap_id = resolve_widget_normal_appearance(&mut doc, &annot)
+            .expect("selected normal appearance");
+        let stream = doc
+            .get_object(ap_id)
+            .expect("appearance stream")
+            .as_stream()
+            .expect("appearance stream");
+        let content = String::from_utf8_lossy(&stream.content);
+
+        assert!(
+            content.contains("YES"),
+            "flatten should choose the selected normal appearance state"
+        );
+    }
+
+    #[test]
+    fn adding_widget_xobject_preserves_indirect_inline_page_xobjects() {
+        let mut doc = Document::with_version("1.4");
+        let existing_xobject_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => Object::Name(b"XObject".to_vec()),
+                "Subtype" => Object::Name(b"Form".to_vec()),
+                "BBox" => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(10), Object::Integer(10),
+                ]),
+            },
+            b"q Q\n".to_vec(),
+        )));
+        let xobject_dict_id = doc.add_object(Object::Dictionary(dictionary! {
+            "R11" => Object::Reference(existing_xobject_id),
+        }));
+
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Page".to_vec()),
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Resources" => Object::Dictionary(dictionary! {
+                "XObject" => Object::Reference(xobject_dict_id),
+            }),
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1)
+            }),
+        );
+
+        let new_xobject_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => Object::Name(b"XObject".to_vec()),
+                "Subtype" => Object::Name(b"Form".to_vec()),
+                "BBox" => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(10), Object::Integer(10),
+                ]),
+            },
+            b"0 0 10 10 re S\n".to_vec(),
+        )));
+
+        add_xobject_to_page_resources(&mut doc, page_id, "XfaAp0", new_xobject_id);
+
+        let xobjects = doc
+            .get_object(xobject_dict_id)
+            .expect("xobject dict")
+            .as_dict()
+            .expect("xobject dict");
+        assert!(xobjects.get(b"R11").is_ok(), "existing page XObject was lost");
+        assert!(
+            xobjects.get(b"XfaAp0").is_ok(),
+            "new flattened widget XObject was not added"
         );
     }
 }
