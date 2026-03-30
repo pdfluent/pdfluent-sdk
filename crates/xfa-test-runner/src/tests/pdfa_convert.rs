@@ -878,6 +878,7 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }
 
     dbg_step!("font_fixes");
+
     // Snapshot font encodings BEFORE font fixes. The pipeline can strip
     // encodings from subset fonts, causing .notdef / missing-glyph / width
     // violations. We restore any encoding that was removed after the pipeline.
