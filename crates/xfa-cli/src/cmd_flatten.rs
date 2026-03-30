@@ -5,12 +5,21 @@ use std::path::Path;
 
 pub fn run(input: &Path, output: &Path) -> Result<()> {
     let pdf_bytes = std::fs::read(input).context("failed to read input PDF")?;
-    let mut doc = lopdf::Document::load_mem(&pdf_bytes).context("failed to parse PDF")?;
 
-    let removed = flatten_acroform(&mut doc);
-
-    doc.save(output).context("failed to save output PDF")?;
-    println!("Flattened {removed} form fields -> {}", output.display());
+    match pdf_xfa::flatten_xfa_to_pdf(&pdf_bytes) {
+        Ok(flattened_bytes) => {
+            std::fs::write(output, &flattened_bytes).context("failed to write output PDF")?;
+            println!("Flattened XFA/AcroForm -> {}", output.display());
+        }
+        Err(e) => {
+            eprintln!("XFA flatten failed: {e:?}");
+            // Fallback to regular acroform flatten
+            let mut doc = lopdf::Document::load_mem(&pdf_bytes).context("failed to parse PDF")?;
+            let removed = flatten_acroform(&mut doc);
+            doc.save(output).context("failed to save output PDF")?;
+            println!("Flattened {removed} form fields -> {}", output.display());
+        }
+    }
     Ok(())
 }
 
