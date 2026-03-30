@@ -6,6 +6,7 @@ pub mod error;
 pub mod extract;
 pub mod flatten;
 pub mod font_bridge;
+pub mod merger;
 pub mod paint_bridge;
 pub mod render_bridge;
 pub mod template_parser;

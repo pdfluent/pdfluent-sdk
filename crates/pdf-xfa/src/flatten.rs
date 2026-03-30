@@ -17,8 +17,9 @@ use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
+use crate::merger::FormMerger;
 use crate::render_bridge::{generate_all_overlays, XfaRenderConfig};
-use crate::template_parser::parse_template;
+use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::layout::LayoutEngine;
 
 /// Flatten all XFA content in `pdf_bytes` to static PDF content streams.
@@ -72,7 +73,10 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     //    fall back to preserving the existing page content with AcroForm stripped.
     match xfa_flatten_inner(pdf_bytes, &template_xml, packets.datasets()) {
         Ok(out) => Ok(out),
-        Err(_) => static_fallback(pdf_bytes),
+        Err(e) => {
+            eprintln!("XFA flatten failed: {e:?}");
+            static_fallback(pdf_bytes)
+        }
     }
 }
 
@@ -84,7 +88,17 @@ fn xfa_flatten_inner(
 ) -> Result<Vec<u8>> {
     use crate::dynamic::apply_dynamic_scripts;
 
-    let (mut tree, root_id) = parse_template(template_xml, datasets_xml)?;
+    let data_dom = if let Some(ds_xml) = datasets_xml {
+        DataDom::from_xml(ds_xml).map_err(|e| XfaError::ParseFailed(format!("datasets parse: {e}")))?
+    } else {
+        DataDom::new()
+    };
+
+    let merger = FormMerger::new(&data_dom);
+    let (mut tree, root_id) = merger
+        .merge(template_xml)
+        .map_err(|e| XfaError::ParseFailed(format!("template merge: {e}")))?;
+
     let _ = apply_dynamic_scripts(&mut tree, root_id);
 
     let engine = LayoutEngine::new(&tree);
