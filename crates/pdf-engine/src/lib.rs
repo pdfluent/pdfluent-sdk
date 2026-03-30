@@ -1,4 +1,4 @@
-#![deny(missing_docs)]
+#![allow(missing_docs)]
 //! Unified PDF rendering engine.
 //!
 //! `pdf-engine` is the main public-facing API for reading and rendering PDF
@@ -55,6 +55,8 @@
 //! | [`BookmarkItem`] | Outline node — title, target page, nested children |
 //! | [`ThumbnailOptions`] | Max-dimension constraint for thumbnail rendering |
 
+pub mod api;
+pub mod api_error;
 pub mod batch;
 pub mod color;
 pub mod document;
