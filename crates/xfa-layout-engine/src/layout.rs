@@ -65,10 +65,12 @@ pub enum LayoutContent {
 }
 
 /// A content node queued for pagination, carrying page-break flags.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct QueuedNode {
     id: FormNodeId,
     break_before: bool,
+    break_after: bool,
+    break_target: Option<String>,
 }
 
 /// The layout engine.
@@ -113,7 +115,7 @@ impl<'a> LayoutEngine<'a> {
                 // TB layout supports pagination: split content across pages
                 let mut remaining = content_queued;
                 while !remaining.is_empty() {
-                    let (page, rest, consumed_break_only) =
+                    let (page, rest, consumed_break_only, _) =
                         self.layout_content_fitting(&area, &remaining, page_w, page_h)?;
                     if page.nodes.is_empty() && !consumed_break_only {
                         // Force place one item to prevent infinite loop
@@ -152,8 +154,8 @@ impl<'a> LayoutEngine<'a> {
                 if remaining.is_empty() {
                     break;
                 }
-                let ca = primary_content_area(pa);
-                let (mut placed, rest, consumed_break_only) =
+                let ca = &pa.content_areas[ca_idx];
+                let (mut placed, rest, consumed_break_only, _) =
                     self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                 if consumed_break_only {
                     remaining = rest;
@@ -239,6 +241,8 @@ impl<'a> LayoutEngine<'a> {
                 QueuedNode {
                     id,
                     break_before: meta.page_break_before,
+                    break_after: meta.page_break_after,
+                    break_target: meta.break_target.clone(),
                 }
             })
             .collect()
@@ -497,7 +501,7 @@ impl<'a> LayoutEngine<'a> {
         content_ids: &[QueuedNode],
         page_width: f64,
         page_height: f64,
-    ) -> Result<(LayoutPage, Vec<QueuedNode>, bool)> {
+    ) -> Result<(LayoutPage, Vec<QueuedNode>, bool, Option<String>)> {
         let mut page = LayoutPage {
             width: page_width,
             height: page_height,
@@ -544,6 +548,7 @@ impl<'a> LayoutEngine<'a> {
         let mut split_remaining: Vec<QueuedNode> = Vec::new();
         let content_bottom = leader_height + content_height;
         let mut consumed_break_only = false;
+        let mut break_target = None;
 
         // Count leader/trailer nodes placed so far (for force-place detection).
         let header_node_count = (if content_area.leader.is_some() { 1 } else { 0 })
@@ -628,6 +633,8 @@ impl<'a> LayoutEngine<'a> {
                             .map(|cid| QueuedNode {
                                 id: cid,
                                 break_before: false,
+                                break_after: self.form.meta(cid).page_break_after,
+                                break_target: None,
                             })
                             .collect();
                     } else if placed_count > 0 {
@@ -670,10 +677,11 @@ impl<'a> LayoutEngine<'a> {
                             QueuedNode {
                                 id: cid,
                                 break_before: m.page_break_before,
+                                break_after: m.page_break_after,
+                                break_target: m.break_target.clone(),
                             }
                         })
-                        .collect();
-                } else if placed_count > 0 {
+                        .collect();                } else if placed_count > 0 {
                     break;
                 } else {
                     if !partial.children.is_empty() {
@@ -690,6 +698,8 @@ impl<'a> LayoutEngine<'a> {
                             QueuedNode {
                                 id: cid,
                                 break_before: m.page_break_before,
+                                break_after: m.page_break_after,
+                                break_target: m.break_target.clone(),
                             }
                         })
                         .collect();
@@ -710,8 +720,8 @@ impl<'a> LayoutEngine<'a> {
         }
 
         let mut remaining = split_remaining;
-        remaining.extend(content_ids[placed_count..].iter().copied());
-        Ok((page, remaining, consumed_break_only))
+        remaining.extend(content_ids[placed_count..].iter().cloned());
+        Ok((page, remaining, consumed_break_only, break_target))
     }
 
     /// Check if a node can be split across pages.

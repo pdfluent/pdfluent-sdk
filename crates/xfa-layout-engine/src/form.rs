@@ -223,6 +223,8 @@ pub struct FormNodeMeta {
     pub presence_invisible: bool,
     /// Whether a page break should be inserted before this node.
     pub page_break_before: bool,
+    /// Whether a page break should be inserted after this node.
+    pub page_break_after: bool,
     /// Target page area name/id for the break (e.g. "MP3", "Page4_ID").
     pub break_target: Option<String>,
     /// Whether this node targets a specific content area via

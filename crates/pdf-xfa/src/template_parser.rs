@@ -73,33 +73,33 @@ fn parse_node(
     tree: &mut FormTree,
     elem: Node<'_, '_>,
     is_root: bool,
-) -> Result<(FormNodeId, bool)> {
+) -> Result<(FormNodeId, (bool, Option<String>))> {
     let tag = elem.tag_name().name();
 
-    let (node, trailing_break) = match tag {
+    let (node, trailing_info) = match tag {
         "template" => {
             let mut n = parse_root_node(tree, elem)?;
-            let tb = add_children(tree, &mut n, elem)?;
-            (n, tb)
+            let ti = add_children(tree, &mut n, elem)?;
+            (n, ti)
         }
         "subform" | "exclGroup" => {
             let mut n = parse_subform_node(tree, elem, is_root)?;
-            let tb = add_children(tree, &mut n, elem)?;
-            (n, tb)
+            let ti = add_children(tree, &mut n, elem)?;
+            (n, ti)
         }
-        "field" => (parse_field(tree, elem)?, false),
-        "draw" => (parse_draw(tree, elem)?, false),
-        "pageSet" => (parse_page_set(tree, elem)?, false),
-        "pageArea" => (parse_page_area(tree, elem)?, false),
+        "field" => (parse_field(tree, elem)?, (false, None)),
+        "draw" => (parse_draw(tree, elem)?, (false, None)),
+        "pageSet" => (parse_page_set(tree, elem)?, (false, None)),
+        "pageArea" => (parse_page_area(tree, elem)?, (false, None)),
         _ => {
             let mut n = blank_node(tag);
-            let tb = add_children(tree, &mut n, elem)?;
-            (n, tb)
+            let ti = add_children(tree, &mut n, elem)?;
+            (n, ti)
         }
     };
 
     let meta = parse_node_meta(elem);
-    Ok((tree.add_node_with_meta(node, meta), trailing_break))
+    Ok((tree.add_node_with_meta(node, meta), trailing_info))
 }
 
 /// Build the root FormNode (without children — `parse_node` calls `add_children`).
@@ -357,9 +357,13 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     );
     let presence_invisible = presence == Some("invisible");
 
-    // (b) Page break detection: look for <breakBefore> child.
-    let page_break_before = detect_page_break_before(elem);
+    // (b) Page break detection: look for <breakBefore>, <breakAfter>, or <break> child.
+    let (page_break_before, break_before_target) = detect_page_break_before(elem);
+    let (page_break_after, break_after_target) = detect_page_break_after(elem);
     let content_area_break = detect_content_area_break(elem);
+
+    // Prefer break_before_target, then break_after_target.
+    let break_target = break_before_target.or(break_after_target);
 
     // (c) Event scripts.
     let event_scripts = collect_event_scripts(elem);
@@ -399,6 +403,8 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         presence_hidden,
         presence_invisible,
         page_break_before,
+        page_break_after,
+        break_target,
         content_area_break,
         overflow_leader,
         overflow_trailer,
@@ -531,7 +537,9 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
 /// content child (subform/field/draw/exclGroup). Inline breakBefore elements
 /// between content children are handled by `add_children` which propagates
 /// them to the next sibling's metadata.
-fn detect_page_break_before(elem: Node<'_, '_>) -> bool {
+///
+/// Returns `(break_found, target_name)`.
+fn detect_page_break_before(elem: Node<'_, '_>) -> (bool, Option<String>) {
     for child in elem.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
         if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
@@ -539,14 +547,42 @@ fn detect_page_break_before(elem: Node<'_, '_>) -> bool {
         }
         if tag == "breakBefore" {
             if attr(child, "targetType") == Some("pageArea") {
-                return true;
+                return (true, attr(child, "target").map(|s| s.to_string()));
             }
         }
         if tag == "break" && attr(child, "before") == Some("pageArea") {
-            return true;
+            return (true, attr(child, "target").map(|s| s.to_string()));
         }
     }
-    false
+    (false, None)
+}
+
+/// Detect page-break-after: look for a child element named `breakAfter` or `break`.
+///
+/// Scans all children after the last content child.
+fn detect_page_break_after(elem: Node<'_, '_>) -> (bool, Option<String>) {
+    let mut last_content_idx = 0;
+    let children: Vec<_> = elem.children().filter(|n| n.is_element()).collect();
+    for (i, child) in children.iter().enumerate() {
+        let tag = child.tag_name().name();
+        if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
+            last_content_idx = i;
+        }
+    }
+
+    // Check elements after the last content node.
+    for child in children.iter().skip(last_content_idx) {
+        let tag = child.tag_name().name();
+        if tag == "breakAfter" {
+            if attr(*child, "targetType") == Some("pageArea") {
+                return (true, attr(*child, "target").map(|s| s.to_string()));
+            }
+        }
+        if tag == "break" && attr(*child, "after") == Some("pageArea") {
+            return (true, attr(*child, "target").map(|s| s.to_string()));
+        }
+    }
+    (false, None)
 }
 
 /// Detect `breakBefore targetType="contentArea"` — the node targets a
@@ -813,23 +849,28 @@ fn find_child_element_by_name<'a, 'input>(
 /// break), it is propagated as `page_break_before` on the next content
 /// sibling's metadata.
 ///
-/// Returns `true` if a pending break remains (i.e. a `breakBefore` was found
-/// after the last content child), meaning the NEXT sibling at the parent
-/// level should receive the break.
+/// Returns `(break_found, target_name)` if a pending break remains (i.e. a
+/// `breakBefore` was found after the last content child), meaning the NEXT
+/// sibling at the parent level should receive the break.
 fn add_children(
     tree: &mut FormTree,
     node: &mut FormNode,
     elem: Node<'_, '_>,
-) -> std::result::Result<bool, crate::error::XfaError> {
+) -> std::result::Result<(bool, Option<String>), crate::error::XfaError> {
     let mut pending_break = false;
+    let mut pending_break_target = None;
     let mut pending_ca_break = false;
     for child in elem.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
         match tag {
             "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" => {
-                let (child_id, trailing_break) = parse_node(tree, child, false)?;
+                let (child_id, (trailing_break, trailing_target)) = parse_node(tree, child, false)?;
                 if pending_break {
-                    tree.meta_mut(child_id).page_break_before = true;
+                    let meta = tree.meta_mut(child_id);
+                    meta.page_break_before = true;
+                    if meta.break_target.is_none() {
+                        meta.break_target = pending_break_target.take();
+                    }
                     pending_break = false;
                 }
                 if pending_ca_break {
@@ -839,12 +880,14 @@ fn add_children(
                 node.children.push(child_id);
                 if trailing_break {
                     pending_break = true;
+                    pending_break_target = trailing_target;
                 }
             }
             "breakBefore" => {
                 let target_type = attr(child, "targetType");
                 if target_type == Some("pageArea") {
                     pending_break = true;
+                    pending_break_target = attr(child, "target").map(|s| s.to_string());
                 } else if target_type == Some("contentArea") {
                     pending_ca_break = true;
                 }
@@ -853,6 +896,7 @@ fn add_children(
             "break" => {
                 if attr(child, "before") == Some("pageArea") {
                     pending_break = true;
+                    pending_break_target = attr(child, "target").map(|s| s.to_string());
                 }
             }
             // Ignore XML elements that are layout metadata, not form nodes.
@@ -868,7 +912,7 @@ fn add_children(
             }
         }
     }
-    Ok(pending_break)
+    Ok((pending_break, pending_break_target))
 }
 
 fn blank_node(tag: &str) -> FormNode {
