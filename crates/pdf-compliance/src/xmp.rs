@@ -932,6 +932,81 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
             .issues
             .iter()
             .any(|i| matches!(i.rule.as_str(), "6.6.4" | "6.7.11" | "6.5.2" | "6.7.3"));
+    // §6.7.3 top-level checks (Title/CreationDate equivalence) fire even when
+    // pdfaid is invalid — veraPDF testNumber 1 (CreationDate) and 2 (Title) are
+    // independent of pdfaid validity. Run these BEFORE the early-return.
+    {
+        let metadata = pdf.metadata();
+        // §6.7.3 testNumber 2: BOM-only /Title vs dc:title mismatch
+        if let Some(ref title) = metadata.title {
+            let info_str = decode_pdf_string(title);
+            if info_str.trim().is_empty() && !title.is_empty() {
+                let dc_title = extract_rdf_alt_value(xmp, "dc:title");
+                match &dc_title {
+                    None => {
+                        error(
+                            report,
+                            "6.7.3",
+                            "/Info has /Title (BOM-only) but XMP dc:title is absent",
+                        );
+                    }
+                    Some(val) if val.is_empty() => {
+                        error(
+                            report,
+                            "6.7.3",
+                            "/Info has /Title (BOM-only bytes) but XMP dc:title is empty string",
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // §6.7.3 testNumber 1: CreationDate timezone mismatch
+        // veraPDF flags when Info has explicit timezone (Z/±HH'MM') but XMP
+        // has no timezone or a different one.  veraPDF interprets timezone-less
+        // XMP dates as local time — which differs from Info UTC on non-UTC hosts.
+        let xmp_create_date = extract_nested_value(xmp, "xmp:CreateDate")
+            .or_else(|| extract_nested_value(xmp, "xap:CreateDate"));
+        if let (Some(info_dt), Some(xmp_dt)) = (&metadata.creation_date, &xmp_create_date) {
+            let n_info = datetime_to_local_str(info_dt);
+            if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
+                let xmp_tz = parse_xmp_tz_offset_minutes(xmp_dt);
+                if let Some(xmp_tz_mins) = xmp_tz {
+                    // Both have timezone — compare
+                    let info_tz = (info_dt.utc_offset_hour as i64) * 60
+                        + (info_dt.utc_offset_minute as i64);
+                    if info_tz != xmp_tz_mins && n_info == n_xmp {
+                        error(
+                            report,
+                            "6.7.3",
+                            format!(
+                                "Info /CreationDate and XMP xmp:CreateDate have same wall-clock \
+                                 time but different timezones (Info={}min, XMP={}min)",
+                                info_tz, xmp_tz_mins
+                            ),
+                        );
+                    }
+                } else if n_info.len() >= 14
+                    && n_xmp.len() >= 14
+                    && n_info == n_xmp
+                    && info_dt.has_timezone
+                {
+                    // XMP has no timezone, Info has explicit TZ (Z, +, or -).
+                    // veraPDF assumes local TZ for timezone-less XMP → mismatch
+                    // on any non-UTC host.
+                    error(
+                        report,
+                        "6.7.3",
+                        format!(
+                            "Info /CreationDate has timezone but XMP xmp:CreateDate '{}' does not",
+                            xmp_dt
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     if pdfaid_invalid {
         if rdf_ns_broken {
             // Broken RDF namespace: pdf:Producer is unreadable → §6.7.3.7 if /Producer set.
@@ -956,26 +1031,11 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
     let metadata = pdf.metadata();
 
     // /Title ↔ dc:title (§6.7.3.2)
+    // BOM-only Title is already handled in the pre-pdfaid block above.
     if let Some(ref title) = metadata.title {
         let info_str = decode_pdf_string(title);
         let dc_title = extract_rdf_alt_value(xmp, "dc:title");
-        if info_str.trim().is_empty() {
-            // BOM-only or truly empty /Title:  veraPDF still requires dc:title
-            // to be absent or empty when /Title is present-but-empty.  If XMP
-            // dc:title has a non-empty value, that's a mismatch.  And if /Title
-            // is a non-empty byte sequence (like BOM-only <FEFF>) but dc:title
-            // is completely absent, veraPDF flags §6.7.3.
-            if !title.is_empty() {
-                // /Title has bytes (e.g. BOM-only) → dc:title must also exist.
-                if dc_title.is_none() {
-                    error(
-                        report,
-                        "6.7.3",
-                        "/Info has /Title (BOM-only or empty bytes) but XMP dc:title is absent",
-                    );
-                }
-            }
-        } else {
+        if !info_str.trim().is_empty() {
             match dc_title {
                 None => {
                     error(
@@ -1156,7 +1216,20 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
             } else {
                 let n_info = datetime_to_local_str(info_dt);
                 if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
-                    if !dates_match(&n_info, &n_xmp) {
+                    // First check: timezone-aware comparison.  If both have
+                    // timezone info but different offsets, same wall-clock digits
+                    // represent different instants → mismatch.
+                    // Timezone-aware check: if both have timezone info but
+                    // different offsets, same wall-clock digits represent
+                    // different instants → mismatch.
+                    let tz_mismatch = if let Some(xmp_tz) = parse_xmp_tz_offset_minutes(xmp_dt) {
+                        let info_tz = (info_dt.utc_offset_hour as i64) * 60
+                            + (info_dt.utc_offset_minute as i64);
+                        info_tz != xmp_tz && n_info == n_xmp
+                    } else {
+                        false
+                    };
+                    if tz_mismatch || !dates_match(&n_info, &n_xmp) {
                         error(
                             report,
                             "6.7.3.8",
@@ -1198,7 +1271,20 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
             } else {
                 let n_info = datetime_to_local_str(info_dt);
                 if let Some(n_xmp) = xmp_date_to_comparable(xmp_dt) {
-                    if !dates_match(&n_info, &n_xmp) {
+                    let tz_mismatch = if let Some(xmp_tz) = parse_xmp_tz_offset_minutes(xmp_dt) {
+                        let info_tz = (info_dt.utc_offset_hour as i64) * 60
+                            + (info_dt.utc_offset_minute as i64);
+                        if info_tz != xmp_tz && n_info == n_xmp {
+                            true
+                        } else if info_tz != xmp_tz {
+                            !dates_match(&n_info, &n_xmp)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if tz_mismatch || !dates_match(&n_info, &n_xmp) {
                         error(
                             report,
                             "6.7.3.1",
@@ -1221,6 +1307,31 @@ fn datetime_to_local_str(dt: &DateTime) -> String {
         "{:04}{:02}{:02}{:02}{:02}{:02}",
         dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
     )
+}
+
+/// Parse XMP ISO 8601 timezone offset, returning offset in minutes.
+/// Examples: "Z" → 0, "+02:00" → 120, "-05:00" → -300, "+02" → 120.
+fn parse_xmp_tz_offset_minutes(xmp_date: &str) -> Option<i64> {
+    let s = xmp_date.trim();
+    // Find timezone indicator after the time portion
+    // ISO 8601: ...THH:MM:SS[.frac]Z or ...THH:MM:SS[.frac]±HH:MM
+    if s.ends_with('Z') {
+        return Some(0);
+    }
+    // Look for +/- in the timezone position (after seconds or fractional seconds)
+    // Scan backwards for the last + or - that's after position 16 (past the date-time)
+    for i in (16..s.len()).rev() {
+        let b = s.as_bytes()[i];
+        if b == b'+' || b == b'-' {
+            let sign: i64 = if b == b'-' { -1 } else { 1 };
+            let tz_str = &s[i + 1..];
+            let parts: Vec<&str> = tz_str.split(':').collect();
+            let hours: i64 = parts.first().and_then(|p| p.parse().ok()).unwrap_or(0);
+            let mins: i64 = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+            return Some(sign * (hours * 60 + mins));
+        }
+    }
+    None
 }
 
 /// Normalize an XMP ISO 8601 date string to 14-digit local-time `YYYYMMDDHHmmSS` for comparison. (#FN-6.7.3)

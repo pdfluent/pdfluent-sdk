@@ -20,6 +20,8 @@ pub struct DateTime {
     pub utc_offset_hour: i8,
     /// The offset in minutes from UTC.
     pub utc_offset_minute: u8,
+    /// Whether the date string contained an explicit timezone indicator (Z, +, or -).
+    pub has_timezone: bool,
 }
 
 impl DateTime {
@@ -60,10 +62,10 @@ impl DateTime {
             .map(|n| n as u8)
             .unwrap_or(0);
 
-        let (utc_offset_hour, utc_offset_minute) = if !reader.at_end() {
+        let (utc_offset_hour, utc_offset_minute, has_timezone) = if !reader.at_end() {
             let multiplier = match reader.read_byte()? {
                 b'-' => -1,
-                _ => 1,
+                _ => 1, // covers both '+' and 'Z'
             };
 
             let hour = multiplier
@@ -75,9 +77,9 @@ impl DateTime {
                 .map(|n| n as u8)
                 .unwrap_or(0);
 
-            (hour, minute)
+            (hour, minute, true)
         } else {
-            (0, 0)
+            (0, 0, false)
         };
 
         Some(Self {
@@ -89,6 +91,7 @@ impl DateTime {
             second,
             utc_offset_hour,
             utc_offset_minute,
+            has_timezone,
         })
     }
 }
@@ -117,6 +120,32 @@ mod tests {
             second,
             utc_offset_hour: utc_hour,
             utc_offset_minute: utc_minute,
+            has_timezone: false,
+        }
+    }
+
+    /// Like dt() but with explicit timezone.
+    #[allow(clippy::too_many_arguments)]
+    fn dt_tz(
+        year: u16,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        utc_hour: i8,
+        utc_minute: u8,
+    ) -> DateTime {
+        DateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            utc_offset_hour: utc_hour,
+            utc_offset_minute: utc_minute,
+            has_timezone: true,
         }
     }
 
@@ -161,7 +190,7 @@ mod tests {
     fn example_from_spec() {
         assert_eq!(
             parse("D:199812231952-08'00"),
-            dt(1998, 12, 23, 19, 52, 0, -8, 0)
+            dt_tz(1998, 12, 23, 19, 52, 0, -8, 0)
         );
     }
 
@@ -169,20 +198,23 @@ mod tests {
     fn positive_offset_with_minutes() {
         assert_eq!(
             parse("D:20230701120000+05'30"),
-            dt(2023, 7, 1, 12, 0, 0, 5, 30)
+            dt_tz(2023, 7, 1, 12, 0, 0, 5, 30)
         );
     }
 
     #[test]
     fn utc_z() {
-        assert_eq!(parse("D:20230701120000Z"), dt(2023, 7, 1, 12, 0, 0, 0, 0));
+        assert_eq!(
+            parse("D:20230701120000Z"),
+            dt_tz(2023, 7, 1, 12, 0, 0, 0, 0)
+        );
     }
 
     #[test]
     fn utc_z_with_zero_offsets() {
         assert_eq!(
             parse("D:20230701120000Z00'00"),
-            dt(2023, 7, 1, 12, 0, 0, 0, 0)
+            dt_tz(2023, 7, 1, 12, 0, 0, 0, 0)
         );
     }
 
@@ -190,7 +222,7 @@ mod tests {
     fn negative_offset_with_minutes() {
         assert_eq!(
             parse("D:20230701120000-03'15"),
-            dt(2023, 7, 1, 12, 0, 0, -3, 15)
+            dt_tz(2023, 7, 1, 12, 0, 0, -3, 15)
         );
     }
 
@@ -198,7 +230,7 @@ mod tests {
     fn leap_year() {
         assert_eq!(
             parse("D:20000229010203+01'00"),
-            dt(2000, 2, 29, 1, 2, 3, 1, 0)
+            dt_tz(2000, 2, 29, 1, 2, 3, 1, 0)
         );
     }
 
@@ -206,25 +238,31 @@ mod tests {
     fn max_values() {
         assert_eq!(
             parse("D:99991231235959+14'00"),
-            dt(9999, 12, 31, 23, 59, 59, 14, 0)
+            dt_tz(9999, 12, 31, 23, 59, 59, 14, 0)
         );
     }
 
     #[test]
     fn min_values() {
-        assert_eq!(parse("D:00000101000000+00'00"), dt(0, 1, 1, 0, 0, 0, 0, 0));
+        assert_eq!(
+            parse("D:00000101000000+00'00"),
+            dt_tz(0, 1, 1, 0, 0, 0, 0, 0)
+        );
     }
 
     #[test]
     fn offset_hour_only() {
-        assert_eq!(parse("D:202307011200+02"), dt(2023, 7, 1, 12, 0, 0, 2, 0));
+        assert_eq!(
+            parse("D:202307011200+02"),
+            dt_tz(2023, 7, 1, 12, 0, 0, 2, 0)
+        );
     }
 
     #[test]
     fn offset_negative_zero_hour() {
         assert_eq!(
             parse("D:202307011200-00'45"),
-            dt(2023, 7, 1, 12, 0, 0, 0, 45)
+            dt_tz(2023, 7, 1, 12, 0, 0, 0, 45)
         );
     }
 }
