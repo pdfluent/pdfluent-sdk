@@ -926,6 +926,11 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     report.fonts_inspected = count_all_fonts(doc);
     report.non_embedded_found = non_embedded.len();
 
+    let sym_count = non_embedded.iter().filter(|i| i.name == "Symbol").count();
+    if sym_count > 0 {
+        eprintln!("  [embed] {} Symbol fonts to embed", sym_count);
+    }
+
     for info in &non_embedded {
         let font_path = find_system_font(&info.name).or_else(find_fallback_font);
 
@@ -1999,6 +2004,12 @@ fn update_simple_widths_cff_symbolic(
             .unwrap_or(255);
         (fc, lc)
     };
+
+    let notdef_w = face.glyph_hor_advance(ttf_parser::GlyphId(0))
+        .map(|w| (w as f64 * scale).round() as i64)
+        .unwrap_or(0);
+    eprintln!("  [sym-cff] font={} id={:?} fc={} lc={} cff={} notdef_hmtx={}",
+        info.name, font_id, first_char, last_char, cff.is_some(), notdef_w);
 
     let mut widths = Vec::new();
     for code in first_char..=last_char {
