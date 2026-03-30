@@ -580,8 +580,6 @@ fn main() {
 
             let test_config = tests::TestConfig {
                 verapdf_oracle,
-                #[cfg(feature = "pdfium-oracle")]
-                diff_dir: std::env::var("XFA_DIFF_DIR").ok().map(PathBuf::from),
             };
             let mut available_tests = tests::all_tests(test_config);
 
@@ -865,8 +863,6 @@ fn main() {
 
             let test_config = tests::TestConfig {
                 verapdf_oracle,
-                #[cfg(feature = "pdfium-oracle")]
-                diff_dir: std::env::var("XFA_DIFF_DIR").ok().map(PathBuf::from),
             };
             let mut available_tests = tests::all_tests(test_config);
 
@@ -940,8 +936,6 @@ fn main() {
             // No veraPDF oracle in the orchestrator — the child handles that.
             let test_config = tests::TestConfig {
                 verapdf_oracle: None,
-                #[cfg(feature = "pdfium-oracle")]
-                diff_dir: std::env::var("XFA_DIFF_DIR").ok().map(PathBuf::from),
             };
             let mut available_tests = tests::all_tests(test_config);
             let tier_parsed: TestTier = tier.parse().unwrap_or(TestTier::Full);

@@ -9,7 +9,7 @@
 
 use clap::Parser;
 use lopdf::Object;
-use pdfium_ffi_bridge::pdf_reader::PdfReader;
+use pdf_xfa::extract::extract_xfa_from_bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -201,8 +201,8 @@ fn analyze_corpus(corpus_dir: &Path) -> Vec<FormEdgeCases> {
 
 fn analyze_single_pdf(path: &Path) -> Option<FormEdgeCases> {
     let bytes = fs::read(path).ok()?;
-    let reader = PdfReader::from_bytes(&bytes).ok()?;
-    let packets = reader.extract_xfa().ok()?;
+    let doc = lopdf::Document::load_mem(&bytes).ok();
+    let packets = extract_xfa_from_bytes(bytes).ok()?;
 
     if packets.packets.is_empty() {
         return None;
@@ -220,7 +220,7 @@ fn analyze_single_pdf(path: &Path) -> Option<FormEdgeCases> {
         "static"
     };
 
-    let flags = detect_edge_cases(template_xml, full_xml, &reader);
+    let flags = detect_edge_cases(template_xml, full_xml, doc.as_ref());
     let edge_case_count = count_edge_cases(&flags);
 
     Some(FormEdgeCases {
@@ -235,7 +235,7 @@ fn analyze_single_pdf(path: &Path) -> Option<FormEdgeCases> {
     })
 }
 
-fn detect_edge_cases(template_xml: &str, full_xml: &str, reader: &PdfReader) -> EdgeCaseFlags {
+fn detect_edge_cases(template_xml: &str, full_xml: &str, doc: Option<&lopdf::Document>) -> EdgeCaseFlags {
     let mut flags = EdgeCaseFlags::default();
 
     // Deep nesting
@@ -258,7 +258,7 @@ fn detect_edge_cases(template_xml: &str, full_xml: &str, reader: &PdfReader) -> 
     }
 
     // Hybrid AcroForm + XFA
-    flags.is_hybrid = detect_hybrid(reader);
+    flags.is_hybrid = doc.map_or(false, detect_hybrid);
 
     // FormCalc scripts
     let formcalc_count = count_formcalc_scripts(template_xml);
@@ -349,10 +349,7 @@ fn is_cjk(ch: char) -> bool {
         || (0x3400..=0x4DBF).contains(&code)
 }
 
-fn detect_hybrid(reader: &PdfReader) -> bool {
-    // Check if AcroForm has both XFA and Fields entries.
-    // Uses get_deref to handle both indirect references and inline dicts.
-    let doc = reader.document();
+fn detect_hybrid(doc: &lopdf::Document) -> bool {
     let catalog = match doc
         .trailer
         .get_deref(b"Root", doc)

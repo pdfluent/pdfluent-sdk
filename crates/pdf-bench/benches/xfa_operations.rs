@@ -39,23 +39,13 @@ fn bench_full_pipeline(c: &mut Criterion) {
     for (name, data) in &pdfs {
         group.bench_with_input(BenchmarkId::new("extract_xfa", name), data, |b, data| {
             b.iter(|| {
-                let _ = pdfium_ffi_bridge::xfa_extract::scan_pdf_for_xfa(data);
+                let _ = pdf_xfa::extract::extract_xfa_from_bytes(data.to_vec());
             });
         });
     }
     group.finish();
 
-    // PDF → JSON (full pipeline)
-    let mut group = c.benchmark_group("pipeline_pdf_to_json");
-    group.sample_size(10);
-    for (name, data) in &pdfs {
-        group.bench_with_input(BenchmarkId::new("pdf_to_json", name), data, |b, data| {
-            b.iter(|| {
-                let _ = pdfium_ffi_bridge::pipeline::pdf_to_json(data);
-            });
-        });
-    }
-    group.finish();
+    // TODO: migrate pdf_to_json benchmark from pdfium-ffi-bridge (#622)
 }
 
 fn bench_lopdf_parse(c: &mut Criterion) {

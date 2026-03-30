@@ -46,8 +46,3 @@ impl IntoResponse for ApiError {
     }
 }
 
-impl From<pdfium_ffi_bridge::error::PdfError> for ApiError {
-    fn from(e: pdfium_ffi_bridge::error::PdfError) -> Self {
-        ApiError::BadRequest(e.to_string())
-    }
-}

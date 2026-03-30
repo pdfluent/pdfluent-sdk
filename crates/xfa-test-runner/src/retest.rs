@@ -190,8 +190,6 @@ fn run_one(
     // Build test config with oracle
     let test_config = tests::TestConfig {
         verapdf_oracle: Some(Arc::clone(oracle)),
-        #[cfg(feature = "pdfium-oracle")]
-        diff_dir: None,
     };
 
     let mut available = tests::all_tests(test_config);

@@ -32,7 +32,6 @@ members = [
     "crates/xfa-cli",
 
     # --- Existing support crates ---
-    "crates/pdfium-ffi-bridge",
     "crates/xfa-api-server",
     "crates/xfa-license",
     "crates/xfa-license-gen",
@@ -81,7 +80,6 @@ repository = "https://github.com/jasperdew/xfa-native-rust"
 [workspace.dependencies]
 roxmltree = "0.20"
 lopdf = { path = "crates/lopdf" }
-pdfium-render = "0.8"
 thiserror = "2"
 image = "0.25"
 pixelmatch = "0.1"
@@ -101,7 +99,6 @@ xmp-writer = "0.3"
 xfa-dom-resolver = { path = "crates/xfa-dom-resolver" }
 formcalc-interpreter = { path = "crates/formcalc-interpreter" }
 xfa-layout-engine = { path = "crates/xfa-layout-engine" }
-pdfium-ffi-bridge = { path = "crates/pdfium-ffi-bridge" }
 xfa-json = { path = "crates/xfa-json" }
 xfa-license = { path = "crates/xfa-license" }
 

@@ -24,7 +24,8 @@ thiserror.workspace = true
 uuid = { version = "1", features = ["v4"] }
 
 # Internal crates
-pdfium-ffi-bridge = { path = "../pdfium-ffi-bridge" }
+pdf-xfa = { path = "../pdf-xfa" }
+lopdf = { path = "../lopdf" }
 xfa-json = { path = "../xfa-json" }
 xfa-layout-engine = { path = "../xfa-layout-engine" }
 xfa-dom-resolver = { path = "../xfa-dom-resolver" }
