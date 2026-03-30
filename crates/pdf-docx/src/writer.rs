@@ -315,7 +315,12 @@ fn write_document(pages: &[Vec<PageElement>], images: &[DocxImage]) -> Result<Ve
 
     let mut img_idx = 0;
 
-    for page_elements in pages {
+    for (page_idx, page_elements) in pages.iter().enumerate() {
+        // Insert a page break before every page except the first.
+        if page_idx > 0 && !page_elements.is_empty() {
+            write_page_break(&mut w)?;
+        }
+
         for element in page_elements {
             match element {
                 PageElement::Para(para) => write_paragraph(&mut w, para)?,
@@ -334,12 +339,50 @@ fn write_document(pages: &[Vec<PageElement>], images: &[DocxImage]) -> Result<Ve
     Ok(buf.into_inner())
 }
 
+fn write_page_break(w: &mut Writer<&mut Cursor<Vec<u8>>>) -> Result<()> {
+    w.write_event(Event::Start(BytesStart::new("w:p")))?;
+    w.write_event(Event::Start(BytesStart::new("w:r")))?;
+    let mut br = BytesStart::new("w:br");
+    br.push_attribute(("w:type", "page"));
+    w.write_event(Event::Empty(br))?;
+    w.write_event(Event::End(BytesEnd::new("w:r")))?;
+    w.write_event(Event::End(BytesEnd::new("w:p")))?;
+    Ok(())
+}
+
 fn find_image_rid(images: &[DocxImage], id: &str) -> usize {
     images.iter().position(|img| img.id == id).unwrap_or(0)
 }
 
+/// Detect heading level from paragraph font metrics.
+/// Returns None for normal text, Some(1..=6) for headings.
+fn detect_heading_level(para: &Paragraph) -> Option<u8> {
+    if para.runs.is_empty() {
+        return None;
+    }
+    // Use the largest font size across all runs.
+    let max_size = para.runs.iter().map(|r| r.font_size).fold(0.0_f64, f64::max);
+    let all_bold = para.runs.iter().all(|r| r.bold);
+    match () {
+        _ if max_size >= 24.0 => Some(1),
+        _ if max_size >= 18.0 => Some(2),
+        _ if max_size >= 14.0 => Some(3),
+        _ if max_size >= 12.0 && all_bold => Some(4),
+        _ => None,
+    }
+}
+
 fn write_paragraph(w: &mut Writer<&mut Cursor<Vec<u8>>>, para: &Paragraph) -> Result<()> {
     w.write_event(Event::Start(BytesStart::new("w:p")))?;
+
+    // Apply heading style if detected.
+    if let Some(level) = detect_heading_level(para) {
+        w.write_event(Event::Start(BytesStart::new("w:pPr")))?;
+        let mut pstyle = BytesStart::new("w:pStyle");
+        pstyle.push_attribute(("w:val", format!("Heading{level}").as_str()));
+        w.write_event(Event::Empty(pstyle))?;
+        w.write_event(Event::End(BytesEnd::new("w:pPr")))?;
+    }
 
     for run in &para.runs {
         write_run(w, run)?;
