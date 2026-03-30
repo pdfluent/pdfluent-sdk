@@ -364,7 +364,23 @@ fn apply_font_correction_plan(doc: &mut Document, plan: &FontCorrectionPlan) -> 
     // Apply width corrections
     if !plan.width_corrections.is_empty() {
         if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&plan.font_id) {
-            if let Ok(Object::Array(ref mut widths)) = d.get_mut(b"Widths") {
+            // Widths may be inline or an indirect reference.
+            let widths_ref = match d.get(b"Widths").ok() {
+                Some(Object::Reference(r)) => Some(*r),
+                _ => None,
+            };
+            if let Some(widths_id) = widths_ref {
+                // Indirect Widths array — modify the referenced object.
+                if let Some(Object::Array(ref mut widths)) = doc.objects.get_mut(&widths_id) {
+                    for &(idx, new_w) in &plan.width_corrections {
+                        if idx < widths.len() {
+                            widths[idx] = Object::Integer(new_w as i64);
+                        }
+                    }
+                    changed = true;
+                }
+            } else if let Ok(Object::Array(ref mut widths)) = d.get_mut(b"Widths") {
+                // Inline Widths array.
                 for &(idx, new_w) in &plan.width_corrections {
                     if idx < widths.len() {
                         widths[idx] = Object::Integer(new_w as i64);
