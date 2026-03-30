@@ -2794,6 +2794,13 @@ pub fn fix_pdf_header(data: &mut Vec<u8>) {
         if data[5] == b'1' && data[7] < b'4' {
             data[7] = b'4';
         }
+        // Fallback: if the version doesn't match %PDF-N.N format, force to 1.7.
+        // Handles corrupt headers like %PDF-000, %PDF-abc, etc.
+        if data[6] != b'.' || !data[5].is_ascii_digit() || !data[7].is_ascii_digit() {
+            data[5] = b'1';
+            data[6] = b'.';
+            data[7] = b'7';
+        }
         // Remove any trailing characters (like spaces) between version and EOL.
         // Header should be exactly "%PDF-1.n" (8 bytes) followed by EOL.
         if data.len() > 8 && data[8] != b'\n' && data[8] != b'\r' {
