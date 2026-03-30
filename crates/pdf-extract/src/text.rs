@@ -90,6 +90,7 @@ impl Default for TextState {
 }
 
 /// Per-font information for text decoding.
+#[derive(Clone)]
 struct FontInfo {
     /// True if the font uses 2-byte CID encoding (Identity-H/V or other CID CMaps).
     is_cid: bool,
@@ -794,7 +795,10 @@ fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> St
                 } else if let Some(ch) = info.encoding_map[b as usize] {
                     result.push(ch);
                 } else {
-                    result.push(b as char);
+                    let ch = b as char;
+                    if is_printable_or_space(ch) {
+                        result.push(ch);
+                    }
                 }
             }
             return result;
@@ -807,15 +811,35 @@ fn decode_pdf_string_with_font(bytes: &[u8], font_info: Option<&FontInfo>) -> St
                 if let Some(ch) = info.encoding_map[b as usize] {
                     result.push(ch);
                 } else {
-                    result.push(b as char);
+                    let ch = b as char;
+                    if is_printable_or_space(ch) {
+                        result.push(ch);
+                    }
                 }
             }
             return result;
         }
     }
 
-    // Fallback: PDFDocEncoding (ASCII + Latin-1).
-    bytes.iter().map(|&b| b as char).collect()
+    // Fallback: PDFDocEncoding (ASCII + Latin-1), skipping control chars.
+    bytes
+        .iter()
+        .filter_map(|&b| {
+            let ch = b as char;
+            if is_printable_or_space(ch) {
+                Some(ch)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Returns true if a character is printable or common whitespace (tab, newline, CR, space).
+/// Filters out NUL, BEL, and other control characters that corrupt XML output.
+fn is_printable_or_space(ch: char) -> bool {
+    let cp = ch as u32;
+    cp >= 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0D
 }
 
 /// Extract text blocks from a specific page.
@@ -826,9 +850,16 @@ pub fn extract_page_blocks(doc: &Document, page_num: u32) -> Vec<TextBlock> {
     };
 
     let font_map = build_font_map(doc, page_id);
+    let resources = get_page_resources(doc, page_id).unwrap_or_default();
     if let Ok(content_bytes) = get_page_content_bytes(doc, page_id) {
         if let Ok(content) = Content::decode(&content_bytes) {
-            return extract_blocks_from_ops(&content.operations, page_num, &font_map);
+            return extract_blocks_from_ops_inner(
+                &content.operations,
+                page_num,
+                &font_map,
+                Some((doc, &resources)),
+                0,
+            );
         }
     }
 
@@ -842,10 +873,16 @@ pub fn extract_text(doc: &Document) -> Vec<TextBlock> {
 
     for (&page_num, &page_id) in &pages {
         let font_map = build_font_map(doc, page_id);
+        let resources = get_page_resources(doc, page_id).unwrap_or_default();
         if let Ok(content_bytes) = get_page_content_bytes(doc, page_id) {
             if let Ok(content) = Content::decode(&content_bytes) {
-                let page_blocks =
-                    extract_blocks_from_ops(&content.operations, page_num, &font_map);
+                let page_blocks = extract_blocks_from_ops_inner(
+                    &content.operations,
+                    page_num,
+                    &font_map,
+                    Some((doc, &resources)),
+                    0,
+                );
                 blocks.extend(page_blocks);
             }
         }
@@ -868,13 +905,20 @@ pub fn extract_page_text(doc: &Document, page_num: u32) -> Result<String> {
         .ok_or(ExtractError::PageOutOfRange(page_num, total))?;
 
     let font_map = build_font_map(doc, page_id);
+    let resources = get_page_resources(doc, page_id).unwrap_or_default();
     let content_bytes = get_page_content_bytes(doc, page_id).unwrap_or_default();
     let content = match Content::decode(&content_bytes) {
         Ok(c) => c,
         Err(_) => return Ok(String::new()),
     };
 
-    let blocks = extract_blocks_from_ops(&content.operations, page_num, &font_map);
+    let blocks = extract_blocks_from_ops_inner(
+        &content.operations,
+        page_num,
+        &font_map,
+        Some((doc, &resources)),
+        0,
+    );
     let text = blocks
         .iter()
         .map(|b| b.text.as_str())
@@ -913,11 +957,13 @@ fn get_page_content_bytes(doc: &Document, page_id: ObjectId) -> std::result::Res
     doc.get_page_content(page_id).map_err(|_| ())
 }
 
-/// Extract text blocks from a list of operations.
-fn extract_blocks_from_ops(
+/// Extract text blocks from a list of operations, handling Form XObject recursion via `Do`.
+fn extract_blocks_from_ops_inner(
     ops: &[Operation],
     page: u32,
     font_map: &HashMap<String, FontInfo>,
+    doc_and_resources: Option<(&Document, &lopdf::Dictionary)>,
+    depth: u32,
 ) -> Vec<TextBlock> {
     let mut state = TextState::default();
     let mut blocks = Vec::new();
@@ -1128,11 +1174,158 @@ fn extract_blocks_from_ops(
                     }
                 }
             }
+            "Do" => {
+                // Invoke Form XObject — recurse into its content stream.
+                if depth < 5 {
+                    if let Some((doc, resources)) = doc_and_resources {
+                        if let Some(Object::Name(ref xobj_name)) = op.operands.first() {
+                            let xobj_name_str = String::from_utf8_lossy(xobj_name);
+                            if let Some(xobj_blocks) =
+                                extract_form_xobject_text(doc, resources, &xobj_name_str, page, font_map, depth)
+                            {
+                                blocks.extend(xobj_blocks);
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     blocks
+}
+
+/// Extract text from a Form XObject referenced by name in the page's Resources/XObject dict.
+fn extract_form_xobject_text(
+    doc: &Document,
+    resources: &lopdf::Dictionary,
+    name: &str,
+    page: u32,
+    font_map: &HashMap<String, FontInfo>,
+    depth: u32,
+) -> Option<Vec<TextBlock>> {
+    // Look up the XObject in the Resources dictionary.
+    let xobj_dict = match resources.get(b"XObject").ok()? {
+        Object::Dictionary(d) => d.clone(),
+        Object::Reference(r) => match doc.get_object(*r).ok()? {
+            Object::Dictionary(d) => d.clone(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    let xobj_ref = match xobj_dict.get(name.as_bytes()).ok()? {
+        Object::Reference(r) => *r,
+        _ => return None,
+    };
+
+    let stream = match doc.get_object(xobj_ref).ok()? {
+        Object::Stream(s) => s.clone(),
+        _ => return None,
+    };
+
+    // Verify it's a Form XObject (not Image).
+    let subtype = stream
+        .dict
+        .get(b"Subtype")
+        .ok()
+        .and_then(|o| match o {
+            Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    if subtype != "Form" {
+        return None;
+    }
+
+    // Decode the content stream.
+    let content_bytes = stream.decompressed_content().ok()
+        .unwrap_or_else(|| stream.content.clone());
+    let content = Content::decode(&content_bytes).ok()?;
+
+    // Build font map from the XObject's own Resources (if any), falling back to page fonts.
+    let mut xobj_font_map = font_map.clone();
+    if let Some(xobj_resources) = resolve_dict(doc, &stream.dict, b"Resources") {
+        if let Some(xobj_fonts) = resolve_dict(doc, &xobj_resources, b"Font") {
+            for (name_bytes, value) in xobj_fonts.iter() {
+                let fname = String::from_utf8_lossy(name_bytes).to_string();
+                if !xobj_font_map.contains_key(&fname) {
+                    if let Some(fi) = build_font_info_from_value(doc, value) {
+                        xobj_font_map.insert(fname, fi);
+                    }
+                }
+            }
+        }
+    }
+
+    // Use the XObject's own Resources dict for recursive Do lookups.
+    let xobj_resources = resolve_dict(doc, &stream.dict, b"Resources")
+        .unwrap_or_else(|| resources.clone());
+
+    Some(extract_blocks_from_ops_inner(
+        &content.operations,
+        page,
+        &xobj_font_map,
+        Some((doc, &xobj_resources)),
+        depth + 1,
+    ))
+}
+
+/// Build a FontInfo from a font dictionary value (used for XObject font resolution).
+fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo> {
+    let font = match value {
+        Object::Reference(r) => match doc.get_object(*r).ok()? {
+            Object::Dictionary(d) => d.clone(),
+            _ => return None,
+        },
+        Object::Dictionary(d) => d.clone(),
+        _ => return None,
+    };
+
+    let subtype = font
+        .get(b"Subtype")
+        .ok()
+        .and_then(|o| match o {
+            Object::Name(n) => Some(String::from_utf8_lossy(n).to_string()),
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    let is_cid = subtype == "Type0";
+    let mut to_unicode = parse_to_unicode_from_font(doc, &font);
+
+    if to_unicode.is_empty() && is_cid {
+        if let Some(Object::Array(descendants)) = font.get(b"DescendantFonts").ok() {
+            for d in descendants {
+                let desc_dict = match d {
+                    Object::Reference(r) => match doc.get_object(*r).ok()? {
+                        Object::Dictionary(d) => d,
+                        _ => continue,
+                    },
+                    Object::Dictionary(d) => d,
+                    _ => continue,
+                };
+                let tu = parse_to_unicode_from_font(doc, desc_dict);
+                if !tu.is_empty() {
+                    to_unicode = tu;
+                    break;
+                }
+            }
+        }
+    }
+
+    let encoding_map = if !is_cid {
+        build_encoding_map(doc, &font)
+    } else {
+        [None; 256]
+    };
+
+    Some(FontInfo {
+        is_cid,
+        to_unicode,
+        encoding_map,
+    })
 }
 
 /// Extract positioned characters from operations.
