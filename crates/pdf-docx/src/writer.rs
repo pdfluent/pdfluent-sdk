@@ -383,11 +383,13 @@ fn write_run(w: &mut Writer<&mut Cursor<Vec<u8>>>, run: &Run) -> Result<()> {
         w.write_event(Event::End(BytesEnd::new("w:rPr")))?;
     }
 
-    // Text content
+    // Text content — strip XML-invalid control characters (U+0000–U+0008,
+    // U+000B, U+000C, U+000E–U+001F) that would make the DOCX unreadable.
+    let clean_text = sanitize_xml_text(&run.text);
     let mut t = BytesStart::new("w:t");
     t.push_attribute(("xml:space", "preserve"));
     w.write_event(Event::Start(t))?;
-    w.write_event(Event::Text(BytesText::new(&run.text)))?;
+    w.write_event(Event::Text(BytesText::new(&clean_text)))?;
     w.write_event(Event::End(BytesEnd::new("w:t")))?;
 
     w.write_event(Event::End(BytesEnd::new("w:r")))?;
@@ -449,10 +451,11 @@ fn write_table(w: &mut Writer<&mut Cursor<Vec<u8>>>, table: &Table) -> Result<()
             w.write_event(Event::Start(BytesStart::new("w:p")))?;
             w.write_event(Event::Start(BytesStart::new("w:r")))?;
 
+            let clean_cell = sanitize_xml_text(cell_text);
             let mut t = BytesStart::new("w:t");
             t.push_attribute(("xml:space", "preserve"));
             w.write_event(Event::Start(t))?;
-            w.write_event(Event::Text(BytesText::new(cell_text)))?;
+            w.write_event(Event::Text(BytesText::new(&clean_cell)))?;
             w.write_event(Event::End(BytesEnd::new("w:t")))?;
 
             w.write_event(Event::End(BytesEnd::new("w:r")))?;
@@ -585,6 +588,20 @@ fn write_image_paragraph(
     w.write_event(Event::End(BytesEnd::new("w:r")))?;
     w.write_event(Event::End(BytesEnd::new("w:p")))?;
     Ok(())
+}
+
+/// Strip characters forbidden in XML 1.0: U+0000–U+0008, U+000B, U+000C,
+/// U+000E–U+001F.  Tab (U+0009), LF (U+000A), and CR (U+000D) are allowed.
+fn sanitize_xml_text(text: &str) -> String {
+    if text.bytes().all(|b| b >= 0x20 || b == b'\t' || b == b'\n' || b == b'\r') {
+        return text.to_string();
+    }
+    text.chars()
+        .filter(|&c| {
+            let cp = c as u32;
+            cp >= 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0D
+        })
+        .collect()
 }
 
 fn image_extension(content_type: &str) -> &str {
