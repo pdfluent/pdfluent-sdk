@@ -140,12 +140,28 @@ fn run_test_with_timeout(
 ///
 /// Returns `Err` only for unrecoverable pre-flight errors (I/O, non-PDF).
 /// Test-level failures are reported in `SinglePdfOutput.results` with status "fail".
+/// Maximum file size for single-pdf child processing (2 GB).
+/// Larger files would consume most of the 8 GB RLIMIT_AS just reading the data,
+/// leaving no room for parsing/processing. Reported as pre-flight error.
+const MAX_SINGLE_PDF_SIZE: u64 = 2 * 1024 * 1024 * 1024;
+
 pub fn run_single_pdf(
     tests: Vec<Box<dyn PdfTest>>,
     pdf_path: &Path,
     timeout_secs: u64,
 ) -> Result<SinglePdfOutput, String> {
     let path_str = pdf_path.to_string_lossy().to_string();
+
+    // Pre-flight size check: avoid reading multi-GB files that would OOM under RLIMIT_AS.
+    let file_size = std::fs::metadata(pdf_path)
+        .map_err(|e| format!("IO error: {e}"))?
+        .len();
+    if file_size > MAX_SINGLE_PDF_SIZE {
+        return Err(format!(
+            "PDF too large ({:.1} GB > 2 GB limit)",
+            file_size as f64 / (1024.0 * 1024.0 * 1024.0)
+        ));
+    }
 
     let pdf_data = std::fs::read(pdf_path).map_err(|e| format!("IO error: {e}"))?;
     let pdf_size = pdf_data.len() as u64;
