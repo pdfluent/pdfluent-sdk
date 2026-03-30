@@ -53,6 +53,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     // content before removing the interactive layer.
     if let Ok(doc) = Document::load_mem(pdf_bytes) {
         if pages_have_static_content(&doc) {
+            eprintln!("Bypassing XFA flatten because pages_have_static_content returned true.");
             let mut doc_mut = Document::load_mem(pdf_bytes)
                 .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
             if flatten_widget_appearances(&mut doc_mut) == 0 {
@@ -71,8 +72,12 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     // 2. Try XFA template → layout → render pipeline.
     //    If this fails (parse error, empty template, layout 0 pages, lopdf error),
     //    fall back to preserving the existing page content with AcroForm stripped.
+    eprintln!("Calling xfa_flatten_inner...");
     match xfa_flatten_inner(pdf_bytes, &template_xml, packets.datasets()) {
-        Ok(out) => Ok(out),
+        Ok(out) => {
+            eprintln!("xfa_flatten_inner succeeded.");
+            Ok(out)
+        },
         Err(e) => {
             eprintln!("XFA flatten failed: {e:?}");
             static_fallback(pdf_bytes)
@@ -267,11 +272,12 @@ fn stream_has_text_operators(stream: &[u8]) -> bool {
 }
 
 fn is_xfa_placeholder_stream(stream: &[u8]) -> bool {
-    const PLACEHOLDER_MARKERS: [&[u8]; 4] = [
+    const PLACEHOLDER_MARKERS: [&[u8]; 5] = [
         b"Please wait",
         b"Adobe Reader",
         b"reader_download",
         b"display this type of document",
+        b"To view the full contents",
     ];
 
     PLACEHOLDER_MARKERS
