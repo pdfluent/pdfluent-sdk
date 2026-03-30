@@ -246,6 +246,10 @@ pub struct FormNodeMeta {
     pub layout_ready_script: Option<String>,
     /// Event scripts collected from `<event>` and `<calculate>` children.
     pub event_scripts: Vec<String>,
+    /// Explicit XFA data binding ref from `<bind ref="...">`.
+    pub data_bind_ref: Option<String>,
+    /// Whether the node explicitly opts out of data binding via `<bind match="none">`.
+    pub data_bind_none: bool,
     /// Visual style (font, colors, borders).
     pub style: FormNodeStyle,
     /// The kind of field (text, checkbox, radio, etc.).
