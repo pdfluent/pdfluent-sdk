@@ -218,7 +218,18 @@ fn build_font_correction_plan(
     };
 
     // --- Compute width corrections ---
-    let width_corrections = compute_plan_widths(doc, font_id, &resolved_encoding, has_ff1, has_ff2, has_ff3);
+    // Skip width corrections for symbolic CFF fonts (Symbol, ZapfDingbats).
+    // Their widths are already correctly computed by update_simple_widths_cff_symbolic
+    // during embed_font_on_target (using hmtx advances). The CFF charstring widths
+    // can differ from hmtx (e.g., .notdef defaultWidthX=1000 vs hmtx=250), and
+    // applying CFF-based corrections would overwrite the correct hmtx widths.
+    let base_name = strip_subset_prefix(base_font);
+    let skip_symbolic_cff = has_ff3 && is_symbolic && is_symbolic_font_name(base_name);
+    let width_corrections = if skip_symbolic_cff {
+        vec![]
+    } else {
+        compute_plan_widths(doc, font_id, &resolved_encoding, has_ff1, has_ff2, has_ff3)
+    };
 
     Some(FontCorrectionPlan {
         font_id,
@@ -919,10 +930,14 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
         let font_path = find_system_font(&info.name).or_else(find_fallback_font);
 
         match font_path {
-            Some(path) => match embed_font_on_target(doc, info, &path) {
-                Ok(()) => report.fonts_embedded += 1,
-                Err(e) => report.failed.push((info.name.clone(), format!("{e}"))),
-            },
+            Some(path) => {
+                match embed_font_on_target(doc, info, &path) {
+                    Ok(()) => {
+                        report.fonts_embedded += 1;
+                    }
+                    Err(e) => report.failed.push((info.name.clone(), format!("{e}"))),
+                }
+            }
             None => {
                 report
                     .failed
