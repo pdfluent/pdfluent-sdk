@@ -154,7 +154,7 @@ impl<'a> LayoutEngine<'a> {
                 if remaining.is_empty() {
                     break;
                 }
-                let ca = &pa.content_areas[ca_idx];
+                let ca = primary_content_area(pa);
                 let (mut placed, rest, consumed_break_only, _) =
                     self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                 if consumed_break_only {
@@ -176,7 +176,7 @@ impl<'a> LayoutEngine<'a> {
                     let pa = &page_areas[pa_idx];
                     let ca = primary_content_area(pa);
 
-                    let (mut page, rest, consumed_break_only) =
+                    let (mut page, rest, consumed_break_only, _) =
                         self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                     if page.nodes.is_empty() && !consumed_break_only {
                         let mut forced = self.layout_content_on_page(
