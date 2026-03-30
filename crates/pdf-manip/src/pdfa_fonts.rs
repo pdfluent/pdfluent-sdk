@@ -1785,6 +1785,9 @@ fn update_metrics_from_font(doc: &mut Document, info: &NonEmbeddedFont, font_dat
                 );
             }
         }
+        if !info.is_type0 && face.tables().glyf.is_some() {
+            let _ = sync_simple_truetype_missing_width(doc, fd_id, &face, scale);
+        }
     }
 
     if info.is_type0 {
@@ -1838,6 +1841,34 @@ fn update_metrics_from_font(doc: &mut Document, info: &NonEmbeddedFont, font_dat
             update_simple_widths(doc, info.font_id, &face, scale);
         }
     }
+}
+
+fn sync_simple_truetype_missing_width(
+    doc: &mut Document,
+    fd_id: ObjectId,
+    face: &ttf_parser::Face<'_>,
+    scale: f64,
+) -> bool {
+    let missing_width = face
+        .glyph_hor_advance(ttf_parser::GlyphId(0))
+        .map(|w| (w as f64 * scale).round() as i64)
+        .unwrap_or(0);
+
+    let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) else {
+        return false;
+    };
+
+    let current = match fd.get(b"MissingWidth").ok() {
+        Some(Object::Integer(i)) => Some(*i),
+        Some(Object::Real(r)) => Some(*r as i64),
+        _ => None,
+    };
+    if current == Some(missing_width) {
+        return false;
+    }
+
+    fd.set("MissingWidth", Object::Integer(missing_width));
+    true
 }
 
 /// Update Widths for a simple font (Type1/TrueType).
@@ -3591,6 +3622,9 @@ pub fn fix_embedded_font_metrics(doc: &mut Document) -> usize {
                     Object::Integer((cap_h as f64 * scale).round() as i64),
                 );
             }
+        }
+        if !is_type0 && face.tables().glyf.is_some() {
+            let _ = sync_simple_truetype_missing_width(doc, fd_id, &face, scale);
         }
 
         // Update widths.
@@ -19506,6 +19540,50 @@ mod tests {
         if let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) {
             assert!(font.has(b"FontDescriptor"));
         }
+    }
+
+    #[test]
+    fn test_embed_font_sets_missing_width_from_notdef() {
+        let mut doc = make_doc_with_unembedded_font();
+        let info = find_non_embedded_fonts_detailed(&doc)
+            .into_iter()
+            .next()
+            .expect("expected one non-embedded font");
+        let font_path = find_system_font(&info.name)
+            .or_else(find_fallback_font)
+            .expect("expected a fallback font file");
+        let font_bytes = std::fs::read(&font_path).expect("read fallback font");
+
+        embed_font_on_target(&mut doc, &info, &font_path).expect("embed font");
+
+        let face = ttf_parser::Face::parse(&font_bytes, 0).expect("parse fallback font");
+        let scale = 1000.0 / face.units_per_em() as f64;
+        let expected_missing_width = face
+            .glyph_hor_advance(ttf_parser::GlyphId(0))
+            .map(|w| (w as f64 * scale).round() as i64)
+            .unwrap_or(0);
+
+        let font = doc
+            .objects
+            .get(&info.font_id)
+            .and_then(|o| o.as_dict().ok())
+            .expect("font dict");
+        let fd_id = font
+            .get(b"FontDescriptor")
+            .and_then(Object::as_reference)
+            .expect("font descriptor ref");
+        let fd = doc
+            .objects
+            .get(&fd_id)
+            .and_then(|o| o.as_dict().ok())
+            .expect("font descriptor");
+        let missing_width = match fd.get(b"MissingWidth").expect("MissingWidth") {
+            Object::Integer(i) => *i,
+            Object::Real(r) => *r as i64,
+            other => panic!("unexpected MissingWidth object: {other:?}"),
+        };
+
+        assert_eq!(missing_width, expected_missing_width);
     }
 
     #[test]
