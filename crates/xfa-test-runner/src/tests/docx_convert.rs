@@ -95,6 +95,9 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     };
 
     // Extract reference text from the source PDF (reuses the loaded document).
+    // Strip XML-invalid control characters (U+0000–U+001F except tab/LF/CR) to match
+    // what the DOCX writer produces via sanitize_xml_text — otherwise garbled CID
+    // font bytes inflate pdf_chars while docx_chars stays near 0.
     let pdf_text = {
         let blocks = pdf_extract::extract_text(&doc);
         let raw: String = blocks
@@ -102,7 +105,13 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
             .map(|b| b.text)
             .collect::<Vec<_>>()
             .join(" ");
-        raw.split_whitespace()
+        raw.chars()
+            .filter(|&c| {
+                let cp = c as u32;
+                cp >= 0x20 || cp == 0x09 || cp == 0x0A || cp == 0x0D
+            })
+            .collect::<String>()
+            .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
             .to_lowercase()
