@@ -37,12 +37,9 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         }
     };
 
-    let template_xml = match packets.template() {
-        Some(t) => t.to_string(),
-        None => {
-            // No template packet — nothing to flatten.
-            return Ok(pdf_bytes.to_vec());
-        }
+    let template_xml = match packets.template().map(str::trim) {
+        Some(t) if !t.is_empty() => t.to_string(),
+        _ => return static_fallback(pdf_bytes),
     };
 
     // 1b. Detect pre-rendered pages: if the PDF's existing pages already contain
@@ -66,8 +63,15 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         }
     }
 
+    match xfa_flatten_inner(pdf_bytes, &template_xml) {
+        Ok(out) => Ok(out),
+        Err(_) => static_fallback(pdf_bytes),
+    }
+}
+
+fn xfa_flatten_inner(pdf_bytes: &[u8], template_xml: &str) -> Result<Vec<u8>> {
     // 2. Parse template → FormTree.
-    let (tree, root_id) = parse_template(&template_xml)?;
+    let (tree, root_id) = parse_template(template_xml)?;
 
     // 3. Layout.
     let engine = LayoutEngine::new(&tree);
@@ -137,33 +141,104 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Fallback path for malformed or unsupported XFA templates.
+///
+/// If the PDF can still be parsed structurally, preserve its existing page
+/// content and only strip widgets/AcroForm. If lopdf cannot parse the PDF at
+/// all (for example corrupt xref tables), return the original bytes unchanged.
+fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut doc = match Document::load_mem(pdf_bytes) {
+        Ok(doc) => doc,
+        Err(_) => return Ok(pdf_bytes.to_vec()),
+    };
+    strip_widgets_and_acroform(&mut doc);
+    let mut out = Vec::new();
+    doc.save_to(&mut out)
+        .map_err(|e| XfaError::LayoutFailed(format!("fallback save: {e}")))?;
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /// Returns `true` when the PDF's pages already carry substantial static content.
 ///
-/// An array /Contents entry (multiple streams) or any individual stream larger
-/// than 200 bytes indicates pre-flattened page content that should be preserved
-/// rather than replaced by XFA re-rendering.
+/// Large existing page streams indicate pre-rendered static page content that
+/// should be preserved rather than replaced by XFA re-rendering.
 fn pages_have_static_content(doc: &Document) -> bool {
     for page_id in doc.page_iter() {
-        let Ok(page_dict) = doc.get_dictionary(page_id) else {
+        let streams = page_content_streams(doc, page_id);
+        if streams.is_empty() {
             continue;
-        };
-        match page_dict.get(b"Contents") {
-            Ok(Object::Array(arr)) if arr.len() > 1 => return true,
-            Ok(Object::Reference(r)) => {
-                if let Ok(Object::Stream(stream)) = doc.get_object(*r) {
-                    if stream.content.len() > 200 {
-                        return true;
-                    }
-                }
-            }
-            _ => {}
         }
+
+        // Require a much higher threshold than the original 200-byte heuristic.
+        // Simple form chrome and Adobe's "Please wait..." placeholder page both
+        // exceed a few hundred bytes, but full pre-rendered static page content
+        // is typically far larger.
+        let has_substantial_content = streams.iter().map(|s| s.len()).sum::<usize>() > 20_000;
+        if !has_substantial_content {
+            continue;
+        }
+
+        if streams
+            .iter()
+            .all(|stream| is_xfa_placeholder_stream(stream))
+        {
+            continue;
+        }
+
+        return true;
     }
     false
+}
+
+fn page_content_streams(doc: &Document, page_id: ObjectId) -> Vec<Vec<u8>> {
+    let Ok(page_dict) = doc.get_dictionary(page_id) else {
+        return Vec::new();
+    };
+
+    match page_dict.get(b"Contents") {
+        Ok(Object::Array(arr)) => arr
+            .iter()
+            .filter_map(|object| resolve_stream_content(doc, object))
+            .collect(),
+        Ok(object) => resolve_stream_content(doc, object).into_iter().collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn resolve_stream_content(doc: &Document, object: &Object) -> Option<Vec<u8>> {
+    let stream = match object {
+        Object::Reference(id) => doc.get_object(*id).ok()?.as_stream().ok()?,
+        Object::Stream(stream) => stream,
+        _ => return None,
+    };
+
+    stream
+        .get_plain_content()
+        .ok()
+        .or_else(|| Some(stream.content.clone()))
+}
+
+fn is_xfa_placeholder_stream(stream: &[u8]) -> bool {
+    const PLACEHOLDER_MARKERS: [&[u8]; 4] = [
+        b"Please wait",
+        b"Adobe Reader",
+        b"reader_download",
+        b"display this type of document",
+    ];
+
+    PLACEHOLDER_MARKERS
+        .iter()
+        .any(|marker| contains_ascii_case_insensitive(stream, marker))
+}
+
+fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 /// Remove Widget annotations from all pages and strip /AcroForm from the catalog.
@@ -326,6 +401,10 @@ mod tests {
 
     /// Build a minimal XFA PDF in memory (same as generate_xfa_layout_fixtures).
     fn build_xfa_pdf(xdp: &str) -> Vec<u8> {
+        build_xfa_pdf_with_page_content(xdp, b"")
+    }
+
+    fn build_xfa_pdf_with_page_content(xdp: &str, page_content: &[u8]) -> Vec<u8> {
         use lopdf::{dictionary, Document, Object, Stream};
         let mut doc = Document::with_version("1.4");
         let xdp_bytes = xdp.as_bytes().to_vec();
@@ -335,7 +414,10 @@ mod tests {
         );
         let xfa_id = doc.add_object(Object::Stream(xfa_stream));
         let pages_id = doc.new_object_id();
-        let content_stream = Stream::new(dictionary! { "Length" => Object::Integer(0i64) }, vec![]);
+        let content_stream = Stream::new(
+            dictionary! { "Length" => Object::Integer(page_content.len() as i64) },
+            page_content.to_vec(),
+        );
         let content_id = doc.add_object(Object::Stream(content_stream));
         let page_id = doc.add_object(Object::Dictionary(dictionary! {
             "Type"     => Object::Name(b"Page".to_vec()),
@@ -367,6 +449,13 @@ mod tests {
         let mut out = Vec::new();
         doc.save_to(&mut out).unwrap();
         out
+    }
+
+    fn first_page_content(doc: &Document) -> Vec<u8> {
+        let page_id = doc.page_iter().next().expect("page");
+        let page_dict = doc.get_dictionary(page_id).expect("page dict");
+        let contents = page_dict.get(b"Contents").expect("contents");
+        resolve_stream_content(doc, contents).expect("stream content")
     }
 
     const SIMPLE_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -528,5 +617,56 @@ mod tests {
         // flatten_xfa_to_pdf should return Ok (with the same bytes).
         let result = flatten_xfa_to_pdf(&raw).expect("flatten non-XFA failed");
         assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn flatten_empty_template_falls_back_to_existing_page_content() {
+        const EMPTY_TEMPLATE_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"/>
+</xdp:xdp>"#;
+
+        let static_content = b"BT /F1 12 Tf 72 720 Td (Existing static content) Tj ET";
+        let pdf_bytes = build_xfa_pdf_with_page_content(EMPTY_TEMPLATE_XDP, static_content);
+        let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+
+        let doc = Document::load_mem(&result).expect("load fallback PDF");
+        let content = first_page_content(&doc);
+        assert!(
+            String::from_utf8_lossy(&content).contains("Existing static content"),
+            "fallback should preserve existing page content"
+        );
+
+        let root_id = doc.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let catalog = doc.get_dictionary(root_id).unwrap();
+        assert!(catalog.get(b"AcroForm").is_err());
+    }
+
+    #[test]
+    fn flatten_malformed_template_xml_falls_back_to_existing_page_content() {
+        const MALFORMED_TEMPLATE_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1"><field name="first"><value><text>&xxe;</text></value></field></subform>
+</template>
+</xdp:xdp>"#;
+
+        let static_content = b"BT /F1 12 Tf 72 700 Td (Static fallback page) Tj ET";
+        let pdf_bytes = build_xfa_pdf_with_page_content(MALFORMED_TEMPLATE_XDP, static_content);
+        let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+
+        let doc = Document::load_mem(&result).expect("load fallback PDF");
+        let content = first_page_content(&doc);
+        assert!(
+            String::from_utf8_lossy(&content).contains("Static fallback page"),
+            "fallback should preserve page content for malformed XML"
+        );
+    }
+
+    #[test]
+    fn static_fallback_returns_original_bytes_for_unparseable_pdf() {
+        let pdf_bytes = b"not a valid pdf".to_vec();
+        let result = static_fallback(&pdf_bytes).expect("fallback failed");
+        assert_eq!(result, pdf_bytes);
     }
 }
