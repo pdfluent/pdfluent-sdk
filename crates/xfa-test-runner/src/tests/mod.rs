@@ -26,8 +26,6 @@ pub mod render;
 pub mod render_llm_review;
 pub mod render_multi_oracle;
 pub mod render_mupdf_oracle;
-#[cfg(feature = "pdfium-oracle")]
-pub mod render_oracle;
 pub mod rotate_roundtrip;
 pub mod search;
 pub mod sign_roundtrip;
@@ -194,8 +192,6 @@ impl TestStatus {
 
 pub struct TestConfig {
     pub verapdf_oracle: Option<std::sync::Arc<crate::oracles::verapdf::VeraPdfOracle>>,
-    #[cfg(feature = "pdfium-oracle")]
-    pub diff_dir: Option<std::path::PathBuf>,
 }
 
 pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
@@ -225,8 +221,7 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         pdfx_validate::PdfXValidateTest::new()
     };
 
-    #[allow(unused_mut)]
-    let mut tests: Vec<Box<dyn PdfTest>> = vec![
+    let tests: Vec<Box<dyn PdfTest>> = vec![
         Box::new(parse::ParseTest),
         Box::new(metadata::MetadataTest),
         Box::new(render::RenderTest),
@@ -272,13 +267,6 @@ pub fn all_tests(config: TestConfig) -> Vec<Box<dyn PdfTest>> {
         Box::new(pptx_convert::PptxConvertTest),
         Box::new(header_footer::HeaderFooterTest),
     ];
-
-    #[cfg(feature = "pdfium-oracle")]
-    {
-        tests.push(Box::new(render_oracle::RenderOracleTest {
-            diff_dir: config.diff_dir,
-        }));
-    }
 
     tests
 }

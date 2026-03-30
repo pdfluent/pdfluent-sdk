@@ -9,7 +9,7 @@
 //! - Dynamic subforms (repeatable sections)
 
 use clap::Parser;
-use pdfium_ffi_bridge::pdf_reader::PdfReader;
+use pdf_xfa::extract::extract_xfa_from_bytes;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -210,8 +210,8 @@ fn main() {
 }
 
 fn analyze_form(path: &Path, filename: &str) -> FormAnalysis {
-    let reader = match PdfReader::from_file(path) {
-        Ok(r) => r,
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
         Err(_) => {
             return FormAnalysis {
                 filename: filename.to_string(),
@@ -231,10 +231,12 @@ fn analyze_form(path: &Path, filename: &str) -> FormAnalysis {
         }
     };
 
-    let page_count = reader.page_count();
+    let page_count = lopdf::Document::load_mem(&bytes)
+        .map(|d| d.get_pages().len())
+        .unwrap_or(0);
     let has_acroform = check_has_acroform(path);
 
-    let xfa = match reader.extract_xfa() {
+    let xfa = match extract_xfa_from_bytes(bytes) {
         Ok(packets) => packets,
         Err(_) => {
             return FormAnalysis {

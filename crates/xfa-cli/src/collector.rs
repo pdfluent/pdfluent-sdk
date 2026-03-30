@@ -1,7 +1,6 @@
 //! XFA PDF collector — download, detect, and classify XFA PDFs for the test corpus.
 
-use pdfium_ffi_bridge::pdf_reader::PdfReader;
-use pdfium_ffi_bridge::xfa_extract::XfaPackets;
+use pdf_xfa::extract::{extract_xfa_from_bytes, XfaPackets};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -108,15 +107,17 @@ fn download_and_check(
     }
 
     // Try to detect XFA
-    let reader = PdfReader::from_bytes(&bytes)?;
-    let xfa_result = reader.extract_xfa();
+    let xfa_result = extract_xfa_from_bytes(bytes.to_vec());
 
     match xfa_result {
         Ok(packets) if !packets.packets.is_empty() => {
             // It's XFA — save the PDF and metadata
             fs::write(pdf_path, &bytes)?;
 
-            let classification = classify_xfa(&packets, &reader);
+            let page_count = lopdf::Document::load_mem(&bytes)
+                .map(|d| d.get_pages().len())
+                .unwrap_or(0);
+            let classification = classify_xfa(&packets, page_count);
             let today = chrono_free_date();
 
             let metadata = PdfMetadata {
@@ -142,7 +143,7 @@ fn download_and_check(
 }
 
 /// Classify an XFA PDF based on its packets.
-fn classify_xfa(packets: &XfaPackets, reader: &PdfReader) -> Classification {
+fn classify_xfa(packets: &XfaPackets, page_count: usize) -> Classification {
     let packet_names: Vec<String> = packets.packets.iter().map(|(n, _)| n.clone()).collect();
 
     let template_xml = packets.template().unwrap_or("");
@@ -165,8 +166,6 @@ fn classify_xfa(packets: &XfaPackets, reader: &PdfReader) -> Classification {
     } else {
         "static".to_string()
     };
-
-    let page_count = reader.page_count();
 
     Classification {
         xfa_type,
@@ -241,12 +240,14 @@ fn scan_single_pdf(path: &Path) -> anyhow::Result<Option<PdfMetadata>> {
         return Ok(None);
     }
 
-    let reader = PdfReader::from_bytes(&bytes)?;
-    let xfa_result = reader.extract_xfa();
+    let xfa_result = extract_xfa_from_bytes(bytes.to_vec());
 
     match xfa_result {
         Ok(packets) if !packets.packets.is_empty() => {
-            let classification = classify_xfa(&packets, &reader);
+            let page_count = lopdf::Document::load_mem(&bytes)
+                .map(|d| d.get_pages().len())
+                .unwrap_or(0);
+            let classification = classify_xfa(&packets, page_count);
             let filename = path
                 .file_name()
                 .unwrap_or_default()

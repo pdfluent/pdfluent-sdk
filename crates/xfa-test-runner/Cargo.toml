@@ -11,7 +11,6 @@ path = "src/main.rs"
 
 [features]
 default = []
-pdfium-oracle = ["dep:pdfium-ffi-bridge"]
 paddle-ocr = ["dep:pdf-ocr"]
 # Pure-Rust ocrs backend — enable with --features ocr
 ocr = ["pdf-engine/ocr"]
@@ -36,8 +35,6 @@ pdf-compliance = { path = "../pdf-compliance" }
 pdf-manip = { path = "../pdf-manip" }
 pdf-redact = { path = "../pdf-redact" }
 
-# PDFium oracle (optional)
-pdfium-ffi-bridge = { path = "../pdfium-ffi-bridge", features = ["pdfium"], optional = true }
 # image is required for render-page subcommand (always enabled).
 image = { workspace = true }
 

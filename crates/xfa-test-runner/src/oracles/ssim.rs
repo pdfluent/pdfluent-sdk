@@ -117,39 +117,6 @@ pub fn compute_ssim(
 ///
 /// Takes two RGBA images with potentially different strides, outputs the
 /// overlapping region with differences amplified 5x.
-#[cfg(feature = "pdfium-oracle")]
-pub fn generate_diff(
-    img_a: &[u8],
-    width_a: u32,
-    img_b: &[u8],
-    width_b: u32,
-    out_width: u32,
-    out_height: u32,
-) -> Vec<u8> {
-    let mut diff = Vec::with_capacity((out_width * out_height * 4) as usize);
-
-    for y in 0..out_height {
-        for x in 0..out_width {
-            let idx_a = ((y * width_a + x) * 4) as usize;
-            let idx_b = ((y * width_b + x) * 4) as usize;
-
-            let dr = (img_a[idx_a] as i16 - img_b[idx_b] as i16).unsigned_abs();
-            let dg = (img_a[idx_a + 1] as i16 - img_b[idx_b + 1] as i16).unsigned_abs();
-            let db = (img_a[idx_a + 2] as i16 - img_b[idx_b + 2] as i16).unsigned_abs();
-
-            let avg_diff = ((dr + dg + db) / 3).min(255) as u8;
-            let amplified = (avg_diff as u16 * 5).min(255) as u8;
-
-            diff.push(amplified); // R = difference
-            diff.push(0); // G
-            diff.push(0); // B
-            diff.push(255); // A = opaque
-        }
-    }
-
-    diff
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,16 +157,4 @@ mod tests {
         assert!((score - 1.0).abs() < 1e-6);
     }
 
-    #[cfg(feature = "pdfium-oracle")]
-    #[test]
-    fn diff_identical_is_black() {
-        let w = 4u32;
-        let h = 4u32;
-        let pixels: Vec<u8> = vec![100, 150, 200, 255].repeat((w * h) as usize);
-        let diff = generate_diff(&pixels, w, &pixels, w, w, h);
-        // All red channel values should be 0 (no difference)
-        for i in (0..diff.len()).step_by(4) {
-            assert_eq!(diff[i], 0, "Expected 0 diff at pixel {}", i / 4);
-        }
-    }
 }

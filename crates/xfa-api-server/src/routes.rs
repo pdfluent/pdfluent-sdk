@@ -6,7 +6,7 @@ use axum::extract::{Multipart, Path, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use pdfium_ffi_bridge::pdf_reader::PdfReader;
+use pdf_xfa::extract::extract_xfa_from_bytes;
 use serde::Serialize;
 use xfa_layout_engine::form::FormNodeId;
 
@@ -53,11 +53,7 @@ pub async fn extract_fields(
 ) -> Result<Json<ExtractResponse>, ApiError> {
     let pdf_bytes = read_pdf_from_multipart(&mut multipart).await?;
 
-    let reader =
-        PdfReader::from_bytes(&pdf_bytes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-
-    let packets = reader
-        .extract_xfa()
+    let packets = extract_xfa_from_bytes(pdf_bytes.to_vec())
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     let template_xml = packets
@@ -127,11 +123,7 @@ pub async fn fill_form(mut multipart: Multipart) -> Result<Response, ApiError> {
     let form_data: xfa_json::FormData =
         serde_json::from_str(&json_text).map_err(|e| ApiError::BadRequest(format!("JSON: {e}")))?;
 
-    let mut reader =
-        PdfReader::from_bytes(&pdf_bytes).map_err(|e| ApiError::BadRequest(e.to_string()))?;
-
-    let packets = reader
-        .extract_xfa()
+    let packets = extract_xfa_from_bytes(pdf_bytes.to_vec())
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     let template_xml = packets
@@ -146,17 +138,13 @@ pub async fn fill_form(mut multipart: Multipart) -> Result<Response, ApiError> {
     // Apply JSON data to FormTree
     xfa_json::json_to_form_tree(&form_data, &mut tree, root);
 
-    // Convert FormTree back to data XML and sync into PDF
+    // Convert FormTree back to data XML and sync into PDF via lopdf
     let data_json = xfa_json::form_tree_to_json(&tree, root);
     let data_xml = form_data_to_xml(&data_json);
     let data_dom = xfa_dom_resolver::data_dom::DataDom::from_xml(&data_xml)
         .map_err(|e| ApiError::Internal(format!("build data DOM: {e}")))?;
 
-    pdfium_ffi_bridge::dataset_sync::sync_datasets(&mut reader, &data_dom)
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let output = reader
-        .save_to_bytes()
+    let output = sync_datasets_lopdf(&pdf_bytes, &data_dom)
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     Ok((
@@ -178,8 +166,8 @@ pub async fn validate_form(mut multipart: Multipart) -> Result<Json<ValidateResp
     let pdf_bytes = read_pdf_from_multipart(&mut multipart).await?;
     let mut issues = Vec::new();
 
-    let reader = match PdfReader::from_bytes(&pdf_bytes) {
-        Ok(r) => r,
+    let doc = match lopdf::Document::load_mem(&pdf_bytes) {
+        Ok(d) => d,
         Err(e) => {
             return Ok(Json(ValidateResponse {
                 valid: false,
@@ -191,11 +179,11 @@ pub async fn validate_form(mut multipart: Multipart) -> Result<Json<ValidateResp
         }
     };
 
-    let page_count = reader.page_count();
+    let page_count = doc.get_pages().len();
     let has_xfa;
     let has_acroform;
 
-    match reader.extract_xfa() {
+    match extract_xfa_from_bytes(pdf_bytes) {
         Ok(packets) => {
             has_xfa = true;
             has_acroform = true;
@@ -217,10 +205,9 @@ pub async fn validate_form(mut multipart: Multipart) -> Result<Json<ValidateResp
         Err(_) => {
             has_xfa = false;
             // Check for AcroForm without XFA
-            has_acroform = reader
-                .document()
+            has_acroform = doc
                 .trailer
-                .get_deref(b"Root", reader.document())
+                .get_deref(b"Root", &doc)
                 .and_then(|o| o.as_dict())
                 .ok()
                 .and_then(|cat| cat.get(b"AcroForm").ok())
@@ -254,11 +241,7 @@ pub async fn get_schema(
             .ok_or_else(|| ApiError::NotFound(format!("form {form_id} not found")))?
     };
 
-    let reader =
-        PdfReader::from_bytes(&pdf_bytes).map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let packets = reader
-        .extract_xfa()
+    let packets = extract_xfa_from_bytes(pdf_bytes)
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let template_xml = packets
@@ -667,6 +650,123 @@ fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// Sync updated datasets XML into a PDF and return the saved bytes.
+fn sync_datasets_lopdf(
+    pdf_bytes: &[u8],
+    data_dom: &xfa_dom_resolver::data_dom::DataDom,
+) -> std::result::Result<Vec<u8>, String> {
+    let data_xml = data_dom.to_xml();
+    let datasets_xml = format!(
+        "<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\">\n  <xfa:data>\n{data_xml}  </xfa:data>\n</xfa:datasets>"
+    );
+
+    let mut doc = lopdf::Document::load_mem(pdf_bytes).map_err(|e| format!("load PDF: {e}"))?;
+
+    let catalog_ref = doc
+        .trailer
+        .get(b"Root")
+        .and_then(|o| o.as_reference())
+        .map_err(|_| "no Root in trailer".to_string())?;
+
+    let catalog = doc
+        .get_object(catalog_ref)
+        .and_then(|o| o.as_dict())
+        .map_err(|_| "Root is not a dictionary".to_string())?
+        .clone();
+
+    let acroform_ref = catalog
+        .get(b"AcroForm")
+        .and_then(|o| o.as_reference())
+        .map_err(|_| "no AcroForm in catalog".to_string())?;
+
+    let acroform = doc
+        .get_object(acroform_ref)
+        .and_then(|o| o.as_dict())
+        .map_err(|_| "AcroForm is not a dictionary".to_string())?
+        .clone();
+
+    let xfa_entry = acroform
+        .get(b"XFA")
+        .map_err(|_| "no XFA entry in AcroForm".to_string())?
+        .clone();
+
+    match &xfa_entry {
+        lopdf::Object::Reference(r) => {
+            // Single-stream XFA: read existing, replace datasets section
+            let existing_xml = match doc.get_object(*r) {
+                Ok(lopdf::Object::Stream(stream)) => {
+                    let content = stream
+                        .get_plain_content()
+                        .map_err(|e| format!("stream decode: {e}"))?;
+                    String::from_utf8(content).map_err(|e| format!("not UTF-8: {e}"))?
+                }
+                _ => return Err("XFA object is not a stream".to_string()),
+            };
+            let new_xdp = replace_datasets_section(&existing_xml, &datasets_xml);
+            let stream = lopdf::Stream::new(lopdf::dictionary! {}, new_xdp.into_bytes());
+            doc.objects.insert(*r, lopdf::Object::Stream(stream));
+        }
+        lopdf::Object::Array(arr) => {
+            // Array-form XFA: find and replace datasets stream
+            let mut i = 0;
+            let mut found = false;
+            while i + 1 < arr.len() {
+                let is_datasets = match &arr[i] {
+                    lopdf::Object::String(s, _) => String::from_utf8_lossy(s) == "datasets",
+                    lopdf::Object::Name(n) => String::from_utf8_lossy(n) == "datasets",
+                    _ => false,
+                };
+                if is_datasets {
+                    if let lopdf::Object::Reference(stream_ref) = &arr[i + 1] {
+                        let stream = lopdf::Stream::new(
+                            lopdf::dictionary! {},
+                            datasets_xml.as_bytes().to_vec(),
+                        );
+                        doc.objects
+                            .insert(*stream_ref, lopdf::Object::Stream(stream));
+                        found = true;
+                        break;
+                    }
+                }
+                i += 2;
+            }
+            if !found {
+                return Err("datasets entry not found in XFA array".to_string());
+            }
+        }
+        _ => return Err("XFA entry is not a reference or array".to_string()),
+    }
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf)
+        .map_err(|e| format!("save PDF: {e}"))?;
+    Ok(buf)
+}
+
+/// Replace the `<xfa:datasets>...</xfa:datasets>` section in an XDP XML string.
+fn replace_datasets_section(xdp_xml: &str, new_datasets: &str) -> String {
+    if let Some(start) = xdp_xml.find("<xfa:datasets") {
+        if let Some(end_tag_start) = xdp_xml[start..].find("</xfa:datasets>") {
+            let end = start + end_tag_start + "</xfa:datasets>".len();
+            let mut result = String::with_capacity(xdp_xml.len());
+            result.push_str(&xdp_xml[..start]);
+            result.push_str(new_datasets);
+            result.push_str(&xdp_xml[end..]);
+            return result;
+        }
+    }
+    if let Some(close_pos) = xdp_xml.rfind("</xdp:xdp>") {
+        let mut result = String::with_capacity(xdp_xml.len() + new_datasets.len());
+        result.push_str(&xdp_xml[..close_pos]);
+        result.push_str("  ");
+        result.push_str(new_datasets);
+        result.push('\n');
+        result.push_str(&xdp_xml[close_pos..]);
+        return result;
+    }
+    xdp_xml.to_string()
 }
 
 /// Count the number of fields in a JSON value.

@@ -37,7 +37,7 @@ path = "src/bin/corpus-render.rs"
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
 xfa-layout-engine.workspace = true
-pdfium-ffi-bridge.workspace = true
+pdf-xfa.workspace = true
 xfa-license = { workspace = true, features = ["signing"] }
 anyhow.workspace = true
 reqwest.workspace = true

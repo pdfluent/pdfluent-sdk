@@ -107,7 +107,7 @@ fn bench_xfa_extract(c: &mut Criterion) {
 
     let mut xfa_pdfs: Vec<&(String, Vec<u8>)> = Vec::new();
     for pdf in &pdfs {
-        if let Ok(Some(_)) = pdfium_ffi_bridge::xfa_extract::scan_pdf_for_xfa(&pdf.1) {
+        if let Ok(Some(_)) = pdf_xfa::extract::extract_xfa_from_bytes(pdf.1.clone()) {
             xfa_pdfs.push(pdf);
             if xfa_pdfs.len() >= 5 {
                 break;
@@ -119,7 +119,7 @@ fn bench_xfa_extract(c: &mut Criterion) {
     for (name, data) in &xfa_pdfs {
         group.bench_with_input(BenchmarkId::new("scan_xfa", name), data, |b, data| {
             b.iter(|| {
-                let _ = pdfium_ffi_bridge::xfa_extract::scan_pdf_for_xfa(data);
+                let _ = pdf_xfa::extract::extract_xfa_from_bytes(data.to_vec());
             });
         });
     }
