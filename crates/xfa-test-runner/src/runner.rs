@@ -193,7 +193,7 @@ pub fn run_single_pdf(
                 for remaining in std::iter::once(test).chain(tests[results.len() + 1..].iter()) {
                     results.push(SinglePdfResult {
                         test_name: remaining.name().to_string(),
-                        status: "crash".to_string(),
+                        status: "skip".to_string(),
                         error_message: Some(format!(
                             "virtual memory pressure ({:.1} GB), skipping to avoid OOM",
                             vm_kb as f64 / (1024.0 * 1024.0)

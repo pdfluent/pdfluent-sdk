@@ -16025,20 +16025,23 @@ pub fn check_image_xobject_intent(pdf: &Pdf, report: &mut ComplianceReport) {
 // ─── §6.1.4 — Cross-reference table syntax ──────────────────────────────────
 
 /// Check xref keyword EOL markers (§6.1.4).
-pub fn check_xref_syntax(pdf: &Pdf, report: &mut ComplianceReport) {
+pub fn check_xref_syntax(pdf: &Pdf, part: u8, report: &mut ComplianceReport) {
     let data = pdf.data().as_ref();
     let len = data.len();
     let mut pos = 0;
 
-    // §6.1.4:3 — PDF/A-1: cross-reference streams (/Type /XRef) are forbidden.
-    for i in 0..len.saturating_sub(11) {
-        if data[i..].starts_with(b"/Type /XRef") || data[i..].starts_with(b"/Type/XRef") {
-            error(
-                report,
-                "6.1.4",
-                "Cross-reference streams (/Type /XRef) shall not be used in PDF/A-1",
-            );
-            break;
+    // §6.1.4:3 — PDF/A-1 only: cross-reference streams (/Type /XRef) are forbidden.
+    // PDF/A-2+ (ISO 32000-1 based) allows XRef streams, so skip this check for part >= 2.
+    if part == 1 {
+        for i in 0..len.saturating_sub(11) {
+            if data[i..].starts_with(b"/Type /XRef") || data[i..].starts_with(b"/Type/XRef") {
+                error(
+                    report,
+                    "6.1.4",
+                    "Cross-reference streams (/Type /XRef) shall not be used in PDF/A-1",
+                );
+                break;
+            }
         }
     }
 

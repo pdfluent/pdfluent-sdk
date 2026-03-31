@@ -48,6 +48,10 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         fix_tiny_floats_in_streams(doc) + fix_non_finite_numbers_in_streams(doc);
     let odd_hex_strings_fixed = fix_odd_hex_strings_in_streams(doc);
     let non_ascii_names_fixed = fix_non_ascii_pdf_names(doc);
+    let long_names_in_streams_fixed = fix_long_names_in_streams(doc);
+    let long_dict_keys_fixed = fix_long_dict_keys(doc);
+    let long_strings_in_streams_fixed = fix_long_strings_in_streams(doc);
+    let invalid_lang_fixed = fix_invalid_lang_values(doc);
     let inline_image_interpolate_fixed = fix_inline_image_interpolate(doc);
     // Re-encode ASCII85 inline images as FlateDecode-only before stripping unknown operators.
     // veraPDF uses strict EI detection and can find false EI markers within ASCII85-encoded
@@ -97,6 +101,10 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         tiny_floats_fixed,
         odd_hex_strings_fixed,
         non_ascii_names_fixed,
+        long_names_in_streams_fixed,
+        long_dict_keys_fixed,
+        long_strings_in_streams_fixed,
+        invalid_lang_fixed,
         inline_image_interpolate_fixed,
         ascii85_inline_images_fixed,
         lzw_inline_images_fixed,
@@ -135,6 +143,10 @@ pub struct FixupReport {
     pub tiny_floats_fixed: usize,
     pub odd_hex_strings_fixed: usize,
     pub non_ascii_names_fixed: usize,
+    pub long_names_in_streams_fixed: usize,
+    pub long_dict_keys_fixed: usize,
+    pub long_strings_in_streams_fixed: usize,
+    pub invalid_lang_fixed: usize,
     pub inline_image_interpolate_fixed: usize,
     pub ascii85_inline_images_fixed: usize,
     pub lzw_inline_images_fixed: usize,
@@ -1947,6 +1959,11 @@ fn fix_file_spec_ef_extra(doc: &mut Document) -> usize {
             return false;
         }
         dict.remove(b"EF");
+        // Remove /Type /Filespec so the dict is no longer identified as a file
+        // specification (§6.9: FileSpec without /EF = forbidden external reference).
+        if matches!(dict.get(b"Type").ok(), Some(Object::Name(ref n)) if n == b"Filespec") {
+            dict.remove(b"Type");
+        }
         // Ensure F and UF keys exist (required by 6.8/2).
         if !dict.has(b"F") && !dict.has(b"UF") {
             dict.set(
@@ -5595,12 +5612,23 @@ fn fix_content_stream_operator_spacing(doc: &mut Document) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// 6.1.13:5 — Replace tiny non-zero floats (|x| < 1.175e-38) with 0.
-// These appear in content streams and violate PDF/A number limits.
+// 6.1.13 — Fix extreme numeric values in content streams.
+//
+// PDF/A requires:
+// - Real values: |val| ≤ 32767.0 and not subnormal (|val| ≥ 1.175e-38 or 0)
+// - Integer values: |val| ≤ 2,147,483,647 (i32::MAX)
+// - String literals: ≤ 32767 bytes
+// - Name tokens: ≤ 127 bytes
+//
+// This function handles real/integer clamping. Names and strings in content
+// streams are handled by fix_long_names_in_streams / fix_long_strings_in_streams.
 // ---------------------------------------------------------------------------
 
 fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
     const MIN_POSITIVE: f64 = 1.175e-38;
+    const MAX_REAL: f64 = 32767.0;
+    const MAX_INT: i64 = 2_147_483_647;
+
     let mut count = 0;
     let content_ids = collect_content_stream_ids(doc);
     let ids: Vec<ObjectId> = content_ids.into_iter().collect();
@@ -5615,31 +5643,99 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
             continue;
         };
 
-        // Quick check: look for patterns like "0.000000" with many zeros.
-        if !decompressed.windows(8).any(|w| w == b"0.000000") {
-            continue;
-        }
-
-        // Scan for number tokens and check if they're tiny.
         let mut new_content = Vec::with_capacity(decompressed.len());
         let mut i = 0;
         let mut fixed_any = false;
+        let mut string_depth = 0u32;
+        let mut escape = false;
+        let mut in_hex_string = false;
+        let mut in_comment = false;
 
         while i < decompressed.len() {
-            // Check if we're at the start of a number token.
-            let at_number = (decompressed[i] == b'0' || decompressed[i] == b'-')
-                && i + 1 < decompressed.len()
-                && (decompressed[i + 1] == b'.' || decompressed[i + 1] == b'0');
+            let b = decompressed[i];
 
-            if !at_number || (i > 0 && is_number_byte(decompressed[i - 1])) {
-                new_content.push(decompressed[i]);
+            // Skip comments.
+            if in_comment {
+                new_content.push(b);
+                if b == b'\n' || b == b'\r' {
+                    in_comment = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            // Skip literal strings.
+            if string_depth > 0 {
+                new_content.push(b);
+                if escape {
+                    escape = false;
+                } else {
+                    match b {
+                        b'\\' => escape = true,
+                        b'(' => string_depth += 1,
+                        b')' => string_depth = string_depth.saturating_sub(1),
+                        _ => {}
+                    }
+                }
+                i += 1;
+                continue;
+            }
+
+            // Skip hex strings.
+            if in_hex_string {
+                new_content.push(b);
+                if b == b'>' {
+                    in_hex_string = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            match b {
+                b'%' => {
+                    in_comment = true;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                b'(' => {
+                    string_depth = 1;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                b'<' if i + 1 < decompressed.len() && decompressed[i + 1] != b'<' => {
+                    in_hex_string = true;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+
+            // Check if we're at the start of a number token.
+            let is_num_start = b.is_ascii_digit() || b == b'-' || b == b'+' || b == b'.';
+            let prev_is_num = i > 0 && is_number_byte(decompressed[i - 1]);
+
+            if !is_num_start || prev_is_num {
+                new_content.push(b);
+                i += 1;
+                continue;
+            }
+
+            // Check that the next byte is also numeric (to avoid matching operators like -).
+            if (b == b'-' || b == b'+')
+                && (i + 1 >= decompressed.len()
+                    || (!decompressed[i + 1].is_ascii_digit() && decompressed[i + 1] != b'.'))
+            {
+                new_content.push(b);
                 i += 1;
                 continue;
             }
 
             // Extract the full number token.
             let start = i;
-            if decompressed[i] == b'-' {
+            if b == b'-' || b == b'+' {
                 i += 1;
             }
             while i < decompressed.len() && is_number_byte(decompressed[i]) {
@@ -5647,16 +5743,37 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
             }
             let token = &decompressed[start..i];
 
-            // Only check tokens with many decimal digits (potential tiny values).
-            if token.len() > 10 {
-                if let Ok(s) = std::str::from_utf8(token) {
+            // Parse and check range.
+            if let Ok(s) = std::str::from_utf8(token) {
+                let is_float = s.contains('.');
+                if is_float {
                     if let Ok(val) = s.parse::<f64>() {
+                        // Subnormal: tiny non-zero → 0
                         if val != 0.0 && val.abs() < MIN_POSITIVE {
                             new_content.push(b'0');
                             count += 1;
                             fixed_any = true;
                             continue;
                         }
+                        // Too large: clamp to ±32767
+                        if val.abs() > MAX_REAL {
+                            let clamped = if val > 0.0 { MAX_REAL } else { -MAX_REAL };
+                            let s = format_float_compact(clamped);
+                            new_content.extend_from_slice(s.as_bytes());
+                            count += 1;
+                            fixed_any = true;
+                            continue;
+                        }
+                    }
+                } else if let Ok(val) = s.parse::<i64>() {
+                    // Integer outside i32 range.
+                    if val.unsigned_abs() > MAX_INT as u64 {
+                        let clamped = val.clamp(-MAX_INT, MAX_INT);
+                        let s = clamped.to_string();
+                        new_content.extend_from_slice(s.as_bytes());
+                        count += 1;
+                        fixed_any = true;
+                        continue;
                     }
                 }
             }
@@ -5673,6 +5790,17 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
         }
     }
     count
+}
+
+/// Format a float compactly without trailing zeros.
+fn format_float_compact(val: f64) -> String {
+    if val == val.trunc() {
+        // Integer value — write without decimal point.
+        format!("{}", val as i64)
+    } else {
+        let s = format!("{:.6}", val);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
 }
 
 fn is_number_byte(b: u8) -> bool {
@@ -7975,4 +8103,467 @@ fn fix_font_type_entries(doc: &mut Document) -> usize {
         }
     }
     fixed
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13:2 — Truncate name tokens > 127 bytes in content streams.
+// ---------------------------------------------------------------------------
+
+fn fix_long_names_in_streams(doc: &mut Document) -> usize {
+    const MAX_NAME_LEN: usize = 127;
+    let mut count = 0;
+    let content_ids = collect_content_stream_ids(doc);
+    let ids: Vec<ObjectId> = content_ids.into_iter().collect();
+
+    for id in ids {
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        let mut new_content = Vec::with_capacity(decompressed.len());
+        let mut i = 0;
+        let mut fixed_any = false;
+        let mut string_depth = 0u32;
+        let mut escape = false;
+        let mut in_hex_string = false;
+        let mut in_comment = false;
+
+        while i < decompressed.len() {
+            let b = decompressed[i];
+
+            if in_comment {
+                new_content.push(b);
+                if b == b'\n' || b == b'\r' {
+                    in_comment = false;
+                }
+                i += 1;
+                continue;
+            }
+            if string_depth > 0 {
+                new_content.push(b);
+                if escape {
+                    escape = false;
+                } else {
+                    match b {
+                        b'\\' => escape = true,
+                        b'(' => string_depth += 1,
+                        b')' => string_depth = string_depth.saturating_sub(1),
+                        _ => {}
+                    }
+                }
+                i += 1;
+                continue;
+            }
+            if in_hex_string {
+                new_content.push(b);
+                if b == b'>' {
+                    in_hex_string = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            match b {
+                b'%' => {
+                    in_comment = true;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                b'(' => {
+                    string_depth = 1;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                b'<' if i + 1 < decompressed.len() && decompressed[i + 1] != b'<' => {
+                    in_hex_string = true;
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+                b'/' => {
+                    // Name token — scan to end, truncate if > 127 bytes.
+                    let start = i;
+                    i += 1; // skip '/'
+                    while i < decompressed.len()
+                        && !decompressed[i].is_ascii_whitespace()
+                        && !is_pdf_delimiter(decompressed[i])
+                    {
+                        i += 1;
+                    }
+                    let name_bytes = &decompressed[start + 1..i]; // without '/'
+                    if name_bytes.len() > MAX_NAME_LEN {
+                        new_content.push(b'/');
+                        new_content.extend_from_slice(&name_bytes[..MAX_NAME_LEN]);
+                        fixed_any = true;
+                        count += 1;
+                    } else {
+                        new_content.extend_from_slice(&decompressed[start..i]);
+                    }
+                    continue;
+                }
+                _ => {
+                    new_content.push(b);
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+
+        if fixed_any {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.set_plain_content(new_content);
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13:2 — Truncate dictionary key names > 127 bytes in PDF objects.
+// Also truncates Name values > 127 bytes.
+// ---------------------------------------------------------------------------
+
+fn fix_long_dict_keys(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        let obj = match doc.objects.get(&id) {
+            Some(o) => o.clone(),
+            None => continue,
+        };
+        let (fixed, n) = fix_long_keys_in_object(obj, 0);
+        if n > 0 {
+            doc.objects.insert(id, fixed);
+            count += n;
+        }
+    }
+    count
+}
+
+fn fix_long_keys_in_object(obj: Object, depth: usize) -> (Object, usize) {
+    const MAX_NAME_LEN: usize = 127;
+    if depth > MAX_OBJECT_DEPTH {
+        return (obj, 0);
+    }
+    match obj {
+        Object::Name(ref n) if n.len() > MAX_NAME_LEN => {
+            (Object::Name(n[..MAX_NAME_LEN].to_vec()), 1)
+        }
+        Object::Array(arr) => {
+            let mut total = 0;
+            let new_arr: Vec<Object> = arr
+                .into_iter()
+                .map(|o| {
+                    let (fixed, n) = fix_long_keys_in_object(o, depth + 1);
+                    total += n;
+                    fixed
+                })
+                .collect();
+            (Object::Array(new_arr), total)
+        }
+        Object::Dictionary(dict) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in dict.into_iter() {
+                let truncated_key = if key.len() > MAX_NAME_LEN {
+                    total += 1;
+                    key[..MAX_NAME_LEN].to_vec()
+                } else {
+                    key
+                };
+                let (fixed_val, n) = fix_long_keys_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(truncated_key, fixed_val);
+            }
+            (Object::Dictionary(new_dict), total)
+        }
+        Object::Stream(mut s) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in s.dict.into_iter() {
+                let truncated_key = if key.len() > MAX_NAME_LEN {
+                    total += 1;
+                    key[..MAX_NAME_LEN].to_vec()
+                } else {
+                    key
+                };
+                let (fixed_val, n) = fix_long_keys_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(truncated_key, fixed_val);
+            }
+            s.dict = new_dict;
+            (Object::Stream(s), total)
+        }
+        other => (other, 0),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13:3 — Truncate literal strings > 32767 bytes in content streams.
+//
+// fix_long_strings handles strings in PDF objects; this covers strings inside
+// content streams where they appear as raw `(...)` tokens.
+// ---------------------------------------------------------------------------
+
+fn fix_long_strings_in_streams(doc: &mut Document) -> usize {
+    const MAX_STRING_LEN: usize = 32767;
+    let mut count = 0;
+    let content_ids = collect_content_stream_ids(doc);
+    let ids: Vec<ObjectId> = content_ids.into_iter().collect();
+
+    for id in ids {
+        let decompressed = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: skip streams shorter than the limit.
+        if decompressed.len() <= MAX_STRING_LEN {
+            continue;
+        }
+
+        let mut new_content = Vec::with_capacity(decompressed.len());
+        let mut i = 0;
+        let mut fixed_any = false;
+
+        while i < decompressed.len() {
+            let b = decompressed[i];
+            if b == b'(' {
+                // Scan to matching ')' respecting nesting and escapes.
+                let start = i;
+                i += 1;
+                let mut depth = 1u32;
+                let mut esc = false;
+                while i < decompressed.len() && depth > 0 {
+                    if esc {
+                        esc = false;
+                        i += 1;
+                        continue;
+                    }
+                    match decompressed[i] {
+                        b'\\' => esc = true,
+                        b'(' => depth += 1,
+                        b')' => depth -= 1,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                // decompressed[start..i] is the full string including parens.
+                let string_body_len = if i > start + 1 { i - start - 2 } else { 0 };
+                if string_body_len > MAX_STRING_LEN {
+                    new_content.push(b'(');
+                    new_content
+                        .extend_from_slice(&decompressed[start + 1..start + 1 + MAX_STRING_LEN]);
+                    new_content.push(b')');
+                    fixed_any = true;
+                    count += 1;
+                } else {
+                    new_content.extend_from_slice(&decompressed[start..i]);
+                }
+            } else {
+                new_content.push(b);
+                i += 1;
+            }
+        }
+
+        if fixed_any {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.set_plain_content(new_content);
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.7.4 — Fix invalid /Lang values in Catalog and StructElem dicts.
+//
+// PDF/A requires /Lang values to be valid BCP 47 language tags. Common
+// violations:
+// - "x-unknown" (used by some generators as placeholder)
+// - Wrong case: "EN-US" instead of "en-US", "DE" instead of "de"
+// - Invalid tags: empty strings, garbage values
+// ---------------------------------------------------------------------------
+
+fn fix_invalid_lang_values(doc: &mut Document) -> usize {
+    let mut count = 0;
+
+    // Fix /Lang in all objects (covers Catalog, StructElem, and anything else).
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let action = if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+            match dict.get(b"Lang") {
+                Ok(Object::String(bytes, _)) => {
+                    let s = String::from_utf8_lossy(bytes);
+                    let s = s.trim();
+                    if s.is_empty() {
+                        Some(LangAction::Remove)
+                    } else if !is_valid_bcp47(s) {
+                        match normalize_bcp47(s) {
+                            Some(normalized) if normalized != s => {
+                                Some(LangAction::Set(normalized))
+                            }
+                            Some(_) => None, // already valid
+                            None => Some(LangAction::Remove),
+                        }
+                    } else {
+                        None
+                    }
+                }
+                Ok(Object::Name(bytes)) => {
+                    // Some PDFs use Name instead of String for /Lang.
+                    let s = String::from_utf8_lossy(bytes);
+                    let s_ref = s.trim();
+                    if s_ref.is_empty() {
+                        Some(LangAction::Remove)
+                    } else {
+                        match normalize_bcp47(s_ref) {
+                            Some(normalized) => Some(LangAction::Set(normalized)),
+                            None => Some(LangAction::Remove),
+                        }
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        match action {
+            Some(LangAction::Set(val)) => {
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    dict.set(
+                        "Lang",
+                        Object::String(val.into_bytes(), lopdf::StringFormat::Literal),
+                    );
+                    count += 1;
+                }
+            }
+            Some(LangAction::Remove) => {
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    dict.remove(b"Lang");
+                    count += 1;
+                }
+            }
+            None => {}
+        }
+    }
+
+    count
+}
+
+enum LangAction {
+    Set(String),
+    Remove,
+}
+
+/// Check if a string is a valid BCP 47 language tag with correct casing.
+fn is_valid_bcp47(tag: &str) -> bool {
+    let tag = tag.trim();
+    if tag.is_empty() || tag.eq_ignore_ascii_case("x-unknown") {
+        return false;
+    }
+
+    let parts: Vec<&str> = tag.split('-').collect();
+    if parts.is_empty() {
+        return false;
+    }
+
+    // Primary subtag: 2-3 lowercase alpha.
+    let primary = parts[0];
+    if primary.len() < 2
+        || primary.len() > 3
+        || !primary.bytes().all(|b| b.is_ascii_lowercase())
+    {
+        return false;
+    }
+
+    for part in parts.iter().skip(1) {
+        if part.is_empty() {
+            return false;
+        }
+        if part.len() == 2 && part.bytes().all(|b| b.is_ascii_alphabetic()) {
+            // Region: must be UPPERCASE.
+            if !part.bytes().all(|b| b.is_ascii_uppercase()) {
+                return false;
+            }
+        } else if part.len() == 4 && part.bytes().all(|b| b.is_ascii_alphabetic()) {
+            // Script: must be Title Case.
+            let mut chars = part.chars();
+            if let Some(first) = chars.next() {
+                if !first.is_ascii_uppercase() {
+                    return false;
+                }
+                if !chars.all(|c| c.is_ascii_lowercase()) {
+                    return false;
+                }
+            }
+        } else if !part.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Normalize a BCP 47 language tag. Returns `Some(normalized)` if the tag can
+/// be fixed, `None` if it should be removed (e.g. "x-unknown", empty, garbage).
+fn normalize_bcp47(tag: &str) -> Option<String> {
+    let tag = tag.trim();
+    if tag.is_empty() || tag.eq_ignore_ascii_case("x-unknown") {
+        return None;
+    }
+
+    let parts: Vec<&str> = tag.split('-').collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    // Primary language subtag: 2-3 letter alpha, lowercase.
+    let primary = parts[0];
+    if primary.len() < 2
+        || primary.len() > 3
+        || !primary.bytes().all(|b| b.is_ascii_alphabetic())
+    {
+        return None;
+    }
+
+    let mut result = primary.to_ascii_lowercase();
+
+    for part in parts.iter().skip(1) {
+        if part.is_empty() {
+            continue;
+        }
+        result.push('-');
+        if part.len() == 2 && part.bytes().all(|b| b.is_ascii_alphabetic()) {
+            // Region subtag: 2 letters, UPPERCASE.
+            result.push_str(&part.to_ascii_uppercase());
+        } else if part.len() == 4 && part.bytes().all(|b| b.is_ascii_alphabetic()) {
+            // Script subtag: 4 letters, Title Case.
+            let mut chars = part.chars();
+            if let Some(first) = chars.next() {
+                result.push(first.to_ascii_uppercase());
+                for c in chars {
+                    result.push(c.to_ascii_lowercase());
+                }
+            }
+        } else if part.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            // Other subtags (variant, extension): lowercase.
+            result.push_str(&part.to_ascii_lowercase());
+        } else {
+            return None;
+        }
+    }
+
+    Some(result)
 }

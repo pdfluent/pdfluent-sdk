@@ -86,7 +86,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_stream_length_pdfa(pdf, &mut report);
     // §6.1.4 — xref syntax check runs in Phase 1 so it fires even when the
     // early exit triggers (e.g. PDF 1.6 claiming PDF/A-1b). (#FN-6.1.4)
-    check_xref_syntax_pdfa(pdf, &mut report);
+    check_xref_syntax_pdfa(pdf, level, &mut report);
 
     // Early exit: if critical structural checks already failed, skip content analysis.
     // "Critical" = missing XMP, encrypted, or wrong file header — these guarantee
@@ -257,7 +257,7 @@ pub fn validate(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     check_object_syntax(pdf, level, &mut report);
     check_xmp_extension_schema_pdfa(pdf, &mut report);
     check_image_intent(pdf, &mut report);
-    check_xref_syntax_pdfa(pdf, &mut report);
+    check_xref_syntax_pdfa(pdf, level, &mut report);
     check_embedded_file_spec(pdf, level, &mut report);
     check_postscript_xobjects_pdfa(pdf, level, &mut report);
     check::check_stream_external_refs_cached(&obj_cache, &mut report);
@@ -741,7 +741,7 @@ pub fn validate_with_progress(
     tracked!("check_image_intent", check_image_intent(pdf, &mut report));
     tracked!(
         "check_xref_syntax_pdfa",
-        check_xref_syntax_pdfa(pdf, &mut report)
+        check_xref_syntax_pdfa(pdf, level, &mut report)
     );
     tracked!(
         "check_embedded_file_spec",
@@ -1203,7 +1203,7 @@ pub fn validate_timed(pdf: &Pdf, level: PdfALevel) -> ComplianceReport {
     timed!("check_image_intent", check_image_intent(pdf, &mut report));
     timed!(
         "check_xref_syntax_pdfa",
-        check_xref_syntax_pdfa(pdf, &mut report)
+        check_xref_syntax_pdfa(pdf, level, &mut report)
     );
     timed!(
         "check_embedded_file_spec",
@@ -3051,8 +3051,8 @@ fn check_image_intent(pdf: &Pdf, report: &mut ComplianceReport) {
 /// match) and misses malformed "xref" keywords in later xref sections (incremental
 /// updates). Supplement with a full-file scan that checks ALL standalone "xref"
 /// keywords. (#FN-6.1.4)
-fn check_xref_syntax_pdfa(pdf: &Pdf, report: &mut ComplianceReport) {
-    check::check_xref_syntax(pdf, report);
+fn check_xref_syntax_pdfa(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceReport) {
+    check::check_xref_syntax(pdf, level.part(), report);
     // Already emitted — don't double-count.
     if report.issues.iter().any(|i| i.rule == "6.1.4") {
         return;
