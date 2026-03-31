@@ -2897,7 +2897,7 @@ fn fix_unbalanced_emc(doc: &mut Document) {
             }
         };
 
-        if !content.windows(3).any(|w| w == b"EMC") {
+        if !content.windows(3).any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC") {
             continue;
         }
 
@@ -2992,6 +2992,12 @@ fn fix_emc_in_bytes(data: &[u8]) -> Vec<u8> {
         } else {
             out.extend_from_slice(token);
         }
+    }
+
+    // Close unclosed BMC/BDC sequences with EMC.
+    while depth > 0 {
+        out.extend_from_slice(b"\nEMC");
+        depth -= 1;
     }
 
     out
