@@ -7531,9 +7531,8 @@ fn debug_62117_fonts() {
         });
         let has_tounicode = dict.get(b"ToUnicode").is_ok();
         let has_encoding = dict.get(b"Encoding").is_ok();
-        let is_type0 = subtype.as_deref() == Some("Type0");
-        let is_c2 = base_font.as_ref().map_or(false, |bf| bf.contains("C2_") || bf.contains("C0_"));
-        if is_type0 || is_c2 {
+        // Also check page resource fonts for C2_0/C2_1 names
+        if false {
             {
                 let encoding = dict.get(b"Encoding").ok().map(|o| format!("{:?}", o));
                 let descendants = dict.get(b"DescendantFonts").ok().map(|o| format!("{:?}", o));
@@ -7569,6 +7568,42 @@ fn debug_62117_fonts() {
                     }
                 }
             }
+        }
+    }
+
+    // Dump page resource font names
+    eprintln!("\n=== Page Font Resources ===");
+    let pages = doc.get_pages();
+    for (&pg, &pg_id) in &pages {
+        let Some(lopdf::Object::Dictionary(pd)) = doc.objects.get(&pg_id) else { continue };
+        let res2 = match pd.get(b"Resources").ok() {
+            Some(lopdf::Object::Dictionary(d)) => Some(d.clone()),
+            Some(lopdf::Object::Reference(rid)) => match doc.objects.get(rid) {
+                Some(lopdf::Object::Dictionary(d)) => Some(d.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(res2) = res2 else { continue };
+        let fd3 = match res2.get(b"Font").ok() {
+            Some(lopdf::Object::Dictionary(d)) => Some(d.clone()),
+            Some(lopdf::Object::Reference(rid)) => match doc.objects.get(rid) {
+                Some(lopdf::Object::Dictionary(d)) => Some(d.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(fd3) = fd3 else { continue };
+        for (nm, val) in fd3.iter() {
+            let fid = match val {
+                lopdf::Object::Reference(id) => *id,
+                _ => continue,
+            };
+            let Some(lopdf::Object::Dictionary(fdict)) = doc.objects.get(&fid) else { continue };
+            let st = fdict.get(b"Subtype").ok().and_then(|o| if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None });
+            let bf = fdict.get(b"BaseFont").ok().and_then(|o| if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None });
+            let has_tu = fdict.get(b"ToUnicode").is_ok();
+            eprintln!("  Page {pg}: /{} -> {:?} Subtype={st:?} BaseFont={bf:?} ToUnicode={has_tu}", String::from_utf8_lossy(nm), fid);
         }
     }
 }

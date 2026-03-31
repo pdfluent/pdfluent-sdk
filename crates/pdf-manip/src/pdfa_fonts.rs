@@ -13127,18 +13127,35 @@ pub fn fix_type0_tounicode(doc: &mut Document) -> usize {
                     cmap_pairs = tt_read_windows_cmap(&font_data, 0);
                 }
                 if cmap_pairs.is_empty() {
-                    continue;
+                    // No usable Windows cmap (e.g. Wingdings with only (1,0)
+                    // Mac cmap). Convert Mac (code, gid) → PUA (U+F000+code, gid).
+                    let mac_pairs = tt_read_mac_cmap(&font_data);
+                    cmap_pairs = mac_pairs
+                        .into_iter()
+                        .map(|(code, gid)| (0xF000u16 + code as u16, gid))
+                        .collect();
                 }
-                // Invert: build gid→unicode (first unicode wins per gid).
-                let mut gid_to_unicode: std::collections::BTreeMap<u16, u16> =
-                    std::collections::BTreeMap::new();
-                for (unicode, gid) in &cmap_pairs {
-                    if *gid != 0 {
-                        gid_to_unicode.entry(*gid).or_insert(*unicode);
+                if !cmap_pairs.is_empty() {
+                    // Invert: build gid→unicode (first unicode wins per gid).
+                    let mut gid_to_unicode: std::collections::BTreeMap<u16, u16> =
+                        std::collections::BTreeMap::new();
+                    for (unicode, gid) in &cmap_pairs {
+                        if *gid != 0 {
+                            gid_to_unicode.entry(*gid).or_insert(*unicode);
+                        }
                     }
+                    // CID == GID (Identity), so each entry is (CID, unicode).
+                    gid_to_unicode.into_iter().collect()
+                } else {
+                    // No cmap at all — create PUA identity mapping for all
+                    // GIDs in the font (CID == GID with Identity mapping).
+                    // Map GID g → U+F000+g (Private Use Area).
+                    let num_glyphs = tt_num_glyphs(&font_data).unwrap_or(256);
+                    (1..num_glyphs)
+                        .map(|g| (g, 0xF000u16.saturating_add(g)))
+                        .filter(|(_, u)| *u <= 0xF8FF) // stay within PUA-A
+                        .collect()
                 }
-                // CID == GID (Identity), so each entry is (CID, unicode).
-                gid_to_unicode.into_iter().collect()
             } else if cid_subtype.as_deref() == Some("CIDFontType0") {
                 // CFF-based CID font: try parsing charset for CID→GID mapping
                 // and use CFF charset names → Unicode via AGL.
@@ -13522,6 +13539,15 @@ fn tt_read_windows_cmap(data: &[u8], encoding_id: u16) -> Vec<(u16, u16)> {
         }
     }
     Vec::new()
+}
+
+/// Read the number of glyphs from the maxp table.
+fn tt_num_glyphs(data: &[u8]) -> Option<u16> {
+    let maxp = tt_find_table(data, b"maxp")?;
+    if maxp.len() < 6 {
+        return None;
+    }
+    Some(u16::from_be_bytes([maxp[4], maxp[5]]))
 }
 
 fn tt_unicode_from_pdf_encoding_code(
