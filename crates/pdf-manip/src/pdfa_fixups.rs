@@ -33,6 +33,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let postscript_xobjects_removed = fix_postscript_xobjects(doc);
     let reference_xobjects_removed = fix_reference_xobjects(doc);
     let overflow_integers_fixed = fix_overflow_integers(doc);
+    let overflow_reals_fixed = fix_overflow_reals(doc);
     let long_strings_fixed = fix_long_strings(doc);
     let jpx_colorspace_fixed = fix_jpx_forbidden_colorspaces(doc);
     // Content stream modifications (decompress/recompress) must run before
@@ -96,6 +97,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         postscript_xobjects_removed,
         reference_xobjects_removed,
         overflow_integers_fixed,
+        overflow_reals_fixed,
         long_strings_fixed,
         operator_spacing_fixed,
         tiny_floats_fixed,
@@ -138,6 +140,7 @@ pub struct FixupReport {
     pub postscript_xobjects_removed: usize,
     pub reference_xobjects_removed: usize,
     pub overflow_integers_fixed: usize,
+    pub overflow_reals_fixed: usize,
     pub long_strings_fixed: usize,
     pub operator_spacing_fixed: usize,
     pub tiny_floats_fixed: usize,
@@ -1961,7 +1964,7 @@ fn fix_file_spec_ef_extra(doc: &mut Document) -> usize {
         dict.remove(b"EF");
         // Remove /Type /Filespec so the dict is no longer identified as a file
         // specification (§6.9: FileSpec without /EF = forbidden external reference).
-        if matches!(dict.get(b"Type").ok(), Some(Object::Name(ref n)) if n == b"Filespec") {
+        if matches!(dict.get(b"Type").ok(), Some(Object::Name(ref n)) if n.eq_ignore_ascii_case(b"Filespec")) {
             dict.remove(b"Type");
         }
         // Ensure F and UF keys exist (required by 6.8/2).
@@ -4728,6 +4731,82 @@ fn fix_reference_xobjects(doc: &mut Document) -> usize {
         }
     }
     count
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.13 — Clamp Real values exceeding ±32767 or subnormal in PDF objects.
+// ---------------------------------------------------------------------------
+
+fn fix_overflow_reals(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let obj = match doc.objects.get(&id) {
+            Some(o) => o.clone(),
+            None => continue,
+        };
+        let (fixed, n) = fix_overflow_reals_in_object(obj, 0);
+        if n > 0 {
+            doc.objects.insert(id, fixed);
+            count += n;
+        }
+    }
+    count
+}
+
+fn fix_overflow_reals_in_object(obj: Object, depth: usize) -> (Object, usize) {
+    const MAX_REAL: f64 = 32767.0;
+    const MIN_POSITIVE: f64 = 1.175e-38;
+    if depth > MAX_OBJECT_DEPTH {
+        return (obj, 0);
+    }
+    match obj {
+        Object::Real(v) => {
+            let val = v as f64;
+            if val != 0.0 && val.abs() < MIN_POSITIVE {
+                (Object::Real(0.0), 1)
+            } else if val.abs() > MAX_REAL {
+                let clamped = if val > 0.0 { MAX_REAL } else { -MAX_REAL };
+                (Object::Real(clamped as f32), 1)
+            } else {
+                (Object::Real(v), 0)
+            }
+        }
+        Object::Array(arr) => {
+            let mut total = 0;
+            let new_arr: Vec<Object> = arr
+                .into_iter()
+                .map(|o| {
+                    let (fixed, n) = fix_overflow_reals_in_object(o, depth + 1);
+                    total += n;
+                    fixed
+                })
+                .collect();
+            (Object::Array(new_arr), total)
+        }
+        Object::Dictionary(dict) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in dict.into_iter() {
+                let (fixed, n) = fix_overflow_reals_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            (Object::Dictionary(new_dict), total)
+        }
+        Object::Stream(mut s) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in s.dict.into_iter() {
+                let (fixed, n) = fix_overflow_reals_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            s.dict = new_dict;
+            (Object::Stream(s), total)
+        }
+        other => (other, 0),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7895,6 +7974,11 @@ fn page_uses_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -
             return true;
         }
     }
+    // Check annotations for transparency: /BM, /CA, /ca on the annotation dict,
+    // and appearance streams with transparency groups or ExtGState transparency.
+    if page_annots_use_transparency_lopdf(page_dict, doc) {
+        return true;
+    }
     // Check Form XObjects: a Form XObject with /Group /S /Transparency implies
     // the parent page uses transparency blending.
     if let Some(xobj_dict) = get_named_resource_dict_from_resources(page_dict, doc, b"XObject") {
@@ -7917,6 +8001,90 @@ fn page_uses_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -
                 }
             }
             // Form XObject with ExtGState transparency in its own resources.
+            if let Some(gs) =
+                get_named_resource_dict_from_stream_resources(&s.dict, doc, b"ExtGState")
+            {
+                if extgstate_dict_has_transparency(&gs, doc) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check whether annotations on a page use transparency features.
+///
+/// Mirrors the compliance checker's `page_annots_use_transparency`: checks
+/// /BM, /CA, /ca on annotation dicts and transparency in appearance streams.
+fn page_annots_use_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -> bool {
+    let annots_arr = match page_dict.get(b"Annots").ok() {
+        Some(Object::Array(arr)) => arr.clone(),
+        Some(Object::Reference(id)) => match doc.objects.get(id) {
+            Some(Object::Array(arr)) => arr.clone(),
+            _ => return false,
+        },
+        _ => return false,
+    };
+    for annot_obj in &annots_arr {
+        let annot = match annot_obj {
+            Object::Reference(id) => match doc.objects.get(id) {
+                Some(Object::Dictionary(d)) => d,
+                _ => continue,
+            },
+            Object::Dictionary(d) => d,
+            _ => continue,
+        };
+        // /BM on annotation dict
+        if let Ok(Object::Name(bm)) = annot.get(b"BM") {
+            if bm != b"Normal" && bm != b"Compatible" {
+                return true;
+            }
+        }
+        // /CA (stroke opacity) < 1
+        if let Ok(Object::Real(ca)) = annot.get(b"CA") {
+            if *ca < 1.0 {
+                return true;
+            }
+        }
+        if let Ok(Object::Real(ca)) = annot.get(b"ca") {
+            if *ca < 1.0 {
+                return true;
+            }
+        }
+        // Check appearance streams (/AP /N).
+        let ap = match annot.get(b"AP").ok() {
+            Some(Object::Dictionary(d)) => d,
+            Some(Object::Reference(id)) => match doc.objects.get(id) {
+                Some(Object::Dictionary(d)) => d,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        // Collect all /N appearance streams (direct or state dict).
+        let mut ap_ids: Vec<ObjectId> = Vec::new();
+        match ap.get(b"N").ok() {
+            Some(Object::Reference(id)) => ap_ids.push(*id),
+            Some(Object::Dictionary(state_dict)) => {
+                for (_, v) in state_dict.iter() {
+                    if let Object::Reference(id) = v {
+                        ap_ids.push(*id);
+                    }
+                }
+            }
+            _ => {}
+        }
+        for ap_id in ap_ids {
+            let Some(Object::Stream(s)) = doc.objects.get(&ap_id) else {
+                continue;
+            };
+            // Form XObject with transparency group
+            if let Ok(Object::Dictionary(grp)) = s.dict.get(b"Group") {
+                if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
+                    return true;
+                }
+            }
+            // ExtGState transparency in appearance resources
             if let Some(gs) =
                 get_named_resource_dict_from_stream_resources(&s.dict, doc, b"ExtGState")
             {
