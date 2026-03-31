@@ -131,6 +131,8 @@ pub enum Error {
 pub enum DecompressError {
     #[error("decoding ASCII85 failed: {0}")]
     Ascii85(&'static str),
+    #[error("decoding ASCIIHex failed: {0}")]
+    AsciiHex(&'static str),
 }
 
 #[derive(Error, Debug)]

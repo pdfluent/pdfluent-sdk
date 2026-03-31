@@ -26,6 +26,9 @@ chrono = { version = "0.4", optional = true, default-features = false, features 
 ecb = "0.1.2"
 encoding_rs = "0.8.32"
 flate2 = "1.0"
+hayro-ccitt = { path = "../hayro-ccitt", optional = true }
+hayro-jbig2 = { path = "../hayro-jbig2", optional = true }
+hayro-jpeg2000 = { path = "../hayro-jpeg2000", optional = true, default-features = false }
 image = { version = "0.25", optional = true }
 indexmap = "2.2.3"
 itoa = "1.0"
@@ -58,7 +61,7 @@ tempfile = "3.3"
 async = ["tokio/rt-multi-thread", "tokio/macros"]
 chrono = ["dep:chrono"]
 default = ["chrono", "jiff", "rayon", "time"]
-embed_image = ["image"]
+embed_image = ["image", "hayro-ccitt", "hayro-jbig2", "hayro-jpeg2000"]
 jiff = ["dep:jiff"]
 wasm_js = ["getrandom/wasm_js"]
 serde = ["dep:serde"]
