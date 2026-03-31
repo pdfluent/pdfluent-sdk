@@ -71,6 +71,11 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     // Runs after normalize_colorspaces has already added the OutputIntent, so
     // /Group << /S /Transparency >> without /CS is valid. (#496)
     let transparency_groups_added = fix_missing_transparency_groups(doc);
+    // Re-balance BMC/BDC/EMC after content stream modifications.
+    // Earlier cleanup already balanced them, but strip_unknown_content_stream_operators
+    // and other content stream fixups above can remove operators within marked content
+    // sequences, leaving BMC/BDC without matching EMC. Run the fix again here.
+    crate::pdfa_cleanup::fix_unbalanced_emc(doc);
     // fix_stream_lengths must be LAST — after all other fixes that may modify streams.
     let font_type_fixed = fix_font_type_entries(doc);
     let form_xobject_bbox_fixed = fix_form_xobject_bbox(doc);
@@ -8266,6 +8271,7 @@ fn find_srgb_icc_stream(doc: &Document) -> Option<ObjectId> {
 ///
 /// Checks for CA < 1, ca < 1, non-None SMask, or non-Normal/Compatible BM.
 /// Also checks Form XObjects with their own /Group /S /Transparency.
+#[allow(dead_code)]
 fn page_uses_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -> bool {
     // Check ExtGState entries.
     if let Some(gs_dict) = get_named_resource_dict_from_resources(page_dict, doc, b"ExtGState") {
@@ -8316,6 +8322,7 @@ fn page_uses_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -
 ///
 /// Mirrors the compliance checker's `page_annots_use_transparency`: checks
 /// /BM, /CA, /ca on annotation dicts and transparency in appearance streams.
+#[allow(dead_code)]
 fn page_annots_use_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -> bool {
     let annots_arr = match page_dict.get(b"Annots").ok() {
         Some(Object::Array(arr)) => arr.clone(),
@@ -8397,6 +8404,7 @@ fn page_annots_use_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Docum
 }
 
 /// Check whether any entry in an ExtGState dictionary uses transparency.
+#[allow(dead_code)]
 fn extgstate_dict_has_transparency(gs_dict: &lopdf::Dictionary, doc: &Document) -> bool {
     for (_, gs_val) in gs_dict.iter() {
         let gs = match gs_val {
@@ -8415,6 +8423,7 @@ fn extgstate_dict_has_transparency(gs_dict: &lopdf::Dictionary, doc: &Document) 
 }
 
 /// Check a single ExtGState dict for transparency features.
+#[allow(dead_code)]
 fn extgstate_entry_has_transparency(gs: &lopdf::Dictionary) -> bool {
     // /SMask present and not /None
     match gs.get(b"SMask").ok() {
@@ -8441,6 +8450,7 @@ fn extgstate_entry_has_transparency(gs: &lopdf::Dictionary) -> bool {
     false
 }
 
+#[allow(dead_code)]
 fn opacity_less_than_one(obj: Option<&Object>) -> bool {
     match obj {
         Some(Object::Real(f)) => *f < 1.0,
@@ -8452,6 +8462,7 @@ fn opacity_less_than_one(obj: Option<&Object>) -> bool {
 /// Like `get_named_resource_dict_from_resources` but works on a stream dict
 /// (Form XObject) rather than a page dict — the resource dict is found directly
 /// under the stream dict's /Resources key.
+#[allow(dead_code)]
 fn get_named_resource_dict_from_stream_resources(
     stream_dict: &lopdf::Dictionary,
     doc: &Document,
