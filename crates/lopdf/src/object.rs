@@ -715,6 +715,15 @@ impl Stream {
                 b"FlateDecode" => Self::decompress_zlib(input, params)?,
                 b"LZWDecode" => Self::decompress_lzw(input, params)?,
                 b"ASCII85Decode" => Self::decode_ascii85(input)?,
+                b"ASCIIHexDecode" | b"AHx" => Self::decode_ascii_hex(input)?,
+                b"RunLengthDecode" | b"RL" => Self::decode_run_length(input)?,
+                #[cfg(feature = "embed_image")]
+                b"CCITTFaxDecode" | b"CCF" => Self::decode_ccitt_fax(input, params)?,
+                #[cfg(feature = "embed_image")]
+                b"JBIG2Decode" => Self::decode_jbig2(input)?,
+                #[cfg(feature = "embed_image")]
+                b"JPXDecode" => Self::decode_jpx(input)?,
+                b"DCTDecode" | b"DCT" => input.to_vec(), // JPEG passthrough
                 _ => return Err(Error::Unimplemented("decompression algorithms")),
             };
             input = &output;
@@ -827,6 +836,250 @@ impl Stream {
         Ok(output)
     }
 
+    fn decode_ascii_hex(input: &[u8]) -> Result<Vec<u8>> {
+        let mut output = Vec::with_capacity(input.len() / 2);
+        let mut hi: Option<u8> = None;
+
+        for &ch in input {
+            if ch == b'>' {
+                break; // EOD marker
+            }
+            if ch.is_ascii_whitespace() {
+                continue;
+            }
+            let nibble = match ch {
+                b'0'..=b'9' => ch - b'0',
+                b'A'..=b'F' => ch - b'A' + 10,
+                b'a'..=b'f' => ch - b'a' + 10,
+                _ => return Err(DecompressError::AsciiHex("invalid hex digit").into()),
+            };
+            match hi {
+                None => hi = Some(nibble),
+                Some(h) => {
+                    output.push((h << 4) | nibble);
+                    hi = None;
+                }
+            }
+        }
+        // Odd trailing nibble: pad with 0 (per PDF spec).
+        if let Some(h) = hi {
+            output.push(h << 4);
+        }
+        Ok(output)
+    }
+
+    fn decode_run_length(input: &[u8]) -> Result<Vec<u8>> {
+        let mut output = Vec::new();
+        let mut i = 0;
+        while i < input.len() {
+            let length = input[i];
+            i += 1;
+            match length {
+                128 => break, // EOD
+                0..=127 => {
+                    let count = length as usize + 1;
+                    let end = (i + count).min(input.len());
+                    output.extend_from_slice(&input[i..end]);
+                    i = end;
+                }
+                _ => {
+                    // 129..=255: repeat next byte (257 - length) times
+                    if i >= input.len() {
+                        break;
+                    }
+                    let count = 257 - length as usize;
+                    let byte = input[i];
+                    i += 1;
+                    output.extend(std::iter::repeat_n(byte, count));
+                }
+            }
+        }
+        Ok(output)
+    }
+
+    #[cfg(feature = "embed_image")]
+    fn decode_ccitt_fax(input: &[u8], params: Option<&Dictionary>) -> Result<Vec<u8>> {
+        let k = params
+            .and_then(|p| p.get(b"K").ok())
+            .and_then(|o| Object::as_i64(o).ok())
+            .unwrap_or(0);
+        let columns = params
+            .and_then(|p| p.get(b"Columns").ok())
+            .and_then(|o| Object::as_i64(o).ok())
+            .unwrap_or(1728) as u32;
+        let rows = params
+            .and_then(|p| p.get(b"Rows").ok())
+            .and_then(|o| Object::as_i64(o).ok())
+            .unwrap_or(0) as u32;
+        let end_of_block = params
+            .and_then(|p| p.get(b"EndOfBlock").ok())
+            .and_then(|o| Object::as_bool(o).ok())
+            .unwrap_or(true);
+        let end_of_line = params
+            .and_then(|p| p.get(b"EndOfLine").ok())
+            .and_then(|o| Object::as_bool(o).ok())
+            .unwrap_or(false);
+        let byte_align = params
+            .and_then(|p| p.get(b"EncodedByteAlign").ok())
+            .and_then(|o| Object::as_bool(o).ok())
+            .unwrap_or(false);
+        let black_is_1 = params
+            .and_then(|p| p.get(b"BlackIs1").ok())
+            .and_then(|o| Object::as_bool(o).ok())
+            .unwrap_or(false);
+
+        let encoding = if k < 0 {
+            hayro_ccitt::EncodingMode::Group4
+        } else if k == 0 {
+            hayro_ccitt::EncodingMode::Group3_1D
+        } else {
+            hayro_ccitt::EncodingMode::Group3_2D { k: k as u32 }
+        };
+
+        let settings = hayro_ccitt::DecodeSettings {
+            columns,
+            rows,
+            end_of_block,
+            end_of_line,
+            rows_are_byte_aligned: byte_align,
+            encoding,
+            invert_black: black_is_1,
+        };
+
+        struct ByteDecoder {
+            output: Vec<u8>,
+            buffer: u8,
+            bit_count: u8,
+        }
+
+        impl ByteDecoder {
+            fn flush(&mut self) {
+                if self.bit_count > 0 {
+                    self.output.push(self.buffer << (8 - self.bit_count));
+                    self.buffer = 0;
+                    self.bit_count = 0;
+                }
+            }
+        }
+
+        impl hayro_ccitt::Decoder for ByteDecoder {
+            fn push_pixel(&mut self, white: bool) {
+                self.buffer = (self.buffer << 1) | u8::from(white);
+                self.bit_count += 1;
+                if self.bit_count == 8 {
+                    self.output.push(self.buffer);
+                    self.buffer = 0;
+                    self.bit_count = 0;
+                }
+            }
+
+            fn push_pixel_chunk(&mut self, white: bool, chunk_count: u32) {
+                let byte = if white { 0xFF } else { 0x00 };
+                self.output
+                    .extend(std::iter::repeat_n(byte, chunk_count as usize));
+            }
+
+            fn next_line(&mut self) {
+                self.flush();
+            }
+        }
+
+        let mut decoder = ByteDecoder {
+            output: Vec::new(),
+            buffer: 0,
+            bit_count: 0,
+        };
+
+        match hayro_ccitt::decode(input, &mut decoder, &settings) {
+            Ok(_) => Ok(decoder.output),
+            Err(_) if !decoder.output.is_empty() => {
+                // Partial decode — return what we got (lenient).
+                Ok(decoder.output)
+            }
+            Err(_) => Err(Error::Unimplemented("CCITTFaxDecode failed")),
+        }
+    }
+
+    #[cfg(feature = "embed_image")]
+    fn decode_jbig2(input: &[u8]) -> Result<Vec<u8>> {
+        // Note: JBIG2Globals from DecodeParms requires Document access to resolve
+        // the indirect stream reference. Without globals, only self-contained
+        // JBIG2 streams can be decoded.
+        let image = hayro_jbig2::decode_embedded(input, None)
+            .map_err(|_| Error::Unimplemented("JBIG2Decode failed"))?;
+
+        let row_bytes = (image.width as usize).div_ceil(8);
+        let mut packed = vec![0u8; row_bytes * image.height as usize];
+
+        struct InvertDecoder<'a> {
+            data: &'a mut [u8],
+            pos: usize,
+            buffer: u8,
+            bit_count: u8,
+        }
+
+        impl hayro_jbig2::Decoder for InvertDecoder<'_> {
+            fn push_pixel(&mut self, black: bool) {
+                // PDF: white=1 black=0 (inverted from JBIG2)
+                self.buffer = (self.buffer << 1) | u8::from(!black);
+                self.bit_count += 1;
+                if self.bit_count == 8 {
+                    if self.pos < self.data.len() {
+                        self.data[self.pos] = self.buffer;
+                    }
+                    self.pos += 1;
+                    self.buffer = 0;
+                    self.bit_count = 0;
+                }
+            }
+
+            fn push_pixel_chunk(&mut self, black: bool, chunk_count: u32) {
+                let byte = if black { 0x00 } else { 0xFF };
+                let end = (self.pos + chunk_count as usize).min(self.data.len());
+                for b in &mut self.data[self.pos..end] {
+                    *b = byte;
+                }
+                self.pos = end;
+            }
+
+            fn next_line(&mut self) {
+                if self.bit_count > 0 {
+                    if self.pos < self.data.len() {
+                        self.data[self.pos] = self.buffer << (8 - self.bit_count);
+                    }
+                    self.pos += 1;
+                    self.buffer = 0;
+                    self.bit_count = 0;
+                }
+            }
+        }
+
+        let mut decoder = InvertDecoder {
+            data: &mut packed,
+            pos: 0,
+            buffer: 0,
+            bit_count: 0,
+        };
+        image.decode(&mut decoder);
+
+        Ok(packed)
+    }
+
+    #[cfg(feature = "embed_image")]
+    fn decode_jpx(input: &[u8]) -> Result<Vec<u8>> {
+        let settings = hayro_jpeg2000::DecodeSettings {
+            resolve_palette_indices: false,
+            strict: false,
+            target_resolution: None,
+        };
+
+        let image = hayro_jpeg2000::Image::new(input, &settings)
+            .map_err(|_| Error::Unimplemented("JPXDecode failed"))?;
+        image
+            .decode()
+            .map_err(|_| Error::Unimplemented("JPXDecode failed"))
+    }
+
     fn decompress_predictor(mut data: Vec<u8>, params: Option<&Dictionary>) -> Result<Vec<u8>> {
         use crate::filters::png;
 
@@ -901,5 +1154,57 @@ mod test {
             output,
             Err(Error::Decompress(DecompressError::Ascii85(_)))
         ));
+    }
+
+    #[test]
+    fn test_decode_ascii_hex() {
+        let input = b"48656C6C6F>";
+        let output = Stream::decode_ascii_hex(input).unwrap();
+        assert_eq!(output, b"Hello");
+    }
+
+    #[test]
+    fn test_decode_ascii_hex_lowercase() {
+        let input = b"48656c6c6f>";
+        let output = Stream::decode_ascii_hex(input).unwrap();
+        assert_eq!(output, b"Hello");
+    }
+
+    #[test]
+    fn test_decode_ascii_hex_whitespace() {
+        let input = b"48 65 6C 6C 6F>";
+        let output = Stream::decode_ascii_hex(input).unwrap();
+        assert_eq!(output, b"Hello");
+    }
+
+    #[test]
+    fn test_decode_ascii_hex_odd_nibble() {
+        // Trailing odd nibble → pad with 0
+        let input = b"ABC>";
+        let output = Stream::decode_ascii_hex(input).unwrap();
+        assert_eq!(output, vec![0xAB, 0xC0]);
+    }
+
+    #[test]
+    fn test_decode_run_length() {
+        let input = vec![4, 10, 11, 12, 13, 14, 253, 3, 128];
+        let output = Stream::decode_run_length(&input).unwrap();
+        assert_eq!(output, vec![10, 11, 12, 13, 14, 3, 3, 3, 3]);
+    }
+
+    #[test]
+    fn test_decode_run_length_eod() {
+        // EOD marker (128) stops processing
+        let input = vec![0, 42, 128, 0, 99];
+        let output = Stream::decode_run_length(&input).unwrap();
+        assert_eq!(output, vec![42]);
+    }
+
+    #[test]
+    fn test_decode_run_length_repeat() {
+        // 255 → repeat next byte (257-255)=2 times
+        let input = vec![255, 0xAA, 128];
+        let output = Stream::decode_run_length(&input).unwrap();
+        assert_eq!(output, vec![0xAA, 0xAA]);
     }
 }
