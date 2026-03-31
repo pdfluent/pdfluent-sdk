@@ -6133,7 +6133,58 @@ pub fn check_name_lengths_raw(pdf: &Pdf, rule: &str, report: &mut ComplianceRepo
     let data = pdf.data().as_ref();
     let len = data.len();
     let mut pos = 0;
+    let mut in_stream = false;
+    let mut paren_depth: i32 = 0;
+
     while pos < len {
+        // Skip compressed/binary stream data between `stream\n` and `endstream`.
+        // Without this, byte patterns inside Flate/LZW-compressed content can
+        // accidentally contain 0x2F (`/`) followed by 127+ non-delimiter bytes,
+        // causing false §6.1.13 violations on names that don't exist.
+        if !in_stream && pos + 6 < len && &data[pos..pos + 6] == b"stream" {
+            let mut skip = pos + 6;
+            while skip < len && (data[skip] == b' ' || data[skip] == b'\t') {
+                skip += 1;
+            }
+            let eol = data.get(skip).copied().unwrap_or(0);
+            if eol == b'\n' || eol == b'\r' {
+                in_stream = true;
+                pos = skip + 1;
+                continue;
+            }
+        }
+        if in_stream {
+            if pos + 9 < len && &data[pos..pos + 9] == b"endstream" {
+                in_stream = false;
+                pos += 9;
+            } else {
+                pos += 1;
+            }
+            continue;
+        }
+
+        // Track parenthesized strings so `/` inside literal strings is skipped.
+        if data[pos] == b'\\' && paren_depth > 0 {
+            pos += 2;
+            continue;
+        }
+        if data[pos] == b'(' {
+            paren_depth += 1;
+            pos += 1;
+            continue;
+        }
+        if data[pos] == b')' {
+            if paren_depth > 0 {
+                paren_depth -= 1;
+            }
+            pos += 1;
+            continue;
+        }
+        if paren_depth > 0 {
+            pos += 1;
+            continue;
+        }
+
         if data[pos] == b'/' {
             // Scan the name token: valid name chars are anything except delimiters
             // and whitespace. Stop at whitespace, '/', '(', ')', '[', ']',
