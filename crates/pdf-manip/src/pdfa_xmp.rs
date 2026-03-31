@@ -195,51 +195,153 @@ fn generate_xmp(meta: &PdfMetadata, conformance: PdfAConformance) -> Vec<u8> {
     writer.finish(None).into_bytes()
 }
 
-/// Parse a date string to xmp_writer DateTime.
+/// Parse a date string to xmp_writer DateTime, preserving full time + timezone.
 fn parse_xmp_date(date_str: &str) -> Option<xmp_writer::DateTime> {
-    // Support ISO 8601 format: YYYY-MM-DDThh:mm:ss+hh:mm
-    // Also support PDF date format: D:YYYYMMDDHHmmSS+HH'mm'
+    // Support ISO 8601: YYYY-MM-DDThh:mm:ss+hh:mm
+    // Support PDF D: format: D:YYYYMMDDHHmmSS+HH'mm' or D:YYYYMMDDHHmmSS-HH'mm' or Z
     let s = date_str.strip_prefix("D:").unwrap_or(date_str);
-
-    // Work on chars to avoid panics on multi-byte UTF-8 boundaries.
     let chars: Vec<char> = s.chars().collect();
+    if chars.len() < 4 {
+        return None;
+    }
 
-    if chars.len() >= 4 {
-        let year_str: String = chars[0..4].iter().collect();
-        let year = year_str.parse::<u16>().ok()?;
-        let month = if chars.len() >= 6 {
-            let ms: String = chars[4..6].iter().collect();
-            ms.parse::<u8>().ok()
+    // Detect ISO vs PDF format by looking for '-' at position 4.
+    let is_iso = chars.len() > 4 && chars[4] == '-';
+
+    if is_iso {
+        return parse_iso_date(&chars);
+    }
+
+    // PDF format: YYYYMMDDHHmmSS[+|-]HH'mm'  or  Z
+    let year: u16 = chars[0..4].iter().collect::<String>().parse().ok()?;
+    let month = parse_two_digits(&chars, 4);
+    let day = parse_two_digits(&chars, 6);
+    let hour = parse_two_digits(&chars, 8);
+    let minute = parse_two_digits(&chars, 10);
+    let second = parse_two_digits(&chars, 12);
+
+    // Timezone starts at position 14: Z, +HH'mm', -HH'mm', +HHmm, -HHmm
+    let timezone = parse_pdf_timezone(&chars, 14);
+
+    Some(xmp_writer::DateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        timezone,
+    })
+}
+
+/// Parse ISO 8601 date: YYYY-MM-DDThh:mm:ss[+hh:mm|Z]
+fn parse_iso_date(chars: &[char]) -> Option<xmp_writer::DateTime> {
+    let year: u16 = chars[0..4].iter().collect::<String>().parse().ok()?;
+    let month = if chars.len() >= 7 && chars[4] == '-' {
+        chars[5..7].iter().collect::<String>().parse::<u8>().ok()
+    } else {
+        None
+    };
+    let day = if chars.len() >= 10 && chars[7] == '-' {
+        chars[8..10].iter().collect::<String>().parse::<u8>().ok()
+    } else {
+        None
+    };
+
+    // Time part after 'T' at position 10
+    let (hour, minute, second) = if chars.len() >= 13 && chars[10] == 'T' {
+        let h = chars[11..13].iter().collect::<String>().parse::<u8>().ok();
+        let m = if chars.len() >= 16 && chars[13] == ':' {
+            chars[14..16].iter().collect::<String>().parse::<u8>().ok()
         } else {
             None
         };
-        let day = if chars.len() >= 8 {
-            let ds: String = chars[6..8].iter().collect();
-            ds.parse::<u8>().ok().or({
-                // ISO format: YYYY-MM-DD
-                if chars.len() >= 10 && chars[4] == '-' {
-                    let ds2: String = chars[8..10].iter().collect();
-                    ds2.parse::<u8>().ok()
-                } else {
-                    None
-                }
-            })
+        let s = if chars.len() >= 19 && chars.get(16) == Some(&':') {
+            chars[17..19].iter().collect::<String>().parse::<u8>().ok()
         } else {
             None
         };
+        (h, m, s)
+    } else {
+        (None, None, None)
+    };
 
-        Some(xmp_writer::DateTime {
-            year,
-            month,
-            day,
-            hour: None,
-            minute: None,
-            second: None,
-            timezone: None,
-        })
+    // Timezone: look for Z, +, or - after the time part
+    let tz_start = if second.is_some() {
+        19
+    } else if minute.is_some() {
+        16
+    } else if hour.is_some() {
+        13
+    } else {
+        10
+    };
+    let timezone = parse_iso_timezone(chars, tz_start);
+
+    Some(xmp_writer::DateTime {
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        timezone,
+    })
+}
+
+fn parse_two_digits(chars: &[char], offset: usize) -> Option<u8> {
+    if chars.len() >= offset + 2 {
+        chars[offset..offset + 2]
+            .iter()
+            .collect::<String>()
+            .parse()
+            .ok()
     } else {
         None
     }
+}
+
+/// Parse PDF timezone: Z, +HH'mm', -HH'mm', +HHmm, -HHmm
+fn parse_pdf_timezone(chars: &[char], offset: usize) -> Option<xmp_writer::Timezone> {
+    let ch = *chars.get(offset)?;
+    if ch == 'Z' {
+        return Some(xmp_writer::Timezone::Utc);
+    }
+    if ch != '+' && ch != '-' {
+        return None;
+    }
+    let tz_hour = parse_two_digits(chars, offset + 1)? as i8;
+    // Minutes: skip optional apostrophe
+    let min_offset = if chars.get(offset + 3) == Some(&'\'') {
+        offset + 4
+    } else {
+        offset + 3
+    };
+    let tz_min = parse_two_digits(chars, min_offset).unwrap_or(0) as i8;
+    let h = if ch == '-' { -(tz_hour as i8) } else { tz_hour as i8 };
+    Some(xmp_writer::Timezone::Local { hour: h, minute: tz_min })
+}
+
+/// Parse ISO timezone: Z, +hh:mm, -hh:mm
+fn parse_iso_timezone(chars: &[char], offset: usize) -> Option<xmp_writer::Timezone> {
+    let ch = *chars.get(offset)?;
+    if ch == 'Z' {
+        return Some(xmp_writer::Timezone::Utc);
+    }
+    if ch != '+' && ch != '-' {
+        return None;
+    }
+    let tz_hour = parse_two_digits(chars, offset + 1)? as i8;
+    let tz_min = if chars.get(offset + 3) == Some(&':') {
+        parse_two_digits(chars, offset + 4).unwrap_or(0) as i8
+    } else {
+        parse_two_digits(chars, offset + 3).unwrap_or(0) as i8
+    };
+    let h = if ch == '-' { -(tz_hour as i8) } else { tz_hour as i8 };
+    Some(xmp_writer::Timezone::Local {
+        hour: h,
+        minute: tz_min,
+    })
 }
 
 /// Read metadata from /Info dictionary.
