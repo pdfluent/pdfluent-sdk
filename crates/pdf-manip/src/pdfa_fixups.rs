@@ -188,6 +188,13 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
             ) {
                 continue;
             }
+            // Skip subset fonts — changing encoding from StandardEncoding to
+            // WinAnsiEncoding maps codes 128-255 to different glyph names
+            // that may not exist in the subset font program → §6.2.11.4.1.
+            let bf = get_name_val(dict, b"BaseFont").unwrap_or_default();
+            if bf.len() > 7 && bf.as_bytes()[6] == b'+' {
+                continue;
+            }
             // For direct /Encoding /StandardEncoding (Name), skip symbolic fonts —
             // they should use internal encodings. But for Encoding *dicts* with
             // /BaseEncoding /StandardEncoding, ALWAYS replace: PDF/A §6.2.11.6
@@ -5891,6 +5898,17 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
                         fixed_any = true;
                         continue;
                     }
+                } else if s.len() > 10
+                    && s.trim_start_matches(['-', '+']).chars().all(|c| c.is_ascii_digit())
+                {
+                    // Integer too large even for i64 — clamp to ±i32 max.
+                    let negative = s.starts_with('-');
+                    let clamped = if negative { -MAX_INT } else { MAX_INT };
+                    let s = clamped.to_string();
+                    new_content.extend_from_slice(s.as_bytes());
+                    count += 1;
+                    fixed_any = true;
+                    continue;
                 }
             }
             new_content.extend_from_slice(token);
