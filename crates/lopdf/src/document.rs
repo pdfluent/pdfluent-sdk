@@ -191,7 +191,10 @@ impl Document {
         let object = self.objects.get(&id).ok_or(Error::ObjectNotFound(id))?;
         let (ref_id, _obj) = self.dereference(object)?;
 
-        Ok(self.objects.get_mut(&ref_id.unwrap_or(id)).unwrap())
+        let target_id = ref_id.unwrap_or(id);
+        self.objects
+            .get_mut(&target_id)
+            .ok_or(Error::ObjectNotFound(target_id))
     }
 
     /// Decompress and extract all ObjStm streams deferred by `LoadOptions::lazy_objstm`.
