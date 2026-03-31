@@ -72,6 +72,8 @@ pub mod pdfa_fixups;
 #[cfg(feature = "pdfa-convert")]
 pub mod pdfa_fonts;
 #[cfg(feature = "pdfa-convert")]
+pub mod pdfa_structure;
+#[cfg(feature = "pdfa-convert")]
 pub mod pdfa_xmp;
 pub mod pdfua;
 pub mod text_replace;

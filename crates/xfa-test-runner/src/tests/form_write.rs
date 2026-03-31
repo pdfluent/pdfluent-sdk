@@ -474,8 +474,8 @@ fn find_and_set_field(
         }
 
         let partial = match partial {
-            Some(p) => p,
-            None => {
+            Some(p) if !p.is_empty() => p,
+            _ => {
                 if let Ok(Object::Array(kids_arr)) = field_dict.get(b"Kids") {
                     let kids_clone = kids_arr.clone();
                     if find_and_set_field(doc, &kids_clone, name_parts, value).is_ok() {
@@ -620,8 +620,8 @@ fn find_and_set_button_name(
         });
 
         let partial = match partial {
-            Some(p) => p,
-            None => {
+            Some(p) if !p.is_empty() => p,
+            _ => {
                 if let Ok(Object::Array(kids_arr)) = field_dict.get(b"Kids") {
                     let kids_clone = kids_arr.clone();
                     if find_and_set_button_name(doc, &kids_clone, name_parts, name_val.clone())
@@ -753,8 +753,8 @@ fn find_and_set_radio_v(
         });
 
         let partial = match partial {
-            Some(p) => p,
-            None => {
+            Some(p) if !p.is_empty() => p,
+            _ => {
                 if let Ok(Object::Array(kids_arr)) = field_dict.get(b"Kids") {
                     let kids_clone = kids_arr.clone();
                     if find_and_set_radio_v(doc, &kids_clone, name_parts, name_val.clone()).is_ok()
