@@ -3054,7 +3054,7 @@ fn strip_forbidden_smask(doc: &mut Document) {
 ///
 /// Scans content streams for EMC operators and ensures each has a matching
 /// BMC or BDC. Removes orphan EMC operators.
-fn fix_unbalanced_emc(doc: &mut Document) {
+pub fn fix_unbalanced_emc(doc: &mut Document) {
     // Collect page content stream IDs. Only process streams that are actually
     // referenced as page /Contents to avoid decompressing every stream.
     let mut content_ids: Vec<ObjectId> = Vec::new();
