@@ -2752,7 +2752,7 @@ fn obj_as_f64(obj: &Object) -> Option<f64> {
     }
 }
 
-/// §6.7.3.3: If MarkInfo/Marked is true but Catalog has no StructTreeRoot,
+/// §6.7.3.3: If MarkInfo/Marked is true but Catalog has no valid StructTreeRoot,
 /// remove the /Marked flag to avoid the compliance violation.
 fn fix_markinfo_without_structtreeroot(doc: &mut Document) {
     let catalog_id = match get_catalog_id(doc) {
@@ -2760,24 +2760,32 @@ fn fix_markinfo_without_structtreeroot(doc: &mut Document) {
         None => return,
     };
 
-    let (has_structtreeroot, markinfo_id) = {
+    let (has_valid_structtreeroot, markinfo_id) = {
         let catalog = match doc.objects.get(&catalog_id) {
             Some(Object::Dictionary(d)) => d,
             _ => return,
         };
-        let has_str = catalog.get(b"StructTreeRoot").is_ok();
+        // StructTreeRoot must be a valid dictionary (direct or indirect).
+        // Object::Null, missing key, or reference to non-dict all count as absent.
+        let has_valid_str = match catalog.get(b"StructTreeRoot").ok() {
+            Some(Object::Dictionary(_)) => true,
+            Some(Object::Reference(id)) => {
+                matches!(doc.objects.get(id), Some(Object::Dictionary(_)))
+            }
+            _ => false,
+        };
         let mi_id = match catalog.get(b"MarkInfo").ok() {
             Some(Object::Reference(id)) => Some(*id),
             _ => None,
         };
-        (has_str, mi_id)
+        (has_valid_str, mi_id)
     };
 
-    if has_structtreeroot {
-        return; // StructTreeRoot exists — no issue.
+    if has_valid_structtreeroot {
+        return; // Valid StructTreeRoot dict exists — no issue.
     }
 
-    // Check inline MarkInfo in catalog.
+    // Remove MarkInfo if Marked=true (inline case).
     if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
         if let Ok(Object::Dictionary(ref mi)) = catalog.get(b"MarkInfo") {
             if matches!(mi.get(b"Marked").ok(), Some(Object::Boolean(true))) {
@@ -2786,36 +2794,43 @@ fn fix_markinfo_without_structtreeroot(doc: &mut Document) {
         }
     }
 
-    // Check indirect MarkInfo.
+    // Remove MarkInfo if Marked=true (indirect case).
     if let Some(mi_id) = markinfo_id {
         let should_remove = matches!(
             doc.objects.get(&mi_id),
             Some(Object::Dictionary(d)) if matches!(d.get(b"Marked").ok(), Some(Object::Boolean(true)))
         );
         if should_remove {
-            // Remove the MarkInfo reference from catalog.
             if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
                 catalog.remove(b"MarkInfo");
             }
         }
     }
+
+    // Also remove a dangling StructTreeRoot key that points to Null or non-dict,
+    // since its presence can confuse other compliance checks.
+    if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+        if catalog.has(b"StructTreeRoot") {
+            catalog.remove(b"StructTreeRoot");
+        }
+    }
 }
 
-/// §6.4.2: Remove forbidden /SMask from Image XObjects.
+/// §6.4.2: Remove forbidden /SMask from XObject dictionaries.
 ///
-/// PDF/A forbids soft masks on images. This strips the /SMask reference
-/// from image XObjects. (The soft mask image itself is left in place — it
-/// becomes an orphan that the serializer drops.)
+/// PDF/A forbids /SMask in XObject dictionaries — both Image and Form XObjects.
+/// This strips the /SMask reference from all XObject streams. (The soft mask
+/// image itself is left in place — it becomes an orphan that the serializer drops.)
 fn strip_forbidden_smask(doc: &mut Document) {
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
         let should_strip = {
             if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
-                let is_image = matches!(
+                let is_xobject = matches!(
                     stream.dict.get(b"Subtype").ok(),
-                    Some(Object::Name(ref n)) if n == b"Image"
+                    Some(Object::Name(ref n)) if n == b"Image" || n == b"Form"
                 );
-                is_image && stream.dict.has(b"SMask")
+                is_xobject && stream.dict.has(b"SMask")
             } else {
                 false
             }
