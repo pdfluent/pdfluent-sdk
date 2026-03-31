@@ -61,6 +61,9 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     // Converting to FlateDecode (binary) eliminates the false EI detection. (#fix-ascii85-inline)
     let ascii85_inline_images_fixed = fix_ascii85_inline_images(doc);
     let lzw_inline_images_fixed = fix_lzw_inline_images(doc);
+    // Second pass: catch any binary inline images introduced by intermediate
+    // fixups (the primary pass runs at the start of cleanup_for_pdfa).
+    fix_binary_inline_image_ei(doc);
     let invalid_ri_fixed = fix_invalid_rendering_intents(doc);
     let opm_fixed = fix_extgstate_opm(doc);
     let concatenated_operators_fixed =
@@ -7396,6 +7399,166 @@ fn fix_lzw_inline_images(doc: &mut Document) -> usize {
     count
 }
 
+/// Compress unfiltered inline images whose binary pixel data contains byte
+/// sequences that match veraPDF's EI-end-of-image heuristic ("\nEI\n", "\rEI ",
+/// etc.).  FlateDecode-encoding the data eliminates the false pattern.
+pub fn fix_binary_inline_image_ei(doc: &mut Document) -> usize {
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let decoded = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            match s.decompressed_content() {
+                Ok(d) => d,
+                Err(_) => s.content.clone(),
+            }
+        } else {
+            continue;
+        };
+
+        // Quick check: must have inline images in the stream
+        if !decoded.windows(2).any(|w| w == b"BI") {
+            continue;
+        }
+
+        if let Some(new_content) = compress_binary_inline_images_with_ei(&decoded) {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.set_plain_content(new_content);
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// Scan a content stream for unfiltered inline images whose raw pixel data
+/// contains the EI termination pattern.  For those images, add `/F /Fl` to the
+/// dict and FlateDecode-compress the image data.
+fn compress_binary_inline_images_with_ei(data: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    let mut modified = false;
+
+    while i < data.len() {
+        // Look for "BI" preceded by a delimiter/whitespace (or at start).
+        if i + 2 <= data.len()
+            && &data[i..i + 2] == b"BI"
+            && (i == 0 || is_pdf_delimiter_or_ws(data[i - 1]))
+            && (i + 2 >= data.len() || data[i + 2].is_ascii_whitespace())
+        {
+            let bi_start = i;
+            let bi_content_start = i + 2;
+
+            // Find " ID " marker
+            let mut id_at = None;
+            let mut j = bi_content_start;
+            while j < data.len() {
+                if j + 3 <= data.len()
+                    && data[j].is_ascii_whitespace()
+                    && &data[j + 1..j + 3] == b"ID"
+                    && (j + 3 >= data.len()
+                        || data[j + 3] == b' '
+                        || data[j + 3] == b'\n'
+                        || data[j + 3] == b'\r')
+                {
+                    id_at = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+            let Some(id_pos) = id_at else {
+                out.push(data[i]);
+                i += 1;
+                continue;
+            };
+
+            let dict_bytes = &data[bi_content_start..id_pos];
+
+            // Skip images that already have a filter — only unfiltered ones
+            // have predictable data lengths and are susceptible to the EI issue.
+            let has_filter = dict_bytes.windows(2).any(|w| w == b"/F")
+                || dict_bytes.windows(7).any(|w| w == b"/Filter");
+            if has_filter {
+                // Pass through as-is until EI
+                let after_id = id_pos + 3; // skip " ID"
+                out.extend_from_slice(&data[bi_start..after_id]);
+                // Skip past whitespace byte after ID + find EI by pattern
+                i = after_id;
+                while i < data.len() {
+                    if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
+                        && i + 3 <= data.len()
+                        && &data[i + 1..i + 3] == b"EI"
+                        && (i + 3 >= data.len()
+                            || data[i + 3].is_ascii_whitespace()
+                            || data[i + 3] == b'Q')
+                    {
+                        out.extend_from_slice(&data[after_id..i + 3]);
+                        i += 3;
+                        break;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+
+            // Calculate expected image data length
+            let expected_len = inline_image_data_length(dict_bytes);
+            if expected_len == 0 {
+                // Can't determine length — pass through
+                out.push(data[i]);
+                i += 1;
+                continue;
+            }
+
+            // The image data starts after "ID" + one whitespace byte
+            let data_start = id_pos + 3 + 1; // " ID" + whitespace
+            let data_end = (data_start + expected_len).min(data.len());
+            let image_data = &data[data_start..data_end];
+
+            // ASCIIHex-encode the image data unconditionally.
+            // ASCIIHexDecode output uses only 0-9 and A-F, so "EI" can never
+            // appear ("I" is not a hex digit).  FlateDecode is NOT safe here
+            // because compressed output can still spell "\nEI".
+            {
+                    let hex: Vec<u8> = image_data
+                        .iter()
+                        .flat_map(|b| format!("{b:02X}").into_bytes())
+                        .chain(std::iter::once(b'>'))
+                        .collect();
+                    // Write: BI <modified dict with /F /AHx> ID <hex data> EI
+                    out.extend_from_slice(b"BI");
+                    out.extend_from_slice(dict_bytes);
+                    out.extend_from_slice(b" /F /AHx");
+                    out.extend_from_slice(b"\nID ");
+                    out.extend_from_slice(&hex);
+                    out.extend_from_slice(b"\nEI");
+
+                    // Skip past the original EI
+                    i = data_end;
+                    while i < data.len() {
+                        if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
+                            && i + 3 <= data.len()
+                            && &data[i + 1..i + 3] == b"EI"
+                            && (i + 3 >= data.len()
+                                || data[i + 3].is_ascii_whitespace()
+                                || data[i + 3] == b'Q')
+                        {
+                            i += 3;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    modified = true;
+                    continue;
+            }
+        }
+        out.push(data[i]);
+        i += 1;
+    }
+
+    if modified { Some(out) } else { None }
+}
+
 /// Scans a decompressed content stream for BI blocks that use LZWDecode
 /// filter, decodes LZW, re-encodes as FlateDecode, and returns the modified
 /// stream. Returns `None` if no LZW inline images are found.
@@ -7900,26 +8063,59 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
                 out.extend_from_slice(&data[bi_dict_start..i]);
                 continue;
             }
-            // Now scan binary data until EI
+
+            // Calculate expected image data length from the BI dict so we can
+            // skip past the binary data reliably.  Pattern-matching for EI in
+            // binary image data produces false positives when pixel bytes happen
+            // to spell "\nEI\n" (§6.2.2 stray-EI regression).
+            let bi_dict = &data[bi_dict_start..i.saturating_sub(3)];
+            let expected_len = inline_image_data_length(bi_dict);
+
+            // Now scan binary data until EI.
+            // If we know the expected length, skip past it first and then
+            // look for EI — this avoids false matches inside the pixel data.
             let mut found_ei = false;
-            while i < data.len() {
-                if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
-                    && i + 3 <= data.len()
-                    && &data[i + 1..i + 3] == b"EI"
-                    && (i + 3 >= data.len()
-                        || data[i + 3].is_ascii_whitespace()
-                        || data[i + 3] == b'Q')
+            let scan_start = if expected_len > 0 {
+                // After "ID" there is one mandatory whitespace byte, then
+                // exactly `expected_len` bytes of image data.
+                let skip = i + 1 + expected_len; // +1 for whitespace after ID
+                // Copy the whitespace + image data verbatim.
+                let safe_end = skip.min(data.len());
+                out.extend_from_slice(&data[i..safe_end]);
+                safe_end
+            } else {
+                i
+            };
+            let mut j = scan_start;
+            while j < data.len() {
+                if (data[j] == b'\n' || data[j] == b' ' || data[j] == b'\r')
+                    && j + 3 <= data.len()
+                    && &data[j + 1..j + 3] == b"EI"
+                    && (j + 3 >= data.len()
+                        || data[j + 3].is_ascii_whitespace()
+                        || data[j + 3] == b'Q')
                 {
-                    out.extend_from_slice(&data[i..i + 3]);
-                    i += 3;
+                    // Write any data between the scan start and the EI marker.
+                    if expected_len > 0 && j > scan_start {
+                        out.extend_from_slice(&data[scan_start..j]);
+                    } else if expected_len == 0 {
+                        out.extend_from_slice(&data[i..j]);
+                    }
+                    out.extend_from_slice(&data[j..j + 3]);
+                    i = j + 3;
                     found_ei = true;
                     break;
                 }
-                out.push(data[i]);
-                i += 1;
+                j += 1;
             }
             if !found_ei {
-                // Malformed: no EI found; continue from current position.
+                // Malformed: no EI found; write remaining data.
+                if expected_len > 0 && j > scan_start {
+                    out.extend_from_slice(&data[scan_start..j]);
+                } else if expected_len == 0 {
+                    out.extend_from_slice(&data[i..j]);
+                }
+                i = j;
             }
             continue;
         }
@@ -7972,6 +8168,122 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
     } else {
         None
     }
+}
+
+/// Parse the inline image BI dict to compute expected image data length.
+///
+/// Returns 0 if the length cannot be determined (unknown colorspace,
+/// missing /W or /H, filter present, etc.).  The caller should fall back
+/// to pattern-based EI scanning in that case.
+fn inline_image_data_length(dict_bytes: &[u8]) -> usize {
+    // Extract integer value for a given key (/W, /H, /BPC).
+    // Supports both full and abbreviated names.
+    fn extract_int(dict: &[u8], keys: &[&[u8]]) -> Option<usize> {
+        for &key in keys {
+            let mut idx = 0;
+            while idx + key.len() < dict.len() {
+                if &dict[idx..idx + key.len()] == key {
+                    let after = idx + key.len();
+                    // Skip whitespace
+                    let mut j = after;
+                    while j < dict.len() && dict[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    // Parse integer
+                    let mut end = j;
+                    while end < dict.len() && dict[end].is_ascii_digit() {
+                        end += 1;
+                    }
+                    if end > j {
+                        if let Some(v) = std::str::from_utf8(&dict[j..end])
+                            .ok()
+                            .and_then(|s| s.parse::<usize>().ok())
+                        {
+                            return Some(v);
+                        }
+                    }
+                }
+                idx += 1;
+            }
+        }
+        None
+    }
+
+    fn extract_name<'a>(dict: &'a [u8], keys: &[&[u8]]) -> Option<&'a [u8]> {
+        for &key in keys {
+            let mut idx = 0;
+            while idx + key.len() < dict.len() {
+                if &dict[idx..idx + key.len()] == key {
+                    let after = idx + key.len();
+                    let mut j = after;
+                    while j < dict.len() && dict[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
+                    if j < dict.len() && dict[j] == b'/' {
+                        j += 1; // skip /
+                        let name_start = j;
+                        while j < dict.len()
+                            && !dict[j].is_ascii_whitespace()
+                            && dict[j] != b'/'
+                        {
+                            j += 1;
+                        }
+                        return Some(&dict[name_start..j]);
+                    }
+                }
+                idx += 1;
+            }
+        }
+        None
+    }
+
+    // If there's a filter, the data length depends on the compressed size
+    // which we can't compute from the dict alone.  Return 0 to fall back.
+    // Check for /F key (abbreviated) or /Filter key.
+    for window_start in 0..dict_bytes.len().saturating_sub(2) {
+        if dict_bytes[window_start] == b'/' && window_start + 1 < dict_bytes.len() {
+            let after_slash = &dict_bytes[window_start + 1..];
+            if after_slash.starts_with(b"F ") || after_slash.starts_with(b"F\n")
+                || after_slash.starts_with(b"F\r")
+                || after_slash.starts_with(b"Filter")
+            {
+                // Has a filter — can't predict data length
+                return 0;
+            }
+        }
+    }
+
+    let w = match extract_int(dict_bytes, &[b"/W ", b"/W\n", b"/W\r", b"/Width "]) {
+        Some(v) if v > 0 => v,
+        _ => return 0,
+    };
+    let h = extract_int(dict_bytes, &[b"/H ", b"/H\n", b"/H\r", b"/Height "]).unwrap_or(1);
+    let bpc = extract_int(dict_bytes, &[b"/BPC ", b"/BPC\n", b"/BitsPerComponent "]).unwrap_or(8);
+
+    // ImageMask (/IM true) images have 1 component and no colorspace.
+    let is_imagemask = dict_bytes.windows(3).any(|w| w == b"/IM")
+        && (dict_bytes.windows(8).any(|w| w == b"/IM true")
+            || dict_bytes.windows(10).any(|w| w == b"/ImageMask"));
+
+    let cs = extract_name(
+        dict_bytes,
+        &[b"/CS ", b"/CS\n", b"/CS\r", b"/ColorSpace "],
+    );
+    let components = if is_imagemask {
+        1
+    } else {
+        match cs {
+            Some(b"G") | Some(b"DeviceGray") => 1,
+            Some(b"RGB") | Some(b"DeviceRGB") => 3,
+            Some(b"CMYK") | Some(b"DeviceCMYK") => 4,
+            _ => return 0, // ICCBased, Indexed, etc. — can't determine
+        }
+    };
+
+    // Row length in bytes (ceiling division)
+    let bits_per_row = w * components * bpc;
+    let bytes_per_row = (bits_per_row + 7) / 8;
+    bytes_per_row * h
 }
 
 /// Returns true if `b` is a PDF token delimiter character.
