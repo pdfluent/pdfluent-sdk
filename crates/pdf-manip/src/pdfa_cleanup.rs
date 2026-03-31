@@ -61,6 +61,12 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
         doc.version = "1.7".to_string();
     }
 
+    // ASCIIHex-encode unfiltered binary inline images FIRST, before any
+    // content stream processing.  Binary pixel data can contain byte
+    // sequences that spell "\nEI\n" etc., which confuses any function that
+    // parses inline image boundaries (e.g. fix_unbalanced_emc).
+    crate::pdfa_fixups::fix_binary_inline_image_ei(doc);
+
     report.js_actions_removed = remove_javascript(doc);
     report.aa_entries_removed = remove_additional_actions(doc);
     report.transparency_groups_found = count_transparency_groups(doc);
@@ -3055,26 +3061,89 @@ fn strip_forbidden_smask(doc: &mut Document) {
 /// Scans content streams for EMC operators and ensures each has a matching
 /// BMC or BDC. Removes orphan EMC operators.
 pub fn fix_unbalanced_emc(doc: &mut Document) {
-    // Collect page content stream IDs. Only process streams that are actually
-    // referenced as page /Contents to avoid decompressing every stream.
-    let mut content_ids: Vec<ObjectId> = Vec::new();
+    // Page content streams: when Contents is an array of streams, BMC/BDC/EMC
+    // sequences can span across stream boundaries.  Concatenate all content
+    // streams for a page, fix the combined result, and write back as a single
+    // stream (replacing the array with one reference).
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
-    for page_id in &page_ids {
-        if let Some(Object::Dictionary(page)) = doc.objects.get(page_id) {
-            match page.get(b"Contents").ok() {
-                Some(Object::Reference(id)) => content_ids.push(*id),
-                Some(Object::Array(arr)) => {
-                    for item in arr {
-                        if let Object::Reference(id) = item {
-                            content_ids.push(*id);
+
+    // Collect (page_id, content_stream_ids) groups.
+    let mut page_groups: Vec<(ObjectId, Vec<ObjectId>)> = Vec::new();
+    for &page_id in &page_ids {
+        let Some(Object::Dictionary(page)) = doc.objects.get(&page_id) else {
+            continue;
+        };
+        let mut ids = Vec::new();
+        match page.get(b"Contents").ok() {
+            Some(Object::Reference(id)) => {
+                // Dereference: the target may be a stream (single) or an array
+                // of stream references (indirect content array).
+                match doc.objects.get(id) {
+                    Some(Object::Array(arr)) => {
+                        for item in arr {
+                            if let Object::Reference(sid) = item {
+                                ids.push(*sid);
+                            }
                         }
                     }
+                    _ => ids.push(*id),
                 }
-                _ => {}
+            }
+            Some(Object::Array(arr)) => {
+                for item in arr {
+                    if let Object::Reference(id) = item {
+                        ids.push(*id);
+                    }
+                }
+            }
+            _ => {}
+        }
+        if !ids.is_empty() {
+            page_groups.push((page_id, ids));
+        }
+    }
+
+    for (page_id, ids) in page_groups {
+        // Concatenate all content streams for this page.
+        let mut combined = Vec::new();
+        for &id in &ids {
+            let Some(Object::Stream(s)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let Ok(c) = s.get_plain_content() else {
+                continue;
+            };
+            if !combined.is_empty() {
+                combined.push(b' ');
+            }
+            combined.extend_from_slice(&c);
+        }
+
+        if !combined.windows(3).any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC") {
+            continue;
+        }
+
+        let fixed = fix_emc_in_bytes(&combined);
+        if fixed == combined {
+            continue;
+        }
+
+        // Write fixed content as a single stream, update page Contents.
+        if ids.len() == 1 {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&ids[0]) {
+                s.set_plain_content(fixed);
+            }
+        } else {
+            // Create a new single content stream and update the page.
+            let new_stream = lopdf::Stream::new(lopdf::dictionary! {}, fixed);
+            let new_id = doc.add_object(Object::Stream(new_stream));
+            if let Some(Object::Dictionary(ref mut page)) = doc.objects.get_mut(&page_id) {
+                page.set("Contents", Object::Reference(new_id));
             }
         }
     }
-    // Also include Form XObject streams.
+
+    // Also fix Form XObject streams (these are self-contained, no spanning).
     let form_ids: Vec<ObjectId> = doc
         .objects
         .iter()
@@ -3091,17 +3160,15 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
             }
         })
         .collect();
-    content_ids.extend(form_ids);
 
-    for id in content_ids {
+    for id in form_ids {
         let content = {
-            if let Some(Object::Stream(s)) = doc.objects.get(&id) {
-                match s.decompressed_content() {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                }
-            } else {
+            let Some(Object::Stream(s)) = doc.objects.get(&id) else {
                 continue;
+            };
+            match s.get_plain_content() {
+                Ok(c) => c,
+                Err(_) => continue,
             }
         };
 
@@ -3173,12 +3240,22 @@ fn fix_emc_in_bytes(data: &[u8]) -> Vec<u8> {
             continue;
         }
 
+        // Skip dict close `>>` (emit and continue, so `>>BDC` is split).
+        if data[i] == b'>' {
+            while i < data.len() && data[i] == b'>' {
+                out.push(data[i]);
+                i += 1;
+            }
+            continue;
+        }
+
         // Read token (keyword or operator).
         let tok_start = i;
         while i < data.len()
             && !data[i].is_ascii_whitespace()
             && data[i] != b'('
             && data[i] != b'<'
+            && data[i] != b'>'
             && data[i] != b'/'
             && data[i] != b'%'
             && data[i] != b'['
