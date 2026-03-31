@@ -157,14 +157,13 @@ pub(crate) fn verify_xml(xml_bytes: Vec<u8>, filename: &str, duration_ms: u64) -
     }
 
     // ZUGFeRD 2.x / Factur-X uses the UN/CEFACT CII namespace.
-    // ZUGFeRD 1.0 used urn:ferd:pdfa:CrossIndustryDocument:invoice:... (pre-CII alignment).
-    // Both are valid ZUGFeRD XML; accept either namespace.
+    // ZUGFeRD 1.0 used urn:ferd:CrossIndustryDocument:invoice:... (pre-CII alignment).
+    // Some older variants include "pdfa" in the namespace URI. Accept all urn:ferd:
+    // variants to be more robust for the roundtrip test. Fixes #507.
     let has_known_ns = xml_bytes
         .windows(CII_NS_PREFIX.len())
         .any(|w| w == CII_NS_PREFIX)
-        || xml_bytes
-            .windows(ZUGFERD_V1_NS_PREFIX.len())
-            .any(|w| w == ZUGFERD_V1_NS_PREFIX);
+        || xml_bytes.windows(9).any(|w| w == b"urn:ferd:");
 
     if !has_known_ns {
         return TestResult {

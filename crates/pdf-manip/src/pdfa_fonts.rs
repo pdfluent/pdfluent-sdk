@@ -17472,7 +17472,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
             } else if let Some(parsed) = parse_type1_program(&font_data) {
                 // Classic Type1.
                 let (enc_name, differences) = get_simple_encoding_info(doc, dict);
-                let available_glyphs = parsed.glyphs;
+                let available_glyphs = &parsed.charstring_widths;
 
                 for code in 0..=255u8 {
                     let glyph_name = if let Some(name) = differences.get(&(code as u32)) {
@@ -17486,12 +17486,12 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         // Symbolic Type1 usually has its own encoding in the program.
                         parsed
                             .encoding
-                            .get(&(code as u32))
+                            .get(&code)
                             .cloned()
                             .unwrap_or_else(|| ".notdef".to_string())
                     };
 
-                    if glyph_name == ".notdef" || !available_glyphs.contains(&glyph_name) {
+                    if glyph_name == ".notdef" || !available_glyphs.contains_key(&glyph_name) {
                         invalid_codes.insert(code);
                     }
                 }
@@ -17613,7 +17613,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
     total_fixed
 }
 
-fn strip_invalid_codes(bytes: &mut Vec<u8>, invalid_codes: &HashSet<u8>) -> bool {
+fn strip_invalid_codes(bytes: &mut Vec<u8>, invalid_codes: &std::collections::HashSet<u8>) -> bool {
     let mut changed = false;
     let mut i = 0;
     while i < bytes.len() {
@@ -20359,6 +20359,85 @@ pub fn fix_type3_notdef_charprocs(doc: &mut Document) -> usize {
     }
 
     fixed
+}
+
+/// Replace `StandardEncoding` with `WinAnsiEncoding` on Type1/MMType1 font
+/// dictionaries. PDF/A §6.2.11.6 forbids StandardEncoding as a BaseEncoding.
+pub fn fix_type1_standard_encoding(doc: &mut Document) -> usize {
+    enum FixAction {
+        ReplaceName(ObjectId),
+        ReplaceBaseInline(ObjectId),
+        ReplaceBaseIndirect(ObjectId),
+    }
+
+    let mut actions: Vec<FixAction> = Vec::new();
+
+    for (&font_id, obj) in &doc.objects {
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+        if subtype != "Type1" && subtype != "MMType1" {
+            continue;
+        }
+
+        match dict.get(b"Encoding").ok() {
+            Some(Object::Name(n)) => {
+                if n == b"StandardEncoding" {
+                    actions.push(FixAction::ReplaceName(font_id));
+                }
+            }
+            Some(Object::Dictionary(enc_dict)) => {
+                if let Some(Object::Name(base)) = enc_dict.get(b"BaseEncoding").ok() {
+                    if base == b"StandardEncoding" {
+                        actions.push(FixAction::ReplaceBaseInline(font_id));
+                    }
+                }
+            }
+            Some(Object::Reference(enc_ref)) => {
+                let enc_ref = *enc_ref;
+                if let Some(Object::Dictionary(enc_dict)) = doc.objects.get(&enc_ref) {
+                    if let Some(Object::Name(base)) = enc_dict.get(b"BaseEncoding").ok() {
+                        if base == b"StandardEncoding" {
+                            actions.push(FixAction::ReplaceBaseIndirect(enc_ref));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let count = actions.len();
+    for action in actions {
+        match action {
+            FixAction::ReplaceName(id) => {
+                if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&id) {
+                    dict.set("Encoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                }
+            }
+            FixAction::ReplaceBaseInline(id) => {
+                if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&id) {
+                    if let Ok(Object::Dictionary(enc)) = dict.get_mut(b"Encoding") {
+                        enc.set(
+                            "BaseEncoding",
+                            Object::Name(b"WinAnsiEncoding".to_vec()),
+                        );
+                    }
+                }
+            }
+            FixAction::ReplaceBaseIndirect(id) => {
+                if let Some(Object::Dictionary(enc)) = doc.objects.get_mut(&id) {
+                    enc.set(
+                        "BaseEncoding",
+                        Object::Name(b"WinAnsiEncoding".to_vec()),
+                    );
+                }
+            }
+        }
+    }
+
+    count
 }
 
 #[cfg(test)]
