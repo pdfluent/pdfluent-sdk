@@ -83,7 +83,26 @@ pub fn repair_xmp_metadata(
 
     // Read existing /Info dictionary values.
     let existing_meta = read_info_dict(doc);
-    let meta = merge_metadata(metadata, &existing_meta);
+    let mut meta = merge_metadata(metadata, &existing_meta);
+
+    // Filter out dates that can't be serialized to XMP — keeping them in /Info
+    // while XMP lacks them causes §6.7.3.1/6.7.3.8 mismatches.
+    if meta
+        .create_date
+        .as_ref()
+        .and_then(|d| parse_xmp_date(d))
+        .is_none()
+    {
+        meta.create_date = None;
+    }
+    if meta
+        .modify_date
+        .as_ref()
+        .and_then(|d| parse_xmp_date(d))
+        .is_none()
+    {
+        meta.modify_date = None;
+    }
 
     // Generate XMP using xmp-writer.
     let xmp_bytes = generate_xmp(&meta, conformance);
@@ -105,7 +124,8 @@ pub fn repair_xmp_metadata(
     };
 
     // Create or update the metadata stream.
-    let metadata_stream = Stream::new(
+    // PDF/A §6.7.2: metadata stream must NOT be compressed.
+    let mut metadata_stream = Stream::new(
         dictionary! {
             "Type" => "Metadata",
             "Subtype" => "XML",
@@ -113,6 +133,7 @@ pub fn repair_xmp_metadata(
         },
         xmp_bytes,
     );
+    metadata_stream.allows_compression = false;
 
     if let Some(meta_id) = existing_metadata_id {
         doc.objects.insert(meta_id, Object::Stream(metadata_stream));
@@ -128,7 +149,52 @@ pub fn repair_xmp_metadata(
     sync_info_dict(doc, &meta);
     report.info_synced = true;
 
+    // Ensure metadata stream is not compressed and has no BOM (§6.7.2 + §6.7.3).
+    sanitize_metadata_stream(doc);
+
     Ok(report)
+}
+
+/// Ensure the Catalog's /Metadata stream is not compressed and has no BOM.
+///
+/// PDF/A §6.7.2 requires metadata streams to be uncompressed.
+/// BOM bytes at the start of XMP can confuse some validators.
+fn sanitize_metadata_stream(doc: &mut Document) {
+    let meta_id = {
+        let catalog_id = match doc.trailer.get(b"Root").ok() {
+            Some(Object::Reference(id)) => *id,
+            _ => return,
+        };
+        let Some(Object::Dictionary(cat)) = doc.objects.get(&catalog_id) else {
+            return;
+        };
+        match cat.get(b"Metadata").ok() {
+            Some(Object::Reference(id)) => *id,
+            _ => return,
+        }
+    };
+
+    let Some(Object::Stream(stream)) = doc.objects.get_mut(&meta_id) else {
+        return;
+    };
+
+    // Remove any compression filter (§6.7.2).
+    if stream.dict.has(b"Filter") {
+        let _ = stream.decompress();
+        stream.dict.remove(b"Filter");
+        stream.dict.remove(b"DecodeParms");
+    }
+
+    // Strip UTF-8 BOM (EF BB BF) from start of content.
+    if stream.content.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        stream.content = stream.content[3..].to_vec();
+    }
+
+    // Update Length.
+    stream
+        .dict
+        .set("Length", Object::Integer(stream.content.len() as i64));
+    stream.allows_compression = false;
 }
 
 /// Generate XMP metadata bytes using xmp-writer.
@@ -516,6 +582,20 @@ fn sync_info_dict(doc: &mut Document, meta: &PdfMetadata) {
                 info.remove(b"Creator");
             }
         }
+        // Sync dates: §6.7.3.1 (CreationDate) and §6.7.3.8 (ModDate).
+        // If the date was filtered out (unparseable for XMP), remove from /Info too.
+        match &meta.create_date {
+            Some(date) => info.set("CreationDate", to_pdf_string(date)),
+            None => {
+                info.remove(b"CreationDate");
+            }
+        }
+        match &meta.modify_date {
+            Some(date) => info.set("ModDate", to_pdf_string(date)),
+            None => {
+                info.remove(b"ModDate");
+            }
+        }
     }
 }
 
@@ -529,6 +609,21 @@ fn build_info_dict(meta: &PdfMetadata) -> lopdf::Dictionary {
     }
     if let Some(ref producer) = meta.producer {
         dict.set("Producer", to_pdf_string(producer));
+    }
+    if let Some(ref description) = meta.description {
+        dict.set("Subject", to_pdf_string(description));
+    }
+    if let Some(ref tool) = meta.creator_tool {
+        dict.set("Creator", to_pdf_string(tool));
+    }
+    if let Some(ref kw) = meta.keywords {
+        dict.set("Keywords", to_pdf_string(kw));
+    }
+    if let Some(ref date) = meta.create_date {
+        dict.set("CreationDate", to_pdf_string(date));
+    }
+    if let Some(ref date) = meta.modify_date {
+        dict.set("ModDate", to_pdf_string(date));
     }
     dict
 }

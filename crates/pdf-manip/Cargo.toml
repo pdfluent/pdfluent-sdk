@@ -20,6 +20,7 @@ xmp-writer = { workspace = true, optional = true }
 roxmltree.workspace = true
 ttf-parser = { workspace = true }
 cff-parser = { workspace = true }
+hayro-jbig2 = { path = "../hayro-jbig2", optional = true }
 
 [features]
 default = ["serde", "image-insert", "font-subset", "pdfa-convert"]
@@ -27,7 +28,7 @@ serde = ["dep:serde", "dep:serde_json"]
 watermark-image = ["dep:image"]
 image-insert = ["dep:image"]
 font-subset = ["dep:subsetter"]
-pdfa-convert = ["dep:xmp-writer"]
+pdfa-convert = ["dep:xmp-writer", "dep:hayro-jbig2"]
 
 [dev-dependencies]
 tempfile = "3"
