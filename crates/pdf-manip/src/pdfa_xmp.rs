@@ -289,6 +289,13 @@ fn parse_xmp_date(date_str: &str) -> Option<xmp_writer::DateTime> {
     // Timezone starts at position 14: Z, +HH'mm', -HH'mm', +HHmm, -HHmm
     let timezone = parse_pdf_timezone(&chars, 14);
 
+    // Validate ranges — malformed dates (e.g. month=20, day=93) produce invalid
+    // XMP and trigger §6.6.2.3.1 / §6.7.3.1.  Return None so the date is dropped
+    // from both /Info and XMP.
+    if !validate_date_components(month, day, hour, minute, second) {
+        return None;
+    }
+
     Some(xmp_writer::DateTime {
         year,
         month,
@@ -344,6 +351,10 @@ fn parse_iso_date(chars: &[char]) -> Option<xmp_writer::DateTime> {
     };
     let timezone = parse_iso_timezone(chars, tz_start);
 
+    if !validate_date_components(month, day, hour, minute, second) {
+        return None;
+    }
+
     Some(xmp_writer::DateTime {
         year,
         month,
@@ -353,6 +364,42 @@ fn parse_iso_date(chars: &[char]) -> Option<xmp_writer::DateTime> {
         second,
         timezone,
     })
+}
+
+fn validate_date_components(
+    month: Option<u8>,
+    day: Option<u8>,
+    hour: Option<u8>,
+    minute: Option<u8>,
+    second: Option<u8>,
+) -> bool {
+    if let Some(m) = month {
+        if m == 0 || m > 12 {
+            return false;
+        }
+    }
+    if let Some(d) = day {
+        if d == 0 || d > 31 {
+            return false;
+        }
+    }
+    if let Some(h) = hour {
+        if h > 23 {
+            return false;
+        }
+    }
+    if let Some(mi) = minute {
+        if mi > 59 {
+            return false;
+        }
+    }
+    if let Some(s) = second {
+        if s > 60 {
+            // allow leap second (60)
+            return false;
+        }
+    }
+    true
 }
 
 fn parse_two_digits(chars: &[char], offset: usize) -> Option<u8> {
