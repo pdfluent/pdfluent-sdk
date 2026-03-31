@@ -588,7 +588,7 @@ impl<'a> LayoutEngine<'a> {
             }
 
             let child = self.form.get(child_id);
-            let child_size = self.compute_extent(child_id);
+            let child_size = self.compute_extent_with_available(child_id, Some(available));
 
             // Keep-chain look-ahead: if this node starts a keep chain and
             // the chain doesn't fit in remaining space (but WOULD fit on a
