@@ -3186,6 +3186,15 @@ fn fix_emc_in_bytes(data: &[u8]) -> Vec<u8> {
         {
             i += 1;
         }
+
+        // If current byte is a delimiter the token loop doesn't consume
+        // (e.g. '/', '[', ']'), emit and advance to avoid an infinite loop.
+        if tok_start == i {
+            out.push(data[i]);
+            i += 1;
+            continue;
+        }
+
         let token = &data[tok_start..i];
 
         if token == b"BMC" || token == b"BDC" {
