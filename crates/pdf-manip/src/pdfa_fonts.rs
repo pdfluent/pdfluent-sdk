@@ -17568,7 +17568,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                             let str_idx = if op.operator == "\"" { 2 } else { 0 };
                             if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx)
                             {
-                                if strip_invalid_codes(bytes, invalid_codes) {
+                                if fix_simple_text_string(bytes, invalid_codes) {
                                     modified = true;
                                 }
                             }
@@ -17583,7 +17583,7 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                             if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                                 for item in arr.iter_mut() {
                                     if let Object::String(bytes, _) = item {
-                                        if strip_invalid_codes(bytes, invalid_codes) {
+                                        if fix_simple_text_string(bytes, invalid_codes) {
                                             modified = true;
                                         }
                                     }
@@ -17613,19 +17613,6 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
     total_fixed
 }
 
-fn strip_invalid_codes(bytes: &mut Vec<u8>, invalid_codes: &std::collections::HashSet<u8>) -> bool {
-    let mut changed = false;
-    let mut i = 0;
-    while i < bytes.len() {
-        if invalid_codes.contains(&bytes[i]) {
-            bytes.remove(i);
-            changed = true;
-        } else {
-            i += 1;
-        }
-    }
-    changed
-}
 
 pub fn fix_simple_font_out_of_range_codes(doc: &mut Document) -> usize {
     use std::collections::HashMap;
