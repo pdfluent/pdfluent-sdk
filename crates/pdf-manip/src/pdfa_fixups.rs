@@ -7934,40 +7934,102 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     let mut count = 0;
 
-    let group_dict = lopdf::dictionary! {
-        "S" => Object::Name(b"Transparency".to_vec()),
-    };
+    // Find an existing sRGB ICC profile stream (N=3) created by
+    // normalize_colorspaces.  We use this in /Group /CS to avoid depending
+    // on OutputIntent (which may be lost during lopdf serialization).
+    let icc_id = find_srgb_icc_stream(doc);
+    let cs_value = icc_id.map(|id| {
+        Object::Array(vec![
+            Object::Name(b"ICCBased".to_vec()),
+            Object::Reference(id),
+        ])
+    });
 
+    // First pass: fix indirect /Group dicts that have device CS or no CS.
+    let mut indirect_fixes: Vec<(ObjectId, Object)> = Vec::new();
+    for page_id in &page_ids {
+        let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
+            continue;
+        };
+        if let Ok(Object::Reference(grp_id)) = pd.get(b"Group") {
+            if let Some(Object::Dictionary(grp)) = doc.objects.get(grp_id) {
+                let needs_fix = match grp.get(b"CS").ok() {
+                    Some(Object::Name(cs))
+                        if cs == b"DeviceRGB"
+                            || cs == b"DeviceCMYK"
+                            || cs == b"DeviceGray" =>
+                    {
+                        true
+                    }
+                    None => true,
+                    _ => false,
+                };
+                if needs_fix {
+                    if let Some(ref cs) = cs_value {
+                        indirect_fixes.push((*grp_id, cs.clone()));
+                    }
+                }
+            }
+        }
+    }
+    for (grp_id, cs) in indirect_fixes {
+        if let Some(Object::Dictionary(ref mut grp)) = doc.objects.get_mut(&grp_id) {
+            grp.set("CS", cs);
+            count += 1;
+        }
+    }
+
+    // Second pass: fix inline /Group dicts and add /Group to pages without one.
     for page_id in &page_ids {
         let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) else {
             continue;
         };
-        if pd.has(b"Group") {
-            // Existing /Group — strip device CS names so the OutputIntent
-            // determines the blending colour space (avoids §6.2.10 "device
-            // CS without OutputIntent" when the OI was added later by our
-            // pipeline).
-            if let Ok(Object::Dictionary(ref mut grp)) = pd.get_mut(b"Group") {
-                if let Ok(Object::Name(cs)) = grp.get(b"CS") {
-                    if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" {
-                        grp.remove(b"CS");
-                        count += 1;
-                    }
+        if let Ok(Object::Dictionary(ref mut grp)) = pd.get_mut(b"Group") {
+            // Inline Group — fix device CS or missing CS.
+            let needs_fix = match grp.get(b"CS").ok() {
+                Some(Object::Name(cs))
+                    if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
+                {
+                    true
+                }
+                None => true,
+                _ => false,
+            };
+            if needs_fix {
+                if let Some(ref cs) = cs_value {
+                    grp.set("CS", cs.clone());
+                    count += 1;
                 }
             }
-        } else {
-            // Add /Group to every page unconditionally.  Adding a transparency
-            // group to a non-transparent page is harmless and avoids false
-            // negatives from our lopdf-based transparency detection which may
-            // miss inherited resources or edge cases the compliance checker
-            // catches.  The pipeline guarantees an OutputIntent, so omitting
-            // /CS from the group dict is valid.
-            pd.set("Group", Object::Dictionary(group_dict.clone()));
+        } else if !pd.has(b"Group") {
+            // No Group — add one.  Adding a transparency group to a
+            // non-transparent page is harmless and avoids false negatives
+            // from our lopdf-based transparency detection.
+            let mut group_dict = lopdf::dictionary! {
+                "S" => Object::Name(b"Transparency".to_vec()),
+            };
+            if let Some(ref cs) = cs_value {
+                group_dict.set("CS", cs.clone());
+            }
+            pd.set("Group", Object::Dictionary(group_dict));
             count += 1;
         }
     }
 
     count
+}
+
+/// Find an existing ICC profile stream with N=3 (sRGB) in the document.
+/// Returns None if no suitable stream exists.
+fn find_srgb_icc_stream(doc: &Document) -> Option<ObjectId> {
+    for (&id, obj) in &doc.objects {
+        if let Object::Stream(s) = obj {
+            if let Ok(Object::Integer(3)) = s.dict.get(b"N") {
+                return Some(id);
+            }
+        }
+    }
+    None
 }
 
 /// Return true if the page's ExtGState resources use transparency.

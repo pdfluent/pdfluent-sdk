@@ -12915,9 +12915,9 @@ fn type1_enc_from_dict(enc_dict: &lopdf::Dictionary) -> (String, Vec<(u8, String
     (base_enc, differences)
 }
 
-/// Add /ToUnicode CMap streams to Type1 fonts that lack them but have a
-/// standard encoding (WinAnsiEncoding / MacRomanEncoding) or a
-/// Differences-based Encoding dictionary.
+/// Add /ToUnicode CMap streams to simple fonts (Type1, MMType1, TrueType)
+/// that lack them but have a standard encoding (WinAnsiEncoding /
+/// MacRomanEncoding) or a Differences-based Encoding dictionary.
 ///
 /// ISO 19005-2 §6.2.11.7.2 requires every non-CID font in PDF/A-2/3 to
 /// carry a /ToUnicode CMap. Fixes #483.
@@ -12933,9 +12933,9 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
         let Object::Dictionary(dict) = obj else {
             continue;
         };
-        // Only simple (non-CID) Type1 fonts.
+        // Simple (non-CID) fonts: Type1, MMType1, TrueType.
         match get_name(dict, b"Subtype").as_deref() {
-            Some("Type1") | Some("MMType1") => {}
+            Some("Type1") | Some("MMType1") | Some("TrueType") => {}
             _ => continue,
         }
         // Skip fonts that already have a ToUnicode entry.
@@ -13033,6 +13033,167 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
     }
 
     fixed
+}
+
+/// Add /ToUnicode CMap streams to Type0 (CID) fonts that lack them.
+///
+/// For CIDFontType2 descendants with an embedded TrueType font program,
+/// reads the (3,1) Unicode cmap to build CID→Unicode mappings.
+/// For Identity-H/V encoding with Identity CIDToGIDMap, CID == GID so
+/// the cmap directly gives us the mapping.
+///
+/// ISO 19005-2 §6.2.11.7.2
+pub fn fix_type0_tounicode(doc: &mut Document) -> usize {
+    // First pass: collect Type0 fonts that need ToUnicode.
+    struct Type0Entry {
+        type0_id: ObjectId,
+        cid_id: ObjectId,
+    }
+    let mut to_process: Vec<Type0Entry> = Vec::new();
+
+    for (&font_id, obj) in &doc.objects {
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        if get_name(dict, b"Subtype").as_deref() != Some("Type0") {
+            continue;
+        }
+        // Skip fonts that already have a ToUnicode entry.
+        if dict.get(b"ToUnicode").is_ok() {
+            continue;
+        }
+        // Get the CIDFont descendant.
+        let Some(Object::Array(descendants)) = dict.get(b"DescendantFonts").ok() else {
+            continue;
+        };
+        let Some(cid_id) = descendants.first().and_then(|o| match o {
+            Object::Reference(id) => Some(*id),
+            _ => None,
+        }) else {
+            continue;
+        };
+        to_process.push(Type0Entry {
+            type0_id: font_id,
+            cid_id,
+        });
+    }
+
+    // Second pass: build and attach ToUnicode streams.
+    let mut fixed = 0;
+    for entry in to_process {
+        // Get the CIDFont descendant dict.
+        let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&entry.cid_id) else {
+            continue;
+        };
+        let cid_subtype = get_name(cid_dict, b"Subtype");
+
+        // Get the font data from the FontDescriptor.
+        let Some(Object::Reference(fd_ref)) = cid_dict.get(b"FontDescriptor").ok() else {
+            continue;
+        };
+        let fd_ref = *fd_ref;
+        let Some(Object::Dictionary(fd)) = doc.objects.get(&fd_ref) else {
+            continue;
+        };
+
+        // Try FontFile2 (TrueType) first, then FontFile3 (CFF/OpenType).
+        let font_data = read_fontfile_stream_content(doc, fd, b"FontFile2")
+            .or_else(|| read_fontfile_stream_content(doc, fd, b"FontFile3"));
+        let Some(font_data) = font_data else {
+            continue;
+        };
+        if font_data.is_empty() {
+            continue;
+        }
+
+        // Check CIDToGIDMap — we only handle Identity (CID == GID) for now.
+        let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&entry.cid_id) else {
+            continue;
+        };
+        let is_identity_gid = match cid_dict.get(b"CIDToGIDMap").ok() {
+            Some(Object::Name(n)) => n == b"Identity",
+            None => true, // absent means Identity for CIDFontType2
+            _ => false,   // explicit stream — skip for now
+        };
+
+        // For CIDFontType2, read the (3,1) Unicode cmap → (unicode, gid) pairs.
+        // With Identity CIDToGIDMap, CID == GID, so gid→unicode gives us CID→Unicode.
+        let mappings: Vec<(u16, u16)> =
+            if cid_subtype.as_deref() == Some("CIDFontType2") && is_identity_gid {
+                // Read (3,1) Unicode cmap first; fall back to (3,0) Symbol cmap
+                // for symbolic fonts like Wingdings that only have (3,0).
+                let mut cmap_pairs = tt_read_windows_cmap(&font_data, 1);
+                if cmap_pairs.is_empty() {
+                    cmap_pairs = tt_read_windows_cmap(&font_data, 0);
+                }
+                if cmap_pairs.is_empty() {
+                    continue;
+                }
+                // Invert: build gid→unicode (first unicode wins per gid).
+                let mut gid_to_unicode: std::collections::BTreeMap<u16, u16> =
+                    std::collections::BTreeMap::new();
+                for (unicode, gid) in &cmap_pairs {
+                    if *gid != 0 {
+                        gid_to_unicode.entry(*gid).or_insert(*unicode);
+                    }
+                }
+                // CID == GID (Identity), so each entry is (CID, unicode).
+                gid_to_unicode.into_iter().collect()
+            } else if cid_subtype.as_deref() == Some("CIDFontType0") {
+                // CFF-based CID font: try parsing charset for CID→GID mapping
+                // and use CFF charset names → Unicode via AGL.
+                // For now, skip CFF CID fonts — they're less common in the
+                // §6.2.11.7.2 failures.
+                continue;
+            } else {
+                continue;
+            };
+
+        if mappings.is_empty() {
+            continue;
+        }
+
+        let cmap_data = build_type0_tounicode_cmap(&mappings);
+        let len = cmap_data.len() as i64;
+        let stream_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! { "Length" => len },
+            cmap_data,
+        )));
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&entry.type0_id) {
+            dict.set("ToUnicode", Object::Reference(stream_id));
+            fixed += 1;
+        }
+    }
+
+    fixed
+}
+
+/// Build a 2-byte ToUnicode CMap for CID fonts.
+/// Input: (CID, Unicode) pairs.
+fn build_type0_tounicode_cmap(mappings: &[(u16, u16)]) -> Vec<u8> {
+    let mut s = String::new();
+    s.push_str("/CIDInit /ProcSet findresource begin\n");
+    s.push_str("12 dict begin\n");
+    s.push_str("begincmap\n");
+    s.push_str("/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n");
+    s.push_str("/CMapName /Adobe-Identity-UCS def\n");
+    s.push_str("/CMapType 2 def\n");
+    s.push_str("1 begincodespacerange\n");
+    s.push_str("<0000> <FFFF>\n");
+    s.push_str("endcodespacerange\n");
+    // CMap spec allows at most 100 entries per beginbfchar/endbfchar block.
+    for chunk in mappings.chunks(100) {
+        s.push_str(&format!("{} beginbfchar\n", chunk.len()));
+        for (cid, unicode) in chunk {
+            s.push_str(&format!("<{:04X}> <{:04X}>\n", cid, unicode));
+        }
+        s.push_str("endbfchar\n");
+    }
+    s.push_str("endcmap\n");
+    s.push_str("CMapName currentdict /CMap defineresource pop\n");
+    s.push_str("end\n");
+    s.push_str("end\n");
+    s.into_bytes()
 }
 
 /// Check if a TrueType font has a (3,1) Unicode BMP cmap.

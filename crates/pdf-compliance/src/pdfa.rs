@@ -2339,10 +2339,40 @@ fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                 // If `endobj` appears between our /F and the `stream`, the stream is
                 // from a different object — this is a FP (e.g. /CharSet glyph names or
                 // annotation /F flags near the following stream object). (#FP-6.1.7.1-raw)
-                let no_endobj_between = !after
-                    .windows(6)
-                    .take_while(|w| *w != b"stream")
-                    .any(|w| w == b"endobj");
+                //
+                // Skip /F inside stream content (binary data between "stream" and
+                // "endstream"). Compressed data can contain bytes 0x2F46 = "/F".
+                // If "endstream" appears before "endobj" in `after`, this /F is
+                // inside stream content, not a dict key. (#FP-6.1.7.1-binary)
+                let endstream_pos = after.windows(9).position(|w| w == b"endstream");
+                let endobj_pos = after.windows(6).position(|w| w == b"endobj");
+                let inside_stream_content = match (endstream_pos, endobj_pos) {
+                    (Some(es), Some(eo)) => es < eo,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                if inside_stream_content {
+                    i += 1;
+                    continue;
+                }
+                // Check if "endobj" appears before the next "stream" keyword.
+                // Use endobj_pos (already computed) vs the first standalone "stream"
+                // (i.e. not the "stream" inside "endstream"). (#FP-6.1.7.1-raw)
+                let no_endobj_between = match endobj_pos {
+                    None => true, // no endobj at all → assume same object
+                    Some(eo) => {
+                        // Find first "stream" that isn't preceded by "end".
+                        let first_stream = after.windows(6).enumerate()
+                            .position(|(pos, w)| {
+                                w == b"stream"
+                                    && !(pos >= 3 && &after[pos - 3..pos] == b"end")
+                            });
+                        match first_stream {
+                            Some(sk) => eo >= sk, // endobj after stream → same object
+                            None => false,        // no stream ahead → different object
+                        }
+                    }
+                };
                 // Also skip /F values that are inside a PDF string (between parentheses).
                 // Use current_dict_ctx (from last '<<') not the full before window: prior
                 // stream objects contain binary data with unbalanced '(' bytes that falsely
