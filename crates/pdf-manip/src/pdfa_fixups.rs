@@ -7932,35 +7932,42 @@ fn fix_non_ascii_pdf_names(doc: &mut Document) -> usize {
 
 fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
-
-    // Collect pages that need a /Group added (read-only pass first).
-    let needs_group: Vec<ObjectId> = page_ids
-        .iter()
-        .copied()
-        .filter(|&page_id| {
-            let Some(Object::Dictionary(page_dict)) = doc.objects.get(&page_id) else {
-                return false;
-            };
-            // Already has /Group — skip.
-            if page_dict.has(b"Group") {
-                return false;
-            }
-            // Add /Group only if the page actually uses transparency.
-            page_uses_transparency_lopdf(page_dict, doc)
-        })
-        .collect();
+    let mut count = 0;
 
     let group_dict = lopdf::dictionary! {
         "S" => Object::Name(b"Transparency".to_vec()),
     };
 
-    for page_id in &needs_group {
-        if let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) {
+    for page_id in &page_ids {
+        let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) else {
+            continue;
+        };
+        if pd.has(b"Group") {
+            // Existing /Group — strip device CS names so the OutputIntent
+            // determines the blending colour space (avoids §6.2.10 "device
+            // CS without OutputIntent" when the OI was added later by our
+            // pipeline).
+            if let Ok(Object::Dictionary(ref mut grp)) = pd.get_mut(b"Group") {
+                if let Ok(Object::Name(cs)) = grp.get(b"CS") {
+                    if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" {
+                        grp.remove(b"CS");
+                        count += 1;
+                    }
+                }
+            }
+        } else {
+            // Add /Group to every page unconditionally.  Adding a transparency
+            // group to a non-transparent page is harmless and avoids false
+            // negatives from our lopdf-based transparency detection which may
+            // miss inherited resources or edge cases the compliance checker
+            // catches.  The pipeline guarantees an OutputIntent, so omitting
+            // /CS from the group dict is valid.
             pd.set("Group", Object::Dictionary(group_dict.clone()));
+            count += 1;
         }
     }
 
-    needs_group.len()
+    count
 }
 
 /// Return true if the page's ExtGState resources use transparency.
@@ -8398,6 +8405,38 @@ fn fix_long_names_in_streams(doc: &mut Document) -> usize {
 // Also truncates Name values > 127 bytes.
 // ---------------------------------------------------------------------------
 
+/// Compute the serialized length of a PDF name (lopdf hex-encodes non-printable bytes).
+fn name_serialized_len(name: &[u8]) -> usize {
+    name.iter()
+        .map(|&b| {
+            if b" \t\n\r\x0C()<>[]{}/%#".contains(&b) || !(33..=126).contains(&b) {
+                3 // #XX
+            } else {
+                1
+            }
+        })
+        .sum()
+}
+
+/// Truncate a name so its serialized form is at most `max_len` bytes.
+fn truncate_name_for_serialization(name: &[u8], max_len: usize) -> Vec<u8> {
+    let mut serialized_len = 0;
+    let mut end = 0;
+    for &b in name {
+        let char_len = if b" \t\n\r\x0C()<>[]{}/%#".contains(&b) || !(33..=126).contains(&b) {
+            3
+        } else {
+            1
+        };
+        if serialized_len + char_len > max_len {
+            break;
+        }
+        serialized_len += char_len;
+        end += 1;
+    }
+    name[..end].to_vec()
+}
+
 fn fix_long_dict_keys(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
@@ -8417,13 +8456,12 @@ fn fix_long_dict_keys(doc: &mut Document) -> usize {
 }
 
 fn fix_long_keys_in_object(obj: Object, depth: usize) -> (Object, usize) {
-    const MAX_NAME_LEN: usize = 127;
     if depth > MAX_OBJECT_DEPTH {
         return (obj, 0);
     }
     match obj {
-        Object::Name(ref n) if n.len() > MAX_NAME_LEN => {
-            (Object::Name(n[..MAX_NAME_LEN].to_vec()), 1)
+        Object::Name(ref n) if name_serialized_len(n) > 127 => {
+            (Object::Name(truncate_name_for_serialization(n, 127)), 1)
         }
         Object::Array(arr) => {
             let mut total = 0;
@@ -8441,9 +8479,9 @@ fn fix_long_keys_in_object(obj: Object, depth: usize) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in dict.into_iter() {
-                let truncated_key = if key.len() > MAX_NAME_LEN {
+                let truncated_key = if name_serialized_len(&key) > 127 {
                     total += 1;
-                    key[..MAX_NAME_LEN].to_vec()
+                    truncate_name_for_serialization(&key, 127)
                 } else {
                     key
                 };
@@ -8457,9 +8495,9 @@ fn fix_long_keys_in_object(obj: Object, depth: usize) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in s.dict.into_iter() {
-                let truncated_key = if key.len() > MAX_NAME_LEN {
+                let truncated_key = if name_serialized_len(&key) > 127 {
                     total += 1;
-                    key[..MAX_NAME_LEN].to_vec()
+                    truncate_name_for_serialization(&key, 127)
                 } else {
                     key
                 };
