@@ -516,7 +516,7 @@ impl<'a> LayoutEngine<'a> {
             let leader_size = self.compute_extent(leader_id);
             leader_height = leader_size.height;
             let leader_node = self.form.get(leader_id);
-            let node = self.layout_single_node(leader_id, leader_node, 0.0, 0.0)?;
+            let node = self.layout_single_node(leader_id, leader_node, 0.0, 0.0, None)?;
             let mut offset = node;
             offset.rect.x += content_area.x;
             offset.rect.y += content_area.y;
@@ -529,7 +529,7 @@ impl<'a> LayoutEngine<'a> {
             // Trailer is placed at the bottom of the content area
             let trailer_y = content_area.height - trailer_height;
             let trailer_node = self.form.get(trailer_id);
-            let node = self.layout_single_node(trailer_id, trailer_node, 0.0, trailer_y)?;
+            let node = self.layout_single_node(trailer_id, trailer_node, 0.0, trailer_y, None)?;
             let mut offset = node;
             offset.rect.x += content_area.x;
             offset.rect.y += content_area.y;
@@ -588,7 +588,7 @@ impl<'a> LayoutEngine<'a> {
             }
 
             let child = self.form.get(child_id);
-            let child_size = self.compute_extent_with_available(child_id, Some(available));
+            let child_size = self.compute_extent_with_override(child_id, qn.children_override.as_deref());
 
             // Keep-chain look-ahead: if this node starts a keep chain and
             // the chain doesn't fit in remaining space (but WOULD fit on a
@@ -609,34 +609,22 @@ impl<'a> LayoutEngine<'a> {
 
                 // Try to split this node if it's a splittable tb-layout container.
                 if remaining_height > 0.0 && self.can_split(child_id) {
-                    let (partial, rest_children) =
-                        self.split_tb_node(child_id, y_cursor, remaining_height, available)?;
+                    let (partial, rest_nodes) =
+                        self.split_tb_node(child_id, y_cursor, remaining_height, available, qn.children_override.as_deref())?;
                     // Place the partial if it fits, OR if the split was
                     // productive (multiple children placed — the overflow
                     // is tolerable).  Only defer when the partial is a
                     // single oversized child that didn't fit — re-splitting
                     // on a fresh page with full height will do better.
                     let partial_fits = partial.rect.height <= remaining_height + 1.0;
-                    let split_productive = partial.children.len() > 1;
+                    let split_productive = !partial.children.is_empty() && (partial_fits || partial.children.len() > 1);
                     if !partial.children.is_empty() && (partial_fits || split_productive) {
                         let mut offset_node = partial;
                         offset_node.rect.x += content_area.x;
                         offset_node.rect.y += content_area.y;
                         page.nodes.push(offset_node);
                         placed_count += 1;
-                        // After a split, rest children go to a fresh page.
-                        // Clear break_before on ALL — the overflow mechanism
-                        // handles page transitions correctly; keeping break
-                        // flags causes premature splits that waste space.
-                        split_remaining = rest_children
-                            .into_iter()
-                            .map(|cid| QueuedNode {
-                                id: cid,
-                                break_before: false,
-                                break_after: self.form.meta(cid).page_break_after,
-                                break_target: None,
-                            })
-                            .collect();
+                        split_remaining = rest_nodes;
                     } else if placed_count > 0 {
                         // Single oversized child doesn't fit and page has
                         // content — defer to a fresh page where re-split

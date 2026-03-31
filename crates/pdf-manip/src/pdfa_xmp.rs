@@ -431,8 +431,15 @@ fn parse_pdf_timezone(chars: &[char], offset: usize) -> Option<xmp_writer::Timez
         offset + 3
     };
     let tz_min = parse_two_digits(chars, min_offset).unwrap_or(0) as i8;
-    let h = if ch == '-' { -(tz_hour as i8) } else { tz_hour as i8 };
-    Some(xmp_writer::Timezone::Local { hour: h, minute: tz_min })
+    let h = if ch == '-' {
+        -(tz_hour as i8)
+    } else {
+        tz_hour as i8
+    };
+    Some(xmp_writer::Timezone::Local {
+        hour: h,
+        minute: tz_min,
+    })
 }
 
 /// Parse ISO timezone: Z, +hh:mm, -hh:mm
@@ -450,7 +457,11 @@ fn parse_iso_timezone(chars: &[char], offset: usize) -> Option<xmp_writer::Timez
     } else {
         parse_two_digits(chars, offset + 3).unwrap_or(0) as i8
     };
-    let h = if ch == '-' { -(tz_hour as i8) } else { tz_hour as i8 };
+    let h = if ch == '-' {
+        -(tz_hour as i8)
+    } else {
+        tz_hour as i8
+    };
     Some(xmp_writer::Timezone::Local {
         hour: h,
         minute: tz_min,
@@ -524,8 +535,7 @@ fn get_string_value(dict: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
                     })
                     .collect();
                 String::from_utf16(&utf16).ok()
-            } else if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
-            {
+            } else if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
                 // UTF-8 BOM — decode the rest as UTF-8.
                 match std::str::from_utf8(&bytes[3..]) {
                     Ok(s) => Some(s.to_string()),
@@ -602,23 +612,33 @@ fn sync_info_dict(doc: &mut Document, meta: &PdfMetadata) {
         // Removing BOM-only / whitespace-only entries prevents §6.7.3 mismatches.
         match &meta.title {
             Some(title) => info.set("Title", to_pdf_string(title)),
-            None => { info.remove(b"Title"); }
+            None => {
+                info.remove(b"Title");
+            }
         }
         match &meta.creator {
             Some(author) => info.set("Author", to_pdf_string(author)),
-            None => { info.remove(b"Author"); }
+            None => {
+                info.remove(b"Author");
+            }
         }
         match &meta.producer {
             Some(producer) => info.set("Producer", to_pdf_string(producer)),
-            None => { info.remove(b"Producer"); }
+            None => {
+                info.remove(b"Producer");
+            }
         }
         match &meta.description {
             Some(subject) => info.set("Subject", to_pdf_string(subject)),
-            None => { info.remove(b"Subject"); }
+            None => {
+                info.remove(b"Subject");
+            }
         }
         match &meta.keywords {
             Some(kw) => info.set("Keywords", to_pdf_string(kw)),
-            None => { info.remove(b"Keywords"); }
+            None => {
+                info.remove(b"Keywords");
+            }
         }
         // Sync /Creator with (trimmed) creator_tool. If None (e.g. was whitespace-only),
         // remove it so /Info and XMP agree and §6.7.3.6 does not fire.

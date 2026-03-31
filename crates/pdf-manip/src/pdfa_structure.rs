@@ -42,7 +42,10 @@ fn fix_transparency_groups(doc: &mut Document) -> Result<()> {
 /// Ensure MarkInfo/Marked is false if StructTreeRoot is missing.
 /// Required by §6.7.3.3.
 fn fix_mark_info(doc: &mut Document) -> Result<()> {
-    let has_struct_tree = doc.catalog().map(|c| c.has(b"StructTreeRoot")).unwrap_or(false);
+    let has_struct_tree = doc
+        .catalog()
+        .map(|c| c.has(b"StructTreeRoot"))
+        .unwrap_or(false);
 
     if !has_struct_tree {
         if let Ok(catalog) = doc.catalog_mut() {
@@ -75,8 +78,10 @@ fn fix_widget_appearances(doc: &mut Document) -> Result<()> {
                 _ => continue,
             };
 
-            let needs_ap = if let Ok(Object::Dictionary(ref annot_dict)) = doc.get_object(annot_id) {
-                let is_widget = matches!(annot_dict.get(b"Subtype"), Ok(Object::Name(ref n)) if n == b"Widget");
+            let needs_ap = if let Ok(Object::Dictionary(ref annot_dict)) = doc.get_object(annot_id)
+            {
+                let is_widget =
+                    matches!(annot_dict.get(b"Subtype"), Ok(Object::Name(ref n)) if n == b"Widget");
                 is_widget && !annot_dict.has(b"AP")
             } else {
                 false

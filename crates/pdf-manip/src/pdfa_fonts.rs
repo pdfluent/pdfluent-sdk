@@ -930,14 +930,12 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
         let font_path = find_system_font(&info.name).or_else(find_fallback_font);
 
         match font_path {
-            Some(path) => {
-                match embed_font_on_target(doc, info, &path) {
-                    Ok(()) => {
-                        report.fonts_embedded += 1;
-                    }
-                    Err(e) => report.failed.push((info.name.clone(), format!("{e}"))),
+            Some(path) => match embed_font_on_target(doc, info, &path) {
+                Ok(()) => {
+                    report.fonts_embedded += 1;
                 }
-            }
+                Err(e) => report.failed.push((info.name.clone(), format!("{e}"))),
+            },
             None => {
                 report
                     .failed
@@ -969,10 +967,71 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     Ok(report)
 }
 
+fn expected_cidfont_subtype_from_fd(
+    doc: &Document,
+    fd_id: ObjectId,
+    cache: &mut std::collections::HashMap<ObjectId, Option<&'static [u8]>>,
+) -> Option<&'static [u8]> {
+    if let Some(expected) = cache.get(&fd_id) {
+        return *expected;
+    }
+
+    let fd_dict = match doc.objects.get(&fd_id) {
+        Some(Object::Dictionary(d)) => d,
+        _ => {
+            cache.insert(fd_id, None);
+            return None;
+        }
+    };
+
+    let expected = expected_cidfont_subtype_from_fd_dict(doc, fd_dict);
+    cache.insert(fd_id, expected);
+    expected
+}
+
+fn expected_cidfont_subtype_from_fd_dict(
+    doc: &Document,
+    fd: &lopdf::Dictionary,
+) -> Option<&'static [u8]> {
+    if fd.has(b"FontFile2") {
+        return Some(b"CIDFontType2".as_slice());
+    }
+    if fd.has(b"FontFile3") {
+        let font_data = read_embedded_font_data_from_dict(doc, fd);
+        match font_data {
+            Some(data)
+                if cff_parser::Table::parse(&data).is_some()
+                    || extract_cff_from_otf(&data).is_some() =>
+            {
+                Some(b"CIDFontType0".as_slice())
+            }
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+fn read_embedded_font_data_from_dict(doc: &Document, fd: &lopdf::Dictionary) -> Option<Vec<u8>> {
+    let font_data = fd.get(b"FontFile3").ok()?;
+    let stream_id = match font_data {
+        Object::Reference(r) => *r,
+        _ => return None,
+    };
+    let obj = doc.objects.get(&stream_id)?;
+    let mut stream = match obj {
+        Object::Stream(s) => s.clone(),
+        _ => return None,
+    };
+    let _ = stream.decompress();
+    Some(stream.content)
+}
+
 /// Synchronize font dict Subtype with the actual embedded font program type.
-/// When a TrueType font is embedded via FontFile2 but the font dict still says
-/// /Subtype /Type1, update it to /Subtype /TrueType. Needed for font dicts
-/// that share a FontDescriptor where only ONE dict was updated by embed_font_on_target.
+///
+/// Handles both simple font dictionaries (Type1/TrueType) and CIDFont
+/// dictionaries (CIDFontType0/CIDFontType2), including inline DescendantFonts
+/// entries inside Type0 fonts.
 pub fn sync_subtypes_from_fontfile(doc: &mut Document) {
     // Build map: FD id → expected Subtype based on FontFile key
     let mut fd_fonttype: std::collections::HashMap<ObjectId, &'static [u8]> = Default::default();
@@ -1057,6 +1116,131 @@ pub fn sync_subtypes_from_fontfile(doc: &mut Document) {
                             d.set("Encoding", Object::Dictionary(enc));
                         }
                         _ => {} // Already WinAnsi or reference
+                    }
+                }
+            }
+        }
+    }
+
+    // Synchronize CIDFont descendants to the embedded font program type.
+    let mut cid_fd_fonttype: std::collections::HashMap<ObjectId, Option<&'static [u8]>> =
+        Default::default();
+
+    // First update indirect CIDFont dictionaries.
+    let cid_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            let Object::Dictionary(d) = obj else {
+                return None;
+            };
+            match get_name(d, b"Subtype").as_deref() {
+                Some("CIDFontType0") | Some("CIDFontType2") => Some(id),
+                _ => None,
+            }
+        })
+        .collect();
+
+    for id in cid_ids {
+        let (expected_opt, current_subtype) = {
+            let Some(Object::Dictionary(d)) = doc.objects.get(&id) else {
+                continue;
+            };
+            let current_subtype = match get_name(d, b"Subtype") {
+                Some(s) if s == "CIDFontType0" || s == "CIDFontType2" => s,
+                _ => continue,
+            };
+            match d.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(r)) => {
+                    let expected = expected_cidfont_subtype_from_fd(doc, *r, &mut cid_fd_fonttype);
+                    (expected, current_subtype)
+                }
+                Some(Object::Dictionary(fd)) => {
+                    let expected = expected_cidfont_subtype_from_fd_dict(doc, fd);
+                    (expected, current_subtype)
+                }
+                _ => continue,
+            }
+        };
+
+        let Some(expected) = expected_opt else {
+            continue;
+        };
+        let expected_str = std::str::from_utf8(expected).unwrap_or("");
+        if current_subtype == expected_str {
+            continue;
+        }
+
+        if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&id) {
+            d.set("Subtype", Object::Name(expected.to_vec()));
+        }
+    }
+
+    // Then update inline CIDFont descendants inside Type0 /DescendantFonts arrays.
+    let type0_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(&id, obj)| {
+            let Object::Dictionary(d) = obj else {
+                return None;
+            };
+            if matches!(get_name(d, b"Subtype").as_deref(), Some("Type0")) {
+                Some(id)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for type0_id in type0_ids {
+        let inline_updates: Vec<(usize, Vec<u8>)> = {
+            let Some(Object::Dictionary(d)) = doc.objects.get(&type0_id) else {
+                continue;
+            };
+            let Some(Object::Array(descendants)) = d.get(b"DescendantFonts").ok() else {
+                continue;
+            };
+
+            descendants
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, item)| {
+                    let Object::Dictionary(cid_dict) = item else {
+                        return None;
+                    };
+                    let current_subtype = match get_name(cid_dict, b"Subtype") {
+                        Some(s) if s == "CIDFontType0" || s == "CIDFontType2" => s,
+                        _ => return None,
+                    };
+                    let expected = match cid_dict.get(b"FontDescriptor").ok() {
+                        Some(Object::Reference(r)) => {
+                            expected_cidfont_subtype_from_fd(doc, *r, &mut cid_fd_fonttype)
+                        }
+                        Some(Object::Dictionary(fd)) => {
+                            expected_cidfont_subtype_from_fd_dict(doc, fd)
+                        }
+                        _ => return None,
+                    };
+                    let expected = expected?;
+                    let expected_str = std::str::from_utf8(expected).unwrap_or("");
+                    if current_subtype == expected_str {
+                        None
+                    } else {
+                        Some((idx, expected.to_vec()))
+                    }
+                })
+                .collect()
+        };
+
+        if inline_updates.is_empty() {
+            continue;
+        }
+
+        if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&type0_id) {
+            if let Ok(Object::Array(descendants)) = d.get_mut(b"DescendantFonts") {
+                for (idx, expected) in inline_updates {
+                    if let Some(Object::Dictionary(cid_dict)) = descendants.get_mut(idx) {
+                        cid_dict.set("Subtype", Object::Name(expected));
                     }
                 }
             }
@@ -2031,11 +2215,19 @@ fn update_simple_widths_cff_symbolic(
         (fc, lc)
     };
 
-    let notdef_w = face.glyph_hor_advance(ttf_parser::GlyphId(0))
+    let notdef_w = face
+        .glyph_hor_advance(ttf_parser::GlyphId(0))
         .map(|w| (w as f64 * scale).round() as i64)
         .unwrap_or(0);
-    eprintln!("  [sym-cff] font={} id={:?} fc={} lc={} cff={} notdef_hmtx={}",
-        info.name, font_id, first_char, last_char, cff.is_some(), notdef_w);
+    eprintln!(
+        "  [sym-cff] font={} id={:?} fc={} lc={} cff={} notdef_hmtx={}",
+        info.name,
+        font_id,
+        first_char,
+        last_char,
+        cff.is_some(),
+        notdef_w
+    );
 
     let mut widths = Vec::new();
     for code in first_char..=last_char {
@@ -10877,10 +11069,8 @@ fn compute_cff_corrections_by_name(
             if code <= 255 && code != 173 {
                 let cff_gid = cff.glyph_index(code as u8).map(|g| g.0).unwrap_or(0);
                 if cff_gid == 0 {
-                    let notdef_w =
-                        cff_glyph_width_f64(cff, cff_parser::GlyphId(0), scale).map(|w| {
-                            w.round() as i64
-                        });
+                    let notdef_w = cff_glyph_width_f64(cff, cff_parser::GlyphId(0), scale)
+                        .map(|w| w.round() as i64);
                     let dwx_w = cff_default_width_f64(cff, scale).map(|w| w.round() as i64);
                     let corr_is_notdef =
                         matches!(notdef_w, Some(nw) if (rounded_w - nw).abs() <= 1);
@@ -13662,8 +13852,8 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
             // - bfrange: 3rd token (index 2)
             // Count how many <...> tokens we've already emitted on this line.
             let token_count = result.matches('<').count();
-            let is_destination = (in_bfchar && token_count == 1)
-                || (in_bfrange && token_count == 2);
+            let is_destination =
+                (in_bfchar && token_count == 1) || (in_bfrange && token_count == 2);
 
             if is_destination && (hex_str.len() == 4 || hex_str.len() == 8) {
                 // Could be multi-byte: check 2-byte pairs.
@@ -13772,14 +13962,12 @@ pub fn fix_type1_tounicode_from_cff(doc: &mut Document) -> usize {
             Some(Object::Dictionary(ed)) => {
                 ed.get(b"Differences").is_ok() || ed.get(b"BaseEncoding").is_ok()
             }
-            Some(Object::Reference(r)) => {
-                match doc.objects.get(r) {
-                    Some(Object::Dictionary(ed)) => {
-                        ed.get(b"Differences").is_ok() || ed.get(b"BaseEncoding").is_ok()
-                    }
-                    _ => false,
+            Some(Object::Reference(r)) => match doc.objects.get(r) {
+                Some(Object::Dictionary(ed)) => {
+                    ed.get(b"Differences").is_ok() || ed.get(b"BaseEncoding").is_ok()
                 }
-            }
+                _ => false,
+            },
             _ => false,
         };
         if has_encoding {
@@ -17560,7 +17748,6 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
     total_fixed
 }
 
-
 pub fn fix_simple_font_out_of_range_codes(doc: &mut Document) -> usize {
     use std::collections::HashMap;
 
@@ -20353,19 +20540,13 @@ pub fn fix_type1_standard_encoding(doc: &mut Document) -> usize {
             FixAction::ReplaceBaseInline(id) => {
                 if let Some(Object::Dictionary(dict)) = doc.objects.get_mut(&id) {
                     if let Ok(Object::Dictionary(enc)) = dict.get_mut(b"Encoding") {
-                        enc.set(
-                            "BaseEncoding",
-                            Object::Name(b"WinAnsiEncoding".to_vec()),
-                        );
+                        enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
                     }
                 }
             }
             FixAction::ReplaceBaseIndirect(id) => {
                 if let Some(Object::Dictionary(enc)) = doc.objects.get_mut(&id) {
-                    enc.set(
-                        "BaseEncoding",
-                        Object::Name(b"WinAnsiEncoding".to_vec()),
-                    );
+                    enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
                 }
             }
         }
@@ -20425,6 +20606,29 @@ mod tests {
 
         doc
     }
+
+    #[rustfmt::skip]
+    const MINIMAL_CID_CFF: &[u8] = &[
+        0x01, 0x00, 0x04, 0x01,
+        0x00, 0x01, 0x01, 0x01, 0x02, 0x46,
+        0x00, 0x01, 0x01, 0x01, 0x11,
+        0xCD, 0xF7, 0x78, 0x8B, 0x0C, 0x1E,
+        0xAE, 0x0F,
+        0xB1, 0x0C, 0x25,
+        0xBE, 0x0C, 0x24,
+        0xB4, 0x11,
+        0x00, 0x00,
+        0x00, 0x00,
+        0x00, 0x00, 0x01,
+        0x00, 0x00, 0x00,
+        0x00, 0x02, 0x01, 0x01, 0x02, 0x05,
+        0x0E,
+        0xF9, 0x1E, 0x0E,
+        0x00, 0x01, 0x01, 0x01, 0x04,
+        0x90, 0xC6, 0x12,
+        0xF8, 0x88, 0x14,
+        0x8B, 0x15,
+    ];
 
     #[test]
     fn test_find_non_embedded() {
@@ -20649,6 +20853,92 @@ mod tests {
             cid_entry.is_none(),
             "CIDFont descendant should not be listed separately"
         );
+    }
+
+    #[test]
+    fn test_sync_subtypes_from_fontfile_fixes_indirect_cidfont_truetype() {
+        let mut doc = Document::with_version("1.7");
+        let font_stream = Stream::new(dictionary! {}, vec![0, 1, 0, 0, 0, 0, 0, 0]);
+        let stream_id = doc.add_object(Object::Stream(font_stream));
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "CIDTT",
+            "FontFile2" => Object::Reference(stream_id),
+        }));
+        let cid_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "CIDFontType0",
+            "BaseFont" => "CIDTT",
+            "FontDescriptor" => Object::Reference(fd_id),
+        }));
+
+        sync_subtypes_from_fontfile(&mut doc);
+
+        let subtype = doc
+            .objects
+            .get(&cid_id)
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| get_name(d, b"Subtype"))
+            .expect("cid subtype");
+        assert_eq!(subtype, "CIDFontType2");
+    }
+
+    #[test]
+    fn test_sync_subtypes_from_fontfile_fixes_inline_cidfont_cff() {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        let font_stream = Stream::new(
+            dictionary! {
+                "Subtype" => "CIDFontType0C",
+            },
+            MINIMAL_CID_CFF.to_vec(),
+        );
+        let stream_id = doc.add_object(Object::Stream(font_stream));
+        let fd_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "FontDescriptor",
+            "FontName" => "CIDCFF",
+            "FontFile3" => Object::Reference(stream_id),
+        }));
+
+        let type0_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type0",
+            "BaseFont" => "CIDCFF",
+            "DescendantFonts" => Object::Array(vec![Object::Dictionary(dictionary! {
+                "Type" => "Font",
+                "Subtype" => "CIDFontType2",
+                "BaseFont" => "CIDCFF",
+                "FontDescriptor" => Object::Reference(fd_id),
+            })]),
+        }));
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(0),
+            "Kids" => Object::Array(vec![]),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        sync_subtypes_from_fontfile(&mut doc);
+
+        let descendant_subtype = doc
+            .objects
+            .get(&type0_id)
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| d.get(b"DescendantFonts").ok())
+            .and_then(|o| o.as_array().ok())
+            .and_then(|arr| arr.first())
+            .and_then(|o| o.as_dict().ok())
+            .and_then(|d| get_name(d, b"Subtype"))
+            .expect("inline cid subtype");
+        assert_eq!(descendant_subtype, "CIDFontType0");
     }
 
     #[test]
