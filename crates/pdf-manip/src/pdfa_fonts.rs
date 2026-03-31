@@ -9074,10 +9074,13 @@ fn cff_pdf_base_glyph_name(code: u32, enc_name: &str) -> Option<String> {
     match enc_name {
         "WinAnsiEncoding" => type1_winansi_glyph_name_for_code(code),
         "" | "StandardEncoding" => standard_type1_glyph_name(code as u8).map(str::to_string),
-        // For CFF simple fonts, veraPDF does not resolve high-byte MacRoman codes
-        // through the MacRoman base encoding table; it falls back to the internal
-        // CFF encoding unless /Differences overrides the code explicitly.
-        "MacRomanEncoding" => None,
+        // MacRomanEncoding: resolve codes to AGL glyph names via the MacRoman
+        // encoding table. veraPDF §6.2.11.5 resolves MacRoman codes to glyph names
+        // and looks them up in the CFF charset (e.g. MacRoman 209 = U+2014 = "emdash").
+        "MacRomanEncoding" => {
+            let ch = macroman_to_char(code);
+            unicode_to_agl_name(ch).or_else(|| unicode_to_glyph_name(ch))
+        }
         _ => {
             let ch = encoding_to_char(code, enc_name);
             unicode_to_agl_name(ch).or_else(|| unicode_to_glyph_name(ch))
@@ -10586,15 +10589,6 @@ fn compute_cff_type1_width_corrections(
             // name-based lookup: code → PDF glyph name → CFF charset → charstring width.
             // This matches veraPDF §6.2.11.5 regardless of CFF encoding type (Standard,
             // custom Format0/Format1) and regardless of subset status.
-            //
-            // Branches removed from 7bed210 that caused §6.2.11.5 regressions:
-            // 1. cff_has_custom_encoding → compute_cff_corrections_for_custom_encoding:
-            //    Used CFF glyph_index (ignoring PDF encoding) → wrong widths for fonts like
-            //    Lucida with WinAnsiEncoding+custom CFF encoding (code 96 "grave" → 627 vs
-            //    veraPDF's expected 241).
-            // 2. enc_name.is_empty() && !is_subset → compute_cff_corrections_by_cff_encoding (removed):
-            //    Ignored Differences entries → e.g. code 133/"endash" correction not generated
-            //    for fonts with only Differences encoding (no BaseEncoding). (#507)
             return compute_cff_corrections_by_name(
                 &cff,
                 cff_bytes,
@@ -11287,8 +11281,6 @@ fn cff_width_for_code(
             // NOT SID 104 = "quotesingle" (advance 278). The old ps_standard_encoding_
             // override("quotesingle") was based on PS SE which differs from CFF SE for
             // this code, causing a wrong 204→278 correction in C059-Italic. (#507)
-            String::new()
-        } else if enc_name == "MacRomanEncoding" {
             String::new()
         } else if let Some(name) = cff_pdf_base_glyph_name(code, enc_name) {
             name
