@@ -112,6 +112,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_file_spec_keys(doc);
     strip_ef_from_file_specs(doc);
     strip_filespec_type(doc);
+    neutralize_filespec_by_structure(doc);
     strip_stream_external_ref_keys(doc);
     remove_ocg_as_key(doc);
     strip_signatures(doc);
@@ -2477,6 +2478,62 @@ fn strip_filespec_type(doc: &mut Document) {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.remove(b"Type");
             }
+        }
+    }
+}
+
+/// Neutralize file specification dicts detected by structure, not by /Type (§6.9).
+///
+/// veraPDF identifies FileSpec dicts not only by `/Type /Filespec` but also by the
+/// presence of keys like /UF, /DOS, /Mac, /Unix, or /FS. Dicts with these keys
+/// but without /Type are missed by `strip_filespec_type`. This pass strips those
+/// identifying keys so veraPDF no longer treats the dict as a file specification.
+fn neutralize_filespec_by_structure(doc: &mut Document) {
+    /// Keys that identify a dict as a file specification by structure.
+    /// /F alone is too generic (used by many dict types).
+    const FILESPEC_KEYS: &[&[u8]] = &[b"UF", b"DOS", b"Mac", b"Unix", b"FS"];
+
+    fn is_filespec_by_structure(dict: &lopdf::Dictionary) -> bool {
+        // Already has /Type /Filespec — handled by strip_filespec_type.
+        if matches!(
+            dict.get(b"Type").ok(),
+            Some(Object::Name(ref n)) if n.eq_ignore_ascii_case(b"Filespec")
+        ) {
+            return false;
+        }
+        // Must have /F (the file name) plus at least one distinctive FileSpec key.
+        dict.has(b"F") && FILESPEC_KEYS.iter().any(|k| dict.has(k))
+    }
+
+    fn strip_filespec_keys(dict: &mut lopdf::Dictionary) {
+        for &key in FILESPEC_KEYS {
+            dict.remove(key);
+        }
+        // Also remove /EF if present (embedded file stream — forbidden without
+        // PDF/A compliance of the embedded file).
+        dict.remove(b"EF");
+    }
+
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        match doc.objects.get_mut(&id) {
+            Some(Object::Dictionary(dict)) => {
+                if is_filespec_by_structure(dict) {
+                    strip_filespec_keys(dict);
+                }
+                // Check inline /FS sub-dicts (e.g. in annotation dicts).
+                if let Ok(Object::Dictionary(ref mut fs_dict)) = dict.get_mut(b"FS") {
+                    if is_filespec_by_structure(fs_dict) {
+                        strip_filespec_keys(fs_dict);
+                    }
+                }
+            }
+            Some(Object::Stream(s)) => {
+                if is_filespec_by_structure(&s.dict) {
+                    strip_filespec_keys(&mut s.dict);
+                }
+            }
+            _ => {}
         }
     }
 }

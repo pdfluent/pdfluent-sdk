@@ -701,7 +701,22 @@ impl Writer {
     }
 
     fn write_stream(file: &mut dyn Write, stream: &Stream) -> Result<()> {
-        Writer::write_dictionary(file, &stream.dict)?;
+        // Ensure /Length matches actual content length. A wrong /Length causes
+        // PDF parsers (including veraPDF) to misparse stream boundaries, which
+        // can expose binary stream bytes as structural PDF tokens and trigger
+        // false §6.1.6 hex-string violations.
+        let actual_len = stream.content.len() as i64;
+        let length_ok = matches!(
+            stream.dict.get(b"Length").ok(),
+            Some(&Object::Integer(l)) if l == actual_len
+        );
+        if length_ok {
+            Writer::write_dictionary(file, &stream.dict)?;
+        } else {
+            let mut dict = stream.dict.clone();
+            dict.set("Length", actual_len);
+            Writer::write_dictionary(file, &dict)?;
+        }
         file.write_all(b"stream\n")?;
         file.write_all(&stream.content)?;
         file.write_all(b"\nendstream")?;
