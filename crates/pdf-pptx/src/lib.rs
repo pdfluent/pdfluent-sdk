@@ -11,14 +11,15 @@ pub use writer::{PptxImage, SlideData};
 
 use lopdf::Document;
 use pdf_extract::{extract_page_blocks, extract_page_images};
-use writer::{extracted_to_pptx_image, write_pptx};
+use std::io::Cursor;
+use writer::{extracted_to_pptx_image, PptxWriter};
 
 /// Maximum number of pages to convert to PPTX. Massive documents (e.g. 1000+
 /// pages) are rarely useful as presentations and cause timeouts.
 const MAX_PPTX_PAGES: u32 = 500;
 
 /// Conversion timeout in seconds.
-const PPTX_TIMEOUT_SECS: u64 = 60;
+const PPTX_TIMEOUT_SECS: u64 = 120;
 
 /// Convert a PDF document to PPTX format.
 ///
@@ -34,7 +35,9 @@ pub fn pdf_to_pptx(doc: &Document) -> Result<Vec<u8>> {
         )));
     }
 
-    let mut slides = Vec::new();
+    let mut writer = PptxWriter::new(Cursor::new(Vec::new()));
+    writer.begin()?;
+
     let mut img_counter = 0;
 
     for page_num in 1..=total_pages {
@@ -60,17 +63,17 @@ pub fn pdf_to_pptx(doc: &Document) -> Result<Vec<u8>> {
             }
         }
 
-        slides.push(SlideData {
+        // Add slide and then DROP the page data.
+        writer.add_slide(&SlideData {
             text_blocks: page_blocks,
             images: pptx_images,
             page_width,
             page_height,
-        });
+        })?;
     }
 
-    let mut output = Vec::new();
-    write_pptx(&slides, &mut output)?;
-    Ok(output)
+    let cursor = writer.finish()?;
+    Ok(cursor.into_inner())
 }
 
 /// Convert PDF bytes to PPTX format.

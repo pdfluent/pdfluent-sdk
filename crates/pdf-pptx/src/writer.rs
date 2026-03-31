@@ -6,7 +6,8 @@ use crate::error::Result;
 use pdf_extract::{ExtractedImage, ImageFilter, TextBlock};
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::Writer;
-use std::io::{Cursor, Write};
+use std::collections::HashSet;
+use std::io::{Cursor, Seek, Write};
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
@@ -39,67 +40,120 @@ pub struct SlideData {
     pub page_height: f64,
 }
 
-/// Write a complete PPTX file from slide data.
-pub fn write_pptx(slides: &[SlideData], output: &mut Vec<u8>) -> Result<()> {
-    let cursor = Cursor::new(Vec::new());
-    let mut zip = ZipWriter::new(cursor);
-    let opts = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+/// Incremental PPTX writer to minimize memory usage during conversion.
+pub struct PptxWriter<W: Write + Seek> {
+    zip: ZipWriter<W>,
+    slide_count: usize,
+    image_extensions: HashSet<String>,
+    global_image_counter: usize,
+    options: SimpleFileOptions,
+}
 
-    // [Content_Types].xml
-    zip.start_file("[Content_Types].xml", opts)?;
-    zip.write_all(&write_content_types(slides)?)?;
+impl<W: Write + Seek> PptxWriter<W> {
+    pub fn new(inner: W) -> Self {
+        let zip = ZipWriter::new(inner);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        Self {
+            zip,
+            slide_count: 0,
+            image_extensions: HashSet::new(),
+            global_image_counter: 0,
+            options,
+        }
+    }
 
-    // _rels/.rels
-    zip.start_file("_rels/.rels", opts)?;
-    zip.write_all(&write_root_rels()?)?;
+    /// Pre-write static files that don't depend on slide content.
+    pub fn begin(&mut self) -> Result<()> {
+        // _rels/.rels
+        self.zip.start_file("_rels/.rels", self.options)?;
+        self.zip.write_all(&write_root_rels()?)?;
 
-    // ppt/presentation.xml
-    zip.start_file("ppt/presentation.xml", opts)?;
-    zip.write_all(&write_presentation(slides.len())?)?;
+        // Slide layout and master (minimal)
+        self.zip
+            .start_file("ppt/slideMasters/slideMaster1.xml", self.options)?;
+        self.zip.write_all(&write_slide_master()?)?;
 
-    // ppt/_rels/presentation.xml.rels
-    zip.start_file("ppt/_rels/presentation.xml.rels", opts)?;
-    zip.write_all(&write_presentation_rels(slides)?)?;
+        self.zip.start_file(
+            "ppt/slideMasters/_rels/slideMaster1.xml.rels",
+            self.options,
+        )?;
+        self.zip.write_all(&write_slide_master_rels()?)?;
 
-    // Slide layout and master (minimal)
-    zip.start_file("ppt/slideMasters/slideMaster1.xml", opts)?;
-    zip.write_all(&write_slide_master()?)?;
+        self.zip
+            .start_file("ppt/slideLayouts/slideLayout1.xml", self.options)?;
+        self.zip.write_all(&write_slide_layout()?)?;
 
-    zip.start_file("ppt/slideMasters/_rels/slideMaster1.xml.rels", opts)?;
-    zip.write_all(&write_slide_master_rels()?)?;
+        self.zip.start_file(
+            "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+            self.options,
+        )?;
+        self.zip.write_all(&write_slide_layout_rels()?)?;
 
-    zip.start_file("ppt/slideLayouts/slideLayout1.xml", opts)?;
-    zip.write_all(&write_slide_layout()?)?;
+        Ok(())
+    }
 
-    zip.start_file("ppt/slideLayouts/_rels/slideLayout1.xml.rels", opts)?;
-    zip.write_all(&write_slide_layout_rels()?)?;
-
-    // Slides + their relationships + images
-    let mut global_img_idx = 0;
-    for (i, slide) in slides.iter().enumerate() {
-        let slide_num = i + 1;
+    /// Add a slide to the presentation.
+    pub fn add_slide(&mut self, slide: &SlideData) -> Result<()> {
+        self.slide_count += 1;
+        let slide_num = self.slide_count;
 
         // Slide XML
         let slide_path = format!("ppt/slides/slide{slide_num}.xml");
-        zip.start_file(slide_path, opts)?;
-        zip.write_all(&write_slide(slide, global_img_idx)?)?;
+        self.zip.start_file(slide_path, self.options)?;
+        self.zip
+            .write_all(&write_slide(slide, self.global_image_counter)?)?;
 
         // Slide rels
         let rels_path = format!("ppt/slides/_rels/slide{slide_num}.xml.rels");
-        zip.start_file(rels_path, opts)?;
-        zip.write_all(&write_slide_rels(slide, global_img_idx)?)?;
+        self.zip.start_file(rels_path, self.options)?;
+        self.zip
+            .write_all(&write_slide_rels(slide, self.global_image_counter)?)?;
 
         // Images
         for img in &slide.images {
+            let ext = image_ext(&img.content_type);
+            self.image_extensions.insert(ext.to_string());
+
             let img_path = format!("ppt/media/{}", img.filename);
-            zip.start_file(img_path, opts)?;
-            zip.write_all(&img.data)?;
+            self.zip.start_file(img_path, self.options)?;
+            self.zip.write_all(&img.data)?;
         }
 
-        global_img_idx += slide.images.len();
+        self.global_image_counter += slide.images.len();
+        Ok(())
     }
 
-    let cursor = zip.finish()?;
+    /// Finalize the PPTX by writing global metadata and finishing the ZIP.
+    pub fn finish(mut self) -> Result<W> {
+        // [Content_Types].xml
+        self.zip.start_file("[Content_Types].xml", self.options)?;
+        self.zip
+            .write_all(&write_content_types_inc(self.slide_count, &self.image_extensions)?)?;
+
+        // ppt/presentation.xml
+        self.zip.start_file("ppt/presentation.xml", self.options)?;
+        self.zip.write_all(&write_presentation(self.slide_count)?)?;
+
+        // ppt/_rels/presentation.xml.rels
+        self.zip
+            .start_file("ppt/_rels/presentation.xml.rels", self.options)?;
+        self.zip
+            .write_all(&write_presentation_rels_inc(self.slide_count)?)?;
+
+        let inner = self.zip.finish()?;
+        Ok(inner)
+    }
+}
+
+/// Write a complete PPTX file from slide data.
+pub fn write_pptx(slides: &[SlideData], output: &mut Vec<u8>) -> Result<()> {
+    let mut writer = PptxWriter::new(Cursor::new(Vec::new()));
+    writer.begin()?;
+    for slide in slides {
+        writer.add_slide(slide)?;
+    }
+    let cursor = writer.finish()?;
     *output = cursor.into_inner();
     Ok(())
 }
@@ -115,7 +169,7 @@ fn xml_decl(w: &mut Writer<&mut Cursor<Vec<u8>>>) -> Result<()> {
     Ok(())
 }
 
-fn write_content_types(slides: &[SlideData]) -> Result<Vec<u8>> {
+fn write_content_types_inc(slide_count: usize, image_exts: &HashSet<String>) -> Result<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     let mut w = Writer::new_with_indent(&mut buf, b' ', 2);
     xml_decl(&mut w)?;
@@ -146,18 +200,19 @@ fn write_content_types(slides: &[SlideData]) -> Result<Vec<u8>> {
     )?;
 
     // Image types
-    let mut seen = std::collections::HashSet::new();
-    for slide in slides {
-        for img in &slide.images {
-            let ext = image_ext(&img.content_type);
-            if seen.insert(ext.to_string()) {
-                empty_with_attrs(
-                    &mut w,
-                    "Default",
-                    &[("Extension", ext), ("ContentType", &img.content_type)],
-                )?;
-            }
-        }
+    for ext in image_exts {
+        let content_type = match ext.as_str() {
+            "jpeg" | "jpg" => "image/jpeg",
+            "png" => "image/png",
+            "gif" => "image/gif",
+            "tiff" => "image/tiff",
+            _ => "image/png",
+        };
+        empty_with_attrs(
+            &mut w,
+            "Default",
+            &[("Extension", ext), ("ContentType", content_type)],
+        )?;
     }
 
     // Overrides
@@ -188,7 +243,7 @@ fn write_content_types(slides: &[SlideData]) -> Result<Vec<u8>> {
         ],
     )?;
 
-    for i in 1..=slides.len() {
+    for i in 1..=slide_count {
         let part = format!("/ppt/slides/slide{i}.xml");
         empty_with_attrs(
             &mut w,
@@ -287,7 +342,7 @@ fn write_presentation(slide_count: usize) -> Result<Vec<u8>> {
     Ok(buf.into_inner())
 }
 
-fn write_presentation_rels(slides: &[SlideData]) -> Result<Vec<u8>> {
+fn write_presentation_rels_inc(slide_count: usize) -> Result<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     let mut w = Writer::new_with_indent(&mut buf, b' ', 2);
     xml_decl(&mut w)?;
@@ -314,7 +369,7 @@ fn write_presentation_rels(slides: &[SlideData]) -> Result<Vec<u8>> {
     )?;
 
     // Slides
-    for i in 0..slides.len() {
+    for i in 0..slide_count {
         let rid = format!("rId{}", i + 2);
         let target = format!("slides/slide{}.xml", i + 1);
         empty_with_attrs(
@@ -553,7 +608,7 @@ fn write_slide(slide: &SlideData, _img_offset: usize) -> Result<Vec<u8>> {
     Ok(buf.into_inner())
 }
 
-fn write_slide_rels(slide: &SlideData, _img_offset: usize) -> Result<Vec<u8>> {
+fn write_slide_rels(slide: &SlideData, img_offset: usize) -> Result<Vec<u8>> {
     let mut buf = Cursor::new(Vec::new());
     let mut w = Writer::new_with_indent(&mut buf, b' ', 2);
     xml_decl(&mut w)?;
@@ -582,7 +637,9 @@ fn write_slide_rels(slide: &SlideData, _img_offset: usize) -> Result<Vec<u8>> {
     // Images
     for (i, img) in slide.images.iter().enumerate() {
         let rid = format!("rId{}", i + 2);
-        let target = format!("../media/{}", img.filename);
+        // Correctly reference global image index for filename.
+        let ext = image_ext(&img.content_type);
+        let target = format!("../media/image{}.{}", img_offset + i, ext);
         empty_with_attrs(
             &mut w,
             "Relationship",

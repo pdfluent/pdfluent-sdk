@@ -1080,6 +1080,12 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         pdf_manip::pdfa_fixups::run_fixups(&mut doc)
     }));
 
+    dbg_step!("run_structure");
+    // Structural fixups (transparency groups, MarkInfo, widget appearances).
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_structure::run_structure_fixups(&mut doc)
+    }));
+
     // Post-fixup color space normalization.
     fix_wrong_root(&mut doc);
     let cs2_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
