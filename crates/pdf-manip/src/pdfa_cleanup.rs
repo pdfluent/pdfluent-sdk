@@ -1663,13 +1663,10 @@ fn fix_acroform_widget_ap(doc: &mut Document) -> usize {
                     if let Some(Object::Dictionary(ap)) = doc.objects.get(ap_id) {
                         match ap.get(b"N").ok() {
                             Some(Object::Stream(_)) | Some(Object::Dictionary(_)) => continue,
-                            Some(Object::Reference(r)) => {
-                                match doc.objects.get(r) {
-                                    Some(Object::Stream(_))
-                                    | Some(Object::Dictionary(_)) => continue,
-                                    _ => {}
-                                }
-                            }
+                            Some(Object::Reference(r)) => match doc.objects.get(r) {
+                                Some(Object::Stream(_)) | Some(Object::Dictionary(_)) => continue,
+                                _ => {}
+                            },
                             _ => {}
                         }
                     }
@@ -3119,7 +3116,10 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
             combined.extend_from_slice(&c);
         }
 
-        if !combined.windows(3).any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC") {
+        if !combined
+            .windows(3)
+            .any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC")
+        {
             continue;
         }
 
@@ -3172,7 +3172,10 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
             }
         };
 
-        if !content.windows(3).any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC") {
+        if !content
+            .windows(3)
+            .any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC")
+        {
             continue;
         }
 

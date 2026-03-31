@@ -1288,8 +1288,7 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
                 );
                 if is_widget {
                     // Check /FT directly or via /Parent chain.
-                    if matches!(dict.get(b"FT").ok(), Some(Object::Name(ref n)) if n == b"Btn")
-                    {
+                    if matches!(dict.get(b"FT").ok(), Some(Object::Name(ref n)) if n == b"Btn") {
                         true
                     } else {
                         let mut found = false;
@@ -1402,19 +1401,29 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
                 // Follow /Parent chain to find inherited /FT.
                 let mut found = false;
                 let mut cur = dict.get(b"Parent").ok().and_then(|o| {
-                    if let Object::Reference(r) = o { Some(*r) } else { None }
+                    if let Object::Reference(r) = o {
+                        Some(*r)
+                    } else {
+                        None
+                    }
                 });
                 let mut depth = 0;
                 while let Some(pid) = cur {
                     depth += 1;
-                    if depth > 20 { break; } // prevent loops
+                    if depth > 20 {
+                        break;
+                    } // prevent loops
                     if let Some(Object::Dictionary(pd)) = doc.objects.get(&pid) {
                         if matches!(pd.get(b"FT").ok(), Some(Object::Name(ref n)) if n == b"Btn") {
                             found = true;
                             break;
                         }
                         cur = pd.get(b"Parent").ok().and_then(|o| {
-                            if let Object::Reference(r) = o { Some(*r) } else { None }
+                            if let Object::Reference(r) = o {
+                                Some(*r)
+                            } else {
+                                None
+                            }
                         });
                     } else {
                         break;
@@ -1433,12 +1442,10 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
             // Check if AP.N is a stream reference (not a dict).
             match doc.objects.get(&ap_id) {
                 Some(Object::Dictionary(ap)) => match ap.get(b"N").ok() {
-                    Some(Object::Reference(n_id)) => {
-                        match doc.objects.get(n_id) {
-                            Some(Object::Stream(_)) => Some((ap_id, *n_id)),
-                            _ => None,
-                        }
-                    }
+                    Some(Object::Reference(n_id)) => match doc.objects.get(n_id) {
+                        Some(Object::Stream(_)) => Some((ap_id, *n_id)),
+                        _ => None,
+                    },
                     _ => None,
                 },
                 _ => None,
@@ -1451,9 +1458,7 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
                     continue;
                 };
                 match dict.get(b"AS").ok() {
-                    Some(Object::Name(n)) if n != b"Off" => {
-                        String::from_utf8_lossy(n).to_string()
-                    }
+                    Some(Object::Name(n)) if n != b"Off" => String::from_utf8_lossy(n).to_string(),
                     _ => "Yes".to_string(),
                 }
             };
@@ -1982,7 +1987,8 @@ fn fix_file_spec_ef_extra(doc: &mut Document) -> usize {
         dict.remove(b"EF");
         // Remove /Type /Filespec so the dict is no longer identified as a file
         // specification (§6.9: FileSpec without /EF = forbidden external reference).
-        if matches!(dict.get(b"Type").ok(), Some(Object::Name(ref n)) if n.eq_ignore_ascii_case(b"Filespec")) {
+        if matches!(dict.get(b"Type").ok(), Some(Object::Name(ref n)) if n.eq_ignore_ascii_case(b"Filespec"))
+        {
             dict.remove(b"Type");
         }
         // Ensure F and UF keys exist (required by 6.8/2).
@@ -4580,8 +4586,7 @@ fn fix_inline_image_f_abbrev(doc: &mut Document) -> usize {
                 if decompressed[i] == b'/'
                     && i + 2 < decompressed.len()
                     && decompressed[i + 1] == b'F'
-                    && (decompressed[i + 2] == b' '
-                        || decompressed[i + 2] == b'/')
+                    && (decompressed[i + 2] == b' ' || decompressed[i + 2] == b'/')
                 {
                     out.extend_from_slice(b"/Filter");
                     i += 2; // skip "/F", the space/slash stays
@@ -4593,8 +4598,7 @@ fn fix_inline_image_f_abbrev(doc: &mut Document) -> usize {
                     && i + 3 < decompressed.len()
                     && decompressed[i + 1] == b'D'
                     && decompressed[i + 2] == b'P'
-                    && (decompressed[i + 3] == b' '
-                        || decompressed[i + 3] == b'<')
+                    && (decompressed[i + 3] == b' ' || decompressed[i + 3] == b'<')
                 {
                     out.extend_from_slice(b"/DecodeParms");
                     i += 3;
@@ -5910,7 +5914,9 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
                         continue;
                     }
                 } else if s.len() > 10
-                    && s.trim_start_matches(['-', '+']).chars().all(|c| c.is_ascii_digit())
+                    && s.trim_start_matches(['-', '+'])
+                        .chars()
+                        .all(|c| c.is_ascii_digit())
                 {
                     // Integer too large even for i64 — clamp to ±i32 max.
                     let negative = s.starts_with('-');
@@ -6231,27 +6237,26 @@ fn fix_jbig2_globals(doc: &mut Document) -> usize {
                 continue;
             }
             // Check for /JBIG2Globals in DecodeParms.
-            let globals_ref: Option<ObjectId> = if let Some(Object::Dictionary(dp)) =
-                stream.dict.get(b"DecodeParms").ok()
-            {
-                match dp.get(b"JBIG2Globals").ok() {
-                    Some(Object::Reference(r)) => Some(*r),
-                    _ => None,
-                }
-            } else if let Some(Object::Array(arr)) = stream.dict.get(b"DecodeParms").ok() {
-                arr.iter().find_map(|o| {
-                    if let Object::Dictionary(dp) = o {
-                        match dp.get(b"JBIG2Globals").ok() {
-                            Some(Object::Reference(r)) => Some(*r),
-                            _ => None,
-                        }
-                    } else {
-                        None
+            let globals_ref: Option<ObjectId> =
+                if let Some(Object::Dictionary(dp)) = stream.dict.get(b"DecodeParms").ok() {
+                    match dp.get(b"JBIG2Globals").ok() {
+                        Some(Object::Reference(r)) => Some(*r),
+                        _ => None,
                     }
-                })
-            } else {
-                None
-            };
+                } else if let Some(Object::Array(arr)) = stream.dict.get(b"DecodeParms").ok() {
+                    arr.iter().find_map(|o| {
+                        if let Object::Dictionary(dp) = o {
+                            match dp.get(b"JBIG2Globals").ok() {
+                                Some(Object::Reference(r)) => Some(*r),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                };
             let Some(globals_id) = globals_ref else {
                 continue; // JBIG2 without globals — allowed in PDF/A.
             };
@@ -6347,9 +6352,13 @@ fn fix_jbig2_globals(doc: &mut Document) -> usize {
 
         // Phase 3: replace stream.
         if let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) {
-            stream.dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+            stream
+                .dict
+                .set("Filter", Object::Name(b"FlateDecode".to_vec()));
             stream.dict.remove(b"DecodeParms");
-            stream.dict.set("Width", Object::Integer(image.width as i64));
+            stream
+                .dict
+                .set("Width", Object::Integer(image.width as i64));
             stream
                 .dict
                 .set("Height", Object::Integer(image.height as i64));
@@ -7520,43 +7529,47 @@ fn compress_binary_inline_images_with_ei(data: &[u8]) -> Option<Vec<u8>> {
             // appear ("I" is not a hex digit).  FlateDecode is NOT safe here
             // because compressed output can still spell "\nEI".
             {
-                    let hex: Vec<u8> = image_data
-                        .iter()
-                        .flat_map(|b| format!("{b:02X}").into_bytes())
-                        .chain(std::iter::once(b'>'))
-                        .collect();
-                    // Write: BI <modified dict with /F /AHx> ID <hex data> EI
-                    out.extend_from_slice(b"BI");
-                    out.extend_from_slice(dict_bytes);
-                    out.extend_from_slice(b" /F /AHx");
-                    out.extend_from_slice(b"\nID ");
-                    out.extend_from_slice(&hex);
-                    out.extend_from_slice(b"\nEI");
+                let hex: Vec<u8> = image_data
+                    .iter()
+                    .flat_map(|b| format!("{b:02X}").into_bytes())
+                    .chain(std::iter::once(b'>'))
+                    .collect();
+                // Write: BI <modified dict with /F /AHx> ID <hex data> EI
+                out.extend_from_slice(b"BI");
+                out.extend_from_slice(dict_bytes);
+                out.extend_from_slice(b" /F /AHx");
+                out.extend_from_slice(b"\nID ");
+                out.extend_from_slice(&hex);
+                out.extend_from_slice(b"\nEI");
 
-                    // Skip past the original EI
-                    i = data_end;
-                    while i < data.len() {
-                        if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
-                            && i + 3 <= data.len()
-                            && &data[i + 1..i + 3] == b"EI"
-                            && (i + 3 >= data.len()
-                                || data[i + 3].is_ascii_whitespace()
-                                || data[i + 3] == b'Q')
-                        {
-                            i += 3;
-                            break;
-                        }
-                        i += 1;
+                // Skip past the original EI
+                i = data_end;
+                while i < data.len() {
+                    if (data[i] == b'\n' || data[i] == b' ' || data[i] == b'\r')
+                        && i + 3 <= data.len()
+                        && &data[i + 1..i + 3] == b"EI"
+                        && (i + 3 >= data.len()
+                            || data[i + 3].is_ascii_whitespace()
+                            || data[i + 3] == b'Q')
+                    {
+                        i += 3;
+                        break;
                     }
-                    modified = true;
-                    continue;
+                    i += 1;
+                }
+                modified = true;
+                continue;
             }
         }
         out.push(data[i]);
         i += 1;
     }
 
-    if modified { Some(out) } else { None }
+    if modified {
+        Some(out)
+    } else {
+        None
+    }
 }
 
 /// Scans a decompressed content stream for BI blocks that use LZWDecode
@@ -8079,7 +8092,7 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
                 // After "ID" there is one mandatory whitespace byte, then
                 // exactly `expected_len` bytes of image data.
                 let skip = i + 1 + expected_len; // +1 for whitespace after ID
-                // Copy the whitespace + image data verbatim.
+                                                 // Copy the whitespace + image data verbatim.
                 let safe_end = skip.min(data.len());
                 out.extend_from_slice(&data[i..safe_end]);
                 safe_end
@@ -8222,10 +8235,7 @@ fn inline_image_data_length(dict_bytes: &[u8]) -> usize {
                     if j < dict.len() && dict[j] == b'/' {
                         j += 1; // skip /
                         let name_start = j;
-                        while j < dict.len()
-                            && !dict[j].is_ascii_whitespace()
-                            && dict[j] != b'/'
-                        {
+                        while j < dict.len() && !dict[j].is_ascii_whitespace() && dict[j] != b'/' {
                             j += 1;
                         }
                         return Some(&dict[name_start..j]);
@@ -8243,7 +8253,8 @@ fn inline_image_data_length(dict_bytes: &[u8]) -> usize {
     for window_start in 0..dict_bytes.len().saturating_sub(2) {
         if dict_bytes[window_start] == b'/' && window_start + 1 < dict_bytes.len() {
             let after_slash = &dict_bytes[window_start + 1..];
-            if after_slash.starts_with(b"F ") || after_slash.starts_with(b"F\n")
+            if after_slash.starts_with(b"F ")
+                || after_slash.starts_with(b"F\n")
                 || after_slash.starts_with(b"F\r")
                 || after_slash.starts_with(b"Filter")
             {
@@ -8265,10 +8276,7 @@ fn inline_image_data_length(dict_bytes: &[u8]) -> usize {
         && (dict_bytes.windows(8).any(|w| w == b"/IM true")
             || dict_bytes.windows(10).any(|w| w == b"/ImageMask"));
 
-    let cs = extract_name(
-        dict_bytes,
-        &[b"/CS ", b"/CS\n", b"/CS\r", b"/ColorSpace "],
-    );
+    let cs = extract_name(dict_bytes, &[b"/CS ", b"/CS\n", b"/CS\r", b"/ColorSpace "]);
     let components = if is_imagemask {
         1
     } else {
@@ -8502,9 +8510,7 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
             if let Some(Object::Dictionary(grp)) = doc.objects.get(grp_id) {
                 let needs_fix = match grp.get(b"CS").ok() {
                     Some(Object::Name(cs))
-                        if cs == b"DeviceRGB"
-                            || cs == b"DeviceCMYK"
-                            || cs == b"DeviceGray" =>
+                        if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
                     {
                         true
                     }
@@ -8528,39 +8534,45 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
 
     // Second pass: fix inline /Group dicts and add /Group to pages without one.
     for page_id in &page_ids {
+        let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
+            continue;
+        };
+        let group_val = pd.get(b"Group");
+        let needs_group_fix = match group_val {
+            Ok(Object::Reference(grp_id)) => {
+                !matches!(doc.objects.get(grp_id), Some(Object::Dictionary(_)))
+            }
+            Ok(Object::Dictionary(_)) => {
+                let grp_dict = match group_val {
+                    Ok(Object::Dictionary(d)) => d,
+                    _ => unreachable!(),
+                };
+                match grp_dict.get(b"CS").ok() {
+                    Some(Object::Name(cs))
+                        if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
+                    {
+                        true
+                    }
+                    None => true,
+                    _ => false,
+                }
+            }
+            _ => true,
+        };
+        if !needs_group_fix {
+            continue;
+        }
         let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) else {
             continue;
         };
-        if let Ok(Object::Dictionary(ref mut grp)) = pd.get_mut(b"Group") {
-            // Inline Group — fix device CS or missing CS.
-            let needs_fix = match grp.get(b"CS").ok() {
-                Some(Object::Name(cs))
-                    if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
-                {
-                    true
-                }
-                None => true,
-                _ => false,
-            };
-            if needs_fix {
-                if let Some(ref cs) = cs_value {
-                    grp.set("CS", cs.clone());
-                    count += 1;
-                }
-            }
-        } else if !pd.has(b"Group") {
-            // No Group — add one.  Adding a transparency group to a
-            // non-transparent page is harmless and avoids false negatives
-            // from our lopdf-based transparency detection.
-            let mut group_dict = lopdf::dictionary! {
-                "S" => Object::Name(b"Transparency".to_vec()),
-            };
-            if let Some(ref cs) = cs_value {
-                group_dict.set("CS", cs.clone());
-            }
-            pd.set("Group", Object::Dictionary(group_dict));
-            count += 1;
+        let mut group_dict = lopdf::dictionary! {
+            "S" => Object::Name(b"Transparency".to_vec()),
+        };
+        if let Some(ref cs) = cs_value {
+            group_dict.set("CS", cs.clone());
         }
+        pd.set("Group", Object::Dictionary(group_dict));
+        count += 1;
     }
 
     count
@@ -9303,10 +9315,7 @@ fn is_valid_bcp47(tag: &str) -> bool {
 
     // Primary subtag: 2-3 lowercase alpha.
     let primary = parts[0];
-    if primary.len() < 2
-        || primary.len() > 3
-        || !primary.bytes().all(|b| b.is_ascii_lowercase())
-    {
+    if primary.len() < 2 || primary.len() > 3 || !primary.bytes().all(|b| b.is_ascii_lowercase()) {
         return false;
     }
 
@@ -9352,10 +9361,7 @@ fn normalize_bcp47(tag: &str) -> Option<String> {
 
     // Primary language subtag: 2-3 letter alpha, lowercase.
     let primary = parts[0];
-    if primary.len() < 2
-        || primary.len() > 3
-        || !primary.bytes().all(|b| b.is_ascii_alphabetic())
-    {
+    if primary.len() < 2 || primary.len() > 3 || !primary.bytes().all(|b| b.is_ascii_alphabetic()) {
         return None;
     }
 

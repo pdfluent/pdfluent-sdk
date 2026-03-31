@@ -1224,8 +1224,7 @@ fn add_default_cs_to_annotation_appearances(doc: &mut Document, name: &[u8], cs_
         let ap_refs = match doc.objects.get(id) {
             Some(Object::Dictionary(dict)) => {
                 // Check if this is an annotation (has /Subtype and /Rect or /Type=Annot).
-                let is_annot = dict.has(b"Rect")
-                    && (dict.has(b"Subtype") || dict.has(b"Type"));
+                let is_annot = dict.has(b"Rect") && (dict.has(b"Subtype") || dict.has(b"Type"));
                 if !is_annot {
                     continue;
                 }
@@ -1540,9 +1539,7 @@ fn ensure_devicen_colorants(doc: &mut Document) {
     // Red/Green/Blue are only process in RGB alternate spaces but are spot
     // colors in CMYK alternate spaces.  We exclude them from the default
     // process list to avoid missing Colorants entries for spot "Blue" etc.
-    let process_names: &[&[u8]] = &[
-        b"Cyan", b"Magenta", b"Yellow", b"Black", b"None", b"All",
-    ];
+    let process_names: &[&[u8]] = &[b"Cyan", b"Magenta", b"Yellow", b"Black", b"None", b"All"];
 
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
