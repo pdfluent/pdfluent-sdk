@@ -106,6 +106,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     remove_forbidden_annotations(doc);
     fix_file_spec_keys(doc);
     strip_ef_from_file_specs(doc);
+    strip_filespec_type(doc);
     strip_stream_external_ref_keys(doc);
     remove_ocg_as_key(doc);
     strip_signatures(doc);
@@ -2292,6 +2293,34 @@ fn strip_ef_from_file_specs(doc: &mut Document) {
         if needs_strip {
             if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                 dict.remove(b"EF");
+            }
+        }
+    }
+}
+
+/// Remove /Type from all file specification dicts (§6.9).
+///
+/// After strip_ef_from_file_specs removes /EF, the remaining FileSpec dicts
+/// would trigger §6.9 ("file specification without /EF = external file reference").
+/// PDF/A-2 forbids external file references. By removing /Type /Filespec, the
+/// dicts are no longer identified as file specifications by compliance checkers.
+/// This also handles FileSpec dicts that never had /EF (pure external references).
+fn strip_filespec_type(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let is_filespec = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                matches!(
+                    dict.get(b"Type").ok(),
+                    Some(Object::Name(ref n)) if n == b"Filespec"
+                )
+            } else {
+                false
+            }
+        };
+        if is_filespec {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.remove(b"Type");
             }
         }
     }

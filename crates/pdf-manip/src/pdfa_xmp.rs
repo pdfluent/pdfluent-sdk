@@ -294,7 +294,7 @@ fn to_pdf_string(s: &str) -> Object {
 }
 
 fn get_string_value(dict: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
-    match dict.get(key).ok()? {
+    let raw = match dict.get(key).ok()? {
         Object::String(bytes, _) => {
             // Handle UTF-16BE BOM.
             if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
@@ -309,6 +309,13 @@ fn get_string_value(dict: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
                     })
                     .collect();
                 String::from_utf16(&utf16).ok()
+            } else if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF
+            {
+                // UTF-8 BOM — decode the rest as UTF-8.
+                match std::str::from_utf8(&bytes[3..]) {
+                    Ok(s) => Some(s.to_string()),
+                    Err(_) => Some(bytes[3..].iter().map(|&b| b as char).collect()),
+                }
             } else {
                 // Try UTF-8 first. For PDFDocEncoding/Latin-1 strings (e.g. 0xAE = ®),
                 // from_utf8_lossy would replace bytes ≥0x80 that aren't valid UTF-8
@@ -323,7 +330,13 @@ fn get_string_value(dict: &lopdf::Dictionary, key: &[u8]) -> Option<String> {
             }
         }
         _ => None,
-    }
+    };
+    // Strip BOM characters (U+FEFF) that survived decoding and treat
+    // whitespace-only / empty strings as absent. This prevents BOM-only or
+    // space-only /Info entries from producing XMP mismatches (§6.7.3).
+    raw.map(|s| s.replace('\u{FEFF}', ""))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Merge user-provided metadata with existing /Info values.
@@ -370,17 +383,27 @@ fn sync_info_dict(doc: &mut Document, meta: &PdfMetadata) {
     };
 
     if let Some(Object::Dictionary(ref mut info)) = doc.objects.get_mut(&info_id) {
-        if let Some(ref title) = meta.title {
-            info.set("Title", to_pdf_string(title));
+        // Sync each /Info key: set if present in metadata, remove if absent.
+        // Removing BOM-only / whitespace-only entries prevents §6.7.3 mismatches.
+        match &meta.title {
+            Some(title) => info.set("Title", to_pdf_string(title)),
+            None => { info.remove(b"Title"); }
         }
-        if let Some(ref author) = meta.creator {
-            info.set("Author", to_pdf_string(author));
+        match &meta.creator {
+            Some(author) => info.set("Author", to_pdf_string(author)),
+            None => { info.remove(b"Author"); }
         }
-        if let Some(ref producer) = meta.producer {
-            info.set("Producer", to_pdf_string(producer));
+        match &meta.producer {
+            Some(producer) => info.set("Producer", to_pdf_string(producer)),
+            None => { info.remove(b"Producer"); }
         }
-        if let Some(ref subject) = meta.description {
-            info.set("Subject", to_pdf_string(subject));
+        match &meta.description {
+            Some(subject) => info.set("Subject", to_pdf_string(subject)),
+            None => { info.remove(b"Subject"); }
+        }
+        match &meta.keywords {
+            Some(kw) => info.set("Keywords", to_pdf_string(kw)),
+            None => { info.remove(b"Keywords"); }
         }
         // Sync /Creator with (trimmed) creator_tool. If None (e.g. was whitespace-only),
         // remove it so /Info and XMP agree and §6.7.3.6 does not fire.
