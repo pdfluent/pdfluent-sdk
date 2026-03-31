@@ -76,17 +76,17 @@ pub enum CFFError {
 }
 
 #[inline]
-pub fn f32_abs(n: f32) -> f32 {
+pub fn f64_abs(n: f64) -> f64 {
     n.abs()
 }
 
 #[inline]
-pub fn conv_subroutine_index(index: f32, bias: u16) -> Result<u32, CFFError> {
+pub fn conv_subroutine_index(index: f64, bias: u16) -> Result<u32, CFFError> {
     conv_subroutine_index_impl(index, bias).ok_or(CFFError::InvalidSubroutineIndex)
 }
 
 #[inline]
-fn conv_subroutine_index_impl(index: f32, bias: u16) -> Option<u32> {
+fn conv_subroutine_index_impl(index: f64, bias: u16) -> Option<u32> {
     let index = i32::try_num_from(index)?;
     let bias = i32::from(bias);
 
@@ -144,19 +144,29 @@ pub(crate) struct Builder<'a> {
 
 impl<'a> Builder<'a> {
     #[inline]
-    fn move_to(&mut self, x: f32, y: f32) {
+    fn move_to(&mut self, x: f64, y: f64) {
+        let x = x as f32;
+        let y = y as f32;
         self.bbox.extend_by(x, y);
         self.builder.move_to(x, y);
     }
 
     #[inline]
-    fn line_to(&mut self, x: f32, y: f32) {
+    fn line_to(&mut self, x: f64, y: f64) {
+        let x = x as f32;
+        let y = y as f32;
         self.bbox.extend_by(x, y);
         self.builder.line_to(x, y);
     }
 
     #[inline]
-    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+    fn curve_to(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, x: f64, y: f64) {
+        let x1 = x1 as f32;
+        let y1 = y1 as f32;
+        let x2 = x2 as f32;
+        let y2 = y2 as f32;
+        let x = x as f32;
+        let y = y as f32;
         self.bbox.extend_by(x1, y1);
         self.bbox.extend_by(x2, y2);
         self.bbox.extend_by(x, y);

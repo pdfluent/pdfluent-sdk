@@ -1,7 +1,7 @@
 use super::CFFError;
 
 pub struct ArgumentsStack<'a> {
-    pub data: &'a mut [f32],
+    pub data: &'a mut [f64],
     pub len: usize,
     pub max_len: usize,
 }
@@ -18,7 +18,7 @@ impl<'a> ArgumentsStack<'a> {
     }
 
     #[inline]
-    pub fn push(&mut self, n: f32) -> Result<(), CFFError> {
+    pub fn push(&mut self, n: f64) -> Result<(), CFFError> {
         if self.len == self.max_len {
             Err(CFFError::ArgumentsStackLimitReached)
         } else {
@@ -29,12 +29,12 @@ impl<'a> ArgumentsStack<'a> {
     }
 
     #[inline]
-    pub fn at(&self, index: usize) -> f32 {
+    pub fn at(&self, index: usize) -> f64 {
         self.data[index]
     }
 
     #[inline]
-    pub fn pop(&mut self) -> f32 {
+    pub fn pop(&mut self) -> f64 {
         debug_assert!(!self.is_empty());
         self.len -= 1;
         self.data[self.len]

@@ -108,9 +108,9 @@ pub(crate) enum FontKind<'a> {
 pub(crate) struct SIDMetadata<'a> {
     local_subrs: Index<'a>,
     /// Can be zero.
-    default_width: f32,
+    default_width: f64,
     /// Can be zero.
-    nominal_width: f32,
+    nominal_width: f64,
     encoding: Encoding<'a>,
 }
 
@@ -124,12 +124,12 @@ pub(crate) struct CIDMetadata<'a> {
 #[allow(missing_docs)]
 #[derive(Clone, Copy, Debug)]
 pub struct Matrix {
-    pub sx: f32,
-    pub ky: f32,
-    pub kx: f32,
-    pub sy: f32,
-    pub tx: f32,
-    pub ty: f32,
+    pub sx: f64,
+    pub ky: f64,
+    pub kx: f64,
+    pub sy: f64,
+    pub tx: f64,
+    pub ty: f64,
 }
 
 impl Default for Matrix {
@@ -202,12 +202,12 @@ fn parse_top_dict(s: &mut Stream) -> Option<TopDict> {
                 let operands = dict_parser.operands();
                 if operands.len() == 6 {
                     top_dict.matrix = Matrix {
-                        sx: operands[0] as f32,
-                        ky: operands[1] as f32,
-                        kx: operands[2] as f32,
-                        sy: operands[3] as f32,
-                        tx: operands[4] as f32,
-                        ty: operands[5] as f32,
+                        sx: operands[0],
+                        ky: operands[1],
+                        kx: operands[2],
+                        sy: operands[3],
+                        tx: operands[4],
+                        ty: operands[5],
                     };
                 }
             }
@@ -299,8 +299,8 @@ mod tests {
 #[derive(Default, Debug)]
 struct PrivateDict {
     local_subroutines_offset: Option<usize>,
-    default_width: Option<f32>,
-    nominal_width: Option<f32>,
+    default_width: Option<f64>,
+    nominal_width: Option<f64>,
 }
 
 fn parse_private_dict(data: &[u8]) -> PrivateDict {
@@ -311,9 +311,9 @@ fn parse_private_dict(data: &[u8]) -> PrivateDict {
         if operator.get() == private_dict_operator::LOCAL_SUBROUTINES_OFFSET {
             dict.local_subroutines_offset = dict_parser.parse_offset();
         } else if operator.get() == private_dict_operator::DEFAULT_WIDTH {
-            dict.default_width = dict_parser.parse_number().map(|n| n as f32);
+            dict.default_width = dict_parser.parse_number();
         } else if operator.get() == private_dict_operator::NOMINAL_WIDTH {
-            dict.nominal_width = dict_parser.parse_number().map(|n| n as f32);
+            dict.nominal_width = dict_parser.parse_number();
         }
     }
 
@@ -346,12 +346,12 @@ fn parse_font_dict_matrix(data: &[u8]) -> Option<Matrix> {
             let operands = dict_parser.operands();
             if operands.len() == 6 {
                 return Some(Matrix {
-                    sx: operands[0] as f32,
-                    ky: operands[1] as f32,
-                    kx: operands[2] as f32,
-                    sy: operands[3] as f32,
-                    tx: operands[4] as f32,
-                    ty: operands[5] as f32,
+                    sx: operands[0],
+                    ky: operands[1],
+                    kx: operands[2],
+                    sy: operands[3],
+                    tx: operands[4],
+                    ty: operands[5],
                 });
             }
         }
@@ -399,7 +399,7 @@ pub fn string_by_id<'a>(metadata: &'a Table, sid: StringId) -> Option<&'a str> {
 
 struct CharStringParserContext<'a> {
     metadata: &'a Table<'a>,
-    width: Option<f32>,
+    width: Option<f64>,
     stems_len: u32,
     has_endchar: bool,
     has_seac: bool,
@@ -413,7 +413,7 @@ fn parse_char_string(
     glyph_id: GlyphId,
     width_only: bool,
     builder: &mut dyn OutlineBuilder,
-) -> Result<(Rect, Option<f32>), CFFError> {
+) -> Result<(Rect, Option<f64>), CFFError> {
     let local_subrs = match metadata.kind {
         FontKind::SID(ref sid) => Some(sid.local_subrs),
         FontKind::CID(_) => None, // Will be resolved on request.
@@ -435,7 +435,7 @@ fn parse_char_string(
     };
 
     let stack = ArgumentsStack {
-        data: &mut [0.0; MAX_ARGUMENTS_STACK_LEN], // 192B
+        data: &mut [0.0; MAX_ARGUMENTS_STACK_LEN], // 384B
         len: 0,
         max_len: MAX_ARGUMENTS_STACK_LEN,
     };
@@ -701,7 +701,7 @@ fn _parse_char_string(
             }
             operator::SHORT_INT => {
                 let n = s.read::<i16>().ok_or(CFFError::ReadOutOfBounds)?;
-                p.stack.push(f32::from(n))?;
+                p.stack.push(f64::from(n))?;
             }
             operator::CALL_GLOBAL_SUBROUTINE => {
                 if p.stack.is_empty() {
@@ -759,7 +759,7 @@ fn _parse_char_string(
     Ok(())
 }
 
-fn seac_code_to_glyph_id(charset: &Charset, n: f32) -> Option<GlyphId> {
+fn seac_code_to_glyph_id(charset: &Charset, n: f64) -> Option<GlyphId> {
     let code = u8::try_num_from(n)?;
 
     let sid = STANDARD_ENCODING[usize::from(code)];
@@ -1123,12 +1123,12 @@ impl<'a> Table<'a> {
         }
     }
 
-    /// Returns the glyph width as a signed `f32` value.
+    /// Returns the glyph width as a signed `f64` value.
     ///
     /// Unlike [`glyph_width`] which returns `u16` (and `None` for negative
     /// widths), this preserves the full CFF charstring advance including
     /// negative values that can arise from nominalWidthX offsets.
-    pub fn glyph_width_f32(&self, glyph_id: GlyphId) -> Option<f32> {
+    pub fn glyph_width_f64(&self, glyph_id: GlyphId) -> Option<f64> {
         match self.kind {
             FontKind::SID(ref sid) => {
                 let data = self.char_strings.get(u32::from(glyph_id.0))?;
@@ -1154,6 +1154,13 @@ impl<'a> Table<'a> {
                 Some(width)
             }
         }
+    }
+
+    /// Returns the glyph width as a signed `f32` value.
+    ///
+    /// Prefer [`glyph_width_f64`] when exact PDF width reconstruction matters.
+    pub fn glyph_width_f32(&self, glyph_id: GlyphId) -> Option<f32> {
+        self.glyph_width_f64(glyph_id).map(|w| w as f32)
     }
 
     /// Returns a glyph ID by a name.
@@ -1183,6 +1190,14 @@ impl<'a> Table<'a> {
     pub fn default_width_x(&self) -> Option<u16> {
         match self.kind {
             FontKind::SID(ref sid) => u16::try_from(sid.default_width as i32).ok(),
+            FontKind::CID(_) => None,
+        }
+    }
+
+    /// Returns the DefaultWidthX value from the Private DICT as `f64`.
+    pub fn default_width_x_f64(&self) -> Option<f64> {
+        match self.kind {
+            FontKind::SID(ref sid) => Some(sid.default_width),
             FontKind::CID(_) => None,
         }
     }
@@ -1392,8 +1407,8 @@ mod width_tests {
         // MINIMAL_CID_CFF has no Matrix entry → default (0.001 identity).
         let table = Table::parse(MINIMAL_CID_CFF).expect("CID CFF should parse");
         let m = table.matrix();
-        assert!((m.sx - 0.001).abs() < f32::EPSILON);
-        assert!((m.sy - 0.001).abs() < f32::EPSILON);
+        assert!((m.sx - 0.001).abs() < f64::EPSILON);
+        assert!((m.sy - 0.001).abs() < f64::EPSILON);
         assert_eq!(m.kx, 0.0);
         assert_eq!(m.ky, 0.0);
         assert_eq!(m.tx, 0.0);
