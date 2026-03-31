@@ -371,7 +371,9 @@ fn check_br_co_15(invoice: &ZugferdInvoice, result: &mut En16931ValidationResult
         }
 
         let expected = item.quantity * (item.unit_price / item.price_base_quantity);
-        if !approx_eq(expected, item.line_total) {
+        // Use a slightly larger tolerance (0.10) for line totals to account for
+        // missing line-level charges/allowances in the current model. Fixes #508.
+        if (expected - item.line_total).abs() > 0.10 {
             found_failure = true;
             result.fail(
                 "BR-CO-15",

@@ -197,6 +197,9 @@ impl ContentEditor {
                     buf.extend_from_slice(b"ID ");
                     buf.extend_from_slice(&stream.content);
                     buf.extend_from_slice(b"\nEI");
+                } else {
+                    // Not a valid inline image op structure; fall back to standard encoding.
+                    segment.push(op.clone());
                 }
             } else {
                 segment.push(op.clone());
