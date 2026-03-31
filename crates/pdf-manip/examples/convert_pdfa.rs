@@ -105,9 +105,13 @@ fn main() {
     let cmap_fixed = pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc);
     eprintln!("TrueType Unicode cmap: fixed={cmap_fixed}");
 
-    // Add /ToUnicode CMap to Type1 fonts with WinAnsi/MacRoman/standard encoding.
+    // Add /ToUnicode CMap to simple fonts with WinAnsi/MacRoman/standard encoding.
     let type1_tu_fixed = pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc);
-    eprintln!("Type1 ToUnicode CMap: fixed={type1_tu_fixed}");
+    eprintln!("Simple font ToUnicode CMap: fixed={type1_tu_fixed}");
+
+    // Add /ToUnicode CMap to Type0 (CID) fonts from embedded font cmap.
+    let type0_tu_fixed = pdf_manip::pdfa_fonts::fix_type0_tounicode(&mut doc);
+    eprintln!("Type0 ToUnicode CMap: fixed={type0_tu_fixed}");
 
     // Fix .notdef glyph references (6.2.11.8:1).
     let notdef_fixed = pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc);

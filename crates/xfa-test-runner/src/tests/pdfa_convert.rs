@@ -340,11 +340,17 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_truetype_unicode_cmap(&mut doc)
         }));
 
-        // 3a2a2. Add /ToUnicode CMap to Type1 fonts with WinAnsi/MacRoman/standard encoding.
+        // 3a2a2. Add /ToUnicode CMap to simple fonts with WinAnsi/MacRoman/standard encoding.
         // ISO 19005-2 §6.2.11.7.2 requires ToUnicode on all non-CID fonts. Fixes #483.
         set_progress("type1_tounicode");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc)
+        }));
+
+        // 3a2a3. Add /ToUnicode CMap to Type0 (CID) fonts from embedded font cmap.
+        set_progress("type0_tounicode");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type0_tounicode(&mut doc)
         }));
 
         // 3a2b. Fix .notdef glyph references (6.2.11.8:1).
@@ -957,6 +963,9 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_type1_tounicode_from_encoding(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type0_tounicode(&mut doc)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc)

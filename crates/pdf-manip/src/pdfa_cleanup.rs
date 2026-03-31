@@ -102,7 +102,8 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     strip_forbidden_smask(doc);
     ensure_page_transparency_group(doc);
     fix_markinfo_without_structtreeroot(doc);
-    fix_unbalanced_emc(doc);
+    // TODO: fix_unbalanced_emc(doc) — §6.8.3.4, disabled due to performance
+    // issues (decompressing all Form XObject streams is too slow on some PDFs).
     remove_halftone_names(doc);
     remove_needs_rendering(doc);
     remove_pressteps(doc);
@@ -2831,6 +2832,7 @@ fn strip_forbidden_smask(doc: &mut Document) {
 ///
 /// Scans content streams for EMC operators and ensures each has a matching
 /// BMC or BDC. Removes orphan EMC operators.
+#[allow(dead_code)]
 fn fix_unbalanced_emc(doc: &mut Document) {
     // Collect page content stream IDs. Only process streams that are actually
     // referenced as page /Contents to avoid decompressing every stream.
@@ -2896,6 +2898,7 @@ fn fix_unbalanced_emc(doc: &mut Document) {
 }
 
 /// Remove orphan EMC operators from content stream bytes.
+#[allow(dead_code)]
 fn fix_emc_in_bytes(data: &[u8]) -> Vec<u8> {
     // Simple token-level scan: track BMC/BDC depth, remove EMC when depth is 0.
     let mut out = Vec::with_capacity(data.len());
