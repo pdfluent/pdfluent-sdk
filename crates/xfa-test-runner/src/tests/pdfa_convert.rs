@@ -328,6 +328,12 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
         }));
 
+        // 3a2-t1. Fix StandardEncoding on Type1/MMType1 fonts (6.2.11.6).
+        set_progress("type1_std_encoding");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_standard_encoding(&mut doc)
+        }));
+
         // 3a2aa. Ensure symbolic TrueType fonts have valid cmap shape (6.2.11.6:4).
         set_progress("symbolic_cmap");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -965,6 +971,9 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_truetype_encoding(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type1_standard_encoding(&mut doc)
     }));
     // Re-sync Subtype + encoding AFTER fix_truetype_encoding: ensures all font dicts
     // sharing the same FD get consistent WinAnsiEncoding for substitute fonts.
