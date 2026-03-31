@@ -599,20 +599,21 @@ fn remove_text_ops_via_editor(
         );
     }
 
-    // Raw-byte fallback: when both text-based and spatial matching found nothing
-    // but the word IS confirmed to be on the page (non-empty match_bboxes), try
-    // decoding each Tj/TJ operand as raw Latin-1 bytes — the same strategy used
-    // by extract_positioned_chars for fonts without a ToUnicode CMap.
-    // This handles cases where extract_text_runs decodes a font differently from
-    // extract_positioned_chars, causing the word to be found during bbox
-    // computation but missed by both text-matching and spatial matching on the
-    // content stream.  Fixes #476.
-    if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
+    // Raw-byte fallback: handles cases where extract_text_runs decodes a font
+    // differently from extract_positioned_chars, causing the word to be found
+    // during bbox computation but missed by both text-matching and spatial
+    // matching on the content stream.  Fixes #476.
+    if !match_bboxes.is_empty() {
+        let mut text_matched_set: HashSet<usize> = indices_to_remove.iter().cloned().collect();
         let ops = editor.operations();
         for (idx, op) in ops.iter().enumerate() {
+            if text_matched_set.contains(&idx) {
+                continue;
+            }
             if let Some(raw_text) = raw_text_from_op(op) {
                 if !matcher.find_all(&raw_text).is_empty() {
                     indices_to_remove.push(idx);
+                    text_matched_set.insert(idx);
                 }
             }
         }
@@ -687,6 +688,23 @@ fn remove_text_ops_with_inline_images(
             editor.operations(),
             matcher,
         );
+    }
+
+    // Raw-byte fallback (same logic as in remove_text_ops_via_editor).
+    if !match_bboxes.is_empty() {
+        let mut text_matched_set: HashSet<usize> = indices_to_remove.iter().cloned().collect();
+        let ops = editor.operations();
+        for (idx, op) in ops.iter().enumerate() {
+            if text_matched_set.contains(&idx) {
+                continue;
+            }
+            if let Some(raw_text) = raw_text_from_op(op) {
+                if !matcher.find_all(&raw_text).is_empty() {
+                    indices_to_remove.push(idx);
+                    text_matched_set.insert(idx);
+                }
+            }
+        }
     }
 
     if indices_to_remove.is_empty() {
@@ -901,17 +919,21 @@ fn remove_text_ops_from_stream(
         );
     }
 
-    // Raw-byte fallback: when both text-based and spatial matching failed,
-    // decode Tj operand bytes as Latin-1 (same as pdf_extract) and match.
-    // Handles XObjects/AP streams where a misleading ToUnicode CMap causes
-    // text_run to produce characters that don't match the search pattern,
-    // even though the raw bytes do. Fixes edge cases #463 (e.g. '270', '000').
-    if indices_to_remove.is_empty() && !match_bboxes.is_empty() {
+    // Raw-byte fallback: handles cases where extract_text_runs decodes a font
+    // differently from extract_positioned_chars, causing the word to be found
+    // during bbox computation but missed by both text-matching and spatial
+    // matching on the content stream.  Fixes #476.
+    if !match_bboxes.is_empty() {
+        let mut text_matched_set: HashSet<usize> = indices_to_remove.iter().cloned().collect();
         let ops = editor.operations();
         for (idx, op) in ops.iter().enumerate() {
+            if text_matched_set.contains(&idx) {
+                continue;
+            }
             if let Some(raw_text) = raw_text_from_op(op) {
                 if !matcher.find_all(&raw_text).is_empty() {
                     indices_to_remove.push(idx);
+                    text_matched_set.insert(idx);
                 }
             }
         }

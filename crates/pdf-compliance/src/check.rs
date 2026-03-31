@@ -4053,7 +4053,12 @@ fn check_ri_in_content(
     for (i, &tok) in tokens.iter().enumerate() {
         if tok == "ri" && i > 0 {
             let operand = tokens[i - 1];
-            let name = operand.strip_prefix('/').unwrap_or(operand);
+            // The operand for `ri` must be a PDF Name (starts with '/').
+            // Skip if not — avoids false positives from 'ri' inside string
+            // literals or other non-Name contexts. (#6.2.6-FP)
+            let Some(name) = operand.strip_prefix('/') else {
+                continue;
+            };
             if !valid_intents.iter().any(|v| v == &name.as_bytes()) {
                 error_at(
                     report,
