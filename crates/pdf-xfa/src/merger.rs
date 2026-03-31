@@ -42,8 +42,9 @@ impl<'a> FormMerger<'a> {
             root_elem
         } else {
             // Find the first <template> descendant.
-            find_first_child_by_name(root_elem, "template")
-                .ok_or_else(|| XfaError::PacketNotFound("no <template> element found".to_string()))?
+            find_first_child_by_name(root_elem, "template").ok_or_else(|| {
+                XfaError::PacketNotFound("no <template> element found".to_string())
+            })?
         };
 
         let (root_id, _trailing) = self.parse_node(template_elem, None, true)?;

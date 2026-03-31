@@ -973,8 +973,8 @@ fn check_info_xmp_deep(pdf: &Pdf, xmp: &str, report: &mut ComplianceReport) {
                 let xmp_tz = parse_xmp_tz_offset_minutes(xmp_dt);
                 if let Some(xmp_tz_mins) = xmp_tz {
                     // Both have timezone — compare
-                    let info_tz = (info_dt.utc_offset_hour as i64) * 60
-                        + (info_dt.utc_offset_minute as i64);
+                    let info_tz =
+                        (info_dt.utc_offset_hour as i64) * 60 + (info_dt.utc_offset_minute as i64);
                     if info_tz != xmp_tz_mins && n_info == n_xmp {
                         error(
                             report,

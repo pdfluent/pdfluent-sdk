@@ -578,9 +578,7 @@ fn main() {
                 )
             });
 
-            let test_config = tests::TestConfig {
-                verapdf_oracle,
-            };
+            let test_config = tests::TestConfig { verapdf_oracle };
             let mut available_tests = tests::all_tests(test_config);
 
             // Apply tier filter
@@ -861,9 +859,7 @@ fn main() {
                 }
             };
 
-            let test_config = tests::TestConfig {
-                verapdf_oracle,
-            };
+            let test_config = tests::TestConfig { verapdf_oracle };
             let mut available_tests = tests::all_tests(test_config);
 
             // Apply tier filter.

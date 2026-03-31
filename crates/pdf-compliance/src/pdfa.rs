@@ -2362,11 +2362,9 @@ fn check_stream_external_refs_raw(pdf: &Pdf, report: &mut ComplianceReport) {
                     None => true, // no endobj at all → assume same object
                     Some(eo) => {
                         // Find first "stream" that isn't preceded by "end".
-                        let first_stream = after.windows(6).enumerate()
-                            .position(|(pos, w)| {
-                                w == b"stream"
-                                    && !(pos >= 3 && &after[pos - 3..pos] == b"end")
-                            });
+                        let first_stream = after.windows(6).enumerate().position(|(pos, w)| {
+                            w == b"stream" && !(pos >= 3 && &after[pos - 3..pos] == b"end")
+                        });
                         match first_stream {
                             Some(sk) => eo >= sk, // endobj after stream → same object
                             None => false,        // no stream ahead → different object

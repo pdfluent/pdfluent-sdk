@@ -235,7 +235,11 @@ fn analyze_single_pdf(path: &Path) -> Option<FormEdgeCases> {
     })
 }
 
-fn detect_edge_cases(template_xml: &str, full_xml: &str, doc: Option<&lopdf::Document>) -> EdgeCaseFlags {
+fn detect_edge_cases(
+    template_xml: &str,
+    full_xml: &str,
+    doc: Option<&lopdf::Document>,
+) -> EdgeCaseFlags {
     let mut flags = EdgeCaseFlags::default();
 
     // Deep nesting
