@@ -56,7 +56,7 @@ fn main() {
 
         let n = table.number_of_glyphs();
         let matrix = table.matrix();
-        let scale = if matrix.sx.abs() > f32::EPSILON {
+        let scale = if matrix.sx.abs() > f64::EPSILON {
             matrix.sx * 1000.0
         } else {
             1.0
