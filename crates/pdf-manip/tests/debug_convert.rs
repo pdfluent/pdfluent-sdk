@@ -7030,10 +7030,7 @@ fn debug_w6211_batch() {
 fn test_filespec_and_xref_fixes() {
     use pdf_manip::pdfa_xmp::PdfAConformance;
 
-    let mut paths: Vec<String> = vec![
-        "/tmp/test_6_9.pdf".into(),
-        "/tmp/test_6_1_4.pdf".into(),
-    ];
+    let mut paths: Vec<String> = vec!["/tmp/test_6_9.pdf".into(), "/tmp/test_6_1_4.pdf".into()];
     // Add batch test files if present.
     for dir in ["/tmp/test_69", "/tmp/test_614"] {
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -7102,9 +7099,13 @@ fn diagnose_three_patterns() {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(true, |x| x != "pdf") { continue; }
+            if path.extension().map_or(true, |x| x != "pdf") {
+                continue;
+            }
             let name = path.file_name().unwrap().to_string_lossy().to_string();
-            let Ok(data) = std::fs::read(&path) else { continue; };
+            let Ok(data) = std::fs::read(&path) else {
+                continue;
+            };
             let Ok(mut doc) = lopdf::Document::load_mem(&data) else {
                 eprintln!("  {name}: parse error");
                 continue;
@@ -7127,7 +7128,9 @@ fn diagnose_three_patterns() {
             let pdf2 = pdf_syntax::Pdf::new(saved).unwrap();
             let report = pdf_compliance::validate_pdfa(&pdf2, pdf_compliance::PdfALevel::A2b);
 
-            let matching: Vec<_> = report.issues.iter()
+            let matching: Vec<_> = report
+                .issues
+                .iter()
                 .filter(|i| i.rule.starts_with(rule_prefix))
                 .collect();
 
@@ -7165,7 +7168,9 @@ fn debug_617_f_key() {
                 let f_val = s.dict.get(b"F").ok();
                 eprintln!("Stream {:?} has /F key: {:?}", id, f_val);
                 // Check what other keys are in this dict
-                let keys: Vec<String> = s.dict.iter()
+                let keys: Vec<String> = s
+                    .dict
+                    .iter()
                     .map(|(k, _)| String::from_utf8_lossy(k).to_string())
                     .collect();
                 eprintln!("  Keys: {:?}", keys);
@@ -7191,7 +7196,9 @@ fn debug_617_f_key() {
                 let ctx = String::from_utf8_lossy(&saved[start..end]);
                 eprintln!("Raw /F at offset {i}: ...{}...", ctx);
                 hits += 1;
-                if hits >= 5 { break; }
+                if hits >= 5 {
+                    break;
+                }
             }
         }
         i += 1;
@@ -7238,23 +7245,35 @@ fn debug_617_raw_scan() {
                     .map(|(idx, _)| idx)
                     .unwrap_or(0);
                 let current_dict_ctx = &before[current_dict_start..];
-                let is_filespec = current_dict_ctx.windows(9).any(|w| w == b"/Filespec" as &[u8]);
-                let is_embedded = current_dict_ctx.windows(13).any(|w| w == b"/EmbeddedFile" as &[u8]);
+                let is_filespec = current_dict_ctx
+                    .windows(9)
+                    .any(|w| w == b"/Filespec" as &[u8]);
+                let is_embedded = current_dict_ctx
+                    .windows(13)
+                    .any(|w| w == b"/EmbeddedFile" as &[u8]);
                 let is_opi_subdict = current_dict_ctx.windows(4).any(|w| w == b"/OPI" as &[u8]);
                 let no_endobj_between = !after
                     .windows(6)
                     .take_while(|w| *w != b"stream")
                     .any(|w| w == b"endobj");
 
-                if has_dict_start && has_stream_ahead && no_endobj_between && !is_filespec && !is_embedded && !is_opi_subdict {
+                if has_dict_start
+                    && has_stream_ahead
+                    && no_endobj_between
+                    && !is_filespec
+                    && !is_embedded
+                    && !is_opi_subdict
+                {
                     let ctx_before = String::from_utf8_lossy(&data[i.saturating_sub(60)..i]);
-                    let ctx_after = String::from_utf8_lossy(&data[i..data.len().min(i+100)]);
+                    let ctx_after = String::from_utf8_lossy(&data[i..data.len().min(i + 100)]);
                     eprintln!("HIT at offset {i}:");
                     eprintln!("  BEFORE: ...{ctx_before}");
                     eprintln!("  AFTER:  {ctx_after}...");
                     eprintln!("  no_endobj_between={no_endobj_between}, has_stream_ahead={has_stream_ahead}");
                     hits += 1;
-                    if hits >= 3 { break; }
+                    if hits >= 3 {
+                        break;
+                    }
                 }
             }
         }
@@ -7276,7 +7295,12 @@ fn debug_6210_transparency() {
 
     let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, false);
     let cs_report = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc);
-    eprintln!("normalize_colorspaces: {:?}", cs_report.as_ref().map(|r| (r.had_output_intent, r.output_intent_added)));
+    eprintln!(
+        "normalize_colorspaces: {:?}",
+        cs_report
+            .as_ref()
+            .map(|r| (r.had_output_intent, r.output_intent_added))
+    );
     pdf_manip::pdfa_fixups::run_fixups(&mut doc);
     let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None);
 
@@ -7293,16 +7317,21 @@ fn debug_6210_transparency() {
     let report = pdf_compliance::validate_pdfa(&pdf_check, pdf_compliance::PdfALevel::A2b);
     for issue in &report.issues {
         if issue.rule.starts_with("6.2.10") {
-            eprintln!("Compliance §{}: {} at {:?}", issue.rule, issue.message, issue.location);
+            eprintln!(
+                "Compliance §{}: {} at {:?}",
+                issue.rule, issue.message, issue.location
+            );
         }
     }
 
     // Check each page for transparency clues
     let pages = doc.get_pages();
     for (&page_num, &page_id) in &pages {
-        let Some(lopdf::Object::Dictionary(page_dict)) = doc.objects.get(&page_id) else { continue };
+        let Some(lopdf::Object::Dictionary(page_dict)) = doc.objects.get(&page_id) else {
+            continue;
+        };
         let has_group = page_dict.has(b"Group");
-        
+
         // Check ExtGState
         let mut has_ext_transparency = false;
         let res_dict = match page_dict.get(b"Resources").ok() {
@@ -7338,7 +7367,7 @@ fn debug_6210_transparency() {
                 }
             }
         }
-        
+
         // Check annotations
         let annots = match page_dict.get(b"Annots").ok() {
             Some(lopdf::Object::Array(arr)) => Some(arr.clone()),
@@ -7368,39 +7397,65 @@ fn debug_6210_transparency() {
                             lopdf::Object::Reference(id) => *id,
                             _ => continue,
                         };
-                        let Some(lopdf::Object::Stream(s)) = doc.objects.get(&stream_id) else { continue };
-                        let subtype = s.dict.get(b"Subtype").ok().and_then(|o| if let lopdf::Object::Name(n) = o { Some(n.clone()) } else { None });
-                        let subtype_str = subtype.as_ref().map(|n| String::from_utf8_lossy(n).to_string()).unwrap_or_default();
+                        let Some(lopdf::Object::Stream(s)) = doc.objects.get(&stream_id) else {
+                            continue;
+                        };
+                        let subtype = s.dict.get(b"Subtype").ok().and_then(|o| {
+                            if let lopdf::Object::Name(n) = o {
+                                Some(n.clone())
+                            } else {
+                                None
+                            }
+                        });
+                        let subtype_str = subtype
+                            .as_ref()
+                            .map(|n| String::from_utf8_lossy(n).to_string())
+                            .unwrap_or_default();
                         // Image with /SMask
                         if subtype_str == "Image" && s.dict.has(b"SMask") {
-                            eprintln!("  Page {page_num}: XObject {} (Image) has /SMask!", String::from_utf8_lossy(name));
+                            eprintln!(
+                                "  Page {page_num}: XObject {} (Image) has /SMask!",
+                                String::from_utf8_lossy(name)
+                            );
                             has_xobj_transparency = true;
                         }
                         // Form with Group/Transparency
                         if subtype_str == "Form" {
                             if let Ok(lopdf::Object::Dictionary(grp)) = s.dict.get(b"Group") {
-                                if grp.get(b"S").ok() == Some(&lopdf::Object::Name(b"Transparency".to_vec())) {
+                                if grp.get(b"S").ok()
+                                    == Some(&lopdf::Object::Name(b"Transparency".to_vec()))
+                                {
                                     eprintln!("  Page {page_num}: XObject {} (Form) has /Group /S /Transparency!", String::from_utf8_lossy(name));
                                     has_xobj_transparency = true;
                                 }
                             }
                             // Check Form XObject's own ExtGState
-                            if let Ok(lopdf::Object::Dictionary(form_res)) = s.dict.get(b"Resources") {
-                                if let Ok(lopdf::Object::Dictionary(gs)) = form_res.get(b"ExtGState") {
+                            if let Ok(lopdf::Object::Dictionary(form_res)) =
+                                s.dict.get(b"Resources")
+                            {
+                                if let Ok(lopdf::Object::Dictionary(gs)) =
+                                    form_res.get(b"ExtGState")
+                                {
                                     for (gsname, gsval) in gs.iter() {
                                         let gsd = match gsval {
-                                            lopdf::Object::Reference(id) => match doc.objects.get(id) {
-                                                Some(lopdf::Object::Dictionary(d)) => Some(d),
-                                                _ => None,
-                                            },
+                                            lopdf::Object::Reference(id) => {
+                                                match doc.objects.get(id) {
+                                                    Some(lopdf::Object::Dictionary(d)) => Some(d),
+                                                    _ => None,
+                                                }
+                                            }
                                             lopdf::Object::Dictionary(d) => Some(d),
                                             _ => None,
                                         };
                                         if let Some(gsd) = gsd {
                                             let sm = gsd.get(b"SMask").ok();
                                             let is_trans = match sm {
-                                                Some(lopdf::Object::Name(n)) if n == b"None" => false,
-                                                Some(lopdf::Object::Name(_)) | Some(lopdf::Object::Dictionary(_)) | Some(lopdf::Object::Reference(_)) => true,
+                                                Some(lopdf::Object::Name(n)) if n == b"None" => {
+                                                    false
+                                                }
+                                                Some(lopdf::Object::Name(_))
+                                                | Some(lopdf::Object::Dictionary(_))
+                                                | Some(lopdf::Object::Reference(_)) => true,
                                                 _ => false,
                                             };
                                             if is_trans {
@@ -7437,23 +7492,31 @@ fn debug_6210_transparency() {
                                 if let Ok(lopdf::Object::Dictionary(gs)) = pr.get(b"ExtGState") {
                                     for (gsname, gsval) in gs.iter() {
                                         let gsd = match gsval {
-                                            lopdf::Object::Reference(id) => match doc.objects.get(id) {
-                                                Some(lopdf::Object::Dictionary(d)) => Some(d),
-                                                _ => None,
-                                            },
+                                            lopdf::Object::Reference(id) => {
+                                                match doc.objects.get(id) {
+                                                    Some(lopdf::Object::Dictionary(d)) => Some(d),
+                                                    _ => None,
+                                                }
+                                            }
                                             lopdf::Object::Dictionary(d) => Some(d),
                                             _ => None,
                                         };
                                         if let Some(gsd) = gsd {
                                             let sm = gsd.get(b"SMask").ok();
                                             let is_trans = match sm {
-                                                Some(lopdf::Object::Name(n)) if n == b"None" => false,
+                                                Some(lopdf::Object::Name(n)) if n == b"None" => {
+                                                    false
+                                                }
                                                 Some(_) => true,
                                                 _ => false,
                                             };
                                             let bm = gsd.get(b"BM").ok();
                                             let bm_trans = match bm {
-                                                Some(lopdf::Object::Name(n)) if n == b"Normal" || n == b"Compatible" => false,
+                                                Some(lopdf::Object::Name(n))
+                                                    if n == b"Normal" || n == b"Compatible" =>
+                                                {
+                                                    false
+                                                }
                                                 Some(lopdf::Object::Name(_)) => true,
                                                 _ => false,
                                             };
@@ -7486,9 +7549,16 @@ fn debug_6210_transparency() {
                             lopdf::Object::Reference(id) => *id,
                             _ => continue,
                         };
-                        let Some(lopdf::Object::Dictionary(fdict)) = doc.objects.get(&fid) else { continue };
-                        if fdict.get(b"Subtype").ok() == Some(&lopdf::Object::Name(b"Type3".to_vec())) {
-                            eprintln!("  Page {page_num}: Found Type3 font {}", String::from_utf8_lossy(fname));
+                        let Some(lopdf::Object::Dictionary(fdict)) = doc.objects.get(&fid) else {
+                            continue;
+                        };
+                        if fdict.get(b"Subtype").ok()
+                            == Some(&lopdf::Object::Name(b"Type3".to_vec()))
+                        {
+                            eprintln!(
+                                "  Page {page_num}: Found Type3 font {}",
+                                String::from_utf8_lossy(fname)
+                            );
                         }
                     }
                 }
@@ -7522,12 +7592,22 @@ fn debug_62117_fonts() {
     let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, PdfAConformance::A2b, None);
 
     for (&id, obj) in &doc.objects {
-        let lopdf::Object::Dictionary(dict) = obj else { continue };
+        let lopdf::Object::Dictionary(dict) = obj else {
+            continue;
+        };
         let subtype = dict.get(b"Subtype").ok().and_then(|o| {
-            if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None }
+            if let lopdf::Object::Name(n) = o {
+                Some(String::from_utf8_lossy(n).to_string())
+            } else {
+                None
+            }
         });
         let base_font = dict.get(b"BaseFont").ok().and_then(|o| {
-            if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None }
+            if let lopdf::Object::Name(n) = o {
+                Some(String::from_utf8_lossy(n).to_string())
+            } else {
+                None
+            }
         });
         let has_tounicode = dict.get(b"ToUnicode").is_ok();
         let has_encoding = dict.get(b"Encoding").is_ok();
@@ -7535,32 +7615,57 @@ fn debug_62117_fonts() {
         if false {
             {
                 let encoding = dict.get(b"Encoding").ok().map(|o| format!("{:?}", o));
-                let descendants = dict.get(b"DescendantFonts").ok().map(|o| format!("{:?}", o));
+                let descendants = dict
+                    .get(b"DescendantFonts")
+                    .ok()
+                    .map(|o| format!("{:?}", o));
                 eprintln!("Font {:?}: Subtype={:?} BaseFont={:?} Encoding={:?} ToUnicode={} Descendants={:?}",
                     id, subtype, base_font, encoding, has_tounicode, descendants);
                 // If Type0, check descendant
                 if let Some(lopdf::Object::Array(desc)) = dict.get(b"DescendantFonts").ok() {
                     for d in desc {
                         if let lopdf::Object::Reference(cid_id) = d {
-                            if let Some(lopdf::Object::Dictionary(cid_dict)) = doc.objects.get(cid_id) {
+                            if let Some(lopdf::Object::Dictionary(cid_dict)) =
+                                doc.objects.get(cid_id)
+                            {
                                 let cid_sub = cid_dict.get(b"Subtype").ok().and_then(|o| {
-                                    if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None }
+                                    if let lopdf::Object::Name(n) = o {
+                                        Some(String::from_utf8_lossy(n).to_string())
+                                    } else {
+                                        None
+                                    }
                                 });
                                 let cid_bf = cid_dict.get(b"BaseFont").ok().and_then(|o| {
-                                    if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None }
+                                    if let lopdf::Object::Name(n) = o {
+                                        Some(String::from_utf8_lossy(n).to_string())
+                                    } else {
+                                        None
+                                    }
                                 });
-                                let cidtogid = cid_dict.get(b"CIDToGIDMap").ok().map(|o| format!("{:?}", o));
-                                let fd = cid_dict.get(b"FontDescriptor").ok().map(|o| format!("{:?}", o));
+                                let cidtogid = cid_dict
+                                    .get(b"CIDToGIDMap")
+                                    .ok()
+                                    .map(|o| format!("{:?}", o));
+                                let fd = cid_dict
+                                    .get(b"FontDescriptor")
+                                    .ok()
+                                    .map(|o| format!("{:?}", o));
                                 eprintln!("  CIDFont {:?}: Subtype={:?} BaseFont={:?} CIDToGIDMap={:?} FD={:?}",
                                     cid_id, cid_sub, cid_bf, cidtogid, fd);
                                 // Check font file
-                                if let Some(lopdf::Object::Reference(fd_id)) = cid_dict.get(b"FontDescriptor").ok() {
-                                    if let Some(lopdf::Object::Dictionary(fd_dict)) = doc.objects.get(fd_id) {
+                                if let Some(lopdf::Object::Reference(fd_id)) =
+                                    cid_dict.get(b"FontDescriptor").ok()
+                                {
+                                    if let Some(lopdf::Object::Dictionary(fd_dict)) =
+                                        doc.objects.get(fd_id)
+                                    {
                                         let has_ff2 = fd_dict.get(b"FontFile2").is_ok();
                                         let has_ff3 = fd_dict.get(b"FontFile3").is_ok();
                                         let has_ff = fd_dict.get(b"FontFile").is_ok();
-                                        eprintln!("    FD {:?}: FontFile={} FontFile2={} FontFile3={}",
-                                            fd_id, has_ff, has_ff2, has_ff3);
+                                        eprintln!(
+                                            "    FD {:?}: FontFile={} FontFile2={} FontFile3={}",
+                                            fd_id, has_ff, has_ff2, has_ff3
+                                        );
                                     }
                                 }
                             }
@@ -7575,7 +7680,9 @@ fn debug_62117_fonts() {
     eprintln!("\n=== Page Font Resources ===");
     let pages = doc.get_pages();
     for (&pg, &pg_id) in &pages {
-        let Some(lopdf::Object::Dictionary(pd)) = doc.objects.get(&pg_id) else { continue };
+        let Some(lopdf::Object::Dictionary(pd)) = doc.objects.get(&pg_id) else {
+            continue;
+        };
         let res2 = match pd.get(b"Resources").ok() {
             Some(lopdf::Object::Dictionary(d)) => Some(d.clone()),
             Some(lopdf::Object::Reference(rid)) => match doc.objects.get(rid) {
@@ -7599,11 +7706,29 @@ fn debug_62117_fonts() {
                 lopdf::Object::Reference(id) => *id,
                 _ => continue,
             };
-            let Some(lopdf::Object::Dictionary(fdict)) = doc.objects.get(&fid) else { continue };
-            let st = fdict.get(b"Subtype").ok().and_then(|o| if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None });
-            let bf = fdict.get(b"BaseFont").ok().and_then(|o| if let lopdf::Object::Name(n) = o { Some(String::from_utf8_lossy(n).to_string()) } else { None });
+            let Some(lopdf::Object::Dictionary(fdict)) = doc.objects.get(&fid) else {
+                continue;
+            };
+            let st = fdict.get(b"Subtype").ok().and_then(|o| {
+                if let lopdf::Object::Name(n) = o {
+                    Some(String::from_utf8_lossy(n).to_string())
+                } else {
+                    None
+                }
+            });
+            let bf = fdict.get(b"BaseFont").ok().and_then(|o| {
+                if let lopdf::Object::Name(n) = o {
+                    Some(String::from_utf8_lossy(n).to_string())
+                } else {
+                    None
+                }
+            });
             let has_tu = fdict.get(b"ToUnicode").is_ok();
-            eprintln!("  Page {pg}: /{} -> {:?} Subtype={st:?} BaseFont={bf:?} ToUnicode={has_tu}", String::from_utf8_lossy(nm), fid);
+            eprintln!(
+                "  Page {pg}: /{} -> {:?} Subtype={st:?} BaseFont={bf:?} ToUnicode={has_tu}",
+                String::from_utf8_lossy(nm),
+                fid
+            );
         }
     }
 }
