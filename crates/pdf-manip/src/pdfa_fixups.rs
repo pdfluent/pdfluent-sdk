@@ -5792,6 +5792,43 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
                 _ => {}
             }
 
+            // Skip inline image binary data: BI ... ID <binary> EI.
+            // "ID" must be preceded by whitespace and followed by a single whitespace byte.
+            if b == b'I'
+                && i + 2 < decompressed.len()
+                && decompressed[i + 1] == b'D'
+                && (i == 0 || decompressed[i - 1].is_ascii_whitespace())
+                && decompressed[i + 2].is_ascii_whitespace()
+            {
+                // Copy "ID" + whitespace to output
+                new_content.push(b'I');
+                new_content.push(b'D');
+                new_content.push(decompressed[i + 2]);
+                i += 3;
+                // Copy binary data until whitespace + "EI" + delimiter
+                while i + 2 < decompressed.len() {
+                    if (decompressed[i] == b'\n'
+                        || decompressed[i] == b'\r'
+                        || decompressed[i] == b' ')
+                        && decompressed[i + 1] == b'E'
+                        && decompressed[i + 2] == b'I'
+                        && (i + 3 >= decompressed.len()
+                            || decompressed[i + 3].is_ascii_whitespace()
+                            || decompressed[i + 3] == b'/')
+                    {
+                        // Copy whitespace + "EI"
+                        new_content.push(decompressed[i]);
+                        new_content.push(b'E');
+                        new_content.push(b'I');
+                        i += 3;
+                        break;
+                    }
+                    new_content.push(decompressed[i]);
+                    i += 1;
+                }
+                continue;
+            }
+
             // Check if we're at the start of a number token.
             let is_num_start = b.is_ascii_digit() || b == b'-' || b == b'+' || b == b'.';
             let prev_is_num = i > 0 && is_number_byte(decompressed[i - 1]);
