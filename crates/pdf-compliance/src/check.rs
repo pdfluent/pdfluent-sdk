@@ -7554,26 +7554,169 @@ fn check_gs_nesting_depth(
 /// this threshold (subnormal / denormal floats). Value ≈ 1.175494e-38.
 const MIN_POSITIVE_REAL: f64 = 1.175_494e-38;
 
+/// Extract numeric tokens from a content stream, skipping binary contexts.
+///
+/// Properly skips:
+/// - String literals `(...)` with balanced nesting and backslash escapes
+/// - Hex strings `<...>` (but not dict markers `<<`/`>>`)
+/// - Inline image data between `ID` and `EI` operators
+/// - Comments `%...\n`
+///
+/// Returns an iterator of byte-slice tokens that are numeric operands.
+fn content_stream_numeric_tokens(content: &[u8]) -> Vec<&[u8]> {
+    let mut tokens = Vec::new();
+    let len = content.len();
+    let mut pos = 0;
+
+    while pos < len {
+        let b = content[pos];
+
+        // Skip whitespace
+        if b.is_ascii_whitespace() {
+            pos += 1;
+            continue;
+        }
+
+        // Skip comments: % ... newline
+        if b == b'%' {
+            pos += 1;
+            while pos < len && content[pos] != b'\n' && content[pos] != b'\r' {
+                pos += 1;
+            }
+            continue;
+        }
+
+        // Skip string literals: (...) with nesting
+        if b == b'(' {
+            pos += 1;
+            let mut depth = 1i32;
+            while pos < len && depth > 0 {
+                match content[pos] {
+                    b'\\' => {
+                        pos += 1; // skip escaped char
+                    }
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+                pos += 1;
+            }
+            continue;
+        }
+
+        // Hex strings / dict markers
+        if b == b'<' {
+            if pos + 1 < len && content[pos + 1] == b'<' {
+                // Dict marker <<
+                pos += 2;
+                continue;
+            }
+            // Hex string — skip to closing >
+            pos += 1;
+            while pos < len && content[pos] != b'>' {
+                pos += 1;
+            }
+            if pos < len {
+                pos += 1; // skip >
+            }
+            continue;
+        }
+
+        // Dict close marker >>
+        if b == b'>' && pos + 1 < len && content[pos + 1] == b'>' {
+            pos += 2;
+            continue;
+        }
+
+        // Name token: /Name — skip entirely
+        if b == b'/' {
+            pos += 1;
+            while pos < len
+                && !content[pos].is_ascii_whitespace()
+                && !matches!(
+                    content[pos],
+                    b'/' | b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}'
+                )
+            {
+                pos += 1;
+            }
+            continue;
+        }
+
+        // Array markers
+        if b == b'[' || b == b']' || b == b'{' || b == b'}' {
+            pos += 1;
+            continue;
+        }
+
+        // Collect a token (consecutive non-delimiter bytes)
+        let start = pos;
+        while pos < len
+            && !content[pos].is_ascii_whitespace()
+            && !matches!(
+                content[pos],
+                b'/' | b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}'
+            )
+        {
+            pos += 1;
+        }
+        let token = &content[start..pos];
+
+        // Check for inline image: BI ... ID <binary> EI
+        // The "ID" operator marks start of binary data, terminated by "\nEI" or "\rEI".
+        if token == b"ID" {
+            // Skip binary data until we find EI preceded by whitespace.
+            // Per PDF spec, EI must be preceded by a single whitespace byte.
+            pos += 1; // skip the single whitespace after ID
+            while pos + 2 < len {
+                if (content[pos] == b'\n' || content[pos] == b'\r' || content[pos] == b' ')
+                    && content[pos + 1] == b'E'
+                    && content[pos + 2] == b'I'
+                    && (pos + 3 >= len || content[pos + 3].is_ascii_whitespace()
+                        || content[pos + 3] == b'/')
+                {
+                    pos += 3; // skip whitespace + "EI"
+                    break;
+                }
+                pos += 1;
+            }
+            continue;
+        }
+
+        // Skip alphabetic-only tokens (operators like "cm", "re", "f", "Tm", etc.)
+        if token.first().is_none_or(|c| c.is_ascii_alphabetic() || *c == b'\'' || *c == b'"') {
+            continue;
+        }
+
+        // Remaining tokens starting with digit, +, -, or . are numeric operands
+        if token.first().is_some_and(|c| {
+            c.is_ascii_digit() || *c == b'+' || *c == b'-' || *c == b'.'
+        }) {
+            tokens.push(token);
+        }
+    }
+
+    tokens
+}
+
 /// Scan content stream for numeric tokens exceeding max or below min positive (§6.1.12).
 ///
 /// Detects both overflow (> 32767) and subnormal floats (0 < |v| < 1.175e-38).
+/// Uses context-aware scanning to skip inline image binary data, string literals,
+/// hex strings, and comments — avoiding false positives from binary byte patterns.
 fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
-    let text = std::string::String::from_utf8_lossy(content);
-    for token in text.split_ascii_whitespace() {
-        if token.starts_with(|c: char| c.is_ascii_alphabetic() || c == '\'' || c == '"')
-            || token.starts_with('/')
-        {
+    for token in content_stream_numeric_tokens(content) {
+        let Ok(s) = std::str::from_utf8(token) else {
             continue;
-        }
+        };
         // PDF/A §6.1.13: the 32767 limit applies to REAL values only.
         // Pure integers are allowed up to ±2,147,483,647 (ISO 32000-1 §7.3.3).
-        let is_real = token.contains('.') || token.contains('e') || token.contains('E');
-        if let Ok(val) = token.parse::<f64>() {
+        let is_real = s.contains('.') || s.contains('e') || s.contains('E');
+        if let Ok(val) = s.parse::<f64>() {
             if is_real && val.abs() > max {
                 return true;
             }
             // Subnormal: non-zero value below the minimum normalized positive float.
-            // Applies to all numeric tokens — integers can't be subnormal.
             if is_real && val != 0.0 && val.abs() < MIN_POSITIVE_REAL {
                 return true;
             }
@@ -7585,23 +7728,20 @@ fn scan_content_stream_reals(content: &[u8], max: f64) -> bool {
 /// Scan decoded content stream for integer operands outside [-2147483648, 2147483647].
 /// PDF §7.3.3 limits integers to 32-bit signed range. veraPDF fires §6.1.12/§6.1.13
 /// when a content stream has an integer beyond this range.
+/// Uses context-aware scanning to skip inline image binary data.
 /// (#FN-6.1.12 isartor-6-1-12-t01-fail-c, #FN-6.1.13 veraPDF-6-1-13-t01-fail-b)
 fn scan_content_stream_integers(content: &[u8]) -> bool {
     const MAX_INT: f64 = 2_147_483_647.0;
     const MIN_INT: f64 = -2_147_483_648.0;
-    let text = std::string::String::from_utf8_lossy(content);
-    for token in text.split_ascii_whitespace() {
-        // Skip operators (alphabetic), names (/), and strings
-        if token.starts_with(|c: char| c.is_ascii_alphabetic() || c == '\'' || c == '"')
-            || token.starts_with('/')
-        {
+    for token in content_stream_numeric_tokens(content) {
+        let Ok(s) = std::str::from_utf8(token) else {
             continue;
-        }
+        };
         // Only check pure integers (no decimal point, no exponent)
-        if token.contains('.') || token.contains('e') || token.contains('E') {
+        if s.contains('.') || s.contains('e') || s.contains('E') {
             continue;
         }
-        if let Ok(val) = token.parse::<f64>() {
+        if let Ok(val) = s.parse::<f64>() {
             if !(MIN_INT..=MAX_INT).contains(&val) {
                 return true;
             }
@@ -16422,6 +16562,85 @@ fn scan_for_invalid_hex_string(data: &[u8], skip_streams: bool) -> Option<(bool,
     None
 }
 
+/// Strip inline image binary data from a content stream.
+///
+/// Replaces the binary data between `ID` and `EI` operators with a single space,
+/// preserving all other content stream bytes. This prevents binary data from
+/// being misinterpreted as PDF tokens (hex strings, numbers, operators).
+fn strip_inline_image_data(content: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(content.len());
+    let len = content.len();
+    let mut pos = 0;
+    let mut paren_depth: i32 = 0;
+
+    while pos < len {
+        let b = content[pos];
+
+        // Track string literal nesting — ID inside (...) is not an operator
+        if b == b'\\' && paren_depth > 0 && pos + 1 < len {
+            out.push(b);
+            out.push(content[pos + 1]);
+            pos += 2;
+            continue;
+        }
+        if b == b'(' {
+            paren_depth += 1;
+            out.push(b);
+            pos += 1;
+            continue;
+        }
+        if b == b')' {
+            if paren_depth > 0 {
+                paren_depth -= 1;
+            }
+            out.push(b);
+            pos += 1;
+            continue;
+        }
+        if paren_depth > 0 {
+            out.push(b);
+            pos += 1;
+            continue;
+        }
+
+        // Look for "ID" preceded by whitespace (inline image data start).
+        // "ID" must be preceded by whitespace and followed by a single whitespace byte.
+        if b == b'I'
+            && pos + 2 < len
+            && content[pos + 1] == b'D'
+            && (pos == 0 || content[pos - 1].is_ascii_whitespace())
+            && content[pos + 2].is_ascii_whitespace()
+        {
+            // Write "ID " to output
+            out.extend_from_slice(b"ID ");
+            pos += 3; // skip "ID" + whitespace byte
+            // Skip binary data until we find whitespace + "EI" + delimiter
+            while pos + 2 < len {
+                if (content[pos] == b'\n'
+                    || content[pos] == b'\r'
+                    || content[pos] == b' ')
+                    && content[pos + 1] == b'E'
+                    && content[pos + 2] == b'I'
+                    && (pos + 3 >= len || content[pos + 3].is_ascii_whitespace()
+                        || content[pos + 3] == b'/')
+                {
+                    // Write "EI" to output
+                    out.push(content[pos]); // whitespace before EI
+                    out.extend_from_slice(b"EI");
+                    pos += 3;
+                    break;
+                }
+                pos += 1;
+            }
+            continue;
+        }
+
+        out.push(b);
+        pos += 1;
+    }
+    out
+}
+
 /// Check hex strings for validity (§6.1.6 / §6.1.5).
 ///
 /// Hex strings must contain only valid hex characters (0-9, a-f, A-F)
@@ -16452,11 +16671,14 @@ pub fn check_hex_strings(pdf: &Pdf, level: PdfALevel, report: &mut ComplianceRep
     // Also scan decoded page content streams — hex strings used as text operands
     // (e.g. `<48455> Tj`) are subject to §6.1.6/§6.1.5 too. Content streams are
     // decoded here so we avoid FPs from binary/compressed stream data.
+    // Strip inline image binary data first to prevent false positives from
+    // binary byte patterns that look like `<` hex-start delimiters.
     for page in pdf.pages().iter() {
         let Some(content) = page.page_stream() else {
             continue;
         };
-        if let Some((odd, invalid)) = scan_for_invalid_hex_string(content, false) {
+        let cleaned = strip_inline_image_data(content);
+        if let Some((odd, invalid)) = scan_for_invalid_hex_string(&cleaned, false) {
             if odd {
                 error(report, rule, "Hexadecimal string in content stream contains odd number of non-whitespace characters");
             } else if invalid {
@@ -18553,5 +18775,106 @@ mod tests {
         let data = b"<< /Type /XObject >>stream\n";
         let stream_pos = data.windows(6).position(|w| w == b"stream").unwrap();
         assert!(!has_length_key(data, stream_pos));
+    }
+
+    // ── content_stream_numeric_tokens ──
+
+    #[test]
+    fn numeric_tokens_basic() {
+        let content = b"100 200 300 re 0.5 0 0 0.5 0 0 cm";
+        let tokens = content_stream_numeric_tokens(content);
+        let strs: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| std::str::from_utf8(t).ok())
+            .collect();
+        assert_eq!(strs, vec!["100", "200", "300", "0.5", "0", "0", "0.5", "0", "0"]);
+    }
+
+    #[test]
+    fn numeric_tokens_skips_inline_image() {
+        // Binary data between ID and EI should be completely skipped.
+        let content = b"q BI /W 8 /H 8 /BPC 8 /CS /G ID \x888888888.88811\x14\x14 EI Q";
+        let tokens = content_stream_numeric_tokens(content);
+        let strs: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| std::str::from_utf8(t).ok())
+            .collect();
+        // Should only find "8", "8", "8" from BI dict, not "88888888.88811"
+        assert_eq!(strs, vec!["8", "8", "8"]);
+    }
+
+    #[test]
+    fn numeric_tokens_skips_string_literals() {
+        let content = b"(99999.99) Tj 42 Tf";
+        let tokens = content_stream_numeric_tokens(content);
+        let strs: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| std::str::from_utf8(t).ok())
+            .collect();
+        assert_eq!(strs, vec!["42"]);
+    }
+
+    #[test]
+    fn numeric_tokens_skips_hex_strings() {
+        let content = b"<DEADBEEF> Tj 42 Tf";
+        let tokens = content_stream_numeric_tokens(content);
+        let strs: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| std::str::from_utf8(t).ok())
+            .collect();
+        assert_eq!(strs, vec!["42"]);
+    }
+
+    #[test]
+    fn numeric_tokens_skips_comments() {
+        let content = b"42 % 99999.99 comment\n7 re";
+        let tokens = content_stream_numeric_tokens(content);
+        let strs: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| std::str::from_utf8(t).ok())
+            .collect();
+        assert_eq!(strs, vec!["42", "7"]);
+    }
+
+    #[test]
+    fn scan_reals_skips_inline_image_binary() {
+        // This simulates the false positive: binary data containing "88888888.88811"
+        let content = b"q BI /W 8 /H 8 /BPC 8 /CS /G ID \x888888888.88811\x14\x14 EI Q";
+        assert!(!scan_content_stream_reals(content, 32767.0));
+    }
+
+    #[test]
+    fn scan_reals_detects_real_overflow() {
+        let content = b"q 99999.0 0 0 99999.0 0 0 cm Q";
+        assert!(scan_content_stream_reals(content, 32767.0));
+    }
+
+    #[test]
+    fn scan_integers_skips_inline_image_binary() {
+        // Binary data that might look like huge integer
+        let mut content = b"q BI /W 8 /H 8 /BPC 8 /CS /G ID ".to_vec();
+        content.extend_from_slice(b"9999999999999");
+        content.extend_from_slice(b" EI Q");
+        assert!(!scan_content_stream_integers(&content));
+    }
+
+    // ── strip_inline_image_data ──
+
+    #[test]
+    fn strip_inline_image_preserves_non_image_content() {
+        let content = b"q 100 200 re f Q";
+        let stripped = strip_inline_image_data(content);
+        assert_eq!(&stripped, content);
+    }
+
+    #[test]
+    fn strip_inline_image_removes_binary_data() {
+        let content = b"q BI /W 8 /H 8 ID \x00\xFF\xAB<not-hex> EI Q";
+        let stripped = strip_inline_image_data(content);
+        // Should contain "ID " and "EI" but not the binary data
+        let text = String::from_utf8_lossy(&stripped);
+        assert!(text.contains("ID"));
+        assert!(text.contains("EI"));
+        assert!(!text.contains("<not-hex>"));
     }
 }
