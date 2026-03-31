@@ -17029,25 +17029,80 @@ pub fn check_page_content_streams_cached(pdf: &Pdf, pdfa_part: u8, report: &mut 
 
 /// Check BMC/EMC nesting for a single page content stream.
 fn check_bmc_emc_nesting(content: &[u8], page_idx: usize, report: &mut ComplianceReport) {
-    let text = String::from_utf8_lossy(content);
-
-    // Split on whitespace first, then further split each token on ">>" to handle
-    // inline dict closings like `0>>BDC` where the dict closer is glued to the operator.
-    // Without this, `split_ascii_whitespace()` yields "0>>BDC" as a single token and
-    // the "BDC" operator is not recognised, causing depth miscounts. (#FP-6.8.3.4)
-    let raw_tokens: Vec<&str> = text.split_ascii_whitespace().collect();
-    let tokens: Vec<&str> = raw_tokens.iter().flat_map(|t| t.split(">>")).collect();
-
+    // Extract operator tokens using a PDF-aware tokenizer that skips string
+    // literals `(...)` and hex strings `<...>`.  A naive whitespace split
+    // would find "BDC"/"BMC"/"EMC" inside text strings, causing false positives.
     let mut depth: i32 = 0;
-    for tok in &tokens {
-        // After splitting on ">>" a hex-string close followed by a dict close produces
-        // ">>>BDC" → ["<hexdata>", ">BDC"]. The residual leading '>' is from the odd
-        // number of consecutive '>' characters. Strip it before matching operators.
-        // PDF operators never start with '>'. (#FP-6.8.3.4)
-        let tok = tok.trim_start_matches('>');
-        match tok {
-            "BMC" | "BDC" => depth += 1,
-            "EMC" => depth -= 1,
+    let mut i = 0;
+    let data = content;
+
+    while i < data.len() {
+        // Skip whitespace.
+        if data[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        // Skip comments.
+        if data[i] == b'%' {
+            while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+                i += 1;
+            }
+            continue;
+        }
+        // Skip parenthesized strings — must skip these to avoid false BDC/EMC.
+        if data[i] == b'(' {
+            i += 1;
+            let mut nest = 1i32;
+            while i < data.len() && nest > 0 {
+                if data[i] == b'\\' {
+                    i += 1; // skip escaped char
+                } else if data[i] == b'(' {
+                    nest += 1;
+                } else if data[i] == b')' {
+                    nest -= 1;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // Skip hex strings.
+        if data[i] == b'<' && data.get(i + 1) != Some(&b'<') {
+            i += 1;
+            while i < data.len() && data[i] != b'>' {
+                i += 1;
+            }
+            if i < data.len() {
+                i += 1;
+            }
+            continue;
+        }
+        // Skip dict close `>>`.
+        if data[i] == b'>' {
+            while i < data.len() && data[i] == b'>' {
+                i += 1;
+            }
+            continue;
+        }
+        // Read token.
+        let tok_start = i;
+        while i < data.len()
+            && !data[i].is_ascii_whitespace()
+            && data[i] != b'('
+            && data[i] != b'<'
+            && data[i] != b'>'
+            && data[i] != b'%'
+        {
+            i += 1;
+        }
+        if tok_start == i {
+            // Delimiter that wasn't consumed above (e.g. '[', ']', '/').
+            i += 1;
+            continue;
+        }
+        let token = &data[tok_start..i];
+        match token {
+            b"BMC" | b"BDC" => depth += 1,
+            b"EMC" => depth -= 1,
             _ => {}
         }
         if depth < 0 {
