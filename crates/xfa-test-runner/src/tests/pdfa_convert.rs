@@ -353,6 +353,18 @@ impl PdfTest for PdfAConvertTest {
             pdf_manip::pdfa_fonts::fix_type0_tounicode(&mut doc)
         }));
 
+        // 3a2a4. Add /ToUnicode CMap to Type1/CFF fonts without encoding via CFF glyph names.
+        set_progress("cff_tounicode");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_tounicode_from_cff(&mut doc)
+        }));
+
+        // 3a2a5. Sanitize forbidden values (U+0000, U+FEFF, U+FFFE) in existing ToUnicode CMaps.
+        set_progress("tounicode_forbidden");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_tounicode_forbidden_values(&mut doc)
+        }));
+
         // 3a2b. Fix .notdef glyph references (6.2.11.8:1).
         set_progress("notdef_refs");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -384,6 +396,12 @@ impl PdfTest for PdfAConvertTest {
         set_progress("simple_range_notdef");
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             pdf_manip::pdfa_fonts::fix_simple_font_streams(&mut doc)
+        }));
+
+        // 3a2d3. Fix §6.2.11.4.1: strip codes referencing missing glyphs in Type1 subsets.
+        set_progress("subset_missing_glyphs");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            pdf_manip::pdfa_fonts::fix_type1_subset_missing_glyphs(&mut doc)
         }));
 
         // 3a2e. Ensure undefined WinAnsi codes have Differences entries.
@@ -968,6 +986,12 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
         pdf_manip::pdfa_fonts::fix_type0_tounicode(&mut doc)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type1_tounicode_from_cff(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_tounicode_forbidden_values(&mut doc)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_notdef_glyph_refs(&mut doc)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -981,6 +1005,9 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_simple_font_streams(&mut doc) // merged pass (#534 perf)
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        pdf_manip::pdfa_fonts::fix_type1_subset_missing_glyphs(&mut doc)
     }));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         pdf_manip::pdfa_fonts::fix_undefined_encoding_codes(&mut doc)
