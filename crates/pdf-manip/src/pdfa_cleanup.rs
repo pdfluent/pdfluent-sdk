@@ -3102,6 +3102,7 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
 
     for (page_id, ids) in page_groups {
         // Concatenate all content streams for this page.
+        // Use newlines to ensure proper token separation at stream boundaries.
         let mut combined = Vec::new();
         for &id in &ids {
             let Some(Object::Stream(s)) = doc.objects.get(&id) else {
@@ -3111,7 +3112,11 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
                 continue;
             };
             if !combined.is_empty() {
-                combined.push(b' ');
+                // Add newlines to ensure operators at stream boundaries are properly separated.
+                // This prevents issues where an orphan EMC at the end of one stream could
+                // incorrectly combine with operators at the start of the next stream.
+                combined.push(b'\n');
+                combined.push(b'\n');
             }
             combined.extend_from_slice(&c);
         }
