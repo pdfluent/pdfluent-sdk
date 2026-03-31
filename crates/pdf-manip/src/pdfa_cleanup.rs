@@ -99,6 +99,10 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     ensure_xmp_dc_title(doc);
     truncate_long_names(doc);
     fix_soft_mask_colorspace(doc);
+    strip_forbidden_smask(doc);
+    ensure_page_transparency_group(doc);
+    fix_markinfo_without_structtreeroot(doc);
+    fix_unbalanced_emc(doc);
     remove_halftone_names(doc);
     remove_needs_rendering(doc);
     remove_pressteps(doc);
@@ -2246,7 +2250,7 @@ fn fix_file_spec_keys(doc: &mut Document) {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 matches!(
                     dict.get(b"Type").ok(),
-                    Some(Object::Name(ref n)) if n == b"Filespec"
+                    Some(Object::Name(ref n)) if n.eq_ignore_ascii_case(b"Filespec")
                 ) && (!dict.has(b"F") || !dict.has(b"UF"))
             } else {
                 false
@@ -2284,7 +2288,7 @@ fn strip_ef_from_file_specs(doc: &mut Document) {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 matches!(
                     dict.get(b"Type").ok(),
-                    Some(Object::Name(ref n)) if n == b"Filespec"
+                    Some(Object::Name(ref n)) if n.eq_ignore_ascii_case(b"Filespec")
                 ) && dict.has(b"EF")
             } else {
                 false
@@ -2312,7 +2316,7 @@ fn strip_filespec_type(doc: &mut Document) {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 matches!(
                     dict.get(b"Type").ok(),
-                    Some(Object::Name(ref n)) if n == b"Filespec"
+                    Some(Object::Name(ref n)) if n.eq_ignore_ascii_case(b"Filespec")
                 )
             } else {
                 false
@@ -2587,6 +2591,395 @@ fn fix_soft_mask_colorspace(doc: &mut Document) {
             }
         }
     }
+}
+
+/// §6.2.10: Ensure pages that use transparency have a /Group entry.
+///
+/// Scans each page's resources for transparency indicators (ExtGState with
+/// CA/ca < 1, SMask, non-Normal BM; Image XObjects with /SMask; Form XObjects
+/// with transparency Groups). If transparency is used and the page lacks
+/// /Group, adds: /Group << /S /Transparency /CS /DeviceRGB >>
+fn ensure_page_transparency_group(doc: &mut Document) {
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+
+    for page_id in page_ids {
+        // Check if page already has /Group.
+        let has_group = matches!(
+            doc.objects.get(&page_id),
+            Some(Object::Dictionary(d)) if d.has(b"Group")
+        );
+        if has_group {
+            continue;
+        }
+
+        // Collect resource object IDs referenced by this page.
+        let uses_transparency = page_uses_transparency_lopdf(doc, page_id);
+        if !uses_transparency {
+            continue;
+        }
+
+        // Add /Group << /S /Transparency /CS /DeviceRGB >>
+        if let Some(Object::Dictionary(ref mut page_dict)) = doc.objects.get_mut(&page_id) {
+            let mut group = lopdf::Dictionary::new();
+            group.set("Type", Object::Name(b"Group".to_vec()));
+            group.set("S", Object::Name(b"Transparency".to_vec()));
+            group.set("CS", Object::Name(b"DeviceRGB".to_vec()));
+            page_dict.set("Group", Object::Dictionary(group));
+        }
+    }
+}
+
+/// Check if a page uses transparency features via its resources (lopdf).
+fn page_uses_transparency_lopdf(doc: &Document, page_id: ObjectId) -> bool {
+    let page_dict = match doc.objects.get(&page_id) {
+        Some(Object::Dictionary(d)) => d,
+        _ => return false,
+    };
+
+    // Get Resources (may be direct or indirect).
+    let resources = match page_dict.get(b"Resources").ok() {
+        Some(Object::Dictionary(d)) => d.clone(),
+        Some(Object::Reference(id)) => match doc.objects.get(id) {
+            Some(Object::Dictionary(d)) => d.clone(),
+            _ => return false,
+        },
+        _ => return false,
+    };
+
+    // Check ExtGState entries.
+    if let Ok(gs_obj) = resources.get(b"ExtGState") {
+        let gs_dict = match gs_obj {
+            Object::Dictionary(d) => Some(d.clone()),
+            Object::Reference(id) => match doc.objects.get(id) {
+                Some(Object::Dictionary(d)) => Some(d.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(gs_dict) = gs_dict {
+            for (_, val) in gs_dict.iter() {
+                let gs = match val {
+                    Object::Dictionary(d) => d,
+                    Object::Reference(id) => match doc.objects.get(id) {
+                        Some(Object::Dictionary(d)) => d,
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                // SMask != None
+                if let Ok(smask) = gs.get(b"SMask") {
+                    match smask {
+                        Object::Name(n) if n == b"None" => {}
+                        Object::Name(_) | Object::Dictionary(_) | Object::Reference(_) => {
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
+                // BM != Normal/Compatible
+                if let Ok(Object::Name(bm)) = gs.get(b"BM") {
+                    if bm != b"Normal" && bm != b"Compatible" {
+                        return true;
+                    }
+                }
+                // CA < 1.0 (stroke opacity)
+                if let Ok(ca_obj) = gs.get(b"CA") {
+                    if let Some(v) = obj_as_f64(ca_obj) {
+                        if v < 1.0 {
+                            return true;
+                        }
+                    }
+                }
+                // ca < 1.0 (fill opacity)
+                if let Ok(ca_obj) = gs.get(b"ca") {
+                    if let Some(v) = obj_as_f64(ca_obj) {
+                        if v < 1.0 {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check XObject entries for Image /SMask or Form transparency Group.
+    if let Ok(xobj_obj) = resources.get(b"XObject") {
+        let xobj_dict = match xobj_obj {
+            Object::Dictionary(d) => Some(d.clone()),
+            Object::Reference(id) => match doc.objects.get(id) {
+                Some(Object::Dictionary(d)) => Some(d.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(xobj_dict) = xobj_dict {
+            for (_, val) in xobj_dict.iter() {
+                let stream_dict = match val {
+                    Object::Reference(id) => match doc.objects.get(id) {
+                        Some(Object::Stream(s)) => &s.dict,
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                let subtype = stream_dict.get(b"Subtype").ok();
+                let is_image = matches!(subtype, Some(Object::Name(ref n)) if n == b"Image");
+                let is_form = matches!(subtype, Some(Object::Name(ref n)) if n == b"Form");
+
+                if is_image && stream_dict.has(b"SMask") {
+                    return true;
+                }
+                if is_form {
+                    if let Ok(Object::Dictionary(group)) = stream_dict.get(b"Group") {
+                        if matches!(group.get(b"S").ok(), Some(Object::Name(ref n)) if n == b"Transparency")
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn obj_as_f64(obj: &Object) -> Option<f64> {
+    match obj {
+        Object::Real(v) => Some(*v as f64),
+        Object::Integer(v) => Some(*v as f64),
+        _ => None,
+    }
+}
+
+/// §6.7.3.3: If MarkInfo/Marked is true but Catalog has no StructTreeRoot,
+/// remove the /Marked flag to avoid the compliance violation.
+fn fix_markinfo_without_structtreeroot(doc: &mut Document) {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return,
+    };
+
+    let (has_structtreeroot, markinfo_id) = {
+        let catalog = match doc.objects.get(&catalog_id) {
+            Some(Object::Dictionary(d)) => d,
+            _ => return,
+        };
+        let has_str = catalog.get(b"StructTreeRoot").is_ok();
+        let mi_id = match catalog.get(b"MarkInfo").ok() {
+            Some(Object::Reference(id)) => Some(*id),
+            _ => None,
+        };
+        (has_str, mi_id)
+    };
+
+    if has_structtreeroot {
+        return; // StructTreeRoot exists — no issue.
+    }
+
+    // Check inline MarkInfo in catalog.
+    if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+        if let Ok(Object::Dictionary(ref mi)) = catalog.get(b"MarkInfo") {
+            if matches!(mi.get(b"Marked").ok(), Some(Object::Boolean(true))) {
+                catalog.remove(b"MarkInfo");
+            }
+        }
+    }
+
+    // Check indirect MarkInfo.
+    if let Some(mi_id) = markinfo_id {
+        let should_remove = matches!(
+            doc.objects.get(&mi_id),
+            Some(Object::Dictionary(d)) if matches!(d.get(b"Marked").ok(), Some(Object::Boolean(true)))
+        );
+        if should_remove {
+            // Remove the MarkInfo reference from catalog.
+            if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+                catalog.remove(b"MarkInfo");
+            }
+        }
+    }
+}
+
+/// §6.4.2: Remove forbidden /SMask from Image XObjects.
+///
+/// PDF/A forbids soft masks on images. This strips the /SMask reference
+/// from image XObjects. (The soft mask image itself is left in place — it
+/// becomes an orphan that the serializer drops.)
+fn strip_forbidden_smask(doc: &mut Document) {
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let should_strip = {
+            if let Some(Object::Stream(stream)) = doc.objects.get(&id) {
+                let is_image = matches!(
+                    stream.dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if n == b"Image"
+                );
+                is_image && stream.dict.has(b"SMask")
+            } else {
+                false
+            }
+        };
+        if should_strip {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&id) {
+                stream.dict.remove(b"SMask");
+            }
+        }
+    }
+}
+
+/// §6.8.3.4: Fix unbalanced EMC operators (EMC without matching BMC/BDC).
+///
+/// Scans content streams for EMC operators and ensures each has a matching
+/// BMC or BDC. Removes orphan EMC operators.
+fn fix_unbalanced_emc(doc: &mut Document) {
+    // Collect page content stream IDs. Only process streams that are actually
+    // referenced as page /Contents to avoid decompressing every stream.
+    let mut content_ids: Vec<ObjectId> = Vec::new();
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    for page_id in &page_ids {
+        if let Some(Object::Dictionary(page)) = doc.objects.get(page_id) {
+            match page.get(b"Contents").ok() {
+                Some(Object::Reference(id)) => content_ids.push(*id),
+                Some(Object::Array(arr)) => {
+                    for item in arr {
+                        if let Object::Reference(id) = item {
+                            content_ids.push(*id);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // Also include Form XObject streams.
+    let form_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Stream(s) = obj {
+                if matches!(s.dict.get(b"Subtype").ok(), Some(Object::Name(ref n)) if n == b"Form")
+                {
+                    Some(*id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+    content_ids.extend(form_ids);
+
+    for id in content_ids {
+        let content = {
+            if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+                match s.decompressed_content() {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                }
+            } else {
+                continue;
+            }
+        };
+
+        if !content.windows(3).any(|w| w == b"EMC") {
+            continue;
+        }
+
+        let fixed = fix_emc_in_bytes(&content);
+        if fixed != content {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.set_plain_content(fixed);
+            }
+        }
+    }
+}
+
+/// Remove orphan EMC operators from content stream bytes.
+fn fix_emc_in_bytes(data: &[u8]) -> Vec<u8> {
+    // Simple token-level scan: track BMC/BDC depth, remove EMC when depth is 0.
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    let mut depth: i32 = 0;
+
+    while i < data.len() {
+        // Skip whitespace.
+        if data[i].is_ascii_whitespace() {
+            out.push(data[i]);
+            i += 1;
+            continue;
+        }
+
+        // Skip comments.
+        if data[i] == b'%' {
+            while i < data.len() && data[i] != b'\n' && data[i] != b'\r' {
+                out.push(data[i]);
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip strings.
+        if data[i] == b'(' {
+            let start = i;
+            i += 1;
+            let mut nest = 1i32;
+            while i < data.len() && nest > 0 {
+                if data[i] == b'(' && (i == 0 || data[i - 1] != b'\\') {
+                    nest += 1;
+                } else if data[i] == b')' && (i == 0 || data[i - 1] != b'\\') {
+                    nest -= 1;
+                }
+                i += 1;
+            }
+            out.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // Skip hex strings.
+        if data[i] == b'<' && data.get(i + 1) != Some(&b'<') {
+            let start = i;
+            i += 1;
+            while i < data.len() && data[i] != b'>' {
+                i += 1;
+            }
+            if i < data.len() {
+                i += 1;
+            }
+            out.extend_from_slice(&data[start..i]);
+            continue;
+        }
+
+        // Read token (keyword or operator).
+        let tok_start = i;
+        while i < data.len()
+            && !data[i].is_ascii_whitespace()
+            && data[i] != b'('
+            && data[i] != b'<'
+            && data[i] != b'/'
+            && data[i] != b'%'
+            && data[i] != b'['
+            && data[i] != b']'
+        {
+            i += 1;
+        }
+        let token = &data[tok_start..i];
+
+        if token == b"BMC" || token == b"BDC" {
+            depth += 1;
+            out.extend_from_slice(token);
+        } else if token == b"EMC" {
+            if depth > 0 {
+                depth -= 1;
+                out.extend_from_slice(token);
+            }
+            // else: orphan EMC — drop it (don't append to out)
+        } else {
+            out.extend_from_slice(token);
+        }
+    }
+
+    out
 }
 
 /// Remove HalftoneName and TransferFunction from halftone dictionaries,
