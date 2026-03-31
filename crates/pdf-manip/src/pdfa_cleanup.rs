@@ -82,6 +82,7 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     fix_image_alternates(doc);
     report.cidtogidmap_added = fix_cidtogidmap(doc);
     report.ap_fixes = fix_annotation_ap(doc);
+    report.ap_fixes += fix_acroform_widget_ap(doc);
     strip_ap_non_normal(doc);
     fix_ocg_order(doc);
     fix_annotation_contents(doc);
@@ -1398,6 +1399,7 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                     if is_zero_size {
                         ApFixInfo::None
                     } else {
+                        let bbox = annot_rect_to_bbox(dict);
                         match dict.get(b"AP").ok() {
                             Some(Object::Dictionary(ap)) => {
                                 let n_is_valid = match ap.get(b"N").ok() {
@@ -1418,11 +1420,11 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                                         .ok()
                                         .cloned()
                                         .or_else(|| ap.get(b"R").ok().cloned());
-                                    ApFixInfo::InlineAp(fallback)
+                                    ApFixInfo::InlineAp(fallback, bbox)
                                 }
                             }
-                            Some(Object::Reference(ap_id)) => ApFixInfo::RefAp(*ap_id),
-                            _ => ApFixInfo::MissingAp, // No AP at all — need to create one.
+                            Some(Object::Reference(ap_id)) => ApFixInfo::RefAp(*ap_id, bbox),
+                            _ => ApFixInfo::MissingAp(bbox), // No AP at all — need to create one.
                         }
                     }
                 }
@@ -1431,7 +1433,7 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
             }
         };
         match fix_info {
-            ApFixInfo::InlineAp(Some(val)) => {
+            ApFixInfo::InlineAp(Some(val), _) => {
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                     if let Ok(Object::Dictionary(ref mut ap)) = dict.get_mut(b"AP") {
                         ap.set("N", val);
@@ -1439,7 +1441,7 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                     }
                 }
             }
-            ApFixInfo::RefAp(ap_id) => {
+            ApFixInfo::RefAp(ap_id, bbox) => {
                 // Check referenced AP dict — N must exist and be a valid stream/dict.
                 let needs_fix = {
                     if let Some(Object::Dictionary(ap)) = doc.objects.get(&ap_id) {
@@ -1474,20 +1476,7 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                             count += 1;
                         }
                     } else {
-                        // No D/R fallback — create empty appearance stream.
-                        let mut stream_dict = lopdf::Dictionary::new();
-                        stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
-                        stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
-                        stream_dict.set(
-                            "BBox",
-                            Object::Array(vec![
-                                Object::Integer(0),
-                                Object::Integer(0),
-                                Object::Integer(0),
-                                Object::Integer(0),
-                            ]),
-                        );
-                        let empty_stream = lopdf::Stream::new(stream_dict, Vec::new());
+                        let empty_stream = make_empty_form_xobject(bbox);
                         let stream_id = doc.add_object(Object::Stream(empty_stream));
                         if let Some(Object::Dictionary(ref mut ap)) = doc.objects.get_mut(&ap_id) {
                             ap.set("N", Object::Reference(stream_id));
@@ -1496,22 +1485,9 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                     }
                 }
             }
-            ApFixInfo::InlineAp(None) => {
+            ApFixInfo::InlineAp(None, bbox) => {
                 // AP dict exists but has no N key and no D/R fallback.
-                // Create an empty appearance stream for N.
-                let mut stream_dict = lopdf::Dictionary::new();
-                stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
-                stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
-                stream_dict.set(
-                    "BBox",
-                    Object::Array(vec![
-                        Object::Integer(0),
-                        Object::Integer(0),
-                        Object::Integer(0),
-                        Object::Integer(0),
-                    ]),
-                );
-                let empty_stream = lopdf::Stream::new(stream_dict, Vec::new());
+                let empty_stream = make_empty_form_xobject(bbox);
                 let stream_id = doc.add_object(Object::Stream(empty_stream));
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                     if let Ok(Object::Dictionary(ref mut ap)) = dict.get_mut(b"AP") {
@@ -1520,21 +1496,9 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
                     }
                 }
             }
-            ApFixInfo::MissingAp => {
+            ApFixInfo::MissingAp(bbox) => {
                 // Create an empty appearance stream and AP dict.
-                let mut stream_dict = lopdf::Dictionary::new();
-                stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
-                stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
-                stream_dict.set(
-                    "BBox",
-                    Object::Array(vec![
-                        Object::Integer(0),
-                        Object::Integer(0),
-                        Object::Integer(0),
-                        Object::Integer(0),
-                    ]),
-                );
-                let empty_stream = lopdf::Stream::new(stream_dict, Vec::new());
+                let empty_stream = make_empty_form_xobject(bbox);
                 let stream_id = doc.add_object(Object::Stream(empty_stream));
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                     let mut ap = lopdf::Dictionary::new();
@@ -1551,9 +1515,196 @@ fn fix_annotation_ap(doc: &mut Document) -> usize {
 
 enum ApFixInfo {
     None,
-    InlineAp(Option<Object>),
-    RefAp(ObjectId),
-    MissingAp,
+    InlineAp(Option<Object>, [f64; 4]),
+    RefAp(ObjectId, [f64; 4]),
+    MissingAp([f64; 4]),
+}
+
+/// Extract [0, 0, width, height] BBox from an annotation /Rect.
+fn annot_rect_to_bbox(dict: &lopdf::Dictionary) -> [f64; 4] {
+    match dict.get(b"Rect").ok() {
+        Some(Object::Array(arr)) if arr.len() == 4 => {
+            let nums: Vec<f64> = arr
+                .iter()
+                .filter_map(|o| match o {
+                    Object::Integer(i) => Some(*i as f64),
+                    Object::Real(r) => Some(*r as f64),
+                    _ => None,
+                })
+                .collect();
+            if nums.len() == 4 {
+                let w = (nums[2] - nums[0]).abs();
+                let h = (nums[3] - nums[1]).abs();
+                [0.0, 0.0, w, h]
+            } else {
+                [0.0, 0.0, 1.0, 1.0]
+            }
+        }
+        _ => [0.0, 0.0, 1.0, 1.0],
+    }
+}
+
+fn make_empty_form_xobject(bbox: [f64; 4]) -> lopdf::Stream {
+    let mut stream_dict = lopdf::Dictionary::new();
+    stream_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    stream_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+    stream_dict.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Real(bbox[0] as f32),
+            Object::Real(bbox[1] as f32),
+            Object::Real(bbox[2] as f32),
+            Object::Real(bbox[3] as f32),
+        ]),
+    );
+    stream_dict.set("Resources", Object::Dictionary(lopdf::Dictionary::new()));
+    lopdf::Stream::new(stream_dict, Vec::new())
+}
+
+/// Walk AcroForm /Fields tree and ensure all terminal Widget annotations have /AP.
+/// Merged field/widget dicts may lack explicit /Subtype /Widget but still need
+/// appearance streams. A terminal widget is a field dict with /Rect but no /Kids
+/// (or with /Subtype /Widget).
+fn fix_acroform_widget_ap(doc: &mut Document) -> usize {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return 0,
+    };
+
+    // Collect field IDs from AcroForm /Fields tree (recursive through /Kids).
+    let mut field_ids: Vec<ObjectId> = Vec::new();
+    let acroform_fields: Vec<ObjectId> = {
+        let Some(Object::Dictionary(catalog)) = doc.objects.get(&catalog_id) else {
+            return 0;
+        };
+        let af = match catalog.get(b"AcroForm").ok() {
+            Some(Object::Reference(id)) => {
+                let Some(Object::Dictionary(af)) = doc.objects.get(id) else {
+                    return 0;
+                };
+                af
+            }
+            Some(Object::Dictionary(af)) => af,
+            _ => return 0,
+        };
+        match af.get(b"Fields").ok() {
+            Some(Object::Array(arr)) => arr
+                .iter()
+                .filter_map(|o| {
+                    if let Object::Reference(id) = o {
+                        Some(*id)
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            _ => return 0,
+        }
+    };
+
+    // BFS through field tree.
+    let mut queue: Vec<ObjectId> = acroform_fields;
+    let mut visited = std::collections::HashSet::new();
+    while let Some(fid) = queue.pop() {
+        if !visited.insert(fid) {
+            continue;
+        }
+        let Some(Object::Dictionary(dict)) = doc.objects.get(&fid) else {
+            continue;
+        };
+        // Recurse into /Kids.
+        if let Ok(Object::Array(kids)) = dict.get(b"Kids") {
+            for kid in kids {
+                if let Object::Reference(kid_id) = kid {
+                    queue.push(*kid_id);
+                }
+            }
+        }
+        // Check if this is a terminal widget: has /Rect, is Widget or has /FT.
+        let has_rect = dict.has(b"Rect");
+        let is_widget = matches!(
+            dict.get(b"Subtype").ok(),
+            Some(Object::Name(ref n)) if n == b"Widget"
+        );
+        if has_rect || is_widget {
+            field_ids.push(fid);
+        }
+    }
+
+    let mut count = 0;
+    for fid in field_ids {
+        let needs_ap = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&fid) else {
+                continue;
+            };
+            // Skip if already has valid /AP.
+            match dict.get(b"AP").ok() {
+                Some(Object::Dictionary(ap)) => {
+                    match ap.get(b"N").ok() {
+                        Some(Object::Stream(_)) | Some(Object::Dictionary(_)) => continue,
+                        Some(Object::Reference(r)) => {
+                            match doc.objects.get(r) {
+                                Some(Object::Stream(_)) | Some(Object::Dictionary(_)) => continue,
+                                _ => {} // Invalid ref — needs fix.
+                            }
+                        }
+                        _ => {} // No N — needs fix.
+                    }
+                    false // Has AP but no valid N — handled by fix_annotation_ap above.
+                }
+                Some(Object::Reference(ap_id)) => {
+                    if let Some(Object::Dictionary(ap)) = doc.objects.get(ap_id) {
+                        match ap.get(b"N").ok() {
+                            Some(Object::Stream(_)) | Some(Object::Dictionary(_)) => continue,
+                            Some(Object::Reference(r)) => {
+                                match doc.objects.get(r) {
+                                    Some(Object::Stream(_))
+                                    | Some(Object::Dictionary(_)) => continue,
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    false
+                }
+                None => true, // No AP at all.
+                _ => true,
+            }
+        };
+        if !needs_ap {
+            continue;
+        }
+        // Get BBox from /Rect.
+        let bbox = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&fid) else {
+                continue;
+            };
+            annot_rect_to_bbox(dict)
+        };
+        // Check if this is a Btn widget — needs subdictionary AP/N.
+        let is_btn = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&fid) else {
+                continue;
+            };
+            is_btn_field(doc, dict)
+        };
+        let empty_stream = make_empty_form_xobject(bbox);
+        let stream_id = doc.add_object(Object::Stream(empty_stream));
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&fid) {
+            let mut ap = lopdf::Dictionary::new();
+            if is_btn {
+                let mut sub = lopdf::Dictionary::new();
+                sub.set("Off", Object::Reference(stream_id));
+                ap.set("N", Object::Dictionary(sub));
+            } else {
+                ap.set("N", Object::Reference(stream_id));
+            }
+            dict.set("AP", Object::Dictionary(ap));
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Remove D and R entries from annotation AP dicts (6.3.3:2).

@@ -35,6 +35,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let overflow_integers_fixed = fix_overflow_integers(doc);
     let overflow_reals_fixed = fix_overflow_reals(doc);
     let long_strings_fixed = fix_long_strings(doc);
+    let jbig2_globals_fixed = fix_jbig2_globals(doc);
     let jpx_colorspace_fixed = fix_jpx_forbidden_colorspaces(doc);
     // Content stream modifications (decompress/recompress) must run before
     // fix_stream_lengths to ensure Length values are correct.
@@ -110,6 +111,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         inline_image_interpolate_fixed,
         ascii85_inline_images_fixed,
         lzw_inline_images_fixed,
+        jbig2_globals_fixed,
         jpx_colorspace_fixed,
         concatenated_operators_fixed,
         unknown_operators_stripped,
@@ -153,6 +155,7 @@ pub struct FixupReport {
     pub inline_image_interpolate_fixed: usize,
     pub ascii85_inline_images_fixed: usize,
     pub lzw_inline_images_fixed: usize,
+    pub jbig2_globals_fixed: usize,
     pub jpx_colorspace_fixed: usize,
     pub concatenated_operators_fixed: usize,
     pub unknown_operators_stripped: usize,
@@ -6187,6 +6190,172 @@ fn replace_invalid_jpx_with_placeholder(stream: &mut lopdf::Stream) {
     stream.dict.remove(b"ImageMask");
     stream.dict.remove(b"Filter");
     stream.set_content(vec![255u8]); // also updates /Length (#FP-6.1.7.1-len)
+}
+
+// ---------------------------------------------------------------------------
+// §6.1.6.2 — Re-encode JBIG2 streams that use global segments
+// ---------------------------------------------------------------------------
+//
+// PDF/A forbids JBIG2Decode with /JBIG2Globals in DecodeParms.
+// Fix: decode the JBIG2 image (merging globals), then re-encode as 1bpp
+// FlateDecode. The image dimensions (/Width, /Height) are preserved.
+
+#[cfg(feature = "pdfa-convert")]
+fn fix_jbig2_globals(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        // Phase 1: detect JBIG2Decode + JBIG2Globals and collect data.
+        let decode_info: Option<(Vec<u8>, Vec<u8>)> = {
+            let Some(Object::Stream(stream)) = doc.objects.get(&id) else {
+                continue;
+            };
+            // Check if this stream uses JBIG2Decode.
+            let is_jbig2 = match stream.dict.get(b"Filter").ok() {
+                Some(Object::Name(n)) => n == b"JBIG2Decode",
+                Some(Object::Array(arr)) => arr
+                    .iter()
+                    .any(|o| matches!(o, Object::Name(n) if n == b"JBIG2Decode")),
+                _ => false,
+            };
+            if !is_jbig2 {
+                continue;
+            }
+            // Check for /JBIG2Globals in DecodeParms.
+            let globals_ref: Option<ObjectId> = if let Some(Object::Dictionary(dp)) =
+                stream.dict.get(b"DecodeParms").ok()
+            {
+                match dp.get(b"JBIG2Globals").ok() {
+                    Some(Object::Reference(r)) => Some(*r),
+                    _ => None,
+                }
+            } else if let Some(Object::Array(arr)) = stream.dict.get(b"DecodeParms").ok() {
+                arr.iter().find_map(|o| {
+                    if let Object::Dictionary(dp) = o {
+                        match dp.get(b"JBIG2Globals").ok() {
+                            Some(Object::Reference(r)) => Some(*r),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
+            let Some(globals_id) = globals_ref else {
+                continue; // JBIG2 without globals — allowed in PDF/A.
+            };
+            // Get the globals stream data.
+            let globals_data = match doc.objects.get(&globals_id) {
+                Some(Object::Stream(gs)) => {
+                    let mut gs_clone = gs.clone();
+                    if gs_clone.decompress().is_ok() {
+                        gs_clone.content.clone()
+                    } else {
+                        gs.content.clone()
+                    }
+                }
+                _ => continue,
+            };
+            // Get the JBIG2 image data (raw stream content).
+            let mut s_clone = stream.clone();
+            let image_data = if s_clone.decompress().is_ok() {
+                // Multi-filter: other filters decoded first, leaving raw JBIG2.
+                // But if the ONLY filter is JBIG2Decode, lopdf can't decode it,
+                // so decompress() may fail — use raw content.
+                s_clone.content.clone()
+            } else {
+                stream.content.clone()
+            };
+            Some((image_data, globals_data))
+        };
+
+        let Some((image_data, globals_data)) = decode_info else {
+            continue;
+        };
+
+        // Phase 2: decode JBIG2 and re-encode.
+        let Ok(image) = hayro_jbig2::decode_embedded(&image_data, Some(&globals_data)) else {
+            continue; // Decode failed — leave stream unchanged.
+        };
+
+        // Extract raw 1bpp bitmap bytes from the decoded image.
+        let bytes_per_row = image.width.div_ceil(8) as usize;
+        let mut raw_bitmap = Vec::with_capacity(bytes_per_row * image.height as usize);
+        struct ByteCollector<'a> {
+            out: &'a mut Vec<u8>,
+            row_buf: Vec<u8>,
+            pixel_count: u32,
+        }
+        impl hayro_jbig2::Decoder for ByteCollector<'_> {
+            fn push_pixel(&mut self, black: bool) {
+                let bit_in_byte = self.pixel_count % 8;
+                if bit_in_byte == 0 {
+                    self.row_buf.push(0);
+                }
+                if black {
+                    let last = self.row_buf.last_mut().unwrap();
+                    *last |= 1 << (7 - bit_in_byte);
+                }
+                self.pixel_count += 1;
+            }
+            fn push_pixel_chunk(&mut self, black: bool, chunk_count: u32) {
+                // Called only when byte-aligned; each chunk = 8 pixels = 1 byte.
+                let byte_val = if black { 0xFF } else { 0x00 };
+                for _ in 0..chunk_count {
+                    self.row_buf.push(byte_val);
+                }
+                self.pixel_count += chunk_count * 8;
+            }
+            fn next_line(&mut self) {
+                self.out.extend_from_slice(&self.row_buf);
+                self.row_buf.clear();
+                self.pixel_count = 0;
+            }
+        }
+        let mut collector = ByteCollector {
+            out: &mut raw_bitmap,
+            row_buf: Vec::with_capacity(bytes_per_row),
+            pixel_count: 0,
+        };
+        image.decode(&mut collector);
+        // Flush any remaining row data.
+        let leftover = std::mem::take(&mut collector.row_buf);
+        drop(collector);
+        if !leftover.is_empty() {
+            raw_bitmap.extend_from_slice(&leftover);
+        }
+
+        // Compress with flate.
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+        if encoder.write_all(&raw_bitmap).is_err() {
+            continue;
+        }
+        let Ok(compressed) = encoder.finish() else {
+            continue;
+        };
+
+        // Phase 3: replace stream.
+        if let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) {
+            stream.dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+            stream.dict.remove(b"DecodeParms");
+            stream.dict.set("Width", Object::Integer(image.width as i64));
+            stream
+                .dict
+                .set("Height", Object::Integer(image.height as i64));
+            stream.dict.set("BitsPerComponent", Object::Integer(1));
+            stream.set_content(compressed);
+            count += 1;
+        }
+    }
+    count
+}
+
+#[cfg(not(feature = "pdfa-convert"))]
+fn fix_jbig2_globals(_doc: &mut Document) -> usize {
+    0
 }
 
 fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
