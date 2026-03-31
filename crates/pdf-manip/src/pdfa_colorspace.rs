@@ -1644,7 +1644,7 @@ fn ensure_devicen_colorants(doc: &mut Document) {
                 }
             }
         }
-        // For DeviceN without attrs ref: create attrs dict with Colorants
+        // For DeviceN without attrs ref: create inline attrs dict with Colorants
         else {
             let mut cd = lopdf::Dictionary::new();
             for name in &spots {
@@ -1660,10 +1660,9 @@ fn ensure_devicen_colorants(doc: &mut Document) {
             let attrs = lopdf::dictionary! {
                 "Colorants" => Object::Dictionary(cd),
             };
-            let attrs_id = doc.add_object(Object::Dictionary(attrs));
             if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&id) {
                 if arr.len() == 4 {
-                    arr.push(Object::Reference(attrs_id));
+                    arr.push(Object::Dictionary(attrs));
                 }
             }
         }
