@@ -1,12 +1,12 @@
 use super::argstack::ArgumentsStack;
-use super::{f32_abs, Builder, CFFError, IsEven};
+use super::{f64_abs, Builder, CFFError, IsEven};
 use crate::parser::{Fixed, Stream};
 
 pub(crate) struct CharStringParser<'a> {
     pub stack: ArgumentsStack<'a>,
     pub builder: &'a mut Builder<'a>,
-    pub x: f32,
-    pub y: f32,
+    pub x: f64,
+    pub y: f64,
     pub has_move_to: bool,
     pub is_first_move_to: bool,
     pub width_only: bool, // Exit right after the glyph width is parsed.
@@ -506,7 +506,7 @@ impl CharStringParser<'_> {
         let dx5 = dx4 + self.stack.at(8);
         let dy5 = dy4 + self.stack.at(9);
 
-        if f32_abs(dx5 - self.x) > f32_abs(dy5 - self.y) {
+        if f64_abs(dx5 - self.x) > f64_abs(dy5 - self.y) {
             self.x = dx5 + self.stack.at(10);
         } else {
             self.y = dy5 + self.stack.at(10);
@@ -582,7 +582,7 @@ impl CharStringParser<'_> {
     #[inline]
     pub fn parse_int1(&mut self, op: u8) -> Result<(), CFFError> {
         let n = i16::from(op) - 139;
-        self.stack.push(f32::from(n))?;
+        self.stack.push(f64::from(n))?;
         Ok(())
     }
 
@@ -591,7 +591,7 @@ impl CharStringParser<'_> {
         let b1 = s.read::<u8>().ok_or(CFFError::ReadOutOfBounds)?;
         let n = (i16::from(op) - 247) * 256 + i16::from(b1) + 108;
         debug_assert!((108..=1131).contains(&n));
-        self.stack.push(f32::from(n))?;
+        self.stack.push(f64::from(n))?;
         Ok(())
     }
 
@@ -600,7 +600,7 @@ impl CharStringParser<'_> {
         let b1 = s.read::<u8>().ok_or(CFFError::ReadOutOfBounds)?;
         let n = -(i16::from(op) - 251) * 256 - i16::from(b1) - 108;
         debug_assert!((-1131..=-108).contains(&n));
-        self.stack.push(f32::from(n))?;
+        self.stack.push(f64::from(n))?;
         Ok(())
     }
 

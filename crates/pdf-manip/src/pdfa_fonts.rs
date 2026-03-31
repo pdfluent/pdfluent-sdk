@@ -90,23 +90,13 @@ pub fn restore_stripped_encodings(
 // Known Limitations — intrinsic veraPDF failures not fixable by our pipeline
 // ---------------------------------------------------------------------------
 //
-// CFF PRECISION (§6.2.11.5:1, delta 1-10 units):
-// TeX CMSY/CMMI/BeraSans subset CFF fonts with non-standard FontMatrix
-// (e.g., 1/1440 UPM). The original Widths array was created by the TeX tool
-// with integer rounding. veraPDF computes fractional widths from CFF
-// charstrings with full f64 precision, producing values that differ by 1-10
-// units. Fix requires CFF re-encoding with corrected widths, which we don't
-// support. Affected PDFs (5): 053_053658, 069_069976, 176_176421,
-// 361_361607, 463_463122.
-//
 // NEGATIVE CFF WIDTHS (§6.2.11.5:1, Melior family):
 // CFF fonts with nominalWidthX offset that produces negative charstring
-// widths (e.g., -89). Our cff-parser's glyph_width() returns Option<u16>
-// which can't represent negative values. The glyph_width_f32() method
-// exists but triggers stack overflow on some PDFs when used broadly.
+// widths (e.g., -89). These need continued validation because several legacy
+// fallback paths historically assumed unsigned advances.
 // Affected PDFs (3): 504_504176, 513_513404, 818_818921.
 //
-// Total known limitations: 8 PDFs (not counted as failures).
+// Total known limitations under investigation: 3 PDFs (not counted as failures).
 
 // ---------------------------------------------------------------------------
 // Two-Phase Font Correction Pipeline
@@ -2982,14 +2972,10 @@ fn fix_cid_widths_from_cff(
     let mut by_cid: std::collections::HashMap<u16, Vec<i64>> = std::collections::HashMap::new();
     for gid in 0..num_glyphs {
         let glyph_id = cff_parser::GlyphId(gid);
-        if let Some(w) = cff.glyph_width(glyph_id) {
-            let fd_matrix = cff.glyph_fd_matrix(glyph_id);
-            let scale = if fd_matrix.sx.abs() > f32::EPSILON {
-                fd_matrix.sx * 1000.0
-            } else {
-                1.0_f32
-            };
-            let scaled = (w as f64 * scale as f64).round() as i64;
+        if let Some(scaled) = cff
+            .glyph_width_f64(glyph_id)
+            .map(|w| (w * cff_matrix_scale(cff.glyph_fd_matrix(glyph_id).sx)).round() as i64)
+        {
             // For CIDFontType0 (CID-keyed CFF), every valid glyph must have a
             // charset entry. GIDs where glyph_cid returns None are unassigned
             // charstrings that carry no CID mapping — skip them. Using
@@ -3020,15 +3006,8 @@ fn fix_cid_widths_from_cff(
     // (notdef_dw is recomputed after the by_cid loop using per-FD matrix)
     let notdef_dw_for_dedup: Option<i64> = {
         let g0 = cff_parser::GlyphId(0);
-        cff.glyph_width(g0).map(|w| {
-            let fd_matrix = cff.glyph_fd_matrix(g0);
-            let scale = if fd_matrix.sx.abs() > f32::EPSILON {
-                fd_matrix.sx * 1000.0
-            } else {
-                1.0_f32
-            };
-            (w as f64 * scale as f64).round() as i64
-        })
+        cff.glyph_width_f64(g0)
+            .map(|w| (w * cff_matrix_scale(cff.glyph_fd_matrix(g0).sx)).round() as i64)
     };
 
     let mut widths: Vec<(u16, i64)> = by_cid
@@ -3070,15 +3049,8 @@ fn fix_cid_widths_from_cff(
     // Mode fallback for fonts where .notdef width is unavailable.
     let notdef_dw = {
         let g0 = cff_parser::GlyphId(0);
-        cff.glyph_width(g0).map(|w| {
-            let fd_matrix = cff.glyph_fd_matrix(g0);
-            let scale = if fd_matrix.sx.abs() > f32::EPSILON {
-                fd_matrix.sx * 1000.0
-            } else {
-                1.0_f32
-            };
-            (w as f64 * scale as f64).round() as i64
-        })
+        cff.glyph_width_f64(g0)
+            .map(|w| (w * cff_matrix_scale(cff.glyph_fd_matrix(g0).sx)).round() as i64)
     };
     let mut freq: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
     for (_, w) in &widths {
@@ -3188,6 +3160,7 @@ fn fix_simple_cff_widths(
     font_id: ObjectId,
     cff: &cff_parser::Table<'_>,
 ) -> bool {
+    let scale = cff_matrix_scale(cff.matrix().sx);
     let (fc, lc, existing_widths) = {
         let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
             return false;
@@ -3233,10 +3206,10 @@ fn fix_simple_cff_widths(
         let Some(gid) = cff.glyph_index(code as u8) else {
             continue;
         };
-        let Some(cff_w) = cff.glyph_width(gid) else {
+        let Some(cff_w) = cff_glyph_width_f64(cff, gid, scale) else {
             continue;
         };
-        let cff_w_i64 = cff_w as i64;
+        let cff_w_i64 = cff_w.round() as i64;
         if (cff_w_i64 - pdf_w).abs() > 1 {
             new_widths[idx] = Object::Integer(cff_w_i64);
             changed = true;
@@ -6279,8 +6252,8 @@ pub fn fix_type1_widths(doc: &mut Document) -> usize {
                 find_cff_glyph_width_by_name(&cff, name, scale)
             } else if code <= u16::MAX as u32 {
                 // Direct GID lookup.
-                cff.glyph_width(cff_parser::GlyphId(code as u16))
-                    .map(|w| (w as f64 * scale).round() as i64)
+                cff_glyph_width_f64(&cff, cff_parser::GlyphId(code as u16), scale)
+                    .map(|w| w.round() as i64)
             } else {
                 None
             };
@@ -6328,9 +6301,7 @@ fn find_cff_glyph_width_by_name(
         let glyph_id = cff_parser::GlyphId(gid);
         if let Some(gname) = cff.glyph_name(glyph_id) {
             if gname == name {
-                return cff
-                    .glyph_width(glyph_id)
-                    .map(|w| (w as f64 * scale).round() as i64);
+                return cff_glyph_width_f64(cff, glyph_id, scale).map(|w| w.round() as i64);
             }
         }
     }
@@ -7101,8 +7072,8 @@ pub fn fix_missing_simple_font_widths(doc: &mut Document) -> usize {
                     };
                     let width = if let Some(name) = &glyph_name {
                         cff.glyph_index_by_name(name)
-                            .and_then(|gid| cff.glyph_width(gid))
-                            .map(|w| (w as f64 * scale).round() as i64)
+                            .and_then(|gid| cff_glyph_width_f64(&cff, gid, scale))
+                            .map(|w| w.round() as i64)
                     } else {
                         None
                     };
@@ -7110,8 +7081,10 @@ pub fn fix_missing_simple_font_widths(doc: &mut Document) -> usize {
                     let width = width.or_else(|| {
                         enc_map
                             .get(&(code as u8))
-                            .and_then(|&gid| cff.glyph_width(cff_parser::GlyphId(gid)))
-                            .map(|w| (w as f64 * scale).round() as i64)
+                            .and_then(|&gid| {
+                                cff_glyph_width_f64(&cff, cff_parser::GlyphId(gid), scale)
+                            })
+                            .map(|w| w.round() as i64)
                     });
                     Object::Integer(width.unwrap_or(0))
                 })
@@ -8066,8 +8039,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                     .or_else(|| {
                         cff_parser::Table::parse(&font_data).and_then(|cff| {
                             let scale = cff_matrix_scale(cff.matrix().sx);
-                            cff.glyph_width(cff_parser::GlyphId(0))
-                                .map(|w| w as f64 * scale)
+                            cff_glyph_width_f64(&cff, cff_parser::GlyphId(0), scale)
                                 .map(|w| w.round() as i64)
                         })
                     });
@@ -8080,8 +8052,7 @@ pub fn fix_font_width_mismatches(doc: &mut Document) -> usize {
                     let cff_bytes = extract_cff_bytes_from_otf(&font_data).unwrap_or(&font_data);
                     cff_parser::Table::parse(cff_bytes).and_then(|cff| {
                         let scale = cff_matrix_scale(cff.matrix().sx);
-                        cff.default_width_x()
-                            .map(|w| (w as f64 * scale).round() as i64)
+                        cff_default_width_f64(&cff, scale).map(|w| w.round() as i64)
                     })
                 };
                 corrections.retain(|(idx, new_w)| {
@@ -10679,39 +10650,31 @@ fn decrypt_charstring_width(
     Some(width)
 }
 
-/// Compute the CFF font matrix scale factor, compensating for f32→f64 precision loss.
+/// Compute the CFF font matrix scale factor from the exact DICT `FontMatrix`.
 ///
-/// CFF FontMatrix `sx` is stored as f32 (commonly 0.001 for 1000 UPM fonts).
-/// Converting `0.001f32` to f64 then multiplying by 1000.0 yields 1.0000000474…
-/// instead of exactly 1.0. This tiny error propagates into glyph widths,
-/// causing sub-unit discrepancies that veraPDF flags.
-pub fn cff_matrix_scale(matrix_sx: f32) -> f64 {
-    if matrix_sx.abs() > f32::EPSILON {
-        // Use the raw f32→f64 cast without rounding. veraPDF uses the exact
-        // float value from the CFF, not a rounded version. Rounding to 6
-        // decimal places loses precision for non-standard FontMatrix values
-        // (e.g., 1/1440 for TeX CMSY fonts), causing 3-7 unit width mismatches.
-        matrix_sx as f64 * 1000.0
+/// `cff-parser` now keeps DICT reals as `f64`, so this preserves the full
+/// precision of non-standard TeX math-font matrices like `1/1440`.
+pub fn cff_matrix_scale(matrix_sx: f64) -> f64 {
+    if matrix_sx.abs() > f64::EPSILON {
+        matrix_sx * 1000.0
     } else {
         1.0
     }
 }
 
-/// Get CFF glyph width as f64, using the signed `glyph_width_f32` to handle
-/// negative widths that arise from nominalWidthX offsets. Falls back to the
-/// unsigned `glyph_width` for compatibility.
+/// Get a CFF glyph width as scaled PDF text-space `f64`.
 #[allow(dead_code)]
 fn cff_glyph_width_f64(
     cff: &cff_parser::Table,
     gid: cff_parser::GlyphId,
     scale: f64,
 ) -> Option<f64> {
-    // Prefer glyph_width_f32 which handles negative widths correctly.
-    if let Some(w) = cff.glyph_width_f32(gid) {
-        return Some(w as f64 * scale);
-    }
-    // Fallback to u16 version
-    cff.glyph_width(gid).map(|w| w as f64 * scale)
+    cff.glyph_width_f64(gid).map(|w| w * scale)
+}
+
+/// Get CFF Private DICT defaultWidthX as scaled PDF text-space `f64`.
+fn cff_default_width_f64(cff: &cff_parser::Table, scale: f64) -> Option<f64> {
+    cff.default_width_x_f64().map(|w| w * scale)
 }
 
 /// Per-font CFF cache built once and shared across all per-code width lookups.
@@ -10761,8 +10724,8 @@ fn build_cff_font_ctx(cff: &cff_parser::Table, font_data: &[u8], scale: f64) -> 
             continue;
         };
         charset_names.insert(name.to_string());
-        if let Some(w) = cff.glyph_width(gid) {
-            name_to_width.insert(name.to_string(), w as f64 * scale);
+        if let Some(w) = cff_glyph_width_f64(cff, gid, scale) {
+            name_to_width.insert(name.to_string(), w);
         }
     }
 
@@ -10815,13 +10778,12 @@ fn compute_cff_corrections_for_custom_encoding(
         // Look up GID from raw encoding map first, fall back to glyph_index.
         let gid_from_map = enc_map.get(&(code as u8)).copied().unwrap_or(0);
         let frac_w = if gid_from_map > 0 {
-            cff.glyph_width(cff_parser::GlyphId(gid_from_map))
-                .map(|w| w as f64 * scale)
+            cff_glyph_width_f64(cff, cff_parser::GlyphId(gid_from_map), scale)
         } else {
             // Try glyph_index as fallback (for fonts where the encoding map
             // doesn't cover all codes but glyph_index does).
             match cff.glyph_index(code as u8) {
-                Some(gid) if gid.0 > 0 => cff.glyph_width(gid).map(|w| w as f64 * scale),
+                Some(gid) if gid.0 > 0 => cff_glyph_width_f64(cff, gid, scale),
                 _ => {
                     // .notdef or absent — skip unless pdf_w is 0
                     if pdf_w != 0.0 {
@@ -10870,8 +10832,7 @@ fn compute_cff_corrections_by_name(
     // Evidence: MELEBE+NCSchlbk GID 64 "atilde" — parser returns 682 (→333)
     // but veraPDF uses defaultWidthX 1139 (→556). (#6.2.11.5-cff-parser-dwx)
     let dwx_rounded: Option<i64> = if ctx.is_custom_enc {
-        cff.default_width_x()
-            .map(|w| (w as f64 * scale).round() as i64)
+        cff_default_width_f64(cff, scale).map(|w| w.round() as i64)
     } else {
         None
     };
@@ -10916,12 +10877,11 @@ fn compute_cff_corrections_by_name(
             if code <= 255 && code != 173 {
                 let cff_gid = cff.glyph_index(code as u8).map(|g| g.0).unwrap_or(0);
                 if cff_gid == 0 {
-                    let notdef_w = cff
-                        .glyph_width(cff_parser::GlyphId(0))
-                        .map(|w| (w as f64 * scale).round() as i64);
-                    let dwx_w = cff
-                        .default_width_x()
-                        .map(|w| (w as f64 * scale).round() as i64);
+                    let notdef_w =
+                        cff_glyph_width_f64(cff, cff_parser::GlyphId(0), scale).map(|w| {
+                            w.round() as i64
+                        });
+                    let dwx_w = cff_default_width_f64(cff, scale).map(|w| w.round() as i64);
                     let corr_is_notdef =
                         matches!(notdef_w, Some(nw) if (rounded_w - nw).abs() <= 1);
                     let corr_is_dwx = matches!(dwx_w, Some(dw) if (rounded_w - dw).abs() <= 1);
@@ -11127,8 +11087,7 @@ fn compute_cff_type1_width_corrections(
         // based path in cff_width_for_code handles the mapping. (#479, #6.2.11.5-notdef-guard)
         let frac_w = frac_w.or_else(|| {
             if !has_pdf_encoding {
-                cff.glyph_width(cff_parser::GlyphId(0))
-                    .map(|w| w as f64 * scale)
+                cff_glyph_width_f64(&cff, cff_parser::GlyphId(0), scale)
             } else {
                 None
             }
@@ -11150,7 +11109,7 @@ fn compute_cff_type1_width_corrections(
             if gid.0 == 0 {
                 return None; // not encoded or .notdef
             }
-            cff.glyph_width(gid).map(|w| w as f64 * scale)
+            cff_glyph_width_f64(&cff, gid, scale)
         });
 
         let Some(frac_w) = frac_w else { continue };
@@ -11256,12 +11215,10 @@ fn compute_otf_cff_corrections(
                 if code <= 255 {
                     if let Some(&gid) = enc_map.get(&(code as u8)) {
                         if gid != 0 {
-                            cff.glyph_width(cff_parser::GlyphId(gid))
-                                .map(|w| w as f64 * cff_scale)
+                            cff_glyph_width_f64(cff, cff_parser::GlyphId(gid), cff_scale)
                         } else {
                             // CFF maps to .notdef
-                            cff.glyph_width(cff_parser::GlyphId(0))
-                                .map(|w| w as f64 * cff_scale)
+                            cff_glyph_width_f64(cff, cff_parser::GlyphId(0), cff_scale)
                         }
                     } else {
                         // Code not in CFF encoding — fall through to cmap-based
@@ -11322,7 +11279,7 @@ fn compute_otf_cff_corrections(
                     }
                 }
             };
-            cff.glyph_width(gid).map(|w| w as f64 * cff_scale)
+            cff_glyph_width_f64(cff, gid, cff_scale)
         } else {
             continue;
         };
@@ -11480,8 +11437,9 @@ fn find_cff_glyph_width_by_name_fractional(
                 // endchar (old seac composite detection), which is also true for
                 // perfectly normal glyphs in subset CFF fonts, returning a wrong
                 // defaultWidthX value instead of the glyph's actual advance.
-                // Use cff.glyph_width directly; it parses the charstring correctly.
-                return cff.glyph_width(gid).map(|w| w as f64 * scale);
+                // Use the signed f64 width path so nominalWidthX and FontMatrix
+                // precision survive until the final PDF-width rounding step.
+                return cff_glyph_width_f64(cff, gid, scale);
             }
         }
     }
@@ -11500,7 +11458,7 @@ fn find_cff_glyph_width_by_exact_name_fractional(
     for gid_raw in 0..cff.number_of_glyphs() {
         let gid = cff_parser::GlyphId(gid_raw);
         if cff.glyph_name(gid) == Some(glyph_name) {
-            return cff.glyph_width(gid).map(|w| w as f64 * scale);
+            return cff_glyph_width_f64(cff, gid, scale);
         }
     }
     None
@@ -11531,9 +11489,11 @@ fn compute_cff_single_width(
                             let cff_scale = cff_matrix_scale(matrix.sx);
                             if let Some(&gid) = enc_map.get(&(code as u8)) {
                                 if gid != 0 {
-                                    return cff
-                                        .glyph_width(cff_parser::GlyphId(gid))
-                                        .map(|w| w as f64 * cff_scale);
+                                    return cff_glyph_width_f64(
+                                        &cff,
+                                        cff_parser::GlyphId(gid),
+                                        cff_scale,
+                                    );
                                 }
                             }
                             // Code not in CFF encoding — fall through to cmap-based
@@ -11576,12 +11536,12 @@ fn compute_cff_single_width(
                 // but WinAnsi maps 252 to "udieresis" which IS in the subset.
                 // (#6.2.11.5-std-enc-gid0-fallthrough)
                 if cff_has_custom_encoding(font_data) || !has_pdf_enc_raw {
-                    return cff.default_width_x().map(|w| w as f64 * scale);
+                    return cff_default_width_f64(&cff, scale);
                 }
                 // Fall through to cff_width_for_code below.
             }
             Some(g) => {
-                return cff.glyph_width(g).map(|w| w as f64 * scale);
+                return cff_glyph_width_f64(&cff, g, scale);
             }
             None => {
                 if cff_has_custom_encoding(font_data) {
@@ -11590,9 +11550,7 @@ fn compute_cff_single_width(
                     // Using defaultWidthX returns 0 for most subset fonts (Private
                     // DICT default_width=0) and causes false §6.2.11.5 corrections
                     // (e.g. gen-783 Garamond-Light Width[32]=250 → 0). (#gen-783)
-                    return cff
-                        .glyph_width(cff_parser::GlyphId(0))
-                        .map(|w| w as f64 * scale);
+                    return cff_glyph_width_f64(&cff, cff_parser::GlyphId(0), scale);
                 }
                 // CID font or standard/expert encoding — fall through to name lookup.
             }
@@ -11909,9 +11867,7 @@ fn cff_width_for_code(
         // Use pre-computed enc_map (hoisted to top of function).
         if let Some(&gid) = enc_map.get(&(code as u8)) {
             if gid != 0 {
-                return cff
-                    .glyph_width(cff_parser::GlyphId(gid))
-                    .map(|w| w as f64 * scale);
+                return cff_glyph_width_f64(cff, cff_parser::GlyphId(gid), scale);
             }
             // gid == 0 in enc_map: CFF encoding explicitly says this code is .notdef.
             cff_enc_explicit_notdef = true;
@@ -11927,7 +11883,7 @@ fn cff_width_for_code(
         if !is_custom_enc || enc_map.contains_key(&(code as u8)) {
             if let Some(gid) = cff.glyph_index(code as u8) {
                 if gid.0 != 0 {
-                    return cff.glyph_width(gid).map(|w| w as f64 * scale);
+                    return cff_glyph_width_f64(cff, gid, scale);
                 }
                 // GID 0 via encoding fallback — name lookup already failed above.
                 cff_enc_explicit_notdef = true;
@@ -12031,25 +11987,19 @@ fn cff_width_for_code(
                 // reports font program width = defaultWidthX (1139→556.15), NOT
                 // .notdef charstring (682→333). (#6.2.11.5-case2-custom-enc)
                 if is_custom_enc {
-                    return cff.default_width_x().map(|w| w as f64 * scale);
+                    return cff_default_width_f64(cff, scale);
                 }
-                return cff
-                    .glyph_width(cff_parser::GlyphId(0))
-                    .map(|w| w as f64 * scale);
+                return cff_glyph_width_f64(cff, cff_parser::GlyphId(0), scale);
             }
             // Case 1: named glyph absent from subset → defaultWidthX.
             // Fall back to .notdef charstring advance when defaultWidthX is absent
             // from the Private DICT — veraPDF uses .notdef advance in that case.
             // (#fix-cff-case1-notdef-fallback)
-            return cff.default_width_x().map(|w| w as f64 * scale).or_else(|| {
-                cff.glyph_width(cff_parser::GlyphId(0))
-                    .map(|w| w as f64 * scale)
-            });
+            return cff_default_width_f64(cff, scale)
+                .or_else(|| cff_glyph_width_f64(cff, cff_parser::GlyphId(0), scale));
         }
         // Case 3: custom encoding, explicit GID 0 → .notdef charstring advance.
-        return cff
-            .glyph_width(cff_parser::GlyphId(0))
-            .map(|w| w as f64 * scale);
+        return cff_glyph_width_f64(cff, cff_parser::GlyphId(0), scale);
     }
     if has_pdf_encoding {
         return None;
@@ -15777,10 +15727,7 @@ fn compute_classic_symbol_cff_width_corrections(
         return Vec::new();
     };
     let scale = cff_matrix_scale(cff.matrix().sx);
-    let notdef = cff
-        .glyph_width(cff_parser::GlyphId(0))
-        .map(|w| w as f64 * scale)
-        .unwrap_or(0.0);
+    let notdef = cff_glyph_width_f64(&cff, cff_parser::GlyphId(0), scale).unwrap_or(0.0);
     let mut corrections = Vec::new();
     for (i, obj) in existing_widths.iter().enumerate() {
         let Some(pdf_w) = object_to_f64(obj) else {
@@ -15830,11 +15777,11 @@ fn compute_symbolic_cff_width_corrections(
 
         let Some(gid) = gid else { continue };
 
-        let Some(w) = cff.glyph_width(gid) else {
+        let Some(w) = cff_glyph_width_f64(&cff, gid, scale) else {
             continue;
         };
 
-        let expected = (w as f64 * scale).round() as i64;
+        let expected = w.round() as i64;
 
         if (pdf_w - expected).abs() > 1 {
             corrections.push((i, expected));
@@ -17443,14 +17390,14 @@ pub fn fix_symbolic_font_notdef_streams(doc: &mut Document) -> usize {
                         if !name.is_empty() && name != ".notdef" {
                             has_glyph = cff
                                 .glyph_index_by_name(&name)
-                                .and_then(|gid| cff.glyph_width(gid))
+                                .and_then(|gid| cff.glyph_width_f64(gid))
                                 .is_some();
 
                             if !has_glyph {
                                 for alt in cff_glyph_name_alternatives(&name) {
                                     if cff
                                         .glyph_index_by_name(alt)
-                                        .and_then(|gid| cff.glyph_width(gid))
+                                        .and_then(|gid| cff.glyph_width_f64(gid))
                                         .is_some()
                                     {
                                         has_glyph = true;
@@ -19156,7 +19103,7 @@ fn fix_notdef_in_type1(
     for gid in 0..num_glyphs {
         let glyph_id = cff_parser::GlyphId(gid);
         if let Some(name) = cff.glyph_name(glyph_id) {
-            if name != ".notdef" && cff.glyph_width(glyph_id).is_some() {
+            if name != ".notdef" && cff.glyph_width_f64(glyph_id).is_some() {
                 available_glyphs.insert(name.to_string());
             }
         }

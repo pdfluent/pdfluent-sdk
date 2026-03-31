@@ -119,15 +119,14 @@ impl FromData for U24 {
 
 /// A 32-bit signed fixed-point number (16.16).
 #[derive(Clone, Copy, Debug)]
-pub struct Fixed(pub f32);
+pub struct Fixed(pub f64);
 
 impl FromData for Fixed {
     const SIZE: usize = 4;
 
     #[inline]
     fn parse(data: &[u8]) -> Option<Self> {
-        // TODO: is it safe to cast?
-        i32::parse(data).map(|n| Fixed(n as f32 / 65536.0))
+        i32::parse(data).map(|n| Fixed(f64::from(n) / 65536.0))
     }
 }
 
@@ -178,6 +177,13 @@ impl TryNumFrom<f32> for u8 {
     }
 }
 
+impl TryNumFrom<f64> for u8 {
+    #[inline]
+    fn try_num_from(v: f64) -> Option<Self> {
+        i32::try_num_from(v).and_then(|v| u8::try_from(v).ok())
+    }
+}
+
 impl TryNumFrom<f32> for i16 {
     #[inline]
     fn try_num_from(v: f32) -> Option<Self> {
@@ -185,9 +191,23 @@ impl TryNumFrom<f32> for i16 {
     }
 }
 
+impl TryNumFrom<f64> for i16 {
+    #[inline]
+    fn try_num_from(v: f64) -> Option<Self> {
+        i32::try_num_from(v).and_then(|v| i16::try_from(v).ok())
+    }
+}
+
 impl TryNumFrom<f32> for u16 {
     #[inline]
     fn try_num_from(v: f32) -> Option<Self> {
+        i32::try_num_from(v).and_then(|v| u16::try_from(v).ok())
+    }
+}
+
+impl TryNumFrom<f64> for u16 {
+    #[inline]
+    fn try_num_from(v: f64) -> Option<Self> {
         i32::try_num_from(v).and_then(|v| u16::try_from(v).ok())
     }
 }
@@ -207,6 +227,20 @@ impl TryNumFrom<f32> for i32 {
         // We can't represent `MAX` exactly, but it will round up to exactly
         // `MAX+1` (a power of two) when we cast it.
         const MAX_P1: f32 = i32::MAX as f32;
+        if v >= MIN && v < MAX_P1 {
+            Some(v as i32)
+        } else {
+            None
+        }
+    }
+}
+
+#[allow(clippy::manual_range_contains)]
+impl TryNumFrom<f64> for i32 {
+    #[inline]
+    fn try_num_from(v: f64) -> Option<Self> {
+        const MIN: f64 = i32::MIN as f64;
+        const MAX_P1: f64 = i32::MAX as f64;
         if v >= MIN && v < MAX_P1 {
             Some(v as i32)
         } else {
