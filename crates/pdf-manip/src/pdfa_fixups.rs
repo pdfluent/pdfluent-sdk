@@ -6229,14 +6229,20 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
                             s.content[enum_pos + 2],
                             s.content[enum_pos + 3],
                         ]);
-                        // CIEJab = 19, not allowed in PDF/A.
-                        if enum_cs == 19 {
-                            // Replace with sRGB (16), also 3-component.
-                            let srgb: [u8; 4] = 16u32.to_be_bytes();
-                            s.content[enum_pos] = srgb[0];
-                            s.content[enum_pos + 1] = srgb[1];
-                            s.content[enum_pos + 2] = srgb[2];
-                            s.content[enum_pos + 3] = srgb[3];
+                        // PDF/A-2 §6.2.8.3: only sRGB(16), greyscale(17), sYCC(18)
+                        // are allowed. Any other enumCS must be replaced.
+                        if enum_cs != 16 && enum_cs != 17 && enum_cs != 18 {
+                            // Pick replacement based on channel count.
+                            let channels = jpx_channel_count(&s.content);
+                            let replacement = match channels {
+                                Some(1) => 17u32, // greyscale
+                                _ => 16u32,       // sRGB
+                            };
+                            let bytes = replacement.to_be_bytes();
+                            s.content[enum_pos] = bytes[0];
+                            s.content[enum_pos + 1] = bytes[1];
+                            s.content[enum_pos + 2] = bytes[2];
+                            s.content[enum_pos + 3] = bytes[3];
                             count += 1;
                         }
                     }
