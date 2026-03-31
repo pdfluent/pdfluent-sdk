@@ -361,7 +361,11 @@ fn detect_heading_level(para: &Paragraph) -> Option<u8> {
         return None;
     }
     // Use the largest font size across all runs.
-    let max_size = para.runs.iter().map(|r| r.font_size).fold(0.0_f64, f64::max);
+    let max_size = para
+        .runs
+        .iter()
+        .map(|r| r.font_size)
+        .fold(0.0_f64, f64::max);
     let all_bold = para.runs.iter().all(|r| r.bold);
     match () {
         _ if max_size >= 24.0 => Some(1),
@@ -636,7 +640,10 @@ fn write_image_paragraph(
 /// Strip characters forbidden in XML 1.0: U+0000–U+0008, U+000B, U+000C,
 /// U+000E–U+001F.  Tab (U+0009), LF (U+000A), and CR (U+000D) are allowed.
 fn sanitize_xml_text(text: &str) -> String {
-    if text.bytes().all(|b| b >= 0x20 || b == b'\t' || b == b'\n' || b == b'\r') {
+    if text
+        .bytes()
+        .all(|b| b >= 0x20 || b == b'\t' || b == b'\n' || b == b'\r')
+    {
         return text.to_string();
     }
     text.chars()

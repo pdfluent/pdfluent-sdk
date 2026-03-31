@@ -240,7 +240,11 @@ fn node_is_empty(form: &FormTree, node_id: FormNodeId) -> bool {
     match &form.get(node_id).node_type {
         FormNodeType::Field { value } => value.trim().is_empty(),
         FormNodeType::Draw { content } => content.trim().is_empty(),
-        FormNodeType::Subform => form.get(node_id).children.iter().all(|&child_id| node_is_empty(form, child_id)),
+        FormNodeType::Subform => form
+            .get(node_id)
+            .children
+            .iter()
+            .all(|&child_id| node_is_empty(form, child_id)),
         _ => false,
     }
 }

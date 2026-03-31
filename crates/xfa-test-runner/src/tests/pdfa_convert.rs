@@ -928,12 +928,26 @@ pub fn convert_to_pdfa_bytes(pdf_data: &[u8], path: &Path) -> Option<Vec<u8>> {
                 if bf == b"Symbol" {
                     let has_enc = dict.has(b"Encoding");
                     if let Some(lopdf::Object::Array(w)) = dict.get(b"Widths").ok() {
-                        let sample: Vec<i64> = w.iter().take(5).map(|o| match o {
-                            lopdf::Object::Integer(i) => *i, _ => -1,
-                        }).collect();
-                        eprintln!("  [dbg] post-embed Symbol {:?} enc={} w[0..5]={:?} total={}", id, has_enc, sample, w.len());
+                        let sample: Vec<i64> = w
+                            .iter()
+                            .take(5)
+                            .map(|o| match o {
+                                lopdf::Object::Integer(i) => *i,
+                                _ => -1,
+                            })
+                            .collect();
+                        eprintln!(
+                            "  [dbg] post-embed Symbol {:?} enc={} w[0..5]={:?} total={}",
+                            id,
+                            has_enc,
+                            sample,
+                            w.len()
+                        );
                     } else {
-                        eprintln!("  [dbg] post-embed Symbol {:?} enc={} NO widths", id, has_enc);
+                        eprintln!(
+                            "  [dbg] post-embed Symbol {:?} enc={} NO widths",
+                            id, has_enc
+                        );
                     }
                 }
             }

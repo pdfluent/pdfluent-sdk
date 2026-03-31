@@ -89,7 +89,8 @@ fn xfa_flatten_inner(
     use crate::dynamic::apply_dynamic_scripts;
 
     let data_dom = if let Some(ds_xml) = datasets_xml {
-        DataDom::from_xml(ds_xml).map_err(|e| XfaError::ParseFailed(format!("datasets parse: {e}")))?
+        DataDom::from_xml(ds_xml)
+            .map_err(|e| XfaError::ParseFailed(format!("datasets parse: {e}")))?
     } else {
         DataDom::new()
     };
@@ -406,7 +407,10 @@ fn annotation_rect(dict: &Dictionary) -> Option<[f32; 4]> {
     ])
 }
 
-fn resolve_widget_normal_appearance(doc: &mut Document, annot_dict: &Dictionary) -> Option<ObjectId> {
+fn resolve_widget_normal_appearance(
+    doc: &mut Document,
+    annot_dict: &Dictionary,
+) -> Option<ObjectId> {
     let ap = annot_dict.get(b"AP").ok()?.as_dict().ok()?;
     let normal = ap.get(b"N").ok()?;
     resolve_appearance_object(doc, annot_dict, normal)
@@ -464,12 +468,7 @@ fn selected_widget_state<'a>(annot_dict: &'a Dictionary) -> Option<&'a [u8]> {
         .get(b"AS")
         .ok()
         .and_then(|obj| obj.as_name().ok())
-        .or_else(|| {
-            annot_dict
-                .get(b"V")
-                .ok()
-                .and_then(|obj| obj.as_name().ok())
-        })
+        .or_else(|| annot_dict.get(b"V").ok().and_then(|obj| obj.as_name().ok()))
 }
 
 fn add_xobject_to_page_resources(
@@ -549,10 +548,7 @@ fn add_xobject_to_resources_dict(resources: &mut Dictionary, name: &str, xobject
 }
 
 fn append_to_page_content(doc: &mut Document, page_id: ObjectId, data: &[u8]) {
-    let new_stream_id = doc.add_object(Object::Stream(Stream::new(
-        dictionary! {},
-        data.to_vec(),
-    )));
+    let new_stream_id = doc.add_object(Object::Stream(Stream::new(dictionary! {}, data.to_vec())));
 
     let contents = doc
         .get_dictionary(page_id)
@@ -1220,8 +1216,8 @@ ET
             "AS" => Object::Name(b"Yes".to_vec()),
             "FT" => Object::Name(b"Btn".to_vec()),
         };
-        let ap_id = resolve_widget_normal_appearance(&mut doc, &annot)
-            .expect("selected normal appearance");
+        let ap_id =
+            resolve_widget_normal_appearance(&mut doc, &annot).expect("selected normal appearance");
         let stream = doc
             .get_object(ap_id)
             .expect("appearance stream")
@@ -1293,7 +1289,10 @@ ET
             .expect("xobject dict")
             .as_dict()
             .expect("xobject dict");
-        assert!(xobjects.get(b"R11").is_ok(), "existing page XObject was lost");
+        assert!(
+            xobjects.get(b"R11").is_ok(),
+            "existing page XObject was lost"
+        );
         assert!(
             xobjects.get(b"XfaAp0").is_ok(),
             "new flattened widget XObject was not added"

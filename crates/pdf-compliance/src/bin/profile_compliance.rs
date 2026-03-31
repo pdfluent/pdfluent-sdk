@@ -16,7 +16,7 @@ fn main() {
     println!("Pages: {}", pdf.pages().iter().count());
 
     // Time the full PDF/A validation
-    let level = pdf_compliance::detect_pdfa_level(&pdf).unwrap_or(pdf_compliance::PdfALevel::A1b);
+    let level = pdf_compliance::preferred_pdfa_level(&pdf);
     println!("Detected level: {:?}", level);
 
     let t1 = Instant::now();

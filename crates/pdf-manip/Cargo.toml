@@ -7,7 +7,7 @@ repository.workspace = true
 description = "PDF manipulation: pages, encryption, watermarks, optimization, bookmarks"
 
 [dependencies]
-lopdf.workspace = true
+lopdf = { workspace = true, features = ["embed_image"] }
 pdf-font.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, optional = true }

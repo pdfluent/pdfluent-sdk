@@ -11,13 +11,14 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use pdf_syntax::Pdf;
-//! use pdf_compliance::{detect_pdfa_level, validate_pdfa, PdfALevel, Severity};
+//! use pdf_compliance::{preferred_pdfa_level, validate_pdfa, Severity};
 //!
 //! let data = Arc::new(std::fs::read("document.pdf").unwrap());
 //! let pdf = Pdf::new(data).unwrap();
 //!
-//! // Auto-detect the declared level, fall back to PDF/A-2B.
-//! let level = detect_pdfa_level(&pdf).unwrap_or(PdfALevel::A2b);
+//! // Prefer the declared level, but promote PDF/A-1 inputs to PDF/A-2B when
+//! // the source uses features like xref streams, transparency, or JPEG2000.
+//! let level = preferred_pdfa_level(&pdf);
 //! let report = validate_pdfa(&pdf, level);
 //!
 //! if report.is_compliant() {
@@ -260,6 +261,29 @@ pub fn detect_pdfa_level(pdf: &Pdf) -> Option<PdfALevel> {
     PdfALevel::from_parts(part, &conformance)
 }
 
+/// Choose the preferred PDF/A level for validating or converting a source PDF.
+///
+/// Policy:
+/// - keep the declared XMP level when it is already PDF/A-2 or later;
+/// - promote declared PDF/A-1 documents to `A2b` when the source uses
+///   cross-reference streams, transparency, or JPEG2000;
+/// - default to `A2b` when no PDF/A level is declared.
+#[must_use]
+pub fn preferred_pdfa_level(pdf: &Pdf) -> PdfALevel {
+    match detect_pdfa_level(pdf) {
+        Some(level) if level.part() >= 2 => level,
+        Some(level)
+            if check::has_xref_streams(pdf)
+                || check::uses_transparency(pdf)
+                || check::uses_jpeg2000(pdf) =>
+        {
+            PdfALevel::A2b
+        }
+        Some(level) => level,
+        None => PdfALevel::A2b,
+    }
+}
+
 /// Validate a PDF against PDF/UA-1 (ISO 14289-1).
 pub fn validate_pdfua(pdf: &Pdf) -> ComplianceReport {
     pdfua::validate(pdf)
@@ -273,4 +297,162 @@ pub fn validate_pdfx(pdf: &Pdf, level: PdfXLevel) -> ComplianceReport {
 /// Parse the structure tree from a PDF.
 pub fn parse_structure_tree(pdf: &Pdf) -> Option<tagged::StructureTree> {
     tagged::parse(pdf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{detect_pdfa_level, preferred_pdfa_level, PdfALevel};
+    use lopdf::{dictionary, xref::XrefType, Document, Object, Stream};
+    use pdf_syntax::Pdf;
+
+    #[test]
+    fn preferred_level_defaults_to_a2b_without_xmp() {
+        let pdf = parse_pdf(base_doc_bytes(false, |_, _| {}));
+        assert_eq!(detect_pdfa_level(&pdf), None);
+        assert_eq!(preferred_pdfa_level(&pdf), PdfALevel::A2b);
+    }
+
+    #[test]
+    fn preferred_level_keeps_declared_a1b_when_source_is_part1_compatible() {
+        let pdf = parse_pdf(base_doc_bytes(true, |_, _| {}));
+        assert_eq!(detect_pdfa_level(&pdf), Some(PdfALevel::A1b));
+        assert!(!crate::check::has_xref_streams(&pdf));
+        assert!(!crate::check::uses_transparency(&pdf));
+        assert!(!crate::check::uses_jpeg2000(&pdf));
+        assert_eq!(preferred_pdfa_level(&pdf), PdfALevel::A1b);
+    }
+
+    #[test]
+    fn preferred_level_promotes_declared_a1b_for_xref_streams() {
+        let mut doc = build_base_doc(true);
+        let mut bytes = Vec::new();
+        doc.save_modern(&mut bytes).unwrap();
+        let pdf = parse_pdf(bytes);
+
+        assert_eq!(detect_pdfa_level(&pdf), Some(PdfALevel::A1b));
+        assert!(crate::check::has_xref_streams(&pdf));
+        assert_eq!(preferred_pdfa_level(&pdf), PdfALevel::A2b);
+    }
+
+    #[test]
+    fn preferred_level_promotes_declared_a1b_for_transparency() {
+        let pdf = parse_pdf(base_doc_bytes(true, |page_id, doc| {
+            let page = doc.get_object_mut(page_id).unwrap().as_dict_mut().unwrap();
+            page.set(
+                "Resources",
+                dictionary! {
+                    "ExtGState" => dictionary! {
+                        "GS1" => dictionary! {
+                            "Type" => "ExtGState",
+                            "ca" => 0.5,
+                        }
+                    }
+                },
+            );
+        }));
+
+        assert_eq!(detect_pdfa_level(&pdf), Some(PdfALevel::A1b));
+        assert!(crate::check::uses_transparency(&pdf));
+        assert_eq!(preferred_pdfa_level(&pdf), PdfALevel::A2b);
+    }
+
+    #[test]
+    fn preferred_level_promotes_declared_a1b_for_jpeg2000() {
+        let pdf = parse_pdf(base_doc_bytes(true, |_, doc| {
+            doc.add_object(Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Image",
+                    "Width" => 1,
+                    "Height" => 1,
+                    "BitsPerComponent" => 8,
+                    "ColorSpace" => "DeviceGray",
+                    "Filter" => "JPXDecode",
+                },
+                vec![0u8; 8],
+            ));
+        }));
+
+        assert_eq!(detect_pdfa_level(&pdf), Some(PdfALevel::A1b));
+        assert!(crate::check::uses_jpeg2000(&pdf));
+        assert_eq!(preferred_pdfa_level(&pdf), PdfALevel::A2b);
+    }
+
+    fn parse_pdf(bytes: Vec<u8>) -> Pdf {
+        Pdf::new(bytes).unwrap()
+    }
+
+    fn base_doc_bytes(
+        with_a1_xmp: bool,
+        mutate: impl FnOnce((u32, u16), &mut Document),
+    ) -> Vec<u8> {
+        let mut doc = build_base_doc(with_a1_xmp);
+        let page_id = doc.get_pages().into_values().next().unwrap();
+        mutate(page_id, &mut doc);
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    fn build_base_doc(with_a1_xmp: bool) -> Document {
+        let mut doc = Document::with_version("1.4");
+        doc.reference_table.cross_reference_type = XrefType::CrossReferenceTable;
+
+        let pages_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        let catalog_id = doc.new_object_id();
+        let content_id = doc.add_object(Stream::new(dictionary! {}, Vec::new()));
+
+        let mut catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        if with_a1_xmp {
+            let metadata_id = doc.add_object(Stream::new(
+                dictionary! {
+                    "Type" => "Metadata",
+                    "Subtype" => "XML",
+                },
+                pdfa_xmp(1, "B").into_bytes(),
+            ));
+            catalog.set("Metadata", Object::Reference(metadata_id));
+        }
+
+        doc.objects.insert(
+            (pages_id.0, pages_id.1),
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(page_id)],
+                "Count" => 1,
+            }),
+        );
+        doc.objects.insert(
+            (page_id.0, page_id.1),
+            Object::Dictionary(dictionary! {
+                "Type" => "Page",
+                "Parent" => Object::Reference(pages_id),
+                "MediaBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+                "Contents" => Object::Reference(content_id),
+            }),
+        );
+        doc.objects
+            .insert((catalog_id.0, catalog_id.1), Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        doc
+    }
+
+    fn pdfa_xmp(part: u8, conformance: &str) -> String {
+        format!(
+            r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">
+      <pdfaid:part>{part}</pdfaid:part>
+      <pdfaid:conformance>{conformance}</pdfaid:conformance>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#
+        )
+    }
 }

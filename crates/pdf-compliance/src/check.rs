@@ -1350,6 +1350,93 @@ pub fn has_transparency(pdf: &Pdf) -> bool {
     false
 }
 
+/// Return `true` if the PDF uses any transparency feature that requires PDF/A-2+.
+pub fn uses_transparency(pdf: &Pdf) -> bool {
+    let xref = pdf.xref();
+    for page in pdf.pages().iter() {
+        let page_dict = page.raw();
+        if resolve_page_group_dict(page_dict, xref)
+            .and_then(|group| group.get::<Name>(keys::S))
+            .is_some_and(|s| s.as_ref() == keys::TRANSPARENCY)
+        {
+            return true;
+        }
+        if page_uses_transparency(page.resources())
+            || page_annots_use_transparency(page_dict)
+            || page_fonts_use_transparency(page.resources())
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Return `true` if the raw PDF contains a cross-reference stream.
+pub fn has_xref_streams(pdf: &Pdf) -> bool {
+    let data = pdf.data().as_ref();
+    data.windows(8).any(|w| w == b"/XRefStm") || startxref_points_to_xref_stream(data)
+}
+
+/// Return `true` if any stream in the PDF uses the JPEG2000 (`JPXDecode`) filter.
+pub fn uses_jpeg2000(pdf: &Pdf) -> bool {
+    let cache = ObjectCache::new(pdf);
+    let has_jpx = cache.iter().any(|obj| match obj {
+        Object::Stream(stream) => dict_uses_filter(stream.dict(), keys::JPX_DECODE),
+        _ => false,
+    });
+    has_jpx
+}
+
+fn dict_uses_filter(dict: &Dict<'_>, filter_name: &[u8]) -> bool {
+    let Some(filter) = dict.get::<Object<'_>>(keys::FILTER) else {
+        return false;
+    };
+    match &filter {
+        Object::Name(name) => name.as_ref() == filter_name,
+        Object::Array(arr) => arr.iter::<Name>().any(|name| name.as_ref() == filter_name),
+        _ => false,
+    }
+}
+
+fn startxref_points_to_xref_stream(data: &[u8]) -> bool {
+    let Some(offset) = find_last_startxref_offset(data) else {
+        return false;
+    };
+    let mut pos = offset.min(data.len());
+    while pos < data.len() && is_pdf_whitespace(data[pos]) {
+        pos += 1;
+    }
+    if data[pos..].starts_with(b"xref") {
+        return false;
+    }
+    let end = (pos + 256).min(data.len());
+    data[pos..end].windows(11).any(|w| w == b"/Type /XRef")
+        || data[pos..end].windows(10).any(|w| w == b"/Type/XRef")
+}
+
+fn find_last_startxref_offset(data: &[u8]) -> Option<usize> {
+    let pos = data.windows(9).rposition(|w| w == b"startxref")?;
+    let mut cursor = pos + 9;
+    while cursor < data.len() && is_pdf_whitespace(data[cursor]) {
+        cursor += 1;
+    }
+    let start = cursor;
+    while cursor < data.len() && data[cursor].is_ascii_digit() {
+        cursor += 1;
+    }
+    if start == cursor {
+        return None;
+    }
+    std::str::from_utf8(&data[start..cursor])
+        .ok()?
+        .parse::<usize>()
+        .ok()
+}
+
+fn is_pdf_whitespace(byte: u8) -> bool {
+    matches!(byte, b'\0' | b'\t' | b'\n' | 0x0C | b'\r' | b' ')
+}
+
 /// Get the StructTreeRoot dictionary if present.
 pub fn struct_tree_root<'a>(pdf: &'a Pdf) -> Option<Dict<'a>> {
     let cat = catalog(pdf)?;
@@ -7728,7 +7815,8 @@ fn content_stream_numeric_tokens(content: &[u8]) -> Vec<&[u8]> {
                 if (content[pos] == b'\n' || content[pos] == b'\r' || content[pos] == b' ')
                     && content[pos + 1] == b'E'
                     && content[pos + 2] == b'I'
-                    && (pos + 3 >= len || content[pos + 3].is_ascii_whitespace()
+                    && (pos + 3 >= len
+                        || content[pos + 3].is_ascii_whitespace()
                         || content[pos + 3] == b'/')
                 {
                     pos += 3; // skip whitespace + "EI"
@@ -7740,14 +7828,18 @@ fn content_stream_numeric_tokens(content: &[u8]) -> Vec<&[u8]> {
         }
 
         // Skip alphabetic-only tokens (operators like "cm", "re", "f", "Tm", etc.)
-        if token.first().is_none_or(|c| c.is_ascii_alphabetic() || *c == b'\'' || *c == b'"') {
+        if token
+            .first()
+            .is_none_or(|c| c.is_ascii_alphabetic() || *c == b'\'' || *c == b'"')
+        {
             continue;
         }
 
         // Remaining tokens starting with digit, +, -, or . are numeric operands
-        if token.first().is_some_and(|c| {
-            c.is_ascii_digit() || *c == b'+' || *c == b'-' || *c == b'.'
-        }) {
+        if token
+            .first()
+            .is_some_and(|c| c.is_ascii_digit() || *c == b'+' || *c == b'-' || *c == b'.')
+        {
             tokens.push(token);
         }
     }
@@ -16670,14 +16762,13 @@ fn strip_inline_image_data(content: &[u8]) -> Vec<u8> {
             // Write "ID " to output
             out.extend_from_slice(b"ID ");
             pos += 3; // skip "ID" + whitespace byte
-            // Skip binary data until we find whitespace + "EI" + delimiter
+                      // Skip binary data until we find whitespace + "EI" + delimiter
             while pos + 2 < len {
-                if (content[pos] == b'\n'
-                    || content[pos] == b'\r'
-                    || content[pos] == b' ')
+                if (content[pos] == b'\n' || content[pos] == b'\r' || content[pos] == b' ')
                     && content[pos + 1] == b'E'
                     && content[pos + 2] == b'I'
-                    && (pos + 3 >= len || content[pos + 3].is_ascii_whitespace()
+                    && (pos + 3 >= len
+                        || content[pos + 3].is_ascii_whitespace()
                         || content[pos + 3] == b'/')
                 {
                     // Write "EI" to output
@@ -18898,7 +18989,10 @@ mod tests {
             .iter()
             .filter_map(|t| std::str::from_utf8(t).ok())
             .collect();
-        assert_eq!(strs, vec!["100", "200", "300", "0.5", "0", "0", "0.5", "0", "0"]);
+        assert_eq!(
+            strs,
+            vec!["100", "200", "300", "0.5", "0", "0", "0.5", "0", "0"]
+        );
     }
 
     #[test]

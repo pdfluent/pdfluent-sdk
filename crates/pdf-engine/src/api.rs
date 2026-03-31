@@ -1,5 +1,5 @@
 //! The ideal top-level API facade for the PDFluent SDK.
-//! 
+//!
 //! This module defines the intended public surface of the PDFluent library,
 //! following the "Zero-Config First Success", "Pit of Success", and "Progressive Disclosure"
 //! design principles.

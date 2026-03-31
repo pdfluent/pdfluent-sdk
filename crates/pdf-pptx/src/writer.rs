@@ -74,20 +74,16 @@ impl<W: Write + Seek> PptxWriter<W> {
             .start_file("ppt/slideMasters/slideMaster1.xml", self.options)?;
         self.zip.write_all(&write_slide_master()?)?;
 
-        self.zip.start_file(
-            "ppt/slideMasters/_rels/slideMaster1.xml.rels",
-            self.options,
-        )?;
+        self.zip
+            .start_file("ppt/slideMasters/_rels/slideMaster1.xml.rels", self.options)?;
         self.zip.write_all(&write_slide_master_rels()?)?;
 
         self.zip
             .start_file("ppt/slideLayouts/slideLayout1.xml", self.options)?;
         self.zip.write_all(&write_slide_layout()?)?;
 
-        self.zip.start_file(
-            "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
-            self.options,
-        )?;
+        self.zip
+            .start_file("ppt/slideLayouts/_rels/slideLayout1.xml.rels", self.options)?;
         self.zip.write_all(&write_slide_layout_rels()?)?;
 
         Ok(())
@@ -128,8 +124,10 @@ impl<W: Write + Seek> PptxWriter<W> {
     pub fn finish(mut self) -> Result<W> {
         // [Content_Types].xml
         self.zip.start_file("[Content_Types].xml", self.options)?;
-        self.zip
-            .write_all(&write_content_types_inc(self.slide_count, &self.image_extensions)?)?;
+        self.zip.write_all(&write_content_types_inc(
+            self.slide_count,
+            &self.image_extensions,
+        )?)?;
 
         // ppt/presentation.xml
         self.zip.start_file("ppt/presentation.xml", self.options)?;

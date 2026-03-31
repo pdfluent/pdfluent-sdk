@@ -1416,7 +1416,9 @@ mod tests {
         let row_ids = tree.get(items_id).children.clone();
 
         assert_eq!(row_ids.len(), 3);
-        assert!(row_ids.iter().all(|&row_id| tree.get(row_id).occur.count() == 1));
+        assert!(row_ids
+            .iter()
+            .all(|&row_id| tree.get(row_id).occur.count() == 1));
 
         let values: Vec<String> = row_ids
             .iter()
@@ -1473,7 +1475,9 @@ mod tests {
         let row_ids = tree.get(items_id).children.clone();
 
         assert_eq!(row_ids.len(), 3);
-        assert!(row_ids.iter().all(|&row_id| tree.get(row_id).occur.count() == 1));
+        assert!(row_ids
+            .iter()
+            .all(|&row_id| tree.get(row_id).occur.count() == 1));
 
         let values: Vec<String> = row_ids
             .iter()

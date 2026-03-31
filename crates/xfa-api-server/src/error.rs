@@ -45,4 +45,3 @@ impl IntoResponse for ApiError {
         (status, axum::Json(body)).into_response()
     }
 }
-

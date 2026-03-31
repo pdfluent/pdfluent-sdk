@@ -11,7 +11,10 @@ pub trait PdfError: std::error::Error {
 
     /// URL naar de error docs
     fn docs_url(&self) -> String {
-        format!("https://docs.pdfluent.dev/errors/{}", self.code().to_lowercase().replace('_', "-"))
+        format!(
+            "https://docs.pdfluent.dev/errors/{}",
+            self.code().to_lowercase().replace('_', "-")
+        )
     }
 }
 
@@ -19,28 +22,74 @@ pub trait PdfError: std::error::Error {
 /// Designed to provide high context and actionable help for developers.
 #[derive(Debug)]
 pub enum Error {
-    FileNotFound { path: PathBuf },
-    PasswordRequired { path: PathBuf },
-    CorruptPdf { path: Option<PathBuf>, reason: String },
-    InvalidPageNumber { requested: usize, total: usize },
-    FontNotFound { font_name: String },
-    PermissionDenied { reason: String },
-    UnsupportedPdfVersion { version: String },
-    FormFieldNotFound { field_name: String },
-    SignatureVerificationFailed { reason: String },
-    RedactionFailed { reason: String },
-    ConversionFailed { reason: String },
-    InvalidEncoding { encoding: String },
-    StreamDecodeFailed { filter: String },
-    XrefCorrupt { reason: String },
-    LicenseExpired { expired_since: String },
-    LicenseInvalid { reason: String },
-    OutputWriteFailed { path: PathBuf, reason: String },
-    ImageDecodeFailed { format: String },
-    EncryptionFailed { reason: String },
-    ComplianceViolation { standard: String, reason: String },
+    FileNotFound {
+        path: PathBuf,
+    },
+    PasswordRequired {
+        path: PathBuf,
+    },
+    CorruptPdf {
+        path: Option<PathBuf>,
+        reason: String,
+    },
+    InvalidPageNumber {
+        requested: usize,
+        total: usize,
+    },
+    FontNotFound {
+        font_name: String,
+    },
+    PermissionDenied {
+        reason: String,
+    },
+    UnsupportedPdfVersion {
+        version: String,
+    },
+    FormFieldNotFound {
+        field_name: String,
+    },
+    SignatureVerificationFailed {
+        reason: String,
+    },
+    RedactionFailed {
+        reason: String,
+    },
+    ConversionFailed {
+        reason: String,
+    },
+    InvalidEncoding {
+        encoding: String,
+    },
+    StreamDecodeFailed {
+        filter: String,
+    },
+    XrefCorrupt {
+        reason: String,
+    },
+    LicenseExpired {
+        expired_since: String,
+    },
+    LicenseInvalid {
+        reason: String,
+    },
+    OutputWriteFailed {
+        path: PathBuf,
+        reason: String,
+    },
+    ImageDecodeFailed {
+        format: String,
+    },
+    EncryptionFailed {
+        reason: String,
+    },
+    ComplianceViolation {
+        standard: String,
+        reason: String,
+    },
     Io(std::io::Error),
-    UnsupportedFeature { feature: String },
+    UnsupportedFeature {
+        feature: String,
+    },
 }
 
 impl std::error::Error for Error {
@@ -151,24 +200,44 @@ impl fmt::Display for Error {
                 write!(f, "  Could not find the file at: {}\n\n", path.display())?;
             }
             Error::PasswordRequired { path } => {
-                write!(f, "  This PDF is encrypted and requires a password to open.\n\n")?;
+                write!(
+                    f,
+                    "  This PDF is encrypted and requires a password to open.\n\n"
+                )?;
                 write!(f, "  File: {}\n\n", path.display())?;
             }
             Error::CorruptPdf { path, reason } => {
                 if let Some(p) = path {
-                    write!(f, "  The PDF file '{}' is corrupt: {}\n\n", p.display(), reason)?;
+                    write!(
+                        f,
+                        "  The PDF file '{}' is corrupt: {}\n\n",
+                        p.display(),
+                        reason
+                    )?;
                 } else {
                     write!(f, "  The PDF data is corrupt: {}\n\n", reason)?;
                 }
             }
             Error::InvalidPageNumber { requested, total } => {
-                write!(f, "  Requested page number {}, but the document only has {} pages.\n\n", requested, total)?;
+                write!(
+                    f,
+                    "  Requested page number {}, but the document only has {} pages.\n\n",
+                    requested, total
+                )?;
             }
             Error::FontNotFound { font_name } => {
-                write!(f, "  The required font '{}' could not be found.\n\n", font_name)?;
+                write!(
+                    f,
+                    "  The required font '{}' could not be found.\n\n",
+                    font_name
+                )?;
             }
             Error::PermissionDenied { reason } => {
-                write!(f, "  Operation denied by document permissions: {}\n\n", reason)?;
+                write!(
+                    f,
+                    "  Operation denied by document permissions: {}\n\n",
+                    reason
+                )?;
             }
             Error::UnsupportedPdfVersion { version } => {
                 write!(f, "  PDF version {} is not supported.\n\n", version)?;
@@ -186,7 +255,11 @@ impl fmt::Display for Error {
                 write!(f, "  Conversion failed: {}\n\n", reason)?;
             }
             Error::InvalidEncoding { encoding } => {
-                write!(f, "  Invalid or unsupported text encoding: {}\n\n", encoding)?;
+                write!(
+                    f,
+                    "  Invalid or unsupported text encoding: {}\n\n",
+                    encoding
+                )?;
             }
             Error::StreamDecodeFailed { filter } => {
                 write!(f, "  Failed to decode stream using filter: {}\n\n", filter)?;
@@ -195,13 +268,22 @@ impl fmt::Display for Error {
                 write!(f, "  The cross-reference table is corrupt: {}\n\n", reason)?;
             }
             Error::LicenseExpired { expired_since } => {
-                write!(f, "  Your PDFluent license expired on {}.\n\n", expired_since)?;
+                write!(
+                    f,
+                    "  Your PDFluent license expired on {}.\n\n",
+                    expired_since
+                )?;
             }
             Error::LicenseInvalid { reason } => {
                 write!(f, "  Invalid license key: {}\n\n", reason)?;
             }
             Error::OutputWriteFailed { path, reason } => {
-                write!(f, "  Failed to write output to '{}': {}\n\n", path.display(), reason)?;
+                write!(
+                    f,
+                    "  Failed to write output to '{}': {}\n\n",
+                    path.display(),
+                    reason
+                )?;
             }
             Error::ImageDecodeFailed { format } => {
                 write!(f, "  Failed to decode {} image.\n\n", format)?;
@@ -210,7 +292,11 @@ impl fmt::Display for Error {
                 write!(f, "  Encryption operation failed: {}\n\n", reason)?;
             }
             Error::ComplianceViolation { standard, reason } => {
-                write!(f, "  Document violates {} compliance: {}\n\n", standard, reason)?;
+                write!(
+                    f,
+                    "  Document violates {} compliance: {}\n\n",
+                    standard, reason
+                )?;
             }
             Error::Io(err) => {
                 write!(f, "  I/O error occurred: {}\n\n", err)?;
@@ -248,7 +334,9 @@ mod tests {
 
     #[test]
     fn test_file_not_found_message() {
-        let err = Error::FileNotFound { path: PathBuf::from("/tmp/nonexistent.pdf") };
+        let err = Error::FileNotFound {
+            path: PathBuf::from("/tmp/nonexistent.pdf"),
+        };
         let msg = format!("{}", err);
         assert!(msg.contains("FileNotFound"));
         assert!(msg.contains("/tmp/nonexistent.pdf"));
@@ -258,7 +346,9 @@ mod tests {
 
     #[test]
     fn test_password_required_message() {
-        let err = Error::PasswordRequired { path: PathBuf::from("invoice-2024.pdf") };
+        let err = Error::PasswordRequired {
+            path: PathBuf::from("invoice-2024.pdf"),
+        };
         let msg = format!("{}", err);
         assert!(msg.contains("PasswordRequired"));
         assert!(msg.contains("invoice-2024.pdf"));

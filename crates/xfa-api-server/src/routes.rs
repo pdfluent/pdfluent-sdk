@@ -241,8 +241,8 @@ pub async fn get_schema(
             .ok_or_else(|| ApiError::NotFound(format!("form {form_id} not found")))?
     };
 
-    let packets = extract_xfa_from_bytes(pdf_bytes)
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let packets =
+        extract_xfa_from_bytes(pdf_bytes).map_err(|e| ApiError::Internal(e.to_string()))?;
 
     let template_xml = packets
         .template()

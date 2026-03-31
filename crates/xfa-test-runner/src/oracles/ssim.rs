@@ -156,5 +156,4 @@ mod tests {
         let score = compute_ssim(&pixels, 2, 1, &pixels, 2, 1);
         assert!((score - 1.0).abs() < 1e-6);
     }
-
 }
