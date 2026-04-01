@@ -15,6 +15,10 @@ use lopdf::Document;
 use pdf_extract::{extract_page_images, extract_text, ImageFilter};
 use writer::write_docx;
 
+/// Maximum number of pages to convert to DOCX. Massive documents (e.g. 1000+
+/// pages) are rarely useful as documents and cause timeouts.
+const MAX_DOCX_PAGES: u32 = 1000;
+
 /// Convert a PDF document to DOCX format.
 ///
 /// Returns the DOCX file contents as bytes.
@@ -39,6 +43,7 @@ pub fn pdf_to_docx_text_only(doc: &Document) -> Result<Vec<u8>> {
 fn pdf_to_docx_sequential(doc: &Document) -> Result<Vec<u8>> {
     let pages = doc.get_pages();
     let total_pages = pages.len() as u32;
+    let total_pages = total_pages.min(MAX_DOCX_PAGES);
     let text_blocks = extract_text(doc);
 
     let mut all_elements: Vec<Vec<PageElement>> = Vec::new();
@@ -78,6 +83,7 @@ fn pdf_to_docx_sequential(doc: &Document) -> Result<Vec<u8>> {
 fn pdf_to_docx_inner(doc: &Document, skip_images: bool) -> Result<Vec<u8>> {
     let pages = doc.get_pages();
     let total_pages = pages.len() as u32;
+    let total_pages = total_pages.min(MAX_DOCX_PAGES);
 
     let mut all_elements: Vec<Vec<PageElement>> = Vec::new();
     let mut all_images: Vec<DocxImage> = Vec::new();
@@ -193,11 +199,7 @@ mod tests {
         let cursor = std::io::Cursor::new(data);
         let archive = zip::ZipArchive::new(cursor).unwrap();
         (0..archive.len())
-            .map(|i| {
-                let cursor = std::io::Cursor::new(data);
-                let archive = zip::ZipArchive::new(cursor).unwrap();
-                archive.name_for_index(i).unwrap().to_string()
-            })
+            .map(|i| archive.name_for_index(i).unwrap().to_string())
             .collect()
     }
 
