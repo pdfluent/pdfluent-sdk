@@ -1,14 +1,30 @@
 //! PDF/A and PDF/UA compliance validation.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Result};
 use std::path::Path;
 
+use crate::error::CliError;
 use pdf_compliance::{ComplianceReport, PdfALevel, Severity};
 use pdf_syntax::Pdf;
 
 pub fn run(input: &Path, profile: &str, json: bool) -> Result<()> {
-    let data = std::fs::read(input).context("failed to read input PDF")?;
-    let pdf = Pdf::new(data).map_err(|e| anyhow::anyhow!("pdf-syntax parse error: {e:?}"))?;
+    let data = std::fs::read(input).map_err(|e| {
+        anyhow::anyhow!(CliError {
+            message: format!("Could not read input PDF: {}", input.display()),
+            why: Some(e.to_string()),
+            fix: Some("Check if the file exists and is readable.".to_string()),
+            docs: Some("https://docs.pdfluent.com/errors/E001".to_string()),
+        })
+    })?;
+
+    let pdf = Pdf::new(data).map_err(|e| {
+        anyhow::anyhow!(CliError {
+            message: format!("Could not parse PDF: {}", input.display()),
+            why: Some(format!("pdf-syntax parse error: {e:?}")),
+            fix: Some("Ensure the file is a valid PDF document.".to_string()),
+            docs: Some("https://docs.pdfluent.com/errors/E002".to_string()),
+        })
+    })?;
 
     let report = match parse_profile(profile)? {
         Profile::PdfA(level) => pdf_compliance::validate_pdfa(&pdf, level),
@@ -48,9 +64,14 @@ fn parse_profile(s: &str) -> Result<Profile> {
         "pdfa4f" | "a4f" => Ok(Profile::PdfA(PdfALevel::A4f)),
         "pdfa4e" | "a4e" => Ok(Profile::PdfA(PdfALevel::A4e)),
         "pdfua" | "pdfua1" | "ua" | "ua1" => Ok(Profile::PdfUa),
-        _ => anyhow::bail!(
-            "unknown profile '{s}'. Supported: pdf-a1a, pdf-a1b, pdf-a2a, pdf-a2b, pdf-a2u, pdf-a3a, pdf-a3b, pdf-a3u, pdf-ua"
-        ),
+        _ => {
+            bail!(CliError {
+                message: format!("Unknown profile '{s}'"),
+                why: Some("The specified compliance profile is not supported.".to_string()),
+                fix: Some("Supported: pdf-a1a, pdf-a1b, pdf-a2a, pdf-a2b, pdf-a2u, pdf-a3a, pdf-a3b, pdf-a3u, pdf-ua".to_string()),
+                docs: Some("https://docs.pdfluent.com/errors/E003".to_string()),
+            })
+        }
     }
 }
 

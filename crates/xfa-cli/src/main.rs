@@ -4,17 +4,18 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod cmd_completions;
 mod cmd_demo;
 mod cmd_doctor;
-mod cmd_completions;
-mod cmd_manpage;
 mod cmd_extract;
 mod cmd_fill;
 mod cmd_flatten;
 mod cmd_info;
+mod cmd_manpage;
 mod cmd_render;
 mod cmd_sign;
 mod cmd_validate;
+pub mod error;
 
 #[derive(Parser)]
 #[command(
