@@ -1,0 +1,3 @@
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/xfa-cli-{ target }-v{ version }.tar.gz"
+bin-dir = "xfa-cli{ binary-ext }"
