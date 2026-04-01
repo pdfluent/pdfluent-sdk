@@ -13482,65 +13482,68 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
         let Object::Dictionary(dict) = obj else {
             continue;
         };
-        // Simple (non-CID) fonts: Type1, MMType1, TrueType.
-        match get_name(dict, b"Subtype").as_deref() {
-            Some("Type1") | Some("MMType1") | Some("TrueType") => {}
+        // Simple (non-CID) fonts: Type1, MMType1, TrueType, Type3.
+        let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+        match subtype.as_str() {
+            "Type1" | "MMType1" | "TrueType" | "Type3" => {}
             _ => continue,
         }
         // Skip fonts that already have a ToUnicode entry.
         if dict.get(b"ToUnicode").is_ok() {
             continue;
         }
-        let enc_info: Option<(String, Vec<(u8, String)>)> = match dict.get(b"Encoding").ok() {
+        let enc_info: (String, Vec<(u8, String)>) = match dict.get(b"Encoding").ok() {
             Some(Object::Name(n)) => {
                 let name = String::from_utf8_lossy(n).to_string();
-                Some((name, vec![]))
+                (name, vec![])
             }
             Some(Object::Reference(enc_ref)) => {
                 let enc_ref = *enc_ref;
                 match doc.objects.get(&enc_ref) {
-                    Some(Object::Dictionary(enc_dict)) => Some(type1_enc_from_dict(enc_dict)),
-                    _ => None,
+                    Some(Object::Dictionary(enc_dict)) => type1_enc_from_dict(enc_dict),
+                    _ => ("StandardEncoding".to_string(), vec![]),
                 }
             }
-            Some(Object::Dictionary(enc_dict)) => Some(type1_enc_from_dict(enc_dict)),
-            _ => None,
+            Some(Object::Dictionary(enc_dict)) => type1_enc_from_dict(enc_dict),
+            None => {
+                // Missing encoding means StandardEncoding for Type1/MMType1.
+                // For TrueType it usually means internal cmap, but Standard is a safe guess for 32-126.
+                ("StandardEncoding".to_string(), vec![])
+            }
+            _ => ("StandardEncoding".to_string(), vec![]),
         };
-        if let Some((base_enc, diffs)) = enc_info {
-            to_process.push((font_id, base_enc, diffs));
-        }
+        to_process.push((font_id, enc_info.0, enc_info.1));
     }
 
     // Second pass (mutable): build and attach ToUnicode streams.
     let mut fixed = 0;
     for (font_id, base_enc, differences) in to_process {
+        // Build code→unicode table.
+        let mut code_to_unicode: [Option<u16>; 256] = [None; 256];
+        
         let enc_known = matches!(
             base_enc.as_str(),
             "WinAnsiEncoding" | "MacRomanEncoding" | "StandardEncoding"
         );
-        if !enc_known && differences.is_empty() {
-            continue;
-        }
 
-        // Build code→unicode table from the base encoding.
-        let mut code_to_unicode: [Option<u16>; 256] = [None; 256];
-        match base_enc.as_str() {
-            "WinAnsiEncoding" | "MacRomanEncoding" => {
-                for code in 32u32..=255 {
-                    let ch = encoding_to_char(code, &base_enc);
-                    let cp = ch as u32;
-                    if cp > 0 && cp <= 0xFFFF && cp != 0xFFFD {
-                        code_to_unicode[code as usize] = Some(cp as u16);
+        if enc_known {
+            match base_enc.as_str() {
+                "WinAnsiEncoding" | "MacRomanEncoding" => {
+                    for code in 32u32..=255 {
+                        let ch = encoding_to_char(code, &base_enc);
+                        let cp = ch as u32;
+                        if cp > 0 && cp <= 0xFFFF && cp != 0xFFFD {
+                            code_to_unicode[code as usize] = Some(cp as u16);
+                        }
                     }
                 }
-            }
-            "StandardEncoding" => {
-                // Standard encoding is US-ASCII for codes 32-126.
-                for code in 32u8..=126 {
-                    code_to_unicode[code as usize] = Some(code as u16);
+                "StandardEncoding" => {
+                    for code in 32u8..=126 {
+                        code_to_unicode[code as usize] = Some(code as u16);
+                    }
                 }
+                _ => {}
             }
-            _ => {} // Differences-only encoding: table starts empty.
         }
 
         // Apply Differences overrides.
@@ -13548,15 +13551,48 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
             match glyph_name_to_char(glyph_name) {
                 Some(ch) => {
                     let cp = ch as u32;
-                    if cp > 0 && cp <= 0xFFFF {
+                    if cp > 0 && cp <= 0xFFFF && cp != 0xFFFD {
                         code_to_unicode[*code as usize] = Some(cp as u16);
-                    } else {
-                        code_to_unicode[*code as usize] = None;
                     }
                 }
-                None => {
-                    code_to_unicode[*code as usize] = None;
+                None => {}
+            }
+        }
+
+        // If we still have nothing (e.g. Builtin encoding or unknown base),
+        // try hinting from embedded font data if available.
+        let current_count = code_to_unicode.iter().filter(|o| o.is_some()).count();
+        if current_count < 10 {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) {
+                if let Some(fd_id) = dict.get(b"FontDescriptor").ok().and_then(|o| o.as_reference().ok()) {
+                    if let Some(font_data) = read_embedded_font_data(doc, fd_id) {
+                        if let Some(cff) = cff_parser::Table::parse(&font_data) {
+                            for code in 0..=255u8 {
+                                if code_to_unicode[code as usize].is_some() { continue }
+                                let gid = match cff.encoding.code_to_gid(&cff.charset, code) {
+                                    Some(gid) if gid.0 > 0 => gid,
+                                    _ => continue,
+                                };
+                                if let Some(gname) = cff.glyph_name(gid) {
+                                    if let Some(ch) = glyph_name_to_char(gname) {
+                                        let cp = ch as u32;
+                                        if cp > 0 && cp <= 0xFFFF && cp != 0xFFFD {
+                                            code_to_unicode[code as usize] = Some(cp as u16);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
+            }
+        }
+
+        // Fallback: US-ASCII identity for printable range if we have absolutely nothing.
+        let final_count = code_to_unicode.iter().filter(|o| o.is_some()).count();
+        if final_count == 0 {
+            for code in 32u8..=126 {
+                code_to_unicode[code as usize] = Some(code as u16);
             }
         }
 
@@ -13655,65 +13691,121 @@ pub fn fix_type0_tounicode(doc: &mut Document) -> usize {
             continue;
         }
 
-        // Check CIDToGIDMap — we only handle Identity (CID == GID) for now.
+        // Check CIDToGIDMap.
         let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&entry.cid_id) else {
             continue;
         };
-        let is_identity_gid = match cid_dict.get(b"CIDToGIDMap").ok() {
-            Some(Object::Name(n)) => n == b"Identity",
-            None => true, // absent means Identity for CIDFontType2
-            _ => false,   // explicit stream — skip for now
+        let (is_identity_gid, cid_to_gid_map) = match cid_dict.get(b"CIDToGIDMap").ok() {
+            Some(Object::Name(n)) if n == b"Identity" => (true, None),
+            Some(Object::Reference(r)) => (false, Some(*r)),
+            None => (true, None), // absent means Identity for CIDFontType2
+            _ => (false, None),   // unknown format
         };
 
-        // For CIDFontType2, read the (3,1) Unicode cmap → (unicode, gid) pairs.
-        // With Identity CIDToGIDMap, CID == GID, so gid→unicode gives us CID→Unicode.
-        let mappings: Vec<(u16, u16)> =
-            if cid_subtype.as_deref() == Some("CIDFontType2") && is_identity_gid {
-                // Read (3,1) Unicode cmap first; fall back to (3,0) Symbol cmap
-                // for symbolic fonts like Wingdings that only have (3,0).
-                let mut cmap_pairs = tt_read_windows_cmap(&font_data, 1);
-                if cmap_pairs.is_empty() {
-                    cmap_pairs = tt_read_windows_cmap(&font_data, 0);
-                }
-                if cmap_pairs.is_empty() {
-                    // No usable Windows cmap (e.g. Wingdings with only (1,0)
-                    // Mac cmap). Convert Mac (code, gid) → PUA (U+F000+code, gid).
-                    let mac_pairs = tt_read_mac_cmap(&font_data);
-                    cmap_pairs = mac_pairs
-                        .into_iter()
-                        .map(|(code, gid)| (0xF000u16 + code as u16, gid))
-                        .collect();
-                }
-                if !cmap_pairs.is_empty() {
-                    // Invert: build gid→unicode (first unicode wins per gid).
-                    let mut gid_to_unicode: std::collections::BTreeMap<u16, u16> =
-                        std::collections::BTreeMap::new();
-                    for (unicode, gid) in &cmap_pairs {
-                        if *gid != 0 {
-                            gid_to_unicode.entry(*gid).or_insert(*unicode);
+        // Resolve CID → GID mapping.
+        let cid_to_gid: std::collections::HashMap<u16, u16> = if is_identity_gid {
+            std::collections::HashMap::new() // Use identity: CID == GID
+        } else if let Some(map_id) = cid_to_gid_map {
+            // Parse CIDToGIDMap stream (sequence of 2-byte GIDs).
+            if let Some(Object::Stream(s)) = doc.objects.get(&map_id) {
+                let mut s = s.clone();
+                let _ = s.decompress();
+                let mut map = std::collections::HashMap::new();
+                for (cid, chunk) in s.content.chunks(2).enumerate() {
+                    if chunk.len() == 2 {
+                        let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                        if gid > 0 {
+                            map.insert(cid as u16, gid);
                         }
                     }
-                    // CID == GID (Identity), so each entry is (CID, unicode).
-                    gid_to_unicode.into_iter().collect()
-                } else {
-                    // No cmap at all — create PUA identity mapping for all
-                    // GIDs in the font (CID == GID with Identity mapping).
-                    // Map GID g → U+F000+g (Private Use Area).
-                    let num_glyphs = tt_num_glyphs(&font_data).unwrap_or(256);
-                    (1..num_glyphs)
-                        .map(|g| (g, 0xF000u16.saturating_add(g)))
-                        .filter(|(_, u)| *u <= 0xF8FF) // stay within PUA-A
-                        .collect()
                 }
-            } else if cid_subtype.as_deref() == Some("CIDFontType0") {
-                // CFF-based CID font: try parsing charset for CID→GID mapping
-                // and use CFF charset names → Unicode via AGL.
-                // For now, skip CFF CID fonts — they're less common in the
-                // §6.2.11.7.2 failures.
-                continue;
+                map
             } else {
-                continue;
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        let mut mappings: Vec<(u16, u16)> = Vec::new();
+
+        if cid_subtype.as_deref() == Some("CIDFontType2") {
+            // For CIDFontType2 (TrueType-based), read the (3,1) Unicode cmap.
+            let mut cmap_pairs = tt_read_windows_cmap(&font_data, 1);
+            if cmap_pairs.is_empty() {
+                cmap_pairs = tt_read_windows_cmap(&font_data, 0);
+            }
+            if cmap_pairs.is_empty() {
+                let mac_pairs = tt_read_mac_cmap(&font_data);
+                cmap_pairs = mac_pairs
+                    .into_iter()
+                    .map(|(code, gid)| (0xF000u16 + code as u16, gid))
+                    .collect();
+            }
+
+            if !cmap_pairs.is_empty() {
+                // gid → unicode
+                let mut gid_to_unicode: std::collections::HashMap<u16, u16> =
+                    std::collections::HashMap::new();
+                for (unicode, gid) in cmap_pairs {
+                    if gid != 0 {
+                        gid_to_unicode.entry(gid).or_insert(unicode);
+                    }
+                }
+
+                // CID → GID → Unicode
+                // Max CID is 65535.
+                for cid in 0..=65535u32 {
+                    let gid = if is_identity_gid {
+                        cid as u16
+                    } else {
+                        match cid_to_gid.get(&(cid as u16)) {
+                            Some(&g) => g,
+                            None => 0,
+                        }
+                    };
+                    if gid > 0 {
+                        if let Some(&unicode) = gid_to_unicode.get(&gid) {
+                            mappings.push((cid as u16, unicode));
+                        }
+                    }
+                }
+            }
+        } else if cid_subtype.as_deref() == Some("CIDFontType0") {
+            // For CIDFontType0 (CFF-based), use CFF charset if available.
+            if let Some(cff) = cff_parser::Table::parse(&font_data) {
+                use crate::encoding_utils::glyph_name_to_char;
+                
+                for gid_idx in 0..cff.number_of_glyphs() {
+                    let gid = cff_parser::GlyphId(gid_idx as u16);
+                    if let Some(gname) = cff.glyph_name(gid) {
+                        if let Some(ch) = glyph_name_to_char(gname) {
+                            // Find which CID maps to this GID.
+                            // For CFF CIDFonts, GID == CID.
+                            // For CFF simple fonts used as CIDFonts (subsetted), 
+                            // we usually have Identity CIDToGIDMap.
+                            let cid = gid_idx as u16;
+                            mappings.push((cid, ch as u16));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: if no mappings found, or for unmapped GIDs, use PUA identity.
+        if mappings.is_empty() {
+            let num_glyphs = if cid_subtype.as_deref() == Some("CIDFontType2") {
+                tt_num_glyphs(&font_data).unwrap_or(256)
+            } else {
+                cff_parser::Table::parse(&font_data)
+                    .map(|c| c.number_of_glyphs())
+                    .unwrap_or(256)
             };
+            mappings = (1..num_glyphs)
+                .map(|g| (g, 0xF000u16.saturating_add(g)))
+                .filter(|(_, u)| *u <= 0xF8FF)
+                .collect();
+        }
 
         if mappings.is_empty() {
             continue;
@@ -13833,8 +13925,16 @@ pub fn fix_tounicode_forbidden_values(doc: &mut Document) -> usize {
 /// Sanitize a single ToUnicode CMap line: replace forbidden destination values
 /// (U+0000, U+FEFF, U+FFFE) with U+FFFD.
 fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> String {
-    // Forbidden destination codepoints.
-    const FORBIDDEN: &[u16] = &[0x0000, 0xFEFF, 0xFFFE];
+    // Forbidden destination codepoints per PDF/A and Unicode specs.
+    // - 0x0000: NULL
+    // - 0xFEFF: Byte Order Mark
+    // - 0xFFFE, 0xFFFF: Non-characters
+    // - 0xD800..=0xDFFF: Surrogates
+    const FORBIDDEN: &[u16] = &[0x0000, 0xFEFF, 0xFFFE, 0xFFFF];
+
+    fn is_forbidden(val: u16) -> bool {
+        FORBIDDEN.contains(&val) || (val >= 0xD800 && val <= 0xDFFF)
+    }
 
     // Parse all <XXXX> tokens.
     let mut result = String::with_capacity(line.len());
@@ -13855,12 +13955,12 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
             let is_destination =
                 (in_bfchar && token_count == 1) || (in_bfrange && token_count == 2);
 
-            if is_destination && (hex_str.len() == 4 || hex_str.len() == 8) {
-                // Could be multi-byte: check 2-byte pairs.
+            if is_destination && (hex_str.len() % 4 == 0) {
+                // ToUnicode maps to UTF-16BE strings. Check each 2-byte unit.
                 let mut hex_bytes: Vec<u8> = Vec::new();
                 let mut valid = true;
                 let mut i = 0;
-                while i + 3 < hex_str.len() + 1 {
+                while i + 3 < hex_str.len() {
                     if let Ok(val) = u16::from_str_radix(&hex_str[i..i + 4], 16) {
                         hex_bytes.push((val >> 8) as u8);
                         hex_bytes.push(val as u8);
@@ -13872,27 +13972,64 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
                 }
                 if valid && !hex_bytes.is_empty() {
                     let mut any_forbidden = false;
-                    // Check 2-byte values.
-                    for chunk in hex_bytes.chunks(2) {
-                        if chunk.len() == 2 {
-                            let val = u16::from_be_bytes([chunk[0], chunk[1]]);
-                            if FORBIDDEN.contains(&val) {
+                    // Check 2-byte values for surrogates or forbidden non-chars.
+                    // Note: valid surrogate PAIRS are technically allowed in UTF-16BE strings
+                    // but veraPDF flags single surrogates as 6.2.11.7.3 errors.
+                    let mut j = 0;
+                    while j + 1 < hex_bytes.len() {
+                        let val = u16::from_be_bytes([hex_bytes[j], hex_bytes[j + 1]]);
+                        
+                        // Is it a high surrogate?
+                        if val >= 0xD800 && val <= 0xDBFF {
+                            // Check if followed by a low surrogate.
+                            let mut has_low = false;
+                            if j + 3 < hex_bytes.len() {
+                                let next_val = u16::from_be_bytes([hex_bytes[j + 2], hex_bytes[j + 3]]);
+                                if next_val >= 0xDC00 && next_val <= 0xDFFF {
+                                    has_low = true;
+                                }
+                            }
+                            if !has_low {
                                 any_forbidden = true;
                                 break;
                             }
+                            j += 4; // Skip the pair.
+                        } else if is_forbidden(val) {
+                            any_forbidden = true;
+                            break;
+                        } else {
+                            j += 2;
                         }
                     }
+
                     if any_forbidden {
-                        // Replace each forbidden 2-byte value with FFFD.
+                        // Replace forbidden parts with FFFD.
                         let mut new_hex = String::new();
-                        for chunk in hex_bytes.chunks(2) {
-                            if chunk.len() == 2 {
-                                let val = u16::from_be_bytes([chunk[0], chunk[1]]);
-                                if FORBIDDEN.contains(&val) {
-                                    new_hex.push_str("FFFD");
-                                } else {
-                                    new_hex.push_str(&format!("{:04X}", val));
+                        let mut k = 0;
+                        while k + 1 < hex_bytes.len() {
+                            let val = u16::from_be_bytes([hex_bytes[k], hex_bytes[k + 1]]);
+                            
+                            if val >= 0xD800 && val <= 0xDBFF {
+                                let mut has_low = false;
+                                if k + 3 < hex_bytes.len() {
+                                    let next_val = u16::from_be_bytes([hex_bytes[k + 2], hex_bytes[k + 3]]);
+                                    if next_val >= 0xDC00 && next_val <= 0xDFFF {
+                                        has_low = true;
+                                    }
                                 }
+                                if has_low {
+                                    new_hex.push_str(&format!("{:04X}{:04X}", val, u16::from_be_bytes([hex_bytes[k + 2], hex_bytes[k + 3]])));
+                                    k += 4;
+                                } else {
+                                    new_hex.push_str("FFFD");
+                                    k += 2;
+                                }
+                            } else if is_forbidden(val) {
+                                new_hex.push_str("FFFD");
+                                k += 2;
+                            } else {
+                                new_hex.push_str(&format!("{:04X}", val));
+                                k += 2;
                             }
                         }
                         result.push('<');
