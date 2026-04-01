@@ -4533,6 +4533,41 @@ fn parse_subset_font_program_glyphs(
     Some(available_glyphs)
 }
 
+// Stub implementations for functions not yet pushed (Codex-generated).
+// Real implementations to follow.
+
+fn is_subset_font_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() > 7
+        && bytes[6] == b'+'
+        && bytes[..6].iter().all(|&b| b.is_ascii_uppercase())
+}
+
+fn collect_notdef_content_containers(_doc: &Document) -> Vec<ObjectId> {
+    Vec::new()
+}
+
+fn resolve_notdef_container_font_map(
+    _doc: &Document,
+    _container: ObjectId,
+) -> Option<Vec<(String, ObjectId)>> {
+    None
+}
+
+fn collect_simple_invalid_codes(
+    _doc: &Document,
+    _fd: &lopdf::Dictionary,
+    _font_data: &[u8],
+    _check_encoding: bool,
+    _available_glyphs: Option<&std::collections::HashSet<String>>,
+) -> std::collections::HashSet<u8> {
+    std::collections::HashSet::new()
+}
+
+fn notdef_content_stream_ids(_doc: &Document, _container: ObjectId) -> Vec<ObjectId> {
+    Vec::new()
+}
+
 pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
     use std::{
         collections::{hash_map::Entry, HashMap},

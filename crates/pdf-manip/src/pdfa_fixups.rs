@@ -209,6 +209,8 @@ pub struct FixupReport {
     pub hex_garbage_fixed: usize,
     pub stream_external_f_fixed: usize,
     pub jbig2_globals_promoted: usize,
+    pub device_cmyk_intent_fixed: usize,
+    pub icc_profile_reuse_fixed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -10281,29 +10283,27 @@ fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
     let mut count = 0;
     
     // Check if OutputIntent is CMYK.
-    let intent_is_cmyk = if let Ok(catalog_id) = doc.catalog() {
-        if let Ok(catalog) = doc.get_object(catalog_id.0).and_then(|o| o.as_dict()) {
-            if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
-                oi_arr.iter().any(|oi| {
-                    let dict = if let Ok(d) = oi.as_dict() {
-                        Some(d)
-                    } else if let Ok(id) = oi.as_reference() {
-                        doc.get_object(id).ok().and_then(|o| o.as_dict())
-                    } else {
-                        None
-                    };
-                    if let Some(d) = dict {
-                        if d.get(b"S").ok().and_then(|o| o.as_name().ok()) == Some(b"GTS_PDFA1") {
-                            if let Ok(profile_id) = d.get(b"DestOutputProfile").and_then(|o| o.as_reference()) {
-                                if let Some(Object::Stream(s)) = doc.objects.get(&profile_id) {
-                                    return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4);
-                                }
+    let intent_is_cmyk = if let Ok(catalog) = doc.catalog() {
+        if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
+            oi_arr.iter().any(|oi| {
+                let dict = if let Ok(d) = oi.as_dict() {
+                    Some(d)
+                } else if let Ok(id) = oi.as_reference() {
+                    doc.get_object(id).ok().and_then(|o| o.as_dict().ok())
+                } else {
+                    None
+                };
+                if let Some(d) = dict {
+                    if d.get(b"S").ok().and_then(|o| o.as_name().ok()) == Some(b"GTS_PDFA1") {
+                        if let Ok(profile_id) = d.get(b"DestOutputProfile").and_then(|o| o.as_reference()) {
+                            if let Some(Object::Stream(s)) = doc.objects.get(&profile_id) {
+                                return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4);
                             }
                         }
                     }
-                    false
-                })
-            } else { false }
+                }
+                false
+            })
         } else { false }
     } else { false };
 
@@ -10313,7 +10313,8 @@ fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
 
     // If DeviceCMYK is used, but intent is not CMYK, we convert DeviceCMYK to
     // an ICCBased CMYK colorspace.
-    let mut cmyk_profile_id = None;
+    // Eagerly create the profile to avoid double-mutable-borrow inside the loop.
+    let cmyk_profile_id = ensure_cmyk_profile_extra(doc);
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
         let mut modified = false;
@@ -10321,17 +10322,12 @@ fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
             if let Ok(Object::Dictionary(ref mut cs_dict)) = dict.get_mut(b"ColorSpace") {
                 for (_, val) in cs_dict.iter_mut() {
                     if val.as_name().ok() == Some(b"DeviceCMYK") {
-                        if cmyk_profile_id.is_none() {
-                            cmyk_profile_id = Some(ensure_cmyk_profile_extra(doc));
-                        }
-                        if let Some(pid) = cmyk_profile_id {
-                            *val = Object::Array(vec![
-                                Object::Name(b"ICCBased".to_vec()),
-                                Object::Reference(pid),
-                            ]);
-                            modified = true;
-                            count += 1;
-                        }
+                        *val = Object::Array(vec![
+                            Object::Name(b"ICCBased".to_vec()),
+                            Object::Reference(cmyk_profile_id),
+                        ]);
+                        modified = true;
+                        count += 1;
                     }
                 }
             }
@@ -10341,16 +10337,11 @@ fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
                 if let Ok(Object::Dictionary(ref mut cs_dict)) = s.dict.get_mut(b"ColorSpace") {
                     for (_, val) in cs_dict.iter_mut() {
                         if val.as_name().ok() == Some(b"DeviceCMYK") {
-                            if cmyk_profile_id.is_none() {
-                                cmyk_profile_id = Some(ensure_cmyk_profile_extra(doc));
-                            }
-                            if let Some(pid) = cmyk_profile_id {
-                                *val = Object::Array(vec![
-                                    Object::Name(b"ICCBased".to_vec()),
-                                    Object::Reference(pid),
-                                ]);
-                                count += 1;
-                            }
+                            *val = Object::Array(vec![
+                                Object::Name(b"ICCBased".to_vec()),
+                                Object::Reference(cmyk_profile_id),
+                            ]);
+                            count += 1;
                         }
                     }
                 }
@@ -10385,20 +10376,18 @@ fn ensure_cmyk_profile_extra(doc: &mut Document) -> ObjectId {
 
 fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
     let mut count = 0;
-    let oi_profile_id = if let Ok(catalog_id) = doc.catalog() {
-        if let Ok(catalog) = doc.get_object(catalog_id.0).and_then(|o| o.as_dict()) {
-            if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
-                oi_arr.iter().find_map(|oi| {
-                    let dict = if let Ok(d) = oi.as_dict() {
-                        Some(d)
-                    } else if let Ok(id) = oi.as_reference() {
-                        doc.get_object(id).ok().and_then(|o| o.as_dict())
-                    } else {
-                        None
-                    };
-                    dict.and_then(|d| d.get(b"DestOutputProfile").ok()).and_then(|o| o.as_reference().ok())
-                })
-            } else { None }
+    let oi_profile_id = if let Ok(catalog) = doc.catalog() {
+        if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
+            oi_arr.iter().find_map(|oi| {
+                let dict = if let Ok(d) = oi.as_dict() {
+                    Some(d)
+                } else if let Ok(id) = oi.as_reference() {
+                    doc.get_object(id).ok().and_then(|o| o.as_dict().ok())
+                } else {
+                    None
+                };
+                dict.and_then(|d| d.get(b"DestOutputProfile").ok()).and_then(|o| o.as_reference().ok())
+            })
         } else { None }
     } else { None };
 

@@ -19,8 +19,8 @@ pub fn run_structure_fixups(doc: &mut Document) -> Result<()> {
 /// Ensure Catalog, Pages, and Page objects have correct /Type entries (§6.1.2).
 fn ensure_core_types(doc: &mut Document) -> Result<()> {
     let catalog_id = doc.trailer.get(b"Root")
-        .and_then(|o| o.as_reference().ok());
-    
+        .ok().and_then(|o| o.as_reference().ok());
+
     if let Some(id) = catalog_id {
         if let Ok(Object::Dictionary(ref mut cat)) = doc.get_object_mut(id) {
             cat.set("Type", Object::Name(b"Catalog".to_vec()));
@@ -62,7 +62,7 @@ fn fix_bdc_lang_tags(doc: &mut Document) -> Result<()> {
 
     // Fix Catalog /Lang if present.
     let catalog_id = doc.trailer.get(b"Root")
-        .and_then(|o| o.as_reference().ok());
+        .ok().and_then(|o| o.as_reference().ok());
 
     if let Some(id) = catalog_id {
         if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(id) {
