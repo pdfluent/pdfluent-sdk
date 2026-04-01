@@ -8935,10 +8935,9 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     let mut count = 0;
 
-    // Find an existing sRGB ICC profile stream (N=3) created by
-    // normalize_colorspaces.  We use this in /Group /CS to avoid depending
-    // on OutputIntent (which may be lost during lopdf serialization).
-    let icc_id = find_srgb_icc_stream(doc);
+    // Find an appropriate ICC profile for the transparency group color space (/CS).
+    // According to PDF/A-2 §6.2.10, /CS must match the OutputIntent if present.
+    let icc_id = find_output_intent_icc_profile(doc);
     let cs_value = icc_id.map(|id| {
         Object::Array(vec![
             Object::Name(b"ICCBased".to_vec()),
@@ -8953,7 +8952,7 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
             Some(Object::Name(s)) if s == b"Transparency" => {}
             _ => return true,
         }
-        // /CS must not be a device color space.
+        // /CS must not be a device color space and must be present.
         match grp.get(b"CS").ok() {
             Some(Object::Name(cs))
                 if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
@@ -8965,7 +8964,7 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         }
     }
 
-    // First pass: fix indirect /Group dicts.
+    // First pass: fix indirect /Group dicts on pages.
     let mut indirect_fixes: Vec<ObjectId> = Vec::new();
     for page_id in &page_ids {
         let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
@@ -8989,22 +8988,28 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         }
     }
 
-    // Second pass: fix inline /Group dicts and add /Group to pages without one.
+    // Second pass: fix inline /Group dicts and add /Group to pages using transparency.
     for page_id in &page_ids {
         let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
             continue;
         };
         let group_val = pd.get(b"Group");
+        let uses_transparency = page_uses_transparency_lopdf(pd, doc);
+
         let needs_group_fix = match group_val {
             Ok(Object::Reference(grp_id)) => {
+                // If the reference is broken, it needs a fix if transparency is used.
                 !matches!(doc.objects.get(grp_id), Some(Object::Dictionary(_)))
+                    && uses_transparency
             }
             Ok(Object::Dictionary(grp_dict)) => group_dict_needs_fix(grp_dict),
-            _ => true,
+            _ => uses_transparency, // Add /Group if missing but transparency is used.
         };
+
         if !needs_group_fix {
             continue;
         }
+
         let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) else {
             continue;
         };
@@ -9028,7 +9033,10 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
             } else {
                 match s.dict.get(b"Group").ok() {
                     Some(Object::Dictionary(grp)) => group_dict_needs_fix(grp),
-                    _ => false,
+                    Some(Object::Reference(grp_id)) => {
+                        !matches!(doc.objects.get(grp_id), Some(Object::Dictionary(_)))
+                    }
+                    _ => form_xobject_uses_transparency(s, doc),
                 }
             }
         } else {
@@ -9051,17 +9059,58 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     count
 }
 
-/// Find an existing ICC profile stream with N=3 (sRGB) in the document.
-/// Returns None if no suitable stream exists.
-fn find_srgb_icc_stream(doc: &Document) -> Option<ObjectId> {
+/// Find an appropriate ICC profile stream for use in a transparency group (/CS).
+/// Prefers the document's OutputIntent profile (PDF/A §6.2.10 requirement).
+fn find_output_intent_icc_profile(doc: &Document) -> Option<ObjectId> {
+    // 1. Try to find the DestOutputProfile from OutputIntent (GTS_PDFA1 or GTS_ISO1).
+    if let Ok(catalog) = doc.catalog() {
+        if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
+            for oi in oi_arr {
+                let dict = match oi {
+                    Object::Dictionary(d) => Some(d),
+                    Object::Reference(id) => doc.objects.get(id).and_then(|o| o.as_dict().ok()),
+                    _ => None,
+                };
+                if let Some(d) = dict {
+                    let subtype = d.get(b"S").ok().and_then(|o| o.as_name().ok());
+                    if subtype == Some(b"GTS_PDFA1") || subtype == Some(b"GTS_ISO1") {
+                        if let Ok(profile_id) = d.get(b"DestOutputProfile").and_then(|o| o.as_reference()) {
+                            return Some(profile_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback: find any ICC profile stream with N=3 (RGB) or N=4 (CMYK).
     for (&id, obj) in &doc.objects {
         if let Object::Stream(s) = obj {
-            if let Ok(Object::Integer(3)) = s.dict.get(b"N") {
-                return Some(id);
+            if let Ok(Object::Integer(n)) = s.dict.get(b"N") {
+                if *n == 3 || *n == 4 {
+                    return Some(id);
+                }
             }
         }
     }
     None
+}
+
+/// Return true if a Form XObject uses transparency features.
+fn form_xobject_uses_transparency(s: &lopdf::Stream, doc: &Document) -> bool {
+    // Check its own /Group dictionary.
+    if let Ok(Object::Dictionary(grp)) = s.dict.get(b"Group") {
+        if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
+            return true;
+        }
+    }
+    // Check its ExtGState resources.
+    if let Some(gs) = get_named_resource_dict_from_stream_resources(&s.dict, doc, b"ExtGState") {
+        if extgstate_dict_has_transparency(&gs, doc) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Return true if the page's ExtGState resources use transparency.

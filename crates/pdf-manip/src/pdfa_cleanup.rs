@@ -3121,13 +3121,6 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
             combined.extend_from_slice(&c);
         }
 
-        if !combined
-            .windows(3)
-            .any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC")
-        {
-            continue;
-        }
-
         let fixed = fix_emc_in_bytes(&combined);
         if fixed == combined {
             continue;
@@ -3148,7 +3141,7 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
         }
     }
 
-    // Also fix Form XObject and Tiling Pattern streams (these are self-contained, no spanning).
+    // Also fix Form XObject and Tiling Pattern streams.
     // Must match collect_content_stream_ids in pdfa_fixups.rs which processes:
     // - /Subtype /Form (Form XObjects)
     // - /PatternType 1 (Tiling Patterns)
@@ -3176,7 +3169,22 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
         })
         .collect();
 
-    for id in form_and_pattern_ids {
+    // Collect all Form XObject IDs referenced from any Form XObject's content
+    // via Do /XObjectName, so we can process them recursively.
+    let mut visited: std::collections::HashSet<ObjectId> =
+        form_and_pattern_ids.iter().copied().collect();
+    let mut queue: Vec<ObjectId> = form_and_pattern_ids.clone();
+    while let Some(form_id) = queue.pop() {
+        let xobject_refs = collect_xobject_refs_from_form(doc, form_id);
+        for ref_id in xobject_refs {
+            if visited.insert(ref_id) {
+                queue.push(ref_id);
+            }
+        }
+    }
+
+    // Process all discovered Form XObjects (including nested ones).
+    for id in visited {
         let content = {
             let Some(Object::Stream(s)) = doc.objects.get(&id) else {
                 continue;
@@ -3187,19 +3195,182 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
             }
         };
 
-        if !content
-            .windows(3)
-            .any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC")
-        {
-            continue;
-        }
-
         let fixed = fix_emc_in_bytes(&content);
         if fixed != content {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.set_plain_content(fixed);
             }
         }
+    }
+}
+
+/// Collect all Form XObject IDs referenced via `Do /XObjectName` operators
+/// in the given Form XObject's content stream.
+fn collect_xobject_refs_from_form(doc: &Document, form_id: ObjectId) -> Vec<ObjectId> {
+    let mut refs = Vec::new();
+    let content = match doc.objects.get(&form_id) {
+        Some(Object::Stream(s)) => match s.get_plain_content() {
+            Ok(c) => c,
+            Err(_) => return refs,
+        },
+        _ => return refs,
+    };
+
+    // Get the Resources dict from this Form XObject to resolve Do references.
+    let resources = match doc.objects.get(&form_id) {
+        Some(Object::Stream(s)) => s.dict.get(b"Resources").ok().cloned(),
+        _ => None,
+    };
+
+    // Tokenize content to find Do /XObjectName patterns.
+    let mut i = 0;
+    while i < content.len() {
+        // Skip whitespace.
+        if content[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        // Skip comments.
+        if content[i] == b'%' {
+            while i < content.len() && content[i] != b'\n' && content[i] != b'\r' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip strings.
+        if content[i] == b'(' {
+            i += 1;
+            let mut nest = 1i32;
+            while i < content.len() && nest > 0 {
+                if content[i] == b'(' && (i == 0 || content[i - 1] != b'\\') {
+                    nest += 1;
+                } else if content[i] == b')' && (i == 0 || content[i - 1] != b'\\') {
+                    nest -= 1;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip hex strings.
+        if content[i] == b'<' && content.get(i + 1) != Some(&b'<') {
+            i += 1;
+            while i < content.len() && content[i] != b'>' {
+                i += 1;
+            }
+            if i < content.len() {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Read token.
+        let tok_start = i;
+        while i < content.len()
+            && !content[i].is_ascii_whitespace()
+            && content[i] != b'('
+            && content[i] != b'<'
+            && content[i] != b'>'
+            && content[i] != b'/'
+            && content[i] != b'%'
+            && content[i] != b'['
+            && content[i] != b']'
+        {
+            i += 1;
+        }
+
+        if tok_start == i {
+            i += 1;
+            continue;
+        }
+
+        let token = &content[tok_start..i];
+
+        // Look for "Do" followed by "/XObjectName".
+        if token == b"Do" {
+            // Read next token (should be a name like "/FormX").
+            while i < content.len() && content[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let name_start = i;
+            while i < content.len()
+                && !content[i].is_ascii_whitespace()
+                && content[i] != b'('
+                && content[i] != b'<'
+                && content[i] != b'>'
+                && content[i] != b'/'
+                && content[i] != b'%'
+                && content[i] != b'['
+                && content[i] != b']'
+            {
+                i += 1;
+            }
+            if name_start < i {
+                let name_tok = &content[name_start..i];
+                // Name should start with '/' — strip it and look up in Resources.
+                if let Some(name) = name_tok.strip_prefix(b"/") {
+                    if let Some(ref resources) = resources {
+                        if let Some(xobj_ref) = lookup_xobject_in_resources(doc, resources, name) {
+                            // Check if it's a Form XObject.
+                            if let Some(Object::Stream(s)) = doc.objects.get(&xobj_ref) {
+                                if s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok())
+                                    == Some(b"Form")
+                                {
+                                    refs.push(xobj_ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    refs
+}
+
+/// Look up an XObject by name in a Resources dictionary.
+fn lookup_xobject_in_resources(
+    doc: &Document,
+    resources: &Object,
+    name: &[u8],
+) -> Option<ObjectId> {
+    let xobjects = match resources {
+        Object::Dictionary(dict) => dict.get(b"XObject").ok().cloned(),
+        Object::Reference(r) => doc.objects.get(&r).cloned(),
+        _ => None,
+    };
+
+    let xobjects = match xobjects {
+        Some(o) => o,
+        None => return None,
+    };
+
+    match xobjects {
+        Object::Dictionary(dict) => {
+            if let Ok(Object::Reference(ref_id)) = dict.get(name) {
+                Some(*ref_id)
+            } else if let Ok(Object::Name(_)) = dict.get(name) {
+                // Name exists but is not a reference — can't resolve.
+                None
+            } else {
+                None
+            }
+        }
+        Object::Reference(r) => {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&r) {
+                if let Ok(Object::Reference(ref_id)) = dict.get(name) {
+                    Some(*ref_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
