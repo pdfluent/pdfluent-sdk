@@ -14,6 +14,10 @@ use pdf_extract::extract_text;
 use rust_xlsxwriter::Workbook;
 use table::detect_tables;
 
+/// Maximum number of pages to process for XLSX conversion. Massive documents
+/// (e.g. 500+ pages) cause timeouts and produce unwieldy spreadsheets.
+const MAX_XLSX_PAGES: u32 = 500;
+
 /// Convert tables from a PDF document to XLSX format.
 ///
 /// Returns the XLSX file contents as bytes.
@@ -21,6 +25,7 @@ use table::detect_tables;
 pub fn pdf_to_xlsx(doc: &Document) -> Result<Vec<u8>> {
     let pages = doc.get_pages();
     let total_pages = pages.len() as u32;
+    let total_pages = total_pages.min(MAX_XLSX_PAGES);
     let text_blocks = extract_text(doc);
 
     let mut workbook = Workbook::new();
@@ -70,6 +75,7 @@ pub fn convert_pdf_bytes_to_xlsx(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
 pub fn extract_tables(doc: &Document) -> Vec<DetectedTable> {
     let pages = doc.get_pages();
     let total_pages = pages.len() as u32;
+    let total_pages = total_pages.min(MAX_XLSX_PAGES);
     let text_blocks = extract_text(doc);
     let mut all_tables = Vec::new();
 
@@ -169,11 +175,7 @@ mod tests {
         let cursor = std::io::Cursor::new(data);
         let archive = zip::ZipArchive::new(cursor).unwrap();
         (0..archive.len())
-            .map(|i| {
-                let cursor = std::io::Cursor::new(data);
-                let archive = zip::ZipArchive::new(cursor).unwrap();
-                archive.name_for_index(i).unwrap().to_string()
-            })
+            .map(|i| archive.name_for_index(i).unwrap().to_string())
             .collect()
     }
 
