@@ -47,6 +47,10 @@ pub struct PptxWriter<W: Write + Seek> {
     image_extensions: HashSet<String>,
     global_image_counter: usize,
     options: SimpleFileOptions,
+    cached_master_xml: Vec<u8>,
+    cached_master_rels_xml: Vec<u8>,
+    cached_layout_xml: Vec<u8>,
+    cached_layout_rels_xml: Vec<u8>,
 }
 
 impl<W: Write + Seek> PptxWriter<W> {
@@ -54,12 +58,20 @@ impl<W: Write + Seek> PptxWriter<W> {
         let zip = ZipWriter::new(inner);
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        let cached_master_xml = write_slide_master().unwrap_or_default();
+        let cached_master_rels_xml = write_slide_master_rels().unwrap_or_default();
+        let cached_layout_xml = write_slide_layout().unwrap_or_default();
+        let cached_layout_rels_xml = write_slide_layout_rels().unwrap_or_default();
         Self {
             zip,
             slide_count: 0,
             image_extensions: HashSet::new(),
             global_image_counter: 0,
             options,
+            cached_master_xml,
+            cached_master_rels_xml,
+            cached_layout_xml,
+            cached_layout_rels_xml,
         }
     }
 
@@ -69,22 +81,22 @@ impl<W: Write + Seek> PptxWriter<W> {
         self.zip.start_file("_rels/.rels", self.options)?;
         self.zip.write_all(&write_root_rels()?)?;
 
-        // Slide layout and master (minimal)
+        // Slide layout and master (cached)
         self.zip
             .start_file("ppt/slideMasters/slideMaster1.xml", self.options)?;
-        self.zip.write_all(&write_slide_master()?)?;
+        self.zip.write_all(&self.cached_master_xml)?;
 
         self.zip
             .start_file("ppt/slideMasters/_rels/slideMaster1.xml.rels", self.options)?;
-        self.zip.write_all(&write_slide_master_rels()?)?;
+        self.zip.write_all(&self.cached_master_rels_xml)?;
 
         self.zip
             .start_file("ppt/slideLayouts/slideLayout1.xml", self.options)?;
-        self.zip.write_all(&write_slide_layout()?)?;
+        self.zip.write_all(&self.cached_layout_xml)?;
 
         self.zip
             .start_file("ppt/slideLayouts/_rels/slideLayout1.xml.rels", self.options)?;
-        self.zip.write_all(&write_slide_layout_rels()?)?;
+        self.zip.write_all(&self.cached_layout_rels_xml)?;
 
         Ok(())
     }

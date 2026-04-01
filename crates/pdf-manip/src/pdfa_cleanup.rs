@@ -3602,16 +3602,14 @@ pub fn fix_pdf_header(data: &mut Vec<u8>) {
 }
 
 /// Verify and fix the startxref pointer in saved PDF data.
-
-    // §6.1.4: Keyword 'xref' not followed by proper EOL marker.
-    // Ensure 'xref' is followed by a single EOL marker (LF or CRLF).
-    fix_xref_eol(data);
-
 ///
 /// lopdf occasionally writes an incorrect startxref offset (off by a few bytes).
 /// This scans backward from the end to find the actual `xref` keyword position
 /// and corrects startxref if it doesn't point to it.
 pub fn fix_startxref(data: &mut Vec<u8>) {
+    // §6.1.4: Keyword 'xref' not followed by proper EOL marker.
+    fix_xref_eol(data);
+
     let Some(sx_pos) = find_last(data, b"startxref") else {
         return;
     };
