@@ -10,7 +10,7 @@ pub use error::{PptxError, Result};
 pub use writer::{PptxImage, SlideData};
 
 use lopdf::Document;
-use pdf_extract::{extract_page_blocks, extract_page_images};
+use pdf_extract::{extract_images_from_page_id, extract_page_blocks};
 use std::io::Cursor;
 use writer::{extracted_to_pptx_image, PptxWriter};
 
@@ -56,7 +56,7 @@ pub fn pdf_to_pptx(doc: &Document) -> Result<Vec<u8>> {
 
         // Extract images.
         let mut pptx_images = Vec::new();
-        if let Ok(images) = extract_page_images(doc, page_num) {
+        if let Ok(images) = extract_images_from_page_id(doc, page_id, page_num) {
             for img in &images {
                 pptx_images.push(extracted_to_pptx_image(img, img_counter));
                 img_counter += 1;
