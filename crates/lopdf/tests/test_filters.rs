@@ -296,6 +296,194 @@ fn test_run_length_decode_multiple_literal_runs() {
 // FlateDecode edge cases
 // ══════════════════════════════════════════════════════════════════════════════
 
+#[test]
+fn test_flate_decode_empty_input() {
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+    dict.set("Length", Object::Integer(0_i64));
+    let stream = Stream::new(dict, vec![]);
+    let result = stream.decompressed_content();
+    assert!(result.is_ok(), "empty FlateDecode should not error");
+    assert_eq!(result.unwrap(), vec![]);
+}
+
+#[test]
+fn test_flate_decode_truncated_data() {
+    use std::io::Write;
+    let original = b"test data for truncated flate";
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(original).unwrap();
+    let compressed = encoder.finish().unwrap();
+    let truncated = &compressed[..compressed.len() / 2];
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+    dict.set("Length", Object::Integer(truncated.len() as i64));
+    let stream = Stream::new(dict, truncated.to_vec());
+    let result = stream.decompressed_content();
+    assert!(
+        result.is_ok(),
+        "truncated FlateDecode should return partial"
+    );
+}
+
+#[test]
+fn test_flate_decode_single_byte_zlib_header() {
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+    dict.set("Length", Object::Integer(1_i64));
+    let stream = Stream::new(dict, vec![0x78]);
+    let result = stream.decompressed_content();
+    assert!(result.is_ok(), "single byte zlib header should not panic");
+}
+
+#[test]
+fn test_flate_decode_with_predictor() {
+    use std::io::Write;
+    let original = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(&original).unwrap();
+    let compressed = encoder.finish().unwrap();
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"FlateDecode".to_vec()));
+    dict.set(
+        "DecodeParms",
+        Object::Dictionary({
+            let mut parms = Dictionary::new();
+            parms.set("Predictor", Object::Integer(1));
+            parms
+        }),
+    );
+    dict.set("Length", Object::Integer(compressed.len() as i64));
+    let stream = Stream::new(dict, compressed);
+    let result = stream.decompressed_content();
+    assert!(result.is_ok(), "FlateDecode with predictor=1 should work");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LZWDecode edge cases
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_lzw_decode_empty_input() {
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"LZWDecode".to_vec()));
+    dict.set("Length", Object::Integer(0_i64));
+    let stream = Stream::new(dict, vec![]);
+    let result = stream.decompressed_content();
+    assert!(result.is_ok(), "empty LZWDecode should not error");
+    assert_eq!(result.unwrap(), vec![]);
+}
+
+#[test]
+fn test_lzw_decode_early_change_zero() {
+    let input = vec![
+        0x80, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+        0x4E, 0x4F, 0x80,
+    ];
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"LZWDecode".to_vec()));
+    dict.set(
+        "DecodeParms",
+        Object::Dictionary({
+            let mut parms = Dictionary::new();
+            parms.set("EarlyChange", Object::Integer(0));
+            parms
+        }),
+    );
+    dict.set("Length", Object::Integer(input.len() as i64));
+    let stream = Stream::new(dict, input);
+    let result = stream.decompressed_content();
+    assert!(result.is_ok(), "LZWDecode with EarlyChange=0 should work");
+}
+
+#[test]
+fn test_lzw_decode_early_change_one() {
+    let input = vec![
+        0x80, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D,
+        0x4E, 0x4F, 0x80,
+    ];
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"LZWDecode".to_vec()));
+    dict.set(
+        "DecodeParms",
+        Object::Dictionary({
+            let mut parms = Dictionary::new();
+            parms.set("EarlyChange", Object::Integer(1));
+            parms
+        }),
+    );
+    dict.set("Length", Object::Integer(input.len() as i64));
+    let stream = Stream::new(dict, input);
+    let result = stream.decompressed_content();
+    assert!(result.is_ok(), "LZWDecode with EarlyChange=1 should work");
+}
+
+#[test]
+fn test_lzw_decode_invalid_sequence() {
+    let input = vec![0xFF, 0xFF, 0xFF, 0xFF];
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"LZWDecode".to_vec()));
+    dict.set("Length", Object::Integer(input.len() as i64));
+    let stream = Stream::new(dict, input);
+    let result = stream.decompressed_content();
+    assert!(
+        result.is_ok(),
+        "invalid LZW should not panic, just return partial"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ASCII85Decode edge cases
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_ascii85_decode_z_shorthand() {
+    let input = b"z~>";
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"ASCII85Decode".to_vec()));
+    dict.set("Length", Object::Integer(input.len() as i64));
+    let stream = Stream::new(dict, input.to_vec());
+    let decoded = stream
+        .decompressed_content()
+        .expect("z shorthand should produce 4 null bytes");
+    assert_eq!(decoded, vec![0, 0, 0, 0]);
+}
+
+#[test]
+fn test_ascii85_decode_missing_eod() {
+    let input = b"BOu!rDZ";
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"ASCII85Decode".to_vec()));
+    dict.set("Length", Object::Integer(input.len() as i64));
+    let stream = Stream::new(dict, input.to_vec());
+    let result = stream.decompressed_content();
+    assert!(result.is_ok(), "missing EOD should still decode");
+}
+
+#[test]
+fn test_ascii85_decode_partial_group() {
+    let input = b"AB";
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"ASCII85Decode".to_vec()));
+    dict.set("Length", Object::Integer(input.len() as i64));
+    let stream = Stream::new(dict, input.to_vec());
+    let decoded = stream
+        .decompressed_content()
+        .expect("partial group should decode with padding");
+    assert_eq!(decoded, vec![100]); // 'd'
+}
+
+#[test]
+fn test_ascii85_decode_empty_input() {
+    let mut dict = Dictionary::new();
+    dict.set("Filter", Object::Name(b"ASCII85Decode".to_vec()));
+    dict.set("Length", Object::Integer(0_i64));
+    let stream = Stream::new(dict, vec![]);
+    let result = stream.decompressed_content();
+    assert!(result.is_ok(), "empty ASCII85 should return empty");
+    assert_eq!(result.unwrap(), vec![]);
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // DCTDecode (JPEG) edge cases
 // ══════════════════════════════════════════════════════════════════════════════
