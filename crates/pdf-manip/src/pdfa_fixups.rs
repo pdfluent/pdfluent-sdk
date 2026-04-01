@@ -5022,6 +5022,29 @@ fn collect_content_stream_ids(doc: &Document) -> std::collections::HashSet<Objec
                 ids.insert(id);
             }
         }
+        // Catch annotation appearance streams (/AP) explicitly, even if they lack /Subtype /Form.
+        if let Object::Dictionary(dict) = obj {
+            let is_annot = matches!(dict.get(b"Type").ok(), Some(Object::Name(ref n)) if n == b"Annotation" || n == b"Annot");
+            if is_annot {
+                if let Ok(Object::Dictionary(ap_dict)) = dict.get(b"AP") {
+                    for (_, ap_val) in ap_dict.iter() {
+                        match ap_val {
+                            Object::Reference(rid) => {
+                                ids.insert(*rid);
+                            }
+                            Object::Dictionary(sub_ap) => {
+                                for (_, sub_ap_val) in sub_ap.iter() {
+                                    if let Object::Reference(rid) = sub_ap_val {
+                                        ids.insert(*rid);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
         // Type 3 font CharProcs — each value is a content stream reference.
         if let Object::Dictionary(dict) = obj {
             let is_type3 =
@@ -6401,46 +6424,103 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
                 }
             }
 
-            // Find "colr" box in JP2 data and check enumCS.
-            if let Some(pos) = find_subsequence(&s.content, b"colr") {
-                // colr box layout: [4 bytes len][4 bytes "colr"][1 byte method][...]
-                // method 1 = enumerated colorspace: [3 bytes prec+approx][4 bytes enumCS]
-                let method_pos = pos + 4;
-                if method_pos < s.content.len() && s.content[method_pos] == 1 {
-                    let enum_pos = method_pos + 3;
-                    if enum_pos + 4 <= s.content.len() {
-                        let enum_cs = u32::from_be_bytes([
-                            s.content[enum_pos],
-                            s.content[enum_pos + 1],
-                            s.content[enum_pos + 2],
-                            s.content[enum_pos + 3],
-                        ]);
-                        // PDF/A-2 §6.2.8.3: only sRGB(16), greyscale(17), sYCC(18)
-                        // are allowed. Any other enumCS must be replaced.
-                        if enum_cs != 16 && enum_cs != 17 && enum_cs != 18 {
-                            // Pick replacement based on channel count.
-                            let channels = jpx_channel_count(&s.content);
-                            let replacement = match channels {
-                                Some(1) => 17u32, // greyscale
-                                _ => 16u32,       // sRGB
-                            };
-                            let bytes = replacement.to_be_bytes();
-                            s.content[enum_pos] = bytes[0];
-                            s.content[enum_pos + 1] = bytes[1];
-                            s.content[enum_pos + 2] = bytes[2];
-                            s.content[enum_pos + 3] = bytes[3];
-                            count += 1;
+            // Find and fix all "colr" boxes in JP2 data.
+            // Use a recursive-style iteration to handle nested boxes (e.g. inside jp2h).
+            let mut pos = 0usize;
+            let mut modified = false;
+            let mut box_stack = vec![s.content.len()]; // limits
+
+            while pos + 8 <= s.content.len() {
+                let lbox = u32::from_be_bytes([
+                    s.content[pos],
+                    s.content[pos + 1],
+                    s.content[pos + 2],
+                    s.content[pos + 3],
+                ]);
+                let box_type_bytes = [
+                    s.content[pos + 4],
+                    s.content[pos + 5],
+                    s.content[pos + 6],
+                    s.content[pos + 7],
+                ];
+                let box_type = &box_type_bytes;
+                let (box_len, header_len) = if lbox == 1 {
+                    if pos + 16 > s.content.len() {
+                        break;
+                    }
+                    let xl = u64::from_be_bytes([
+                        s.content[pos + 8],
+                        s.content[pos + 9],
+                        s.content[pos + 10],
+                        s.content[pos + 11],
+                        s.content[pos + 12],
+                        s.content[pos + 13],
+                        s.content[pos + 14],
+                        s.content[pos + 15],
+                    ]) as usize;
+                    (xl, 16usize)
+                } else if lbox == 0 {
+                    // Box extends to end of file.
+                    (*box_stack.last().unwrap() - pos, 8usize)
+                } else {
+                    (lbox as usize, 8usize)
+                };
+
+                if box_type == b"colr" {
+                    // colr box layout: [1 byte method][1 byte precedence][1 byte approximation][4 bytes enumCS (if method == 1)]
+                    let method_pos = pos + header_len;
+                    if method_pos < s.content.len() && s.content[method_pos] == 1 {
+                        let enum_pos = method_pos + 3;
+                        if enum_pos + 4 <= s.content.len() {
+                            let enum_cs = u32::from_be_bytes([
+                                s.content[enum_pos],
+                                s.content[enum_pos + 1],
+                                s.content[enum_pos + 2],
+                                s.content[enum_pos + 3],
+                            ]);
+                            // PDF/A-2 §6.2.8.3: only sRGB(16), greyscale(17), sYCC(18)
+                            // are allowed. Any other enumCS must be replaced.
+                            if enum_cs != 16 && enum_cs != 17 && enum_cs != 18 {
+                                // Pick replacement based on channel count.
+                                let channels = jpx_channel_count(&s.content);
+                                let replacement = match channels {
+                                    Some(1) => 17u32, // greyscale
+                                    _ => 16u32,       // sRGB
+                                };
+                                let bytes = replacement.to_be_bytes();
+                                s.content[enum_pos] = bytes[0];
+                                s.content[enum_pos + 1] = bytes[1];
+                                s.content[enum_pos + 2] = bytes[2];
+                                s.content[enum_pos + 3] = bytes[3];
+                                modified = true;
+                            }
                         }
                     }
                 }
+
+                if box_type == b"jp2h" || box_type == b"res " {
+                    // These boxes contain other boxes. Enter them.
+                    box_stack.push(pos + box_len);
+                    pos += header_len;
+                } else {
+                    if box_len == 0 || pos + box_len > s.content.len() {
+                        break;
+                    }
+                    pos += box_len;
+
+                    // Pop from stack if we've reached the end of a container box.
+                    while pos >= *box_stack.last().unwrap() && box_stack.len() > 1 {
+                        box_stack.pop();
+                    }
+                }
+            }
+
+            if modified {
+                count += 1;
             }
         }
     }
     count
-}
-
-fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 // ---------------------------------------------------------------------------
@@ -8023,9 +8103,9 @@ fn strip_unknown_ops_in_stream(data: &[u8]) -> Option<Vec<u8>> {
             continue;
         }
 
-        // ── Keyword / operator token: scan to next delimiter ─────────────────
+        // ── Keyword / operator token: scan to next delimiter or whitespace ────
         let tok_start = i;
-        while i < data.len() && !is_pdf_delimiter(data[i]) {
+        while i < data.len() && !is_pdf_delimiter(data[i]) && !data[i].is_ascii_whitespace() {
             i += 1;
         }
         if i == tok_start {
