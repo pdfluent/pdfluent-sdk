@@ -349,7 +349,10 @@ fn fix_differences_128_159(enc: &mut lopdf::Dictionary) {
                 // Emit code prefix if needed (after filtering, the previous
                 // code integer may have been skipped).
                 if new_diffs.is_empty()
-                    || !matches!(new_diffs.last(), Some(Object::Integer(_)) | Some(Object::Name(_)))
+                    || !matches!(
+                        new_diffs.last(),
+                        Some(Object::Integer(_)) | Some(Object::Name(_))
+                    )
                     || needs_code_prefix(&new_diffs, current_code)
                 {
                     new_diffs.push(Object::Integer(current_code));
@@ -1375,7 +1378,10 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
             }
             match dict.get(b"Subtype").ok() {
                 Some(Object::Name(ref n)) => {
-                    matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie" | b"FileAttachment")
+                    matches!(
+                        n.as_slice(),
+                        b"3D" | b"Sound" | b"Screen" | b"Movie" | b"FileAttachment"
+                    )
                 }
                 None => {
                     // Annotation without Subtype — forbidden.
@@ -9460,32 +9466,54 @@ fn fix_long_names_in_streams(doc: &mut Document) -> usize {
                     // PDF name token starting at i.
                     let start = i;
                     i += 1;
-                    while i < decompressed.len() && !is_pdf_delimiter(decompressed[i]) && !decompressed[i].is_ascii_whitespace() {
+                    while i < decompressed.len()
+                        && !is_pdf_delimiter(decompressed[i])
+                        && !decompressed[i].is_ascii_whitespace()
+                    {
                         i += 1;
                     }
                     let name_token = &decompressed[start..i];
                     let name_val = &name_token[1..]; // skip '/'
-                    
+
                     let mut modified_name = false;
                     let mut sanitized = Vec::new();
-                    
+
                     // 1. Sanitize for UTF-8 validity (§6.1.8).
                     if String::from_utf8(name_val.to_vec()).is_err() {
-                        sanitized = name_val.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' }).collect();
+                        sanitized = name_val
+                            .iter()
+                            .map(|&b| {
+                                if b.is_ascii_graphic() || b == b' ' {
+                                    b
+                                } else {
+                                    b'_'
+                                }
+                            })
+                            .collect();
                         modified_name = true;
                     }
-                    
+
                     // 2. Truncate to 127 bytes (§6.1.13).
-                    let current_name = if sanitized.is_empty() { name_val } else { &sanitized };
+                    let current_name = if sanitized.is_empty() {
+                        name_val
+                    } else {
+                        &sanitized
+                    };
                     if current_name.len() > MAX_NAME_LEN {
-                        if sanitized.is_empty() { sanitized = name_val.to_vec(); }
+                        if sanitized.is_empty() {
+                            sanitized = name_val.to_vec();
+                        }
                         sanitized.truncate(MAX_NAME_LEN);
                         modified_name = true;
                     }
 
                     if modified_name {
                         new_content.push(b'/');
-                        new_content.extend_from_slice(if sanitized.is_empty() { name_val } else { &sanitized });
+                        new_content.extend_from_slice(if sanitized.is_empty() {
+                            name_val
+                        } else {
+                            &sanitized
+                        });
                         fixed_any = true;
                         count += 1;
                     } else {
@@ -9991,7 +10019,13 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
             if String::from_utf8(sanitized.clone()).is_err() {
                 sanitized = sanitized
                     .into_iter()
-                    .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                    .map(|b| {
+                        if b.is_ascii_graphic() || b == b' ' {
+                            b
+                        } else {
+                            b'_'
+                        }
+                    })
                     .collect();
                 total += 1;
             }
@@ -10021,7 +10055,13 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
                 if String::from_utf8(fixed_key.clone()).is_err() {
                     fixed_key = fixed_key
                         .into_iter()
-                        .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                        .map(|b| {
+                            if b.is_ascii_graphic() || b == b' ' {
+                                b
+                            } else {
+                                b'_'
+                            }
+                        })
                         .collect();
                     total += 1;
                 }
@@ -10043,7 +10083,13 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
                 if String::from_utf8(fixed_key.clone()).is_err() {
                     fixed_key = fixed_key
                         .into_iter()
-                        .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                        .map(|b| {
+                            if b.is_ascii_graphic() || b == b' ' {
+                                b
+                            } else {
+                                b'_'
+                            }
+                        })
                         .collect();
                     total += 1;
                 }
@@ -10249,7 +10295,7 @@ fn fix_jbig2_globals_promotion(doc: &mut Document) -> usize {
                     }
                 }
             }
-            
+
             // Also check if it's already in the stream dict but inline.
             if globals_to_move.is_none() {
                 if let Ok(globals) = s.dict.get(b"JBIG2Globals") {
@@ -10281,7 +10327,7 @@ fn fix_jbig2_globals_promotion(doc: &mut Document) -> usize {
 
 fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
     let mut count = 0;
-    
+
     // Check if OutputIntent is CMYK.
     let intent_is_cmyk = if let Ok(catalog) = doc.catalog() {
         if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
@@ -10295,17 +10341,24 @@ fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
                 };
                 if let Some(d) = dict {
                     if d.get(b"S").ok().and_then(|o| o.as_name().ok()) == Some(b"GTS_PDFA1") {
-                        if let Ok(profile_id) = d.get(b"DestOutputProfile").and_then(|o| o.as_reference()) {
+                        if let Ok(profile_id) =
+                            d.get(b"DestOutputProfile").and_then(|o| o.as_reference())
+                        {
                             if let Some(Object::Stream(s)) = doc.objects.get(&profile_id) {
-                                return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4);
+                                return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok())
+                                    == Some(4);
                             }
                         }
                     }
                 }
                 false
             })
-        } else { false }
-    } else { false };
+        } else {
+            false
+        }
+    } else {
+        false
+    };
 
     if intent_is_cmyk {
         return 0; // Compliant.
@@ -10386,12 +10439,19 @@ fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
                 } else {
                     None
                 };
-                dict.and_then(|d| d.get(b"DestOutputProfile").ok()).and_then(|o| o.as_reference().ok())
+                dict.and_then(|d| d.get(b"DestOutputProfile").ok())
+                    .and_then(|o| o.as_reference().ok())
             })
-        } else { None }
-    } else { None };
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    let Some(profile_id) = oi_profile_id else { return 0; };
+    let Some(profile_id) = oi_profile_id else {
+        return 0;
+    };
 
     // Find all ICCBased colorspaces that use this profile_id.
     let mut to_replace = Vec::new();
@@ -10419,4 +10479,3 @@ fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
 
     count
 }
-
