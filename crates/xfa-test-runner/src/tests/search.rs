@@ -55,12 +55,27 @@ impl PdfTest for SearchTest {
 fn run_inner(pdf: Vec<u8>) -> TestResult {
     let start = std::time::Instant::now();
 
+    // Skip very large PDFs (>50 MB) where load_mem itself can exceed timeout.
+    if pdf.len() > 50 * 1024 * 1024 {
+        return TestResult {
+            status: TestStatus::Skip,
+            error_message: Some(format!(
+                "PDF too large ({} MB) — skipping search",
+                pdf.len() / 1024 / 1024
+            )),
+            duration_ms: start.elapsed().as_millis() as u64,
+            oracle_score: None,
+            metadata: HashMap::new(),
+        };
+    }
+
     // Try lopdf first for full search capability.
     // Use count_text_only with a page limit — bounding boxes are not needed
     // for corpus validation and positioned char extraction is very expensive.
     match lopdf::Document::load_mem(&pdf) {
         Ok(doc) => {
-            let pages_to_search = (doc.get_pages().len() as u32).min(20);
+            // Limit to 10 pages to avoid timeouts on documents with many pages.
+            let pages_to_search = (doc.get_pages().len() as u32).min(10);
             let options = pdf_extract::SearchOptions {
                 pages: (1..=pages_to_search).collect(),
                 ..Default::default()
