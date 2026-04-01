@@ -6751,8 +6751,7 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
                     };
                     if let Some(enum_pos) = jp2_enum_cs_offset(&s.content) {
                         let mut patched = s.content.clone();
-                        patched[enum_pos..enum_pos + 4]
-                            .copy_from_slice(&replacement.to_be_bytes());
+                        patched[enum_pos..enum_pos + 4].copy_from_slice(&replacement.to_be_bytes());
                         s.set_content(patched);
                         count += 1;
                     }
@@ -9160,7 +9159,9 @@ fn find_output_intent_icc_profile(doc: &Document) -> Option<ObjectId> {
                 if let Some(d) = dict {
                     let subtype = d.get(b"S").ok().and_then(|o| o.as_name().ok());
                     if subtype == Some(b"GTS_PDFA1") || subtype == Some(b"GTS_ISO1") {
-                        if let Ok(profile_id) = d.get(b"DestOutputProfile").and_then(|o| o.as_reference()) {
+                        if let Ok(profile_id) =
+                            d.get(b"DestOutputProfile").and_then(|o| o.as_reference())
+                        {
                             return Some(profile_id);
                         }
                     }
@@ -10729,7 +10730,7 @@ mod tests_transparency_groups {
     #[test]
     fn test_fix_missing_transparency_groups_selective_v2() {
         let mut doc = make_basic_doc_transparency();
-        
+
         // Add an OutputIntent with an ICC profile (RGB, N=3)
         let icc_dict = dictionary! { "N" => 3 };
         let icc_id = doc.add_object(Object::Stream(Stream::new(icc_dict, Vec::new())));
@@ -10743,7 +10744,10 @@ mod tests_transparency_groups {
             _ => panic!(),
         };
         if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
-            catalog.set("OutputIntents", Object::Array(vec![Object::Reference(oi_id)]));
+            catalog.set(
+                "OutputIntents",
+                Object::Array(vec![Object::Reference(oi_id)]),
+            );
         }
 
         let pages = doc.get_pages();
@@ -10764,7 +10768,15 @@ mod tests_transparency_groups {
         }
 
         // Add Page 2: Does NOT use transparency
-        let pages_id = match doc.objects.get(&page1_id).unwrap().as_dict().unwrap().get(b"Parent").unwrap() {
+        let pages_id = match doc
+            .objects
+            .get(&page1_id)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+        {
             Object::Reference(id) => *id,
             _ => panic!(),
         };
