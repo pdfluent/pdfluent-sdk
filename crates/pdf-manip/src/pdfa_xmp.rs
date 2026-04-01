@@ -85,24 +85,24 @@ pub fn repair_xmp_metadata(
     let existing_meta = read_info_dict(doc);
     let mut meta = merge_metadata(metadata, &existing_meta);
 
-    // Filter out dates that can't be serialized to XMP — keeping them in /Info
-    // while XMP lacks them causes §6.7.3.1/6.7.3.8 mismatches.
-    if meta
-        .create_date
-        .as_ref()
-        .and_then(|d| parse_xmp_date(d))
-        .is_none()
-    {
-        meta.create_date = None;
+    // Normalize dates before generation to ensure Info and XMP match (§6.7.3).
+    if let Some(ref date) = meta.create_date {
+        if let Some(dt) = parse_xmp_date(date) {
+            meta.create_date = Some(format_pdf_date(&dt));
+        } else {
+            meta.create_date = None;
+        }
     }
-    if meta
-        .modify_date
-        .as_ref()
-        .and_then(|d| parse_xmp_date(d))
-        .is_none()
-    {
-        meta.modify_date = None;
+    if let Some(ref date) = meta.modify_date {
+        if let Some(dt) = parse_xmp_date(date) {
+            meta.modify_date = Some(format_pdf_date(&dt));
+        } else {
+            meta.modify_date = None;
+        }
     }
+
+    // Normalize Catalog /Lang if present (§6.7.4).
+    normalize_catalog_lang(doc);
 
     // Generate XMP using xmp-writer.
     let xmp_bytes = generate_xmp(&meta, conformance);
@@ -259,6 +259,99 @@ fn generate_xmp(meta: &PdfMetadata, conformance: PdfAConformance) -> Vec<u8> {
     }
 
     writer.finish(None).into_bytes()
+}
+
+/// Format XMP DateTime as a PDF date string: D:YYYYMMDDHHmmSSOHH'mm'
+fn format_pdf_date(dt: &xmp_writer::DateTime) -> String {
+    let mut s = format!(
+        "D:{:04}{:02}{:02}{:02}{:02}{:02}",
+        dt.year,
+        dt.month.unwrap_or(1),
+        dt.day.unwrap_or(1),
+        dt.hour.unwrap_or(0),
+        dt.minute.unwrap_or(0),
+        dt.second.unwrap_or(0)
+    );
+
+    match dt.timezone {
+        Some(xmp_writer::Timezone::Utc) => {
+            s.push('Z');
+        }
+        Some(xmp_writer::Timezone::Local { hour, minute }) => {
+            if hour >= 0 {
+                s.push('+');
+            } else {
+                s.push('-');
+            }
+            s.push_str(&format!("{:02}'{:02}'", hour.abs(), minute));
+        }
+        None => {}
+    }
+    s
+}
+
+/// Normalize the language tag in the Catalog dictionary.
+fn normalize_catalog_lang(doc: &mut Document) {
+    let catalog_id = match get_catalog_id(doc) {
+        Ok(id) => id,
+        Err(_) => return,
+    };
+
+    if let Some(Object::Dictionary(ref mut cat)) = doc.objects.get_mut(&catalog_id) {
+        if let Ok(Object::String(bytes, _)) = cat.get(b"Lang") {
+            let lang = String::from_utf8_lossy(bytes).to_string();
+            let normalized = normalize_lang_tag(&lang);
+            if normalized != lang {
+                cat.set(
+                    "Lang",
+                    Object::String(normalized.into_bytes(), lopdf::StringFormat::Literal),
+                );
+            }
+        }
+    }
+}
+
+/// Normalize a language tag to RFC 3066 / BCP 47 style.
+/// Handles common non-compliant tags like 'x-none', 'en-USA', 'portugues-pt'.
+pub fn normalize_lang_tag(lang: &str) -> String {
+    let lang = lang.trim();
+    if lang.is_empty() || lang.eq_ignore_ascii_case("x-none") || lang == "und" {
+        // Return 'en-US' as a safe default for PDF/A if language is unknown/none.
+        // Some validators reject 'x-none'.
+        return "en-US".to_string();
+    }
+
+    // Handle 'portugues-pt' -> 'pt-PT'
+    if lang.eq_ignore_ascii_case("portugues-pt") || lang.eq_ignore_ascii_case("portugue-pt") {
+        return "pt-PT".to_string();
+    }
+    if lang.eq_ignore_ascii_case("portugues") || lang.eq_ignore_ascii_case("portugue") {
+        return "pt".to_string();
+    }
+
+    // Handle 'en-USA' -> 'en-US'
+    if lang.eq_ignore_ascii_case("en-USA") {
+        return "en-US".to_string();
+    }
+
+    // Standard normalization: primary-subtag
+    let parts: Vec<&str> = lang.split(|c| c == '-' || c == '_').collect();
+    if parts.len() >= 2 {
+        let mut primary = parts[0].to_lowercase();
+        let mut subtag = parts[1].to_uppercase();
+
+        // Fix 3-letter codes if possible (very basic)
+        if primary == "eng" {
+            primary = "en".to_string();
+        }
+        if subtag == "USA" {
+            subtag = "US".to_string();
+        }
+
+        format!("{}-{}", primary, subtag)
+    } else {
+        lang.to_lowercase()
+    }
 }
 
 /// Parse a date string to xmp_writer DateTime, preserving full time + timezone.
@@ -829,5 +922,27 @@ mod tests {
         assert_eq!(dt.year, 2024);
         assert_eq!(dt.month, Some(1));
         assert_eq!(dt.day, Some(15));
+    }
+
+    #[test]
+    fn test_format_pdf_date() {
+        let dt = xmp_writer::DateTime {
+            year: 2024,
+            month: Some(3),
+            day: Some(31),
+            hour: Some(22),
+            minute: Some(0),
+            second: Some(28),
+            timezone: Some(xmp_writer::Timezone::Local { hour: 2, minute: 0 }),
+        };
+        assert_eq!(format_pdf_date(&dt), "D:20240331220028+02'00'");
+    }
+
+    #[test]
+    fn test_normalize_lang_tag() {
+        assert_eq!(normalize_lang_tag("x-none"), "en-US");
+        assert_eq!(normalize_lang_tag("en-USA"), "en-US");
+        assert_eq!(normalize_lang_tag("portugues-pt"), "pt-PT");
+        assert_eq!(normalize_lang_tag("en_US"), "en-US");
     }
 }
