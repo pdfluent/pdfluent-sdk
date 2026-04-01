@@ -6387,6 +6387,75 @@ fn jpx_channel_count(data: &[u8]) -> Option<u16> {
     None
 }
 
+fn jp2_enum_cs_offset(data: &[u8]) -> Option<usize> {
+    let mut pos = 0usize;
+    let mut box_stack = vec![data.len()];
+
+    while pos + 8 <= data.len() {
+        while box_stack.len() > 1 && pos >= *box_stack.last().unwrap() {
+            box_stack.pop();
+        }
+
+        let limit = *box_stack.last().unwrap();
+        if pos + 8 > limit {
+            break;
+        }
+
+        let lbox = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+        let box_type = &data[pos + 4..pos + 8];
+        let (box_len, header_len) = if lbox == 1 {
+            if pos + 16 > data.len() || pos + 16 > limit {
+                break;
+            }
+            let xl = u64::from_be_bytes([
+                data[pos + 8],
+                data[pos + 9],
+                data[pos + 10],
+                data[pos + 11],
+                data[pos + 12],
+                data[pos + 13],
+                data[pos + 14],
+                data[pos + 15],
+            ]) as usize;
+            (xl, 16usize)
+        } else if lbox == 0 {
+            (limit - pos, 8usize)
+        } else {
+            (lbox as usize, 8usize)
+        };
+
+        if box_len < header_len || pos + box_len > data.len() || pos + box_len > limit {
+            break;
+        }
+
+        if box_type == b"colr" {
+            let payload = pos + header_len;
+            if payload + 7 <= pos + box_len && data[payload] == 1 {
+                return Some(payload + 3);
+            }
+        }
+
+        if box_type == b"jp2h" || box_type == b"res " {
+            box_stack.push(pos + box_len);
+            pos += header_len;
+        } else {
+            pos += box_len;
+        }
+    }
+
+    None
+}
+
+fn read_jp2_enum_cs(data: &[u8]) -> Option<u32> {
+    let pos = jp2_enum_cs_offset(data)?;
+    Some(u32::from_be_bytes([
+        data[pos],
+        data[pos + 1],
+        data[pos + 2],
+        data[pos + 3],
+    ]))
+}
+
 /// Replace invalid JPX image stream with a minimal DeviceGray image placeholder.
 fn replace_invalid_jpx_with_placeholder(stream: &mut lopdf::Stream) {
     stream.dict.set("Width", Object::Integer(1));
@@ -6592,7 +6661,8 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
             // PDF/A-2 6.2.8.3:1: allowed JPX channel counts are 1, 3 or 4.
             // If the codestream contains an unsupported channel count, replace
             // the stream with a minimal non-JPX image to keep the file compliant.
-            if let Some(channels) = jpx_channel_count(&s.content) {
+            let channels = jpx_channel_count(&s.content);
+            if let Some(channels) = channels {
                 if channels != 1 && channels != 3 && channels != 4 {
                     replace_invalid_jpx_with_placeholder(s);
                     count += 1;
@@ -6600,99 +6670,21 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
                 }
             }
 
-            // Find and fix all "colr" boxes in JP2 data.
-            // Use a recursive-style iteration to handle nested boxes (e.g. inside jp2h).
-            let mut pos = 0usize;
-            let mut modified = false;
-            let mut box_stack = vec![s.content.len()]; // limits
-
-            while pos + 8 <= s.content.len() {
-                let lbox = u32::from_be_bytes([
-                    s.content[pos],
-                    s.content[pos + 1],
-                    s.content[pos + 2],
-                    s.content[pos + 3],
-                ]);
-                let box_type_bytes = [
-                    s.content[pos + 4],
-                    s.content[pos + 5],
-                    s.content[pos + 6],
-                    s.content[pos + 7],
-                ];
-                let box_type = &box_type_bytes;
-                let (box_len, header_len) = if lbox == 1 {
-                    if pos + 16 > s.content.len() {
-                        break;
-                    }
-                    let xl = u64::from_be_bytes([
-                        s.content[pos + 8],
-                        s.content[pos + 9],
-                        s.content[pos + 10],
-                        s.content[pos + 11],
-                        s.content[pos + 12],
-                        s.content[pos + 13],
-                        s.content[pos + 14],
-                        s.content[pos + 15],
-                    ]) as usize;
-                    (xl, 16usize)
-                } else if lbox == 0 {
-                    // Box extends to end of file.
-                    (*box_stack.last().unwrap() - pos, 8usize)
-                } else {
-                    (lbox as usize, 8usize)
-                };
-
-                if box_type == b"colr" {
-                    // colr box layout: [1 byte method][1 byte precedence][1 byte approximation][4 bytes enumCS (if method == 1)]
-                    let method_pos = pos + header_len;
-                    if method_pos < s.content.len() && s.content[method_pos] == 1 {
-                        let enum_pos = method_pos + 3;
-                        if enum_pos + 4 <= s.content.len() {
-                            let enum_cs = u32::from_be_bytes([
-                                s.content[enum_pos],
-                                s.content[enum_pos + 1],
-                                s.content[enum_pos + 2],
-                                s.content[enum_pos + 3],
-                            ]);
-                            // PDF/A-2 §6.2.8.3: only sRGB(16), greyscale(17), sYCC(18)
-                            // are allowed. Any other enumCS must be replaced.
-                            if enum_cs != 16 && enum_cs != 17 && enum_cs != 18 {
-                                // Pick replacement based on channel count.
-                                let channels = jpx_channel_count(&s.content);
-                                let replacement = match channels {
-                                    Some(1) => 17u32, // greyscale
-                                    _ => 16u32,       // sRGB
-                                };
-                                let bytes = replacement.to_be_bytes();
-                                s.content[enum_pos] = bytes[0];
-                                s.content[enum_pos + 1] = bytes[1];
-                                s.content[enum_pos + 2] = bytes[2];
-                                s.content[enum_pos + 3] = bytes[3];
-                                modified = true;
-                            }
-                        }
+            if let Some(enum_cs) = read_jp2_enum_cs(&s.content) {
+                if enum_cs != 16 && enum_cs != 17 && enum_cs != 18 {
+                    let replacement = match channels {
+                        Some(1) => 17u32,
+                        Some(3) => 16u32,
+                        _ => 16u32,
+                    };
+                    if let Some(enum_pos) = jp2_enum_cs_offset(&s.content) {
+                        let mut patched = s.content.clone();
+                        patched[enum_pos..enum_pos + 4]
+                            .copy_from_slice(&replacement.to_be_bytes());
+                        s.set_content(patched);
+                        count += 1;
                     }
                 }
-
-                if box_type == b"jp2h" || box_type == b"res " {
-                    // These boxes contain other boxes. Enter them.
-                    box_stack.push(pos + box_len);
-                    pos += header_len;
-                } else {
-                    if box_len == 0 || pos + box_len > s.content.len() {
-                        break;
-                    }
-                    pos += box_len;
-
-                    // Pop from stack if we've reached the end of a container box.
-                    while pos >= *box_stack.last().unwrap() && box_stack.len() > 1 {
-                        box_stack.pop();
-                    }
-                }
-            }
-
-            if modified {
-                count += 1;
             }
         }
     }
