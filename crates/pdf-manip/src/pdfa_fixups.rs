@@ -1367,7 +1367,7 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
             }
             match dict.get(b"Subtype").ok() {
                 Some(Object::Name(ref n)) => {
-                    matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie")
+                    matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie" | b"FileAttachment")
                 }
                 None => {
                     // Annotation without Subtype — forbidden.
