@@ -10,11 +10,11 @@ use crate::thumbnail::ThumbnailOptions;
 use pdf_forms::parse::parse_acroform;
 use pdf_forms::tree::FieldValue;
 use pdf_render::pdf_interpret::PageExt;
-use pdf_render::pdf_interpret::{interpret_page, Context, InterpreterSettings};
-use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
-use pdf_render::pdf_syntax::object::Dict;
-use pdf_render::pdf_syntax::page::Page;
+use pdf_render::pdf_interpret::{Context, InterpreterSettings, interpret_page};
 use pdf_render::pdf_syntax::Pdf;
+use pdf_render::pdf_syntax::object::Dict;
+use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
+use pdf_render::pdf_syntax::page::Page;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -103,13 +103,11 @@ impl PdfDocument {
     /// If the document contains an XFA template, it is automatically flattened
     /// to static PDF content before rendering.  This prevents the "Please wait"
     /// placeholder page that Adobe Reader would show when rendering an XFA PDF
-    /// with a conventional renderer.
+    /// with a conventional renderer. If flattening fails, rendering falls back
+    /// to the original document as a best-effort path.
     pub fn render_page(&self, index: usize, options: &RenderOptions) -> Result<RenderedPage> {
         #[cfg(feature = "xfa")]
-        if crate::xfa::has_xfa(self) {
-            let flat_bytes = crate::xfa::flatten(self)
-                .map_err(|e| EngineError::RenderError(format!("XFA flatten: {e}")))?;
-            let flat_doc = Self::open(flat_bytes)?;
+        if let Some(flat_doc) = self.open_flattened_xfa_for_render() {
             return flat_doc.render_page(index, options);
         }
         let page = self.get_page(index)?;
@@ -119,16 +117,14 @@ impl PdfDocument {
     /// Render a single page using the high-level render config.
     ///
     /// XFA documents are auto-flattened before rendering (same as `render_page`).
+    /// If flattening fails, rendering falls back to the original document.
     pub fn render_page_with_config(
         &self,
         index: usize,
         config: &RenderConfig,
     ) -> Result<RenderedPage> {
         #[cfg(feature = "xfa")]
-        if crate::xfa::has_xfa(self) {
-            let flat_bytes = crate::xfa::flatten(self)
-                .map_err(|e| EngineError::RenderError(format!("XFA flatten: {e}")))?;
-            let flat_doc = Self::open(flat_bytes)?;
+        if let Some(flat_doc) = self.open_flattened_xfa_for_render() {
             return flat_doc.render_page_with_config(index, config);
         }
         let page = self.get_page(index)?;
@@ -408,6 +404,18 @@ impl PdfDocument {
             self.settings.clone(),
         )
     }
+
+    #[cfg(feature = "xfa")]
+    fn open_flattened_xfa_for_render(&self) -> Option<Self> {
+        if !crate::xfa::has_xfa(self) {
+            return None;
+        }
+
+        let flat_bytes = crate::xfa::flatten(self).ok()?;
+        let mut flat_doc = Self::open(flat_bytes).ok()?;
+        flat_doc.settings = self.settings.clone();
+        Some(flat_doc)
+    }
 }
 
 /// Walk the outline linked list (FIRST → NEXT chain).
@@ -542,7 +550,7 @@ mod tests {
     }
 
     fn solid_fill_pdf_bytes(color_operator: &str) -> Vec<u8> {
-        use lopdf::{dictionary, Document, Object, Stream};
+        use lopdf::{Document, Object, Stream, dictionary};
 
         let mut doc = Document::with_version("1.4");
 
@@ -592,7 +600,7 @@ mod tests {
     }
 
     fn mixed_rgb_cmyk_pdf_bytes() -> Vec<u8> {
-        use lopdf::{dictionary, Document, Object, Stream};
+        use lopdf::{Document, Object, Stream, dictionary};
 
         let mut doc = Document::with_version("1.4");
         let pages_id = doc.new_object_id();
@@ -634,7 +642,7 @@ mod tests {
     }
 
     fn transparent_cmyk_pdf_bytes() -> Vec<u8> {
-        use lopdf::{dictionary, Document, Object, Stream};
+        use lopdf::{Document, Object, Stream, dictionary};
 
         let mut doc = Document::with_version("1.4");
         let pages_id = doc.new_object_id();
@@ -685,7 +693,7 @@ mod tests {
     }
 
     fn cmyk_image_pdf_bytes() -> Vec<u8> {
-        use lopdf::{dictionary, Document, Object, Stream};
+        use lopdf::{Document, Object, Stream, dictionary};
 
         let mut doc = Document::with_version("1.4");
         let pages_id = doc.new_object_id();
