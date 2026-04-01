@@ -11,6 +11,91 @@ pub fn run_structure_fixups(doc: &mut Document) -> Result<()> {
     fix_transparency_groups(doc)?;
     fix_mark_info(doc)?;
     fix_widget_appearances(doc)?;
+    ensure_core_types(doc)?;
+    fix_bdc_lang_tags(doc)?;
+    Ok(())
+}
+
+/// Ensure Catalog, Pages, and Page objects have correct /Type entries (§6.1.2).
+fn ensure_core_types(doc: &mut Document) -> Result<()> {
+    let catalog_id = doc.trailer.get(b"Root")
+        .and_then(|o| o.as_reference().ok());
+    
+    if let Some(id) = catalog_id {
+        if let Ok(Object::Dictionary(ref mut cat)) = doc.get_object_mut(id) {
+            cat.set("Type", Object::Name(b"Catalog".to_vec()));
+        }
+    }
+
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    let mut pages_dict_ids = std::collections::HashSet::new();
+
+    for page_id in page_ids {
+        if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
+            page_dict.set("Type", Object::Name(b"Page".to_vec()));
+            if let Ok(Object::Reference(parent_id)) = page_dict.get(b"Parent") {
+                pages_dict_ids.insert(*parent_id);
+            }
+        }
+    }
+
+    // Recursively find and fix all Pages (tree nodes) dictionaries.
+    for pages_id in pages_dict_ids {
+        fix_pages_tree_node(doc, pages_id);
+    }
+
+    Ok(())
+}
+
+fn fix_pages_tree_node(doc: &mut Document, id: ObjectId) {
+    if let Ok(Object::Dictionary(ref mut pages_dict)) = doc.get_object_mut(id) {
+        pages_dict.set("Type", Object::Name(b"Pages".to_vec()));
+        if let Ok(Object::Reference(parent_id)) = pages_dict.get(b"Parent").cloned() {
+            fix_pages_tree_node(doc, parent_id);
+        }
+    }
+}
+
+/// Fix invalid language tags in BDC (Marked Content) and structure elements (§6.7.4).
+fn fix_bdc_lang_tags(doc: &mut Document) -> Result<()> {
+    use crate::pdfa_xmp::normalize_lang_tag;
+
+    // Fix Catalog /Lang if present.
+    let catalog_id = doc.trailer.get(b"Root")
+        .and_then(|o| o.as_reference().ok());
+
+    if let Some(id) = catalog_id {
+        if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(id) {
+            if let Ok(Object::String(bytes, _)) = catalog.get(b"Lang") {
+                let lang = String::from_utf8_lossy(bytes).to_string();
+                let normalized = normalize_lang_tag(&lang);
+                if normalized != lang {
+                    catalog.set(
+                        "Lang",
+                        Object::String(normalized.into_bytes(), lopdf::StringFormat::Literal),
+                    );
+                }
+            }
+        }
+    }
+
+    // Fix /Lang in all objects (BDC properties, structure elements).
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(id) {
+            if let Ok(Object::String(bytes, _)) = dict.get(b"Lang") {
+                let lang = String::from_utf8_lossy(bytes).to_string();
+                let normalized = normalize_lang_tag(&lang);
+                if normalized != lang {
+                    dict.set(
+                        "Lang",
+                        Object::String(normalized.into_bytes(), lopdf::StringFormat::Literal),
+                    );
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
