@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 
 [[bin]]
+name = "pdfluent"
+path = "src/main.rs"
+
+[[bin]]
 name = "xfa-cli"
 path = "src/main.rs"
 
@@ -52,3 +56,5 @@ pdf-sign.workspace = true
 pdf-compliance.workspace = true
 image.workspace = true
 base64 = "0.22"
+clap_complete = "4"
+clap_mangen = "0.2"
