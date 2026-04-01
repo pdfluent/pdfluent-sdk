@@ -4468,12 +4468,12 @@ pub fn fix_type1_charset(doc: &mut Document) -> usize {
     fixed
 }
 
-/// Fix §6.2.11.4.1 — strip character codes from content streams that reference
-/// glyphs not present in the embedded Type1/CFF subset font program.
+/// Fix §6.2.11.4.1 — replace content-stream character codes whose mapped glyphs
+/// are absent from embedded subset simple fonts.
 ///
-/// For each page and Form XObject, finds Type1/MMType1 subset fonts, parses the
-/// CFF/Type1 font program to get available glyph names, builds an encoding map
-/// (code → glyph name), then replaces codes whose glyph is missing with space (0x20).
+/// For each page and Form XObject, finds subset simple fonts (TrueType,
+/// Type1/MMType1 and CFF-backed Type1), determines which character codes
+/// resolve to missing glyphs, then replaces those codes with space (0x20).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct FontProgramCacheKey {
     stream_id: ObjectId,
@@ -4539,61 +4539,24 @@ pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
         rc::Rc,
     };
 
-    #[derive(Clone, Copy)]
-    enum ContentContainer {
-        Page(ObjectId),
-        Form(ObjectId),
-    }
-
-    struct SubsetFontInfo {
-        /// Glyph names available in the font program (excluding .notdef).
-        available_glyphs: Rc<std::collections::HashSet<String>>,
-        /// Code → glyph name mapping from font Encoding.
-        code_to_glyph: HashMap<u8, String>,
-    }
-
-    // Collect pages and Form XObjects.
-    let mut containers: Vec<ContentContainer> = doc
-        .get_pages()
-        .values()
-        .copied()
-        .map(ContentContainer::Page)
-        .collect();
-    for (&id, obj) in &doc.objects {
-        if let Object::Stream(stream) = obj {
-            let is_form = stream
-                .dict
-                .get(b"Subtype")
-                .ok()
-                .and_then(|o| o.as_name().ok())
-                == Some(b"Form");
-            if is_form {
-                containers.push(ContentContainer::Form(id));
-            }
-        }
-    }
-
-    // Quick check: does the document have any Type1/MMType1 subset fonts at all?
-    // If not, skip all container iteration entirely.
-    let has_type1_subset = doc.objects.values().any(|obj| {
+    let has_subset_simple_font = doc.objects.values().any(|obj| {
         let Object::Dictionary(dict) = obj else {
             return false;
         };
         let subtype = get_name(dict, b"Subtype").unwrap_or_default();
-        if subtype != "Type1" && subtype != "MMType1" {
+        if subtype != "TrueType" && subtype != "Type1" && subtype != "MMType1" {
             return false;
         }
         let base_font = get_name(dict, b"BaseFont").unwrap_or_default();
-        let bf = base_font.as_bytes();
-        bf.len() > 7 && bf[6] == b'+' && bf[..6].iter().all(|b| b.is_ascii_uppercase())
+        is_subset_font_name(&base_font)
     });
-    if !has_type1_subset {
+    if !has_subset_simple_font {
         return 0;
     }
 
-    // Cache parsed font info by font object, and parsed glyph availability by
-    // the underlying embedded font program stream.
-    let mut font_cache: HashMap<ObjectId, Option<Rc<SubsetFontInfo>>> = HashMap::new();
+    let containers = collect_notdef_content_containers(doc);
+    let mut font_cache: HashMap<ObjectId, Option<Rc<std::collections::HashSet<u8>>>> =
+        HashMap::new();
     let mut font_program_cache: HashMap<
         FontProgramCacheKey,
         Option<Rc<std::collections::HashSet<String>>>,
@@ -4602,82 +4565,33 @@ pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
     let mut total_fixed = 0usize;
 
     for container in containers {
-        // Resolve resources for this container.
-        let resources = match container {
-            ContentContainer::Page(page_id) => {
-                let page = match doc.objects.get(&page_id) {
-                    Some(Object::Dictionary(d)) => d.clone(),
-                    _ => continue,
-                };
-                match page.get(b"Resources").ok() {
-                    Some(Object::Dictionary(d)) => d.clone(),
-                    Some(Object::Reference(r)) => match doc.objects.get(r) {
-                        Some(Object::Dictionary(d)) => d.clone(),
-                        _ => continue,
-                    },
-                    _ => continue,
-                }
-            }
-            ContentContainer::Form(form_id) => {
-                let stream = match doc.objects.get(&form_id) {
-                    Some(Object::Stream(s)) => s.clone(),
-                    _ => continue,
-                };
-                match stream.dict.get(b"Resources").ok() {
-                    Some(Object::Dictionary(d)) => d.clone(),
-                    Some(Object::Reference(r)) => match doc.objects.get(r) {
-                        Some(Object::Dictionary(d)) => d.clone(),
-                        _ => continue,
-                    },
-                    _ => continue,
-                }
-            }
-        };
-        let fonts = match resources.get(b"Font").ok() {
-            Some(Object::Dictionary(d)) => d.clone(),
-            Some(Object::Reference(r)) => match doc.objects.get(r) {
-                Some(Object::Dictionary(d)) => d.clone(),
-                _ => continue,
-            },
-            _ => continue,
+        let Some(font_map) = resolve_notdef_container_font_map(doc, container) else {
+            continue;
         };
 
-        // Build per-resource-name SubsetFontInfo for Type1/MMType1 subset fonts.
-        let mut subset_fonts: HashMap<String, Rc<SubsetFontInfo>> = HashMap::new();
+        let mut subset_fonts: HashMap<String, Rc<std::collections::HashSet<u8>>> = HashMap::new();
 
-        for (key, val) in fonts.iter() {
-            let res_name = String::from_utf8_lossy(key).to_string();
-            let font_id = match val {
-                Object::Reference(id) => *id,
-                _ => continue,
-            };
+        for (res_name, font_id) in font_map {
             let fd = match doc.objects.get(&font_id) {
                 Some(Object::Dictionary(d)) => d,
                 _ => continue,
             };
             let subtype = get_name(fd, b"Subtype").unwrap_or_default();
-            if subtype != "Type1" && subtype != "MMType1" {
+            if subtype != "TrueType" && subtype != "Type1" && subtype != "MMType1" {
                 continue;
             }
             let base_font = get_name(fd, b"BaseFont").unwrap_or_default();
-            // Only subset fonts (ABCDEF+FontName pattern).
-            let bf_bytes = base_font.as_bytes();
-            if bf_bytes.len() <= 7
-                || bf_bytes[6] != b'+'
-                || !bf_bytes[..6].iter().all(|b| b.is_ascii_uppercase())
-            {
+            if !is_subset_font_name(&base_font) {
                 continue;
             }
 
-            // Check cache first.
             if let Some(cached) = font_cache.get(&font_id).cloned() {
-                if let Some(info) = cached {
-                    subset_fonts.insert(res_name, info);
+                if let Some(invalid_codes) = cached {
+                    subset_fonts.insert(res_name, invalid_codes);
                 }
                 continue;
             }
 
-            // Get FontDescriptor.
             let fd_id = match fd.get(b"FontDescriptor").ok() {
                 Some(Object::Reference(id)) => *id,
                 _ => {
@@ -4686,88 +4600,65 @@ pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
                 }
             };
 
-            let Some(program_key) = subset_font_program_cache_key(doc, fd_id) else {
+            let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
                 font_cache.insert(font_id, None);
                 continue;
             };
 
-            let available_glyphs = match font_program_cache.entry(program_key) {
-                Entry::Occupied(entry) => entry.get().as_ref().map(Rc::clone),
-                Entry::Vacant(entry) => {
-                    let parsed = read_embedded_font_data(doc, fd_id)
-                        .and_then(|font_data| {
+            let invalid_codes = if subtype == "TrueType" {
+                let invalid_codes = collect_simple_invalid_codes(doc, fd, &font_data, true, None);
+                if invalid_codes.is_empty() {
+                    None
+                } else {
+                    Some(Rc::new(invalid_codes))
+                }
+            } else {
+                let Some(program_key) = subset_font_program_cache_key(doc, fd_id) else {
+                    font_cache.insert(font_id, None);
+                    continue;
+                };
+
+                let available_glyphs = match font_program_cache.entry(program_key) {
+                    Entry::Occupied(entry) => entry.get().as_ref().map(Rc::clone),
+                    Entry::Vacant(entry) => {
+                        let parsed =
                             parse_subset_font_program_glyphs(&font_data, program_key.is_cff)
-                        })
-                        .map(Rc::new);
-                    entry.insert(parsed.clone());
-                    parsed
-                }
-            };
-
-            let Some(available_glyphs) = available_glyphs else {
-                font_cache.insert(font_id, None);
-                continue;
-            };
-
-            // Build code→glyph name from WinAnsi baseline + Differences override.
-            let mut code_to_glyph: HashMap<u8, String> = (0u8..=255u8)
-                .filter_map(|c| winansi_type1_glyph_name(c).map(|n| (c, n.to_string())))
-                .collect();
-            // Also add standard ASCII range (32-127) from WinAnsi.
-            for c in 32u8..=127 {
-                if let std::collections::hash_map::Entry::Vacant(e) = code_to_glyph.entry(c) {
-                    if let Some(name) = type1_winansi_glyph_name_for_code(c as u32) {
-                        e.insert(name);
+                                .map(Rc::new);
+                        entry.insert(parsed.clone());
+                        parsed
                     }
-                }
-            }
-            // Apply /Encoding Differences override.
-            let enc_obj = fd.get(b"Encoding").ok().cloned();
-            let enc_dict = match &enc_obj {
-                Some(Object::Dictionary(d)) => Some(d.clone()),
-                Some(Object::Reference(r)) => match doc.objects.get(r) {
-                    Some(Object::Dictionary(d)) => Some(d.clone()),
-                    _ => None,
-                },
-                _ => None,
-            };
-            if let Some(enc) = enc_dict {
-                if let Ok(Object::Array(diffs)) = enc.get(b"Differences") {
-                    let mut current_code = 0u8;
-                    for item in diffs {
-                        match item {
-                            Object::Integer(n) => current_code = *n as u8,
-                            Object::Name(n) => {
-                                let s = String::from_utf8_lossy(n).to_string();
-                                code_to_glyph.insert(current_code, s);
-                                current_code = current_code.saturating_add(1);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
+                };
 
-            let info = Rc::new(SubsetFontInfo {
-                available_glyphs,
-                code_to_glyph,
-            });
-            font_cache.insert(font_id, Some(Rc::clone(&info)));
-            subset_fonts.insert(res_name, info);
+                let Some(available_glyphs) = available_glyphs else {
+                    font_cache.insert(font_id, None);
+                    continue;
+                };
+
+                let invalid_codes = collect_simple_invalid_codes(
+                    doc,
+                    fd,
+                    &font_data,
+                    true,
+                    Some(available_glyphs.as_ref()),
+                );
+                if invalid_codes.is_empty() {
+                    None
+                } else {
+                    Some(Rc::new(invalid_codes))
+                }
+            };
+
+            font_cache.insert(font_id, invalid_codes.clone());
+            if let Some(invalid_codes) = invalid_codes {
+                subset_fonts.insert(res_name, invalid_codes);
+            }
         }
 
         if subset_fonts.is_empty() {
             continue;
         }
 
-        // Get content stream IDs for this container.
-        let content_ids = match container {
-            ContentContainer::Page(page_id) => {
-                crate::content_editor::get_content_stream_ids(doc, page_id)
-            }
-            ContentContainer::Form(form_id) => vec![form_id],
-        };
-
+        let content_ids = notdef_content_stream_ids(doc, container);
         let mut current_font = String::new();
 
         for cs_id in content_ids {
@@ -4796,17 +4687,12 @@ pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
                         new_ops.push(op.clone());
                     }
                     "Tj" | "'" | "\"" => {
-                        let info = subset_fonts.get(&current_font);
-                        if let Some(info) = info {
+                        if let Some(invalid_codes) = subset_fonts.get(&current_font) {
                             let mut new_op = op.clone();
                             let str_idx = if op.operator == "\"" { 2 } else { 0 };
                             if let Some(Object::String(bytes, _)) = new_op.operands.get_mut(str_idx)
                             {
-                                if replace_missing_glyph_codes(
-                                    bytes,
-                                    &info.available_glyphs,
-                                    &info.code_to_glyph,
-                                ) {
+                                if fix_simple_text_string(bytes, invalid_codes) {
                                     changed = true;
                                 }
                             }
@@ -4816,17 +4702,12 @@ pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
                         }
                     }
                     "TJ" => {
-                        let info = subset_fonts.get(&current_font);
-                        if let Some(info) = info {
+                        if let Some(invalid_codes) = subset_fonts.get(&current_font) {
                             let mut new_op = op.clone();
                             if let Some(Object::Array(arr)) = new_op.operands.first_mut() {
                                 for item in arr.iter_mut() {
                                     if let Object::String(bytes, _) = item {
-                                        if replace_missing_glyph_codes(
-                                            bytes,
-                                            &info.available_glyphs,
-                                            &info.code_to_glyph,
-                                        ) {
+                                        if fix_simple_text_string(bytes, invalid_codes) {
                                             changed = true;
                                         }
                                     }
@@ -4854,30 +4735,6 @@ pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
     }
 
     total_fixed
-}
-
-/// Replace character codes that map to glyphs missing from the subset font with space (0x20).
-fn replace_missing_glyph_codes(
-    bytes: &mut [u8],
-    available_glyphs: &std::collections::HashSet<String>,
-    code_to_glyph: &std::collections::HashMap<u8, String>,
-) -> bool {
-    let mut changed = false;
-    for b in bytes.iter_mut() {
-        if *b == 0 {
-            continue; // .notdef handled by other passes
-        }
-        if *b == 0x20 {
-            continue; // space — keep
-        }
-        if let Some(glyph_name) = code_to_glyph.get(b) {
-            if !available_glyphs.contains(glyph_name.as_str()) {
-                *b = 0x20; // Replace with space
-                changed = true;
-            }
-        }
-    }
-    changed
 }
 
 /// Extract glyph names from a Type 1 (PFB) font program and return a CharSet string.
@@ -18299,16 +18156,36 @@ pub fn fix_simple_font_streams(doc: &mut Document) -> (usize, usize) {
     (range_fixed, ctrl_fixed)
 }
 
-/// Replace single-byte codes in a simple font text string that are invalid.
+/// Replace invalid simple-font character codes with space (0x20).
 #[allow(clippy::ptr_arg)]
 fn fix_simple_text_string(
     bytes: &mut Vec<u8>,
     invalid_codes: &std::collections::HashSet<u8>,
 ) -> bool {
-    let changed = collapse_two_byte_simple_codes(bytes);
-    let original_len = bytes.len();
-    bytes.retain(|b| !invalid_codes.contains(b));
-    changed || bytes.len() != original_len
+    if invalid_codes.is_empty() {
+        return false;
+    }
+
+    let mut changed = false;
+    if let Some(code_in_odd_lane) = paired_simple_code_lane(bytes) {
+        let code_offset = if code_in_odd_lane { 1 } else { 0 };
+        for i in (0..bytes.len()).step_by(2) {
+            let idx = i + code_offset;
+            if invalid_codes.contains(&bytes[idx]) && bytes[idx] != 0x20 {
+                bytes[idx] = 0x20;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    for b in bytes.iter_mut() {
+        if invalid_codes.contains(b) && *b != 0x20 {
+            *b = 0x20;
+            changed = true;
+        }
+    }
+    changed
 }
 
 #[allow(clippy::ptr_arg)]
