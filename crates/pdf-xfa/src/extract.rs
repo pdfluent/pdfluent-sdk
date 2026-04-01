@@ -1,8 +1,8 @@
 //! XFA packet extraction from PDF via pdf-syntax.
 use crate::error::{Result, XfaError};
+use pdf_syntax::Pdf;
 use pdf_syntax::object::dict::keys::{ACRO_FORM, XFA};
 use pdf_syntax::object::{Array, Dict, Object, Stream};
-use pdf_syntax::Pdf;
 
 #[derive(Debug, Clone, Default)]
 pub struct XfaPackets {
@@ -32,7 +32,7 @@ impl XfaPackets {
 }
 
 pub fn extract_xfa(pdf: &Pdf) -> Result<XfaPackets> {
-    if let Some(p) = extract_from_acroform(pdf) {
+    if let Some(p) = extract_xfa_from_acroform(pdf) {
         if !p.packets.is_empty() || p.full_xml.is_some() {
             return Ok(p);
         }
@@ -45,7 +45,7 @@ pub fn extract_xfa_from_bytes(data: impl Into<pdf_syntax::PdfData>) -> Result<Xf
     extract_xfa(&pdf)
 }
 
-fn extract_from_acroform(pdf: &Pdf) -> Option<XfaPackets> {
+pub fn extract_xfa_from_acroform(pdf: &Pdf) -> Option<XfaPackets> {
     let xref = pdf.xref();
     let catalog: Dict<'_> = xref.get(xref.root_id())?;
     let acroform: Dict<'_> = catalog.get(ACRO_FORM)?;
@@ -177,8 +177,8 @@ fn parse_xfa_xml(xml: &str) -> XfaPackets {
 }
 
 pub fn extract_embedded_fonts(pdf: &Pdf) -> Vec<(String, Vec<u8>)> {
-    use pdf_syntax::object::dict::keys::{FONT_FILE, FONT_FILE2, FONT_FILE3, FONT_NAME, TYPE};
     use pdf_syntax::object::Name;
+    use pdf_syntax::object::dict::keys::{FONT_FILE, FONT_FILE2, FONT_FILE3, FONT_NAME, TYPE};
     let mut fonts = Vec::new();
     for obj in pdf.objects() {
         let dict = match &obj {
