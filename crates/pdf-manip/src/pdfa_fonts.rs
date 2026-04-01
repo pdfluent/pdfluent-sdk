@@ -4533,39 +4533,267 @@ fn parse_subset_font_program_glyphs(
     Some(available_glyphs)
 }
 
-// Stub implementations for functions not yet pushed (Codex-generated).
-// Real implementations to follow.
-
 fn is_subset_font_name(name: &str) -> bool {
     let bytes = name.as_bytes();
-    bytes.len() > 7
-        && bytes[6] == b'+'
-        && bytes[..6].iter().all(|&b| b.is_ascii_uppercase())
+    bytes.len() > 7 && bytes[6] == b'+' && bytes[..6].iter().all(|&b| b.is_ascii_uppercase())
 }
 
-fn collect_notdef_content_containers(_doc: &Document) -> Vec<ObjectId> {
-    Vec::new()
+fn collect_notdef_content_containers(doc: &Document) -> Vec<ObjectId> {
+    let mut containers: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+
+    for (&id, obj) in &doc.objects {
+        let Object::Stream(stream) = obj else {
+            continue;
+        };
+        let is_form = stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            == Some(b"Form");
+        if is_form {
+            containers.push(id);
+        }
+    }
+
+    containers
 }
 
 fn resolve_notdef_container_font_map(
-    _doc: &Document,
-    _container: ObjectId,
+    doc: &Document,
+    container: ObjectId,
 ) -> Option<Vec<(String, ObjectId)>> {
-    None
+    let resources = resolve_page_resources_local(doc, container).or_else(|| {
+        let stream = match doc.objects.get(&container) {
+            Some(Object::Stream(s)) => s,
+            _ => return None,
+        };
+        match stream.dict.get(b"Resources").ok() {
+            Some(Object::Dictionary(d)) => Some(d.clone()),
+            Some(Object::Reference(r)) => match doc.objects.get(r) {
+                Some(Object::Dictionary(d)) => Some(d.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    })?;
+
+    let fonts = match resources.get(b"Font").ok() {
+        Some(Object::Dictionary(d)) => d.clone(),
+        Some(Object::Reference(r)) => match doc.objects.get(r) {
+            Some(Object::Dictionary(d)) => d.clone(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    let mut map = Vec::new();
+    for (key, val) in fonts.iter() {
+        if let Object::Reference(id) = val {
+            map.push((String::from_utf8_lossy(key).to_string(), *id));
+        }
+    }
+
+    Some(map)
 }
 
 fn collect_simple_invalid_codes(
-    _doc: &Document,
-    _fd: &lopdf::Dictionary,
-    _font_data: &[u8],
-    _check_encoding: bool,
-    _available_glyphs: Option<&std::collections::HashSet<String>>,
+    doc: &Document,
+    fd: &lopdf::Dictionary,
+    font_data: &[u8],
+    is_subset: bool,
+    available_glyphs: Option<&std::collections::HashSet<String>>,
 ) -> std::collections::HashSet<u8> {
-    std::collections::HashSet::new()
+    use std::collections::HashSet;
+
+    let subtype = get_name(fd, b"Subtype").unwrap_or_default();
+
+    if subtype == "TrueType" {
+        let Ok(face) = ttf_parser::Face::parse(font_data, 0) else {
+            return HashSet::new();
+        };
+
+        let (enc_name, differences) = get_simple_encoding_info(doc, fd);
+        let base_name = get_name(fd, b"BaseFont").unwrap_or_default();
+        let is_symbolic = is_font_symbolic(doc, fd) || is_symbolic_font_name(&base_name);
+
+        let glyph_name_is_real = |glyph_name: &str| -> bool {
+            if glyph_name.is_empty() || glyph_name == ".notdef" {
+                return false;
+            }
+
+            if let Some(gid) = face.glyph_index_by_name(glyph_name) {
+                if tt_glyph_is_real(&face, gid, is_subset) {
+                    return true;
+                }
+            }
+
+            let Some(unicode) = glyph_name_to_unicode(glyph_name) else {
+                return false;
+            };
+            let unicode = match unicode {
+                '\u{00AD}' => '-',
+                other => other,
+            };
+
+            face.glyph_index(unicode)
+                .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
+        };
+
+        let mut invalid_codes = HashSet::new();
+        for code in 0u8..=255 {
+            let has_real_glyph = if let Some(glyph_name) = differences.get(&(code as u32)) {
+                glyph_name_is_real(glyph_name)
+            } else {
+                let ch = match encoding_to_char(code as u32, &enc_name) {
+                    '\u{00AD}' => '-',
+                    other => other,
+                };
+
+                (!is_symbolic
+                    && has_cmap_31(&face)
+                    && lookup_unicode_cmap_31_raw(&face, ch as u32)
+                        .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset)))
+                    || face
+                        .glyph_index(ch)
+                        .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
+                    || unicode_to_agl_name(ch)
+                        .and_then(|name| face.glyph_index_by_name(&name))
+                        .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
+                    || unicode_to_glyph_name(ch)
+                        .and_then(|name| face.glyph_index_by_name(&name))
+                        .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
+                    || ((is_symbolic || enc_name.is_empty())
+                        && lookup_symbol_cmap_30(&face, code as u32)
+                            .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset)))
+            };
+
+            if !has_real_glyph {
+                invalid_codes.insert(code);
+            }
+        }
+
+        return invalid_codes;
+    }
+
+    let cff_data = extract_cff_bytes_from_otf(font_data).unwrap_or(font_data);
+    let is_cff = cff_parser::Table::parse(cff_data).is_some();
+    let owned_available_glyphs: std::collections::HashSet<String>;
+    let available_glyphs = if let Some(glyphs) = available_glyphs {
+        glyphs
+    } else {
+        owned_available_glyphs =
+            parse_subset_font_program_glyphs(font_data, is_cff).unwrap_or_default();
+        if owned_available_glyphs.is_empty() {
+            return HashSet::new();
+        }
+        &owned_available_glyphs
+    };
+
+    let (enc_name, differences) = get_simple_encoding_info(doc, fd);
+
+    if is_cff {
+        let enc_map = parse_cff_encoding_map(cff_data);
+        let has_pdf_encoding = fd.get(b"Encoding").is_ok();
+        let has_explicit_difference = !differences.is_empty();
+        let has_gid_based_names = cff_parser::Table::parse(cff_data)
+            .map(|cff| cff_has_gid_based_names(&cff))
+            .unwrap_or(false);
+        let allow_cff_encoding_fallback = !has_pdf_encoding
+            || has_gid_based_names
+            || (enc_name.is_empty() && !has_explicit_difference);
+
+        let mut invalid_codes = HashSet::new();
+        for code in 0u8..=255 {
+            let mut has_glyph = false;
+
+            let glyph_name = if let Some(name) = differences.get(&(code as u32)) {
+                Some(name.clone())
+            } else if !enc_name.is_empty() {
+                let ch = encoding_to_char(code as u32, &enc_name);
+                unicode_to_glyph_name(ch).or_else(|| unicode_to_agl_name(ch))
+            } else {
+                None
+            };
+
+            if let Some(name) = glyph_name {
+                if !name.is_empty() && name != ".notdef" {
+                    has_glyph = available_glyphs.contains(name.as_str());
+
+                    if !has_glyph {
+                        for alt in cff_glyph_name_alternatives(&name) {
+                            if available_glyphs.contains(*alt) {
+                                has_glyph = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !has_glyph && allow_cff_encoding_fallback {
+                has_glyph = enc_map.get(&code).map(|&gid| gid != 0).unwrap_or(false);
+            }
+
+            if !has_glyph {
+                invalid_codes.insert(code);
+            }
+        }
+
+        return invalid_codes;
+    }
+
+    let parsed = parse_type1_program(font_data);
+    let mut invalid_codes = HashSet::new();
+    for code in 0u8..=255 {
+        let glyph_name = if let Some(name) = differences.get(&(code as u32)) {
+            name.clone()
+        } else if !enc_name.is_empty() {
+            let ch = encoding_to_char(code as u32, &enc_name);
+            unicode_to_glyph_name(ch)
+                .or_else(|| unicode_to_agl_name(ch))
+                .unwrap_or_else(|| ".notdef".to_string())
+        } else if let Some(parsed) = parsed.as_ref() {
+            if let Some(name) = parsed.encoding.get(&code) {
+                name.clone()
+            } else if !parsed.base_encoding_name.is_empty() {
+                let ch = encoding_to_char(code as u32, &parsed.base_encoding_name);
+                unicode_to_glyph_name(ch)
+                    .or_else(|| unicode_to_agl_name(ch))
+                    .unwrap_or_else(|| ".notdef".to_string())
+            } else {
+                ".notdef".to_string()
+            }
+        } else {
+            ".notdef".to_string()
+        };
+
+        if glyph_name == ".notdef" || !available_glyphs.contains(glyph_name.as_str()) {
+            invalid_codes.insert(code);
+        }
+    }
+
+    invalid_codes
 }
 
-fn notdef_content_stream_ids(_doc: &Document, _container: ObjectId) -> Vec<ObjectId> {
-    Vec::new()
+fn notdef_content_stream_ids(doc: &Document, container: ObjectId) -> Vec<ObjectId> {
+    if resolve_page_resources_local(doc, container).is_some() {
+        return crate::content_editor::get_content_stream_ids(doc, container);
+    }
+
+    match doc.objects.get(&container) {
+        Some(Object::Stream(stream))
+            if stream
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|o| o.as_name().ok())
+                == Some(b"Form") =>
+        {
+            vec![container]
+        }
+        _ => Vec::new(),
+    }
 }
 
 pub fn fix_type1_subset_missing_glyphs(doc: &mut Document) -> usize {
@@ -13412,7 +13640,7 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
     for (font_id, base_enc, differences) in to_process {
         // Build code→unicode table.
         let mut code_to_unicode: [Option<u16>; 256] = [None; 256];
-        
+
         let enc_known = matches!(
             base_enc.as_str(),
             "WinAnsiEncoding" | "MacRomanEncoding" | "StandardEncoding"
@@ -13456,11 +13684,17 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
         let current_count = code_to_unicode.iter().filter(|o| o.is_some()).count();
         if current_count < 10 {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) {
-                if let Some(fd_id) = dict.get(b"FontDescriptor").ok().and_then(|o| o.as_reference().ok()) {
+                if let Some(fd_id) = dict
+                    .get(b"FontDescriptor")
+                    .ok()
+                    .and_then(|o| o.as_reference().ok())
+                {
                     if let Some(font_data) = read_embedded_font_data(doc, fd_id) {
                         if let Some(cff) = cff_parser::Table::parse(&font_data) {
                             for code in 0..=255u8 {
-                                if code_to_unicode[code as usize].is_some() { continue }
+                                if code_to_unicode[code as usize].is_some() {
+                                    continue;
+                                }
                                 let gid = match cff.encoding.code_to_gid(&cff.charset, code) {
                                     Some(gid) if gid.0 > 0 => gid,
                                     _ => continue,
@@ -13667,14 +13901,14 @@ pub fn fix_type0_tounicode(doc: &mut Document) -> usize {
             // For CIDFontType0 (CFF-based), use CFF charset if available.
             if let Some(cff) = cff_parser::Table::parse(&font_data) {
                 use crate::encoding_utils::glyph_name_to_char;
-                
+
                 for gid_idx in 0..cff.number_of_glyphs() {
                     let gid = cff_parser::GlyphId(gid_idx as u16);
                     if let Some(gname) = cff.glyph_name(gid) {
                         if let Some(ch) = glyph_name_to_char(gname) {
                             // Find which CID maps to this GID.
                             // For CFF CIDFonts, GID == CID.
-                            // For CFF simple fonts used as CIDFonts (subsetted), 
+                            // For CFF simple fonts used as CIDFonts (subsetted),
                             // we usually have Identity CIDToGIDMap.
                             let cid = gid_idx as u16;
                             mappings.push((cid, ch as u16));
@@ -13870,13 +14104,14 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
                     let mut j = 0;
                     while j + 1 < hex_bytes.len() {
                         let val = u16::from_be_bytes([hex_bytes[j], hex_bytes[j + 1]]);
-                        
+
                         // Is it a high surrogate?
                         if val >= 0xD800 && val <= 0xDBFF {
                             // Check if followed by a low surrogate.
                             let mut has_low = false;
                             if j + 3 < hex_bytes.len() {
-                                let next_val = u16::from_be_bytes([hex_bytes[j + 2], hex_bytes[j + 3]]);
+                                let next_val =
+                                    u16::from_be_bytes([hex_bytes[j + 2], hex_bytes[j + 3]]);
                                 if next_val >= 0xDC00 && next_val <= 0xDFFF {
                                     has_low = true;
                                 }
@@ -13900,17 +14135,22 @@ fn sanitize_tounicode_line(line: &str, in_bfchar: bool, in_bfrange: bool) -> Str
                         let mut k = 0;
                         while k + 1 < hex_bytes.len() {
                             let val = u16::from_be_bytes([hex_bytes[k], hex_bytes[k + 1]]);
-                            
+
                             if val >= 0xD800 && val <= 0xDBFF {
                                 let mut has_low = false;
                                 if k + 3 < hex_bytes.len() {
-                                    let next_val = u16::from_be_bytes([hex_bytes[k + 2], hex_bytes[k + 3]]);
+                                    let next_val =
+                                        u16::from_be_bytes([hex_bytes[k + 2], hex_bytes[k + 3]]);
                                     if next_val >= 0xDC00 && next_val <= 0xDFFF {
                                         has_low = true;
                                     }
                                 }
                                 if has_low {
-                                    new_hex.push_str(&format!("{:04X}{:04X}", val, u16::from_be_bytes([hex_bytes[k + 2], hex_bytes[k + 3]])));
+                                    new_hex.push_str(&format!(
+                                        "{:04X}{:04X}",
+                                        val,
+                                        u16::from_be_bytes([hex_bytes[k + 2], hex_bytes[k + 3]])
+                                    ));
                                     k += 4;
                                 } else {
                                     new_hex.push_str("FFFD");
