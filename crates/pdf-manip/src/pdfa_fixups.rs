@@ -66,10 +66,26 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     fix_binary_inline_image_ei(doc);
     let invalid_ri_fixed = fix_invalid_rendering_intents(doc);
     let opm_fixed = fix_extgstate_opm(doc);
+    // §6.4.2: Fix SMask dicts with invalid /S (must be Alpha or Luminosity).
+    let smask_subtype_fixed = fix_extgstate_smask_subtype(doc);
+    // §6.4.1: Normalize non-standard blend mode names (case-insensitive match).
+    let blend_mode_fixed = fix_extgstate_blend_modes(doc);
     let concatenated_operators_fixed =
         fix_concatenated_operators(doc) + invalid_ri_fixed + opm_fixed;
     let unknown_operators_stripped = strip_unknown_content_stream_operators(doc);
     let page_boundary_fixed = fix_page_boundary_sizes(doc);
+    // §6.1.13: Truncate oversized dictionaries (>4095) and arrays (>8191).
+    let long_containers_fixed = fix_long_containers(doc);
+    // §6.1.8: Ensure names are valid UTF-8 (or at least valid PDF names).
+    let non_utf8_names_fixed = fix_non_utf8_names(doc);
+    // §6.3.3: Ensure annotations have appearance streams.
+    let annot_ap_fixed = fix_missing_annot_appearances_extra(doc);
+    // §6.1.6: Remove non-hex characters from hex strings.
+    let hex_garbage_fixed = fix_hex_string_garbage(doc);
+    // §6.1.7.1: Remove forbidden external file references from stream dicts.
+    let stream_external_f_fixed = fix_stream_external_ref_keys_extra(doc);
+    // §6.1.6.2: Promote inline JBIG2Globals to indirect objects.
+    let jbig2_globals_promoted = fix_jbig2_globals_promotion(doc);
     // Add /Group to pages using transparency without one (6.2.10-tgroup).
     // Runs after normalize_colorspaces has already added the OutputIntent, so
     // /Group << /S /Transparency >> without /CS is valid. (#496)
@@ -125,6 +141,14 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         unknown_operators_stripped,
         page_boundary_fixed,
         transparency_groups_added,
+        smask_subtype_fixed,
+        blend_mode_fixed,
+        long_containers_fixed,
+        non_utf8_names_fixed,
+        annot_ap_fixed,
+        hex_garbage_fixed,
+        stream_external_f_fixed,
+        jbig2_globals_promoted,
     }
 }
 
@@ -169,8 +193,16 @@ pub struct FixupReport {
     pub unknown_operators_stripped: usize,
     pub page_boundary_fixed: usize,
     pub transparency_groups_added: usize,
+    pub smask_subtype_fixed: usize,
+    pub blend_mode_fixed: usize,
     pub font_type_fixed: usize,
     pub form_xobject_bbox_fixed: usize,
+    pub long_containers_fixed: usize,
+    pub non_utf8_names_fixed: usize,
+    pub annot_ap_fixed: usize,
+    pub hex_garbage_fixed: usize,
+    pub stream_external_f_fixed: usize,
+    pub jbig2_globals_promoted: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -199,24 +231,23 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
             ) {
                 continue;
             }
-            // Skip subset fonts — changing encoding from StandardEncoding to
-            // WinAnsiEncoding maps codes 128-255 to different glyph names
-            // that may not exist in the subset font program → §6.2.11.4.1.
-            let bf = get_name_val(dict, b"BaseFont").unwrap_or_default();
-            if bf.len() > 7 && bf.as_bytes()[6] == b'+' {
-                continue;
-            }
-            // For direct /Encoding /StandardEncoding (Name), skip symbolic fonts —
-            // they should use internal encodings. But for Encoding *dicts* with
-            // /BaseEncoding /StandardEncoding, ALWAYS replace: PDF/A §6.2.11.6
-            // requires BaseEncoding = WinAnsiEncoding or MacRomanEncoding regardless
-            // of symbolic status. TeX CM fonts (CMSS, CMBX, CMMI) are flagged
+            // For direct /Encoding /StandardEncoding (Name), skip symbolic
+            // subset fonts — changing the entire encoding mapping is risky
+            // when the subset may lack glyphs expected by WinAnsiEncoding.
+            // But for Encoding *dicts* with /BaseEncoding /StandardEncoding,
+            // ALWAYS replace: PDF/A §6.2.11.6 requires BaseEncoding =
+            // WinAnsiEncoding or MacRomanEncoding regardless of symbolic
+            // status or subset. TeX CM fonts (CMSS, CMBX, CMMI) are flagged
             // symbolic but still use StandardEncoding in their Encoding dict.
+            // The Differences array already covers all used codes, so changing
+            // only the BaseEncoding is safe.
+            let bf = get_name_val(dict, b"BaseFont").unwrap_or_default();
+            let is_subset = bf.len() > 7 && bf.as_bytes()[6] == b'+';
             let symbolic = is_symbolic(doc, dict);
             match dict.get(b"Encoding").ok() {
-                // /Encoding /StandardEncoding — only fix non-symbolic
+                // /Encoding /StandardEncoding — skip symbolic subsets
                 Some(Object::Name(n)) if n == b"StandardEncoding" => {
-                    if symbolic {
+                    if symbolic && is_subset {
                         StdEncAction::None
                     } else {
                         StdEncAction::ReplaceName
@@ -259,6 +290,7 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
                 if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
                     if let Ok(Object::Dictionary(ref mut enc)) = dict.get_mut(b"Encoding") {
                         enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                        fix_differences_128_159(enc);
                         count += 1;
                     }
                 }
@@ -266,12 +298,127 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
             StdEncAction::ReplaceRefBase(enc_id) => {
                 if let Some(Object::Dictionary(ref mut enc)) = doc.objects.get_mut(&enc_id) {
                     enc.set("BaseEncoding", Object::Name(b"WinAnsiEncoding".to_vec()));
+                    fix_differences_128_159(enc);
                     count += 1;
                 }
             }
         }
     }
     count
+}
+
+/// Remove Differences entries for codes 128-159 that conflict with
+/// WinAnsiEncoding. Called after replacing BaseEncoding from
+/// StandardEncoding to WinAnsiEncoding.
+fn fix_differences_128_159(enc: &mut lopdf::Dictionary) {
+    let Some(Object::Array(diffs)) = enc.get(b"Differences").ok().cloned() else {
+        return;
+    };
+    let mut new_diffs: Vec<Object> = Vec::new();
+    let mut current_code: i64 = -1;
+    let mut skip_next_names = false;
+    let mut i = 0;
+    while i < diffs.len() {
+        match &diffs[i] {
+            Object::Integer(n) => {
+                current_code = *n;
+                skip_next_names = (128..160).contains(&current_code);
+                if !skip_next_names {
+                    new_diffs.push(diffs[i].clone());
+                }
+            }
+            Object::Name(name) => {
+                if skip_next_names && (128..160).contains(&current_code) {
+                    let expected = winansi_name_for_code_128_159(current_code as u8);
+                    let name_str = String::from_utf8_lossy(name);
+                    if !expected.is_empty() && name_str != expected {
+                        // Skip this conflicting entry.
+                        current_code += 1;
+                        i += 1;
+                        continue;
+                    }
+                }
+                // Emit code prefix if needed (after filtering, the previous
+                // code integer may have been skipped).
+                if new_diffs.is_empty()
+                    || !matches!(new_diffs.last(), Some(Object::Integer(_)) | Some(Object::Name(_)))
+                    || needs_code_prefix(&new_diffs, current_code)
+                {
+                    new_diffs.push(Object::Integer(current_code));
+                }
+                new_diffs.push(diffs[i].clone());
+                current_code += 1;
+            }
+            _ => {
+                new_diffs.push(diffs[i].clone());
+            }
+        }
+        i += 1;
+    }
+    enc.set("Differences", Object::Array(new_diffs));
+}
+
+/// Check if we need to emit a code integer before the next name in the
+/// rebuilt Differences array.
+fn needs_code_prefix(arr: &[Object], code: i64) -> bool {
+    // The array tracks (code, name, name, ...) — we need a code prefix
+    // when the last entry is not a name at (code - 1), i.e. the sequence
+    // is not consecutive.
+    match arr.last() {
+        Some(Object::Integer(_)) => false, // Already have a code prefix
+        None => true,
+        _ => {
+            // Walk backwards to find the last code integer and count names after it.
+            let mut names_after_last_int = 0;
+            let mut last_int = 0i64;
+            for item in arr.iter().rev() {
+                match item {
+                    Object::Name(_) => names_after_last_int += 1,
+                    Object::Integer(n) => {
+                        last_int = *n;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            // Expected code for next name = last_int + names_after_last_int
+            (last_int + names_after_last_int) != code
+        }
+    }
+}
+
+/// Standard WinAnsiEncoding glyph names for codes 128-159.
+fn winansi_name_for_code_128_159(code: u8) -> &'static str {
+    match code {
+        128 => "Euro",
+        130 => "quotesinglbase",
+        131 => "florin",
+        132 => "quotedblbase",
+        133 => "ellipsis",
+        134 => "dagger",
+        135 => "daggerdbl",
+        136 => "circumflex",
+        137 => "perthousand",
+        138 => "Scaron",
+        139 => "guilsinglleft",
+        140 => "OE",
+        142 => "Zcaron",
+        145 => "quoteleft",
+        146 => "quoteright",
+        147 => "quotedblleft",
+        148 => "quotedblright",
+        149 => "bullet",
+        150 => "endash",
+        151 => "emdash",
+        152 => "tilde",
+        153 => "trademark",
+        154 => "scaron",
+        155 => "guilsinglright",
+        156 => "oe",
+        158 => "zcaron",
+        159 => "Ydieresis",
+        _ => "",
+    }
 }
 
 /// Glyph name for a code in StandardEncoding (PDF spec Table D.1).
@@ -5805,11 +5952,17 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
                 continue;
             }
 
-            // Skip hex strings.
+            // Clean hex strings: remove non-hex characters (§6.1.6).
             if in_hex_string {
-                new_content.push(b);
                 if b == b'>' {
+                    new_content.push(b);
                     in_hex_string = false;
+                } else if b.is_ascii_hexdigit() || b.is_ascii_whitespace() {
+                    new_content.push(b);
+                } else {
+                    // Skip non-hex garbage.
+                    fixed_any = true;
+                    count += 1;
                 }
                 i += 1;
                 continue;
@@ -5838,38 +5991,47 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
             }
 
             // Skip inline image binary data: BI ... ID <binary> EI.
-            // "ID" must be preceded by whitespace and followed by a single whitespace byte.
+            // Uses inline_image_data_length to skip past binary payload reliably.
             if b == b'I'
                 && i + 2 < decompressed.len()
                 && decompressed[i + 1] == b'D'
                 && (i == 0 || decompressed[i - 1].is_ascii_whitespace())
                 && decompressed[i + 2].is_ascii_whitespace()
             {
-                // Copy "ID" + whitespace to output
+                // Find start of BI block to parse its dict.
+                let mut bi_start = i;
+                while bi_start > 0 && &decompressed[bi_start..bi_start + 2] != b"BI" {
+                    bi_start -= 1;
+                }
+                let bi_dict = &decompressed[bi_start..i];
+                let expected_len = inline_image_data_length(bi_dict);
+
                 new_content.push(b'I');
                 new_content.push(b'D');
                 new_content.push(decompressed[i + 2]);
                 i += 3;
-                // Copy binary data until whitespace + "EI" + delimiter
-                while i + 2 < decompressed.len() {
-                    if (decompressed[i] == b'\n'
-                        || decompressed[i] == b'\r'
-                        || decompressed[i] == b' ')
-                        && decompressed[i + 1] == b'E'
-                        && decompressed[i + 2] == b'I'
-                        && (i + 3 >= decompressed.len()
-                            || decompressed[i + 3].is_ascii_whitespace()
-                            || decompressed[i + 3] == b'/')
-                    {
-                        // Copy whitespace + "EI"
+
+                if expected_len > 0 {
+                    let end = (i + expected_len).min(decompressed.len());
+                    new_content.extend_from_slice(&decompressed[i..end]);
+                    i = end;
+                } else {
+                    // Fallback: scan for EI.
+                    while i + 2 < decompressed.len() {
+                        if (decompressed[i] == b'\n'
+                            || decompressed[i] == b'\r'
+                            || decompressed[i] == b' ')
+                            && decompressed[i + 1] == b'E'
+                            && decompressed[i + 2] == b'I'
+                            && (i + 3 >= decompressed.len()
+                                || decompressed[i + 3].is_ascii_whitespace()
+                                || decompressed[i + 3] == b'/')
+                        {
+                            break;
+                        }
                         new_content.push(decompressed[i]);
-                        new_content.push(b'E');
-                        new_content.push(b'I');
-                        i += 3;
-                        break;
+                        i += 1;
                     }
-                    new_content.push(decompressed[i]);
-                    i += 1;
                 }
                 continue;
             }
@@ -5906,7 +6068,7 @@ fn fix_tiny_floats_in_streams(doc: &mut Document) -> usize {
 
             // Parse and check range.
             if let Ok(s) = std::str::from_utf8(token) {
-                let is_float = s.contains('.');
+                let is_float = s.contains('.') || s.contains('e') || s.contains('E');
                 if is_float {
                     if let Ok(val) = s.parse::<f64>() {
                         // Subnormal: tiny non-zero → 0
@@ -5978,7 +6140,7 @@ fn format_float_compact(val: f64) -> String {
 }
 
 fn is_number_byte(b: u8) -> bool {
-    b.is_ascii_digit() || b == b'.' || b == b'-'
+    b.is_ascii_digit() || b == b'.' || b == b'-' || b == b'+' || b == b'e' || b == b'E'
 }
 
 /// Replace non-finite numeric tokens in content streams with `0`.
@@ -6863,6 +7025,196 @@ fn fix_opm_in_dict_recursive(d: &mut lopdf::Dictionary) -> usize {
         }
     }
     count
+}
+
+// ---------------------------------------------------------------------------
+// §6.4.2 — Fix ExtGState SMask /S subtype
+// ---------------------------------------------------------------------------
+//
+// PDF/A requires that SMask dictionaries in ExtGState have /S set to either
+// /Alpha or /Luminosity. Some malformed PDFs have /S /GoTo or other invalid
+// values. Fix: set invalid /S values to /Alpha (the more common default).
+
+fn fix_extgstate_smask_subtype(doc: &mut Document) -> usize {
+    // Walk every object. Any dictionary with /SMask (dict) whose /S is not
+    // Alpha or Luminosity is fixed. This covers standalone ExtGState objects
+    // (indirect refs), inline dicts in Resources, and Form XObject stream dicts.
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut count = 0;
+
+    for id in ids {
+        let has_bad_smask = match doc.objects.get(&id) {
+            Some(Object::Dictionary(d)) => dict_has_bad_smask(d),
+            Some(Object::Stream(s)) => dict_has_bad_smask(&s.dict),
+            _ => false,
+        };
+        if !has_bad_smask {
+            continue;
+        }
+        match doc.objects.get_mut(&id) {
+            Some(Object::Dictionary(d)) => {
+                count += fix_bad_smask_recursive(d);
+            }
+            Some(Object::Stream(s)) => {
+                count += fix_bad_smask_recursive(&mut s.dict);
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+/// Check if any dict or nested sub-dict has an SMask with invalid /S.
+fn dict_has_bad_smask(d: &lopdf::Dictionary) -> bool {
+    if let Ok(Object::Dictionary(smask)) = d.get(b"SMask") {
+        match smask.get(b"S").ok() {
+            Some(Object::Name(s)) if s == b"Alpha" || s == b"Luminosity" => {}
+            Some(Object::Name(_)) | None => return true,
+            _ => {}
+        }
+    }
+    for (_, val) in d.iter() {
+        match val {
+            Object::Dictionary(inner) => {
+                if dict_has_bad_smask(inner) {
+                    return true;
+                }
+            }
+            Object::Array(arr) => {
+                for item in arr {
+                    if let Object::Dictionary(inner) = item {
+                        if dict_has_bad_smask(inner) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Recursively fix SMask /S values in a dict and all nested sub-dicts.
+fn fix_bad_smask_recursive(d: &mut lopdf::Dictionary) -> usize {
+    let mut count = 0;
+    if let Ok(Object::Dictionary(smask)) = d.get_mut(b"SMask") {
+        let needs_fix = match smask.get(b"S").ok() {
+            Some(Object::Name(s)) if s == b"Alpha" || s == b"Luminosity" => false,
+            Some(Object::Name(_)) | None => true,
+            _ => false,
+        };
+        if needs_fix {
+            smask.set("S", Object::Name(b"Alpha".to_vec()));
+            count += 1;
+        }
+    }
+    for (_, val) in d.iter_mut() {
+        match val {
+            Object::Dictionary(inner) => {
+                count += fix_bad_smask_recursive(inner);
+            }
+            Object::Array(arr) => {
+                for item in arr.iter_mut() {
+                    if let Object::Dictionary(inner) = item {
+                        count += fix_bad_smask_recursive(inner);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// §6.4.1 — Normalize non-standard blend mode names in ExtGState
+// ---------------------------------------------------------------------------
+//
+// PDF spec defines specific blend mode names (Normal, Multiply, Screen, etc.).
+// Some PDFs have case-insensitive variants (e.g. "MuLtiply"). PDF/A requires
+// exact casing. Fix: normalize to the canonical name.
+
+fn fix_extgstate_blend_modes(doc: &mut Document) -> usize {
+    // Walk every object, recursively fix /BM values that aren't standard.
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    let mut count = 0;
+
+    for id in ids {
+        match doc.objects.get_mut(&id) {
+            Some(Object::Dictionary(d)) => {
+                count += fix_blend_recursive(d);
+            }
+            Some(Object::Stream(s)) => {
+                count += fix_blend_recursive(&mut s.dict);
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+const VALID_BLEND_MODES: &[&[u8]] = &[
+    b"Normal",
+    b"Compatible",
+    b"Multiply",
+    b"Screen",
+    b"Overlay",
+    b"Darken",
+    b"Lighten",
+    b"ColorDodge",
+    b"ColorBurn",
+    b"HardLight",
+    b"SoftLight",
+    b"Difference",
+    b"Exclusion",
+    b"Hue",
+    b"Saturation",
+    b"Color",
+    b"Luminosity",
+];
+
+fn fix_blend_recursive(d: &mut lopdf::Dictionary) -> usize {
+    let mut count = 0;
+    if let Ok(Object::Name(bm)) = d.get(b"BM") {
+        let bm_clone = bm.clone();
+        if !VALID_BLEND_MODES.iter().any(|v| *v == bm_clone.as_slice()) {
+            if let Some(canonical) = find_canonical_blend_mode(&bm_clone) {
+                d.set("BM", Object::Name(canonical.to_vec()));
+                count += 1;
+            } else {
+                d.set("BM", Object::Name(b"Normal".to_vec()));
+                count += 1;
+            }
+        }
+    }
+    for (_, val) in d.iter_mut() {
+        match val {
+            Object::Dictionary(inner) => {
+                count += fix_blend_recursive(inner);
+            }
+            Object::Array(arr) => {
+                for item in arr.iter_mut() {
+                    if let Object::Dictionary(inner) = item {
+                        count += fix_blend_recursive(inner);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    count
+}
+
+fn find_canonical_blend_mode(name: &[u8]) -> Option<&'static [u8]> {
+    let lower: Vec<u8> = name.iter().map(|b| b.to_ascii_lowercase()).collect();
+    for &v in VALID_BLEND_MODES {
+        let vl: Vec<u8> = v.iter().map(|b| b.to_ascii_lowercase()).collect();
+        if lower == vl {
+            return Some(v);
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -8580,34 +8932,45 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         ])
     });
 
-    // First pass: fix indirect /Group dicts that have device CS or no CS.
-    let mut indirect_fixes: Vec<(ObjectId, Object)> = Vec::new();
+    /// Check if a /Group dict needs fixing: wrong /S value, device CS, or missing CS.
+    fn group_dict_needs_fix(grp: &lopdf::Dictionary) -> bool {
+        // /S must be /Transparency — any other value (GoTo, etc.) needs fixing.
+        match grp.get(b"S").ok() {
+            Some(Object::Name(s)) if s == b"Transparency" => {}
+            _ => return true,
+        }
+        // /CS must not be a device color space.
+        match grp.get(b"CS").ok() {
+            Some(Object::Name(cs))
+                if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
+            {
+                true
+            }
+            None => true,
+            _ => false,
+        }
+    }
+
+    // First pass: fix indirect /Group dicts.
+    let mut indirect_fixes: Vec<ObjectId> = Vec::new();
     for page_id in &page_ids {
         let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
             continue;
         };
         if let Ok(Object::Reference(grp_id)) = pd.get(b"Group") {
             if let Some(Object::Dictionary(grp)) = doc.objects.get(grp_id) {
-                let needs_fix = match grp.get(b"CS").ok() {
-                    Some(Object::Name(cs))
-                        if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
-                    {
-                        true
-                    }
-                    None => true,
-                    _ => false,
-                };
-                if needs_fix {
-                    if let Some(ref cs) = cs_value {
-                        indirect_fixes.push((*grp_id, cs.clone()));
-                    }
+                if group_dict_needs_fix(grp) {
+                    indirect_fixes.push(*grp_id);
                 }
             }
         }
     }
-    for (grp_id, cs) in indirect_fixes {
+    for grp_id in indirect_fixes {
         if let Some(Object::Dictionary(ref mut grp)) = doc.objects.get_mut(&grp_id) {
-            grp.set("CS", cs);
+            grp.set("S", Object::Name(b"Transparency".to_vec()));
+            if let Some(ref cs) = cs_value {
+                grp.set("CS", cs.clone());
+            }
             count += 1;
         }
     }
@@ -8622,21 +8985,7 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
             Ok(Object::Reference(grp_id)) => {
                 !matches!(doc.objects.get(grp_id), Some(Object::Dictionary(_)))
             }
-            Ok(Object::Dictionary(_)) => {
-                let grp_dict = match group_val {
-                    Ok(Object::Dictionary(d)) => d,
-                    _ => unreachable!(),
-                };
-                match grp_dict.get(b"CS").ok() {
-                    Some(Object::Name(cs))
-                        if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
-                    {
-                        true
-                    }
-                    None => true,
-                    _ => false,
-                }
-            }
+            Ok(Object::Dictionary(grp_dict)) => group_dict_needs_fix(grp_dict),
             _ => true,
         };
         if !needs_group_fix {
@@ -8653,6 +9002,36 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         }
         pd.set("Group", Object::Dictionary(group_dict));
         count += 1;
+    }
+
+    // Third pass: fix /Group dicts on Form XObjects.
+    let xobj_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in xobj_ids {
+        let needs_fix = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
+            let is_form = matches!(s.dict.get(b"Subtype"), Ok(Object::Name(ref n)) if n == b"Form");
+            if !is_form {
+                false
+            } else {
+                match s.dict.get(b"Group").ok() {
+                    Some(Object::Dictionary(grp)) => group_dict_needs_fix(grp),
+                    _ => false,
+                }
+            }
+        } else {
+            false
+        };
+        if needs_fix {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                let mut group_dict = lopdf::dictionary! {
+                    "S" => Object::Name(b"Transparency".to_vec()),
+                };
+                if let Some(ref cs) = cs_value {
+                    group_dict.set("CS", cs.clone());
+                }
+                s.dict.set("Group", Object::Dictionary(group_dict));
+                count += 1;
+            }
+        }
     }
 
     count
@@ -9474,3 +9853,375 @@ fn normalize_bcp47(tag: &str) -> Option<String> {
 
     Some(result)
 }
+
+// ---------------------------------------------------------------------------
+// 6.1.13: Truncate oversized dictionaries (>4095) and arrays (>8191).
+// ---------------------------------------------------------------------------
+
+fn fix_long_containers(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let obj = match doc.objects.get(&id) {
+            Some(o) => o.clone(),
+            None => continue,
+        };
+        let (fixed, n) = fix_long_containers_in_object(obj, 0);
+        if n > 0 {
+            doc.objects.insert(id, fixed);
+            count += n;
+        }
+    }
+    count
+}
+
+fn fix_long_containers_in_object(obj: Object, depth: usize) -> (Object, usize) {
+    if depth > MAX_OBJECT_DEPTH {
+        return (obj, 0);
+    }
+    match obj {
+        Object::Array(mut arr) => {
+            let mut total = 0;
+            if arr.len() > 8191 {
+                arr.truncate(8191);
+                total += 1;
+            }
+            let new_arr: Vec<Object> = arr
+                .into_iter()
+                .map(|o| {
+                    let (fixed, n) = fix_long_containers_in_object(o, depth + 1);
+                    total += n;
+                    fixed
+                })
+                .collect();
+            (Object::Array(new_arr), total)
+        }
+        Object::Dictionary(mut dict) => {
+            let mut total = 0;
+            if dict.len() > 4095 {
+                let keys: Vec<Vec<u8>> = dict.iter().map(|(k, _)| k.clone()).collect();
+                for key in keys.into_iter().skip(4095) {
+                    dict.remove(&key);
+                }
+                total += 1;
+            }
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in dict.into_iter() {
+                let (fixed, n) = fix_long_containers_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            (Object::Dictionary(new_dict), total)
+        }
+        Object::Stream(mut s) => {
+            let mut total = 0;
+            if s.dict.len() > 4095 {
+                let keys: Vec<Vec<u8>> = s.dict.iter().map(|(k, _)| k.clone()).collect();
+                for key in keys.into_iter().skip(4095) {
+                    s.dict.remove(&key);
+                }
+                total += 1;
+            }
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in s.dict.into_iter() {
+                let (fixed, n) = fix_long_containers_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            s.dict = new_dict;
+            (Object::Stream(s), total)
+        }
+        other => (other, 0),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.8 — Name value is not a valid UTF-8 sequence.
+// ---------------------------------------------------------------------------
+
+fn fix_non_utf8_names(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let obj = match doc.objects.get(&id) {
+            Some(o) => o.clone(),
+            None => continue,
+        };
+        let (fixed, n) = sanitize_names_in_object(obj, 0);
+        if n > 0 {
+            doc.objects.insert(id, fixed);
+            count += n;
+        }
+    }
+    count
+}
+
+fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
+    if depth > MAX_OBJECT_DEPTH {
+        return (obj, 0);
+    }
+    match obj {
+        Object::Name(bytes) => {
+            let mut total = 0;
+            let mut sanitized = bytes;
+            if String::from_utf8(sanitized.clone()).is_err() {
+                sanitized = sanitized
+                    .into_iter()
+                    .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                    .collect();
+                total += 1;
+            }
+            if name_serialized_len(&sanitized) > 127 {
+                sanitized = truncate_name_for_serialization(&sanitized, 127);
+                total += 1;
+            }
+            (Object::Name(sanitized), total)
+        }
+        Object::Array(arr) => {
+            let mut total = 0;
+            let new_arr: Vec<Object> = arr
+                .into_iter()
+                .map(|o| {
+                    let (fixed, n) = sanitize_names_in_object(o, depth + 1);
+                    total += n;
+                    fixed
+                })
+                .collect();
+            (Object::Array(new_arr), total)
+        }
+        Object::Dictionary(dict) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in dict.into_iter() {
+                let mut fixed_key = key;
+                if String::from_utf8(fixed_key.clone()).is_err() {
+                    fixed_key = fixed_key
+                        .into_iter()
+                        .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                        .collect();
+                    total += 1;
+                }
+                if name_serialized_len(&fixed_key) > 127 {
+                    fixed_key = truncate_name_for_serialization(&fixed_key, 127);
+                    total += 1;
+                }
+                let (fixed_val, n) = sanitize_names_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(fixed_key, fixed_val);
+            }
+            (Object::Dictionary(new_dict), total)
+        }
+        Object::Stream(mut s) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in s.dict.into_iter() {
+                let mut fixed_key = key;
+                if String::from_utf8(fixed_key.clone()).is_err() {
+                    fixed_key = fixed_key
+                        .into_iter()
+                        .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                        .collect();
+                    total += 1;
+                }
+                if name_serialized_len(&fixed_key) > 127 {
+                    fixed_key = truncate_name_for_serialization(&fixed_key, 127);
+                    total += 1;
+                }
+                let (fixed_val, n) = sanitize_names_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(fixed_key, fixed_val);
+            }
+            s.dict = new_dict;
+            (Object::Stream(s), total)
+        }
+        other => (other, 0),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6.3.3 — Text/Highlight/etc annotation missing /AP (appearance dict).
+// ---------------------------------------------------------------------------
+
+fn fix_missing_annot_appearances_extra(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    for page_id in page_ids {
+        let annots = match doc.get_object(page_id) {
+            Ok(Object::Dictionary(ref d)) => match d.get(b"Annots") {
+                Ok(Object::Array(ref a)) => a.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+
+        // Collect annot IDs + rects first, then mutate in a second pass
+        // to avoid double-mutable-borrow of doc.
+        let mut needs_ap: Vec<(ObjectId, Vec<Object>)> = Vec::new();
+        for annot_ref in annots {
+            let annot_id = match annot_ref {
+                Object::Reference(id) => id,
+                _ => continue,
+            };
+            if let Ok(Object::Dictionary(ref annot_dict)) = doc.get_object(annot_id) {
+                let is_annot = matches!(annot_dict.get(b"Type").ok(), Some(Object::Name(ref n)) if n == b"Annotation" || n == b"Annot");
+                if is_annot && !annot_dict.has(b"AP") {
+                    let rect = match annot_dict.get(b"Rect") {
+                        Ok(Object::Array(a)) => a.clone(),
+                        _ => vec![0.into(), 0.into(), 1.into(), 1.into()],
+                    };
+                    needs_ap.push((annot_id, rect));
+                }
+            }
+        }
+        for (annot_id, rect) in needs_ap {
+            let ap_stream = create_empty_ap_stream_extra(doc, &rect);
+            if let Ok(Object::Dictionary(ref mut annot_dict)) = doc.get_object_mut(annot_id) {
+                annot_dict.set("AP", dictionary! { "N" => Object::Reference(ap_stream) });
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn obj_as_f64(obj: &Object) -> Option<f64> {
+    match obj {
+        Object::Integer(i) => Some(*i as f64),
+        Object::Real(f) => Some(*f as f64),
+        _ => None,
+    }
+}
+
+fn create_empty_ap_stream_extra(doc: &mut Document, rect: &[Object]) -> ObjectId {
+    let bbox = if rect.len() == 4 {
+        let x1 = obj_as_f64(&rect[0]).unwrap_or(0.0);
+        let y1 = obj_as_f64(&rect[1]).unwrap_or(0.0);
+        let x2 = obj_as_f64(&rect[2]).unwrap_or(1.0);
+        let y2 = obj_as_f64(&rect[3]).unwrap_or(1.0);
+        vec![0.into(), 0.into(), (x2 - x1).into(), (y2 - y1).into()]
+    } else {
+        vec![0.into(), 0.into(), 1.into(), 1.into()]
+    };
+
+    let dict = dictionary! {
+        "Type" => "XObject",
+        "Subtype" => "Form",
+        "BBox" => Object::Array(bbox),
+        "Resources" => dictionary! {},
+    };
+    doc.add_object(Object::Stream(lopdf::Stream::new(dict, Vec::new())))
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.6 — Hexadecimal string contains non-hex characters.
+// ---------------------------------------------------------------------------
+
+fn fix_hex_string_garbage(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let obj = match doc.objects.get(&id) {
+            Some(o) => o.clone(),
+            None => continue,
+        };
+        let (fixed, n) = clean_hex_in_object(obj, 0);
+        if n > 0 {
+            doc.objects.insert(id, fixed);
+            count += n;
+        }
+    }
+    count
+}
+
+fn clean_hex_in_object(obj: Object, depth: usize) -> (Object, usize) {
+    if depth > MAX_OBJECT_DEPTH {
+        return (obj, 0);
+    }
+    match obj {
+        Object::String(bytes, lopdf::StringFormat::Hexadecimal) => {
+            (Object::String(bytes, lopdf::StringFormat::Hexadecimal), 0)
+        }
+        Object::Array(arr) => {
+            let mut total = 0;
+            let new_arr: Vec<Object> = arr
+                .into_iter()
+                .map(|o| {
+                    let (fixed, n) = clean_hex_in_object(o, depth + 1);
+                    total += n;
+                    fixed
+                })
+                .collect();
+            (Object::Array(new_arr), total)
+        }
+        Object::Dictionary(dict) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in dict.into_iter() {
+                let (fixed, n) = clean_hex_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            (Object::Dictionary(new_dict), total)
+        }
+        Object::Stream(mut s) => {
+            let mut total = 0;
+            let mut new_dict = lopdf::Dictionary::new();
+            for (key, val) in s.dict.into_iter() {
+                let (fixed, n) = clean_hex_in_object(val, depth + 1);
+                total += n;
+                new_dict.set(key, fixed);
+            }
+            s.dict = new_dict;
+            (Object::Stream(s), total)
+        }
+        other => (other, 0),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.7.1 — Remove forbidden external file references from stream dicts.
+// ---------------------------------------------------------------------------
+
+fn fix_stream_external_ref_keys_extra(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            if s.dict.has(b"F") || s.dict.has(b"FFilter") || s.dict.has(b"FDecodeParms") {
+                s.dict.remove(b"F");
+                s.dict.remove(b"FFilter");
+                s.dict.remove(b"FDecodeParms");
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// 6.1.6.2 — Promote inline JBIG2Globals to indirect objects.
+// ---------------------------------------------------------------------------
+
+fn fix_jbig2_globals_promotion(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let mut new_globals_id = None;
+        if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+            if let Ok(globals) = s.dict.get(b"JBIG2Globals") {
+                if !matches!(globals, Object::Reference(_)) {
+                    let globals_obj = globals.clone();
+                    new_globals_id = Some(doc.add_object(globals_obj));
+                    count += 1;
+                }
+            }
+        }
+        if let Some(gid) = new_globals_id {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.set("JBIG2Globals", Object::Reference(gid));
+            }
+        }
+    }
+    count
+}
+
