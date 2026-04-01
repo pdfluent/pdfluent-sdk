@@ -57,6 +57,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build binary
+        shell: bash
         run: |
           if [ "${{ matrix.use_cross }}" = "true" ]; then
             cross build --release --bin xfa-cli --target ${{ matrix.target }}
@@ -66,16 +67,19 @@ jobs:
 
       - name: Strip binary (Linux)
         if: matrix.os == 'ubuntu-latest'
+        shell: bash
         run: |
           strip target/${{ matrix.target }}/release/xfa-cli
 
       - name: Strip binary (macOS)
         if: matrix.os == 'macos-latest' || matrix.os == 'macos-13'
+        shell: bash
         run: |
           strip target/${{ matrix.target }}/release/xfa-cli
 
       - name: Package binary
         id: package
+        shell: bash
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           ARCHIVE_NAME=xfa-cli-${{ matrix.target }}-v${VERSION}
@@ -113,23 +117,6 @@ jobs:
         with:
           path: dist
 
-      - name: Prepare artifacts for upload
-        run: |
-          for dir in dist/xfa-cli-*; do
-            if [ -d "$dir" ]; then
-              cd "$dir"
-              if [ -f "xfa-cli.exe" ]; then
-                powershell -Command "Compress-Archive -Path '.' -DestinationPath '../$(basename $dir).zip'"
-              else
-                tar -czf '../$(basename $dir).tar.gz' .
-              fi
-              cd ../..
-            fi
-          done
-
-      - name: Delete old artifacts directory
-        run: rm -rf dist/xfa-cli-*
-
       - name: Get version from tag
         id: tag
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -148,10 +135,8 @@ jobs:
 
       - name: Upload Release Assets
         run: |
-          for archive in dist/*.tar.gz dist/*.zip; do
-            if [ -f "$archive" ]; then
-              gh release upload ${{ github.ref_name }} "$archive" --clobber
-            fi
+          find dist -type f \( -name "*.tar.gz" -o -name "*.zip" \) | while read f; do
+            gh release upload ${{ github.ref_name }} "$f" --clobber
           done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
