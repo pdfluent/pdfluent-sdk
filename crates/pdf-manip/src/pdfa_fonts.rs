@@ -966,6 +966,11 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     // order, avoiding the interference between separate pipeline steps.
     let _ = enforce_pdfa_font_compliance(doc);
 
+    // Complete any incomplete ToUnicode CMaps by filling gaps based on
+    // the font's Encoding (especially Differences). §6.2.11.4.1 requires
+    // that ALL character codes used in a PDF have a Unicode mapping.
+    let _ = fix_incomplete_tounicode_from_encoding(doc);
+
     // Final width sync pass: after ALL font manipulations (encoding fixes,
     // subsetting, embedding, ToUnicode), synchronize Widths arrays with
     // actual glyph widths from the embedded font binary.
@@ -14340,14 +14345,32 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
 
         // Apply Differences overrides.
         for (code, glyph_name) in &differences {
-            match glyph_name_to_char(glyph_name) {
+            let mapped = glyph_name_to_char(glyph_name).or_else(|| {
+                if glyph_name.starts_with("uni") && glyph_name.len() == 7 {
+                    u32::from_str_radix(&glyph_name[3..], 16)
+                        .ok()
+                        .and_then(|cp| char::from_u32(cp))
+                } else if glyph_name.starts_with("u") && glyph_name.len() == 6 {
+                    u32::from_str_radix(&glyph_name[1..], 16)
+                        .ok()
+                        .and_then(|cp| char::from_u32(cp))
+                } else {
+                    None
+                }
+            });
+            match mapped {
                 Some(ch) => {
                     let cp = ch as u32;
                     if cp > 0 && cp <= 0xFFFF && cp != 0xFFFD {
                         code_to_unicode[*code as usize] = Some(cp as u16);
                     }
                 }
-                None => {}
+                None => {
+                    let cp = *code as u32;
+                    if cp > 0 && cp <= 0xFFFF {
+                        code_to_unicode[*code as usize] = Some(cp as u16);
+                    }
+                }
             }
         }
 
@@ -14411,6 +14434,175 @@ pub fn fix_type1_tounicode_from_encoding(doc: &mut Document) -> usize {
         )));
         if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&font_id) {
             dict.set("ToUnicode", Object::Reference(stream_id));
+            fixed += 1;
+        }
+    }
+
+    fixed
+}
+
+/// Complete ToUnicode CMap for simple fonts that have one but are missing
+/// entries required by their Encoding (especially Differences).
+///
+/// §6.2.11.4.1 requires that ALL character codes used in a PDF have a
+/// Unicode mapping. This function fills gaps in existing ToUnicode CMaps
+/// by computing what the encoding says should exist and adding missing
+/// entries. Existing correct mappings are never modified or removed.
+///
+/// ISO 19005-2 §6.2.11.7.2
+pub fn fix_incomplete_tounicode_from_encoding(doc: &mut Document) -> usize {
+    use crate::encoding_utils::glyph_name_to_char;
+
+    #[derive(Clone)]
+    struct FontEncInfo {
+        font_id: ObjectId,
+        base_enc: String,
+        differences: Vec<(u8, String)>,
+    }
+
+    let font_ids: Vec<FontEncInfo> = doc
+        .objects
+        .iter()
+        .filter_map(|(&font_id, obj)| {
+            let Object::Dictionary(dict) = obj else {
+                return None;
+            };
+            let subtype = get_name(dict, b"Subtype").unwrap_or_default();
+            match subtype.as_str() {
+                "Type1" | "MMType1" | "TrueType" | "Type3" => {}
+                _ => return None,
+            }
+            if dict.get(b"ToUnicode").is_err() {
+                return None;
+            }
+
+            let enc_info: (String, Vec<(u8, String)>) = match dict.get(b"Encoding").ok() {
+                Some(Object::Name(n)) => {
+                    let name = String::from_utf8_lossy(n).to_string();
+                    (name, vec![])
+                }
+                Some(Object::Reference(enc_ref)) => {
+                    let enc_ref = *enc_ref;
+                    match doc.objects.get(&enc_ref) {
+                        Some(Object::Dictionary(enc_dict)) => type1_enc_from_dict(enc_dict),
+                        _ => ("StandardEncoding".to_string(), vec![]),
+                    }
+                }
+                Some(Object::Dictionary(enc_dict)) => type1_enc_from_dict(enc_dict),
+                None | Some(_) => ("StandardEncoding".to_string(), vec![]),
+            };
+
+            if enc_info.1.is_empty() {
+                return None;
+            }
+
+            Some(FontEncInfo {
+                font_id,
+                base_enc: enc_info.0,
+                differences: enc_info.1,
+            })
+        })
+        .collect();
+
+    let mut fixed = 0;
+
+    for enc_info in font_ids {
+        let Some(Object::Dictionary(dict)) = doc.objects.get(&enc_info.font_id) else {
+            continue;
+        };
+
+        let existing_map = read_font_to_unicode_map(doc, dict);
+        if existing_map.is_empty() {
+            continue;
+        }
+
+        let mut expected_codes: std::collections::HashMap<u8, Option<u16>> =
+            std::collections::HashMap::new();
+
+        let enc_known = matches!(
+            enc_info.base_enc.as_str(),
+            "WinAnsiEncoding" | "MacRomanEncoding" | "StandardEncoding"
+        );
+
+        if enc_known {
+            match enc_info.base_enc.as_str() {
+                "WinAnsiEncoding" | "MacRomanEncoding" => {
+                    for code in 32u32..=255 {
+                        let ch = encoding_to_char(code, &enc_info.base_enc);
+                        let cp = ch as u32;
+                        if cp > 0 && cp <= 0xFFFF && cp != 0xFFFD {
+                            expected_codes.insert(code as u8, Some(cp as u16));
+                        }
+                    }
+                }
+                "StandardEncoding" => {
+                    for code in 32u8..=126 {
+                        expected_codes.insert(code, Some(code as u16));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for (code, glyph_name) in &enc_info.differences {
+            let mapped = glyph_name_to_char(glyph_name).or_else(|| {
+                if glyph_name.starts_with("uni") && glyph_name.len() == 7 {
+                    u32::from_str_radix(&glyph_name[3..], 16)
+                        .ok()
+                        .and_then(|cp| char::from_u32(cp))
+                } else if glyph_name.starts_with("u") && glyph_name.len() == 6 {
+                    u32::from_str_radix(&glyph_name[1..], 16)
+                        .ok()
+                        .and_then(|cp| char::from_u32(cp))
+                } else {
+                    None
+                }
+            });
+            if let Some(ch) = mapped {
+                let cp = ch as u32;
+                if cp > 0 && cp <= 0xFFFF && cp != 0xFFFD {
+                    expected_codes.insert(*code, Some(cp as u16));
+                }
+            } else {
+                let cp = *code as u32;
+                if cp > 0 && cp <= 0xFFFF {
+                    expected_codes.insert(*code, Some(cp as u16));
+                }
+            }
+        }
+
+        let mut missing_codes: Vec<(u8, u16)> = Vec::new();
+        for (code, expected_unicode) in &expected_codes {
+            if existing_map.get(code).is_none() {
+                if let Some(unicode) = expected_unicode {
+                    missing_codes.push((*code, *unicode));
+                }
+            }
+        }
+
+        if missing_codes.is_empty() {
+            continue;
+        }
+
+        let mut all_mappings: Vec<(u8, u16)> = existing_map
+            .into_iter()
+            .map(|(code, ch)| (code, ch as u16))
+            .collect();
+        all_mappings.extend(missing_codes);
+        all_mappings.sort_by_key(|(code, _)| *code);
+        all_mappings.dedup_by_key(|(code, _)| *code);
+
+        let cmap_data = build_type1_tounicode_cmap(&all_mappings);
+        let len = cmap_data.len() as i64;
+
+        let stream_id = doc.add_object(Object::Stream(Stream::new(
+            dictionary! { "Length" => len },
+            cmap_data,
+        )));
+
+        if let Some(Object::Dictionary(ref mut font_dict)) = doc.objects.get_mut(&enc_info.font_id)
+        {
+            font_dict.set("ToUnicode", Object::Reference(stream_id));
             fixed += 1;
         }
     }
