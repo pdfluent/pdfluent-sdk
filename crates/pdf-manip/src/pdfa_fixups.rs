@@ -10084,20 +10084,39 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
     match obj {
         Object::Name(bytes) => {
             let mut total = 0;
-            let mut sanitized = bytes;
-            if String::from_utf8(sanitized.clone()).is_err() {
-                sanitized = sanitized
-                    .into_iter()
-                    .map(|b| {
-                        if b.is_ascii_graphic() || b == b' ' {
-                            b
+            let mut sanitized = Vec::with_capacity(bytes.len());
+            let mut changed = false;
+
+            let mut input = &bytes[..];
+            while !input.is_empty() {
+                match std::str::from_utf8(input) {
+                    Ok(s) => {
+                        sanitized.extend_from_slice(s.as_bytes());
+                        break;
+                    }
+                    Err(e) => {
+                        let (valid, after_valid) = input.split_at(e.valid_up_to());
+                        sanitized.extend_from_slice(valid);
+                        if let Some(invalid_sequence_length) = e.error_len() {
+                            for _ in 0..invalid_sequence_length {
+                                sanitized.push(b'_');
+                            }
+                            input = &after_valid[invalid_sequence_length..];
                         } else {
-                            b'_'
+                            for _ in 0..after_valid.len() {
+                                sanitized.push(b'_');
+                            }
+                            break;
                         }
-                    })
-                    .collect();
+                        changed = true;
+                    }
+                }
+            }
+
+            if changed {
                 total += 1;
             }
+
             if name_serialized_len(&sanitized) > 127 {
                 sanitized = truncate_name_for_serialization(&sanitized, 127);
                 total += 1;
@@ -10120,27 +10139,46 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in dict.into_iter() {
-                let mut fixed_key = key;
-                if String::from_utf8(fixed_key.clone()).is_err() {
-                    fixed_key = fixed_key
-                        .into_iter()
-                        .map(|b| {
-                            if b.is_ascii_graphic() || b == b' ' {
-                                b
+                let mut sanitized_key = Vec::with_capacity(key.len());
+                let mut changed = false;
+
+                let mut input = &key[..];
+                while !input.is_empty() {
+                    match std::str::from_utf8(input) {
+                        Ok(s) => {
+                            sanitized_key.extend_from_slice(s.as_bytes());
+                            break;
+                        }
+                        Err(e) => {
+                            let (valid, after_valid) = input.split_at(e.valid_up_to());
+                            sanitized_key.extend_from_slice(valid);
+                            if let Some(invalid_sequence_length) = e.error_len() {
+                                for _ in 0..invalid_sequence_length {
+                                    sanitized_key.push(b'_');
+                                }
+                                input = &after_valid[invalid_sequence_length..];
                             } else {
-                                b'_'
+                                for _ in 0..after_valid.len() {
+                                    sanitized_key.push(b'_');
+                                }
+                                break;
                             }
-                        })
-                        .collect();
+                            changed = true;
+                        }
+                    }
+                }
+
+                if changed {
                     total += 1;
                 }
-                if name_serialized_len(&fixed_key) > 127 {
-                    fixed_key = truncate_name_for_serialization(&fixed_key, 127);
+
+                if name_serialized_len(&sanitized_key) > 127 {
+                    sanitized_key = truncate_name_for_serialization(&sanitized_key, 127);
                     total += 1;
                 }
                 let (fixed_val, n) = sanitize_names_in_object(val, depth + 1);
                 total += n;
-                new_dict.set(fixed_key, fixed_val);
+                new_dict.set(sanitized_key, fixed_val);
             }
             (Object::Dictionary(new_dict), total)
         }
@@ -10148,27 +10186,46 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in s.dict.into_iter() {
-                let mut fixed_key = key;
-                if String::from_utf8(fixed_key.clone()).is_err() {
-                    fixed_key = fixed_key
-                        .into_iter()
-                        .map(|b| {
-                            if b.is_ascii_graphic() || b == b' ' {
-                                b
+                let mut sanitized_key = Vec::with_capacity(key.len());
+                let mut changed = false;
+
+                let mut input = &key[..];
+                while !input.is_empty() {
+                    match std::str::from_utf8(input) {
+                        Ok(s) => {
+                            sanitized_key.extend_from_slice(s.as_bytes());
+                            break;
+                        }
+                        Err(e) => {
+                            let (valid, after_valid) = input.split_at(e.valid_up_to());
+                            sanitized_key.extend_from_slice(valid);
+                            if let Some(invalid_sequence_length) = e.error_len() {
+                                for _ in 0..invalid_sequence_length {
+                                    sanitized_key.push(b'_');
+                                }
+                                input = &after_valid[invalid_sequence_length..];
                             } else {
-                                b'_'
+                                for _ in 0..after_valid.len() {
+                                    sanitized_key.push(b'_');
+                                }
+                                break;
                             }
-                        })
-                        .collect();
+                            changed = true;
+                        }
+                    }
+                }
+
+                if changed {
                     total += 1;
                 }
-                if name_serialized_len(&fixed_key) > 127 {
-                    fixed_key = truncate_name_for_serialization(&fixed_key, 127);
+
+                if name_serialized_len(&sanitized_key) > 127 {
+                    sanitized_key = truncate_name_for_serialization(&sanitized_key, 127);
                     total += 1;
                 }
                 let (fixed_val, n) = sanitize_names_in_object(val, depth + 1);
                 total += n;
-                new_dict.set(fixed_key, fixed_val);
+                new_dict.set(sanitized_key, fixed_val);
             }
             s.dict = new_dict;
             (Object::Stream(s), total)
@@ -10278,6 +10335,20 @@ fn clean_hex_in_object(obj: Object, depth: usize) -> (Object, usize) {
     }
     match obj {
         Object::String(bytes, lopdf::StringFormat::Hexadecimal) => {
+            // lopdf encodes Object::String(..., Hexadecimal) as raw bytes during write,
+            // then lopdf's write_string(Hexadecimal) writes them out as hex pairs.
+            // If the original PDF had garbage inside <...>, it might have been
+            // misparsed or the garbage might still be "present" if lopdf's parser
+            // was lenient but kept some artifacts.
+            // However, §6.1.6 usually refers to the serialized form having non-hex.
+            // In lopdf, we can't easily "fix" the serialized form without changing lopdf.
+            // BUT, if we are in pdf-manip, we can ensure that when we write it back,
+            // it is clean. lopdf always writes it back clean (only 0-9A-F).
+            // So just identifying it as "fixed" if it might have been messy is enough
+            // to trigger a re-write.
+            // Let's assume any Hexadecimal string is potentially fixed by re-serialization.
+            // Actually, we should probably check if it was originally malformed if we had that info.
+            // Since we don't, we'll just return it as-is but with 0 count unless we actually change bytes.
             (Object::String(bytes, lopdf::StringFormat::Hexadecimal), 0)
         }
         Object::Array(arr) => {
