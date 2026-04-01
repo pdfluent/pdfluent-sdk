@@ -5239,6 +5239,78 @@ fn collect_content_stream_ids(doc: &Document) -> std::collections::HashSet<Objec
 ///
 /// Corrupt compressed content can surface as undefined operators during
 /// validation. For such streams, keep a valid but empty content stream.
+fn collect_annotation_appearance_stream_ids(doc: &Document) -> std::collections::HashSet<ObjectId> {
+    fn collect_ap_stream_refs(
+        doc: &Document,
+        obj: &Object,
+        ids: &mut std::collections::HashSet<ObjectId>,
+    ) {
+        match obj {
+            Object::Reference(id) => match doc.objects.get(id) {
+                Some(Object::Stream(_)) => {
+                    ids.insert(*id);
+                }
+                Some(Object::Dictionary(dict)) => {
+                    for (_, value) in dict.iter() {
+                        collect_ap_stream_refs(doc, value, ids);
+                    }
+                }
+                _ => {}
+            },
+            Object::Dictionary(dict) => {
+                for (_, value) in dict.iter() {
+                    collect_ap_stream_refs(doc, value, ids);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut ids = std::collections::HashSet::new();
+
+    for page_id in doc.get_pages().values() {
+        let annots: Vec<Object> = match doc.objects.get(page_id) {
+            Some(Object::Dictionary(page_dict)) => match page_dict.get(b"Annots").ok() {
+                Some(Object::Array(arr)) => arr.clone(),
+                Some(Object::Reference(arr_id)) => match doc.objects.get(arr_id) {
+                    Some(Object::Array(arr)) => arr.clone(),
+                    _ => Vec::new(),
+                },
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+
+        for annot_obj in &annots {
+            let annot = match annot_obj {
+                Object::Reference(id) => match doc.objects.get(id) {
+                    Some(Object::Dictionary(dict)) => dict,
+                    _ => continue,
+                },
+                Object::Dictionary(dict) => dict,
+                _ => continue,
+            };
+
+            let ap_dict = match annot.get(b"AP").ok() {
+                Some(Object::Dictionary(dict)) => dict,
+                Some(Object::Reference(ap_id)) => match doc.objects.get(ap_id) {
+                    Some(Object::Dictionary(dict)) => dict,
+                    _ => continue,
+                },
+                _ => continue,
+            };
+
+            for key in [b"N".as_slice(), b"R".as_slice(), b"D".as_slice()] {
+                if let Ok(value) = ap_dict.get(key) {
+                    collect_ap_stream_refs(doc, value, &mut ids);
+                }
+            }
+        }
+    }
+
+    ids
+}
+
 fn fix_unreadable_content_streams(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
@@ -8257,7 +8329,9 @@ fn is_pdf_delimiter_or_ws(b: u8) -> bool {
 }
 
 fn strip_unknown_content_stream_operators(doc: &mut Document) -> usize {
-    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
+    let mut ids = collect_content_stream_ids(doc);
+    ids.extend(collect_annotation_appearance_stream_ids(doc));
+    let ids: Vec<ObjectId> = ids.into_iter().collect();
     let mut count = 0;
 
     for id in ids {
