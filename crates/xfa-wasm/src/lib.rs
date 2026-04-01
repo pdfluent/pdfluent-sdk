@@ -888,6 +888,67 @@ impl PdfDoc {
             .collect();
         serde_json::to_string(&results).unwrap_or_default()
     }
+
+    /// Merge another PDF document into this one.
+    ///
+    /// Returns the merged PDF as a `Uint8Array`.
+    #[wasm_bindgen(js_name = "merge")]
+    pub fn merge(&self, other: &[u8]) -> Result<Vec<u8>, JsError> {
+        let self_bytes = self.pdf.data().as_ref();
+        let mut self_doc =
+            lopdf::Document::load_mem(self_bytes).map_err(|e| JsError::new(&format!("{e}")))?;
+        let other_doc =
+            lopdf::Document::load_mem(other).map_err(|e| JsError::new(&format!("{e}")))?;
+        let page_count = self_doc.get_pages().len() as u32;
+        pdf_manip::pages::insert_pages(&mut self_doc, &other_doc, page_count + 1)
+            .map_err(|e| JsError::new(&format!("merge failed: {e}")))?;
+        let mut buf = Vec::new();
+        self_doc
+            .save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("save failed: {e}")))?;
+        Ok(buf)
+    }
+
+    /// Convert this PDF to PDF/A-1b, PDF/A-2b, or PDF/A-3b.
+    ///
+    /// `level` must be "1b", "2b", or "3b".
+    /// Returns the converted PDF as a `Uint8Array`.
+    #[wasm_bindgen(js_name = "convertToPdfa")]
+    pub fn convert_to_pdfa(&self, level: &str) -> Result<Vec<u8>, JsError> {
+        use pdf_manip::pdfa_xmp::PdfAConformance;
+        let conformance = match level
+            .to_lowercase()
+            .replace(['-', '/', '_', ' '], "")
+            .as_str()
+        {
+            "pdfa1b" | "a1b" | "1b" => PdfAConformance::A1b,
+            "pdfa2b" | "a2b" | "2b" => PdfAConformance::A2b,
+            "pdfa3b" | "a3b" | "3b" => PdfAConformance::A3b,
+            other => {
+                return Err(JsError::new(&format!(
+                    "unknown PDF/A level: {other:?} — expected \"1b\", \"2b\", or \"3b\""
+                )))
+            }
+        };
+        let self_bytes = self.pdf.data().as_ref();
+        let mut doc =
+            lopdf::Document::load_mem(self_bytes).map_err(|e| JsError::new(&format!("{e}")))?;
+        let is_pdfa1 = matches!(conformance, PdfAConformance::A1b);
+        let _ = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut doc, is_pdfa1)
+            .map_err(|e| JsError::new(&format!("pdfa cleanup: {e}")))?;
+        let _ = pdf_manip::pdfa_fonts::enforce_pdfa_font_compliance(&mut doc);
+        let _ = pdf_manip::pdfa_colorspace::normalize_colorspaces(&mut doc)
+            .map_err(|e| JsError::new(&format!("colorspace: {e}")))?;
+        pdf_manip::pdfa_fixups::run_fixups(&mut doc);
+        let _ = pdf_manip::pdfa_xmp::repair_xmp_metadata(&mut doc, conformance, None)
+            .map_err(|e| JsError::new(&format!("xmp repair: {e}")))?;
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf)
+            .map_err(|e| JsError::new(&format!("save: {e}")))?;
+        pdf_manip::pdfa_cleanup::fix_pdf_header(&mut buf);
+        pdf_manip::pdfa_cleanup::fix_startxref(&mut buf);
+        Ok(buf)
+    }
 }
 
 impl PdfDoc {
