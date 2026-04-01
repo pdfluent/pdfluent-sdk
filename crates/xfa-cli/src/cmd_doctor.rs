@@ -4,9 +4,13 @@ use anyhow::{bail, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use crate::error::CliError;
 
 pub fn run() -> Result<()> {
-    println!("PDFluent v{} — installation check", env!("CARGO_PKG_VERSION"));
+    println!(
+        "PDFluent v{} — installation check",
+        env!("CARGO_PKG_VERSION")
+    );
     println!();
 
     let mut issues = 0;
@@ -14,7 +18,11 @@ pub fn run() -> Result<()> {
     // 1. Binary
     let binary_path = std::env::current_exe().ok();
     match binary_path {
-        Some(path) => println!("✓ Binary     v{} at {}", env!("CARGO_PKG_VERSION"), path.display()),
+        Some(path) => println!(
+            "✓ Binary     v{} at {}",
+            env!("CARGO_PKG_VERSION"),
+            path.display()
+        ),
         None => {
             println!("✗ Binary     Could not determine executable path");
             issues += 1;
@@ -72,7 +80,10 @@ pub fn run() -> Result<()> {
 
     // 4. ICC profiles
     let icc_dirs = if cfg!(target_os = "macos") {
-        vec!["/Library/ColorSync/Profiles", "/System/Library/ColorSync/Profiles"]
+        vec![
+            "/Library/ColorSync/Profiles",
+            "/System/Library/ColorSync/Profiles",
+        ]
     } else {
         vec!["/usr/share/color/icc", "/usr/local/share/color/icc"]
     };
@@ -104,7 +115,9 @@ pub fn run() -> Result<()> {
     // 6. veraPDF (optional)
     match Command::new("verapdf").arg("--version").output() {
         Ok(_) => println!("✓ veraPDF    Found"),
-        Err(_) => println!("– veraPDF    Not found (optional — only needed for validation testing)"),
+        Err(_) => {
+            println!("– veraPDF    Not found (optional — only needed for validation testing)")
+        }
     }
 
     println!();
@@ -169,10 +182,16 @@ fn get_free_space(path: &Path) -> String {
 
 fn get_memory() -> Result<String> {
     if cfg!(target_os = "macos") {
-        let output = Command::new("sysctl").arg("-n").arg("hw.memsize").output()?;
+        let output = Command::new("sysctl")
+            .arg("-n")
+            .arg("hw.memsize")
+            .output()?;
         let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let bytes: u64 = s.parse()?;
-        Ok(format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0)))
+        Ok(format!(
+            "{:.1} GB",
+            bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+        ))
     } else {
         let meminfo = fs::read_to_string("/proc/meminfo")?;
         for line in meminfo.lines() {
@@ -184,7 +203,12 @@ fn get_memory() -> Result<String> {
                 }
             }
         }
-        bail!("Could not parse /proc/meminfo")
+        bail!(CliError {
+            message: "Could not parse /proc/meminfo".to_string(),
+            why: Some("The /proc/meminfo file format is unexpected.".to_string()),
+            fix: Some("This is likely a system configuration issue or an unsupported OS version.".to_string()),
+            docs: Some("https://docs.pdfluent.com/errors/E004".to_string()),
+        })
     }
 }
 

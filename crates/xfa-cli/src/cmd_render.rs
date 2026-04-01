@@ -3,11 +3,27 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 
+use crate::error::CliError;
 use pdf_engine::{PdfDocument, RenderOptions};
 
 pub fn run(input: &Path, output: &Path, dpi: f64, pages: Option<&str>) -> Result<()> {
-    let data = std::fs::read(input).context("failed to read input PDF")?;
-    let doc = PdfDocument::open(data).context("failed to open PDF")?;
+    let data = std::fs::read(input).map_err(|e| {
+        anyhow::anyhow!(CliError {
+            message: format!("Could not read input PDF: {}", input.display()),
+            why: Some(e.to_string()),
+            fix: Some("Check if the file exists and is readable.".to_string()),
+            docs: Some("https://docs.pdfluent.com/errors/E001".to_string()),
+        })
+    })?;
+
+    let doc = PdfDocument::open(data).map_err(|e| {
+        anyhow::anyhow!(CliError {
+            message: format!("Could not open PDF: {}", input.display()),
+            why: Some(e.to_string()),
+            fix: Some("Ensure the file is a valid PDF document and not corrupted.".to_string()),
+            docs: Some("https://docs.pdfluent.com/errors/E005".to_string()),
+        })
+    })?;
     let total = doc.page_count();
 
     let page_indices = match pages {
