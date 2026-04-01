@@ -7330,6 +7330,224 @@ pub fn fix_missing_cidtogidmap(doc: &mut Document) -> usize {
     count
 }
 
+/// CIDSystemInfo extracted from a CMap stream.
+#[derive(Debug, Clone, PartialEq)]
+struct CmapCidsystemInfo {
+    registry: String,
+    ordering: String,
+    supplement: i64,
+}
+
+impl CmapCidsystemInfo {
+    fn parse_from_cmap_stream(doc: &Document, enc_ref: ObjectId) -> Option<Self> {
+        let stream = match doc.objects.get(&enc_ref) {
+            Some(Object::Stream(s)) => s,
+            _ => return None,
+        };
+        let mut s = stream.clone();
+        let _ = s.decompress();
+        Self::parse_from_cmap_text(std::str::from_utf8(&s.content).ok()?)
+    }
+
+    fn parse_from_cmap_text(text: &str) -> Option<Self> {
+        let mut registry = None;
+        let mut ordering = None;
+        let mut supplement = None;
+
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with("/Registry") {
+                let after_reg = line.strip_prefix("/Registry")?.trim();
+                if let Some(start) = after_reg.find('(') {
+                    if let Some(end) = after_reg[start + 1..].find(')') {
+                        registry = Some(after_reg[start + 1..start + 1 + end].to_string());
+                    }
+                }
+            } else if line.starts_with("/Ordering") {
+                let after_ord = line.strip_prefix("/Ordering")?.trim();
+                if let Some(start) = after_ord.find('(') {
+                    if let Some(end) = after_ord[start + 1..].find(')') {
+                        ordering = Some(after_ord[start + 1..start + 1 + end].to_string());
+                    }
+                }
+            } else if line.starts_with("/Supplement") {
+                if let Some(num) = line
+                    .strip_prefix("/Supplement")
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+                {
+                    supplement = Some(num);
+                }
+            }
+        }
+
+        Some(Self {
+            registry: registry?,
+            ordering: ordering?,
+            supplement: supplement.unwrap_or(0),
+        })
+    }
+}
+
+/// Returns true if the given CMap name is a predefined Adobe CMap.
+/// Identity-H and Identity-V are considered predefined.
+fn is_predefined_cmap(cmap_name: &str) -> bool {
+    if is_identity_type0_cmap(cmap_name) {
+        return true;
+    }
+    find_predefined_cmap_file(cmap_name).is_some()
+}
+
+/// Fix §6.2.11.3.3 and §6.2.11.3.1 for Type0 fonts:
+///
+/// §6.2.11.3.3: Type0 fonts with non-standard CMap names (not in Adobe's
+/// predefined CMap collection) that have a non-embedded CIDFont descendant.
+/// The CMap cannot be validated when the font program is absent, so replace
+/// the non-standard CMap with Identity-H and update the CIDSystemInfo to
+/// Adobe/Identity/0.
+///
+/// §6.2.11.3.1: CIDSystemInfo Registry/Ordering mismatch between the CMap
+/// and the CIDFont descendant. When they disagree, the CIDFont's CIDSystemInfo
+/// is updated to match the CMap.
+pub fn fix_type0_cmap_cidsysteminfo(doc: &mut Document) -> usize {
+    #[derive(Debug, Clone)]
+    struct Type0CmapInfo {
+        type0_id: ObjectId,
+        cid_id: ObjectId,
+        is_nonstandard: bool,
+        cmap_cidsysteminfo: Option<CmapCidsystemInfo>,
+    }
+
+    let mut to_fix: Vec<Type0CmapInfo> = Vec::new();
+
+    for (&font_id, obj) in &doc.objects {
+        let Object::Dictionary(dict) = obj else {
+            continue;
+        };
+        if get_name(dict, b"Subtype").as_deref() != Some("Type0") {
+            continue;
+        }
+
+        let cmap_name = match resolve_type0_cmap_name(doc, dict) {
+            Some(name) => name,
+            None => continue,
+        };
+
+        let is_nonstandard = !is_predefined_cmap(&cmap_name);
+
+        let descendants = match dict.get(b"DescendantFonts").ok() {
+            Some(Object::Array(arr)) => arr.clone(),
+            _ => continue,
+        };
+
+        let Some(Object::Reference(cid_id)) = descendants.first() else {
+            continue;
+        };
+        let cid_id = *cid_id;
+
+        let cmap_cidsysteminfo = match dict.get(b"Encoding").ok() {
+            Some(Object::Reference(enc_ref)) => {
+                CmapCidsystemInfo::parse_from_cmap_stream(doc, *enc_ref)
+            }
+            _ => None,
+        };
+
+        to_fix.push(Type0CmapInfo {
+            type0_id: font_id,
+            cid_id,
+            is_nonstandard,
+            cmap_cidsysteminfo,
+        });
+    }
+
+    let mut fixed = 0;
+
+    for info in &to_fix {
+        let cid_is_embedded = {
+            let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&info.cid_id) else {
+                continue;
+            };
+            match cid_dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(fd_id)) => {
+                    if let Some(Object::Dictionary(fd)) = doc.objects.get(fd_id) {
+                        has_valid_font_file(doc, fd)
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+        };
+
+        if info.is_nonstandard && !cid_is_embedded {
+            if let Some(Object::Dictionary(type0_dict)) = doc.objects.get_mut(&info.type0_id) {
+                type0_dict.set("Encoding", Object::Name(b"Identity-H".to_vec()));
+            }
+            if let Some(Object::Dictionary(cid_dict)) = doc.objects.get_mut(&info.cid_id) {
+                cid_dict.set(
+                    "CIDSystemInfo",
+                    Object::Dictionary(dictionary! {
+                        "Registry" => Object::String(b"Adobe".to_vec(), lopdf::StringFormat::Literal),
+                        "Ordering" => Object::String(b"Identity".to_vec(), lopdf::StringFormat::Literal),
+                        "Supplement" => Object::Integer(0),
+                    }),
+                );
+            }
+            fixed += 1;
+            continue;
+        }
+
+        if let (Some(cmap_csi), Some(Object::Dictionary(cid_dict))) =
+            (&info.cmap_cidsysteminfo, doc.objects.get(&info.cid_id))
+        {
+            let cid_csi = match cid_dict.get(b"CIDSystemInfo").ok() {
+                Some(Object::Dictionary(d)) => {
+                    let registry = match d.get(b"Registry").ok() {
+                        Some(Object::String(s, _)) => Some(String::from_utf8_lossy(s).to_string()),
+                        Some(Object::Name(n)) => Some(String::from_utf8_lossy(n).to_string()),
+                        _ => None,
+                    };
+                    let ordering = match d.get(b"Ordering").ok() {
+                        Some(Object::String(s, _)) => Some(String::from_utf8_lossy(s).to_string()),
+                        Some(Object::Name(n)) => Some(String::from_utf8_lossy(n).to_string()),
+                        _ => None,
+                    };
+                    let supplement = d.get(b"Supplement").and_then(|o| o.as_i64()).unwrap_or(0);
+                    if let (Some(r), Some(o)) = (registry, ordering) {
+                        Some(CmapCidsystemInfo {
+                            registry: r,
+                            ordering: o,
+                            supplement,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+            if let Some(cid_csi) = cid_csi {
+                if cmap_csi.registry != cid_csi.registry || cmap_csi.ordering != cid_csi.ordering {
+                    if let Some(Object::Dictionary(ref mut cid_dict)) =
+                        doc.objects.get_mut(&info.cid_id)
+                    {
+                        cid_dict.set(
+                            "CIDSystemInfo",
+                            Object::Dictionary(dictionary! {
+                                "Registry" => Object::String(cmap_csi.registry.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+                                "Ordering" => Object::String(cmap_csi.ordering.as_bytes().to_vec(), lopdf::StringFormat::Literal),
+                                "Supplement" => Object::Integer(cmap_csi.supplement),
+                            }),
+                        );
+                        fixed += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    fixed
+}
+
 /// Fix CIDSet streams for all CID fonts (6.2.11.8:1).
 ///
 /// CIDSet must be a stream containing a bitmap covering all CIDs present
