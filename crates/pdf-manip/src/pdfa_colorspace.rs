@@ -201,13 +201,15 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     };
 
     // Also scan for DeviceCMYK usage in content streams and image XObjects.
-    let _has_cmyk =
+    let has_cmyk =
         unique_names.iter().any(|n| n.contains("DeviceCMYK")) || has_device_cmyk_in_objects(doc);
 
     let output_intent_added = if !had_output_intent {
-        // Always add sRGB OutputIntent — DeviceRGB is used implicitly by most PDFs.
-        // Only one GTS_PDFA1 OutputIntent is allowed, so we use sRGB.
-        add_srgb_output_intent(doc)?;
+        if has_cmyk {
+            add_cmyk_output_intent(doc)?;
+        } else {
+            add_srgb_output_intent(doc)?;
+        }
         true
     } else {
         false
@@ -249,30 +251,158 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
 }
 
 /// Check if any object in the document uses DeviceCMYK.
+/// Detects DeviceCMYK in:
+/// - Image XObject dict /ColorSpace
+/// - Shading dict /ColorSpace (/ShadingType present)
+/// - Pattern dict /ColorSpace (/PatternType present)
+/// - Separation/DeviceN/NChannel alternate colorspace (index 2)
+/// - DeviceN Process/ColorSpace attribute
+/// - Inline images in content streams (BI ... /CS /CMYK ... ID ... EI)
+/// - ICCBased streams with /N 4
+/// - Content stream CMYK operators (k/K)
 fn has_device_cmyk_in_objects(doc: &Document) -> bool {
-    for obj in doc.objects.values() {
+    let mut visited: std::collections::HashSet<ObjectId> = std::collections::HashSet::new();
+    let mut stack: Vec<&Object> = doc.objects.values().collect();
+    while let Some(obj) = stack.pop() {
         match obj {
             Object::Dictionary(dict) => {
-                // Check /ColorSpace /DeviceCMYK in image XObjects.
                 if get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
                     return true;
+                }
+                if dict.get(b"ShadingType").is_ok() {
+                    if get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
+                        return true;
+                    }
+                }
+                if dict.get(b"PatternType").is_ok()
+                    || get_name(dict, b"Type").as_deref() == Some("Pattern")
+                {
+                    if get_name(dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
+                        return true;
+                    }
+                }
+                for (_, val) in dict.iter() {
+                    match val {
+                        Object::Reference(ref_id) => {
+                            if visited.insert(*ref_id) {
+                                if let Some(resolved) = doc.objects.get(&ref_id) {
+                                    stack.push(resolved);
+                                }
+                            }
+                        }
+                        _ => stack.push(val),
+                    }
                 }
             }
             Object::Stream(stream) => {
                 if get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
                     return true;
                 }
-                // Check content streams for CMYK operators (k/K).
+                if stream.dict.get(b"ShadingType").is_ok() {
+                    if get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
+                        return true;
+                    }
+                }
+                let is_pattern = stream.dict.get(b"PatternType").is_ok()
+                    || get_name(&stream.dict, b"Type").as_deref() == Some("Pattern");
+                if is_pattern {
+                    if get_name(&stream.dict, b"ColorSpace").as_deref() == Some("DeviceCMYK") {
+                        return true;
+                    }
+                }
+                if stream.dict.get(b"N").is_ok() {
+                    if let Ok(Object::Integer(n)) = stream.dict.get(b"N") {
+                        if *n == 4 {
+                            return true;
+                        }
+                    }
+                }
                 if get_name(&stream.dict, b"Type").as_deref() == Some("XObject")
                     || stream.dict.get(b"Type").is_err()
                 {
-                    // Quick scan of stream content for CMYK operators.
-                    let content = &stream.content;
-                    if content.windows(2).any(|w| {
-                        (w[1] == b'k' || w[1] == b'K')
-                            && (w[0] == b' ' || w[0] == b'\n' || w[0] == b'\r')
-                    }) {
+                    if content_has_cmyk(&stream.content) {
                         return true;
+                    }
+                }
+                for (_, val) in stream.dict.iter() {
+                    match val {
+                        Object::Reference(ref_id) => {
+                            if visited.insert(*ref_id) {
+                                if let Some(resolved) = doc.objects.get(&ref_id) {
+                                    stack.push(resolved);
+                                }
+                            }
+                        }
+                        _ => stack.push(val),
+                    }
+                }
+            }
+            Object::Array(arr) => {
+                if arr.len() >= 4 {
+                    if let Object::Name(cs_type) = &arr[0] {
+                        if cs_type == b"Separation"
+                            || cs_type == b"DeviceN"
+                            || cs_type == b"NChannel"
+                            || cs_type == b"DeviceCMYK"
+                        {
+                            match &arr[2] {
+                                Object::Name(n) if n == b"DeviceCMYK" => return true,
+                                Object::Reference(ref_id) => {
+                                    if let Some(Object::Name(n)) = doc.objects.get(&ref_id) {
+                                        if n == b"DeviceCMYK" {
+                                            return true;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    if let Object::Name(name) = &arr[0] {
+                        if name == b"DeviceN" || name == b"NChannel" {
+                            if arr.len() > 4 {
+                                if let Some(Object::Dictionary(attrs)) = arr.get(4) {
+                                    if let Ok(Object::Dictionary(process)) = attrs.get(b"Process") {
+                                        match process.get(b"ColorSpace").ok() {
+                                            Some(Object::Name(n)) => {
+                                                if n == b"DeviceCMYK" {
+                                                    return true;
+                                                }
+                                            }
+                                            Some(Object::Reference(ref_id)) => {
+                                                if let Some(Object::Name(n)) =
+                                                    doc.objects.get(&ref_id)
+                                                {
+                                                    if n == b"DeviceCMYK" {
+                                                        return true;
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                for item in arr {
+                    match item {
+                        Object::Reference(ref_id) => {
+                            if visited.insert(*ref_id) {
+                                if let Some(resolved) = doc.objects.get(&ref_id) {
+                                    stack.push(resolved);
+                                }
+                            }
+                        }
+                        _ => stack.push(item),
+                    }
+                }
+            }
+            Object::Reference(ref_id) => {
+                if visited.insert(*ref_id) {
+                    if let Some(resolved) = doc.objects.get(&ref_id) {
+                        stack.push(resolved);
                     }
                 }
             }
@@ -282,8 +412,35 @@ fn has_device_cmyk_in_objects(doc: &Document) -> bool {
     false
 }
 
+fn content_has_cmyk(content: &[u8]) -> bool {
+    if content
+        .windows(2)
+        .any(|w| (w[1] == b'k' || w[1] == b'K') && (w[0] == b' ' || w[0] == b'\n' || w[0] == b'\r'))
+    {
+        return true;
+    }
+    let content_str = String::from_utf8_lossy(content);
+    if content_str.contains("/CS") || content_str.contains("/ColorSpace") {
+        if content_str.contains("CMYK") || content_str.contains("DeviceCMYK") {
+            let bi_start = content_str.find("BI");
+            if let Some(bi) = bi_start {
+                let after_bi = &content_str[bi..];
+                let ei_idx = after_bi.find("EI");
+                if let Some(ei) = ei_idx {
+                    let inline_img = &after_bi[..ei];
+                    if inline_img.contains("/CS")
+                        && (inline_img.contains("CMYK") || inline_img.contains("DeviceCMYK"))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Add a CMYK OutputIntent to the document for PDF/A compliance.
-#[allow(dead_code)]
 fn add_cmyk_output_intent(doc: &mut Document) -> Result<()> {
     let icc_bytes = cmyk_icc_profile_bytes();
 
