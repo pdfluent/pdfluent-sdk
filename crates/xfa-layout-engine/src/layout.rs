@@ -592,7 +592,11 @@ impl<'a> LayoutEngine<'a> {
             }
 
             let child = self.form.get(child_id);
-            let child_size = self.compute_extent_with_available_and_override(child_id, Some(available), qn.children_override.as_deref());
+            let child_size = self.compute_extent_with_available_and_override(
+                child_id,
+                Some(available),
+                qn.children_override.as_deref(),
+            );
 
             // Keep-chain look-ahead: if this node starts a keep chain and
             // the chain doesn't fit in remaining space (but WOULD fit on a
@@ -613,12 +617,18 @@ impl<'a> LayoutEngine<'a> {
 
                 // Try to split this node if it's a splittable container.
                 if remaining_height > 0.0 && self.can_split(child_id) {
-                    let (partial, rest_nodes) =
-                        self.split_tb_node(child_id, y_cursor, remaining_height, available, qn.children_override.as_deref())?;
-                    
+                    let (partial, rest_nodes) = self.split_tb_node(
+                        child_id,
+                        y_cursor,
+                        remaining_height,
+                        available,
+                        qn.children_override.as_deref(),
+                    )?;
+
                     let partial_fits = partial.rect.height <= remaining_height + 1.0;
-                    let split_productive = !partial.children.is_empty() && (partial_fits || partial.children.len() > 1);
-                    
+                    let split_productive = !partial.children.is_empty()
+                        && (partial_fits || partial.children.len() > 1);
+
                     if !partial.children.is_empty() && (partial_fits || split_productive) {
                         let mut offset_node = partial;
                         offset_node.rect.x += content_area.x;
@@ -635,7 +645,12 @@ impl<'a> LayoutEngine<'a> {
                 } else if idx == 0 || page.nodes.len() <= header_node_count {
                     // First content item too large and can't split — force place it
                     let node = self.layout_single_node_with_extent(
-                        child_id, child, 0.0, y_cursor, child_size, qn.children_override.as_deref()
+                        child_id,
+                        child,
+                        0.0,
+                        y_cursor,
+                        child_size,
+                        qn.children_override.as_deref(),
                     )?;
                     let mut offset_node = node;
                     offset_node.rect.x += content_area.x;
@@ -650,8 +665,13 @@ impl<'a> LayoutEngine<'a> {
             // inner page-break-before children, split it using the FULL
             // content height so the inner break is detected.
             if self.has_inner_break(child_id) && self.can_split(child_id) {
-                let (partial, rest_nodes) =
-                    self.split_tb_node(child_id, y_cursor, content_height, available, qn.children_override.as_deref())?;
+                let (partial, rest_nodes) = self.split_tb_node(
+                    child_id,
+                    y_cursor,
+                    content_height,
+                    available,
+                    qn.children_override.as_deref(),
+                )?;
                 let remaining_on_page = content_bottom - y_cursor;
                 if !partial.children.is_empty() && partial.rect.height <= remaining_on_page {
                     let mut offset_node = partial;
@@ -675,8 +695,14 @@ impl<'a> LayoutEngine<'a> {
                 break;
             }
 
-            let node =
-                self.layout_single_node_with_extent(child_id, child, 0.0, y_cursor, child_size, qn.children_override.as_deref())?;
+            let node = self.layout_single_node_with_extent(
+                child_id,
+                child,
+                0.0,
+                y_cursor,
+                child_size,
+                qn.children_override.as_deref(),
+            )?;
             let mut offset_node = node;
             offset_node.rect.x += content_area.x;
             offset_node.rect.y += content_area.y;
@@ -701,7 +727,11 @@ impl<'a> LayoutEngine<'a> {
     /// Only tb-layout subforms and Table subforms with children can be split.
     fn can_split(&self, id: FormNodeId) -> bool {
         let node = self.form.get(id);
-        matches!(node.layout, LayoutStrategy::TopToBottom | LayoutStrategy::Table) && !node.children.is_empty()
+        matches!(
+            node.layout,
+            LayoutStrategy::TopToBottom | LayoutStrategy::Table
+        ) && !node.children.is_empty()
+            && node.box_model.height.is_none()
     }
 
     /// Check if any direct (expanded) child of a tb-layout subform has
@@ -772,13 +802,18 @@ impl<'a> LayoutEngine<'a> {
                         width: child.box_model.content_width().min(child_size.width),
                         height: child.box_model.content_height().min(child_size.height),
                     };
-                    let (partial_child, child_rest) =
-                        self.split_tb_node(child_id, child_y, child_remaining, child_available, None)?;
-                    
+                    let (partial_child, child_rest) = self.split_tb_node(
+                        child_id,
+                        child_y,
+                        child_remaining,
+                        child_available,
+                        None,
+                    )?;
+
                     let partial_fits = partial_child.rect.height <= child_remaining + 1.0;
                     let split_productive = !partial_child.children.is_empty()
                         && (partial_fits || partial_child.children.len() > 1);
-                    
+
                     if split_productive {
                         placed_children.push(partial_child);
                         child_y += placed_children.last().unwrap().rect.height;
@@ -789,7 +824,9 @@ impl<'a> LayoutEngine<'a> {
                             break_before: false,
                             break_after: self.form.meta(child_id).page_break_after,
                             break_target: None,
-                            children_override: Some(child_rest.into_iter().map(|qn| qn.id).collect()),
+                            children_override: Some(
+                                child_rest.into_iter().map(|qn| qn.id).collect(),
+                            ),
                         }];
                         rest.extend(expanded_children[i + 1..].iter().map(|&cid| QueuedNode {
                             id: cid,
@@ -849,7 +886,9 @@ impl<'a> LayoutEngine<'a> {
         };
 
         // Compute partial extent: full width, height = content that fit
-        let partial_width = self.compute_extent_with_override(id, children_override).width;
+        let partial_width = self
+            .compute_extent_with_override(id, children_override)
+            .width;
 
         let partial_node = LayoutNode {
             form_node: id,
@@ -924,8 +963,13 @@ impl<'a> LayoutEngine<'a> {
         let mut nodes = Vec::new();
         for &child_id in children {
             let child = self.form.get(child_id);
-            let node =
-                self.layout_single_node(child_id, child, child.box_model.x, child.box_model.y, None)?;
+            let node = self.layout_single_node(
+                child_id,
+                child,
+                child.box_model.x,
+                child.box_model.y,
+                None,
+            )?;
             nodes.push(node);
         }
         Ok(nodes)
@@ -940,8 +984,8 @@ impl<'a> LayoutEngine<'a> {
             let child = self.form.get(child_id);
             let child_size = self.compute_extent_with_available(child_id, Some(available));
 
-            let node =
-                self.layout_single_node_with_extent(child_id, child, 0.0, y_cursor, child_size, None)?;
+            let node = self
+                .layout_single_node_with_extent(child_id, child, 0.0, y_cursor, child_size, None)?;
             nodes.push(node);
 
             y_cursor += child_size.height;
@@ -1081,8 +1125,14 @@ impl<'a> LayoutEngine<'a> {
                     height: cell_height,
                 };
 
-                let cell_node =
-                    self.layout_single_node_with_extent(cell_id, cell, x_cursor, 0.0, cell_extent, None)?;
+                let cell_node = self.layout_single_node_with_extent(
+                    cell_id,
+                    cell,
+                    x_cursor,
+                    0.0,
+                    cell_extent,
+                    None,
+                )?;
                 max_cell_height = max_cell_height.max(cell_extent.height);
                 cells.push(cell_node);
 
@@ -1279,7 +1329,11 @@ impl<'a> LayoutEngine<'a> {
         } else if node.layout == LayoutStrategy::Table {
             // Table layout: resolve column widths from the parent node,
             // then distribute cells across rows.
-            let col_widths = self.resolve_column_widths_with_override(node, child_available.width, children_override);
+            let col_widths = self.resolve_column_widths_with_override(
+                node,
+                child_available.width,
+                children_override,
+            );
             self.layout_table_rows(node_children, child_available, &col_widths)?
         } else {
             self.layout_children(node_children, child_available, node.layout)?
@@ -1303,7 +1357,11 @@ impl<'a> LayoutEngine<'a> {
         self.compute_extent_with_available(id, None)
     }
 
-    pub fn compute_extent_with_override(&self, id: FormNodeId, children_override: Option<&[FormNodeId]>) -> Size {
+    pub fn compute_extent_with_override(
+        &self,
+        id: FormNodeId,
+        children_override: Option<&[FormNodeId]>,
+    ) -> Size {
         self.compute_extent_with_available_and_override(id, None, children_override)
     }
 
@@ -1317,7 +1375,12 @@ impl<'a> LayoutEngine<'a> {
         self.compute_extent_with_available_and_override(id, available, None)
     }
 
-    fn compute_extent_with_available_and_override(&self, id: FormNodeId, available: Option<Size>, children_override: Option<&[FormNodeId]>) -> Size {
+    fn compute_extent_with_available_and_override(
+        &self,
+        id: FormNodeId,
+        available: Option<Size>,
+        children_override: Option<&[FormNodeId]>,
+    ) -> Size {
         let node = self.form.get(id);
         let bm = &node.box_model;
 
@@ -1354,7 +1417,8 @@ impl<'a> LayoutEngine<'a> {
                 LayoutStrategy::Table => {
                     // Table width = sum of resolved column widths
                     let avail_w = available.map(|a| a.width).unwrap_or(f64::MAX);
-                    let col_widths = self.resolve_column_widths_with_override(node, avail_w, children_override);
+                    let col_widths =
+                        self.resolve_column_widths_with_override(node, avail_w, children_override);
                     let table_width: f64 = col_widths.iter().sum();
                     content_size.width = content_size.width.max(table_width);
                     // Table height = sum of row heights
@@ -4041,7 +4105,7 @@ mod tests {
     #[test]
     fn table_splits_across_pages() {
         let mut tree = FormTree::new();
-        
+
         // Rows of 100pt height
         let mut rows = Vec::new();
         for i in 0..10 {
@@ -4049,10 +4113,10 @@ mod tests {
             let row = make_row(&mut tree, &format!("Row{}", i), vec![cell]);
             rows.push(row);
         }
-        
+
         // Table with 10 rows = 1000pt total height
         let table = make_table(&mut tree, "Table", vec![200.0], rows);
-        
+
         // Page area of 400pt height. Should fit 4 rows per page.
         let page_area = tree.add_node(FormNode {
             name: "PageArea".to_string(),
