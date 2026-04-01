@@ -84,8 +84,12 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let hex_garbage_fixed = fix_hex_string_garbage(doc);
     // §6.1.7.1: Remove forbidden external file references from stream dicts.
     let stream_external_f_fixed = fix_stream_external_ref_keys_extra(doc);
-    // §6.1.6.2: Promote inline JBIG2Globals to indirect objects.
+    // §6.1.6.2: Promote inline JBIG2Globals to indirect objects and move from DecodeParms.
     let jbig2_globals_promoted = fix_jbig2_globals_promotion(doc);
+    // §6.2.4.3: Fix DeviceCMYK usage when OutputIntent is not CMYK.
+    let device_cmyk_intent_fixed = fix_device_cmyk_intent_mismatch(doc);
+    // §6.2.4.2: Fix ICC profile reuse between ICCBased and OutputIntent.
+    let icc_profile_reuse_fixed = fix_icc_profile_reuse(doc);
     // Add /Group to pages using transparency without one (6.2.10-tgroup).
     // Runs after normalize_colorspaces has already added the OutputIntent, so
     // /Group << /S /Transparency >> without /CS is valid. (#496)
@@ -149,6 +153,8 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         hex_garbage_fixed,
         stream_external_f_fixed,
         jbig2_globals_promoted,
+        device_cmyk_intent_fixed,
+        icc_profile_reuse_fixed,
     }
 }
 
@@ -9449,23 +9455,39 @@ fn fix_long_names_in_streams(doc: &mut Document) -> usize {
                     continue;
                 }
                 b'/' => {
-                    // Name token — scan to end, truncate if > 127 bytes.
+                    // PDF name token starting at i.
                     let start = i;
-                    i += 1; // skip '/'
-                    while i < decompressed.len()
-                        && !decompressed[i].is_ascii_whitespace()
-                        && !is_pdf_delimiter(decompressed[i])
-                    {
+                    i += 1;
+                    while i < decompressed.len() && !is_pdf_delimiter(decompressed[i]) && !decompressed[i].is_ascii_whitespace() {
                         i += 1;
                     }
-                    let name_bytes = &decompressed[start + 1..i]; // without '/'
-                    if name_bytes.len() > MAX_NAME_LEN {
+                    let name_token = &decompressed[start..i];
+                    let name_val = &name_token[1..]; // skip '/'
+                    
+                    let mut modified_name = false;
+                    let mut sanitized = Vec::new();
+                    
+                    // 1. Sanitize for UTF-8 validity (§6.1.8).
+                    if String::from_utf8(name_val.to_vec()).is_err() {
+                        sanitized = name_val.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' }).collect();
+                        modified_name = true;
+                    }
+                    
+                    // 2. Truncate to 127 bytes (§6.1.13).
+                    let current_name = if sanitized.is_empty() { name_val } else { &sanitized };
+                    if current_name.len() > MAX_NAME_LEN {
+                        if sanitized.is_empty() { sanitized = name_val.to_vec(); }
+                        sanitized.truncate(MAX_NAME_LEN);
+                        modified_name = true;
+                    }
+
+                    if modified_name {
                         new_content.push(b'/');
-                        new_content.extend_from_slice(&name_bytes[..MAX_NAME_LEN]);
+                        new_content.extend_from_slice(if sanitized.is_empty() { name_val } else { &sanitized });
                         fixed_any = true;
                         count += 1;
                     } else {
-                        new_content.extend_from_slice(&decompressed[start..i]);
+                        new_content.extend_from_slice(name_token);
                     }
                     continue;
                 }
@@ -10206,22 +10228,206 @@ fn fix_jbig2_globals_promotion(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
-        let mut new_globals_id = None;
+        let mut globals_to_move = None;
         if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
-            if let Ok(globals) = s.dict.get(b"JBIG2Globals") {
-                if !matches!(globals, Object::Reference(_)) {
-                    let globals_obj = globals.clone();
-                    new_globals_id = Some(doc.add_object(globals_obj));
+            // §6.1.6.2: JBIG2Globals MUST NOT be in DecodeParms.
+            if let Ok(Object::Dictionary(ref mut dp)) = s.dict.get_mut(b"DecodeParms") {
+                if let Ok(globals) = dp.get(b"JBIG2Globals") {
+                    globals_to_move = Some(globals.clone());
+                    dp.remove(b"JBIG2Globals");
+                }
+            } else if let Ok(Object::Array(ref mut dpa)) = s.dict.get_mut(b"DecodeParms") {
+                for item in dpa.iter_mut() {
+                    if let Object::Dictionary(ref mut dp) = item {
+                        if let Ok(globals) = dp.get(b"JBIG2Globals") {
+                            globals_to_move = Some(globals.clone());
+                            dp.remove(b"JBIG2Globals");
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Also check if it's already in the stream dict but inline.
+            if globals_to_move.is_none() {
+                if let Ok(globals) = s.dict.get(b"JBIG2Globals") {
+                    if !matches!(globals, Object::Reference(_)) {
+                        globals_to_move = Some(globals.clone());
+                    }
+                }
+            }
+        }
+
+        if let Some(globals_obj) = globals_to_move {
+            let gid = if let Object::Reference(rid) = globals_obj {
+                rid
+            } else {
+                doc.add_object(globals_obj)
+            };
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                s.dict.set("JBIG2Globals", Object::Reference(gid));
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// §6.2.4.3 — Fix DeviceCMYK usage when OutputIntent is not CMYK.
+// ---------------------------------------------------------------------------
+
+fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
+    let mut count = 0;
+    
+    // Check if OutputIntent is CMYK.
+    let intent_is_cmyk = if let Ok(catalog_id) = doc.catalog() {
+        if let Ok(catalog) = doc.get_object(catalog_id.0).and_then(|o| o.as_dict()) {
+            if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
+                oi_arr.iter().any(|oi| {
+                    let dict = if let Ok(d) = oi.as_dict() {
+                        Some(d)
+                    } else if let Ok(id) = oi.as_reference() {
+                        doc.get_object(id).ok().and_then(|o| o.as_dict())
+                    } else {
+                        None
+                    };
+                    if let Some(d) = dict {
+                        if d.get(b"S").ok().and_then(|o| o.as_name().ok()) == Some(b"GTS_PDFA1") {
+                            if let Ok(profile_id) = d.get(b"DestOutputProfile").and_then(|o| o.as_reference()) {
+                                if let Some(Object::Stream(s)) = doc.objects.get(&profile_id) {
+                                    return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4);
+                                }
+                            }
+                        }
+                    }
+                    false
+                })
+            } else { false }
+        } else { false }
+    } else { false };
+
+    if intent_is_cmyk {
+        return 0; // Compliant.
+    }
+
+    // If DeviceCMYK is used, but intent is not CMYK, we convert DeviceCMYK to
+    // an ICCBased CMYK colorspace.
+    let mut cmyk_profile_id = None;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in ids {
+        let mut modified = false;
+        if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+            if let Ok(Object::Dictionary(ref mut cs_dict)) = dict.get_mut(b"ColorSpace") {
+                for (_, val) in cs_dict.iter_mut() {
+                    if val.as_name().ok() == Some(b"DeviceCMYK") {
+                        if cmyk_profile_id.is_none() {
+                            cmyk_profile_id = Some(ensure_cmyk_profile_extra(doc));
+                        }
+                        if let Some(pid) = cmyk_profile_id {
+                            *val = Object::Array(vec![
+                                Object::Name(b"ICCBased".to_vec()),
+                                Object::Reference(pid),
+                            ]);
+                            modified = true;
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if !modified {
+            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
+                if let Ok(Object::Dictionary(ref mut cs_dict)) = s.dict.get_mut(b"ColorSpace") {
+                    for (_, val) in cs_dict.iter_mut() {
+                        if val.as_name().ok() == Some(b"DeviceCMYK") {
+                            if cmyk_profile_id.is_none() {
+                                cmyk_profile_id = Some(ensure_cmyk_profile_extra(doc));
+                            }
+                            if let Some(pid) = cmyk_profile_id {
+                                *val = Object::Array(vec![
+                                    Object::Name(b"ICCBased".to_vec()),
+                                    Object::Reference(pid),
+                                ]);
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    count
+}
+
+fn ensure_cmyk_profile_extra(doc: &mut Document) -> ObjectId {
+    // Look for any existing CMYK profile first.
+    for (&id, obj) in &doc.objects {
+        if let Object::Stream(ref s) = obj {
+            if s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4) {
+                if s.dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"ICCBased") {
+                    return id;
+                }
+            }
+        }
+    }
+    // Fallback: create a minimal one.
+    let dict = dictionary! {
+        "Type" => "ICCBased",
+        "N" => 4,
+    };
+    doc.add_object(Object::Stream(lopdf::Stream::new(dict, Vec::new())))
+}
+
+// ---------------------------------------------------------------------------
+// §6.2.4.2 — Fix ICC profile reuse.
+// ---------------------------------------------------------------------------
+
+fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let oi_profile_id = if let Ok(catalog_id) = doc.catalog() {
+        if let Ok(catalog) = doc.get_object(catalog_id.0).and_then(|o| o.as_dict()) {
+            if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
+                oi_arr.iter().find_map(|oi| {
+                    let dict = if let Ok(d) = oi.as_dict() {
+                        Some(d)
+                    } else if let Ok(id) = oi.as_reference() {
+                        doc.get_object(id).ok().and_then(|o| o.as_dict())
+                    } else {
+                        None
+                    };
+                    dict.and_then(|d| d.get(b"DestOutputProfile").ok()).and_then(|o| o.as_reference().ok())
+                })
+            } else { None }
+        } else { None }
+    } else { None };
+
+    let Some(profile_id) = oi_profile_id else { return 0; };
+
+    // Find all ICCBased colorspaces that use this profile_id.
+    let mut to_replace = Vec::new();
+    for (&id, obj) in &doc.objects {
+        if let Object::Array(ref arr) = obj {
+            if arr.len() == 2 && arr[0].as_name().ok() == Some(b"ICCBased") {
+                if arr[1].as_reference().ok() == Some(profile_id) {
+                    to_replace.push(id);
+                }
+            }
+        }
+    }
+
+    if !to_replace.is_empty() {
+        if let Ok(profile_obj) = doc.get_object(profile_id).cloned() {
+            let new_profile_id = doc.add_object(profile_obj);
+            for id in to_replace {
+                if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&id) {
+                    arr[1] = Object::Reference(new_profile_id);
                     count += 1;
                 }
             }
         }
-        if let Some(gid) = new_globals_id {
-            if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
-                s.dict.set("JBIG2Globals", Object::Reference(gid));
-            }
-        }
     }
+
     count
 }
 
