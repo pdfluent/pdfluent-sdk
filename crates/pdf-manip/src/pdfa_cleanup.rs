@@ -3148,14 +3148,24 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
         }
     }
 
-    // Also fix Form XObject streams (these are self-contained, no spanning).
-    let form_ids: Vec<ObjectId> = doc
+    // Also fix Form XObject and Tiling Pattern streams (these are self-contained, no spanning).
+    // Must match collect_content_stream_ids in pdfa_fixups.rs which processes:
+    // - /Subtype /Form (Form XObjects)
+    // - /PatternType 1 (Tiling Patterns)
+    let form_and_pattern_ids: Vec<ObjectId> = doc
         .objects
         .iter()
         .filter_map(|(id, obj)| {
             if let Object::Stream(s) = obj {
-                if matches!(s.dict.get(b"Subtype").ok(), Some(Object::Name(ref n)) if n == b"Form")
-                {
+                let is_form =
+                    s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok()) == Some(b"Form");
+                let is_pattern = s
+                    .dict
+                    .get(b"PatternType")
+                    .ok()
+                    .and_then(|o| o.as_i64().ok())
+                    == Some(1);
+                if is_form || is_pattern {
                     Some(*id)
                 } else {
                     None
@@ -3166,7 +3176,7 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
         })
         .collect();
 
-    for id in form_ids {
+    for id in form_and_pattern_ids {
         let content = {
             let Some(Object::Stream(s)) = doc.objects.get(&id) else {
                 continue;
@@ -3592,6 +3602,11 @@ pub fn fix_pdf_header(data: &mut Vec<u8>) {
 }
 
 /// Verify and fix the startxref pointer in saved PDF data.
+
+    // §6.1.4: Keyword 'xref' not followed by proper EOL marker.
+    // Ensure 'xref' is followed by a single EOL marker (LF or CRLF).
+    fix_xref_eol(data);
+
 ///
 /// lopdf occasionally writes an incorrect startxref offset (off by a few bytes).
 /// This scans backward from the end to find the actual `xref` keyword position
@@ -5105,5 +5120,40 @@ mod tests {
         let mut data = b"%PDF-2.0\ntest".to_vec();
         fix_pdf_header(&mut data);
         assert!(data.starts_with(b"%PDF-1.7"));
+    }
+}
+
+/// Ensure 'xref' and 'startxref' keywords are followed by proper EOL (§6.1.4).
+fn fix_xref_eol(data: &mut Vec<u8>) {
+    // 1. Fix 'xref' keyword.
+    if let Some(pos) = find_last(data, b"xref") {
+        // Check if standalone 'xref' (not part of 'startxref').
+        if pos == 0 || data[pos - 1].is_ascii_whitespace() {
+            let next = pos + 4;
+            if next < data.len() && data[next] == b' ' {
+                // Remove trailing spaces after 'xref' before EOL.
+                let mut end = next;
+                while end < data.len() && data[end] == b' ' {
+                    end += 1;
+                }
+                if end > next {
+                    data.drain(next..end);
+                }
+            }
+        }
+    }
+
+    // 2. Fix 'startxref' keyword.
+    if let Some(pos) = find_last(data, b"startxref") {
+        let next = pos + 9;
+        if next < data.len() && data[next] == b' ' {
+            let mut end = next;
+            while end < data.len() && data[end] == b' ' {
+                end += 1;
+            }
+            if end > next {
+                data.drain(next..end);
+            }
+        }
     }
 }
