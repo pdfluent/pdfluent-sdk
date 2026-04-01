@@ -5,6 +5,9 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod cmd_demo;
+mod cmd_doctor;
+mod cmd_completions;
+mod cmd_manpage;
 mod cmd_extract;
 mod cmd_fill;
 mod cmd_flatten;
@@ -15,17 +18,17 @@ mod cmd_validate;
 
 #[derive(Parser)]
 #[command(
-    name = "xfa-cli",
+    name = "pdfluent",
     version,
     about = "PDF and XFA form processing toolkit"
 )]
-struct Cli {
+pub struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    pub command: Commands,
 }
 
 #[derive(Subcommand)]
-enum Commands {
+pub enum Commands {
     /// Render PDF pages to PNG images.
     Render {
         /// Input PDF file.
@@ -97,6 +100,19 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Check installation and system environment.
+    Doctor {
+        /// Try to fix found issues.
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Generate shell completions.
+    Completions {
+        /// Shell to generate completions for.
+        shell: clap_complete::Shell,
+    },
+    /// Generate man pages.
+    Man,
     /// Run the XFA engine demo pipeline.
     Demo,
 }
@@ -127,6 +143,12 @@ fn main() -> Result<()> {
             json,
         } => cmd_validate::run(&input, &profile, json),
         Commands::Sign { input, json } => cmd_sign::run(&input, json),
+        Commands::Doctor { fix: _ } => cmd_doctor::run(),
+        Commands::Completions { shell } => {
+            cmd_completions::run(shell);
+            Ok(())
+        }
+        Commands::Man => cmd_manpage::run(),
         Commands::Demo => cmd_demo::run(),
     }
 }
