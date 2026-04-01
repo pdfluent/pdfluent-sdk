@@ -27,7 +27,20 @@
 //! engine.importJson('{"form1.Name": "Bob"}');
 //! ```
 
+#[cfg(feature = "render")]
+pub mod canvas2d_device;
+
+#[cfg(all(feature = "render", target_arch = "wasm32"))]
+use crate::canvas2d_device::Canvas2DDevice;
+#[cfg(all(feature = "render", target_arch = "wasm32"))]
+use kurbo::{Affine, Rect, Shape};
 use pdf_engine::PdfDocument;
+#[cfg(all(feature = "render", target_arch = "wasm32"))]
+use pdf_render::pdf_interpret::util::PageExt;
+#[cfg(all(feature = "render", target_arch = "wasm32"))]
+use pdf_render::pdf_interpret::{
+    BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings, interpret_page,
+};
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occur};
@@ -688,6 +701,60 @@ impl PdfDoc {
         self.render_engine_to_canvas(&self.engine, canvas, page_index, scale)
     }
 
+    /// Render a page using Canvas2D vector draw calls.
+    ///
+    /// Falls back to the raster renderer if the vector device hits an
+    /// unsupported PDF feature.
+    #[cfg(all(feature = "render", target_arch = "wasm32"))]
+    #[wasm_bindgen(js_name = "renderPageToCanvasVector")]
+    pub fn render_page_to_canvas_vector(
+        &self,
+        canvas: &web_sys::HtmlCanvasElement,
+        page_index: usize,
+        scale: f32,
+    ) -> Result<(), JsError> {
+        let has_xfa = pdf_engine::xfa::has_xfa(&self.engine);
+        web_sys::console::log_1(&format!("has_xfa: {has_xfa}").into());
+
+        let mut flattened_engine = None;
+
+        if has_xfa {
+            web_sys::console::log_1(&"XFA detected, flattening for vector render...".into());
+            match pdf_engine::xfa::flatten(&self.engine) {
+                Ok(flattened_bytes) => {
+                    web_sys::console::log_1(
+                        &format!("Flattened: {} bytes", flattened_bytes.len()).into(),
+                    );
+                    match PdfDocument::open(Arc::new(flattened_bytes)) {
+                        Ok(engine) => flattened_engine = Some(engine),
+                        Err(error) => {
+                            web_sys::console::log_1(
+                                &format!("flatten open failed: {error}").into(),
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    web_sys::console::log_1(&format!("Flatten failed: {error}").into());
+                }
+            }
+        }
+
+        let engine = flattened_engine.as_ref().unwrap_or(&self.engine);
+        match self.render_engine_to_canvas_vector(engine, canvas, page_index, scale) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                web_sys::console::warn_1(
+                    &format!(
+                        "Vector canvas render failed, falling back to raster: {error:?}"
+                    )
+                    .into(),
+                );
+                self.render_engine_to_canvas(engine, canvas, page_index, scale)
+            }
+        }
+    }
+
     /// Text-run positions for a page.
     ///
     /// Returns a JSON array of `{text, x, y, width, height, fontSize}`
@@ -1004,6 +1071,76 @@ impl PdfDoc {
         .map_err(|e| JsError::new(&format!("ImageData: {e:?}")))?;
         ctx.put_image_data(&image_data, 0.0, 0.0)
             .map_err(|e| JsError::new(&format!("putImageData: {e:?}")))?;
+        Ok(())
+    }
+
+    #[cfg(all(feature = "render", target_arch = "wasm32"))]
+    fn render_engine_to_canvas_vector(
+        &self,
+        engine: &PdfDocument,
+        canvas: &web_sys::HtmlCanvasElement,
+        page_index: usize,
+        scale: f32,
+    ) -> Result<(), JsError> {
+        use wasm_bindgen::JsCast;
+
+        let pages = engine.pdf().pages();
+        if page_index >= pages.len() {
+            return Err(JsError::new(&format!(
+                "page index {page_index} out of range (0..{})",
+                pages.len()
+            )));
+        }
+
+        let page = &pages[page_index];
+        let (page_width, page_height) = page.render_dimensions();
+        let width = (page_width * scale).ceil().max(1.0) as u32;
+        let height = (page_height * scale).ceil().max(1.0) as u32;
+
+        canvas.set_width(width);
+        canvas.set_height(height);
+
+        let ctx = canvas
+            .get_context("2d")
+            .map_err(|e| JsError::new(&format!("getContext: {e:?}")))?
+            .ok_or_else(|| JsError::new("no 2d context"))?;
+        let ctx: web_sys::CanvasRenderingContext2d = ctx
+            .dyn_into()
+            .map_err(|_| JsError::new("context is not CanvasRenderingContext2d"))?;
+
+        ctx.reset_transform()
+            .map_err(|e| JsError::new(&format!("resetTransform: {e:?}")))?;
+        ctx.set_global_alpha(1.0);
+        ctx.set_global_composite_operation("source-over")
+            .map_err(|e| JsError::new(&format!("globalCompositeOperation: {e:?}")))?;
+        ctx.clear_rect(0.0, 0.0, width as f64, height as f64);
+        ctx.set_fill_style_str("rgba(255, 255, 255, 1)");
+        ctx.fill_rect(0.0, 0.0, width as f64, height as f64);
+
+        let initial_transform =
+            Affine::scale_non_uniform(scale as f64, scale as f64) * page.initial_transform(true);
+        let viewport = Rect::new(0.0, 0.0, width as f64, height as f64);
+        let mut context = Context::new(
+            initial_transform,
+            viewport,
+            page.xref(),
+            InterpreterSettings::default(),
+        );
+        let mut device = Canvas2DDevice::new(ctx);
+
+        device.push_clip_path(&ClipPath {
+            path: viewport.to_path(0.1),
+            fill: FillRule::NonZero,
+        });
+        device.push_transparency_group(1.0, None, BlendMode::Normal);
+        interpret_page(page, &mut context, &mut device);
+        device.pop_transparency_group();
+        device.pop_clip_path();
+
+        if let Some(reason) = device.fallback_reason() {
+            return Err(JsError::new(reason));
+        }
+
         Ok(())
     }
 }
