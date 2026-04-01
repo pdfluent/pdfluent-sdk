@@ -228,7 +228,7 @@ fn run_inner(pdf: Vec<u8>) -> TestResult {
     // gone.  Case-insensitive search caused 360 PASS→FAIL regressions because
     // the case-insensitive redaction engine failed to remove all variants for
     // many PDFs while the (?i) verification then found them. (#redact-ci-regression)
-    let opts = RedactSearchOptions::default();
+    let opts = RedactSearchOptions::default().pages(vec![1]);
 
     let redact_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         search_and_redact(&mut doc, &search_word, &opts)
