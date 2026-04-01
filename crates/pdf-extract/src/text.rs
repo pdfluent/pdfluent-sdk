@@ -424,6 +424,17 @@ fn resolve_dict(doc: &Document, dict: &lopdf::Dictionary, key: &[u8]) -> Option<
 fn build_encoding_map(doc: &Document, font: &lopdf::Dictionary) -> [Option<char>; 256] {
     let mut table = [None::<char>; 256];
 
+    let subtype = font.get(b"Subtype").ok().and_then(|o| o.as_name().ok());
+    let base_font = font.get(b"BaseFont").ok().and_then(|o| o.as_name().ok());
+
+    // Default encoding for Type 1 fonts (excluding Symbol/ZapfDingbats) is StandardEncoding.
+    if subtype == Some(b"Type1")
+        && base_font != Some(b"Symbol")
+        && base_font != Some(b"ZapfDingbats")
+    {
+        apply_base_encoding(&mut table, "StandardEncoding");
+    }
+
     let encoding = match font.get(b"Encoding").ok() {
         Some(obj) => obj,
         None => return table,
@@ -431,14 +442,16 @@ fn build_encoding_map(doc: &Document, font: &lopdf::Dictionary) -> [Option<char>
 
     match encoding {
         Object::Name(name) => {
-            // Named encoding (e.g. "WinAnsiEncoding").
+            // Named encoding replaces the built-in one.
+            table = [None; 256];
             let name_str = String::from_utf8_lossy(name);
             apply_base_encoding(&mut table, &name_str);
         }
         Object::Reference(r) => {
-            if let Some(Object::Dictionary(enc_dict)) = doc.get_object(*r).ok() {
+            if let Ok(Object::Dictionary(enc_dict)) = doc.get_object(*r) {
                 parse_encoding_dict(doc, enc_dict, &mut table);
-            } else if let Some(Object::Name(name)) = doc.get_object(*r).ok() {
+            } else if let Ok(Object::Name(name)) = doc.get_object(*r) {
+                table = [None; 256];
                 let name_str = String::from_utf8_lossy(name);
                 apply_base_encoding(&mut table, &name_str);
             }
@@ -459,7 +472,8 @@ fn parse_encoding_dict(
     table: &mut [Option<char>; 256],
 ) {
     // Apply BaseEncoding first.
-    if let Some(Object::Name(base)) = enc_dict.get(b"BaseEncoding").ok() {
+    if let Ok(Object::Name(base)) = enc_dict.get(b"BaseEncoding") {
+        *table = [None; 256];
         let base_str = String::from_utf8_lossy(base);
         apply_base_encoding(table, &base_str);
     }
@@ -484,22 +498,19 @@ fn parse_encoding_dict(
                 if let Some(c) = code {
                     if c < 256 {
                         let glyph = String::from_utf8_lossy(name);
-                        if let Some(ch) = glyph_name_to_unicode(&glyph) {
-                            table[c as usize] = Some(ch);
-                        }
+                        // Always overwrite the slot, even if we can't map the glyph name.
+                        table[c as usize] = glyph_name_to_unicode(&glyph);
                     }
                     code = Some(c + 1);
                 }
             }
             Object::Reference(r) => {
                 // Indirect name reference (rare).
-                if let Some(Object::Name(name)) = doc.get_object(*r).ok() {
+                if let Ok(Object::Name(name)) = doc.get_object(*r) {
                     if let Some(c) = code {
                         if c < 256 {
                             let glyph = String::from_utf8_lossy(name);
-                            if let Some(ch) = glyph_name_to_unicode(&glyph) {
-                                table[c as usize] = Some(ch);
-                            }
+                            table[c as usize] = glyph_name_to_unicode(&glyph);
                         }
                         code = Some(c + 1);
                     }
@@ -515,6 +526,8 @@ fn apply_base_encoding(table: &mut [Option<char>; 256], name: &str) {
     let source = match name {
         "WinAnsiEncoding" => winansi_encoding(),
         "MacRomanEncoding" => mac_roman_encoding(),
+        "StandardEncoding" => standard_encoding(),
+        "PDFDocEncoding" => pdf_doc_encoding(),
         _ => return,
     };
     for (i, &ch) in source.iter().enumerate() {
@@ -572,6 +585,80 @@ fn winansi_encoding() -> &'static [char; 256] {
         }
         // 0xA0-0xFF: same as Unicode Latin-1 supplement.
         for i in 0xA0..=0xFFu16 {
+            t[i as usize] = char::from_u32(i as u32).unwrap_or('\0');
+        }
+        t
+    })
+}
+
+/// StandardEncoding table.
+fn standard_encoding() -> &'static [char; 256] {
+    static TABLE: OnceLock<[char; 256]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = ['\0'; 256];
+        // ASCII-ish range 0x20-0x7E
+        for i in 0x20..=0x7Eu8 {
+            t[i as usize] = i as char;
+        }
+        t[0x27] = '\u{2019}'; // quoteright
+        t[0x60] = '\u{2018}'; // quoteleft
+
+        // Standard upper range and specific differences.
+        let std_extra: [(u8, char); 54] = [
+            (0xA1, '\u{00A1}'), (0xA2, '\u{00A2}'), (0xA3, '\u{00A3}'), (0xA4, '\u{2044}'),
+            (0xA5, '\u{00A5}'), (0xA6, '\u{0192}'), (0xA7, '\u{00A7}'), (0xA8, '\u{00A4}'),
+            (0xA9, '\u{0027}'), (0xAA, '\u{201C}'), (0xAB, '\u{00AB}'), (0xAC, '\u{2039}'),
+            (0xAD, '\u{203A}'), (0xAE, '\u{FB01}'), (0xAF, '\u{FB02}'), (0xB1, '\u{2013}'),
+            (0xB2, '\u{2020}'), (0xB3, '\u{2021}'), (0xB4, '\u{00B7}'), (0xB6, '\u{00B6}'),
+            (0xB7, '\u{2022}'), (0xB8, '\u{201A}'), (0xB9, '\u{201E}'), (0xBA, '\u{201D}'),
+            (0xBB, '\u{00BB}'), (0xBC, '\u{2026}'), (0xBD, '\u{2030}'), (0xBF, '\u{00BF}'),
+            (0xC1, '\u{0060}'), (0xC2, '\u{00B4}'), (0xC3, '\u{02C6}'), (0xC4, '\u{02DC}'),
+            (0xC5, '\u{00AF}'), (0xC6, '\u{02D8}'), (0xC7, '\u{02D9}'), (0xC8, '\u{00A8}'),
+            (0xCA, '\u{02DA}'), (0xCB, '\u{00B8}'), (0xCD, '\u{02DD}'), (0xCE, '\u{02DB}'),
+            (0xCF, '\u{02C7}'), (0xD0, '\u{2014}'), (0xD1, '\u{00C6}'), (0xD3, '\u{00AA}'),
+            (0xD8, '\u{0141}'), (0xD9, '\u{00D8}'), (0xDA, '\u{0152}'), (0xDB, '\u{00BA}'),
+            (0xE1, '\u{00E6}'), (0xE3, '\u{0131}'), (0xE8, '\u{0142}'), (0xE9, '\u{00F8}'),
+            (0xEA, '\u{0153}'), (0xEB, '\u{00DF}'),
+        ];
+        for (code, ch) in std_extra {
+            t[code as usize] = ch;
+        }
+        t
+    })
+}
+
+/// PDFDocEncoding table.
+fn pdf_doc_encoding() -> &'static [char; 256] {
+    static TABLE: OnceLock<[char; 256]> = OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = ['\0'; 256];
+        // ASCII range 0x20-0x7E
+        for i in 0x20..=0x7Eu8 {
+            t[i as usize] = i as char;
+        }
+        // PDFDoc upper range and specific differences.
+        let pdf_extra: [(u8, char); 60] = [
+            (0x80, '\u{2022}'), (0x81, '\u{2020}'), (0x82, '\u{2021}'), (0x83, '\u{2026}'),
+            (0x84, '\u{2044}'), (0x85, '\u{2030}'), (0x86, '\u{2039}'), (0x87, '\u{203A}'),
+            (0x88, '\u{2212}'), (0x89, '\u{0027}'), (0x8A, '\u{2018}'), (0x8B, '\u{2019}'),
+            (0x8C, '\u{201C}'), (0x8D, '\u{201D}'), (0x8E, '\u{201A}'), (0x8F, '\u{201E}'),
+            (0x90, '\u{2013}'), (0x91, '\u{2014}'), (0x92, '\u{FB01}'), (0x93, '\u{FB02}'),
+            (0x94, '\u{0141}'), (0x95, '\u{0142}'), (0x96, '\u{00D8}'), (0x97, '\u{00F8}'),
+            (0x98, '\u{0152}'), (0x99, '\u{0153}'), (0x9A, '\u{0178}'), (0x9B, '\u{2212}'),
+            (0xA0, '\u{00A0}'), (0xA1, '\u{00A1}'), (0xA2, '\u{00A2}'), (0xA3, '\u{00A3}'),
+            (0xA4, '\u{00A4}'), (0xA5, '\u{00A5}'), (0xA6, '\u{00A6}'), (0xA7, '\u{00A7}'),
+            (0xA8, '\u{00A8}'), (0xA9, '\u{00A9}'), (0xAA, '\u{00AA}'), (0xAB, '\u{00AB}'),
+            (0xAC, '\u{00AC}'), (0xAD, '\u{00AD}'), (0xAE, '\u{00AE}'), (0xAF, '\u{00AF}'),
+            (0xB0, '\u{00B0}'), (0xB1, '\u{00B1}'), (0xB2, '\u{00B2}'), (0xB3, '\u{00B3}'),
+            (0xB4, '\u{00B4}'), (0xB5, '\u{00B5}'), (0xB6, '\u{00B6}'), (0xB7, '\u{00B7}'),
+            (0xB8, '\u{00B8}'), (0xB9, '\u{00B9}'), (0xBA, '\u{00BA}'), (0xBB, '\u{00BB}'),
+            (0xBC, '\u{00BC}'), (0xBD, '\u{00BD}'), (0xBE, '\u{00BE}'), (0xBF, '\u{00BF}'),
+        ];
+        for (code, ch) in pdf_extra {
+            t[code as usize] = ch;
+        }
+        // 0xC0-0xFF are same as Unicode (Latin-1)
+        for i in 0xC0..=0xFFu16 {
             t[i as usize] = char::from_u32(i as u32).unwrap_or('\0');
         }
         t
@@ -1848,5 +1935,110 @@ mod tests {
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].text, "Line1");
         assert_eq!(blocks[1].text, "Line2");
+    }
+
+    #[test]
+    fn extract_text_with_default_encoding() {
+        let mut doc = Document::with_version("1.7");
+        let font_dict = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            // No Encoding entry! Should default to StandardEncoding.
+        };
+        let font_id = doc.add_object(Object::Dictionary(font_dict));
+
+        let content = b"BT /F1 12 Tf (ABC') Tj ET"; // ' is 0x27
+        let content_stream = Stream::new(dictionary! {}, content.to_vec());
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Resources" => dictionary! {
+                "Font" => dictionary! {
+                    "F1" => Object::Reference(font_id),
+                },
+            },
+            "Contents" => Object::Reference(content_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        // StandardEncoding maps 0x27 to quoteright (\u{2019})
+        assert_eq!(blocks[0].text, "ABC\u{2019}");
+    }
+
+    #[test]
+    fn extract_text_with_differences() {
+        let mut doc = Document::with_version("1.7");
+        let font_dict = dictionary! {
+            "Type" => "Font",
+            "Subtype" => "Type1",
+            "BaseFont" => "Helvetica",
+            "Encoding" => dictionary! {
+                "Type" => "Encoding",
+                "Differences" => vec![
+                    Object::Integer(65), // 'A'
+                    Object::Name(b"Euro".to_vec()),
+                ],
+            },
+        };
+        let font_id = doc.add_object(Object::Dictionary(font_dict));
+
+        let content = b"BT /F1 12 Tf (A) Tj ET";
+        let content_stream = Stream::new(dictionary! {}, content.to_vec());
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "Resources" => dictionary! {
+                "Font" => dictionary! {
+                    "F1" => Object::Reference(font_id),
+                },
+            },
+            "Contents" => Object::Reference(content_id),
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let blocks = extract_text(&doc);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "€");
     }
 }
