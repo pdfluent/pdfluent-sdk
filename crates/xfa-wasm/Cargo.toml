@@ -26,6 +26,7 @@ serde_json.workspace = true
 indexmap.workspace = true
 js-sys = "0.3"
 kurbo = "0.13"
+pdf-manip = { path = "../pdf-manip", features = ["pdfa-convert"] }
 
 # lopdf: required for text extraction; annotate uses lopdf for mutation.
 # Direct path (not workspace = true) to allow per-target default-features override.
