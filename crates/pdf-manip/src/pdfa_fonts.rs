@@ -642,6 +642,7 @@ fn find_non_embedded_fonts_detailed(doc: &Document) -> Vec<NonEmbeddedFont> {
 /// Check if a font dictionary has an embedded font program via FontDescriptor.
 /// Verifies that FontFile/FontFile2/FontFile3 actually points to a Stream object,
 /// not just that the key exists (lopdf can drop stream data during load/save).
+/// Handles both Reference (fd_id → FontDescriptor) and inline FontDescriptor dict.
 fn has_embedded_font_program(doc: &Document, dict: &lopdf::Dictionary) -> bool {
     match dict.get(b"FontDescriptor").ok() {
         Some(Object::Reference(fd_id)) => {
@@ -651,6 +652,7 @@ fn has_embedded_font_program(doc: &Document, dict: &lopdf::Dictionary) -> bool {
                 false
             }
         }
+        Some(Object::Dictionary(fd)) => has_valid_font_file(doc, fd),
         _ => false,
     }
 }
@@ -963,6 +965,11 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     // resolution, Subtype syncing, and width computation in a deterministic
     // order, avoiding the interference between separate pipeline steps.
     let _ = enforce_pdfa_font_compliance(doc);
+
+    // Final width sync pass: after ALL font manipulations (encoding fixes,
+    // subsetting, embedding, ToUnicode), synchronize Widths arrays with
+    // actual glyph widths from the embedded font binary.
+    let _ = sync_widths_from_embedded_fonts(doc);
 
     Ok(report)
 }
@@ -2852,6 +2859,9 @@ fn find_system_font(font_name: &str) -> Option<String> {
             "/System/Library/Fonts/",
             "/Library/Fonts/",
             "~/Library/Fonts/",
+            "/opt/homebrew/share/fonts/",
+            "/opt/local/share/fonts/",
+            "~/.local/share/fonts/",
         ]
     } else if cfg!(target_os = "linux") {
         vec![
@@ -2974,6 +2984,530 @@ fn find_font_recursive_depth(dir: &str, filename: &str, depth: u32) -> Option<St
         }
     }
     None
+}
+
+/// Synchronize width arrays with the actual embedded font program metrics.
+///
+/// For simple fonts this rewrites `/Widths` from the embedded TrueType/CFF
+/// program and updates `/MissingWidth`. For CID fonts it rewrites `/W` and
+/// `/DW` on the CIDFont descendant using the authoritative embedded metrics:
+/// - CIDFontType2: hmtx advances from `ttf_parser`
+/// - CIDFontType0: CFF charstring widths from `cff_parser`
+pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
+    let font_ids: Vec<ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, obj)| {
+            if let Object::Dictionary(dict) = obj {
+                if is_font_dict(dict) {
+                    return Some(*id);
+                }
+            }
+            None
+        })
+        .collect();
+
+    let mut fixed = 0;
+    let mut processed_cid_fonts = std::collections::HashSet::new();
+
+    for font_id in font_ids {
+        let subtype = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            get_name(dict, b"Subtype").unwrap_or_default()
+        };
+
+        if subtype == "Type0" {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            let Some((cid_font_id, true)) = get_descendant_embed_info(doc, dict) else {
+                continue;
+            };
+            if !processed_cid_fonts.insert(cid_font_id) {
+                continue;
+            }
+
+            let (cid_subtype, fd_id) = match doc.objects.get(&cid_font_id) {
+                Some(Object::Dictionary(cid_dict)) => (
+                    get_name(cid_dict, b"Subtype").unwrap_or_default(),
+                    match cid_dict.get(b"FontDescriptor").ok() {
+                        Some(Object::Reference(id)) => Some(*id),
+                        _ => None,
+                    },
+                ),
+                _ => continue,
+            };
+            let Some(fd_id) = fd_id else { continue };
+
+            let changed = match cid_subtype.as_str() {
+                "CIDFontType0" => sync_cid_widths_from_cff_embedded_font(doc, cid_font_id, fd_id),
+                "CIDFontType2" => {
+                    sync_cid_widths_from_truetype_embedded_font(doc, cid_font_id, fd_id)
+                }
+                _ => false,
+            };
+            if changed {
+                fixed += 1;
+            }
+            continue;
+        }
+
+        if subtype == "CIDFontType0" || subtype == "CIDFontType2" {
+            if !processed_cid_fonts.insert(font_id) {
+                continue;
+            }
+            let fd_id = {
+                let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                    continue;
+                };
+                match dict.get(b"FontDescriptor").ok() {
+                    Some(Object::Reference(id)) => Some(*id),
+                    _ => None,
+                }
+            };
+            let Some(fd_id) = fd_id else { continue };
+
+            let changed = if subtype == "CIDFontType0" {
+                sync_cid_widths_from_cff_embedded_font(doc, font_id, fd_id)
+            } else {
+                sync_cid_widths_from_truetype_embedded_font(doc, font_id, fd_id)
+            };
+            if changed {
+                fixed += 1;
+            }
+            continue;
+        }
+
+        let fd_id = {
+            let Some(Object::Dictionary(dict)) = doc.objects.get(&font_id) else {
+                continue;
+            };
+            match dict.get(b"FontDescriptor").ok() {
+                Some(Object::Reference(id)) => *id,
+                _ => continue,
+            }
+        };
+
+        let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
+            continue;
+        };
+
+        if let Ok(face) = ttf_parser::Face::parse(&font_data, 0) {
+            let units_per_em = face.units_per_em() as f64;
+            if units_per_em == 0.0 {
+                continue;
+            }
+
+            let (first_char, existing_widths, enc) = {
+                let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+                    continue;
+                };
+                let first_char = font
+                    .get(b"FirstChar")
+                    .ok()
+                    .and_then(|o| match o {
+                        Object::Integer(i) => Some(*i as u32),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let widths = match font.get(b"Widths").ok() {
+                    Some(Object::Array(arr)) => arr.clone(),
+                    _ => continue,
+                };
+                let enc = font
+                    .get(b"Encoding")
+                    .ok()
+                    .and_then(|o| match o {
+                        Object::Name(n) => String::from_utf8(n.clone()).ok(),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                (first_char, widths, enc)
+            };
+
+            let mut new_widths: Vec<Object> = Vec::with_capacity(existing_widths.len());
+            let mut changed = false;
+            for (idx, obj) in existing_widths.iter().enumerate() {
+                let code = first_char + idx as u32;
+                let ch = encoding_to_char(code, &enc);
+                let expected = if let Some(gid) = face.glyph_index(ch) {
+                    face.glyph_hor_advance(gid)
+                        .map(|w| (w as f64 * 1000.0 / units_per_em).round() as i32)
+                        .unwrap_or(0)
+                } else if code <= u16::MAX as u32 {
+                    face.glyph_hor_advance(ttf_parser::GlyphId(code as u16))
+                        .map(|w| (w as f64 * 1000.0 / units_per_em).round() as i32)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                let current = match obj {
+                    Object::Integer(w) => *w as i32,
+                    Object::Real(r) => *r as i32,
+                    _ => 0,
+                };
+                if current != expected {
+                    changed = true;
+                }
+                new_widths.push(Object::Integer(expected as i64));
+            }
+
+            if changed {
+                if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
+                    font.set("Widths", Object::Array(new_widths));
+                }
+                fixed += 1;
+            }
+
+            if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                let missing_width = face
+                    .glyph_hor_advance(ttf_parser::GlyphId(0))
+                    .map(|w| (w as f64 * 1000.0 / units_per_em).round() as i64)
+                    .unwrap_or(0);
+                let current_missing = match fd.get(b"MissingWidth").ok() {
+                    Some(Object::Integer(i)) => Some(*i),
+                    Some(Object::Real(r)) => Some(*r as i64),
+                    _ => None,
+                };
+                if current_missing != Some(missing_width) {
+                    fd.set("MissingWidth", Object::Integer(missing_width));
+                }
+            }
+        } else if let Some(cff) = cff_parser::Table::parse(&font_data) {
+            let (first_char, last_char, existing_widths) = {
+                let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
+                    continue;
+                };
+                let first_char = match font.get(b"FirstChar").ok() {
+                    Some(Object::Integer(i)) => *i as u32,
+                    _ => 0,
+                };
+                let last_char = match font.get(b"LastChar").ok() {
+                    Some(Object::Integer(i)) => *i as u32,
+                    _ => 255,
+                };
+                let widths = match font.get(b"Widths").ok() {
+                    Some(Object::Array(arr)) => arr.clone(),
+                    _ => continue,
+                };
+                (first_char, last_char, widths)
+            };
+
+            let upem = {
+                let matrix_sx = cff.matrix().sx;
+                if matrix_sx.abs() > f64::EPSILON {
+                    (1.0 / matrix_sx).round()
+                } else {
+                    1000.0
+                }
+            };
+
+            let mut new_widths: Vec<Object> = Vec::with_capacity(existing_widths.len());
+            let mut changed = false;
+            for (idx, obj) in existing_widths.iter().enumerate() {
+                let code = first_char + idx as u32;
+                if code > last_char {
+                    break;
+                }
+                let current = match obj {
+                    Object::Integer(w) => *w as i32,
+                    Object::Real(r) => *r as i32,
+                    _ => 0,
+                };
+                let expected = cff
+                    .glyph_index(code as u8)
+                    .and_then(|gid| cff.glyph_width_f64(gid))
+                    .map(|w| (w * 1000.0 / upem).round() as i32)
+                    .unwrap_or(current);
+                if current != expected {
+                    changed = true;
+                }
+                new_widths.push(Object::Integer(expected as i64));
+            }
+
+            if changed {
+                if let Some(Object::Dictionary(ref mut font)) = doc.objects.get_mut(&font_id) {
+                    font.set("Widths", Object::Array(new_widths));
+                }
+                fixed += 1;
+            }
+
+            if let Some(Object::Dictionary(ref mut fd)) = doc.objects.get_mut(&fd_id) {
+                let missing_width = cff
+                    .glyph_width_f64(cff_parser::GlyphId(0))
+                    .map(|w| (w * 1000.0 / upem).round() as i64)
+                    .unwrap_or(0);
+                let current_missing = match fd.get(b"MissingWidth").ok() {
+                    Some(Object::Integer(i)) => Some(*i),
+                    Some(Object::Real(r)) => Some(*r as i64),
+                    _ => None,
+                };
+                if current_missing != Some(missing_width) {
+                    fd.set("MissingWidth", Object::Integer(missing_width));
+                }
+            }
+        }
+    }
+
+    fixed
+}
+
+fn sync_cid_widths_from_cff_embedded_font(
+    doc: &mut Document,
+    cid_font_id: ObjectId,
+    fd_id: ObjectId,
+) -> bool {
+    let has_ff3 = matches!(
+        doc.objects.get(&fd_id),
+        Some(Object::Dictionary(d)) if d.has(b"FontFile3")
+    );
+    if !has_ff3 {
+        return false;
+    }
+
+    let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
+        return false;
+    };
+    let Some(cff) =
+        cff_parser::Table::parse(&font_data).or_else(|| extract_cff_from_otf(&font_data))
+    else {
+        return false;
+    };
+
+    let before = capture_cid_width_state(doc, cid_font_id);
+    if !fix_cid_widths_from_cff(doc, cid_font_id, &cff) {
+        return false;
+    }
+    capture_cid_width_state(doc, cid_font_id) != before
+}
+
+fn sync_cid_widths_from_truetype_embedded_font(
+    doc: &mut Document,
+    cid_font_id: ObjectId,
+    fd_id: ObjectId,
+) -> bool {
+    let has_ff2 = matches!(
+        doc.objects.get(&fd_id),
+        Some(Object::Dictionary(d)) if d.has(b"FontFile2")
+    );
+    if !has_ff2 {
+        return false;
+    }
+
+    let Some(font_data) = read_embedded_font_data(doc, fd_id) else {
+        return false;
+    };
+    let before = capture_cid_width_state(doc, cid_font_id);
+
+    let force_zero_widths = {
+        let head = tt_find_table(&font_data, b"head");
+        let hhea = tt_find_table(&font_data, b"hhea");
+        if let (Some(head), Some(hhea)) = (head, hhea) {
+            if head.len() >= 52 && hhea.len() >= 36 {
+                let idx_format = i16::from_be_bytes([head[50], head[51]]);
+                let num_h_metrics = u16::from_be_bytes([hhea[34], hhea[35]]);
+                (idx_format != 0 && idx_format != 1) && num_h_metrics == 0
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+    if force_zero_widths {
+        if let Some(Object::Dictionary(ref mut cid_dict)) = doc.objects.get_mut(&cid_font_id) {
+            cid_dict.set("DW", Object::Integer(0));
+            cid_dict.remove(b"W");
+        }
+        return capture_cid_width_state(doc, cid_font_id) != before;
+    }
+
+    let parsed_face = ttf_parser::Face::parse(&font_data, 0).ok();
+    let raw_metrics = if parsed_face.is_none() {
+        tt_parse_raw_metrics(&font_data)
+    } else {
+        None
+    };
+    let (num_glyphs, scale) = if let Some(face) = parsed_face.as_ref() {
+        let upem = face.units_per_em() as f64;
+        if upem == 0.0 {
+            return false;
+        }
+        (face.number_of_glyphs(), 1000.0 / upem)
+    } else if let Some(raw) = raw_metrics.as_ref() {
+        (raw.num_glyphs, 1000.0 / raw.units_per_em as f64)
+    } else {
+        return false;
+    };
+
+    enum CidToGidMode {
+        Identity,
+        Stream(Vec<u8>),
+    }
+
+    let cid_to_gid_mode = {
+        let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_font_id) else {
+            return false;
+        };
+        match cid_dict.get(b"CIDToGIDMap").ok() {
+            Some(Object::Name(n)) if n == b"Identity" => CidToGidMode::Identity,
+            None => CidToGidMode::Identity,
+            Some(Object::Reference(id)) => match doc.objects.get(id) {
+                Some(Object::Stream(s)) => {
+                    let mut st = s.clone();
+                    let _ = st.decompress();
+                    CidToGidMode::Stream(st.content)
+                }
+                _ => return false,
+            },
+            Some(Object::Stream(s)) => {
+                let mut st = s.clone();
+                let _ = st.decompress();
+                CidToGidMode::Stream(st.content)
+            }
+            _ => return false,
+        }
+    };
+
+    let mut widths: Vec<(u16, i64)> = Vec::new();
+    match cid_to_gid_mode {
+        CidToGidMode::Identity => {
+            for gid in 0..num_glyphs {
+                let width = if let Some(face) = parsed_face.as_ref() {
+                    face.glyph_hor_advance(ttf_parser::GlyphId(gid))
+                        .map(|advance| (advance as f64 * scale).round() as i64)
+                        .unwrap_or(0)
+                } else if let Some(raw) = raw_metrics.as_ref() {
+                    tt_raw_glyph_advance(raw, gid)
+                        .map(|advance| (advance as f64 * scale).round() as i64)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                widths.push((gid, width));
+            }
+        }
+        CidToGidMode::Stream(map_bytes) => {
+            for (cid, chunk) in map_bytes.chunks_exact(2).enumerate() {
+                if cid > u16::MAX as usize {
+                    break;
+                }
+                let gid = u16::from_be_bytes([chunk[0], chunk[1]]);
+                if gid == u16::MAX {
+                    continue;
+                }
+                let width = if gid < num_glyphs {
+                    if let Some(face) = parsed_face.as_ref() {
+                        face.glyph_hor_advance(ttf_parser::GlyphId(gid))
+                            .map(|advance| (advance as f64 * scale).round() as i64)
+                            .unwrap_or(0)
+                    } else if let Some(raw) = raw_metrics.as_ref() {
+                        tt_raw_glyph_advance(raw, gid)
+                            .map(|advance| (advance as f64 * scale).round() as i64)
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                widths.push((cid as u16, width));
+            }
+        }
+    }
+
+    if widths.is_empty() {
+        return false;
+    }
+
+    let mut freq: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+    for (_, width) in &widths {
+        *freq.entry(*width).or_default() += 1;
+    }
+    let dw = freq
+        .iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(width, _)| *width)
+        .unwrap_or(1000);
+
+    let current_dw = doc
+        .objects
+        .get(&cid_font_id)
+        .and_then(|obj| {
+            if let Object::Dictionary(cid_dict) = obj {
+                match cid_dict.get(b"DW").ok() {
+                    Some(Object::Integer(v)) => Some(*v),
+                    Some(Object::Real(v)) => Some(*v as i64),
+                    _ => Some(1000),
+                }
+            } else {
+                None
+            }
+        })
+        .unwrap_or(1000);
+    if check_cid_widths_match(doc, cid_font_id, &widths) && current_dw == dw {
+        return false;
+    }
+
+    let w_array = build_cid_w_array(widths.as_slice(), dw);
+    if let Some(Object::Dictionary(ref mut cid_dict)) = doc.objects.get_mut(&cid_font_id) {
+        cid_dict.set("DW", Object::Integer(dw));
+        if w_array.is_empty() {
+            cid_dict.remove(b"W");
+        } else {
+            cid_dict.set("W", Object::Array(w_array));
+        }
+    }
+
+    capture_cid_width_state(doc, cid_font_id) != before
+}
+
+fn capture_cid_width_state(
+    doc: &Document,
+    cid_font_id: ObjectId,
+) -> Option<(Option<Object>, Option<Object>)> {
+    let Some(Object::Dictionary(cid_dict)) = doc.objects.get(&cid_font_id) else {
+        return None;
+    };
+    Some((
+        cid_dict.get(b"DW").ok().cloned(),
+        cid_dict.get(b"W").ok().cloned(),
+    ))
+}
+
+fn build_cid_w_array(widths: &[(u16, i64)], dw: i64) -> Vec<Object> {
+    let mut w_array: Vec<Object> = Vec::new();
+    let mut i = 0;
+    while i < widths.len() {
+        let (cid, width) = widths[i];
+        if width == dw {
+            i += 1;
+            continue;
+        }
+
+        let start = cid;
+        let mut run: Vec<i64> = vec![width];
+        i += 1;
+        while i < widths.len() {
+            let (next_cid, next_width) = widths[i];
+            if next_cid != start + run.len() as u16 {
+                break;
+            }
+            if next_width == dw && (i + 1 >= widths.len() || widths[i + 1].0 != next_cid + 1) {
+                break;
+            }
+            run.push(next_width);
+            i += 1;
+        }
+
+        w_array.push(Object::Integer(start as i64));
+        w_array.push(Object::Array(
+            run.into_iter().map(Object::Integer).collect(),
+        ));
+    }
+    w_array
 }
 
 /// Fix width mismatches for fonts with embedded programs (6.2.11.5:1).
@@ -4917,7 +5451,9 @@ fn collect_simple_invalid_codes(
 
 fn notdef_content_stream_ids(doc: &Document, container: ObjectId) -> Vec<ObjectId> {
     match doc.objects.get(&container) {
-        Some(Object::Dictionary(_)) => crate::content_editor::get_content_stream_ids(doc, container),
+        Some(Object::Dictionary(_)) => {
+            crate::content_editor::get_content_stream_ids(doc, container)
+        }
         Some(Object::Stream(stream))
             if stream
                 .dict
