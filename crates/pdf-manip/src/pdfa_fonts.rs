@@ -4539,31 +4539,13 @@ fn is_subset_font_name(name: &str) -> bool {
 }
 
 fn collect_notdef_content_containers(doc: &Document) -> Vec<ObjectId> {
-    let mut containers: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+    use std::collections::{HashSet, VecDeque};
 
-    for (&id, obj) in &doc.objects {
-        let Object::Stream(stream) = obj else {
-            continue;
-        };
-        let is_form = stream
-            .dict
-            .get(b"Subtype")
-            .ok()
-            .and_then(|o| o.as_name().ok())
-            == Some(b"Form");
-        if is_form {
-            containers.push(id);
+    fn container_resources(doc: &Document, container: ObjectId) -> Option<lopdf::Dictionary> {
+        if let Some(resources) = resolve_page_resources_local(doc, container) {
+            return Some(resources);
         }
-    }
 
-    containers
-}
-
-fn resolve_notdef_container_font_map(
-    doc: &Document,
-    container: ObjectId,
-) -> Option<Vec<(String, ObjectId)>> {
-    let resources = resolve_page_resources_local(doc, container).or_else(|| {
         let stream = match doc.objects.get(&container) {
             Some(Object::Stream(s)) => s,
             _ => return None,
@@ -4576,7 +4558,93 @@ fn resolve_notdef_container_font_map(
             },
             _ => None,
         }
-    })?;
+    }
+
+    let mut containers = Vec::new();
+    let mut seen = HashSet::new();
+    let mut queue: VecDeque<ObjectId> = doc.get_pages().values().copied().collect();
+
+    while let Some(container) = queue.pop_front() {
+        if !seen.insert(container) {
+            continue;
+        }
+        containers.push(container);
+
+        let Some(resources) = container_resources(doc, container) else {
+            continue;
+        };
+        let xobjects = match resources.get(b"XObject").ok() {
+            Some(Object::Dictionary(d)) => d.clone(),
+            Some(Object::Reference(r)) => match doc.objects.get(r) {
+                Some(Object::Dictionary(d)) => d.clone(),
+                _ => continue,
+            },
+            _ => continue,
+        };
+
+        for (_, value) in xobjects.iter() {
+            let Object::Reference(xobj_id) = value else {
+                continue;
+            };
+            let Some(Object::Stream(stream)) = doc.objects.get(xobj_id) else {
+                continue;
+            };
+            let is_form = stream
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|o| o.as_name().ok())
+                == Some(b"Form");
+            if is_form && !seen.contains(xobj_id) {
+                queue.push_back(*xobj_id);
+            }
+        }
+    }
+
+    for (&id, obj) in &doc.objects {
+        let Object::Stream(stream) = obj else {
+            continue;
+        };
+        let is_form = stream
+            .dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            == Some(b"Form");
+        if is_form && seen.insert(id) {
+            containers.push(id);
+        }
+    }
+
+    containers
+}
+
+fn resolve_notdef_container_font_map(
+    doc: &Document,
+    container: ObjectId,
+) -> Option<Vec<(String, ObjectId)>> {
+    use std::collections::HashSet;
+
+    let resources = match doc.objects.get(&container) {
+        Some(Object::Stream(stream))
+            if stream
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|o| o.as_name().ok())
+                == Some(b"Form") =>
+        {
+            match stream.dict.get(b"Resources").ok() {
+                Some(Object::Dictionary(d)) => Some(d.clone()),
+                Some(Object::Reference(r)) => match doc.objects.get(r) {
+                    Some(Object::Dictionary(d)) => Some(d.clone()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        _ => resolve_page_resources_local(doc, container),
+    }?;
 
     let fonts = match resources.get(b"Font").ok() {
         Some(Object::Dictionary(d)) => d.clone(),
@@ -4588,13 +4656,22 @@ fn resolve_notdef_container_font_map(
     };
 
     let mut map = Vec::new();
+    let mut seen_names = HashSet::new();
     for (key, val) in fonts.iter() {
-        if let Object::Reference(id) = val {
-            map.push((String::from_utf8_lossy(key).to_string(), *id));
+        let Object::Reference(id) = val else {
+            continue;
+        };
+        let name = String::from_utf8_lossy(key).to_string();
+        if seen_names.insert(name.clone()) {
+            map.push((name, *id));
         }
     }
 
-    Some(map)
+    if map.is_empty() {
+        None
+    } else {
+        Some(map)
+    }
 }
 
 fn collect_simple_invalid_codes(
@@ -4607,87 +4684,124 @@ fn collect_simple_invalid_codes(
     use std::collections::HashSet;
 
     let subtype = get_name(fd, b"Subtype").unwrap_or_default();
+    let first_char = fd
+        .get(b"FirstChar")
+        .ok()
+        .and_then(|o| match o {
+            Object::Integer(i) => Some((*i).clamp(0, 255) as u32),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let last_char = fd
+        .get(b"LastChar")
+        .ok()
+        .and_then(|o| match o {
+            Object::Integer(i) => Some((*i).clamp(0, 255) as u32),
+            _ => None,
+        })
+        .unwrap_or(255);
+
+    let add_declared_range_bounds = |invalid_codes: &mut HashSet<u8>| {
+        for code in 0..first_char.min(256) {
+            invalid_codes.insert(code as u8);
+        }
+        if last_char < 255 {
+            for code in (last_char + 1)..=255 {
+                invalid_codes.insert(code as u8);
+            }
+        }
+    };
 
     if subtype == "TrueType" {
-        let Ok(face) = ttf_parser::Face::parse(font_data, 0) else {
-            return HashSet::new();
-        };
-
-        let (enc_name, differences) = get_simple_encoding_info(doc, fd);
-        let base_name = get_name(fd, b"BaseFont").unwrap_or_default();
-        let is_symbolic = is_font_symbolic(doc, fd) || is_symbolic_font_name(&base_name);
-
-        let glyph_name_is_real = |glyph_name: &str| -> bool {
-            if glyph_name.is_empty() || glyph_name == ".notdef" {
-                return false;
-            }
-
-            if let Some(gid) = face.glyph_index_by_name(glyph_name) {
-                if tt_glyph_is_real(&face, gid, is_subset) {
-                    return true;
-                }
-            }
-
-            let Some(unicode) = glyph_name_to_unicode(glyph_name) else {
-                return false;
-            };
-            let unicode = match unicode {
-                '\u{00AD}' => '-',
-                other => other,
-            };
-
-            face.glyph_index(unicode)
-                .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
-        };
-
         let mut invalid_codes = HashSet::new();
-        for code in 0u8..=255 {
-            let has_real_glyph = if let Some(glyph_name) = differences.get(&(code as u32)) {
-                glyph_name_is_real(glyph_name)
-            } else {
-                let ch = match encoding_to_char(code as u32, &enc_name) {
+        let mut parse_was_conclusive = false;
+
+        if let Ok(face) = ttf_parser::Face::parse(font_data, 0) {
+            parse_was_conclusive = true;
+
+            let (enc_name, differences) = get_simple_encoding_info(doc, fd);
+            let base_name = get_name(fd, b"BaseFont").unwrap_or_default();
+            let is_symbolic = is_font_symbolic(doc, fd) || is_symbolic_font_name(&base_name);
+
+            let glyph_name_is_real = |glyph_name: &str| -> bool {
+                if glyph_name.is_empty() || glyph_name == ".notdef" {
+                    return false;
+                }
+
+                if let Some(gid) = face.glyph_index_by_name(glyph_name) {
+                    if tt_glyph_is_real(&face, gid, is_subset) {
+                        return true;
+                    }
+                }
+
+                let Some(unicode) = glyph_name_to_unicode(glyph_name) else {
+                    return false;
+                };
+                let unicode = match unicode {
                     '\u{00AD}' => '-',
                     other => other,
                 };
 
-                (!is_symbolic
-                    && has_cmap_31(&face)
-                    && lookup_unicode_cmap_31_raw(&face, ch as u32)
-                        .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset)))
-                    || face
-                        .glyph_index(ch)
-                        .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
-                    || unicode_to_agl_name(ch)
-                        .and_then(|name| face.glyph_index_by_name(&name))
-                        .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
-                    || unicode_to_glyph_name(ch)
-                        .and_then(|name| face.glyph_index_by_name(&name))
-                        .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
-                    || ((is_symbolic || enc_name.is_empty())
-                        && lookup_symbol_cmap_30(&face, code as u32)
-                            .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset)))
+                face.glyph_index(unicode)
+                    .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
             };
 
-            if !has_real_glyph {
-                invalid_codes.insert(code);
+            for code in 0u8..=255 {
+                let has_real_glyph = if let Some(glyph_name) = differences.get(&(code as u32)) {
+                    glyph_name_is_real(glyph_name)
+                } else {
+                    let ch = match encoding_to_char(code as u32, &enc_name) {
+                        '\u{00AD}' => '-',
+                        other => other,
+                    };
+
+                    (!is_symbolic
+                        && has_cmap_31(&face)
+                        && lookup_unicode_cmap_31_raw(&face, ch as u32)
+                            .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset)))
+                        || face
+                            .glyph_index(ch)
+                            .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
+                        || unicode_to_agl_name(ch)
+                            .and_then(|name| face.glyph_index_by_name(&name))
+                            .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
+                        || unicode_to_glyph_name(ch)
+                            .and_then(|name| face.glyph_index_by_name(&name))
+                            .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset))
+                        || ((is_symbolic || enc_name.is_empty())
+                            && lookup_symbol_cmap_30(&face, code as u32)
+                                .is_some_and(|gid| tt_glyph_is_real(&face, gid, is_subset)))
+                };
+
+                if !has_real_glyph {
+                    invalid_codes.insert(code);
+                }
             }
         }
 
+        if !parse_was_conclusive {
+            invalid_codes.extend(invalid_simple_codes_from_widths(
+                doc, fd, first_char, last_char,
+            ));
+        }
+        add_declared_range_bounds(&mut invalid_codes);
         return invalid_codes;
     }
 
     let cff_data = extract_cff_bytes_from_otf(font_data).unwrap_or(font_data);
-    let is_cff = cff_parser::Table::parse(cff_data).is_some();
+    let parsed_cff = cff_parser::Table::parse(cff_data);
+    let is_cff = parsed_cff.is_some();
     let owned_available_glyphs: std::collections::HashSet<String>;
     let available_glyphs = if let Some(glyphs) = available_glyphs {
-        glyphs
+        Some(glyphs)
     } else {
         owned_available_glyphs =
             parse_subset_font_program_glyphs(font_data, is_cff).unwrap_or_default();
         if owned_available_glyphs.is_empty() {
-            return HashSet::new();
+            None
+        } else {
+            Some(&owned_available_glyphs)
         }
-        &owned_available_glyphs
     };
 
     let (enc_name, differences) = get_simple_encoding_info(doc, fd);
@@ -4696,7 +4810,8 @@ fn collect_simple_invalid_codes(
         let enc_map = parse_cff_encoding_map(cff_data);
         let has_pdf_encoding = fd.get(b"Encoding").is_ok();
         let has_explicit_difference = !differences.is_empty();
-        let has_gid_based_names = cff_parser::Table::parse(cff_data)
+        let has_gid_based_names = parsed_cff
+            .as_ref()
             .map(|cff| cff_has_gid_based_names(&cff))
             .unwrap_or(false);
         let allow_cff_encoding_fallback = !has_pdf_encoding
@@ -4704,6 +4819,7 @@ fn collect_simple_invalid_codes(
             || (enc_name.is_empty() && !has_explicit_difference);
 
         let mut invalid_codes = HashSet::new();
+        let parse_was_conclusive = available_glyphs.is_some() || !enc_map.is_empty();
         for code in 0u8..=255 {
             let mut has_glyph = false;
 
@@ -4718,13 +4834,15 @@ fn collect_simple_invalid_codes(
 
             if let Some(name) = glyph_name {
                 if !name.is_empty() && name != ".notdef" {
-                    has_glyph = available_glyphs.contains(name.as_str());
+                    if let Some(available_glyphs) = available_glyphs {
+                        has_glyph = available_glyphs.contains(name.as_str());
 
-                    if !has_glyph {
-                        for alt in cff_glyph_name_alternatives(&name) {
-                            if available_glyphs.contains(*alt) {
-                                has_glyph = true;
-                                break;
+                        if !has_glyph {
+                            for alt in cff_glyph_name_alternatives(&name) {
+                                if available_glyphs.contains(*alt) {
+                                    has_glyph = true;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -4740,11 +4858,18 @@ fn collect_simple_invalid_codes(
             }
         }
 
+        if !parse_was_conclusive {
+            invalid_codes.extend(invalid_simple_codes_from_widths(
+                doc, fd, first_char, last_char,
+            ));
+        }
+        add_declared_range_bounds(&mut invalid_codes);
         return invalid_codes;
     }
 
     let parsed = parse_type1_program(font_data);
     let mut invalid_codes = HashSet::new();
+    let parse_was_conclusive = parsed.is_some() || available_glyphs.is_some();
     for code in 0u8..=255 {
         let glyph_name = if let Some(name) = differences.get(&(code as u32)) {
             name.clone()
@@ -4768,20 +4893,31 @@ fn collect_simple_invalid_codes(
             ".notdef".to_string()
         };
 
-        if glyph_name == ".notdef" || !available_glyphs.contains(glyph_name.as_str()) {
+        let has_glyph = if let Some(available_glyphs) = available_glyphs {
+            available_glyphs.contains(glyph_name.as_str())
+        } else {
+            parsed
+                .as_ref()
+                .is_some_and(|parsed| parsed.charstring_widths.contains_key(glyph_name.as_str()))
+        };
+
+        if glyph_name == ".notdef" || !has_glyph {
             invalid_codes.insert(code);
         }
     }
 
+    if !parse_was_conclusive {
+        invalid_codes.extend(invalid_simple_codes_from_widths(
+            doc, fd, first_char, last_char,
+        ));
+    }
+    add_declared_range_bounds(&mut invalid_codes);
     invalid_codes
 }
 
 fn notdef_content_stream_ids(doc: &Document, container: ObjectId) -> Vec<ObjectId> {
-    if resolve_page_resources_local(doc, container).is_some() {
-        return crate::content_editor::get_content_stream_ids(doc, container);
-    }
-
     match doc.objects.get(&container) {
+        Some(Object::Dictionary(_)) => crate::content_editor::get_content_stream_ids(doc, container),
         Some(Object::Stream(stream))
             if stream
                 .dict
