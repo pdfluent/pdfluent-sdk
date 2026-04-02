@@ -18,11 +18,10 @@ pub fn run_structure_fixups(doc: &mut Document) -> Result<()> {
 
 /// Ensure Catalog, Pages, and Page objects have correct /Type entries (§6.1.2).
 fn ensure_core_types(doc: &mut Document) -> Result<()> {
-    let catalog_id = doc
-        .trailer
-        .get(b"Root")
-        .ok()
-        .and_then(|o| o.as_reference().ok());
+    let catalog_id = match doc.trailer.get(b"Root").ok() {
+        Some(Object::Reference(id)) => Some(*id),
+        _ => None,
+    };
 
     if let Some(id) = catalog_id {
         if let Ok(Object::Dictionary(ref mut cat)) = doc.get_object_mut(id) {
@@ -42,7 +41,6 @@ fn ensure_core_types(doc: &mut Document) -> Result<()> {
         }
     }
 
-    // Recursively find and fix all Pages (tree nodes) dictionaries.
     for pages_id in pages_dict_ids {
         fix_pages_tree_node(doc, pages_id);
     }
@@ -51,24 +49,49 @@ fn ensure_core_types(doc: &mut Document) -> Result<()> {
 }
 
 fn fix_pages_tree_node(doc: &mut Document, id: ObjectId) {
-    if let Ok(Object::Dictionary(ref mut pages_dict)) = doc.get_object_mut(id) {
+    let parent_id = if let Ok(Object::Dictionary(ref mut pages_dict)) = doc.get_object_mut(id) {
         pages_dict.set("Type", Object::Name(b"Pages".to_vec()));
-        if let Ok(Object::Reference(parent_id)) = pages_dict.get(b"Parent").cloned() {
-            fix_pages_tree_node(doc, parent_id);
+        match pages_dict.get(b"Parent") {
+            Ok(Object::Reference(pid)) => Some(*pid),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    if let Some(pid) = parent_id {
+        fix_pages_tree_node(doc, pid);
+    }
+}
+
+/// Normalize a BCP-47 language tag (lowercase language, titlecase region).
+fn normalize_lang_tag(tag: &str) -> String {
+    let parts: Vec<&str> = tag.split('-').collect();
+    let mut out = String::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push('-');
+        }
+        if i == 0 {
+            out.push_str(&part.to_lowercase());
+        } else if part.len() == 2 {
+            out.push_str(&part.to_uppercase());
+        } else {
+            let mut chars = part.chars();
+            if let Some(first) = chars.next() {
+                out.extend(first.to_uppercase());
+                out.push_str(&chars.as_str().to_lowercase());
+            }
         }
     }
+    out
 }
 
 /// Fix invalid language tags in BDC (Marked Content) and structure elements (§6.7.4).
 fn fix_bdc_lang_tags(doc: &mut Document) -> Result<()> {
-    use crate::pdfa_xmp::normalize_lang_tag;
-
-    // Fix Catalog /Lang if present.
-    let catalog_id = doc
-        .trailer
-        .get(b"Root")
-        .ok()
-        .and_then(|o| o.as_reference().ok());
+    let catalog_id = match doc.trailer.get(b"Root").ok() {
+        Some(Object::Reference(id)) => Some(*id),
+        _ => None,
+    };
 
     if let Some(id) = catalog_id {
         if let Ok(Object::Dictionary(ref mut catalog)) = doc.get_object_mut(id) {
@@ -85,7 +108,6 @@ fn fix_bdc_lang_tags(doc: &mut Document) -> Result<()> {
         }
     }
 
-    // Fix /Lang in all objects (BDC properties, structure elements).
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
         if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(id) {
@@ -115,14 +137,10 @@ fn fix_transparency_groups(doc: &mut Document) -> Result<()> {
                 continue;
             }
 
-            // Heuristic: check if page uses transparency.
-            // For simplicity and safety in PDF/A-2+, we can always add a transparency
-            // group to all pages. It identifies the page as a transparency transparency
-            // rendering intent, which is required if any transparency is used.
             let group = dictionary! {
                 "Type" => "Group",
                 "S" => "Transparency",
-                "CS" => "DeviceRGB", // Default to DeviceRGB; normalize_colorspaces will fix if needed.
+                "CS" => "DeviceRGB",
             };
             page_dict.set("Group", Object::Dictionary(group));
         }

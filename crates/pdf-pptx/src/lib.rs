@@ -10,7 +10,7 @@ pub use error::{PptxError, Result};
 pub use writer::{PptxImage, SlideData};
 
 use lopdf::Document;
-use pdf_extract::{extract_images_from_page_id, extract_page_blocks};
+use pdf_extract::{extract_blocks_from_page_id, extract_images_from_page_id};
 use std::io::Cursor;
 use writer::{extracted_to_pptx_image, PptxWriter};
 
@@ -46,12 +46,11 @@ pub fn pdf_to_pptx(doc: &Document) -> Result<Vec<u8>> {
             return Err(PptxError::Other("PPTX conversion timed out".into()));
         }
 
-        let page_blocks = extract_page_blocks(doc, page_num);
-
-        // Get page dimensions.
         let page_id = *pages.get(&page_num).ok_or(PptxError::Other(format!(
             "Missing page dictionary for page {page_num}"
         )))?;
+
+        let page_blocks = extract_blocks_from_page_id(doc, page_id, page_num);
         let (page_width, page_height) = get_page_dimensions(doc, page_id);
 
         // Extract images.
