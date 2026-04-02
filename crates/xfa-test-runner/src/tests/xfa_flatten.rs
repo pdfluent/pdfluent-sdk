@@ -15,9 +15,7 @@
 //!
 //! SSIM visual regression: when `mutool` and the iText oracle are available,
 //! renders page 1 of our flatten and page 1 of the iText flatten (both via
-//! mutool), then computes SSIM between them. Fails if SSIM < 0.60.  The
-//! threshold is intentionally lenient: XFA flattening strips dynamic form
-//! content, so some visual divergence is expected.
+//! mutool), then computes SSIM between them. Fails if SSIM < 0.85.
 //!
 //! Skip policy:
 //! - No /XFA key in AcroForm → Skip (not an XFA form)
@@ -28,7 +26,7 @@
 //! - pdf_syntax cannot re-parse the saved bytes
 //! - Re-parsed PDF has zero pages
 //! - Page count differs from iText oracle (when oracle is available)
-//! - SSIM of page 1 < 0.60 (when mutool available and rendering succeeds)
+//! - SSIM of page 1 < 0.85 (when mutool available and rendering succeeds)
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -39,7 +37,7 @@ use super::{PdfTest, TestResult, TestStatus};
 use crate::oracles::itext::ITextOracle;
 use crate::oracles::ssim;
 
-const SSIM_PASS_THRESHOLD: f64 = 0.60;
+const SSIM_PASS_THRESHOLD: f64 = 0.85;
 const RENDER_DPI: f64 = 150.0;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -107,12 +105,9 @@ impl PdfTest for XfaFlattenTest {
         // Falls back to a plain AcroForm strip on layout errors so the test
         // still passes for structurally valid PDFs whose template we can't
         // fully render yet.
-        let mut used_fallback = false;
         let buf = match pdf_xfa::flatten_xfa_to_pdf(pdf_data) {
             Ok(b) => b,
             Err(e) => {
-                // Layout failed — fall back to minimal AcroForm strip.
-                used_fallback = true;
                 remove_acroform(&mut doc);
                 let mut fallback = Vec::new();
                 if let Err(e2) = doc.save_to(&mut fallback) {
@@ -196,24 +191,10 @@ impl PdfTest for XfaFlattenTest {
 
                 // SSIM visual regression: compare our flatten (page 1 via mutool)
                 // against iText's flatten (page 1 via mutool). Skips when iText
-                // oracle is unavailable, did not write its output file, or when
-                // the layout engine fell back to a bare AcroForm strip (in which
-                // case we are not testing XFA render quality but merely PDF
-                // re-serialisation fidelity, which is outside the test's scope).
+                // oracle is unavailable or did not write its output file.
                 // Also skips for certified PDFs: iText 5 cannot flatten a certified
                 // PDF (it returns the original unmodified bytes), so comparing
                 // our flatten against it would be meaningless. (#557)
-                if used_fallback {
-                    let _ = std::fs::remove_file(&itext_flat_path);
-                    metadata.insert("ssim_skip".to_string(), "layout_fallback".to_string());
-                    return TestResult {
-                        status: TestStatus::Pass,
-                        error_message: None,
-                        duration_ms: start.elapsed().as_millis() as u64,
-                        oracle_score: None,
-                        metadata,
-                    };
-                }
                 if is_certified {
                     let _ = std::fs::remove_file(&itext_flat_path);
                     metadata.insert("ssim_skip".to_string(), "certified_pdf".to_string());
