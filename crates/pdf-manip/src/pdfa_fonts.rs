@@ -1011,6 +1011,14 @@ pub fn embed_fonts(doc: &mut Document) -> Result<FontEmbedReport> {
     // order, avoiding the interference between separate pipeline steps.
     let _ = enforce_pdfa_font_compliance(doc);
 
+    // FINAL: Clean up font metadata and enforce PDF/A consistency.
+    // Each of these fixers is idempotent and can run multiple times safely.
+    let _ = fix_font_descriptor_metrics(doc);
+    let _ = fix_type1_charset(doc);
+    let _ = fix_missing_cidtogidmap(doc);
+    let _ = fix_missing_simple_font_widths(doc);
+    let _ = fix_cidset(doc);
+
     // Complete any incomplete ToUnicode CMaps by filling gaps based on
     // the font's Encoding (especially Differences). §6.2.11.4.1 requires
     // that ALL character codes used in a PDF have a Unicode mapping.
@@ -3150,21 +3158,21 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 continue;
             }
 
-            let (first_char, existing_widths, enc) = {
+            let (first_char, last_char, existing_widths, enc) = {
                 let Some(Object::Dictionary(font)) = doc.objects.get(&font_id) else {
                     continue;
                 };
-                let first_char = font
-                    .get(b"FirstChar")
-                    .ok()
-                    .and_then(|o| match o {
-                        Object::Integer(i) => Some(*i as u32),
-                        _ => None,
-                    })
-                    .unwrap_or(0);
+                let first_char = match font.get(b"FirstChar").ok() {
+                    Some(Object::Integer(i)) => *i as u32,
+                    _ => 0,
+                };
+                let last_char = match font.get(b"LastChar").ok() {
+                    Some(Object::Integer(i)) => *i as u32,
+                    _ => 255,
+                };
                 let widths = match font.get(b"Widths").ok() {
                     Some(Object::Array(arr)) => arr.clone(),
-                    _ => continue,
+                    _ => vec![],
                 };
                 let enc = font
                     .get(b"Encoding")
@@ -3174,13 +3182,13 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                         _ => None,
                     })
                     .unwrap_or_default();
-                (first_char, widths, enc)
+                (first_char, last_char, widths, enc)
             };
 
-            let mut new_widths: Vec<Object> = Vec::with_capacity(existing_widths.len());
-            let mut changed = false;
-            for (idx, obj) in existing_widths.iter().enumerate() {
-                let code = first_char + idx as u32;
+            let mut new_widths: Vec<Object> = Vec::with_capacity((last_char.saturating_sub(first_char) + 1) as usize);
+            let mut changed = existing_widths.len() != (last_char.saturating_sub(first_char) + 1) as usize;
+            for code in first_char..=last_char {
+                let idx = (code - first_char) as usize;
                 let ch = encoding_to_char(code, &enc);
                 let expected = if let Some(gid) = face.glyph_index(ch) {
                     face.glyph_hor_advance(gid)
@@ -3193,12 +3201,12 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 } else {
                     0
                 };
-                let current = match obj {
-                    Object::Integer(w) => *w as i32,
-                    Object::Real(r) => *r as i32,
-                    _ => 0,
-                };
-                if current != expected {
+                let current = existing_widths.get(idx).and_then(|o| match o {
+                    Object::Integer(w) => Some(*w as i32),
+                    Object::Real(r) => Some(*r as i32),
+                    _ => None,
+                });
+                if current != Some(expected) {
                     changed = true;
                 }
                 new_widths.push(Object::Integer(expected as i64));
@@ -3240,7 +3248,7 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 };
                 let widths = match font.get(b"Widths").ok() {
                     Some(Object::Array(arr)) => arr.clone(),
-                    _ => continue,
+                    _ => vec![],
                 };
                 (first_char, last_char, widths)
             };
@@ -3254,24 +3262,21 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 }
             };
 
-            let mut new_widths: Vec<Object> = Vec::with_capacity(existing_widths.len());
-            let mut changed = false;
-            for (idx, obj) in existing_widths.iter().enumerate() {
-                let code = first_char + idx as u32;
-                if code > last_char {
-                    break;
-                }
-                let current = match obj {
-                    Object::Integer(w) => *w as i32,
-                    Object::Real(r) => *r as i32,
-                    _ => 0,
-                };
+            let mut new_widths: Vec<Object> = Vec::with_capacity((last_char.saturating_sub(first_char) + 1) as usize);
+            let mut changed = existing_widths.len() != (last_char.saturating_sub(first_char) + 1) as usize;
+            for code in first_char..=last_char {
+                let idx = (code - first_char) as usize;
+                let current = existing_widths.get(idx).and_then(|o| match o {
+                    Object::Integer(w) => Some(*w as i32),
+                    Object::Real(r) => Some(*r as i32),
+                    _ => None,
+                });
                 let expected = cff
                     .glyph_index(code as u8)
                     .and_then(|gid| cff.glyph_width_f64(gid))
                     .map(|w| (w * 1000.0 / upem).round() as i32)
-                    .unwrap_or(current);
-                if current != expected {
+                    .unwrap_or_else(|| current.unwrap_or(0));
+                if current != Some(expected) {
                     changed = true;
                 }
                 new_widths.push(Object::Integer(expected as i64));
@@ -17996,22 +18001,33 @@ fn strip_control_bytes(bytes: &mut Vec<u8>, allow_collapse: bool) -> bool {
                 } else {
                     bytes[i]
                 };
-                if code >= 32 {
-                    filtered.push(bytes[i]);
-                    filtered.push(bytes[i + 1]);
+                if code < 32 && !matches!(code, 9 | 10 | 13) {
+                    // Replace forbidden character code with space (remap from .notdef).
+                    if code_in_odd_lane {
+                        bytes[i + 1] = 32;
+                    } else {
+                        bytes[i] = 32;
+                    }
+                    changed = true;
                 }
+                filtered.push(bytes[i]);
+                filtered.push(bytes[i + 1]);
             }
-            if filtered.len() != bytes.len() {
+            if changed {
                 *bytes = filtered;
-                changed = true;
             }
             return changed;
         }
     }
 
-    let original_len = bytes.len();
-    bytes.retain(|b| *b >= 32);
-    changed || bytes.len() != original_len
+    for b in bytes.iter_mut() {
+        if *b < 32 && !matches!(*b, 9 | 10 | 13) {
+            // Replace forbidden character code with space (remap from .notdef).
+            *b = 32;
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Fix .notdef references in CID (Type0) fonts by modifying content streams.
