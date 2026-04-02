@@ -214,6 +214,7 @@ mod tests {
                 value: value.into(),
                 field_kind: xfa_layout_engine::form::FieldKind::Text,
                 font_size: 0.0,
+                font_family: xfa_layout_engine::text::FontFamily::Serif,
             },
             children: vec![],
             style: Default::default(),
