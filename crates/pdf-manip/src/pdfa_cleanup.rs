@@ -35,6 +35,20 @@ pub struct PdfACleanupReport {
     pub cidtogidmap_added: usize,
     /// Number of annotation AP fixes.
     pub ap_fixes: usize,
+    /// Number of FileAttachment annotations removed.
+    pub file_attachment_annotations_removed: usize,
+    /// Number of annotation /CA fixes (set to 1.0).
+    pub ca_fixes: usize,
+    /// Number of ExtGState SMask/S fixes.
+    pub smask_s_fixes: usize,
+    /// Number of long strings truncated in content streams.
+    pub long_string_fixes: usize,
+    /// Number of invalid Lang values fixed.
+    pub invalid_lang_fixes: usize,
+    /// Number of Info/XMP date mismatches fixed.
+    pub date_mismatch_fixes: usize,
+    /// Number of XMP metadata rebuilt.
+    pub xmp_rebuilt: usize,
 }
 
 /// Remove all PDF/A-incompatible elements from the document.
@@ -53,6 +67,13 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
         ocg_fixes: 0,
         cidtogidmap_added: 0,
         ap_fixes: 0,
+        file_attachment_annotations_removed: 0,
+        ca_fixes: 0,
+        smask_s_fixes: 0,
+        long_string_fixes: 0,
+        invalid_lang_fixes: 0,
+        date_mismatch_fixes: 0,
+        xmp_rebuilt: 0,
     };
 
     // Force PDF version to 1.7 for PDF/A-2 compliance (6.1.2).
@@ -90,6 +111,12 @@ pub fn cleanup_for_pdfa(doc: &mut Document, is_pdfa1: bool) -> Result<PdfACleanu
     report.ap_fixes = fix_annotation_ap(doc);
     report.ap_fixes += fix_acroform_widget_ap(doc);
     strip_ap_non_normal(doc);
+    report.file_attachment_annotations_removed = remove_file_attachment_annotations(doc);
+    report.smask_s_fixes = fix_extgstate_smask_s(doc);
+    report.long_string_fixes = fix_long_strings_in_content_streams(doc);
+    report.invalid_lang_fixes = fix_invalid_lang_in_bdc(doc);
+    report.date_mismatch_fixes = sync_info_xmp_dates(doc);
+    report.xmp_rebuilt = rebuild_broken_xmp(doc);
     fix_ocg_order(doc);
     fix_annotation_contents(doc);
     fix_annotation_contents_type(doc);
@@ -1369,11 +1396,39 @@ fn fix_cidtogidmap(doc: &mut Document) -> usize {
     count
 }
 
-/// Fix annotation AP dictionaries: ensure /N (normal appearance) exists (6.3.3 t2).
+/// Fix annotation AP dictionaries (ensure /N exists) and force /CA to 1.0 (§6.3.3).
 fn fix_annotation_ap(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
+        // First, fix /CA (transparency) — must be 1.0 for all annotations.
+        let needs_ca_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                let is_annot = matches!(
+                    dict.get(b"Subtype").ok(),
+                    Some(Object::Name(ref n)) if is_annotation_subtype(n)
+                );
+                if is_annot {
+                    match dict.get(b"CA").ok() {
+                        Some(Object::Real(r)) => *r != 1.0,
+                        Some(Object::Integer(i)) => *i != 1,
+                        _ => false, // missing CA is 1.0 default
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        if needs_ca_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                dict.set("CA", Object::Real(1.0));
+                count += 1;
+            }
+        }
+
+        // Second, ensure /AP (appearance) exists and has /N.
         let fix_info = {
             if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
                 let is_annot = matches!(
@@ -3121,13 +3176,6 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
             combined.extend_from_slice(&c);
         }
 
-        if !combined
-            .windows(3)
-            .any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC")
-        {
-            continue;
-        }
-
         let fixed = fix_emc_in_bytes(&combined);
         if fixed == combined {
             continue;
@@ -3148,7 +3196,7 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
         }
     }
 
-    // Also fix Form XObject and Tiling Pattern streams (these are self-contained, no spanning).
+    // Also fix Form XObject and Tiling Pattern streams.
     // Must match collect_content_stream_ids in pdfa_fixups.rs which processes:
     // - /Subtype /Form (Form XObjects)
     // - /PatternType 1 (Tiling Patterns)
@@ -3176,7 +3224,22 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
         })
         .collect();
 
-    for id in form_and_pattern_ids {
+    // Collect all Form XObject IDs referenced from any Form XObject's content
+    // via Do /XObjectName, so we can process them recursively.
+    let mut visited: std::collections::HashSet<ObjectId> =
+        form_and_pattern_ids.iter().copied().collect();
+    let mut queue: Vec<ObjectId> = form_and_pattern_ids.clone();
+    while let Some(form_id) = queue.pop() {
+        let xobject_refs = collect_xobject_refs_from_form(doc, form_id);
+        for ref_id in xobject_refs {
+            if visited.insert(ref_id) {
+                queue.push(ref_id);
+            }
+        }
+    }
+
+    // Process all discovered Form XObjects (including nested ones).
+    for id in visited {
         let content = {
             let Some(Object::Stream(s)) = doc.objects.get(&id) else {
                 continue;
@@ -3187,19 +3250,182 @@ pub fn fix_unbalanced_emc(doc: &mut Document) {
             }
         };
 
-        if !content
-            .windows(3)
-            .any(|w| w == b"EMC" || w == b"BMC" || w == b"BDC")
-        {
-            continue;
-        }
-
         let fixed = fix_emc_in_bytes(&content);
         if fixed != content {
             if let Some(Object::Stream(ref mut s)) = doc.objects.get_mut(&id) {
                 s.set_plain_content(fixed);
             }
         }
+    }
+}
+
+/// Collect all Form XObject IDs referenced via `Do /XObjectName` operators
+/// in the given Form XObject's content stream.
+fn collect_xobject_refs_from_form(doc: &Document, form_id: ObjectId) -> Vec<ObjectId> {
+    let mut refs = Vec::new();
+    let content = match doc.objects.get(&form_id) {
+        Some(Object::Stream(s)) => match s.get_plain_content() {
+            Ok(c) => c,
+            Err(_) => return refs,
+        },
+        _ => return refs,
+    };
+
+    // Get the Resources dict from this Form XObject to resolve Do references.
+    let resources = match doc.objects.get(&form_id) {
+        Some(Object::Stream(s)) => s.dict.get(b"Resources").ok().cloned(),
+        _ => None,
+    };
+
+    // Tokenize content to find Do /XObjectName patterns.
+    let mut i = 0;
+    while i < content.len() {
+        // Skip whitespace.
+        if content[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        // Skip comments.
+        if content[i] == b'%' {
+            while i < content.len() && content[i] != b'\n' && content[i] != b'\r' {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip strings.
+        if content[i] == b'(' {
+            i += 1;
+            let mut nest = 1i32;
+            while i < content.len() && nest > 0 {
+                if content[i] == b'(' && (i == 0 || content[i - 1] != b'\\') {
+                    nest += 1;
+                } else if content[i] == b')' && (i == 0 || content[i - 1] != b'\\') {
+                    nest -= 1;
+                }
+                i += 1;
+            }
+            continue;
+        }
+
+        // Skip hex strings.
+        if content[i] == b'<' && content.get(i + 1) != Some(&b'<') {
+            i += 1;
+            while i < content.len() && content[i] != b'>' {
+                i += 1;
+            }
+            if i < content.len() {
+                i += 1;
+            }
+            continue;
+        }
+
+        // Read token.
+        let tok_start = i;
+        while i < content.len()
+            && !content[i].is_ascii_whitespace()
+            && content[i] != b'('
+            && content[i] != b'<'
+            && content[i] != b'>'
+            && content[i] != b'/'
+            && content[i] != b'%'
+            && content[i] != b'['
+            && content[i] != b']'
+        {
+            i += 1;
+        }
+
+        if tok_start == i {
+            i += 1;
+            continue;
+        }
+
+        let token = &content[tok_start..i];
+
+        // Look for "Do" followed by "/XObjectName".
+        if token == b"Do" {
+            // Read next token (should be a name like "/FormX").
+            while i < content.len() && content[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let name_start = i;
+            while i < content.len()
+                && !content[i].is_ascii_whitespace()
+                && content[i] != b'('
+                && content[i] != b'<'
+                && content[i] != b'>'
+                && content[i] != b'/'
+                && content[i] != b'%'
+                && content[i] != b'['
+                && content[i] != b']'
+            {
+                i += 1;
+            }
+            if name_start < i {
+                let name_tok = &content[name_start..i];
+                // Name should start with '/' — strip it and look up in Resources.
+                if let Some(name) = name_tok.strip_prefix(b"/") {
+                    if let Some(ref resources) = resources {
+                        if let Some(xobj_ref) = lookup_xobject_in_resources(doc, resources, name) {
+                            // Check if it's a Form XObject.
+                            if let Some(Object::Stream(s)) = doc.objects.get(&xobj_ref) {
+                                if s.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok())
+                                    == Some(b"Form")
+                                {
+                                    refs.push(xobj_ref);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    refs
+}
+
+/// Look up an XObject by name in a Resources dictionary.
+fn lookup_xobject_in_resources(
+    doc: &Document,
+    resources: &Object,
+    name: &[u8],
+) -> Option<ObjectId> {
+    let xobjects = match resources {
+        Object::Dictionary(dict) => dict.get(b"XObject").ok().cloned(),
+        Object::Reference(r) => doc.objects.get(&r).cloned(),
+        _ => None,
+    };
+
+    let xobjects = match xobjects {
+        Some(o) => o,
+        None => return None,
+    };
+
+    match xobjects {
+        Object::Dictionary(dict) => {
+            if let Ok(Object::Reference(ref_id)) = dict.get(name) {
+                Some(*ref_id)
+            } else if let Ok(Object::Name(_)) = dict.get(name) {
+                // Name exists but is not a reference — can't resolve.
+                None
+            } else {
+                None
+            }
+        }
+        Object::Reference(r) => {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&r) {
+                if let Ok(Object::Reference(ref_id)) = dict.get(name) {
+                    Some(*ref_id)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }
 
@@ -3608,7 +3834,6 @@ pub fn fix_pdf_header(data: &mut Vec<u8>) {
 /// and corrects startxref if it doesn't point to it.
 pub fn fix_startxref(data: &mut Vec<u8>) {
     // §6.1.4: Keyword 'xref' not followed by proper EOL marker.
-    // Ensure 'xref' is followed by a single EOL marker (LF or CRLF).
     fix_xref_eol(data);
 
     let Some(sx_pos) = find_last(data, b"startxref") else {
@@ -4590,6 +4815,861 @@ fn get_font_dict_inline(dict: &lopdf::Dictionary) -> Option<&lopdf::Dictionary> 
         },
         _ => None,
     }
+}
+
+/// §6.3.1: Remove all FileAttachment annotations from /Annots arrays and delete their objects.
+fn remove_file_attachment_annotations(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let mut file_attachment_ids = std::collections::HashSet::new();
+    let page_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    // 1. Collect all FileAttachment annotation IDs and remove references from /Annots arrays.
+    for &page_id in &page_ids {
+        let (annots_arr, annots_ref_id) = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&page_id) {
+                match dict.get(b"Annots").ok() {
+                    Some(Object::Array(arr)) => (Some(arr.clone()), None),
+                    Some(Object::Reference(ref_id)) => {
+                        if let Some(Object::Array(arr)) = doc.objects.get(ref_id) {
+                            (Some(arr.clone()), Some(*ref_id))
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    _ => (None, None),
+                }
+            } else {
+                (None, None)
+            }
+        };
+
+        let Some(arr) = annots_arr else { continue };
+
+        let page_fa_refs: Vec<ObjectId> = arr
+            .iter()
+            .filter_map(|obj| {
+                let id = match obj {
+                    Object::Reference(id) => *id,
+                    _ => return None,
+                };
+                if let Some(Object::Dictionary(d)) = doc.objects.get(&id) {
+                    if matches!(
+                        d.get(b"Subtype").ok(),
+                        Some(Object::Name(ref n)) if n == b"FileAttachment"
+                    ) {
+                        return Some(id);
+                    }
+                }
+                None
+            })
+            .collect();
+
+        if page_fa_refs.is_empty() {
+            continue;
+        }
+
+        for id in &page_fa_refs {
+            file_attachment_ids.insert(*id);
+        }
+
+        let retain_fn = |obj: &Object| -> bool {
+            if let Object::Reference(id) = obj {
+                !page_fa_refs.contains(id)
+            } else {
+                true
+            }
+        };
+
+        if let Some(annots_id) = annots_ref_id {
+            if let Some(Object::Array(ref mut arr)) = doc.objects.get_mut(&annots_id) {
+                let before = arr.len();
+                arr.retain(retain_fn);
+                count += before - arr.len();
+            }
+        } else {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&page_id) {
+                if let Ok(Object::Array(ref mut arr)) = dict.get_mut(b"Annots") {
+                    let before = arr.len();
+                    arr.retain(retain_fn);
+                    count += before - arr.len();
+                }
+            }
+        }
+    }
+
+    // 2. Delete the annotation objects and their associated /FS (File Specification) objects.
+    for id in file_attachment_ids {
+        if let Some(Object::Dictionary(dict)) = doc.objects.remove(&id) {
+            // Check for /FS (File Specification)
+            if let Ok(Object::Reference(fs_id)) = dict.get(b"FS") {
+                if let Some(Object::Dictionary(fs_dict)) = doc.objects.remove(fs_id) {
+                    // Check for /EF (Embedded File)
+                    if let Ok(Object::Dictionary(ef_dict)) = fs_dict.get(b"EF") {
+                        for (_, obj) in ef_dict.iter() {
+                            if let Object::Reference(stream_id) = obj {
+                                doc.objects.remove(stream_id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    count
+}
+
+/// §6.4.2: Fix ExtGState SMask /S - must be Alpha or Luminosity, not GoTo or other values.
+fn fix_extgstate_smask_s(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        let needs_fix = {
+            if let Some(Object::Dictionary(dict)) = doc.objects.get(&id) {
+                let has_smask_dict = matches!(dict.get(b"SMask").ok(), Some(Object::Dictionary(_)));
+                if !has_smask_dict {
+                    false
+                } else {
+                    if let Ok(Object::Dictionary(smask)) = dict.get(b"SMask") {
+                        match smask.get(b"S").ok() {
+                            Some(Object::Name(ref n)) => n != b"Alpha" && n != b"Luminosity",
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                }
+            } else {
+                false
+            }
+        };
+
+        if needs_fix {
+            if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                if let Ok(Object::Dictionary(ref mut smask)) = dict.get_mut(b"SMask") {
+                    smask.set("S", Object::Name(b"Alpha".to_vec()));
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+/// §6.1.13: Truncate string literals > 32767 bytes in content streams.
+fn fix_long_strings_in_content_streams(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+
+    for &page_id in &page_ids {
+        let content_ids: Vec<ObjectId> = {
+            if let Some(Object::Dictionary(page)) = doc.objects.get(&page_id) {
+                match page.get(b"Contents").ok() {
+                    Some(Object::Reference(id)) => vec![*id],
+                    Some(Object::Array(arr)) => arr
+                        .iter()
+                        .filter_map(|o| {
+                            if let Object::Reference(id) = o {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    _ => vec![],
+                }
+            } else {
+                vec![]
+            }
+        };
+
+        for content_id in content_ids {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&content_id) {
+                let content = match stream.get_plain_content() {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+
+                let truncated = truncate_long_strings_in_content(&content);
+                if truncated != content {
+                    stream.set_plain_content(truncated);
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Truncate string literals > 32767 bytes in content stream bytes.
+fn truncate_long_strings_in_content(content: &[u8]) -> Vec<u8> {
+    const MAX_STRING_LEN: usize = 32767;
+    let mut result = Vec::with_capacity(content.len());
+    let mut i = 0;
+
+    while i < content.len() {
+        if content[i] == b'(' {
+            let start = i;
+            i += 1;
+            let mut nest = 1i32;
+            let mut str_len = 0;
+            while i < content.len() && nest > 0 {
+                if content[i] == b'(' && (i == 0 || content[i - 1] != b'\\') {
+                    nest += 1;
+                } else if content[i] == b')' && (i == 0 || content[i - 1] != b'\\') {
+                    nest -= 1;
+                }
+                if nest > 0 {
+                    str_len += 1;
+                }
+                i += 1;
+            }
+            if str_len > MAX_STRING_LEN {
+                result.extend_from_slice(&content[start..start + str_len.min(MAX_STRING_LEN)]);
+                result.push(b')');
+            } else {
+                result.extend_from_slice(&content[start..i]);
+            }
+        } else if content[i] == b'<' && content.get(i + 1) != Some(&b'<') {
+            let start = i;
+            i += 1;
+            while i < content.len() && content[i] != b'>' {
+                i += 1;
+            }
+            i += 1;
+            let str_len = i - start;
+            if str_len > MAX_STRING_LEN * 2 {
+                result.extend_from_slice(&content[start..start + MAX_STRING_LEN * 2]);
+                result.push(b'>');
+            } else {
+                result.extend_from_slice(&content[start..i]);
+            }
+        } else {
+            result.push(content[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
+/// §6.7.4: Fix invalid /Lang values in BDC operators - must be valid BCP47.
+fn fix_invalid_lang_in_bdc(doc: &mut Document) -> usize {
+    let mut count = 0;
+    let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
+
+    for &page_id in &page_ids {
+        let content_ids: Vec<ObjectId> = {
+            if let Some(Object::Dictionary(page)) = doc.objects.get(&page_id) {
+                match page.get(b"Contents").ok() {
+                    Some(Object::Reference(id)) => vec![*id],
+                    Some(Object::Array(arr)) => arr
+                        .iter()
+                        .filter_map(|o| {
+                            if let Object::Reference(id) = o {
+                                Some(*id)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                    _ => vec![],
+                }
+            } else {
+                vec![]
+            }
+        };
+
+        for content_id in content_ids {
+            if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&content_id) {
+                let content = match stream.get_plain_content() {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+
+                let fixed = fix_lang_in_content_stream(&content);
+                if fixed != content {
+                    stream.set_plain_content(fixed);
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Fix invalid /Lang values in content stream bytes.
+fn fix_lang_in_content_stream(content: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(content.len());
+    let mut i = 0;
+
+    while i < content.len() {
+        if content[i].is_ascii_whitespace() {
+            result.push(content[i]);
+            i += 1;
+            continue;
+        }
+
+        if content[i] == b'%' {
+            while i < content.len() && content[i] != b'\n' && content[i] != b'\r' {
+                result.push(content[i]);
+                i += 1;
+            }
+            continue;
+        }
+
+        let tok_start = i;
+        while i < content.len()
+            && !content[i].is_ascii_whitespace()
+            && content[i] != b'('
+            && content[i] != b'<'
+            && content[i] != b'>'
+            && content[i] != b'/'
+            && content[i] != b'%'
+            && content[i] != b'['
+            && content[i] != b']'
+        {
+            i += 1;
+        }
+
+        if tok_start == i {
+            result.push(content[i]);
+            i += 1;
+            continue;
+        }
+
+        let token = &content[tok_start..i];
+
+        if token == b"BDC" {
+            result.extend_from_slice(token);
+            i = tok_start + 3;
+            while i < content.len() && content[i].is_ascii_whitespace() {
+                result.push(content[i]);
+                i += 1;
+            }
+
+            if content[i] == b'/' {
+                let name_start = i;
+                i += 1;
+                while i < content.len()
+                    && !content[i].is_ascii_whitespace()
+                    && content[i] != b'('
+                    && content[i] != b'<'
+                    && content[i] != b'>'
+                    && content[i] != b'/'
+                    && content[i] != b'%'
+                    && content[i] != b'['
+                    && content[i] != b']'
+                {
+                    i += 1;
+                }
+                let name = &content[name_start..i];
+                if name == b"/Lang" {
+                    result.extend_from_slice(name);
+                    while i < content.len() && content[i].is_ascii_whitespace() {
+                        result.push(content[i]);
+                        i += 1;
+                    }
+
+                    if content[i] == b'(' {
+                        let str_start = i;
+                        i += 1;
+                        while i < content.len() && content[i] != b')' {
+                            i += 1;
+                        }
+                        i += 1;
+                        let lang = &content[str_start + 1..i - 1];
+                        let lang_str = String::from_utf8_lossy(lang);
+
+                        if !is_valid_bcp47(&lang_str) {
+                            if let Some(normalized) = normalize_bcp47(&lang_str) {
+                                result.push(b'(');
+                                result.extend_from_slice(normalized.as_bytes());
+                                result.push(b')');
+                            } else {
+                                result.push(b'(');
+                                result.extend_from_slice(b"en");
+                                result.push(b')');
+                            }
+                        } else {
+                            result.extend_from_slice(&content[str_start..i]);
+                        }
+                    } else {
+                        // Not a string after /Lang, just emit as-is
+                    }
+                } else {
+                    result.extend_from_slice(name);
+                }
+            } else {
+                result.extend_from_slice(&content[tok_start..i]);
+            }
+        } else {
+            result.extend_from_slice(token);
+        }
+    }
+    result
+}
+
+/// Check if a string is a valid BCP 47 language tag.
+fn is_valid_bcp47(tag: &str) -> bool {
+    if tag.is_empty() {
+        return false;
+    }
+
+    let parts: Vec<&str> = tag.split('-').collect();
+    if parts.is_empty() {
+        return false;
+    }
+
+    let first = parts[0];
+    if first.len() < 2 || first.len() > 3 {
+        return false;
+    }
+
+    if !first.chars().all(|c| c.is_ascii_lowercase()) {
+        return false;
+    }
+
+    if first == "x" {
+        return parts.len() == 1;
+    }
+
+    for part in &parts[1..] {
+        if part.len() == 1 && part.chars().next() == Some('X') {
+            continue;
+        }
+        if part.len() < 2 || part.len() > 8 {
+            return false;
+        }
+        if !part.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Normalize a BCP 47 language tag to a valid form.
+fn normalize_bcp47(tag: &str) -> Option<String> {
+    if tag.is_empty() {
+        return None;
+    }
+
+    let parts: Vec<&str> = tag.split('-').collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    let first = parts[0].to_lowercase();
+    if first.len() < 2 || first.len() > 3 {
+        return None;
+    }
+
+    let mut result = first;
+
+    for part in &parts[1..] {
+        if part.is_empty() {
+            continue;
+        }
+        if *part == "X" {
+            result.push_str("-X");
+            break;
+        }
+        let normalized_part: String = part
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i == 0 {
+                    c.to_uppercase().next().unwrap_or(c)
+                } else {
+                    c.to_lowercase().next().unwrap_or(c)
+                }
+            })
+            .collect();
+        if normalized_part.len() >= 2 && normalized_part.len() <= 8 {
+            result.push('-');
+            result.push_str(&normalized_part);
+        }
+    }
+
+    Some(result)
+}
+
+/// §6.7.3: Sync Info CreationDate with XMP xmp:CreateDate (use XMP as source of truth).
+fn sync_info_xmp_dates(doc: &mut Document) -> usize {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return 0,
+    };
+
+    let meta_id = {
+        if let Some(Object::Dictionary(cat)) = doc.objects.get(&catalog_id) {
+            match cat.get(b"Metadata").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    };
+
+    let meta_id = match meta_id {
+        Some(id) => id,
+        None => return 0,
+    };
+
+    let xmp_bytes = {
+        if let Some(Object::Stream(stream)) = doc.objects.get(&meta_id) {
+            stream.content.clone()
+        } else {
+            return 0;
+        }
+    };
+
+    let xmp_str = String::from_utf8_lossy(&xmp_bytes);
+
+    let xmp_create_date = extract_xmp_date(&xmp_str, "xmp:CreateDate");
+    let xmp_modify_date = extract_xmp_date(&xmp_str, "xmp:ModifyDate");
+
+    if xmp_create_date.is_none() && xmp_modify_date.is_none() {
+        return 0;
+    }
+
+    let mut count = 0;
+
+    let info_id = doc
+        .objects
+        .iter()
+        .find(|(_, obj)| {
+            if let Object::Dictionary(d) = obj {
+                d.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"Info")
+            } else {
+                false
+            }
+        })
+        .map(|(id, _)| *id);
+
+    if let Some(info_id) = info_id {
+        if let Some(Object::Dictionary(ref mut info)) = doc.objects.get_mut(&info_id) {
+            if let Some(create_date) = xmp_create_date {
+                if let Ok(current) = info.get(b"CreationDate") {
+                    let current_str = date_to_string(current);
+                    if current_str != create_date {
+                        info.set(
+                            "CreationDate",
+                            Object::String(create_date.into_bytes(), lopdf::StringFormat::Literal),
+                        );
+                        count += 1;
+                    }
+                }
+            }
+
+            if let Some(modify_date) = xmp_modify_date {
+                if let Ok(current) = info.get(b"ModDate") {
+                    let current_str = date_to_string(current);
+                    if current_str != modify_date {
+                        info.set(
+                            "ModDate",
+                            Object::String(modify_date.into_bytes(), lopdf::StringFormat::Literal),
+                        );
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    count
+}
+
+/// Extract a date value from XMP metadata by property name.
+fn extract_xmp_date(xmp: &str, property: &str) -> Option<String> {
+    let search = format!("<{}>", property);
+    let search_close = format!("</{}>", property);
+
+    let start = xmp.find(&search).map(|p| p + search.len())?;
+    let end = xmp[start..].find(&search_close)?;
+
+    let date_str = &xmp[start..start + end];
+    let date_str = date_str.trim();
+
+    if date_str.is_empty() {
+        return None;
+    }
+
+    Some(date_str.to_string())
+}
+
+/// Convert an Object date to its string representation.
+fn date_to_string(obj: &Object) -> String {
+    match obj {
+        Object::String(s, _) => String::from_utf8_lossy(s).to_string(),
+        _ => String::new(),
+    }
+}
+
+/// §6.6.4: Rebuild broken XMP/RDF metadata for PDF/A identification.
+/// If XMP metadata is not valid RDF, rebuild from scratch using Info dict values.
+fn rebuild_broken_xmp(doc: &mut Document) -> usize {
+    let catalog_id = match get_catalog_id(doc) {
+        Some(id) => id,
+        None => return 0,
+    };
+
+    let meta_id = {
+        if let Some(Object::Dictionary(cat)) = doc.objects.get(&catalog_id) {
+            match cat.get(b"Metadata").ok() {
+                Some(Object::Reference(id)) => Some(*id),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    };
+
+    let meta_id = match meta_id {
+        Some(id) => id,
+        None => return 0,
+    };
+
+    let xmp_bytes = {
+        if let Some(Object::Stream(stream)) = doc.objects.get(&meta_id) {
+            stream.content.clone()
+        } else {
+            return 0;
+        }
+    };
+
+    let xmp_str = String::from_utf8_lossy(&xmp_bytes);
+
+    if is_valid_rdf(&xmp_str) {
+        return 0;
+    }
+
+    let info_values = extract_info_for_xmp(doc);
+
+    let new_xmp = build_xmp_from_info(&info_values);
+
+    if let Some(Object::Stream(ref mut stream)) = doc.objects.get_mut(&meta_id) {
+        stream.set_content(new_xmp.into_bytes());
+    }
+
+    1
+}
+
+/// Check if XMP string contains valid RDF structure.
+fn is_valid_rdf(xmp: &str) -> bool {
+    xmp.contains("<rdf:RDF") && xmp.contains("</rdf:RDF>")
+        || xmp.contains("<rdf:Description") && xmp.contains("</rdf:Description>")
+}
+
+/// Extract Info dict values for XMP rebuilding.
+struct InfoValues {
+    title: Option<String>,
+    creator: Option<String>,
+    creation_date: Option<String>,
+    modification_date: Option<String>,
+}
+
+fn extract_info_for_xmp(doc: &Document) -> InfoValues {
+    let info_id = doc
+        .objects
+        .iter()
+        .find(|(_, obj)| {
+            if let Object::Dictionary(d) = obj {
+                d.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"Info")
+            } else {
+                false
+            }
+        })
+        .map(|(id, _)| *id);
+
+    let mut info_values = InfoValues {
+        title: None,
+        creator: None,
+        creation_date: None,
+        modification_date: None,
+    };
+
+    if let Some(info_id) = info_id {
+        if let Some(Object::Dictionary(info)) = doc.objects.get(&info_id) {
+            if let Ok(Object::String(s, _)) = info.get(b"Title") {
+                let title = String::from_utf8_lossy(s).to_string();
+                if !title.is_empty() {
+                    info_values.title = Some(title);
+                }
+            }
+            if let Ok(Object::String(s, _)) = info.get(b"Author") {
+                let author = String::from_utf8_lossy(s).to_string();
+                if !author.is_empty() {
+                    info_values.creator = Some(author);
+                }
+            }
+            if let Ok(Object::String(s, _)) = info.get(b"CreationDate") {
+                let date = String::from_utf8_lossy(s).to_string();
+                if !date.is_empty() {
+                    info_values.creation_date = Some(date);
+                }
+            }
+            if let Ok(Object::String(s, _)) = info.get(b"ModDate") {
+                let date = String::from_utf8_lossy(s).to_string();
+                if !date.is_empty() {
+                    info_values.modification_date = Some(date);
+                }
+            }
+        }
+    }
+
+    info_values
+}
+
+/// Build XMP metadata string from Info values.
+fn build_xmp_from_info(info: &InfoValues) -> String {
+    let mut xmp = String::from(
+        r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+<rdf:Description rdf:about=""
+  xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"
+  xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+"#,
+    );
+
+    xmp.push_str("  <pdfaid:part>2</pdfaid:part>\n");
+    xmp.push_str("  <pdfaid:conformance>B</pdfaid:conformance>\n");
+
+    if let Some(ref title) = info.title {
+        let escaped_title = escape_xml_string(title);
+        xmp.push_str(&format!(
+            r#"  <dc:title>
+    <rdf:Alt>
+      <rdf:li xml:lang="x-default">{}</rdf:li>
+    </rdf:Alt>
+  </dc:title>
+"#,
+            escaped_title
+        ));
+    } else {
+        xmp.push_str(
+            r#"  <dc:title>
+    <rdf:Alt>
+      <rdf:li xml:lang="x-default">Untitled</rdf:li>
+    </rdf:Alt>
+  </dc:title>
+"#,
+        );
+    }
+
+    if let Some(ref creator) = info.creator {
+        let escaped_creator = escape_xml_string(creator);
+        xmp.push_str(&format!(
+            r#"  <dc:creator>
+    <rdf:Seq>
+      <rdf:li>{}</rdf:li>
+    </rdf:Seq>
+  </dc:creator>
+"#,
+            escaped_creator
+        ));
+    } else {
+        xmp.push_str(
+            r#"  <dc:creator>
+    <rdf:Seq>
+      <rdf:li>Unknown</rdf:li>
+    </rdf:Seq>
+  </dc:creator>
+"#,
+        );
+    }
+
+    if let Some(ref create_date) = info.creation_date {
+        let xmp_date = normalize_date_for_xmp(create_date);
+        xmp.push_str(&format!(
+            r#"  <xmp:CreateDate>{}</xmp:CreateDate>
+"#,
+            xmp_date
+        ));
+    } else {
+        xmp.push_str("  <xmp:CreateDate>1970-01-01T00:00:00Z</xmp:CreateDate>\n");
+    }
+
+    if let Some(ref mod_date) = info.modification_date {
+        let xmp_date = normalize_date_for_xmp(mod_date);
+        xmp.push_str(&format!(
+            r#"  <xmp:ModifyDate>{}</xmp:ModifyDate>
+"#,
+            xmp_date
+        ));
+    } else {
+        xmp.push_str("  <xmp:ModifyDate>1970-01-01T00:00:00Z</xmp:ModifyDate>\n");
+    }
+
+    xmp.push_str(
+        r#"</rdf:Description>
+</rdf:RDF>
+</x:xmpmeta><?xpacket end="w"?>"#,
+    );
+
+    xmp
+}
+
+/// Escape special XML characters in string values.
+fn escape_xml_string(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// Normalize date string to XMP format (ISO 8601).
+fn normalize_date_for_xmp(date: &str) -> String {
+    let cleaned = date.trim();
+
+    if cleaned.is_empty() {
+        return "1970-01-01T00:00:00Z".to_string();
+    }
+
+    if cleaned.len() >= 19
+        && cleaned.chars().nth(4) == Some('D')
+        && cleaned.chars().nth(7) == Some('\'')
+    {
+        let year = &cleaned[0..4];
+        let month = &cleaned[5..7];
+        let day = &cleaned[8..10];
+        let hour = &cleaned[11..13];
+        let minute = &cleaned[14..16];
+        let second = &cleaned[17..19];
+        return format!("{}:{}:{}T{}:{}:{}Z", year, month, day, hour, minute, second);
+    }
+
+    if cleaned.len() >= 14
+        && cleaned.chars().nth(4) == Some('-')
+        && cleaned.chars().nth(7) == Some('-')
+    {
+        let year = &cleaned[0..4];
+        let month = &cleaned[5..7];
+        let day = &cleaned[8..10];
+        let hour = if cleaned.len() >= 16 {
+            &cleaned[11..13]
+        } else {
+            "00"
+        };
+        let minute = if cleaned.len() >= 19 {
+            &cleaned[14..16]
+        } else {
+            "00"
+        };
+        let second = if cleaned.len() >= 22 {
+            &cleaned[17..19]
+        } else {
+            "00"
+        };
+        return format!("{}:{}:{}T{}:{}:{}Z", year, month, day, hour, minute, second);
+    }
+
+    cleaned.to_string()
 }
 
 #[cfg(test)]

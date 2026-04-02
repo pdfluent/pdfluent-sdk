@@ -65,6 +65,65 @@ pub struct XmpRepairReport {
     pub pdfa_id_set: bool,
 }
 
+/// Parse metadata from existing XMP stream if present and readable (§6.6.4).
+fn parse_existing_xmp(doc: &Document) -> Option<PdfMetadata> {
+    let catalog_id = get_catalog_id(doc).ok()?;
+    let catalog = doc.objects.get(&catalog_id)?.as_dict().ok()?;
+    let meta_id = match catalog.get(b"Metadata").ok()? {
+        Object::Reference(id) => *id,
+        _ => return None,
+    };
+    let meta_stream = doc.objects.get(&meta_id)?.as_stream().ok()?;
+    let xmp_bytes = meta_stream.decompressed_content().ok()?;
+    let xmp_str = std::str::from_utf8(&xmp_bytes).ok()?;
+
+    let xml = roxmltree::Document::parse(xmp_str).ok()?;
+    let mut meta = PdfMetadata::default();
+
+    // Very basic RDF extraction — looking for dc: and xmp: properties.
+    for node in xml.descendants() {
+        if node.is_element() {
+            match node.tag_name().name() {
+                "title" => {
+                    if let Some(alt) = node.children().find(|n| n.tag_name().name() == "Alt") {
+                        meta.title = alt
+                            .children()
+                            .find(|n| n.tag_name().name() == "li")
+                            .and_then(|n| n.text())
+                            .map(|s| s.to_string());
+                    }
+                }
+                "creator" => {
+                    if let Some(seq) = node.children().find(|n| n.tag_name().name() == "Seq") {
+                        meta.creator = seq
+                            .children()
+                            .find(|n| n.tag_name().name() == "li")
+                            .and_then(|n| n.text())
+                            .map(|s| s.to_string());
+                    }
+                }
+                "description" => {
+                    if let Some(alt) = node.children().find(|n| n.tag_name().name() == "Alt") {
+                        meta.description = alt
+                            .children()
+                            .find(|n| n.tag_name().name() == "li")
+                            .and_then(|n| n.text())
+                            .map(|s| s.to_string());
+                    }
+                }
+                "CreatorTool" => meta.creator_tool = node.text().map(|s| s.to_string()),
+                "CreateDate" => meta.create_date = node.text().map(|s| s.to_string()),
+                "ModifyDate" => meta.modify_date = node.text().map(|s| s.to_string()),
+                "Keywords" => meta.keywords = node.text().map(|s| s.to_string()),
+                "Producer" => meta.producer = node.text().map(|s| s.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    Some(meta)
+}
+
 /// Repair or create XMP metadata for PDF/A conformance.
 ///
 /// - Creates or replaces the XMP metadata stream in the catalog
@@ -81,17 +140,36 @@ pub fn repair_xmp_metadata(
         pdfa_id_set: false,
     };
 
-    // Read existing /Info dictionary values.
-    let existing_meta = read_info_dict(doc);
-    let mut meta = merge_metadata(metadata, &existing_meta);
+    // 1. Read existing metadata from /Info and XMP (§6.6.4: rebuild from scratch if unreadable).
+    let info_meta = read_info_dict(doc);
+    let xmp_meta = parse_existing_xmp(doc).unwrap_or_default();
 
-    // Normalize dates before generation to ensure Info and XMP match (§6.7.3).
+    // 2. Merge metadata: provided > info > xmp.
+    let mut meta = merge_metadata(metadata, &info_meta);
+    if meta.title.is_none() { meta.title = xmp_meta.title; }
+    if meta.creator.is_none() { meta.creator = xmp_meta.creator; }
+    if meta.description.is_none() { meta.description = xmp_meta.description; }
+    if meta.producer.is_none() { meta.producer = xmp_meta.producer; }
+    if meta.creator_tool.is_none() { meta.creator_tool = xmp_meta.creator_tool; }
+    if meta.keywords.is_none() { meta.keywords = xmp_meta.keywords; }
+
+    // 3. Synchronize dates and ensure same timezone (§6.7.3).
+    // Preference: provided > info > xmp.
+    if meta.create_date.is_none() {
+        meta.create_date = xmp_meta.create_date;
+    }
     if let Some(ref date) = meta.create_date {
         if let Some(dt) = parse_xmp_date(date) {
+            // Re-format as PDF date string (D:...) which ensures it's valid for Info
+            // and can be parsed back for XMP generation, preserving the timezone (§6.7.3).
             meta.create_date = Some(format_pdf_date(&dt));
         } else {
             meta.create_date = None;
         }
+    }
+
+    if meta.modify_date.is_none() {
+        meta.modify_date = xmp_meta.modify_date;
     }
     if let Some(ref date) = meta.modify_date {
         if let Some(dt) = parse_xmp_date(date) {
