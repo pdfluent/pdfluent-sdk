@@ -2567,8 +2567,8 @@ fn neutralize_filespec_by_structure(doc: &mut Document) {
         for &key in FILESPEC_KEYS {
             dict.remove(key);
         }
-        // Also remove /EF if present (embedded file stream — forbidden without
-        // PDF/A compliance of the embedded file).
+        // Also remove /F (main filename) and /EF if present.
+        dict.remove(b"F");
         dict.remove(b"EF");
     }
 

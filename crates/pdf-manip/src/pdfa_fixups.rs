@@ -253,6 +253,8 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
             let is_subset = bf.len() > 7 && bf.as_bytes()[6] == b'+';
             let symbolic = is_symbolic(doc, dict);
             match dict.get(b"Encoding").ok() {
+                // Missing /Encoding for non-symbolic simple font: default is StandardEncoding (forbidden).
+                None if !symbolic => StdEncAction::ReplaceName,
                 // /Encoding /StandardEncoding — skip symbolic subsets
                 Some(Object::Name(n)) if n == b"StandardEncoding" => {
                     if symbolic && is_subset {
@@ -261,23 +263,26 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
                         StdEncAction::ReplaceName
                     }
                 }
-                // /Encoding << /BaseEncoding /StandardEncoding ... >> — always fix
+                // /Encoding << ... >>
                 Some(Object::Dictionary(enc)) => {
-                    if matches!(enc.get(b"BaseEncoding").ok(), Some(Object::Name(n)) if n == b"StandardEncoding")
-                    {
-                        StdEncAction::ReplaceInlineBase
-                    } else {
-                        StdEncAction::None
+                    match enc.get(b"BaseEncoding").ok() {
+                        Some(Object::Name(n)) if n == b"StandardEncoding" => {
+                            StdEncAction::ReplaceInlineBase
+                        }
+                        // Missing BaseEncoding in non-symbolic font dictionary: default is StandardEncoding (forbidden).
+                        None if !symbolic => StdEncAction::ReplaceInlineBase,
+                        _ => StdEncAction::None,
                     }
                 }
                 // /Encoding is an indirect reference — always fix BaseEncoding
                 Some(Object::Reference(enc_id)) => match doc.objects.get(enc_id) {
                     Some(Object::Dictionary(enc)) => {
-                        if matches!(enc.get(b"BaseEncoding").ok(), Some(Object::Name(n)) if n == b"StandardEncoding")
-                        {
-                            StdEncAction::ReplaceRefBase(*enc_id)
-                        } else {
-                            StdEncAction::None
+                        match enc.get(b"BaseEncoding").ok() {
+                            Some(Object::Name(n)) if n == b"StandardEncoding" => {
+                                StdEncAction::ReplaceRefBase(*enc_id)
+                            }
+                            None if !symbolic => StdEncAction::ReplaceRefBase(*enc_id),
+                            _ => StdEncAction::None,
                         }
                     }
                     _ => StdEncAction::None,
@@ -9642,36 +9647,18 @@ fn fix_long_names_in_streams(doc: &mut Document) -> usize {
 // Also truncates Name values > 127 bytes.
 // ---------------------------------------------------------------------------
 
-/// Compute the serialized length of a PDF name (lopdf hex-encodes non-printable bytes).
+/// Compute the internal byte length of a PDF name.
 fn name_serialized_len(name: &[u8]) -> usize {
-    name.iter()
-        .map(|&b| {
-            if b" \t\n\r\x0C()<>[]{}/%#".contains(&b) || !(33..=126).contains(&b) {
-                3 // #XX
-            } else {
-                1
-            }
-        })
-        .sum()
+    name.len()
 }
 
-/// Truncate a name so its serialized form is at most `max_len` bytes.
+/// Truncate a name so its internal length is at most `max_len` bytes.
 fn truncate_name_for_serialization(name: &[u8], max_len: usize) -> Vec<u8> {
-    let mut serialized_len = 0;
-    let mut end = 0;
-    for &b in name {
-        let char_len = if b" \t\n\r\x0C()<>[]{}/%#".contains(&b) || !(33..=126).contains(&b) {
-            3
-        } else {
-            1
-        };
-        if serialized_len + char_len > max_len {
-            break;
-        }
-        serialized_len += char_len;
-        end += 1;
+    if name.len() <= max_len {
+        name.to_vec()
+    } else {
+        name[..max_len].to_vec()
     }
-    name[..end].to_vec()
 }
 
 fn fix_long_dict_keys(doc: &mut Document) -> usize {
