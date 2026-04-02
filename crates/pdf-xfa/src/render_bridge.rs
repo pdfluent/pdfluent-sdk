@@ -179,11 +179,22 @@ fn render_nodes(
                 value,
                 field_kind,
                 font_size,
+                font_family,
             } => match field_kind {
                 FieldKind::Checkbox | FieldKind::Radio => {
                     render_checkbox(abs_x, pdf_y, w, h, value, &node_config, ops)
                 }
-                _ => render_field(abs_x, pdf_y, w, h, value, *font_size, &node_config, ops),
+                _ => render_field(
+                    abs_x,
+                    pdf_y,
+                    w,
+                    h,
+                    value,
+                    *font_size,
+                    *font_family,
+                    &node_config,
+                    ops,
+                ),
             },
             LayoutContent::Text(text) => render_text(abs_x, pdf_y, text, &node_config, ops),
             LayoutContent::WrappedText {
@@ -224,6 +235,7 @@ fn render_field(
     h: f64,
     value: &str,
     font_size: f64,
+    font_family: FontFamily,
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
@@ -262,8 +274,13 @@ fn render_field(
         let content_w = (w - p * 2.0).max(0.0);
         let metrics = FontMetrics {
             size: fs,
-            typeface: FontFamily::Serif,
+            typeface: font_family,
             ..Default::default()
+        };
+        let font_ref = match font_family {
+            FontFamily::Serif => "/F1",
+            FontFamily::SansSerif => "/F2",
+            FontFamily::Monospace => "/F3",
         };
         let text_w = metrics.measure_width(value);
 
@@ -272,10 +289,11 @@ fn render_field(
             write_ops(
                 ops,
                 format_args!(
-                    "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+                    "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
                     config.text_color[0],
                     config.text_color[1],
                     config.text_color[2],
+                    font_ref,
                     fs,
                     x + p,
                     pdf_y + p,
@@ -289,10 +307,11 @@ fn render_field(
             write_ops(
                 ops,
                 format_args!(
-                    "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n",
+                    "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n",
                     config.text_color[0],
                     config.text_color[1],
                     config.text_color[2],
+                    font_ref,
                     fs,
                     x + p,
                     pdf_y + h - p - fs,
@@ -527,6 +546,7 @@ mod tests {
                 value: value.to_string(),
                 field_kind: xfa_layout_engine::form::FieldKind::Text,
                 font_size: 0.0,
+                font_family: xfa_layout_engine::text::FontFamily::Serif,
             },
             children: vec![],
             style: Default::default(),
