@@ -2,38 +2,42 @@
 
 All notable changes to the xfa-native-rust PDF engine are documented here.
 
-## [Unreleased] — post-beta.1 fixes
-
-### Fixed
-
-- **Compliance false negatives (§6.1.7 / §6.1.7.1 / §6.1.6.1):** `check_stream_length`
-  now correctly rejects `stream<space>\n` — spaces between the `stream` keyword and its
-  EOL are a violation that veraPDF flags as both a CRLF error and a Length mismatch.
-  Added PDF/A-4 remaps: `6.1.7.1` and `6.1.7.1-len` → `6.1.6.1` (ISO 19005-4
-  reorganised the stream structure rules relative to PDF/A-2/3).
-- **Compliance false negatives (§6.3.5 / §6.2.10.4.1):** CIDSet missing rule now
-  remapped to `6.2.10.4.1` for PDF/A-4 documents.
-- **`text_replace` on subset-encoded CID fonts:** real CID font support via ToUnicode
-  CMap lookup; multi-char fallback corrected. Resolves #391 and #475.
-- **`sign_roundtrip` 4 corpus failures:** all 4 PDFs with unusual AcroForm structures
-  now sign and validate successfully. Corpus failure rate: 0. Resolves #477.
-- **ZUGFeRD v1 roundtrip test:** `zugferd_roundtrip` previously rejected valid ZUGFeRD
-  1.0 documents (FERD namespace) — now accepts both `urn:ferd:pdfa:…` (v1) and
-  `urn:un:unece:…` CII namespace (v2 / Factur-X).
+## [Unreleased] — 2026-04-02
 
 ### Added
 
-- **`xfa-test-runner`: DOCX / XLSX / ZUGFeRD corpus tests** — `docx_convert`,
-  `xlsx_convert`, and `zugferd_roundtrip` modules registered and running on corpus.
-  Resolves #489.
-- **CI benchmark regression detection** (`bench.yml`): every merge to master saves a
-  new Criterion baseline; PRs restore the latest master baseline and fail if any
-  benchmark median regresses >10%. Generates a markdown table (❌/⚠️/✅) as a PR
-  comment. Resolves #487.
+- Canvas2D vector renderer (`renderPageToCanvasVector`) — #589
+- License system met `PDFLUENT_LICENSE_KEY` env var + watermark — #614
+- Elm-style error messages in CLI — #618
+- 10 WASM playground demos — #584
+- AI docs assistant op pdfluent.com — #620
+- Shell completions + man pages in CLI — #613
+- `pdfluent doctor` command — #613
+- 15 XFA PDFs toegevoegd aan golden corpus — #594
+- GA integration tests (8 tests) — nieuw
+- Soak test scripts — #606
+
+### Fixed
+
+- XFA auto-flatten in `render_page` (elimineert AcroForm fallback) — #588
+- Text extraction custom font encoding — #586
+- Font widths + subsets PDF/A compliance — #631, #632
+- Undefined operators in annotation streams — #624
+- JPEG2000 EnumCS patching — #623
+- DeviceCMYK OutputIntent — #625
+- XMP rebuild + date sync — #629
+- `lopdf` stream `/Length` recalculation + xref EOL — #627
+- CIDSystemInfo/CMap registry — #628
+- Annotation `/AP` + `/CA` compliance — #626
+
+### Changed
+
+- Website volledig herpositioneerd als SDK
+- Error context propagated naar WASM en C-API
 
 ### Milestone
 
-- **1.0-beta milestone closed** — all 25 issues resolved (2026-03-20).
+- **50K corpus fix-run:** §6.2.11.x failures van 20K+ naar <350 residual — #598
 
 ---
 
