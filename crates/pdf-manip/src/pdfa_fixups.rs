@@ -349,10 +349,7 @@ fn fix_differences_128_159(enc: &mut lopdf::Dictionary) {
                 // Emit code prefix if needed (after filtering, the previous
                 // code integer may have been skipped).
                 if new_diffs.is_empty()
-                    || !matches!(
-                        new_diffs.last(),
-                        Some(Object::Integer(_)) | Some(Object::Name(_))
-                    )
+                    || !matches!(new_diffs.last(), Some(Object::Integer(_)) | Some(Object::Name(_)))
                     || needs_code_prefix(&new_diffs, current_code)
                 {
                     new_diffs.push(Object::Integer(current_code));
@@ -399,7 +396,7 @@ fn needs_code_prefix(arr: &[Object], code: i64) -> bool {
 }
 
 /// Standard WinAnsiEncoding glyph names for codes 128-159.
-fn winansi_name_for_code_128_159(code: u8) -> &'static str {
+pub(crate) fn winansi_name_for_code_128_159(code: u8) -> &'static str {
     match code {
         128 => "Euro",
         130 => "quotesinglbase",
@@ -1378,10 +1375,7 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
             }
             match dict.get(b"Subtype").ok() {
                 Some(Object::Name(ref n)) => {
-                    matches!(
-                        n.as_slice(),
-                        b"3D" | b"Sound" | b"Screen" | b"Movie" | b"FileAttachment"
-                    )
+                    matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie" | b"FileAttachment")
                 }
                 None => {
                     // Annotation without Subtype — forbidden.
@@ -1770,12 +1764,33 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
     // Strategy 2: Find action OBJECTS that are forbidden and replace their
     // /S and /N with an allowed action type. This catches actions referenced
     // via indirect references from annotations that our Strategy 1 missed.
+    // Non-action dict types that also have /S (SMask dicts, transparency
+    // groups, etc.) must be excluded to avoid corrupting them.
+    const NON_ACTION_TYPES: &[&[u8]] = &[
+        b"Mask",          // SMask dict (/S = Alpha | Luminosity)
+        b"Group",         // Transparency group (/S = Transparency)
+        b"Catalog",
+        b"Page",
+        b"Pages",
+        b"Font",
+        b"FontDescriptor",
+        b"XObject",
+        b"XRef",
+        b"ObjStm",
+        b"Sig",
+    ];
     let ids2: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids2 {
         let is_forbidden = {
             let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
                 continue;
             };
+            // Skip dicts whose /Type is a known non-action type.
+            if let Some(Object::Name(ref t)) = dict.get(b"Type").ok() {
+                if NON_ACTION_TYPES.iter().any(|nt| t == *nt) {
+                    continue;
+                }
+            }
             let has_s = dict.has(b"S");
             let has_type_action = matches!(
                 dict.get(b"Type").ok(),
@@ -5239,78 +5254,6 @@ fn collect_content_stream_ids(doc: &Document) -> std::collections::HashSet<Objec
 ///
 /// Corrupt compressed content can surface as undefined operators during
 /// validation. For such streams, keep a valid but empty content stream.
-fn collect_annotation_appearance_stream_ids(doc: &Document) -> std::collections::HashSet<ObjectId> {
-    fn collect_ap_stream_refs(
-        doc: &Document,
-        obj: &Object,
-        ids: &mut std::collections::HashSet<ObjectId>,
-    ) {
-        match obj {
-            Object::Reference(id) => match doc.objects.get(id) {
-                Some(Object::Stream(_)) => {
-                    ids.insert(*id);
-                }
-                Some(Object::Dictionary(dict)) => {
-                    for (_, value) in dict.iter() {
-                        collect_ap_stream_refs(doc, value, ids);
-                    }
-                }
-                _ => {}
-            },
-            Object::Dictionary(dict) => {
-                for (_, value) in dict.iter() {
-                    collect_ap_stream_refs(doc, value, ids);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut ids = std::collections::HashSet::new();
-
-    for page_id in doc.get_pages().values() {
-        let annots: Vec<Object> = match doc.objects.get(page_id) {
-            Some(Object::Dictionary(page_dict)) => match page_dict.get(b"Annots").ok() {
-                Some(Object::Array(arr)) => arr.clone(),
-                Some(Object::Reference(arr_id)) => match doc.objects.get(arr_id) {
-                    Some(Object::Array(arr)) => arr.clone(),
-                    _ => Vec::new(),
-                },
-                _ => Vec::new(),
-            },
-            _ => Vec::new(),
-        };
-
-        for annot_obj in &annots {
-            let annot = match annot_obj {
-                Object::Reference(id) => match doc.objects.get(id) {
-                    Some(Object::Dictionary(dict)) => dict,
-                    _ => continue,
-                },
-                Object::Dictionary(dict) => dict,
-                _ => continue,
-            };
-
-            let ap_dict = match annot.get(b"AP").ok() {
-                Some(Object::Dictionary(dict)) => dict,
-                Some(Object::Reference(ap_id)) => match doc.objects.get(ap_id) {
-                    Some(Object::Dictionary(dict)) => dict,
-                    _ => continue,
-                },
-                _ => continue,
-            };
-
-            for key in [b"N".as_slice(), b"R".as_slice(), b"D".as_slice()] {
-                if let Ok(value) = ap_dict.get(key) {
-                    collect_ap_stream_refs(doc, value, &mut ids);
-                }
-            }
-        }
-    }
-
-    ids
-}
-
 fn fix_unreadable_content_streams(doc: &mut Document) -> usize {
     let mut count = 0;
     let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
@@ -6459,75 +6402,6 @@ fn jpx_channel_count(data: &[u8]) -> Option<u16> {
     None
 }
 
-fn jp2_enum_cs_offset(data: &[u8]) -> Option<usize> {
-    let mut pos = 0usize;
-    let mut box_stack = vec![data.len()];
-
-    while pos + 8 <= data.len() {
-        while box_stack.len() > 1 && pos >= *box_stack.last().unwrap() {
-            box_stack.pop();
-        }
-
-        let limit = *box_stack.last().unwrap();
-        if pos + 8 > limit {
-            break;
-        }
-
-        let lbox = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
-        let box_type = &data[pos + 4..pos + 8];
-        let (box_len, header_len) = if lbox == 1 {
-            if pos + 16 > data.len() || pos + 16 > limit {
-                break;
-            }
-            let xl = u64::from_be_bytes([
-                data[pos + 8],
-                data[pos + 9],
-                data[pos + 10],
-                data[pos + 11],
-                data[pos + 12],
-                data[pos + 13],
-                data[pos + 14],
-                data[pos + 15],
-            ]) as usize;
-            (xl, 16usize)
-        } else if lbox == 0 {
-            (limit - pos, 8usize)
-        } else {
-            (lbox as usize, 8usize)
-        };
-
-        if box_len < header_len || pos + box_len > data.len() || pos + box_len > limit {
-            break;
-        }
-
-        if box_type == b"colr" {
-            let payload = pos + header_len;
-            if payload + 7 <= pos + box_len && data[payload] == 1 {
-                return Some(payload + 3);
-            }
-        }
-
-        if box_type == b"jp2h" || box_type == b"res " {
-            box_stack.push(pos + box_len);
-            pos += header_len;
-        } else {
-            pos += box_len;
-        }
-    }
-
-    None
-}
-
-fn read_jp2_enum_cs(data: &[u8]) -> Option<u32> {
-    let pos = jp2_enum_cs_offset(data)?;
-    Some(u32::from_be_bytes([
-        data[pos],
-        data[pos + 1],
-        data[pos + 2],
-        data[pos + 3],
-    ]))
-}
-
 /// Replace invalid JPX image stream with a minimal DeviceGray image placeholder.
 fn replace_invalid_jpx_with_placeholder(stream: &mut lopdf::Stream) {
     stream.dict.set("Width", Object::Integer(1));
@@ -6733,8 +6607,7 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
             // PDF/A-2 6.2.8.3:1: allowed JPX channel counts are 1, 3 or 4.
             // If the codestream contains an unsupported channel count, replace
             // the stream with a minimal non-JPX image to keep the file compliant.
-            let channels = jpx_channel_count(&s.content);
-            if let Some(channels) = channels {
+            if let Some(channels) = jpx_channel_count(&s.content) {
                 if channels != 1 && channels != 3 && channels != 4 {
                     replace_invalid_jpx_with_placeholder(s);
                     count += 1;
@@ -6742,20 +6615,99 @@ fn fix_jpx_forbidden_colorspaces(doc: &mut Document) -> usize {
                 }
             }
 
-            if let Some(enum_cs) = read_jp2_enum_cs(&s.content) {
-                if enum_cs != 16 && enum_cs != 17 && enum_cs != 18 {
-                    let replacement = match channels {
-                        Some(1) => 17u32,
-                        Some(3) => 16u32,
-                        _ => 16u32,
-                    };
-                    if let Some(enum_pos) = jp2_enum_cs_offset(&s.content) {
-                        let mut patched = s.content.clone();
-                        patched[enum_pos..enum_pos + 4].copy_from_slice(&replacement.to_be_bytes());
-                        s.set_content(patched);
-                        count += 1;
+            // Find and fix all "colr" boxes in JP2 data.
+            // Use a recursive-style iteration to handle nested boxes (e.g. inside jp2h).
+            let mut pos = 0usize;
+            let mut modified = false;
+            let mut box_stack = vec![s.content.len()]; // limits
+
+            while pos + 8 <= s.content.len() {
+                let lbox = u32::from_be_bytes([
+                    s.content[pos],
+                    s.content[pos + 1],
+                    s.content[pos + 2],
+                    s.content[pos + 3],
+                ]);
+                let box_type_bytes = [
+                    s.content[pos + 4],
+                    s.content[pos + 5],
+                    s.content[pos + 6],
+                    s.content[pos + 7],
+                ];
+                let box_type = &box_type_bytes;
+                let (box_len, header_len) = if lbox == 1 {
+                    if pos + 16 > s.content.len() {
+                        break;
+                    }
+                    let xl = u64::from_be_bytes([
+                        s.content[pos + 8],
+                        s.content[pos + 9],
+                        s.content[pos + 10],
+                        s.content[pos + 11],
+                        s.content[pos + 12],
+                        s.content[pos + 13],
+                        s.content[pos + 14],
+                        s.content[pos + 15],
+                    ]) as usize;
+                    (xl, 16usize)
+                } else if lbox == 0 {
+                    // Box extends to end of file.
+                    (*box_stack.last().unwrap() - pos, 8usize)
+                } else {
+                    (lbox as usize, 8usize)
+                };
+
+                if box_type == b"colr" {
+                    // colr box layout: [1 byte method][1 byte precedence][1 byte approximation][4 bytes enumCS (if method == 1)]
+                    let method_pos = pos + header_len;
+                    if method_pos < s.content.len() && s.content[method_pos] == 1 {
+                        let enum_pos = method_pos + 3;
+                        if enum_pos + 4 <= s.content.len() {
+                            let enum_cs = u32::from_be_bytes([
+                                s.content[enum_pos],
+                                s.content[enum_pos + 1],
+                                s.content[enum_pos + 2],
+                                s.content[enum_pos + 3],
+                            ]);
+                            // PDF/A-2 §6.2.8.3: only sRGB(16), greyscale(17), sYCC(18)
+                            // are allowed. Any other enumCS must be replaced.
+                            if enum_cs != 16 && enum_cs != 17 && enum_cs != 18 {
+                                // Pick replacement based on channel count.
+                                let channels = jpx_channel_count(&s.content);
+                                let replacement = match channels {
+                                    Some(1) => 17u32, // greyscale
+                                    _ => 16u32,       // sRGB
+                                };
+                                let bytes = replacement.to_be_bytes();
+                                s.content[enum_pos] = bytes[0];
+                                s.content[enum_pos + 1] = bytes[1];
+                                s.content[enum_pos + 2] = bytes[2];
+                                s.content[enum_pos + 3] = bytes[3];
+                                modified = true;
+                            }
+                        }
                     }
                 }
+
+                if box_type == b"jp2h" || box_type == b"res " {
+                    // These boxes contain other boxes. Enter them.
+                    box_stack.push(pos + box_len);
+                    pos += header_len;
+                } else {
+                    if box_len == 0 || pos + box_len > s.content.len() {
+                        break;
+                    }
+                    pos += box_len;
+
+                    // Pop from stack if we've reached the end of a container box.
+                    while pos >= *box_stack.last().unwrap() && box_stack.len() > 1 {
+                        box_stack.pop();
+                    }
+                }
+            }
+
+            if modified {
+                count += 1;
             }
         }
     }
@@ -8328,9 +8280,7 @@ fn is_pdf_delimiter_or_ws(b: u8) -> bool {
 }
 
 fn strip_unknown_content_stream_operators(doc: &mut Document) -> usize {
-    let mut ids = collect_content_stream_ids(doc);
-    ids.extend(collect_annotation_appearance_stream_ids(doc));
-    let ids: Vec<ObjectId> = ids.into_iter().collect();
+    let ids: Vec<ObjectId> = collect_content_stream_ids(doc).into_iter().collect();
     let mut count = 0;
 
     for id in ids {
@@ -9000,9 +8950,10 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     let mut count = 0;
 
-    // Find an appropriate ICC profile for the transparency group color space (/CS).
-    // According to PDF/A-2 §6.2.10, /CS must match the OutputIntent if present.
-    let icc_id = find_output_intent_icc_profile(doc);
+    // Find an existing sRGB ICC profile stream (N=3) created by
+    // normalize_colorspaces.  We use this in /Group /CS to avoid depending
+    // on OutputIntent (which may be lost during lopdf serialization).
+    let icc_id = find_srgb_icc_stream(doc);
     let cs_value = icc_id.map(|id| {
         Object::Array(vec![
             Object::Name(b"ICCBased".to_vec()),
@@ -9010,36 +8961,26 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         ])
     });
 
-    /// Check if a /Group dict needs fixing: wrong /S value, device CS, missing CS, or mismatch.
-    fn group_dict_needs_fix(grp: &lopdf::Dictionary, expected_cs: Option<&Object>) -> bool {
+    /// Check if a /Group dict needs fixing: wrong /S value, device CS, or missing CS.
+    fn group_dict_needs_fix(grp: &lopdf::Dictionary) -> bool {
         // /S must be /Transparency — any other value (GoTo, etc.) needs fixing.
         match grp.get(b"S").ok() {
             Some(Object::Name(s)) if s == b"Transparency" => {}
             _ => return true,
         }
-        // /CS must be present and not a device color space.
-        let current_cs = match grp.get(b"CS").ok() {
-            Some(cs) => {
-                if let Some(name) = cs.as_name().ok() {
-                    if name == b"DeviceRGB" || name == b"DeviceCMYK" || name == b"DeviceGray" {
-                        return true;
-                    }
-                }
-                cs
+        // /CS must not be a device color space.
+        match grp.get(b"CS").ok() {
+            Some(Object::Name(cs))
+                if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
+            {
+                true
             }
-            None => return true, // Missing /CS
-        };
-
-        // If it doesn't match the expected CS (from OutputIntent), it needs a fix.
-        if let Some(expected) = expected_cs {
-            if current_cs != expected {
-                return true;
-            }
+            None => true,
+            _ => false,
         }
-        false
     }
 
-    // First pass: fix indirect /Group dicts on pages.
+    // First pass: fix indirect /Group dicts.
     let mut indirect_fixes: Vec<ObjectId> = Vec::new();
     for page_id in &page_ids {
         let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
@@ -9047,7 +8988,7 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         };
         if let Ok(Object::Reference(grp_id)) = pd.get(b"Group") {
             if let Some(Object::Dictionary(grp)) = doc.objects.get(grp_id) {
-                if group_dict_needs_fix(grp, cs_value.as_ref()) {
+                if group_dict_needs_fix(grp) {
                     indirect_fixes.push(*grp_id);
                 }
             }
@@ -9063,33 +9004,22 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         }
     }
 
-    // Second pass: fix inline /Group dicts and add /Group to pages using transparency.
+    // Second pass: fix inline /Group dicts and add /Group to pages without one.
     for page_id in &page_ids {
         let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
             continue;
         };
         let group_val = pd.get(b"Group");
-        let uses_transparency = page_uses_transparency_lopdf(pd, doc);
-
         let needs_group_fix = match group_val {
             Ok(Object::Reference(grp_id)) => {
-                // If the reference is broken, it needs a fix if transparency is used.
-                let broken = !matches!(doc.objects.get(grp_id), Some(Object::Dictionary(_)));
-                if broken {
-                    uses_transparency
-                } else {
-                    let grp = doc.objects.get(grp_id).unwrap().as_dict().unwrap();
-                    group_dict_needs_fix(grp, cs_value.as_ref())
-                }
+                !matches!(doc.objects.get(grp_id), Some(Object::Dictionary(_)))
             }
-            Ok(Object::Dictionary(grp_dict)) => group_dict_needs_fix(grp_dict, cs_value.as_ref()),
-            _ => uses_transparency, // Add /Group if missing but transparency is used.
+            Ok(Object::Dictionary(grp_dict)) => group_dict_needs_fix(grp_dict),
+            _ => true,
         };
-
         if !needs_group_fix {
             continue;
         }
-
         let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) else {
             continue;
         };
@@ -9112,16 +9042,8 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
                 false
             } else {
                 match s.dict.get(b"Group").ok() {
-                    Some(Object::Dictionary(grp)) => group_dict_needs_fix(grp, cs_value.as_ref()),
-                    Some(Object::Reference(grp_id)) => {
-                        if let Some(Object::Dictionary(grp)) = doc.objects.get(grp_id) {
-                            group_dict_needs_fix(grp, cs_value.as_ref())
-                        } else {
-                            // Broken reference, needs fix if it uses transparency.
-                            form_xobject_uses_transparency(s, doc)
-                        }
-                    }
-                    _ => form_xobject_uses_transparency(s, doc),
+                    Some(Object::Dictionary(grp)) => group_dict_needs_fix(grp),
+                    _ => false,
                 }
             }
         } else {
@@ -9144,60 +9066,17 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     count
 }
 
-/// Find an appropriate ICC profile stream for use in a transparency group (/CS).
-/// Prefers the document's OutputIntent profile (PDF/A §6.2.10 requirement).
-fn find_output_intent_icc_profile(doc: &Document) -> Option<ObjectId> {
-    // 1. Try to find the DestOutputProfile from OutputIntent (GTS_PDFA1 or GTS_ISO1).
-    if let Ok(catalog) = doc.catalog() {
-        if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
-            for oi in oi_arr {
-                let dict = match oi {
-                    Object::Dictionary(d) => Some(d),
-                    Object::Reference(id) => doc.objects.get(id).and_then(|o| o.as_dict().ok()),
-                    _ => None,
-                };
-                if let Some(d) = dict {
-                    let subtype = d.get(b"S").ok().and_then(|o| o.as_name().ok());
-                    if subtype == Some(b"GTS_PDFA1") || subtype == Some(b"GTS_ISO1") {
-                        if let Ok(profile_id) =
-                            d.get(b"DestOutputProfile").and_then(|o| o.as_reference())
-                        {
-                            return Some(profile_id);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Fallback: find any ICC profile stream with N=3 (RGB) or N=4 (CMYK).
+/// Find an existing ICC profile stream with N=3 (sRGB) in the document.
+/// Returns None if no suitable stream exists.
+fn find_srgb_icc_stream(doc: &Document) -> Option<ObjectId> {
     for (&id, obj) in &doc.objects {
         if let Object::Stream(s) = obj {
-            if let Ok(Object::Integer(n)) = s.dict.get(b"N") {
-                if *n == 3 || *n == 4 {
-                    return Some(id);
-                }
+            if let Ok(Object::Integer(3)) = s.dict.get(b"N") {
+                return Some(id);
             }
         }
     }
     None
-}
-
-/// Return true if a Form XObject uses transparency features.
-fn form_xobject_uses_transparency(s: &lopdf::Stream, doc: &Document) -> bool {
-    // Check its own /Group dictionary.
-    if let Ok(Object::Dictionary(grp)) = s.dict.get(b"Group") {
-        if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
-            return true;
-        }
-    }
-    // Check its ExtGState resources.
-    if let Some(gs) = get_named_resource_dict_from_stream_resources(&s.dict, doc, b"ExtGState") {
-        if extgstate_dict_has_transparency(&gs, doc) {
-            return true;
-        }
-    }
-    false
 }
 
 /// Return true if the page's ExtGState resources use transparency.
@@ -9602,54 +9481,32 @@ fn fix_long_names_in_streams(doc: &mut Document) -> usize {
                     // PDF name token starting at i.
                     let start = i;
                     i += 1;
-                    while i < decompressed.len()
-                        && !is_pdf_delimiter(decompressed[i])
-                        && !decompressed[i].is_ascii_whitespace()
-                    {
+                    while i < decompressed.len() && !is_pdf_delimiter(decompressed[i]) && !decompressed[i].is_ascii_whitespace() {
                         i += 1;
                     }
                     let name_token = &decompressed[start..i];
                     let name_val = &name_token[1..]; // skip '/'
-
+                    
                     let mut modified_name = false;
                     let mut sanitized = Vec::new();
-
+                    
                     // 1. Sanitize for UTF-8 validity (§6.1.8).
                     if String::from_utf8(name_val.to_vec()).is_err() {
-                        sanitized = name_val
-                            .iter()
-                            .map(|&b| {
-                                if b.is_ascii_graphic() || b == b' ' {
-                                    b
-                                } else {
-                                    b'_'
-                                }
-                            })
-                            .collect();
+                        sanitized = name_val.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' }).collect();
                         modified_name = true;
                     }
-
+                    
                     // 2. Truncate to 127 bytes (§6.1.13).
-                    let current_name = if sanitized.is_empty() {
-                        name_val
-                    } else {
-                        &sanitized
-                    };
+                    let current_name = if sanitized.is_empty() { name_val } else { &sanitized };
                     if current_name.len() > MAX_NAME_LEN {
-                        if sanitized.is_empty() {
-                            sanitized = name_val.to_vec();
-                        }
+                        if sanitized.is_empty() { sanitized = name_val.to_vec(); }
                         sanitized.truncate(MAX_NAME_LEN);
                         modified_name = true;
                     }
 
                     if modified_name {
                         new_content.push(b'/');
-                        new_content.extend_from_slice(if sanitized.is_empty() {
-                            name_val
-                        } else {
-                            &sanitized
-                        });
+                        new_content.extend_from_slice(if sanitized.is_empty() { name_val } else { &sanitized });
                         fixed_any = true;
                         count += 1;
                     } else {
@@ -10151,39 +10008,14 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
     match obj {
         Object::Name(bytes) => {
             let mut total = 0;
-            let mut sanitized = Vec::with_capacity(bytes.len());
-            let mut changed = false;
-
-            let mut input = &bytes[..];
-            while !input.is_empty() {
-                match std::str::from_utf8(input) {
-                    Ok(s) => {
-                        sanitized.extend_from_slice(s.as_bytes());
-                        break;
-                    }
-                    Err(e) => {
-                        let (valid, after_valid) = input.split_at(e.valid_up_to());
-                        sanitized.extend_from_slice(valid);
-                        if let Some(invalid_sequence_length) = e.error_len() {
-                            for _ in 0..invalid_sequence_length {
-                                sanitized.push(b'_');
-                            }
-                            input = &after_valid[invalid_sequence_length..];
-                        } else {
-                            for _ in 0..after_valid.len() {
-                                sanitized.push(b'_');
-                            }
-                            break;
-                        }
-                        changed = true;
-                    }
-                }
-            }
-
-            if changed {
+            let mut sanitized = bytes;
+            if String::from_utf8(sanitized.clone()).is_err() {
+                sanitized = sanitized
+                    .into_iter()
+                    .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                    .collect();
                 total += 1;
             }
-
             if name_serialized_len(&sanitized) > 127 {
                 sanitized = truncate_name_for_serialization(&sanitized, 127);
                 total += 1;
@@ -10206,46 +10038,21 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in dict.into_iter() {
-                let mut sanitized_key = Vec::with_capacity(key.len());
-                let mut changed = false;
-
-                let mut input = &key[..];
-                while !input.is_empty() {
-                    match std::str::from_utf8(input) {
-                        Ok(s) => {
-                            sanitized_key.extend_from_slice(s.as_bytes());
-                            break;
-                        }
-                        Err(e) => {
-                            let (valid, after_valid) = input.split_at(e.valid_up_to());
-                            sanitized_key.extend_from_slice(valid);
-                            if let Some(invalid_sequence_length) = e.error_len() {
-                                for _ in 0..invalid_sequence_length {
-                                    sanitized_key.push(b'_');
-                                }
-                                input = &after_valid[invalid_sequence_length..];
-                            } else {
-                                for _ in 0..after_valid.len() {
-                                    sanitized_key.push(b'_');
-                                }
-                                break;
-                            }
-                            changed = true;
-                        }
-                    }
-                }
-
-                if changed {
+                let mut fixed_key = key;
+                if String::from_utf8(fixed_key.clone()).is_err() {
+                    fixed_key = fixed_key
+                        .into_iter()
+                        .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                        .collect();
                     total += 1;
                 }
-
-                if name_serialized_len(&sanitized_key) > 127 {
-                    sanitized_key = truncate_name_for_serialization(&sanitized_key, 127);
+                if name_serialized_len(&fixed_key) > 127 {
+                    fixed_key = truncate_name_for_serialization(&fixed_key, 127);
                     total += 1;
                 }
                 let (fixed_val, n) = sanitize_names_in_object(val, depth + 1);
                 total += n;
-                new_dict.set(sanitized_key, fixed_val);
+                new_dict.set(fixed_key, fixed_val);
             }
             (Object::Dictionary(new_dict), total)
         }
@@ -10253,46 +10060,21 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
             let mut total = 0;
             let mut new_dict = lopdf::Dictionary::new();
             for (key, val) in s.dict.into_iter() {
-                let mut sanitized_key = Vec::with_capacity(key.len());
-                let mut changed = false;
-
-                let mut input = &key[..];
-                while !input.is_empty() {
-                    match std::str::from_utf8(input) {
-                        Ok(s) => {
-                            sanitized_key.extend_from_slice(s.as_bytes());
-                            break;
-                        }
-                        Err(e) => {
-                            let (valid, after_valid) = input.split_at(e.valid_up_to());
-                            sanitized_key.extend_from_slice(valid);
-                            if let Some(invalid_sequence_length) = e.error_len() {
-                                for _ in 0..invalid_sequence_length {
-                                    sanitized_key.push(b'_');
-                                }
-                                input = &after_valid[invalid_sequence_length..];
-                            } else {
-                                for _ in 0..after_valid.len() {
-                                    sanitized_key.push(b'_');
-                                }
-                                break;
-                            }
-                            changed = true;
-                        }
-                    }
-                }
-
-                if changed {
+                let mut fixed_key = key;
+                if String::from_utf8(fixed_key.clone()).is_err() {
+                    fixed_key = fixed_key
+                        .into_iter()
+                        .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                        .collect();
                     total += 1;
                 }
-
-                if name_serialized_len(&sanitized_key) > 127 {
-                    sanitized_key = truncate_name_for_serialization(&sanitized_key, 127);
+                if name_serialized_len(&fixed_key) > 127 {
+                    fixed_key = truncate_name_for_serialization(&fixed_key, 127);
                     total += 1;
                 }
                 let (fixed_val, n) = sanitize_names_in_object(val, depth + 1);
                 total += n;
-                new_dict.set(sanitized_key, fixed_val);
+                new_dict.set(fixed_key, fixed_val);
             }
             s.dict = new_dict;
             (Object::Stream(s), total)
@@ -10402,20 +10184,6 @@ fn clean_hex_in_object(obj: Object, depth: usize) -> (Object, usize) {
     }
     match obj {
         Object::String(bytes, lopdf::StringFormat::Hexadecimal) => {
-            // lopdf encodes Object::String(..., Hexadecimal) as raw bytes during write,
-            // then lopdf's write_string(Hexadecimal) writes them out as hex pairs.
-            // If the original PDF had garbage inside <...>, it might have been
-            // misparsed or the garbage might still be "present" if lopdf's parser
-            // was lenient but kept some artifacts.
-            // However, §6.1.6 usually refers to the serialized form having non-hex.
-            // In lopdf, we can't easily "fix" the serialized form without changing lopdf.
-            // BUT, if we are in pdf-manip, we can ensure that when we write it back,
-            // it is clean. lopdf always writes it back clean (only 0-9A-F).
-            // So just identifying it as "fixed" if it might have been messy is enough
-            // to trigger a re-write.
-            // Let's assume any Hexadecimal string is potentially fixed by re-serialization.
-            // Actually, we should probably check if it was originally malformed if we had that info.
-            // Since we don't, we'll just return it as-is but with 0 count unless we actually change bytes.
             (Object::String(bytes, lopdf::StringFormat::Hexadecimal), 0)
         }
         Object::Array(arr) => {
@@ -10502,7 +10270,7 @@ fn fix_jbig2_globals_promotion(doc: &mut Document) -> usize {
                     }
                 }
             }
-
+            
             // Also check if it's already in the stream dict but inline.
             if globals_to_move.is_none() {
                 if let Ok(globals) = s.dict.get(b"JBIG2Globals") {
@@ -10534,7 +10302,7 @@ fn fix_jbig2_globals_promotion(doc: &mut Document) -> usize {
 
 fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
     let mut count = 0;
-
+    
     // Check if OutputIntent is CMYK.
     let intent_is_cmyk = if let Ok(catalog) = doc.catalog() {
         if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
@@ -10548,32 +10316,25 @@ fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
                 };
                 if let Some(d) = dict {
                     if d.get(b"S").ok().and_then(|o| o.as_name().ok()) == Some(b"GTS_PDFA1") {
-                        if let Ok(profile_id) =
-                            d.get(b"DestOutputProfile").and_then(|o| o.as_reference())
-                        {
+                        if let Ok(profile_id) = d.get(b"DestOutputProfile").and_then(|o| o.as_reference()) {
                             if let Some(Object::Stream(s)) = doc.objects.get(&profile_id) {
-                                return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok())
-                                    == Some(4);
+                                return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4);
                             }
                         }
                     }
                 }
                 false
             })
-        } else {
-            false
-        }
-    } else {
-        false
-    };
+        } else { false }
+    } else { false };
 
     if intent_is_cmyk {
         return 0; // Compliant.
     }
 
     // If DeviceCMYK is used, but intent is not CMYK, we convert DeviceCMYK to
-    // an ICCBased CMYK colorspace.
-    // Eagerly create the profile to avoid double-mutable-borrow inside the loop.
+    // an ICCBased CMYK colorspace.  Pre-create the CMYK profile to avoid
+    // borrowing doc mutably inside the object iteration loop.
     let cmyk_profile_id = ensure_cmyk_profile_extra(doc);
     let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in ids {
@@ -10646,19 +10407,12 @@ fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
                 } else {
                     None
                 };
-                dict.and_then(|d| d.get(b"DestOutputProfile").ok())
-                    .and_then(|o| o.as_reference().ok())
+                dict.and_then(|d| d.get(b"DestOutputProfile").ok()).and_then(|o| o.as_reference().ok())
             })
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+        } else { None }
+    } else { None };
 
-    let Some(profile_id) = oi_profile_id else {
-        return 0;
-    };
+    let Some(profile_id) = oi_profile_id else { return 0; };
 
     // Find all ICCBased colorspaces that use this profile_id.
     let mut to_replace = Vec::new();
@@ -10687,126 +10441,3 @@ fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
     count
 }
 
-#[cfg(test)]
-mod tests_transparency_groups {
-    use super::*;
-    use lopdf::{dictionary, Document, Object, Stream};
-
-    fn make_basic_doc_transparency() -> Document {
-        let mut doc = Document::with_version("1.7");
-        let pages_id = doc.new_object_id();
-
-        let content = Stream::new(dictionary! {}, b"BT /F1 12 Tf (Hello) Tj ET".to_vec());
-        let content_id = doc.add_object(Object::Stream(content));
-
-        let page = dictionary! {
-            "Type" => "Page",
-            "Parent" => Object::Reference(pages_id),
-            "MediaBox" => Object::Array(vec![
-                Object::Integer(0), Object::Integer(0),
-                Object::Integer(612), Object::Integer(792),
-            ]),
-            "Contents" => Object::Reference(content_id),
-        };
-        let page_id = doc.add_object(Object::Dictionary(page));
-
-        let pages = dictionary! {
-            "Type" => "Pages",
-            "Count" => Object::Integer(1),
-            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
-        };
-        doc.objects.insert(pages_id, Object::Dictionary(pages));
-
-        let catalog = dictionary! {
-            "Type" => "Catalog",
-            "Pages" => Object::Reference(pages_id),
-        };
-        let catalog_id = doc.add_object(Object::Dictionary(catalog));
-        doc.trailer.set("Root", Object::Reference(catalog_id));
-
-        doc
-    }
-
-    #[test]
-    fn test_fix_missing_transparency_groups_selective_v2() {
-        let mut doc = make_basic_doc_transparency();
-
-        // Add an OutputIntent with an ICC profile (RGB, N=3)
-        let icc_dict = dictionary! { "N" => 3 };
-        let icc_id = doc.add_object(Object::Stream(Stream::new(icc_dict, Vec::new())));
-        let oi = dictionary! {
-            "S" => "GTS_PDFA1",
-            "DestOutputProfile" => Object::Reference(icc_id),
-        };
-        let oi_id = doc.add_object(Object::Dictionary(oi));
-        let catalog_id = match doc.trailer.get(b"Root").unwrap() {
-            Object::Reference(id) => *id,
-            _ => panic!(),
-        };
-        if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
-            catalog.set(
-                "OutputIntents",
-                Object::Array(vec![Object::Reference(oi_id)]),
-            );
-        }
-
-        let pages = doc.get_pages();
-        let page1_id = pages.get(&1).copied().unwrap();
-
-        // Page 1: Uses transparency (ca < 1.0 in ExtGState)
-        let gs_dict = dictionary! {
-            "ca" => 0.5,
-        };
-        let gs_id = doc.add_object(Object::Dictionary(gs_dict));
-        let res_dict = dictionary! {
-            "ExtGState" => dictionary! {
-                "GS1" => Object::Reference(gs_id),
-            },
-        };
-        if let Some(Object::Dictionary(ref mut page)) = doc.objects.get_mut(&page1_id) {
-            page.set("Resources", Object::Dictionary(res_dict));
-        }
-
-        // Add Page 2: Does NOT use transparency
-        let pages_id = match doc
-            .objects
-            .get(&page1_id)
-            .unwrap()
-            .as_dict()
-            .unwrap()
-            .get(b"Parent")
-            .unwrap()
-        {
-            Object::Reference(id) => *id,
-            _ => panic!(),
-        };
-        let page2 = dictionary! {
-            "Type" => "Page",
-            "Parent" => Object::Reference(pages_id),
-            "MediaBox" => Object::Array(vec![Object::Integer(0), Object::Integer(0), Object::Integer(612), Object::Integer(792)]),
-        };
-        let page2_id = doc.add_object(Object::Dictionary(page2));
-        if let Some(Object::Dictionary(ref mut pages_dict)) = doc.objects.get_mut(&pages_id) {
-            if let Ok(Object::Array(ref mut kids)) = pages_dict.get_mut(b"Kids") {
-                kids.push(Object::Reference(page2_id));
-            }
-            pages_dict.set("Count", 2);
-        }
-
-        let count = fix_missing_transparency_groups(&mut doc);
-        assert!(count >= 1);
-
-        // Page 1 should have a /Group
-        let p1 = doc.objects.get(&page1_id).unwrap().as_dict().unwrap();
-        assert!(p1.has(b"Group"));
-        let grp1 = p1.get(b"Group").unwrap().as_dict().unwrap();
-        assert_eq!(grp1.get(b"S").unwrap().as_name().unwrap(), b"Transparency");
-        let cs = grp1.get(b"CS").unwrap().as_array().unwrap();
-        assert_eq!(cs[0].as_name().unwrap(), b"ICCBased");
-        assert_eq!(cs[1].as_reference().unwrap(), icc_id);
-
-        // Page 2 should NOT have a /Group
-        let p2 = doc.objects.get(&page2_id).unwrap().as_dict().unwrap();
-        assert!(!p2.has(b"Group"));
-    }
-}

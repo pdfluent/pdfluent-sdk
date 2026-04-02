@@ -115,19 +115,19 @@ impl XrefEntry {
     pub fn write_xref_entry(&self, file: &mut dyn Write) -> Result<()> {
         match self {
             XrefEntry::Normal { offset, generation } => {
-                writeln!(file, "{offset:>010} {generation:>05} n ")?;
+                write!(file, "{offset:>010} {generation:>05} n \n")?;
             }
             XrefEntry::Compressed {
                 container: _,
                 index: _,
             } => {
-                writeln!(file, "{:>010} {:>05} f ", 0, 65535)?;
+                write!(file, "{:>010} {:>05} f \n", 0, 65535)?;
             }
             XrefEntry::Free => {
-                writeln!(file, "{:>010} {:>05} f ", 0, 0)?;
+                write!(file, "{:>010} {:>05} f \n", 0, 0)?;
             }
             XrefEntry::UnusableFree => {
-                writeln!(file, "{:>010} {:>05} f ", 0, 65535)?;
+                write!(file, "{:>010} {:>05} f \n", 0, 65535)?;
             }
         }
         Ok(())
@@ -158,7 +158,7 @@ impl XrefSection {
     pub fn write_xref_section(&self, file: &mut dyn Write) -> Result<()> {
         if !self.is_empty() {
             // Write section range
-            writeln!(file, "{} {}", self.starting_id, self.entries.len())?;
+            write!(file, "{} {}\n", self.starting_id, self.entries.len())?;
             // Write entries
             for entry in &self.entries {
                 entry.write_xref_entry(file)?;

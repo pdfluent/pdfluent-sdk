@@ -52,7 +52,7 @@ impl Document {
         };
 
         let mut xref = Xref::new(self.max_id + 1, self.reference_table.cross_reference_type);
-        writeln!(target, "%PDF-{}", self.version)?;
+        write!(target, "%PDF-{}\n", self.version)?;
 
         Writer::write_binary_mark(&mut target, &self.binary_mark)?;
 
@@ -118,7 +118,7 @@ impl Document {
         }
 
         let mut xref = Xref::new(self.max_id + 1, self.reference_table.cross_reference_type);
-        writeln!(target, "%PDF-{}", self.version)?;
+        write!(target, "%PDF-{}\n", self.version)?;
         Writer::write_binary_mark(&mut target, &self.binary_mark)?;
 
         // Organize objects into streams
@@ -326,10 +326,10 @@ impl IncrementalDocument {
         if let Some(last_byte) = prev_document_bytes.last() {
             if *last_byte != b'\n' {
                 // Add a newline if it was not already present
-                writeln!(target)?;
+                write!(target, "\n")?;
             }
         }
-        writeln!(target, "%PDF-{}", self.new_document.version)?;
+        write!(target, "%PDF-{}\n", self.new_document.version)?;
 
         Writer::write_binary_mark(&mut target, &self.new_document.binary_mark)?;
 
@@ -403,7 +403,7 @@ impl Writer {
     ///
     /// Note: This is different from a "Cross Reference Stream".
     fn write_xref(file: &mut dyn Write, xref: &Xref) -> Result<()> {
-        writeln!(file, "xref")?;
+        file.write_all(b"xref\n")?;
 
         let mut xref_section = XrefSection::new(0);
         // Add first (0) entry
@@ -550,9 +550,9 @@ impl Writer {
             }
         )?;
         Writer::write_object(file, object)?;
-        writeln!(
+        write!(
             file,
-            "{}\nendobj",
+            "{}\nendobj\n",
             if Writer::need_end_separator(object) {
                 " "
             } else {
