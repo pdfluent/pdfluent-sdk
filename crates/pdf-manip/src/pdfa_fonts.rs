@@ -69,8 +69,8 @@ pub fn restore_stripped_encodings(
                 .map(|n| n.len() > 7 && n.as_bytes()[6] == b'+')
                 .unwrap_or(false);
 
-            let is_symbolic_tt = get_name(d, b"Subtype").as_deref() == Some("TrueType")
-                && is_font_symbolic(doc, d);
+            let is_symbolic_tt =
+                get_name(d, b"Subtype").as_deref() == Some("TrueType") && is_font_symbolic(doc, d);
 
             if !d.has(b"Encoding") && !is_symbolic_tt {
                 // Encoding removed entirely → always restore
@@ -3185,8 +3185,10 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 (first_char, last_char, widths, enc)
             };
 
-            let mut new_widths: Vec<Object> = Vec::with_capacity((last_char.saturating_sub(first_char) + 1) as usize);
-            let mut changed = existing_widths.len() != (last_char.saturating_sub(first_char) + 1) as usize;
+            let mut new_widths: Vec<Object> =
+                Vec::with_capacity((last_char.saturating_sub(first_char) + 1) as usize);
+            let mut changed =
+                existing_widths.len() != (last_char.saturating_sub(first_char) + 1) as usize;
             for code in first_char..=last_char {
                 let idx = (code - first_char) as usize;
                 let ch = encoding_to_char(code, &enc);
@@ -3262,8 +3264,10 @@ pub fn sync_widths_from_embedded_fonts(doc: &mut Document) -> usize {
                 }
             };
 
-            let mut new_widths: Vec<Object> = Vec::with_capacity((last_char.saturating_sub(first_char) + 1) as usize);
-            let mut changed = existing_widths.len() != (last_char.saturating_sub(first_char) + 1) as usize;
+            let mut new_widths: Vec<Object> =
+                Vec::with_capacity((last_char.saturating_sub(first_char) + 1) as usize);
+            let mut changed =
+                existing_widths.len() != (last_char.saturating_sub(first_char) + 1) as usize;
             for code in first_char..=last_char {
                 let idx = (code - first_char) as usize;
                 let current = existing_widths.get(idx).and_then(|o| match o {
@@ -3502,7 +3506,18 @@ fn sync_cid_widths_from_truetype_embedded_font(
             }
         })
         .unwrap_or(1000);
-    if check_cid_widths_match(doc, cid_font_id, &widths) && current_dw == dw {
+    let dw_is_missing = doc
+        .objects
+        .get(&cid_font_id)
+        .and_then(|obj| {
+            if let Object::Dictionary(cid_dict) = obj {
+                Some(!cid_dict.has(b"DW"))
+            } else {
+                Some(true)
+            }
+        })
+        .unwrap_or(true);
+    if !dw_is_missing && check_cid_widths_match(doc, cid_font_id, &widths) && current_dw == dw {
         return false;
     }
 
@@ -3965,12 +3980,18 @@ fn fix_simple_cff_widths(
         return false;
     }
     let expected_len = lc - fc + 1;
-    if existing_widths.len() < expected_len {
-        return false;
-    }
 
     // Walk codes [fc..=lc] and collect corrected widths.
-    let mut new_widths = existing_widths.clone();
+    // Extend new_widths to at least expected_len to handle short Widths arrays.
+    let mut new_widths = if existing_widths.len() >= expected_len {
+        existing_widths.clone()
+    } else {
+        existing_widths.clone()
+    };
+    // Pad with zeros (default width) if existing_widths is too short.
+    while new_widths.len() < expected_len {
+        new_widths.push(Object::Integer(0));
+    }
     let mut changed = false;
 
     for code in fc..=lc {
