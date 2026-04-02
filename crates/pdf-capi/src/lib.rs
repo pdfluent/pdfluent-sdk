@@ -45,7 +45,7 @@ pub unsafe extern "C" fn pdf_document_open_from_bytes(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if data.is_null() || out.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let bytes = unsafe { slice::from_raw_parts(data, len) }.to_vec();
@@ -55,7 +55,7 @@ pub unsafe extern "C" fn pdf_document_open_from_bytes(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorCorruptPdf
         }
     }
@@ -72,20 +72,20 @@ pub unsafe extern "C" fn pdf_document_open(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if path.is_null() || out.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
         Ok(s) => s,
         Err(_) => {
-            error::set_last_error("invalid UTF-8 in path");
+            error::set_last_error_str("invalid UTF-8 in path");
             return PdfStatus::ErrorInvalidArgument;
         }
     };
     let bytes = match std::fs::read(path_str) {
         Ok(b) => b,
         Err(e) => {
-            error::set_last_error(&format!("failed to read file: {e}"));
+            error::set_last_error_str(&format!("failed to read file: {e}"));
             return PdfStatus::ErrorFileNotFound;
         }
     };
@@ -96,7 +96,7 @@ pub unsafe extern "C" fn pdf_document_open(
                 PdfStatus::Ok
             }
             Err(e) => {
-                error::set_last_error(&e.to_string());
+                error::set_last_error(&e);
                 PdfStatus::ErrorCorruptPdf
             }
         }
@@ -104,7 +104,7 @@ pub unsafe extern "C" fn pdf_document_open(
         let pw = match unsafe { CStr::from_ptr(password) }.to_str() {
             Ok(s) => s,
             Err(_) => {
-                error::set_last_error("invalid UTF-8 in password");
+                error::set_last_error_str("invalid UTF-8 in password");
                 return PdfStatus::ErrorInvalidArgument;
             }
         };
@@ -114,7 +114,7 @@ pub unsafe extern "C" fn pdf_document_open(
                 PdfStatus::Ok
             }
             Err(e) => {
-                error::set_last_error(&e.to_string());
+                error::set_last_error(&e);
                 PdfStatus::ErrorInvalidPassword
             }
         }
@@ -141,7 +141,7 @@ pub unsafe extern "C" fn pdf_document_free(doc: *mut PdfDocument) {
 #[no_mangle]
 pub unsafe extern "C" fn pdf_document_page_count(doc: *const PdfDocument) -> i32 {
     if doc.is_null() {
-        error::set_last_error("null document pointer");
+        error::set_last_error_str("null document pointer");
         return -1;
     }
     unsafe { &*doc }.0.page_count() as i32
@@ -208,11 +208,11 @@ pub unsafe extern "C" fn pdf_page_render(
     out_pixels: *mut *mut u8,
 ) -> PdfStatus {
     if doc.is_null() || out_width.is_null() || out_height.is_null() || out_pixels.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     if page_index < 0 {
-        error::set_last_error("negative page index");
+        error::set_last_error_str("negative page index");
         return PdfStatus::ErrorPageRange;
     }
     let opts = pdf_engine::RenderOptions {
@@ -229,7 +229,7 @@ pub unsafe extern "C" fn pdf_page_render(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             PdfStatus::ErrorRender
         }
     }
@@ -249,11 +249,11 @@ pub unsafe extern "C" fn pdf_page_render_thumbnail(
     out_pixels: *mut *mut u8,
 ) -> PdfStatus {
     if doc.is_null() || out_width.is_null() || out_height.is_null() || out_pixels.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     if page_index < 0 {
-        error::set_last_error("negative page index");
+        error::set_last_error_str("negative page index");
         return PdfStatus::ErrorPageRange;
     }
     let opts = pdf_engine::ThumbnailOptions { max_dimension };
@@ -267,7 +267,7 @@ pub unsafe extern "C" fn pdf_page_render_thumbnail(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             PdfStatus::ErrorRender
         }
     }
@@ -296,19 +296,19 @@ pub unsafe extern "C" fn pdf_page_extract_text(
     page_index: i32,
 ) -> *mut c_char {
     if doc.is_null() || page_index < 0 {
-        error::set_last_error("invalid argument");
+        error::set_last_error_str("invalid argument");
         return ptr::null_mut();
     }
     match unsafe { &*doc }.0.extract_text(page_index as usize) {
         Ok(text) => match std::ffi::CString::new(text) {
             Ok(cstr) => cstr.into_raw(),
             Err(_) => {
-                error::set_last_error("text contains interior null byte");
+                error::set_last_error_str("text contains interior null byte");
                 ptr::null_mut()
             }
         },
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             ptr::null_mut()
         }
     }
@@ -442,11 +442,11 @@ unsafe fn get_box(
 ) -> PdfStatus {
     if doc.is_null() || out_x0.is_null() || out_y0.is_null() || out_x1.is_null() || out_y1.is_null()
     {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     if page_index < 0 {
-        error::set_last_error("negative page index");
+        error::set_last_error_str("negative page index");
         return PdfStatus::ErrorPageRange;
     }
     match unsafe { &*doc }.0.page_geometry(page_index as usize) {
@@ -461,7 +461,7 @@ unsafe fn get_box(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             PdfStatus::ErrorPageRange
         }
     }
@@ -485,7 +485,7 @@ pub unsafe extern "C" fn pdf_document_validate_pdfa(
     out: *mut *mut PdfComplianceReport,
 ) -> PdfStatus {
     if doc.is_null() || out.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let pdf = unsafe { &*doc }.0.pdf();
@@ -549,26 +549,26 @@ pub unsafe extern "C" fn pdf_document_convert_pdfa(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if doc.is_null() || out.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
     let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&format!("lopdf load: {e}"));
+            error::set_last_error_str(&format!("lopdf load: {e}"));
             return PdfStatus::ErrorCorruptPdf;
         }
     };
     // cleanup_for_pdfa applies PDF/A-incompatible element removal; is_pdfa1
     // enables stricter PDF/A-1 rules (e.g. no transparency at all).
     if let Err(e) = pdf_manip::pdfa_cleanup::cleanup_for_pdfa(&mut lopdf_doc, level.is_part1()) {
-        error::set_last_error(&e.to_string());
+        error::set_last_error_str(&e.to_string());
         return PdfStatus::ErrorConvert;
     }
     let mut buf = Vec::new();
     if let Err(e) = lopdf_doc.save_to(&mut buf) {
-        error::set_last_error(&format!("save: {e}"));
+        error::set_last_error_str(&format!("save: {e}"));
         return PdfStatus::ErrorConvert;
     }
     match pdf_engine::PdfDocument::open(buf) {
@@ -577,7 +577,7 @@ pub unsafe extern "C" fn pdf_document_convert_pdfa(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorConvert
         }
     }
@@ -601,13 +601,13 @@ pub unsafe extern "C" fn pdf_document_redact(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if doc.is_null() || pattern.is_null() || out.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let pat = match unsafe { CStr::from_ptr(pattern) }.to_str() {
         Ok(s) => s,
         Err(_) => {
-            error::set_last_error("invalid UTF-8 in pattern");
+            error::set_last_error_str("invalid UTF-8 in pattern");
             return PdfStatus::ErrorInvalidArgument;
         }
     };
@@ -615,18 +615,18 @@ pub unsafe extern "C" fn pdf_document_redact(
     let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&format!("lopdf load: {e}"));
+            error::set_last_error_str(&format!("lopdf load: {e}"));
             return PdfStatus::ErrorCorruptPdf;
         }
     };
     let opts = pdf_redact::RedactSearchOptions::default();
     if let Err(e) = pdf_redact::search_and_redact(&mut lopdf_doc, pat, &opts) {
-        error::set_last_error(&e.to_string());
+        error::set_last_error_str(&e.to_string());
         return PdfStatus::ErrorRedact;
     }
     let mut buf = Vec::new();
     if let Err(e) = lopdf_doc.save_to(&mut buf) {
-        error::set_last_error(&format!("save: {e}"));
+        error::set_last_error_str(&format!("save: {e}"));
         return PdfStatus::ErrorRedact;
     }
     match pdf_engine::PdfDocument::open(buf) {
@@ -635,7 +635,7 @@ pub unsafe extern "C" fn pdf_document_redact(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorRedact
         }
     }
@@ -661,13 +661,13 @@ pub unsafe extern "C" fn pdf_document_sign(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if doc.is_null() || pkcs12_path.is_null() || out.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let path_str = match unsafe { CStr::from_ptr(pkcs12_path) }.to_str() {
         Ok(s) => s,
         Err(_) => {
-            error::set_last_error("invalid UTF-8 in pkcs12_path");
+            error::set_last_error_str("invalid UTF-8 in pkcs12_path");
             return PdfStatus::ErrorInvalidArgument;
         }
     };
@@ -677,7 +677,7 @@ pub unsafe extern "C" fn pdf_document_sign(
         match unsafe { CStr::from_ptr(pkcs12_password) }.to_str() {
             Ok(s) => s,
             Err(_) => {
-                error::set_last_error("invalid UTF-8 in pkcs12_password");
+                error::set_last_error_str("invalid UTF-8 in pkcs12_password");
                 return PdfStatus::ErrorInvalidArgument;
             }
         }
@@ -685,14 +685,14 @@ pub unsafe extern "C" fn pdf_document_sign(
     let pkcs12_bytes = match std::fs::read(path_str) {
         Ok(b) => b,
         Err(e) => {
-            error::set_last_error(&format!("failed to read PKCS#12: {e}"));
+            error::set_last_error_str(&format!("failed to read PKCS#12: {e}"));
             return PdfStatus::ErrorFileNotFound;
         }
     };
     let signer = match pdf_sign::Pkcs12Signer::from_pkcs12(&pkcs12_bytes, password) {
         Ok(s) => s,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorSign;
         }
     };
@@ -701,7 +701,7 @@ pub unsafe extern "C" fn pdf_document_sign(
         match pdf_sign::sign_pdf(raw_bytes, &signer, &pdf_sign::SignOptions::default()) {
             Ok(b) => b,
             Err(e) => {
-                error::set_last_error(&e.to_string());
+                error::set_last_error_str(&e.to_string());
                 return PdfStatus::ErrorSign;
             }
         };
@@ -711,7 +711,7 @@ pub unsafe extern "C" fn pdf_document_sign(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorSign
         }
     }
@@ -727,7 +727,7 @@ pub unsafe extern "C" fn pdf_document_sign(
 #[no_mangle]
 pub unsafe extern "C" fn pdf_form_field_count(doc: *const PdfDocument) -> i32 {
     if doc.is_null() {
-        error::set_last_error("null document pointer");
+        error::set_last_error_str("null document pointer");
         return -1;
     }
     let pdf = unsafe { &*doc }.0.pdf();
@@ -774,14 +774,14 @@ pub unsafe extern "C" fn pdf_form_field_name(doc: *const PdfDocument, index: i32
 #[no_mangle]
 pub unsafe extern "C" fn pdf_annotation_count(doc: *const PdfDocument, page_index: i32) -> i32 {
     if doc.is_null() || page_index < 0 {
-        error::set_last_error("invalid argument");
+        error::set_last_error_str("invalid argument");
         return -1;
     }
     let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref();
     let lopdf_doc = match lopdf::Document::load_mem(raw_bytes) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return -1;
         }
     };
@@ -844,24 +844,24 @@ pub unsafe extern "C" fn pdf_annotation_add_highlight(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if doc.is_null() || out.is_null() || page_index < 0 {
-        error::set_last_error("invalid argument");
+        error::set_last_error_str("invalid argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let raw_bytes = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
     let mut lopdf_doc = match lopdf::Document::load_mem(&raw_bytes) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorCorruptPdf;
         }
     };
     if let Err(msg) = add_highlight(&mut lopdf_doc, page_index as u32, x, y, w, h) {
-        error::set_last_error(&msg);
+        error::set_last_error_str(&msg);
         return PdfStatus::ErrorAnnotation;
     }
     let mut buf = Vec::new();
     if let Err(e) = lopdf_doc.save_to(&mut buf) {
-        error::set_last_error(&format!("save: {e}"));
+        error::set_last_error_str(&format!("save: {e}"));
         return PdfStatus::ErrorAnnotation;
     }
     match pdf_engine::PdfDocument::open(buf) {
@@ -870,7 +870,7 @@ pub unsafe extern "C" fn pdf_annotation_add_highlight(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorAnnotation
         }
     }
@@ -892,7 +892,7 @@ pub unsafe extern "C" fn pdf_documents_merge(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if docs.is_null() || out.is_null() || count <= 0 {
-        error::set_last_error("invalid argument");
+        error::set_last_error_str("invalid argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let count = count as usize;
@@ -900,14 +900,14 @@ pub unsafe extern "C" fn pdf_documents_merge(
     let mut lopdf_docs = Vec::with_capacity(count);
     for &doc_ptr in docs_slice {
         if doc_ptr.is_null() {
-            error::set_last_error("null document pointer in array");
+            error::set_last_error_str("null document pointer in array");
             return PdfStatus::ErrorInvalidArgument;
         }
         let raw = unsafe { &*doc_ptr }.0.pdf().data().as_ref().to_vec();
         match lopdf::Document::load_mem(&raw) {
             Ok(d) => lopdf_docs.push(d),
             Err(e) => {
-                error::set_last_error(&e.to_string());
+                error::set_last_error_str(&e.to_string());
                 return PdfStatus::ErrorCorruptPdf;
             }
         }
@@ -915,13 +915,13 @@ pub unsafe extern "C" fn pdf_documents_merge(
     let mut merged = match pdf_manip::pages::merge_documents(&lopdf_docs) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorMerge;
         }
     };
     let mut buf = Vec::new();
     if let Err(e) = merged.save_to(&mut buf) {
-        error::set_last_error(&format!("save: {e}"));
+        error::set_last_error_str(&format!("save: {e}"));
         return PdfStatus::ErrorMerge;
     }
     match pdf_engine::PdfDocument::open(buf) {
@@ -930,7 +930,7 @@ pub unsafe extern "C" fn pdf_documents_merge(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorMerge
         }
     }
@@ -1060,7 +1060,7 @@ fn add_highlight(
 #[no_mangle]
 pub unsafe extern "C" fn pdf_signature_count(doc: *const PdfDocument) -> i32 {
     if doc.is_null() {
-        error::set_last_error("null document pointer");
+        error::set_last_error_str("null document pointer");
         return -1;
     }
     let pdf = unsafe { &*doc }.0.pdf();
@@ -1077,14 +1077,14 @@ pub unsafe extern "C" fn pdf_signature_count(doc: *const PdfDocument) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn pdf_signature_is_valid(doc: *const PdfDocument, index: i32) -> i32 {
     if doc.is_null() || index < 0 {
-        error::set_last_error("invalid argument");
+        error::set_last_error_str("invalid argument");
         return -1;
     }
     let pdf = unsafe { &*doc }.0.pdf();
     let results = pdf_sign::validate_signatures(pdf);
     let idx = index as usize;
     if idx >= results.len() {
-        error::set_last_error("signature index out of range");
+        error::set_last_error_str("signature index out of range");
         return -1;
     }
     match results[idx].status {
@@ -1103,21 +1103,21 @@ pub unsafe extern "C" fn pdf_signature_is_valid(doc: *const PdfDocument, index: 
 #[no_mangle]
 pub unsafe extern "C" fn pdf_page_image_count(doc: *const PdfDocument, page_index: i32) -> i32 {
     if doc.is_null() || page_index < 0 {
-        error::set_last_error("invalid argument");
+        error::set_last_error_str("invalid argument");
         return -1;
     }
     let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
     let lopdf_doc = match lopdf::Document::load_mem(&raw) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return -1;
         }
     };
     match pdf_extract::images::extract_page_images(&lopdf_doc, page_index as u32 + 1) {
         Ok(imgs) => imgs.len() as i32,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             -1
         }
     }
@@ -1149,27 +1149,27 @@ pub unsafe extern "C" fn pdf_page_extract_image(
         || out_data.is_null()
         || out_len.is_null()
     {
-        error::set_last_error("null pointer or invalid argument");
+        error::set_last_error_str("null pointer or invalid argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
     let lopdf_doc = match lopdf::Document::load_mem(&raw) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorCorruptPdf;
         }
     };
     let imgs = match pdf_extract::images::extract_page_images(&lopdf_doc, page_index as u32 + 1) {
         Ok(v) => v,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorExtract;
         }
     };
     let idx = image_index as usize;
     if idx >= imgs.len() {
-        error::set_last_error("image index out of range");
+        error::set_last_error_str("image index out of range");
         return PdfStatus::ErrorInvalidArgument;
     }
     let img = &imgs[idx];
@@ -1210,13 +1210,13 @@ pub unsafe extern "C" fn pdf_document_search_count(
     query: *const c_char,
 ) -> i32 {
     if doc.is_null() || query.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return -1;
     }
     let q = match unsafe { CStr::from_ptr(query) }.to_str() {
         Ok(s) => s,
         Err(_) => {
-            error::set_last_error("invalid UTF-8 in query");
+            error::set_last_error_str("invalid UTF-8 in query");
             return -1;
         }
     };
@@ -1224,7 +1224,7 @@ pub unsafe extern "C" fn pdf_document_search_count(
     let lopdf_doc = match lopdf::Document::load_mem(&raw) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return -1;
         }
     };
@@ -1249,14 +1249,14 @@ pub unsafe extern "C" fn pdf_document_split_range(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if doc.is_null() || out.is_null() || from_page < 0 || to_page < from_page {
-        error::set_last_error("invalid argument");
+        error::set_last_error_str("invalid argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
     let lopdf_doc = match lopdf::Document::load_mem(&raw) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorCorruptPdf;
         }
     };
@@ -1265,13 +1265,13 @@ pub unsafe extern "C" fn pdf_document_split_range(
     let mut extracted = match pdf_manip::pages::extract_pages(&lopdf_doc, &pages) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorSplit;
         }
     };
     let mut buf = Vec::new();
     if let Err(e) = extracted.save_to(&mut buf) {
-        error::set_last_error(&format!("save: {e}"));
+        error::set_last_error_str(&format!("save: {e}"));
         return PdfStatus::ErrorSplit;
     }
     match pdf_engine::PdfDocument::open(buf) {
@@ -1280,7 +1280,7 @@ pub unsafe extern "C" fn pdf_document_split_range(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorSplit
         }
     }
@@ -1302,13 +1302,13 @@ pub unsafe extern "C" fn pdf_document_add_watermark(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if doc.is_null() || text.is_null() || out.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let text_str = match unsafe { CStr::from_ptr(text) }.to_str() {
         Ok(s) => s,
         Err(_) => {
-            error::set_last_error("invalid UTF-8 in text");
+            error::set_last_error_str("invalid UTF-8 in text");
             return PdfStatus::ErrorInvalidArgument;
         }
     };
@@ -1316,7 +1316,7 @@ pub unsafe extern "C" fn pdf_document_add_watermark(
     let mut lopdf_doc = match lopdf::Document::load_mem(&raw) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorCorruptPdf;
         }
     };
@@ -1334,12 +1334,12 @@ pub unsafe extern "C" fn pdf_document_add_watermark(
         &watermark,
         &pdf_manip::watermark::PageSelection::All,
     ) {
-        error::set_last_error(&e.to_string());
+        error::set_last_error_str(&e.to_string());
         return PdfStatus::ErrorWatermark;
     }
     let mut buf = Vec::new();
     if let Err(e) = lopdf_doc.save_to(&mut buf) {
-        error::set_last_error(&format!("save: {e}"));
+        error::set_last_error_str(&format!("save: {e}"));
         return PdfStatus::ErrorWatermark;
     }
     match pdf_engine::PdfDocument::open(buf) {
@@ -1348,7 +1348,7 @@ pub unsafe extern "C" fn pdf_document_add_watermark(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorWatermark
         }
     }
@@ -1368,24 +1368,24 @@ pub unsafe extern "C" fn pdf_document_compress(
     out: *mut *mut PdfDocument,
 ) -> PdfStatus {
     if doc.is_null() || out.is_null() {
-        error::set_last_error("null pointer argument");
+        error::set_last_error_str("null pointer argument");
         return PdfStatus::ErrorInvalidArgument;
     }
     let raw = unsafe { &*doc }.0.pdf().data().as_ref().to_vec();
     let mut lopdf_doc = match lopdf::Document::load_mem(&raw) {
         Ok(d) => d,
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error_str(&e.to_string());
             return PdfStatus::ErrorCorruptPdf;
         }
     };
     if let Err(e) = pdf_manip::optimize::compress_streams(&mut lopdf_doc) {
-        error::set_last_error(&e.to_string());
+        error::set_last_error_str(&e.to_string());
         return PdfStatus::ErrorCompress;
     }
     let mut buf = Vec::new();
     if let Err(e) = lopdf_doc.save_to(&mut buf) {
-        error::set_last_error(&format!("save: {e}"));
+        error::set_last_error_str(&format!("save: {e}"));
         return PdfStatus::ErrorCompress;
     }
     match pdf_engine::PdfDocument::open(buf) {
@@ -1394,7 +1394,7 @@ pub unsafe extern "C" fn pdf_document_compress(
             PdfStatus::Ok
         }
         Err(e) => {
-            error::set_last_error(&e.to_string());
+            error::set_last_error(&e);
             PdfStatus::ErrorCompress
         }
     }
