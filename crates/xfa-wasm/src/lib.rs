@@ -34,12 +34,13 @@ pub mod canvas2d_device;
 use crate::canvas2d_device::Canvas2DDevice;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use kurbo::{Affine, Rect, Shape};
+use pdf_engine::api_error::PdfError;
 use pdf_engine::PdfDocument;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::util::PageExt;
 #[cfg(all(feature = "render", target_arch = "wasm32"))]
 use pdf_render::pdf_interpret::{
-    BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings, interpret_page,
+    interpret_page, BlendMode, ClipPath, Context, Device, FillRule, InterpreterSettings,
 };
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -47,6 +48,20 @@ use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occu
 use xfa_layout_engine::scripting;
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
+
+fn wasm_err<E: PdfError>(e: E) -> JsError {
+    let code = e.code();
+    let msg = e.to_string();
+    let help = e.help().unwrap_or_default();
+    let docs = e.docs_url();
+    JsError::new(&format!(
+        "[{}] {} — Fix: {} — Docs: {}",
+        code,
+        msg.lines().next().unwrap_or(&msg),
+        help.lines().next().unwrap_or(&help),
+        docs
+    ))
+}
 
 /// The main XFA processing engine for WASM.
 ///
@@ -445,7 +460,7 @@ impl PdfDoc {
     pub fn open(data: &[u8]) -> Result<PdfDoc, JsError> {
         let raw = Arc::new(data.to_vec());
         let pdf = pdf_syntax::Pdf::new(raw.clone()).map_err(|e| JsError::new(&format!("{e:?}")))?;
-        let engine = PdfDocument::open(raw).map_err(|e| JsError::new(&e.to_string()))?;
+        let engine = PdfDocument::open(raw).map_err(wasm_err)?;
         Ok(PdfDoc { pdf, engine })
     }
 
@@ -632,10 +647,7 @@ impl PdfDoc {
                 "page index {page_index} out of range (0..{page_count})"
             )));
         }
-        let geom = self
-            .engine
-            .page_geometry(page_index)
-            .map_err(|e| JsError::new(&format!("geometry failed: {e}")))?;
+        let geom = self.engine.page_geometry(page_index).map_err(wasm_err)?;
         let pw = geom.media_box.width().abs() as f32;
         let ph = geom.media_box.height().abs() as f32;
         let max_side = pw.max(ph);
@@ -745,10 +757,8 @@ impl PdfDoc {
             Ok(()) => Ok(()),
             Err(error) => {
                 web_sys::console::warn_1(
-                    &format!(
-                        "Vector canvas render failed, falling back to raster: {error:?}"
-                    )
-                    .into(),
+                    &format!("Vector canvas render failed, falling back to raster: {error:?}")
+                        .into(),
                 );
                 self.render_engine_to_canvas(engine, canvas, page_index, scale)
             }
@@ -1038,9 +1048,7 @@ impl PdfDoc {
             dpi: (scale * 72.0) as f64,
             ..Default::default()
         };
-        engine
-            .render_page(page_index, &options)
-            .map_err(|e| JsError::new(&format!("render failed: {e}")))
+        engine.render_page(page_index, &options).map_err(wasm_err)
     }
 
     #[cfg(all(feature = "render", target_arch = "wasm32"))]
