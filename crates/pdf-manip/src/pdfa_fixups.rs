@@ -8937,6 +8937,7 @@ fn fix_non_ascii_pdf_names(doc: &mut Document) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
 // 6.2.10-tgroup — Pages using transparency must have a /Group entry
 // ---------------------------------------------------------------------------
 //
@@ -8950,10 +8951,9 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
     let page_ids: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     let mut count = 0;
 
-    // Find an existing sRGB ICC profile stream (N=3) created by
-    // normalize_colorspaces.  We use this in /Group /CS to avoid depending
-    // on OutputIntent (which may be lost during lopdf serialization).
-    let icc_id = find_srgb_icc_stream(doc);
+    // Find an appropriate ICC profile for the transparency group color space (/CS).
+    // According to PDF/A-2 §6.2.10, /CS must match the OutputIntent if present.
+    let icc_id = find_output_intent_icc_profile(doc);
     let cs_value = icc_id.map(|id| {
         Object::Array(vec![
             Object::Name(b"ICCBased".to_vec()),
@@ -8961,35 +8961,45 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         ])
     });
 
-    /// Check if a /Group dict needs fixing: wrong /S value, device CS, or missing CS.
-    fn group_dict_needs_fix(grp: &lopdf::Dictionary) -> bool {
+    /// Check if a /Group dict needs fixing: wrong /S value, device CS, missing CS, or mismatch.
+    fn group_dict_needs_fix(grp: &lopdf::Dictionary, expected_cs: Option<&Object>) -> bool {
         // /S must be /Transparency — any other value (GoTo, etc.) needs fixing.
         match grp.get(b"S").ok() {
             Some(Object::Name(s)) if s == b"Transparency" => {}
             _ => return true,
         }
-        // /CS must not be a device color space.
-        match grp.get(b"CS").ok() {
-            Some(Object::Name(cs))
-                if cs == b"DeviceRGB" || cs == b"DeviceCMYK" || cs == b"DeviceGray" =>
-            {
-                true
+        // /CS must be present and not a device color space.
+        let current_cs = match grp.get(b"CS").ok() {
+            Some(cs) => {
+                if let Some(name) = cs.as_name().ok() {
+                    if name == b"DeviceRGB" || name == b"DeviceCMYK" || name == b"DeviceGray" {
+                        return true;
+                    }
+                }
+                cs
             }
-            None => true,
-            _ => false,
+            None => return true, // Missing /CS
+        };
+
+        // If it doesn't match the expected CS (from OutputIntent), it needs a fix.
+        if let Some(expected) = expected_cs {
+            if current_cs != expected {
+                return true;
+            }
         }
+        false
     }
 
-    // First pass: fix indirect /Group dicts.
+    // First pass: fix indirect /Group dicts (shared across pages/XObjects).
     let mut indirect_fixes: Vec<ObjectId> = Vec::new();
-    for page_id in &page_ids {
-        let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
-            continue;
-        };
-        if let Ok(Object::Reference(grp_id)) = pd.get(b"Group") {
-            if let Some(Object::Dictionary(grp)) = doc.objects.get(grp_id) {
-                if group_dict_needs_fix(grp) {
-                    indirect_fixes.push(*grp_id);
+    let all_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+    for id in all_ids {
+        if let Some(Object::Dictionary(grp)) = doc.objects.get(&id) {
+            // We don't know for sure if it's a Group dict, but if it has /S /Transparency
+            // and looks like one, we should fix it to be compliant.
+            if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
+                if group_dict_needs_fix(grp, cs_value.as_ref()) {
+                    indirect_fixes.push(id);
                 }
             }
         }
@@ -9004,36 +9014,8 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         }
     }
 
-    // Second pass: fix inline /Group dicts and add /Group to pages without one.
-    for page_id in &page_ids {
-        let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
-            continue;
-        };
-        let group_val = pd.get(b"Group");
-        let needs_group_fix = match group_val {
-            Ok(Object::Reference(grp_id)) => {
-                !matches!(doc.objects.get(grp_id), Some(Object::Dictionary(_)))
-            }
-            Ok(Object::Dictionary(grp_dict)) => group_dict_needs_fix(grp_dict),
-            _ => true,
-        };
-        if !needs_group_fix {
-            continue;
-        }
-        let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) else {
-            continue;
-        };
-        let mut group_dict = lopdf::dictionary! {
-            "S" => Object::Name(b"Transparency".to_vec()),
-        };
-        if let Some(ref cs) = cs_value {
-            group_dict.set("CS", cs.clone());
-        }
-        pd.set("Group", Object::Dictionary(group_dict));
-        count += 1;
-    }
-
-    // Third pass: fix /Group dicts on Form XObjects.
+    // Second pass: fix /Group dicts on Form XObjects.
+    // We fix XObjects first so that pages using them can correctly detect transparency.
     let xobj_ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
     for id in xobj_ids {
         let needs_fix = if let Some(Object::Stream(s)) = doc.objects.get(&id) {
@@ -9042,8 +9024,16 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
                 false
             } else {
                 match s.dict.get(b"Group").ok() {
-                    Some(Object::Dictionary(grp)) => group_dict_needs_fix(grp),
-                    _ => false,
+                    Some(Object::Dictionary(grp)) => group_dict_needs_fix(grp, cs_value.as_ref()),
+                    Some(Object::Reference(grp_id)) => {
+                        if let Some(Object::Dictionary(grp)) = doc.objects.get(grp_id) {
+                            group_dict_needs_fix(grp, cs_value.as_ref())
+                        } else {
+                            // Broken reference, needs fix if it uses transparency.
+                            form_xobject_uses_transparency(s, doc)
+                        }
+                    }
+                    _ => form_xobject_uses_transparency(s, doc),
                 }
             }
         } else {
@@ -9063,20 +9053,133 @@ fn fix_missing_transparency_groups(doc: &mut Document) -> usize {
         }
     }
 
+    // Third pass: fix /Group dicts and add /Group to pages using transparency.
+    for page_id in &page_ids {
+        let Some(Object::Dictionary(pd)) = doc.objects.get(page_id) else {
+            continue;
+        };
+        let group_val = pd.get(b"Group");
+        let uses_transparency = page_uses_transparency_lopdf(pd, doc);
+
+        let needs_group_fix = match group_val {
+            Ok(Object::Reference(grp_id)) => {
+                // If the reference is broken, it needs a fix if transparency is used.
+                let broken = !matches!(doc.objects.get(grp_id), Some(Object::Dictionary(_)));
+                if broken {
+                    uses_transparency
+                } else {
+                    let grp = doc.objects.get(grp_id).unwrap().as_dict().unwrap();
+                    group_dict_needs_fix(grp, cs_value.as_ref())
+                }
+            }
+            Ok(Object::Dictionary(grp_dict)) => group_dict_needs_fix(grp_dict, cs_value.as_ref()),
+            _ => uses_transparency, // Add /Group if missing but transparency is used.
+        };
+
+        if !needs_group_fix {
+            continue;
+        }
+
+        let Some(Object::Dictionary(ref mut pd)) = doc.objects.get_mut(page_id) else {
+            continue;
+        };
+        let mut group_dict = lopdf::dictionary! {
+            "S" => Object::Name(b"Transparency".to_vec()),
+        };
+        if let Some(ref cs) = cs_value {
+            group_dict.set("CS", cs.clone());
+        }
+        pd.set("Group", Object::Dictionary(group_dict));
+        count += 1;
+    }
+
     count
 }
 
-/// Find an existing ICC profile stream with N=3 (sRGB) in the document.
-/// Returns None if no suitable stream exists.
-fn find_srgb_icc_stream(doc: &Document) -> Option<ObjectId> {
+/// Find an appropriate ICC profile stream from OutputIntent or from doc.objects.
+fn find_output_intent_icc_profile(doc: &Document) -> Option<ObjectId> {
+    // 1. Try to find the DestOutputProfile from OutputIntent (GTS_PDFA1 or GTS_ISO1).
+    if let Ok(catalog) = doc.catalog() {
+        if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
+            for oi in oi_arr {
+                let dict = match oi {
+                    Object::Dictionary(d) => Some(d),
+                    Object::Reference(id) => doc.objects.get(id).and_then(|o| o.as_dict().ok()),
+                    _ => None,
+                };
+                if let Some(d) = dict {
+                    let subtype = d.get(b"S").ok().and_then(|o| o.as_name().ok());
+                    if subtype == Some(b"GTS_PDFA1") || subtype == Some(b"GTS_ISO1") {
+                        if let Ok(profile_id) =
+                            d.get(b"DestOutputProfile").and_then(|o| o.as_reference())
+                        {
+                            return Some(profile_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback: find any ICC profile stream with N=3 (RGB) or N=4 (CMYK).
     for (&id, obj) in &doc.objects {
         if let Object::Stream(s) = obj {
-            if let Ok(Object::Integer(3)) = s.dict.get(b"N") {
-                return Some(id);
+            if let Ok(Object::Integer(n)) = s.dict.get(b"N") {
+                if *n == 3 || *n == 4 {
+                    // Make sure it looks like an ICC profile (has /Filter /FlateDecode usually).
+                    return Some(id);
+                }
             }
         }
     }
     None
+}
+
+/// Return true if a Form XObject uses transparency features.
+fn form_xobject_uses_transparency(s: &lopdf::Stream, doc: &Document) -> bool {
+    // Check its own /Group dictionary.
+    if let Ok(Object::Dictionary(grp)) = s.dict.get(b"Group") {
+        if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
+            return true;
+        }
+    }
+    // Check for /SMask in the stream dictionary itself (common for Image and Form XObjects).
+    if let Ok(val) = s.dict.get(b"SMask") {
+        if val.as_name().ok() != Some(b"None") {
+            return true;
+        }
+    }
+    // Check its ExtGState resources.
+    if let Some(gs) = get_named_resource_dict_from_stream_resources(&s.dict, doc, b"ExtGState") {
+        if extgstate_dict_has_transparency(&gs, doc) {
+            return true;
+        }
+    }
+    // Check its XObject resources for transparency (recursive one-level check).
+    if let Some(xo) = get_named_resource_dict_from_stream_resources(&s.dict, doc, b"XObject") {
+        for (_, xobj_val) in xo.iter() {
+            let stream_id = match xobj_val {
+                Object::Reference(id) => *id,
+                _ => continue,
+            };
+            let Some(Object::Stream(xs)) = doc.objects.get(&stream_id) else {
+                continue;
+            };
+            // SMask in child XObject.
+            if let Ok(val) = xs.dict.get(b"SMask") {
+                if val.as_name().ok() != Some(b"None") {
+                    return true;
+                }
+            }
+            // Child Form XObject with transparency group.
+            if let Ok(Object::Dictionary(grp)) = xs.dict.get(b"Group") {
+                if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Return true if the page's ExtGState resources use transparency.
@@ -9091,13 +9194,11 @@ fn page_uses_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -
             return true;
         }
     }
-    // Check annotations for transparency: /BM, /CA, /ca on the annotation dict,
-    // and appearance streams with transparency groups or ExtGState transparency.
+    // Check annotations for transparency.
     if page_annots_use_transparency_lopdf(page_dict, doc) {
         return true;
     }
-    // Check Form XObjects: a Form XObject with /Group /S /Transparency implies
-    // the parent page uses transparency blending.
+    // Check XObjects (Form and Image).
     if let Some(xobj_dict) = get_named_resource_dict_from_resources(page_dict, doc, b"XObject") {
         for (_, xobj_val) in xobj_dict.iter() {
             let stream_id = match xobj_val {
@@ -9107,9 +9208,11 @@ fn page_uses_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Document) -
             let Some(Object::Stream(s)) = doc.objects.get(&stream_id) else {
                 continue;
             };
-            // Only Form XObjects.
-            if s.dict.get(b"Subtype").ok() != Some(&Object::Name(b"Form".to_vec())) {
-                continue;
+            // SMask in any XObject (Image or Form) triggers transparency requirement.
+            if let Ok(val) = s.dict.get(b"SMask") {
+                if val.as_name().ok() != Some(b"None") {
+                    return true;
+                }
             }
             // Form XObject with its own transparency group.
             if let Ok(Object::Dictionary(grp)) = s.dict.get(b"Group") {
@@ -9160,15 +9263,12 @@ fn page_annots_use_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Docum
             }
         }
         // /CA (stroke opacity) < 1
-        if let Ok(Object::Real(ca)) = annot.get(b"CA") {
-            if *ca < 1.0 {
-                return true;
-            }
+        if opacity_less_than_one(annot.get(b"CA").ok()) {
+            return true;
         }
-        if let Ok(Object::Real(ca)) = annot.get(b"ca") {
-            if *ca < 1.0 {
-                return true;
-            }
+        // /ca (fill opacity) < 1
+        if opacity_less_than_one(annot.get(b"ca").ok()) {
+            return true;
         }
         // Check appearance streams (/AP /N).
         let ap = match annot.get(b"AP").ok() {
@@ -9196,6 +9296,12 @@ fn page_annots_use_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Docum
             let Some(Object::Stream(s)) = doc.objects.get(&ap_id) else {
                 continue;
             };
+            // SMask in appearance stream
+            if let Ok(val) = s.dict.get(b"SMask") {
+                if val.as_name().ok() != Some(b"None") {
+                    return true;
+                }
+            }
             // Form XObject with transparency group
             if let Ok(Object::Dictionary(grp)) = s.dict.get(b"Group") {
                 if grp.get(b"S").ok() == Some(&Object::Name(b"Transparency".to_vec())) {
@@ -9220,14 +9326,14 @@ fn page_annots_use_transparency_lopdf(page_dict: &lopdf::Dictionary, doc: &Docum
 fn extgstate_dict_has_transparency(gs_dict: &lopdf::Dictionary, doc: &Document) -> bool {
     for (_, gs_val) in gs_dict.iter() {
         let gs = match gs_val {
-            Object::Dictionary(d) => d.clone(),
+            Object::Dictionary(d) => d,
             Object::Reference(id) => match doc.objects.get(id) {
-                Some(Object::Dictionary(d)) => d.clone(),
+                Some(Object::Dictionary(d)) => d,
                 _ => continue,
             },
             _ => continue,
         };
-        if extgstate_entry_has_transparency(&gs) {
+        if extgstate_entry_has_transparency(gs) {
             return true;
         }
     }
@@ -10441,3 +10547,195 @@ fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
     count
 }
 
+mod tests_transparency_groups {
+    use super::*;
+    use lopdf::{dictionary, Document, Object, Stream};
+
+    fn make_basic_doc_transparency() -> Document {
+        let mut doc = Document::with_version("1.7");
+        let pages_id = doc.new_object_id();
+
+        let content = Stream::new(dictionary! {}, b"BT /F1 12 Tf (Hello) Tj ET".to_vec());
+        let content_id = doc.add_object(Object::Stream(content));
+
+        let page = dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(content_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page));
+
+        let pages = dictionary! {
+            "Type" => "Pages",
+            "Count" => Object::Integer(1),
+            "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+        };
+        doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc
+    }
+
+    #[test]
+    fn test_fix_missing_transparency_groups_selective_v2() {
+        let mut doc = make_basic_doc_transparency();
+
+        // Add an OutputIntent with an ICC profile (RGB, N=3)
+        let icc_dict = dictionary! { "N" => 3 };
+        let icc_id = doc.add_object(Object::Stream(Stream::new(icc_dict, Vec::new())));
+        let oi = dictionary! {
+            "S" => "GTS_PDFA1",
+            "DestOutputProfile" => Object::Reference(icc_id),
+        };
+        let oi_id = doc.add_object(Object::Dictionary(oi));
+        let catalog_id = match doc.trailer.get(b"Root").unwrap() {
+            Object::Reference(id) => *id,
+            _ => panic!(),
+        };
+        if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+            catalog.set(
+                "OutputIntents",
+                Object::Array(vec![Object::Reference(oi_id)]),
+            );
+        }
+
+        let pages = doc.get_pages();
+        let page1_id = pages.get(&1).copied().unwrap();
+
+        // Page 1: Uses transparency (ca < 1.0 in ExtGState)
+        let gs_dict = dictionary! {
+            "ca" => 0.5,
+        };
+        let gs_id = doc.add_object(Object::Dictionary(gs_dict));
+        let res_dict = dictionary! {
+            "ExtGState" => dictionary! {
+                "GS1" => Object::Reference(gs_id),
+            },
+        };
+        if let Some(Object::Dictionary(ref mut page)) = doc.objects.get_mut(&page1_id) {
+            page.set("Resources", Object::Dictionary(res_dict));
+        }
+
+        // Add Page 2: Does NOT use transparency
+        let pages_id = match doc
+            .objects
+            .get(&page1_id)
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"Parent")
+            .unwrap()
+        {
+            Object::Reference(id) => *id,
+            _ => panic!(),
+        };
+        let page2 = dictionary! {
+            "Type" => "Page",
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![Object::Integer(0), Object::Integer(0), Object::Integer(612), Object::Integer(792)]),
+        };
+        let page2_id = doc.add_object(Object::Dictionary(page2));
+        if let Some(Object::Dictionary(ref mut pages_dict)) = doc.objects.get_mut(&pages_id) {
+            if let Ok(Object::Array(ref mut kids)) = pages_dict.get_mut(b"Kids") {
+                kids.push(Object::Reference(page2_id));
+            }
+            pages_dict.set("Count", 2);
+        }
+
+        let count = fix_missing_transparency_groups(&mut doc);
+        assert!(count >= 1);
+
+        // Page 1 should have a /Group
+        let p1 = doc.objects.get(&page1_id).unwrap().as_dict().unwrap();
+        assert!(p1.has(b"Group"));
+        let grp1 = p1.get(b"Group").unwrap().as_dict().unwrap();
+        assert_eq!(grp1.get(b"S").unwrap().as_name().unwrap(), b"Transparency");
+        let cs = grp1.get(b"CS").unwrap().as_array().unwrap();
+        assert_eq!(cs[0].as_name().unwrap(), b"ICCBased");
+        assert_eq!(cs[1].as_reference().unwrap(), icc_id);
+
+        // Page 2 should NOT have a /Group
+        let p2 = doc.objects.get(&page2_id).unwrap().as_dict().unwrap();
+        assert!(!p2.has(b"Group"));
+    }
+
+    #[test]
+    fn test_transparency_propagation_and_smask() {
+        let mut doc = make_basic_doc_transparency();
+
+        // Add an OutputIntent with an ICC profile (RGB, N=3)
+        let icc_dict = dictionary! { "N" => 3 };
+        let icc_id = doc.add_object(Object::Stream(Stream::new(icc_dict, Vec::new())));
+        let oi = dictionary! {
+            "S" => "GTS_PDFA1",
+            "DestOutputProfile" => Object::Reference(icc_id),
+        };
+        let oi_id = doc.add_object(Object::Dictionary(oi));
+        let catalog_id = match doc.trailer.get(b"Root").unwrap() {
+            Object::Reference(id) => *id,
+            _ => panic!(),
+        };
+        if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
+            catalog.set("OutputIntents", Object::Array(vec![Object::Reference(oi_id)]));
+        }
+
+        let page1_id = doc.get_pages().get(&1).copied().unwrap();
+
+        // 1. Create an Image XObject with SMask
+        let smask_img = Stream::new(dictionary! { "Type" => "XObject", "Subtype" => "Image", "N" => 1 }, vec![0]);
+        let smask_id = doc.add_object(Object::Stream(smask_img));
+        let img = Stream::new(dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "SMask" => Object::Reference(smask_id),
+        }, vec![0]);
+        let img_id = doc.add_object(Object::Stream(img));
+
+        // 2. Create a Form XObject that uses the Image
+        let form_res = dictionary! {
+            "XObject" => dictionary! { "Im1" => Object::Reference(img_id) },
+        };
+        let form_stream = Stream::new(dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Form",
+            "BBox" => Object::Array(vec![0.into(), 0.into(), 100.into(), 100.into()]),
+            "Resources" => Object::Dictionary(form_res),
+        }, b"/Im1 Do".to_vec());
+        let form_id = doc.add_object(Object::Stream(form_stream));
+
+        // 3. Add the Form to Page 1 resources
+        if let Some(Object::Dictionary(ref mut page)) = doc.objects.get_mut(&page1_id) {
+            let page_res = dictionary! {
+                "XObject" => dictionary! { "F1" => Object::Reference(form_id) },
+            };
+            page.set("Resources", Object::Dictionary(page_res));
+        }
+
+        // Run fixup
+        let _ = fix_missing_transparency_groups(&mut doc);
+
+        // Verify:
+        // - The Form XObject should have gotten its own /Group because it uses an Image with SMask
+        let f = doc.objects.get(&form_id).unwrap().as_stream().unwrap();
+        assert!(f.dict.has(b"Group"), "Form XObject should have a /Group because its child image has an SMask");
+        
+        // - The Page should have gotten a /Group because it uses a Form XObject that uses transparency
+        let p = doc.objects.get(&page1_id).unwrap().as_dict().unwrap();
+        assert!(p.has(b"Group"), "Page should have a /Group because it uses a Form that uses transparency");
+        
+        let grp = p.get(b"Group").unwrap().as_dict().unwrap();
+        assert_eq!(grp.get(b"S").unwrap().as_name().unwrap(), b"Transparency");
+        let cs = grp.get(b"CS").unwrap().as_array().unwrap();
+        assert_eq!(cs[1].as_reference().unwrap(), icc_id);
+    }
+}
