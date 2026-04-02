@@ -1,0 +1,21 @@
+[package]
+name = "xfa-pdfrest-compare"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80.0"
+
+[dependencies]
+pdf-xfa = { path = "../pdf-xfa" }
+pdf-engine = { path = "../pdf-engine", features = ["xfa"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+clap = { version = "4", features = ["derive"] }
+image = "0.25"
+sha2 = "0.10"
+rayon = "1.10"
+walkdir = "2"
+anyhow = "1"
+thiserror = "2"
+
+[[bin]]
+name = "xfa-pdfrest-compare"
+path = "src/main.rs"

@@ -60,6 +60,7 @@ members = [
 
     # --- Test infrastructure ---
     "crates/xfa-test-runner",
+    "crates/xfa-pdfrest-compare",
 
     # --- Benchmarks ---
     "crates/pdf-bench",
