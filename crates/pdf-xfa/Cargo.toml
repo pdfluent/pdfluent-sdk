@@ -19,3 +19,4 @@ ttf-parser = "0.25"
 roxmltree = "0.20"
 log = "0.4"
 base64 = "0.22"
+image = { workspace = true }
