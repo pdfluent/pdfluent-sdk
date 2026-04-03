@@ -200,6 +200,10 @@ fn process_directory(dir: &Path) -> Option<(String, f64, usize, String, usize, u
     let input_data = std::fs::read(&input_path).ok()?;
     let hash = hash_bytes(&input_data);
 
+    if pdf_xfa::is_pdf_encrypted(&input_data) {
+        return Some((hash, 0.0, 0, "encrypted_skip".to_string(), 0, 0));
+    }
+
     let (page_matches, our_pages, pdfrest_pages) = find_matching_pages(dir);
 
     if page_matches.is_empty() {
@@ -267,6 +271,7 @@ fn main() -> anyhow::Result<()> {
     let mut total_ssim = 0.0;
     let mut valid_count = 0usize;
     let mut no_render = 0usize;
+    let mut encrypted_skip = 0usize;
     let mut worst_cases = Vec::new();
 
     for dir in &entries {
@@ -295,6 +300,19 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
         };
+
+        if status == "encrypted_skip" {
+            encrypted_skip += 1;
+            if let Err(e) = conn.execute(
+                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages)
+                 VALUES (?1, NULL, 0, 'encrypted_skip', 0, 0)",
+                params![hash],
+            ) {
+                eprintln!("DB error: {}", e);
+            }
+            println!("[{}] SKIP: encrypted PDF", dir_name);
+            continue;
+        }
 
         has_comparable += 1;
         let ssim_val = ssim;
@@ -337,6 +355,7 @@ fn main() -> anyhow::Result<()> {
     println!("=== Summary ===");
     println!("Total directories: {}", entries.len());
     println!("No render (skipped): {}", no_render);
+    println!("Encrypted (skipped): {}", encrypted_skip);
     println!("Have both PNGs: {}", has_comparable);
     println!("Pass (≥{:.2}): {}", SSIM_PASS_THRESHOLD, pass_count);
     println!("Fail: {}", fail_count);

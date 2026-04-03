@@ -11,6 +11,10 @@ pub fn run(input: &Path, output: &Path) -> Result<()> {
             std::fs::write(output, &flattened_bytes).context("failed to write output PDF")?;
             println!("Flattened XFA/AcroForm -> {}", output.display());
         }
+        Err(pdf_xfa::error::XfaError::Encrypted(msg)) => {
+            eprintln!("SKIP: encrypted PDF — {msg}");
+            std::process::exit(2);
+        }
         Err(e) => {
             eprintln!("XFA flatten failed: {e:?}");
             // Fallback to regular acroform flatten
