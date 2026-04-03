@@ -168,11 +168,13 @@ impl<'a> LayoutEngine<'a> {
                     self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                 if consumed_break_only {
                     remaining = rest;
-                } else if !placed.nodes.is_empty() {
+                } else if Self::has_visible_content(&placed.nodes) {
                     self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
                     pages.push(placed);
                     remaining = rest;
                 } else {
+                    // Content nodes exist but are all hidden/invisible —
+                    // suppress the blank page and advance.
                     remaining = rest;
                 }
             }
@@ -188,21 +190,26 @@ impl<'a> LayoutEngine<'a> {
                     let (mut page, rest, consumed_break_only, _) =
                         self.layout_content_fitting(ca, &remaining, pa.page_width, pa.page_height)?;
                     if page.nodes.is_empty() && !consumed_break_only {
-                        let mut forced = self.layout_content_on_page(
+                        let forced = self.layout_content_on_page(
                             ca,
                             pa.page_width,
                             pa.page_height,
                             &[remaining[0].id],
                             LayoutStrategy::TopToBottom,
                         )?;
-                        self.prepend_fixed_nodes(&pa.fixed_nodes, &mut forced)?;
-                        pages.push(forced);
+                        if Self::has_visible_content(&forced.nodes) {
+                            let mut forced = forced;
+                            self.prepend_fixed_nodes(&pa.fixed_nodes, &mut forced)?;
+                            pages.push(forced);
+                        }
                         remaining = remaining[1..].to_vec();
                     } else if consumed_break_only {
                         remaining = rest;
                     } else {
-                        self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
-                        pages.push(page);
+                        if Self::has_visible_content(&page.nodes) {
+                            self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
+                            pages.push(page);
+                        }
                         remaining = rest;
                     }
                 }
@@ -215,6 +222,17 @@ impl<'a> LayoutEngine<'a> {
     // -------------------------------------------------------------------
     // Helper methods for queued/hidden-aware pagination
     // -------------------------------------------------------------------
+
+    /// Returns true if the layout nodes contain at least one visually rendered
+    /// element (non-`None` content or a child with rendered content).
+    ///
+    /// Used to suppress blank pages whose content nodes are all hidden/invisible
+    /// (e.g. conditional contact-form pages that are collapsed in the data).
+    fn has_visible_content(nodes: &[LayoutNode]) -> bool {
+        nodes.iter().any(|n| {
+            !matches!(n.content, LayoutContent::None) || Self::has_visible_content(&n.children)
+        })
+    }
 
     /// Returns true if the node should be completely skipped during layout
     /// (no layout space consumed).
