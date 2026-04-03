@@ -107,7 +107,11 @@ fn parse_root_node(_tree: &mut FormTree, _elem: Node<'_, '_>) -> Result<FormNode
     Ok(FormNode {
         name: "root".to_string(),
         node_type: FormNodeType::Root,
-        box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
+        box_model: BoxModel {
+            max_width: f64::MAX,
+            max_height: f64::MAX,
+            ..Default::default()
+        },
         layout: LayoutStrategy::TopToBottom,
         children: Vec::new(),
         occur: Occur::once(),
@@ -310,7 +314,11 @@ fn parse_page_set(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let mut node = FormNode {
         name,
         node_type: FormNodeType::PageSet,
-        box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
+        box_model: BoxModel {
+            max_width: f64::MAX,
+            max_height: f64::MAX,
+            ..Default::default()
+        },
         layout: LayoutStrategy::TopToBottom,
         children: Vec::new(),
         occur: Occur::once(),
@@ -1137,7 +1145,11 @@ fn blank_node(tag: &str) -> FormNode {
     FormNode {
         name: tag.to_string(),
         node_type: FormNodeType::Subform,
-        box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
+        box_model: BoxModel {
+            max_width: f64::MAX,
+            max_height: f64::MAX,
+            ..Default::default()
+        },
         layout: LayoutStrategy::TopToBottom,
         children: Vec::new(),
         occur: Occur::once(),
@@ -1193,9 +1205,13 @@ fn parse_margin(elem: Node<'_, '_>) -> Insets {
     if let Some(margin) = find_first_child_by_name(elem, "margin") {
         Insets {
             top: attr(margin, "topInset").and_then(parse_dim).unwrap_or(0.0),
-            bottom: attr(margin, "bottomInset").and_then(parse_dim).unwrap_or(0.0),
+            bottom: attr(margin, "bottomInset")
+                .and_then(parse_dim)
+                .unwrap_or(0.0),
             left: attr(margin, "leftInset").and_then(parse_dim).unwrap_or(0.0),
-            right: attr(margin, "rightInset").and_then(parse_dim).unwrap_or(0.0),
+            right: attr(margin, "rightInset")
+                .and_then(parse_dim)
+                .unwrap_or(0.0),
         }
     } else {
         Insets::default()
