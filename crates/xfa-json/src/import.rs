@@ -58,6 +58,9 @@ fn merge_node(data: &FormData, tree: &mut FormTree, node_id: FormNodeId, parent_
                 };
             }
         }
+        FormNodeType::Image { .. } => {
+            // Images are static content - no data binding
+        }
         FormNodeType::Subform => {
             if is_repeating {
                 // Repeating subforms are handled by the parent via

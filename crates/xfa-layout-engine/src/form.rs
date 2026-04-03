@@ -120,6 +120,8 @@ pub enum FormNodeType {
     Field { value: String },
     /// A static draw element (text, image, line, etc.).
     Draw { content: String },
+    /// A static image draw element.
+    Image { data: Vec<u8>, mime_type: String },
 }
 
 /// Occurrence rules for repeating subforms (XFA §3.3 occur element).
