@@ -18,7 +18,7 @@ pub struct FormTree {
     pub nodes: Vec<FormNode>,
     /// Per-node metadata (parallel to `nodes`).
     pub metadata: Vec<FormNodeMeta>,
-    /// Lookup table: XFA `id` attribute → `FormNodeId`.
+    /// Lookup table: XFA `id` attribute -> `FormNodeId`.
     pub node_ids: HashMap<String, FormNodeId>,
 }
 
@@ -92,7 +92,7 @@ pub struct FormNode {
     pub occur: Occur,
     /// Font metrics for text measurement (Draw/Field nodes).
     pub font: FontMetrics,
-    /// FormCalc calculate script (XFA §14.3.2): runs to compute the field's value.
+    /// FormCalc calculate script (XFA S14.3.2): runs to compute the field's value.
     pub calculate: Option<String>,
     /// FormCalc validate script: runs to validate the field's value, returns bool.
     pub validate: Option<String>,
@@ -124,7 +124,7 @@ pub enum FormNodeType {
     Image { data: Vec<u8>, mime_type: String },
 }
 
-/// Occurrence rules for repeating subforms (XFA §3.3 occur element).
+/// Occurrence rules for repeating subforms (XFA S3.3 occur element).
 ///
 /// Controls how many instances of a subform are created. The layout engine
 /// expands templates based on the `initial` count, bounded by `min` and `max`.
@@ -211,6 +211,34 @@ impl Default for ContentArea {
 // Metadata, style, and kind types
 // ---------------------------------------------------------------------------
 
+/// XFA `presence` attribute values (XFA 3.3 S3.2.8).
+///
+/// Controls visibility and layout space allocation:
+/// - `Visible` -- normal rendering (default).
+/// - `Hidden` -- not rendered, but reserves layout space.
+/// - `Invisible` -- not rendered, no layout space.
+/// - `Inactive` -- completely ignored (no space, no processing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Presence {
+    #[default]
+    Visible,
+    Hidden,
+    Invisible,
+    Inactive,
+}
+
+impl Presence {
+    /// True when the element should not be rendered.
+    pub fn is_not_visible(self) -> bool {
+        !matches!(self, Presence::Visible)
+    }
+
+    /// True when the element should not occupy layout space.
+    pub fn is_layout_hidden(self) -> bool {
+        matches!(self, Presence::Invisible | Presence::Inactive)
+    }
+}
+
 /// Extended metadata for a form node.
 ///
 /// Carries XFA attributes that the layout engine and dynamic scripting
@@ -219,10 +247,8 @@ impl Default for ContentArea {
 pub struct FormNodeMeta {
     /// Optional XFA `id` attribute.
     pub xfa_id: Option<String>,
-    /// Whether the element has `presence="hidden"` or `"inactive"`.
-    pub presence_hidden: bool,
-    /// Whether the element has `presence="invisible"` (layout space kept, not rendered).
-    pub presence_invisible: bool,
+    /// XFA presence attribute (visible/hidden/invisible/inactive).
+    pub presence: Presence,
     /// Whether a page break should be inserted before this node.
     pub page_break_before: bool,
     /// Whether a page break should be inserted after this node.
@@ -244,7 +270,7 @@ pub struct FormNodeMeta {
     pub keep_previous_content_area: bool,
     /// Keep intact within content area.
     pub keep_intact_content_area: bool,
-    /// Layout-ready script (XFA §14.3).
+    /// Layout-ready script (XFA S14.3).
     pub layout_ready_script: Option<String>,
     /// Event scripts collected from `<event>` and `<calculate>` children.
     pub event_scripts: Vec<String>,
