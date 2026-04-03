@@ -22,6 +22,13 @@ use crate::render_bridge::{generate_all_overlays, XfaRenderConfig};
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::layout::LayoutEngine;
 
+/// Returns `true` if the PDF bytes contain an `/Encrypt` entry in the trailer.
+pub fn is_pdf_encrypted(pdf_bytes: &[u8]) -> bool {
+    Document::load_mem(pdf_bytes)
+        .map(|doc| doc.trailer.get(b"Encrypt").is_ok())
+        .unwrap_or(false)
+}
+
 /// Flatten all XFA content in `pdf_bytes` to static PDF content streams.
 ///
 /// Returns the modified PDF bytes. The /AcroForm entry is removed so the
@@ -29,6 +36,15 @@ use xfa_layout_engine::layout::LayoutEngine;
 ///
 /// If the PDF has no XFA content, returns a clone of the input unchanged.
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
+    // 0. Reject encrypted PDFs early — they produce garbage output.
+    if let Ok(doc) = Document::load_mem(pdf_bytes) {
+        if doc.trailer.get(b"Encrypt").is_ok() {
+            return Err(XfaError::Encrypted(
+                "PDF is encrypted; decrypt before flattening".into(),
+            ));
+        }
+    }
+
     // 1. Extract XFA packets.
     let packets = match extract_xfa_from_bytes(pdf_bytes.to_vec()) {
         Ok(p) => p,
@@ -1296,6 +1312,53 @@ ET
         assert!(
             xobjects.get(b"XfaAp0").is_ok(),
             "new flattened widget XObject was not added"
+        );
+    }
+
+    #[test]
+    fn encrypted_pdf_returns_encrypted_error() {
+        // Build a minimal PDF with an /Encrypt dictionary in the trailer.
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Page".to_vec()),
+            "Parent"   => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"  => Object::Name(b"Catalog".to_vec()),
+            "Pages" => Object::Reference(pages_id),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        // Add a dummy /Encrypt entry to simulate an encrypted PDF.
+        let encrypt_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Filter" => Object::Name(b"Standard".to_vec()),
+            "V"      => Object::Integer(2),
+            "Length"  => Object::Integer(128),
+        }));
+        doc.trailer.set("Encrypt", Object::Reference(encrypt_id));
+
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf).expect("save test PDF");
+
+        let result = flatten_xfa_to_pdf(&buf);
+        assert!(result.is_err(), "expected Encrypted error");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, XfaError::Encrypted(_)),
+            "expected XfaError::Encrypted, got: {err:?}"
         );
     }
 }

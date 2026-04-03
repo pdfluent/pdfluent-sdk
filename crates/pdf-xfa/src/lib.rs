@@ -11,7 +11,7 @@ pub mod paint_bridge;
 pub mod render_bridge;
 pub mod template_parser;
 
-pub use flatten::flatten_xfa_to_pdf;
+pub use flatten::{flatten_xfa_to_pdf, is_pdf_encrypted};
 
 pub use formcalc_interpreter as formcalc;
 pub use xfa_dom_resolver as dom_resolver;
