@@ -517,6 +517,12 @@ fn wrap_text(text: &str, max_width: f64, metrics: &FontMetrics) -> Vec<String> {
     lines
 }
 
+/// Escape a Unicode string for use inside a PDF literal string `(…)`.
+///
+/// The fonts we register use WinAnsiEncoding, so every character must be
+/// mapped to its single-byte WinAnsi code point. Characters outside the
+/// WinAnsi range are replaced with `?`. Bytes outside printable ASCII
+/// (0x20–0x7E) are emitted as octal escapes `\NNN`.
 fn pdf_escape(s: &str) -> String {
     let mut r = String::with_capacity(s.len());
     for c in s.chars() {
@@ -524,10 +530,64 @@ fn pdf_escape(s: &str) -> String {
             '(' => r.push_str("\\("),
             ')' => r.push_str("\\)"),
             '\\' => r.push_str("\\\\"),
-            _ => r.push(c),
+            // Printable ASCII passes through directly.
+            '\x20'..='\x7e' => r.push(c),
+            _ => {
+                if let Some(b) = unicode_to_winansi(c) {
+                    // Emit as octal escape for non-ASCII WinAnsi bytes.
+                    use std::fmt::Write;
+                    let _ = write!(r, "\\{:03o}", b);
+                } else {
+                    r.push('?');
+                }
+            }
         }
     }
     r
+}
+
+/// Map a Unicode code point to its WinAnsiEncoding byte value.
+///
+/// Returns `None` for characters that have no WinAnsi representation.
+/// Covers the 0x80–0x9F range (where WinAnsi differs from Latin-1) and
+/// the 0xA0–0xFF Latin-1 supplement range.
+fn unicode_to_winansi(c: char) -> Option<u8> {
+    // Latin-1 Supplement range 0xA0–0xFF maps 1:1.
+    let cp = c as u32;
+    if (0xA0..=0xFF).contains(&cp) {
+        return Some(cp as u8);
+    }
+    // WinAnsi 0x80–0x9F special mappings (Windows-1252).
+    match c {
+        '\u{20AC}' => Some(0x80), // €
+        '\u{201A}' => Some(0x82), // ‚
+        '\u{0192}' => Some(0x83), // ƒ
+        '\u{201E}' => Some(0x84), // „
+        '\u{2026}' => Some(0x85), // …
+        '\u{2020}' => Some(0x86), // †
+        '\u{2021}' => Some(0x87), // ‡
+        '\u{02C6}' => Some(0x88), // ˆ
+        '\u{2030}' => Some(0x89), // ‰
+        '\u{0160}' => Some(0x8A), // Š
+        '\u{2039}' => Some(0x8B), // ‹
+        '\u{0152}' => Some(0x8C), // Œ
+        '\u{017D}' => Some(0x8E), // Ž
+        '\u{2018}' => Some(0x91), // '
+        '\u{2019}' => Some(0x92), // '
+        '\u{201C}' => Some(0x93), // "
+        '\u{201D}' => Some(0x94), // "
+        '\u{2022}' => Some(0x95), // •  (bullet)
+        '\u{2013}' => Some(0x96), // –  (en-dash)
+        '\u{2014}' => Some(0x97), // —  (em-dash)
+        '\u{02DC}' => Some(0x98), // ˜
+        '\u{2122}' => Some(0x99), // ™
+        '\u{0161}' => Some(0x9A), // š
+        '\u{203A}' => Some(0x9B), // ›
+        '\u{0153}' => Some(0x9C), // œ
+        '\u{017E}' => Some(0x9E), // ž
+        '\u{0178}' => Some(0x9F), // Ÿ
+        _ => None,
+    }
 }
 
 fn write_ops(buf: &mut Vec<u8>, args: std::fmt::Arguments<'_>) {
@@ -613,5 +673,21 @@ mod tests {
         let config = XfaRenderConfig::default();
         let overlays = generate_all_overlays(&layout, &config).unwrap();
         assert_eq!(overlays.len(), 2);
+    }
+
+    #[test]
+    fn pdf_escape_winansi_encoding() {
+        // ASCII passes through.
+        assert_eq!(pdf_escape("Hello"), "Hello");
+        // Parentheses and backslash are escaped.
+        assert_eq!(pdf_escape("a(b)c\\d"), "a\\(b\\)c\\\\d");
+        // En-dash U+2013 → WinAnsi 0x96 → octal \226.
+        assert_eq!(pdf_escape("\u{2013}"), "\\226");
+        // Bullet U+2022 → WinAnsi 0x95 → octal \225.
+        assert_eq!(pdf_escape("\u{2022}"), "\\225");
+        // Latin-1: © U+00A9 → WinAnsi 0xA9 → octal \251.
+        assert_eq!(pdf_escape("\u{00A9}"), "\\251");
+        // Unmapped character → '?'.
+        assert_eq!(pdf_escape("\u{4E16}"), "?"); // CJK char
     }
 }
