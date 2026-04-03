@@ -865,11 +865,28 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             }
         }
     }
-    if let Some(border) = find_first_child_by_name(elem, "border") {
+    // Borders can live directly on the element OR inside <ui><textEdit|…><border>.
+    let border = find_first_child_by_name(elem, "border").or_else(|| {
+        let ui = find_first_child_by_name(elem, "ui")?;
+        ui.children()
+            .filter(|c| c.is_element() && c.tag_name().name() != "border")
+            .find_map(|widget| find_first_child_by_name(widget, "border"))
+    });
+    if let Some(border) = border {
         if let Some(edge) = find_first_child_by_name(border, "edge") {
             if let Some(color) = find_first_child_by_name(edge, "color") {
                 if let Some(rgb) = parse_xfa_color(color) {
                     style.border_color = Some(rgb);
+                }
+            }
+            let stroke = attr(edge, "stroke").unwrap_or("solid");
+            if stroke != "none" {
+                let thickness = attr(edge, "thickness")
+                    .and_then(Measurement::parse)
+                    .map(|m: Measurement| m.to_points())
+                    .unwrap_or(0.5);
+                if thickness > 0.0 {
+                    style.border_width_pt = Some(thickness);
                 }
             }
         }
