@@ -3,7 +3,7 @@
 //! Implements XFA 3.3 §4 (Box Model) and §8 (Layout for Growable Objects).
 //! Supports positioned layout and flowed layout (tb, lr-tb, rl-tb).
 
-use crate::error::{LayoutError, Result};
+use crate::error::Result;
 use crate::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree};
 use crate::text::{self, FontFamily};
 use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
@@ -100,7 +100,7 @@ impl<'a> LayoutEngine<'a> {
     pub fn layout(&self, root: FormNodeId) -> Result<LayoutDom> {
         let root_node = self.form.get(root);
 
-        let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node, 0)?;
+        let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
         // Build queued nodes with break_before flags and occur expansion.
         let content_queued = self.queue_content(&raw_content_nodes);
 
@@ -258,20 +258,14 @@ impl<'a> LayoutEngine<'a> {
             .collect()
     }
 
-    fn subtree_is_blank(&self, id: FormNodeId, depth: usize) -> bool {
-        if depth > Self::MAX_DEPTH {
-            return false;
-        }
+    fn subtree_is_blank(&self, id: FormNodeId) -> bool {
         let node = self.form.get(id);
         match &node.node_type {
             FormNodeType::Field { value } => value.is_empty(),
             FormNodeType::Draw { content } => content.is_empty(),
             FormNodeType::Image { data, .. } => data.is_empty(),
             FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => true,
-            FormNodeType::Subform => node
-                .children
-                .iter()
-                .all(|&c| self.subtree_is_blank(c, depth + 1)),
+            FormNodeType::Subform => node.children.iter().all(|&c| self.subtree_is_blank(c)),
         }
     }
 
@@ -327,7 +321,7 @@ impl<'a> LayoutEngine<'a> {
     /// constraint (used as a "glue" between siblings).
     fn is_spacer_keep_with_next(&self, id: FormNodeId) -> bool {
         let meta = self.form.meta(id);
-        meta.keep_intact_content_area && self.subtree_is_blank(id, 0)
+        meta.keep_intact_content_area && self.subtree_is_blank(id)
     }
 
     /// Compute the cumulative height of a keep-chain starting at index
@@ -352,7 +346,7 @@ impl<'a> LayoutEngine<'a> {
                 let nxt_meta = self.form.meta(next_id);
                 let keep = cur_meta.keep_next_content_area
                     || nxt_meta.keep_previous_content_area
-                    || (cur_meta.keep_intact_content_area && self.subtree_is_blank(id, 0));
+                    || (cur_meta.keep_intact_content_area && self.subtree_is_blank(id));
                 if !keep {
                     break;
                 }
@@ -364,12 +358,7 @@ impl<'a> LayoutEngine<'a> {
     fn extract_page_structure(
         &self,
         root: &FormNode,
-        depth: usize,
     ) -> Result<(Vec<PageAreaInfo>, Vec<FormNodeId>)> {
-        if depth > Self::MAX_DEPTH {
-            return Err(LayoutError::MaxDepthExceeded);
-        }
-
         let mut page_areas = Vec::new();
         let mut content_nodes = Vec::new();
 
@@ -444,15 +433,13 @@ impl<'a> LayoutEngine<'a> {
                         .iter()
                         .any(|&cid| matches!(self.form.get(cid).node_type, FormNodeType::PageSet));
                     if has_pageset {
-                        let (inner_areas, inner_content) =
-                            self.extract_page_structure(child, depth + 1)?;
+                        let (inner_areas, inner_content) = self.extract_page_structure(child)?;
                         page_areas.extend(inner_areas);
                         content_nodes.extend(inner_content);
                     } else if child.layout == LayoutStrategy::TopToBottom {
                         // TB subform without inner PageSet — still recurse in
                         // case an inner TB child wraps a PageSet.
-                        let (inner_areas, inner_content) =
-                            self.extract_page_structure(child, depth + 1)?;
+                        let (inner_areas, inner_content) = self.extract_page_structure(child)?;
                         if !inner_areas.is_empty() {
                             page_areas.extend(inner_areas);
                             content_nodes.extend(inner_content);
@@ -641,7 +628,6 @@ impl<'a> LayoutEngine<'a> {
                         remaining_height,
                         available,
                         qn.children_override.as_deref(),
-                        0,
                     )?;
 
                     let partial_fits = partial.rect.height <= remaining_height + 1.0;
@@ -690,7 +676,6 @@ impl<'a> LayoutEngine<'a> {
                     content_height,
                     available,
                     qn.children_override.as_deref(),
-                    0,
                 )?;
                 let remaining_on_page = content_bottom - y_cursor;
                 if !partial.children.is_empty() && partial.rect.height <= remaining_on_page {
@@ -774,8 +759,6 @@ impl<'a> LayoutEngine<'a> {
     /// Respects keep constraints: if a child has `keep_next_content_area`,
     /// the split will not occur between that child and its successor.
     /// Also respects `page_break_before` on children as mandatory split points.
-    const MAX_DEPTH: usize = 200;
-
     fn split_tb_node(
         &self,
         id: FormNodeId,
@@ -783,11 +766,7 @@ impl<'a> LayoutEngine<'a> {
         remaining_height: f64,
         _available: Size,
         children_override: Option<&[FormNodeId]>,
-        depth: usize,
     ) -> Result<(LayoutNode, Vec<QueuedNode>)> {
-        if depth > Self::MAX_DEPTH {
-            return Err(LayoutError::MaxDepthExceeded);
-        }
         let node = self.form.get(id);
         let node_children = children_override.unwrap_or(&node.children);
         let expanded_children = self.expand_occur(node_children);
@@ -834,7 +813,6 @@ impl<'a> LayoutEngine<'a> {
                         child_remaining,
                         child_available,
                         None,
-                        depth + 1,
                     )?;
 
                     let partial_fits = partial_child.rect.height <= child_remaining + 1.0;

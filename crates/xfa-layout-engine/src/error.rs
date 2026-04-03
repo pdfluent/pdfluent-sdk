@@ -15,9 +15,6 @@ pub enum LayoutError {
 
     #[error("Layout error: {0}")]
     General(String),
-
-    #[error("Maximum recursion depth exceeded")]
-    MaxDepthExceeded,
 }
 
 pub type Result<T> = std::result::Result<T, LayoutError>;
