@@ -479,9 +479,12 @@ fn parse_occur(elem: Node<'_, '_>) -> Occur {
         let max: Option<u32> = attr(occur, "max")
             .map(|s| if s == "-1" { None } else { s.parse().ok() })
             .unwrap_or(Some(1));
+        // XFA 3.3 §3.2.5: when initial is absent, default to at least 1 —
+        // the subform exists in the template and should render once unless
+        // explicitly suppressed by initial="0".
         let initial: u32 = attr(occur, "initial")
             .and_then(|s| s.parse().ok())
-            .unwrap_or(min);
+            .unwrap_or(min.max(1));
         Occur::repeating(min, max, initial)
     } else {
         Occur::once()
