@@ -13,7 +13,7 @@ use xfa_layout_engine::form::{
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
-    BoxModel, Caption, CaptionPlacement, LayoutStrategy, Measurement, TextAlign,
+    BoxModel, Caption, CaptionPlacement, Insets, LayoutStrategy, Measurement, TextAlign,
 };
 
 /// Merges an XFA template (XML) with data from a DataDom to produce a FormTree.
@@ -183,7 +183,7 @@ impl<'a> FormMerger<'a> {
         let container = FormNode {
             name: format!("{}_container", name),
             node_type: FormNodeType::Subform,
-            box_model: BoxModel::default(),
+            box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
             layout: LayoutStrategy::TopToBottom,
             children: instances,
             occur: Occur::once(),
@@ -294,7 +294,7 @@ impl<'a> FormMerger<'a> {
         let mut node = FormNode {
             name,
             node_type: FormNodeType::PageSet,
-            box_model: BoxModel::default(),
+            box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
             layout: LayoutStrategy::TopToBottom,
             children: Vec::new(),
             occur: Occur::once(),
@@ -404,7 +404,7 @@ impl<'a> FormMerger<'a> {
         FormNode {
             name: name.to_string(),
             node_type,
-            box_model: BoxModel::default(),
+            box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
             layout: LayoutStrategy::TopToBottom,
             children: Vec::new(),
             occur: Occur::once(),
@@ -454,15 +454,36 @@ fn parse_box_model(elem: Node<'_, '_>) -> BoxModel {
     let h = attr(elem, "h").and_then(parse_dim);
     let x = attr(elem, "x").and_then(parse_dim).unwrap_or(0.0);
     let y = attr(elem, "y").and_then(parse_dim).unwrap_or(0.0);
+    let min_h = attr(elem, "minH").and_then(parse_dim).unwrap_or(0.0);
+    let min_w = attr(elem, "minW").and_then(parse_dim).unwrap_or(0.0);
+    let max_h = attr(elem, "maxH").and_then(parse_dim).unwrap_or(f64::MAX);
+    let max_w = attr(elem, "maxW").and_then(parse_dim).unwrap_or(f64::MAX);
+    let margins = parse_margin(elem);
 
     BoxModel {
         width: w,
         height: h,
         x,
         y,
-        max_width: f64::MAX,
-        max_height: f64::MAX,
+        margins,
+        min_width: min_w,
+        max_width: max_w,
+        min_height: min_h,
+        max_height: max_h,
         ..Default::default()
+    }
+}
+
+fn parse_margin(elem: Node<'_, '_>) -> Insets {
+    if let Some(margin) = find_first_child_by_name(elem, "margin") {
+        Insets {
+            top: attr(margin, "topInset").and_then(parse_dim).unwrap_or(0.0),
+            bottom: attr(margin, "bottomInset").and_then(parse_dim).unwrap_or(0.0),
+            left: attr(margin, "leftInset").and_then(parse_dim).unwrap_or(0.0),
+            right: attr(margin, "rightInset").and_then(parse_dim).unwrap_or(0.0),
+        }
+    } else {
+        Insets::default()
     }
 }
 
@@ -484,7 +505,7 @@ fn parse_occur(elem: Node<'_, '_>) -> Occur {
         // explicitly suppressed by initial="0".
         let initial: u32 = attr(occur, "initial")
             .and_then(|s| s.parse().ok())
-            .unwrap_or(min.max(1));
+            .unwrap_or(min);
         Occur::repeating(min, max, initial)
     } else {
         Occur::once()
