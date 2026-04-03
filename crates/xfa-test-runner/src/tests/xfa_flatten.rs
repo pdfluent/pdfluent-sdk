@@ -195,51 +195,54 @@ impl PdfTest for XfaFlattenTest {
                 // Also skips for certified PDFs: iText 5 cannot flatten a certified
                 // PDF (it returns the original unmodified bytes), so comparing
                 // our flatten against it would be meaningless. (#557)
-                if is_certified {
+                let (_ssim_score, ssim_oracle_score) = if is_certified {
                     let _ = std::fs::remove_file(&itext_flat_path);
                     metadata.insert("ssim_skip".to_string(), "certified_pdf".to_string());
-                    return TestResult {
-                        status: TestStatus::Pass,
-                        error_message: None,
-                        duration_ms: start.elapsed().as_millis() as u64,
-                        oracle_score: None,
-                        metadata,
-                    };
-                }
-                let ssim_result = compute_ssim_comparison(&buf, &itext_flat_path);
-                let _ = std::fs::remove_file(&itext_flat_path);
-                match ssim_result {
-                    SsimResult::Score(score) => {
-                        metadata.insert("ssim".to_string(), format!("{score:.4}"));
-                        if score < SSIM_PASS_THRESHOLD {
-                            return TestResult {
-                                status: TestStatus::Fail,
-                                error_message: Some(format!(
-                                    "SSIM {score:.4} below threshold {SSIM_PASS_THRESHOLD} (flatten visual regression)"
-                                )),
-                                duration_ms: start.elapsed().as_millis() as u64,
-                                oracle_score: Some(score),
-                                metadata,
-                            };
+                    (None, run_verapdf_fallback(&buf))
+                } else {
+                    let ssim_result = compute_ssim_comparison(&buf, &itext_flat_path);
+                    let _ = std::fs::remove_file(&itext_flat_path);
+                    match ssim_result {
+                        SsimResult::Score(score) => {
+                            metadata.insert("ssim".to_string(), format!("{score:.4}"));
+                            if score < SSIM_PASS_THRESHOLD {
+                                return TestResult {
+                                    status: TestStatus::Fail,
+                                    error_message: Some(format!(
+                                        "SSIM {score:.4} below threshold {SSIM_PASS_THRESHOLD} (flatten visual regression)"
+                                    )),
+                                    duration_ms: start.elapsed().as_millis() as u64,
+                                    oracle_score: Some(score),
+                                    metadata,
+                                };
+                            }
+                            (Some(score), Some(score))
                         }
-                        TestResult {
-                            status: TestStatus::Pass,
-                            error_message: None,
-                            duration_ms: start.elapsed().as_millis() as u64,
-                            oracle_score: Some(score),
-                            metadata,
+                        SsimResult::Skipped(reason) => {
+                            metadata.insert("ssim_skip".to_string(), reason.clone());
+                            if reason == "iText flatten output not available" {
+                                (None, run_verapdf_fallback(&buf))
+                            } else {
+                                (None, None)
+                            }
                         }
                     }
-                    SsimResult::Skipped(reason) => {
-                        metadata.insert("ssim_skip".to_string(), reason);
-                        TestResult {
-                            status: TestStatus::Pass,
-                            error_message: None,
-                            duration_ms: start.elapsed().as_millis() as u64,
-                            oracle_score: None,
-                            metadata,
-                        }
+                };
+
+                let error_message = ssim_oracle_score.map_or(None, |score| {
+                    if score < 0.0 {
+                        Some("no_reference_for_ssim".to_string())
+                    } else {
+                        None
                     }
+                });
+
+                TestResult {
+                    status: TestStatus::Pass,
+                    error_message,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    oracle_score: ssim_oracle_score,
+                    metadata,
                 }
             }
             Err(e) => TestResult {
@@ -398,6 +401,49 @@ fn is_certified_pdf(doc: &lopdf::Document) -> bool {
     doc.get_dictionary(root_id)
         .map(|d| d.get(b"Perms").is_ok())
         .unwrap_or(false)
+}
+
+/// Run veraPDF as a fallback when SSIM is not available.
+/// Returns `Some(1.0)` if veraPDF is available and reports compliance,
+/// `Some(0.0)` if veraPDF reports non-compliance, or `Some(-1.0)` if veraPDF
+/// is not available or failed to run.
+fn run_verapdf_fallback(flattened_data: &[u8]) -> Option<f64> {
+    let verapdf_path = "/opt/verapdf/verapdf";
+    if !std::path::Path::new(verapdf_path).exists() {
+        return Some(-1.0);
+    }
+
+    let uid = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let tmp_dir = std::env::temp_dir();
+    let pdf_path = tmp_dir.join(format!("xfa-flatten-verapdf-{pid}-{uid}.pdf"));
+
+    if std::fs::write(&pdf_path, flattened_data).is_err() {
+        return Some(-1.0);
+    }
+
+    let output = std::process::Command::new(verapdf_path)
+        .args(["--format", "json", "--flavour", "0"])
+        .arg(&pdf_path)
+        .output();
+
+    let _ = std::fs::remove_file(&pdf_path);
+
+    match output {
+        Ok(out) if out.status.success() => {
+            match crate::oracles::verapdf::parse_verapdf_json_output(&out.stdout, 0) {
+                Ok(result) => {
+                    if result.is_compliant {
+                        Some(1.0)
+                    } else {
+                        Some(0.0)
+                    }
+                }
+                Err(_) => Some(-1.0),
+            }
+        }
+        _ => Some(-1.0),
+    }
 }
 
 /// Remove the /AcroForm entry from the document catalog.
