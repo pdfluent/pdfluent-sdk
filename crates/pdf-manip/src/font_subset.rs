@@ -194,8 +194,9 @@ fn collect_font_usage(doc: &Document) -> std::collections::HashMap<String, HashS
             }
         }
 
-        // Always include .notdef (glyph 0).
+        // Always include .notdef (glyph 0) and space (code 32).
         glyph_set.insert(0);
+        glyph_set.insert(32);
     }
 
     usage
