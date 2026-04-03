@@ -1305,11 +1305,8 @@ fn extract_value_image(elem: Node<'_, '_>) -> Option<(Vec<u8>, String)> {
 fn bmp_to_png(bmp_data: &[u8]) -> Option<Vec<u8>> {
     let img = image::load_from_memory_with_format(bmp_data, image::ImageFormat::Bmp).ok()?;
     let mut buf = Vec::new();
-    img.write_to(
-        &mut std::io::Cursor::new(&mut buf),
-        image::ImageFormat::Png,
-    )
-    .ok()?;
+    img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+        .ok()?;
     Some(buf)
 }
 
@@ -1318,9 +1315,11 @@ fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
     // Try <text>, <float>, <integer>, <date>
     for tag in &["text", "float", "integer", "date", "dateTime", "decimal"] {
         if let Some(child) = find_first_child_by_name(value, tag) {
-            let text = child.text().unwrap_or("").trim().to_string();
-            if !text.is_empty() {
-                return Some(text);
+            let text = child.text().unwrap_or("");
+            let trimmed = text.trim_start_matches(|c: char| c.is_whitespace() && c != '\n');
+            let trimmed = trimmed.trim_end_matches(|c: char| c.is_whitespace() && c != '\n');
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
             }
         }
     }
@@ -1335,22 +1334,42 @@ fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
     None
 }
 
-/// Walk all descendant text nodes of `node` and return their trimmed content
-/// joined by spaces, with excess whitespace collapsed. Used to extract plain
-/// text from XHTML-encoded `<exData>` nodes.
+/// Walk all descendant nodes of `node` and return text content joined
+/// by newlines between block-level elements (e.g. `<p>`, `<div>`), preserving
+/// paragraph structure. Used to extract plain text from XHTML-encoded
+/// `<exData>` nodes. (#686)
 fn extract_text_from_descendants(node: Node<'_, '_>) -> String {
-    let mut parts: Vec<&str> = Vec::new();
+    let block_tags = [
+        "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "br",
+    ];
+    let mut result = String::new();
+    let mut last_was_block = false;
+
     for desc in node.descendants() {
+        let is_block = desc.is_element() && block_tags.contains(&desc.tag_name().name());
+
+        if is_block && !result.is_empty() {
+            result.push('\n');
+            last_was_block = true;
+        }
+
         if desc.is_text() {
             if let Some(t) = desc.text() {
                 let t = t.trim();
                 if !t.is_empty() {
-                    parts.push(t);
+                    if last_was_block || result.is_empty() {
+                        result.push_str(t);
+                    } else {
+                        result.push(' ');
+                        result.push_str(t);
+                    }
+                    last_was_block = false;
                 }
             }
         }
     }
-    parts.join(" ")
+
+    result.trim().to_string()
 }
 
 fn base64_decode(input: &str) -> Vec<u8> {
@@ -1835,7 +1854,8 @@ mod tests {
             0x13, 0x0B, 0x00, 0x00, // v-res
             0x00, 0x00, 0x00, 0x00, // colors
             0x00, 0x00, 0x00, 0x00, // important colors
-            0xFF, 0x00, 0x00, 0x00, // pixel (BGR: blue=FF, green=0, red=0) + 1 byte row padding
+            0xFF, 0x00, 0x00,
+            0x00, // pixel (BGR: blue=FF, green=0, red=0) + 1 byte row padding
         ];
         use base64::Engine;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
@@ -1861,8 +1881,7 @@ mod tests {
 </template>"#
         );
         let (tree, root_id) = parse_template(&xml, None).unwrap();
-        let node =
-            find_node_by_name(&tree, root_id, "barcode_img").expect("barcode_img not found");
+        let node = find_node_by_name(&tree, root_id, "barcode_img").expect("barcode_img not found");
         match &node.node_type {
             FormNodeType::Image { data, mime_type } => {
                 assert_eq!(mime_type, "image/png", "BMP should be converted to PNG");

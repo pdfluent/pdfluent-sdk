@@ -572,9 +572,11 @@ fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
     let value = find_first_child_by_name(elem, "value")?;
     for tag in &["text", "float", "integer", "date", "dateTime", "decimal"] {
         if let Some(child) = find_first_child_by_name(value, tag) {
-            let text = child.text().unwrap_or("").trim().to_string();
-            if !text.is_empty() {
-                return Some(text);
+            let text = child.text().unwrap_or("");
+            let trimmed = text.trim_start_matches(|c: char| c.is_whitespace() && c != '\n');
+            let trimmed = trimmed.trim_end_matches(|c: char| c.is_whitespace() && c != '\n');
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
             }
         }
     }
@@ -588,18 +590,37 @@ fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
 }
 
 fn extract_text_from_descendants(node: Node<'_, '_>) -> String {
-    let mut parts: Vec<&str> = Vec::new();
+    let block_tags = [
+        "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "br",
+    ];
+    let mut result = String::new();
+    let mut last_was_block = false;
+
     for desc in node.descendants() {
+        let is_block = desc.is_element() && block_tags.contains(&desc.tag_name().name());
+
+        if is_block && !result.is_empty() {
+            result.push('\n');
+            last_was_block = true;
+        }
+
         if desc.is_text() {
             if let Some(t) = desc.text() {
                 let t = t.trim();
                 if !t.is_empty() {
-                    parts.push(t);
+                    if last_was_block || result.is_empty() {
+                        result.push_str(t);
+                    } else {
+                        result.push(' ');
+                        result.push_str(t);
+                    }
+                    last_was_block = false;
                 }
             }
         }
     }
-    parts.join(" ")
+
+    result.trim().to_string()
 }
 
 fn extract_exdata_font_size(elem: Node<'_, '_>) -> Option<f64> {
