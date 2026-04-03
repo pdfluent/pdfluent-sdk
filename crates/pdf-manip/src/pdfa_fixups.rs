@@ -88,6 +88,8 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
     let jbig2_globals_promoted = fix_jbig2_globals_promotion(doc);
     // §6.2.4.3: Fix DeviceCMYK usage when OutputIntent is not CMYK.
     let device_cmyk_intent_fixed = fix_device_cmyk_intent_mismatch(doc);
+    // §6.5.3: Convert annotation /C and /IC color arrays to match OutputIntent.
+    let annotation_color_intent_fixed = fix_annotation_color_intent_mismatch(doc);
     // §6.2.4.2: Fix ICC profile reuse between ICCBased and OutputIntent.
     let icc_profile_reuse_fixed = fix_icc_profile_reuse(doc);
     // Add /Group to pages using transparency without one (6.2.10-tgroup).
@@ -154,6 +156,7 @@ pub fn run_fixups(doc: &mut Document) -> FixupReport {
         stream_external_f_fixed,
         jbig2_globals_promoted,
         device_cmyk_intent_fixed,
+        annotation_color_intent_fixed,
         icc_profile_reuse_fixed,
     }
 }
@@ -210,6 +213,7 @@ pub struct FixupReport {
     pub stream_external_f_fixed: usize,
     pub jbig2_globals_promoted: usize,
     pub device_cmyk_intent_fixed: usize,
+    pub annotation_color_intent_fixed: usize,
     pub icc_profile_reuse_fixed: usize,
 }
 
@@ -10533,6 +10537,148 @@ fn ensure_cmyk_profile_extra(doc: &mut Document) -> ObjectId {
         "N" => 4,
     };
     doc.add_object(Object::Stream(lopdf::Stream::new(dict, Vec::new())))
+}
+
+// ---------------------------------------------------------------------------
+// §6.5.3 — Convert annotation /C and /IC color arrays to match OutputIntent.
+// ---------------------------------------------------------------------------
+//
+// Annotation /C (border color) and /IC (interior color) arrays must have a
+// component count compatible with the OutputIntent color space:
+//   - 1-component (gray) is compatible with any intent.
+//   - 3-component (RGB) requires RGB intent (3 components).
+//   - 4-component (CMYK) requires CMYK intent (4 components).
+// When incompatible, convert the color array. Most common case: 3-component
+// RGB colors in PDFs with a CMYK OutputIntent. (#646)
+
+fn fix_annotation_color_intent_mismatch(doc: &mut Document) -> usize {
+    // Determine OutputIntent ICC profile /N value.
+    let intent_n = {
+        let catalog = match doc.catalog() {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+        let oi_arr = match catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
+            Ok(arr) => arr.clone(),
+            Err(_) => return 0,
+        };
+        let mut found = None;
+        for oi in &oi_arr {
+            let dict = if let Ok(d) = oi.as_dict() {
+                Some(d)
+            } else if let Ok(id) = oi.as_reference() {
+                doc.get_object(id).ok().and_then(|o| o.as_dict().ok())
+            } else {
+                None
+            };
+            let Some(d) = dict else { continue };
+            if d.get(b"S").ok().and_then(|o| o.as_name().ok()) != Some(b"GTS_PDFA1") {
+                continue;
+            }
+            if let Some(profile_id) = d
+                .get(b"DestOutputProfile")
+                .ok()
+                .and_then(|o| o.as_reference().ok())
+            {
+                if let Some(Object::Stream(s)) = doc.objects.get(&profile_id) {
+                    if let Some(n) = s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) {
+                        found = Some(n as usize);
+                        break;
+                    }
+                }
+            }
+        }
+        match found {
+            Some(n) => n,
+            None => return 0,
+        }
+    };
+
+    let mut count = 0;
+    let ids: Vec<ObjectId> = doc.objects.keys().copied().collect();
+
+    for id in ids {
+        for key in [b"C" as &[u8], b"IC"] {
+            let converted = {
+                let Some(Object::Dictionary(dict)) = doc.objects.get(&id) else {
+                    break;
+                };
+                // Only process annotation-like dicts (must have /Rect).
+                if dict.get(b"Rect").is_err() {
+                    break;
+                }
+                let Ok(Object::Array(arr)) = dict.get(key) else {
+                    continue;
+                };
+                if arr.is_empty() {
+                    continue; // empty = transparent; always allowed
+                }
+                let n = arr.len();
+                // Check compatibility (mirrors pdf-compliance check_annotation_color_arrays).
+                let compatible = match intent_n {
+                    1 => n == 1,
+                    3 => n == 1 || n == 3,
+                    4 => n == 1 || n == 4,
+                    _ => true,
+                };
+                if compatible {
+                    continue;
+                }
+                // Verify all elements are numeric before converting.
+                if !arr.iter().all(|o| matches!(o, Object::Integer(_) | Object::Real(_))) {
+                    continue;
+                }
+                convert_annotation_color(arr, n, intent_n)
+            };
+            if let Some(new_arr) = converted {
+                if let Some(Object::Dictionary(ref mut dict)) = doc.objects.get_mut(&id) {
+                    dict.set(key.to_vec(), Object::Array(new_arr));
+                    count += 1;
+                }
+            }
+        }
+    }
+    count
+}
+
+/// Convert a color array from `from_n` components to `to_n` components.
+fn convert_annotation_color(arr: &[Object], from_n: usize, to_n: usize) -> Option<Vec<Object>> {
+    match (from_n, to_n) {
+        (3, 4) => {
+            // RGB -> CMYK: C=1-R, M=1-G, Y=1-B, K=0
+            let r = obj_as_f32(arr.first()?);
+            let g = obj_as_f32(arr.get(1)?);
+            let b = obj_as_f32(arr.get(2)?);
+            Some(vec![
+                Object::Real(1.0 - r),
+                Object::Real(1.0 - g),
+                Object::Real(1.0 - b),
+                Object::Real(0.0),
+            ])
+        }
+        (4, 3) => {
+            // CMYK -> RGB: R=(1-C)*(1-K), G=(1-M)*(1-K), B=(1-Y)*(1-K)
+            let c = obj_as_f32(arr.first()?);
+            let m = obj_as_f32(arr.get(1)?);
+            let y = obj_as_f32(arr.get(2)?);
+            let k = obj_as_f32(arr.get(3)?);
+            let inv_k = 1.0 - k;
+            Some(vec![
+                Object::Real((1.0 - c) * inv_k),
+                Object::Real((1.0 - m) * inv_k),
+                Object::Real((1.0 - y) * inv_k),
+            ])
+        }
+        _ => None, // Gray (1-component) is always compatible; other combos unexpected.
+    }
+}
+
+fn obj_as_f32(obj: &Object) -> f32 {
+    match obj {
+        Object::Integer(i) => *i as f32,
+        Object::Real(f) => *f,
+        _ => 0.0,
+    }
 }
 
 // ---------------------------------------------------------------------------
