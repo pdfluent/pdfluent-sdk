@@ -7,6 +7,8 @@ pub enum XfaError {
     LoadFailed(String),
     #[error("XFA packet not found: {0}")]
     PacketNotFound(String),
+    #[error("encrypted PDF: {0}")]
+    Encrypted(String),
     #[error("XML parse error: {0}")]
     XmlParse(String),
     #[error("font error: {0}")]
