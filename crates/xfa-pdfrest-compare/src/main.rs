@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 const SSIM_PASS_THRESHOLD: f64 = 0.85;
+const SSIM_HIGH_THRESHOLD: f64 = 0.99;
 
 #[derive(Parser)]
 #[command(name = "xfa-pdfrest-compare")]
@@ -278,6 +279,14 @@ fn main() -> anyhow::Result<()> {
     let mut pdfrest_truncated_count = 0usize;
     let mut worst_cases = Vec::new();
 
+    let mut ssim_bucket_095_099 = 0usize;
+    let mut ssim_bucket_085_095 = 0usize;
+    let mut ssim_bucket_080_085 = 0usize;
+    let mut ssim_bucket_050_080 = 0usize;
+    let mut ssim_bucket_000_050 = 0usize;
+    let mut page_mismatch_we_gt = 0usize;
+    let mut page_mismatch_we_lt = 0usize;
+
     for dir in &entries {
         let dir_name = dir
             .file_name()
@@ -342,6 +351,26 @@ fn main() -> anyhow::Result<()> {
                 fail_count += 1;
             }
 
+            if ssim_val >= SSIM_HIGH_THRESHOLD {
+                ssim_bucket_095_099 += 1;
+            } else if ssim_val >= 0.95 {
+                ssim_bucket_085_095 += 1;
+            } else if ssim_val >= 0.80 {
+                ssim_bucket_080_085 += 1;
+            } else if ssim_val >= 0.50 {
+                ssim_bucket_050_080 += 1;
+            } else {
+                ssim_bucket_000_050 += 1;
+            }
+
+            if our_pages != pdfrest_pages {
+                if our_pages > pdfrest_pages {
+                    page_mismatch_we_gt += 1;
+                } else {
+                    page_mismatch_we_lt += 1;
+                }
+            }
+
             total_ssim += ssim_val;
             valid_count += 1;
             worst_cases.push((dir_name.clone(), ssim_val));
@@ -397,6 +426,38 @@ fn main() -> anyhow::Result<()> {
     );
     println!("Fail: {} ({:.1}%)", fail_count, fail_rate);
     println!("Average SSIM: {:.4}", avg_ssim);
+    println!();
+    println!("=== SSIM Breakdown ===");
+    println!(
+        "  SSIM ≥ {:.2} (high quality): {}",
+        SSIM_HIGH_THRESHOLD, ssim_bucket_095_099
+    );
+    println!(
+        "  SSIM 0.95-{:.2} (acceptable):  {}",
+        SSIM_HIGH_THRESHOLD - 0.01,
+        ssim_bucket_085_095
+    );
+    println!("  SSIM 0.80-0.95 (marginal):   {}", ssim_bucket_080_085);
+    println!("  SSIM 0.50-0.80 (low):       {}", ssim_bucket_050_080);
+    println!("  SSIM < 0.50 (very low):     {}", ssim_bucket_000_050);
+    println!();
+    println!("=== Failure Category Breakdown ===");
+    if page_mismatch_we_gt > 0 {
+        println!("  page_mismatch (we > pdfrest): {}", page_mismatch_we_gt);
+    }
+    if page_mismatch_we_lt > 0 {
+        println!("  page_mismatch (we < pdfrest): {}", page_mismatch_we_lt);
+    }
+    let total_page_mismatch = page_mismatch_we_gt + page_mismatch_we_lt;
+    let total_low_ssim =
+        ssim_bucket_000_050 + ssim_bucket_050_080 + ssim_bucket_080_085 + ssim_bucket_085_095;
+    println!("  total page_mismatch: {}", total_page_mismatch);
+    println!(
+        "  total low_ssim (< {:.2}): {}",
+        SSIM_HIGH_THRESHOLD, total_low_ssim
+    );
+    println!("  encrypted_skip: {}", encrypted_skip);
+    println!("  pdfrest_truncated: {}", pdfrest_truncated_count);
     println!();
     println!("=== Worst 10 Cases ===");
     for (name, ssim) in worst_cases.iter().rev() {
