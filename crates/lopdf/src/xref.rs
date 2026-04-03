@@ -112,22 +112,26 @@ impl XrefEntry {
     }
 
     /// Write Entry in Cross Reference Table.
+    ///
+    /// Each entry is exactly 20 bytes: 10-digit offset, space, 5-digit
+    /// generation, space, keyword (`n`/`f`), CR, LF.
+    /// Uses CR+LF as the 2-byte EOL per PDF specification §7.5.4.
     pub fn write_xref_entry(&self, file: &mut dyn Write) -> Result<()> {
         match self {
             XrefEntry::Normal { offset, generation } => {
-                write!(file, "{offset:>010} {generation:>05} n \n")?;
+                write!(file, "{offset:>010} {generation:>05} n\r\n")?;
             }
             XrefEntry::Compressed {
                 container: _,
                 index: _,
             } => {
-                write!(file, "{:>010} {:>05} f \n", 0, 65535)?;
+                write!(file, "{:>010} {:>05} f\r\n", 0, 65535)?;
             }
             XrefEntry::Free => {
-                write!(file, "{:>010} {:>05} f \n", 0, 0)?;
+                write!(file, "{:>010} {:>05} f\r\n", 0, 0)?;
             }
             XrefEntry::UnusableFree => {
-                write!(file, "{:>010} {:>05} f \n", 0, 65535)?;
+                write!(file, "{:>010} {:>05} f\r\n", 0, 65535)?;
             }
         }
         Ok(())
