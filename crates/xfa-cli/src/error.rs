@@ -10,24 +10,30 @@ pub struct CliError {
 
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "-- ERROR -----------------------------------------------------------------------")?;
+        writeln!(
+            f,
+            "-- ERROR -----------------------------------------------------------------------"
+        )?;
         writeln!(f, "{}", self.message)?;
-        
+
         if let Some(ref why) = self.why {
             writeln!(f, "\nWhy:")?;
             writeln!(f, "{}", why)?;
         }
-        
+
         if let Some(ref fix) = self.fix {
             writeln!(f, "\nHow to fix:")?;
             writeln!(f, "{}", fix)?;
         }
-        
+
         if let Some(ref docs) = self.docs {
             writeln!(f, "\nDocs: {}", docs)?;
         }
-        
-        write!(f, "--------------------------------------------------------------------------------")
+
+        write!(
+            f,
+            "--------------------------------------------------------------------------------"
+        )
     }
 }
 

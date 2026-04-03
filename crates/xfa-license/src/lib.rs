@@ -155,7 +155,11 @@ impl LicenseGuard {
     /// Returns Err if an env var is set but the license is invalid.
     pub fn load_from_env(public_key: &[u8], now: u64) -> Result<Option<Self>> {
         if let Ok(path) = std::env::var("PDFLUENT_LICENSE_FILE") {
-            return Ok(Some(Self::from_license_path(public_key, std::path::Path::new(&path), now)?));
+            return Ok(Some(Self::from_license_path(
+                public_key,
+                std::path::Path::new(&path),
+                now,
+            )?));
         }
 
         if let Ok(key) = std::env::var("PDFLUENT_LICENSE_KEY") {
@@ -165,10 +169,14 @@ impl LicenseGuard {
             } else {
                 use base64::{engine::general_purpose::STANDARD, Engine as _};
                 let decoded = STANDARD.decode(key).map_err(|e| {
-                    LicenseError::MalformedToken(format!("Invalid base64 in PDFLUENT_LICENSE_KEY: {e}"))
+                    LicenseError::MalformedToken(format!(
+                        "Invalid base64 in PDFLUENT_LICENSE_KEY: {e}"
+                    ))
                 })?;
                 let json = String::from_utf8(decoded).map_err(|e| {
-                    LicenseError::MalformedToken(format!("Invalid UTF-8 in PDFLUENT_LICENSE_KEY: {e}"))
+                    LicenseError::MalformedToken(format!(
+                        "Invalid UTF-8 in PDFLUENT_LICENSE_KEY: {e}"
+                    ))
                 })?;
                 return Ok(Some(Self::from_license(public_key, &json, now)?));
             }
@@ -289,7 +297,9 @@ mod tests {
         let license_json = token::sign_license(&private_key, &payload).unwrap();
 
         std::env::set_var("PDFLUENT_LICENSE_KEY", &license_json);
-        let guard = LicenseGuard::load_from_env(&public_key, 1500).unwrap().unwrap();
+        let guard = LicenseGuard::load_from_env(&public_key, 1500)
+            .unwrap()
+            .unwrap();
         assert_eq!(guard.licensee(), "Env Test");
         std::env::remove_var("PDFLUENT_LICENSE_KEY");
     }
@@ -313,7 +323,9 @@ mod tests {
         let b64 = STANDARD.encode(license_json);
 
         std::env::set_var("PDFLUENT_LICENSE_KEY", &b64);
-        let guard = LicenseGuard::load_from_env(&public_key, 1500).unwrap().unwrap();
+        let guard = LicenseGuard::load_from_env(&public_key, 1500)
+            .unwrap()
+            .unwrap();
         assert_eq!(guard.licensee(), "Base64 Test");
         std::env::remove_var("PDFLUENT_LICENSE_KEY");
     }

@@ -250,8 +250,8 @@ export declare class PdfDocument {
    * Encrypt the document and write it to `output_path`.
    *
    * Uses AES-256 with `password` as both the user and owner password.
-   * The current in-memory document is not modified — only the written file
-   * is encrypted.
+   * The in-memory document is not modified — encryption is applied to a
+   * temporary clone and only the written file is encrypted.
    */
   encrypt(outputPath: string, password: string): void
   /**

@@ -276,15 +276,13 @@ fn fix_standard_encoding(doc: &mut Document) -> usize {
                 }
                 // /Encoding is an indirect reference — always fix BaseEncoding
                 Some(Object::Reference(enc_id)) => match doc.objects.get(enc_id) {
-                    Some(Object::Dictionary(enc)) => {
-                        match enc.get(b"BaseEncoding").ok() {
-                            Some(Object::Name(n)) if n == b"StandardEncoding" => {
-                                StdEncAction::ReplaceRefBase(*enc_id)
-                            }
-                            None if !symbolic => StdEncAction::ReplaceRefBase(*enc_id),
-                            _ => StdEncAction::None,
+                    Some(Object::Dictionary(enc)) => match enc.get(b"BaseEncoding").ok() {
+                        Some(Object::Name(n)) if n == b"StandardEncoding" => {
+                            StdEncAction::ReplaceRefBase(*enc_id)
                         }
-                    }
+                        None if !symbolic => StdEncAction::ReplaceRefBase(*enc_id),
+                        _ => StdEncAction::None,
+                    },
                     _ => StdEncAction::None,
                 },
                 _ => StdEncAction::None,
@@ -354,7 +352,10 @@ fn fix_differences_128_159(enc: &mut lopdf::Dictionary) {
                 // Emit code prefix if needed (after filtering, the previous
                 // code integer may have been skipped).
                 if new_diffs.is_empty()
-                    || !matches!(new_diffs.last(), Some(Object::Integer(_)) | Some(Object::Name(_)))
+                    || !matches!(
+                        new_diffs.last(),
+                        Some(Object::Integer(_)) | Some(Object::Name(_))
+                    )
                     || needs_code_prefix(&new_diffs, current_code)
                 {
                     new_diffs.push(Object::Integer(current_code));
@@ -1380,7 +1381,10 @@ fn fix_forbidden_annotations_extra(doc: &mut Document) -> usize {
             }
             match dict.get(b"Subtype").ok() {
                 Some(Object::Name(ref n)) => {
-                    matches!(n.as_slice(), b"3D" | b"Sound" | b"Screen" | b"Movie" | b"FileAttachment")
+                    matches!(
+                        n.as_slice(),
+                        b"3D" | b"Sound" | b"Screen" | b"Movie" | b"FileAttachment"
+                    )
                 }
                 None => {
                     // Annotation without Subtype — forbidden.
@@ -1772,8 +1776,8 @@ fn fix_forbidden_actions(doc: &mut Document) -> usize {
     // Non-action dict types that also have /S (SMask dicts, transparency
     // groups, etc.) must be excluded to avoid corrupting them.
     const NON_ACTION_TYPES: &[&[u8]] = &[
-        b"Mask",          // SMask dict (/S = Alpha | Luminosity)
-        b"Group",         // Transparency group (/S = Transparency)
+        b"Mask",  // SMask dict (/S = Alpha | Luminosity)
+        b"Group", // Transparency group (/S = Transparency)
         b"Catalog",
         b"Page",
         b"Pages",
@@ -9592,32 +9596,54 @@ fn fix_long_names_in_streams(doc: &mut Document) -> usize {
                     // PDF name token starting at i.
                     let start = i;
                     i += 1;
-                    while i < decompressed.len() && !is_pdf_delimiter(decompressed[i]) && !decompressed[i].is_ascii_whitespace() {
+                    while i < decompressed.len()
+                        && !is_pdf_delimiter(decompressed[i])
+                        && !decompressed[i].is_ascii_whitespace()
+                    {
                         i += 1;
                     }
                     let name_token = &decompressed[start..i];
                     let name_val = &name_token[1..]; // skip '/'
-                    
+
                     let mut modified_name = false;
                     let mut sanitized = Vec::new();
-                    
+
                     // 1. Sanitize for UTF-8 validity (§6.1.8).
                     if String::from_utf8(name_val.to_vec()).is_err() {
-                        sanitized = name_val.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' }).collect();
+                        sanitized = name_val
+                            .iter()
+                            .map(|&b| {
+                                if b.is_ascii_graphic() || b == b' ' {
+                                    b
+                                } else {
+                                    b'_'
+                                }
+                            })
+                            .collect();
                         modified_name = true;
                     }
-                    
+
                     // 2. Truncate to 127 bytes (§6.1.13).
-                    let current_name = if sanitized.is_empty() { name_val } else { &sanitized };
+                    let current_name = if sanitized.is_empty() {
+                        name_val
+                    } else {
+                        &sanitized
+                    };
                     if current_name.len() > MAX_NAME_LEN {
-                        if sanitized.is_empty() { sanitized = name_val.to_vec(); }
+                        if sanitized.is_empty() {
+                            sanitized = name_val.to_vec();
+                        }
                         sanitized.truncate(MAX_NAME_LEN);
                         modified_name = true;
                     }
 
                     if modified_name {
                         new_content.push(b'/');
-                        new_content.extend_from_slice(if sanitized.is_empty() { name_val } else { &sanitized });
+                        new_content.extend_from_slice(if sanitized.is_empty() {
+                            name_val
+                        } else {
+                            &sanitized
+                        });
                         fixed_any = true;
                         count += 1;
                     } else {
@@ -10105,7 +10131,13 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
             if String::from_utf8(sanitized.clone()).is_err() {
                 sanitized = sanitized
                     .into_iter()
-                    .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                    .map(|b| {
+                        if b.is_ascii_graphic() || b == b' ' {
+                            b
+                        } else {
+                            b'_'
+                        }
+                    })
                     .collect();
                 total += 1;
             }
@@ -10135,7 +10167,13 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
                 if String::from_utf8(fixed_key.clone()).is_err() {
                     fixed_key = fixed_key
                         .into_iter()
-                        .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                        .map(|b| {
+                            if b.is_ascii_graphic() || b == b' ' {
+                                b
+                            } else {
+                                b'_'
+                            }
+                        })
                         .collect();
                     total += 1;
                 }
@@ -10157,7 +10195,13 @@ fn sanitize_names_in_object(obj: Object, depth: usize) -> (Object, usize) {
                 if String::from_utf8(fixed_key.clone()).is_err() {
                     fixed_key = fixed_key
                         .into_iter()
-                        .map(|b| if b.is_ascii_graphic() || b == b' ' { b } else { b'_' })
+                        .map(|b| {
+                            if b.is_ascii_graphic() || b == b' ' {
+                                b
+                            } else {
+                                b'_'
+                            }
+                        })
                         .collect();
                     total += 1;
                 }
@@ -10363,7 +10407,7 @@ fn fix_jbig2_globals_promotion(doc: &mut Document) -> usize {
                     }
                 }
             }
-            
+
             // Also check if it's already in the stream dict but inline.
             if globals_to_move.is_none() {
                 if let Ok(globals) = s.dict.get(b"JBIG2Globals") {
@@ -10395,7 +10439,7 @@ fn fix_jbig2_globals_promotion(doc: &mut Document) -> usize {
 
 fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
     let mut count = 0;
-    
+
     // Check if OutputIntent is CMYK.
     let intent_is_cmyk = if let Ok(catalog) = doc.catalog() {
         if let Ok(oi_arr) = catalog.get(b"OutputIntents").and_then(|o| o.as_array()) {
@@ -10409,17 +10453,24 @@ fn fix_device_cmyk_intent_mismatch(doc: &mut Document) -> usize {
                 };
                 if let Some(d) = dict {
                     if d.get(b"S").ok().and_then(|o| o.as_name().ok()) == Some(b"GTS_PDFA1") {
-                        if let Ok(profile_id) = d.get(b"DestOutputProfile").and_then(|o| o.as_reference()) {
+                        if let Ok(profile_id) =
+                            d.get(b"DestOutputProfile").and_then(|o| o.as_reference())
+                        {
                             if let Some(Object::Stream(s)) = doc.objects.get(&profile_id) {
-                                return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(4);
+                                return s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok())
+                                    == Some(4);
                             }
                         }
                     }
                 }
                 false
             })
-        } else { false }
-    } else { false };
+        } else {
+            false
+        }
+    } else {
+        false
+    };
 
     if intent_is_cmyk {
         return 0; // Compliant.
@@ -10500,12 +10551,19 @@ fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
                 } else {
                     None
                 };
-                dict.and_then(|d| d.get(b"DestOutputProfile").ok()).and_then(|o| o.as_reference().ok())
+                dict.and_then(|d| d.get(b"DestOutputProfile").ok())
+                    .and_then(|o| o.as_reference().ok())
             })
-        } else { None }
-    } else { None };
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
-    let Some(profile_id) = oi_profile_id else { return 0; };
+    let Some(profile_id) = oi_profile_id else {
+        return 0;
+    };
 
     // Find all ICCBased colorspaces that use this profile_id.
     let mut to_replace = Vec::new();
@@ -10673,31 +10731,43 @@ mod tests_transparency_groups {
             _ => panic!(),
         };
         if let Some(Object::Dictionary(ref mut catalog)) = doc.objects.get_mut(&catalog_id) {
-            catalog.set("OutputIntents", Object::Array(vec![Object::Reference(oi_id)]));
+            catalog.set(
+                "OutputIntents",
+                Object::Array(vec![Object::Reference(oi_id)]),
+            );
         }
 
         let page1_id = doc.get_pages().get(&1).copied().unwrap();
 
         // 1. Create an Image XObject with SMask
-        let smask_img = Stream::new(dictionary! { "Type" => "XObject", "Subtype" => "Image", "N" => 1 }, vec![0]);
+        let smask_img = Stream::new(
+            dictionary! { "Type" => "XObject", "Subtype" => "Image", "N" => 1 },
+            vec![0],
+        );
         let smask_id = doc.add_object(Object::Stream(smask_img));
-        let img = Stream::new(dictionary! {
-            "Type" => "XObject",
-            "Subtype" => "Image",
-            "SMask" => Object::Reference(smask_id),
-        }, vec![0]);
+        let img = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Image",
+                "SMask" => Object::Reference(smask_id),
+            },
+            vec![0],
+        );
         let img_id = doc.add_object(Object::Stream(img));
 
         // 2. Create a Form XObject that uses the Image
         let form_res = dictionary! {
             "XObject" => dictionary! { "Im1" => Object::Reference(img_id) },
         };
-        let form_stream = Stream::new(dictionary! {
-            "Type" => "XObject",
-            "Subtype" => "Form",
-            "BBox" => Object::Array(vec![0.into(), 0.into(), 100.into(), 100.into()]),
-            "Resources" => Object::Dictionary(form_res),
-        }, b"/Im1 Do".to_vec());
+        let form_stream = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => Object::Array(vec![0.into(), 0.into(), 100.into(), 100.into()]),
+                "Resources" => Object::Dictionary(form_res),
+            },
+            b"/Im1 Do".to_vec(),
+        );
         let form_id = doc.add_object(Object::Stream(form_stream));
 
         // 3. Add the Form to Page 1 resources
@@ -10714,12 +10784,18 @@ mod tests_transparency_groups {
         // Verify:
         // - The Form XObject should have gotten its own /Group because it uses an Image with SMask
         let f = doc.objects.get(&form_id).unwrap().as_stream().unwrap();
-        assert!(f.dict.has(b"Group"), "Form XObject should have a /Group because its child image has an SMask");
-        
+        assert!(
+            f.dict.has(b"Group"),
+            "Form XObject should have a /Group because its child image has an SMask"
+        );
+
         // - The Page should have gotten a /Group because it uses a Form XObject that uses transparency
         let p = doc.objects.get(&page1_id).unwrap().as_dict().unwrap();
-        assert!(p.has(b"Group"), "Page should have a /Group because it uses a Form that uses transparency");
-        
+        assert!(
+            p.has(b"Group"),
+            "Page should have a /Group because it uses a Form that uses transparency"
+        );
+
         let grp = p.get(b"Group").unwrap().as_dict().unwrap();
         assert_eq!(grp.get(b"S").unwrap().as_name().unwrap(), b"Transparency");
         let cs = grp.get(b"CS").unwrap().as_array().unwrap();

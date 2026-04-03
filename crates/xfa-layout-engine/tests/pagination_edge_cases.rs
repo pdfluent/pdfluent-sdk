@@ -93,7 +93,8 @@ fn collect_named_nodes<'a>(nodes: &'a [LayoutNode], name: &str, out: &mut Vec<&'
 }
 
 fn count_nodes_with_prefix(nodes: &[LayoutNode], prefix: &str) -> usize {
-    nodes.iter()
+    nodes
+        .iter()
         .map(|node| {
             usize::from(node.name.starts_with(prefix))
                 + count_nodes_with_prefix(&node.children, prefix)
@@ -181,12 +182,7 @@ fn paginate_subform_starts_new_page_every_three_items() {
 
     let mut items = Vec::new();
     for idx in 0..9 {
-        items.push(make_field(
-            &mut tree,
-            &format!("Item{idx}"),
-            200.0,
-            25.0,
-        ));
+        items.push(make_field(&mut tree, &format!("Item{idx}"), 200.0, 25.0));
     }
 
     let paginated = make_subform(

@@ -1,9 +1,15 @@
 {
   "name": "@xfa-engine/pdf-node",
-  "version": "0.1.0",
+  "version": "1.0.0-beta.1",
   "description": "Enterprise PDF SDK for Node.js — rendering, text extraction, forms, annotations, redaction, encryption, and PDF/A compliance.",
   "main": "index.js",
   "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
   "files": [
     "index.js",
     "index.d.ts",
@@ -21,7 +27,7 @@
     ]
   },
   "engines": {
-    "node": ">= 16"
+    "node": ">= 18"
   },
   "scripts": {
     "build": "napi build --release --platform",
@@ -59,12 +65,12 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@xfa-engine/pdf-node-darwin-arm64": "0.1.0",
-    "@xfa-engine/pdf-node-darwin-x64": "0.1.0",
-    "@xfa-engine/pdf-node-linux-arm64-gnu": "0.1.0",
-    "@xfa-engine/pdf-node-linux-x64-gnu": "0.1.0",
-    "@xfa-engine/pdf-node-linux-x64-musl": "0.1.0",
-    "@xfa-engine/pdf-node-win32-x64-msvc": "0.1.0"
+    "@xfa-engine/pdf-node-darwin-arm64": "1.0.0-beta.1",
+    "@xfa-engine/pdf-node-darwin-x64": "1.0.0-beta.1",
+    "@xfa-engine/pdf-node-linux-arm64-gnu": "1.0.0-beta.1",
+    "@xfa-engine/pdf-node-linux-x64-gnu": "1.0.0-beta.1",
+    "@xfa-engine/pdf-node-linux-x64-musl": "1.0.0-beta.1",
+    "@xfa-engine/pdf-node-win32-x64-msvc": "1.0.0-beta.1"
   },
   "devDependencies": {
     "@napi-rs/cli": "^2.18.0",

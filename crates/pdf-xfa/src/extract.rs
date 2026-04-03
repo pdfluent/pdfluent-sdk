@@ -1,8 +1,8 @@
 //! XFA packet extraction from PDF via pdf-syntax.
 use crate::error::{Result, XfaError};
-use pdf_syntax::Pdf;
 use pdf_syntax::object::dict::keys::{ACRO_FORM, XFA};
 use pdf_syntax::object::{Array, Dict, Object, Stream};
+use pdf_syntax::Pdf;
 
 #[derive(Debug, Clone, Default)]
 pub struct XfaPackets {
@@ -177,8 +177,8 @@ fn parse_xfa_xml(xml: &str) -> XfaPackets {
 }
 
 pub fn extract_embedded_fonts(pdf: &Pdf) -> Vec<(String, Vec<u8>)> {
-    use pdf_syntax::object::Name;
     use pdf_syntax::object::dict::keys::{FONT_FILE, FONT_FILE2, FONT_FILE3, FONT_NAME, TYPE};
+    use pdf_syntax::object::Name;
     let mut fonts = Vec::new();
     for obj in pdf.objects() {
         let dict = match &obj {

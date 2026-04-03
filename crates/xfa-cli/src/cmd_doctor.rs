@@ -1,10 +1,10 @@
 //! Installation check command.
 
+use crate::error::CliError;
 use anyhow::{bail, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use crate::error::CliError;
 
 pub fn run() -> Result<()> {
     println!(
@@ -206,7 +206,10 @@ fn get_memory() -> Result<String> {
         bail!(CliError {
             message: "Could not parse /proc/meminfo".to_string(),
             why: Some("The /proc/meminfo file format is unexpected.".to_string()),
-            fix: Some("This is likely a system configuration issue or an unsupported OS version.".to_string()),
+            fix: Some(
+                "This is likely a system configuration issue or an unsupported OS version."
+                    .to_string()
+            ),
             docs: Some("https://docs.pdfluent.com/errors/E004".to_string()),
         })
     }

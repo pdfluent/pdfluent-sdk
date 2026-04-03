@@ -1,4 +1,4 @@
-use lopdf::{Document, Object, Stream, dictionary};
+use lopdf::{dictionary, Document, Object, Stream};
 use xfa_wasm::PdfDoc;
 
 const SIMPLE_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>

@@ -11,8 +11,7 @@ use pdf_render::pdf_interpret::cmap::BfString;
 use pdf_render::pdf_interpret::font::Glyph;
 #[cfg(target_arch = "wasm32")]
 use pdf_render::pdf_interpret::{
-    BlendMode, ClipPath, Device, GlyphDrawMode, Image, Paint, PathDrawMode, SoftMask,
-    StrokeProps,
+    BlendMode, ClipPath, Device, GlyphDrawMode, Image, Paint, PathDrawMode, SoftMask, StrokeProps,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,16 +29,13 @@ pub fn for_each_path_command(path: &BezPath, mut emit: impl FnMut(CanvasPathComm
             PathEl::MoveTo(point) => emit(CanvasPathCommand::MoveTo(point.x, point.y)),
             PathEl::LineTo(point) => emit(CanvasPathCommand::LineTo(point.x, point.y)),
             PathEl::QuadTo(control, point) => {
-                emit(CanvasPathCommand::QuadTo(control.x, control.y, point.x, point.y));
+                emit(CanvasPathCommand::QuadTo(
+                    control.x, control.y, point.x, point.y,
+                ));
             }
             PathEl::CurveTo(control1, control2, point) => {
                 emit(CanvasPathCommand::CurveTo(
-                    control1.x,
-                    control1.y,
-                    control2.x,
-                    control2.y,
-                    point.x,
-                    point.y,
+                    control1.x, control1.y, control2.x, control2.y, point.x, point.y,
                 ));
             }
             PathEl::ClosePath => emit(CanvasPathCommand::ClosePath),
@@ -210,12 +206,10 @@ impl Canvas2DDevice {
     fn apply_stroke_props(&mut self, stroke_props: &StrokeProps, transform: &Affine) {
         self.ctx
             .set_line_width(adjusted_line_width(stroke_props, transform));
-        self.ctx
-            .set_line_cap(line_cap_name(stroke_props.line_cap));
+        self.ctx.set_line_cap(line_cap_name(stroke_props.line_cap));
         self.ctx
             .set_line_join(line_join_name(stroke_props.line_join));
-        self.ctx
-            .set_miter_limit(stroke_props.miter_limit as f64);
+        self.ctx.set_miter_limit(stroke_props.miter_limit as f64);
         self.ctx
             .set_line_dash_offset(stroke_props.dash_offset as f64);
 
