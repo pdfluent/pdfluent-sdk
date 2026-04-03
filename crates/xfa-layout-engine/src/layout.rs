@@ -63,6 +63,11 @@ pub enum LayoutContent {
         /// Font family for selecting the correct PDF font resource.
         font_family: FontFamily,
     },
+    /// A static image.
+    Image {
+        data: Vec<u8>,
+        mime_type: String,
+    },
 }
 
 /// A content node queued for pagination, carrying page-break flags.
@@ -261,6 +266,7 @@ impl<'a> LayoutEngine<'a> {
         match &node.node_type {
             FormNodeType::Field { value } => value.is_empty(),
             FormNodeType::Draw { content } => content.is_empty(),
+            FormNodeType::Image { data, .. } => data.is_empty(),
             FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => true,
             FormNodeType::Subform => node
                 .children

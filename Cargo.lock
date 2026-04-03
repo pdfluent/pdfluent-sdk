@@ -4389,6 +4389,7 @@ dependencies = [
 name = "pdf-xfa"
 version = "1.0.0-beta.1"
 dependencies = [
+ "base64 0.22.1",
  "formcalc-interpreter",
  "log",
  "lopdf",
@@ -8522,6 +8523,8 @@ name = "xfa-golden-tests"
 version = "1.0.0-beta.1"
 dependencies = [
  "image",
+ "lopdf",
+ "pdf-engine",
  "thiserror 2.0.18",
  "xfa-layout-engine",
 ]
@@ -8566,6 +8569,23 @@ dependencies = [
  "hex",
  "serde_json",
  "xfa-license",
+]
+
+[[package]]
+name = "xfa-pdfrest-compare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "image",
+ "pdf-engine",
+ "pdf-xfa",
+ "rayon",
+ "regex",
+ "rusqlite",
+ "sha2",
+ "thiserror 2.0.18",
+ "walkdir",
 ]
 
 [[package]]

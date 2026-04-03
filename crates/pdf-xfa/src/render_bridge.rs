@@ -216,6 +216,18 @@ fn render_nodes(
                 &node_config,
                 ops,
             ),
+            LayoutContent::Image { data, mime_type } => {
+                ops.extend(
+                    format!(
+                        "q\n{:.2} 0 0 {:.2} {:.2} {:.2} cm\n/Im0 Do\nQ\n",
+                        w, h, abs_x, pdf_y
+                    )
+                    .bytes(),
+                );
+                // TODO: add image data to page resource dictionary as XObject
+                // The caller must add: /XObject << /Im0 << /Type /XObject /Subtype /Image ... >> >>
+                let _ = (data, mime_type);
+            }
             LayoutContent::None => {}
         }
 

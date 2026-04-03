@@ -192,6 +192,7 @@ fn emit_node_commands(
                 });
             }
         }
+        LayoutContent::Image { .. } => {}
         LayoutContent::None => {}
     }
 

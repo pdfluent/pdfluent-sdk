@@ -63,6 +63,9 @@ fn walk_node(
                 fields.insert(path, FieldValue::Text(content.clone()));
             }
         }
+        FormNodeType::Image { .. } => {
+            // Images are static content - not exported as form data
+        }
         FormNodeType::Subform => {
             if node.occur.is_repeating() {
                 // Repeating subform: collect siblings with the same name as an array.
@@ -112,6 +115,9 @@ fn walk_node_into_map(
             if !content.is_empty() {
                 map.insert(node.name.clone(), FieldValue::Text(content.clone()));
             }
+        }
+        FormNodeType::Image { .. } => {
+            // Images are static content
         }
         FormNodeType::Subform => {
             if node.occur.is_repeating() {
