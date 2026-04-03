@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use clap::Parser;
 use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
@@ -42,7 +43,7 @@ fn discover_golden_entries(golden_dir: &Path) -> Vec<GoldenEntry> {
         let input_path = dir.join("input.pdf");
         let reference_path = dir.join("pdfrest_flat.pdf");
         let itext_path = dir.join("itext_flat.pdf");
-        if input_path.exists() && reference_path.exists() {
+        if input_path.exists() && reference_path.exists() && itext_path.exists() {
             entries.push(GoldenEntry {
                 dir: dir.to_path_buf(),
                 input_path,
@@ -305,6 +306,11 @@ fn process_entry(entry: &GoldenEntry) -> CompareResult {
 }
 
 fn main() -> anyhow::Result<()> {
+    ThreadPoolBuilder::new()
+        .stack_size(8 * 1024 * 1024)
+        .build_global()
+        .unwrap();
+
     let cli = Cli::parse();
 
     let entries = discover_golden_entries(&cli.golden_dir);
