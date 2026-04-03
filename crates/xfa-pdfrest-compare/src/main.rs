@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use image::{DynamicImage, GenericImageView};
+use image::GenericImageView;
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
