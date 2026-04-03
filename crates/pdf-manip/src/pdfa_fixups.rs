@@ -10625,7 +10625,10 @@ fn fix_annotation_color_intent_mismatch(doc: &mut Document) -> usize {
                     continue;
                 }
                 // Verify all elements are numeric before converting.
-                if !arr.iter().all(|o| matches!(o, Object::Integer(_) | Object::Real(_))) {
+                if !arr
+                    .iter()
+                    .all(|o| matches!(o, Object::Integer(_) | Object::Real(_)))
+                {
                     continue;
                 }
                 convert_annotation_color(arr, n, intent_n)
@@ -10738,6 +10741,7 @@ fn fix_icc_profile_reuse(doc: &mut Document) -> usize {
     count
 }
 
+#[cfg(test)]
 mod tests_transparency_groups {
     use super::*;
     use lopdf::{dictionary, Document, Object, Stream};

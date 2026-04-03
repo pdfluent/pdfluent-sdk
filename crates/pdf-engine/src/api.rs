@@ -4,7 +4,7 @@
 //! following the "Zero-Config First Success", "Pit of Success", and "Progressive Disclosure"
 //! design principles.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub use crate::api_error::Error;
 

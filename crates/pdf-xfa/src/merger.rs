@@ -60,7 +60,7 @@ impl<'a> FormMerger<'a> {
     ) -> Result<(FormNodeId, (bool, Option<String>))> {
         let tag = elem.tag_name().name();
 
-        let (mut node, trailing_info) = match tag {
+        let (node, trailing_info) = match tag {
             "template" => {
                 let mut n = self.blank_node("root", FormNodeType::Root);
                 n.layout = LayoutStrategy::TopToBottom;
@@ -183,7 +183,11 @@ impl<'a> FormMerger<'a> {
         let container = FormNode {
             name: format!("{}_container", name),
             node_type: FormNodeType::Subform,
-            box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
             layout: LayoutStrategy::TopToBottom,
             children: instances,
             occur: Occur::once(),
@@ -294,7 +298,11 @@ impl<'a> FormMerger<'a> {
         let mut node = FormNode {
             name,
             node_type: FormNodeType::PageSet,
-            box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
             layout: LayoutStrategy::TopToBottom,
             children: Vec::new(),
             occur: Occur::once(),
@@ -404,7 +412,11 @@ impl<'a> FormMerger<'a> {
         FormNode {
             name: name.to_string(),
             node_type,
-            box_model: BoxModel { max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
             layout: LayoutStrategy::TopToBottom,
             children: Vec::new(),
             occur: Occur::once(),
@@ -478,9 +490,13 @@ fn parse_margin(elem: Node<'_, '_>) -> Insets {
     if let Some(margin) = find_first_child_by_name(elem, "margin") {
         Insets {
             top: attr(margin, "topInset").and_then(parse_dim).unwrap_or(0.0),
-            bottom: attr(margin, "bottomInset").and_then(parse_dim).unwrap_or(0.0),
+            bottom: attr(margin, "bottomInset")
+                .and_then(parse_dim)
+                .unwrap_or(0.0),
             left: attr(margin, "leftInset").and_then(parse_dim).unwrap_or(0.0),
-            right: attr(margin, "rightInset").and_then(parse_dim).unwrap_or(0.0),
+            right: attr(margin, "rightInset")
+                .and_then(parse_dim)
+                .unwrap_or(0.0),
         }
     } else {
         Insets::default()
