@@ -1346,12 +1346,75 @@ impl<'a> LayoutEngine<'a> {
             self.layout_children(node_children, child_available, node.layout)?
         };
 
+        // Emit a child layout node for the field caption, if present.
+        let mut all_children = children;
+        if let Some(ref cap) = node.box_model.caption {
+            if !cap.text.is_empty() {
+                let bw = node.box_model.border_width;
+                let margins = &node.box_model.margins;
+                let reserve = cap.reserve.unwrap_or(0.0);
+                use crate::types::CaptionPlacement;
+                let (cx, cy, cw, ch) = match cap.placement {
+                    CaptionPlacement::Left => (
+                        margins.left + bw,
+                        margins.top + bw,
+                        reserve,
+                        extent.height - margins.vertical() - bw * 2.0,
+                    ),
+                    CaptionPlacement::Right => (
+                        extent.width - margins.right - bw - reserve,
+                        margins.top + bw,
+                        reserve,
+                        extent.height - margins.vertical() - bw * 2.0,
+                    ),
+                    CaptionPlacement::Top => (
+                        margins.left + bw,
+                        margins.top + bw,
+                        extent.width - margins.horizontal() - bw * 2.0,
+                        reserve,
+                    ),
+                    CaptionPlacement::Bottom => (
+                        margins.left + bw,
+                        extent.height - margins.bottom - bw - reserve,
+                        extent.width - margins.horizontal() - bw * 2.0,
+                        reserve,
+                    ),
+                    CaptionPlacement::Inline => (
+                        margins.left + bw,
+                        margins.top + bw,
+                        0.0,
+                        0.0,
+                    ),
+                };
+                if cw > 0.0 && ch > 0.0 {
+                    let cap_content = {
+                        let wrapped = text::wrap_text(&cap.text, cw.max(0.0), &node.font);
+                        LayoutContent::WrappedText {
+                            lines: wrapped.lines,
+                            font_size: node.font.size,
+                            text_align: node.font.text_align,
+                            font_family: node.font.typeface,
+                        }
+                    };
+                    let cap_node = LayoutNode {
+                        form_node: id,
+                        rect: Rect::new(cx, cy, cw, ch),
+                        name: format!("{}_caption", node.name),
+                        content: cap_content,
+                        children: Vec::new(),
+                        style: Default::default(),
+                    };
+                    all_children.insert(0, cap_node);
+                }
+            }
+        }
+
         Ok(LayoutNode {
             form_node: id,
             rect: Rect::new(x, y, extent.width, extent.height),
             name: node.name.clone(),
             content,
-            children,
+            children: all_children,
             style: self.form.meta(id).style.clone(),
         })
     }
