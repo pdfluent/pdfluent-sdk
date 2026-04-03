@@ -29,6 +29,38 @@ pub fn is_pdf_encrypted(pdf_bytes: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
+enum DecryptResult {
+    NotEncrypted,
+    Decrypted(Vec<u8>),
+    NeedsPassword,
+}
+
+/// Try to handle encryption: if not encrypted return as-is, if encrypted try
+/// empty password (owner-only encryption), otherwise report needs-password.
+fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
+    let doc = match Document::load_mem(pdf_bytes) {
+        Ok(d) => d,
+        Err(_) => return DecryptResult::NotEncrypted, // Can't parse — let downstream handle it
+    };
+    if doc.trailer.get(b"Encrypt").is_err() {
+        return DecryptResult::NotEncrypted;
+    }
+
+    // /Encrypt present — try loading with empty password (owner-only encryption).
+    match Document::load_mem_with_password(pdf_bytes, "") {
+        Ok(mut decrypted_doc) => {
+            // Remove encryption artifacts so the output is a clean PDF.
+            decrypted_doc.trailer.remove(b"Encrypt");
+            let mut buf = Vec::new();
+            match decrypted_doc.save_to(&mut buf) {
+                Ok(()) => DecryptResult::Decrypted(buf),
+                Err(_) => DecryptResult::NeedsPassword,
+            }
+        }
+        Err(_) => DecryptResult::NeedsPassword,
+    }
+}
+
 /// Flatten all XFA content in `pdf_bytes` to static PDF content streams.
 ///
 /// Returns the modified PDF bytes. The /AcroForm entry is removed so the
@@ -36,14 +68,21 @@ pub fn is_pdf_encrypted(pdf_bytes: &[u8]) -> bool {
 ///
 /// If the PDF has no XFA content, returns a clone of the input unchanged.
 pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
-    // 0. Reject encrypted PDFs early — they produce garbage output.
-    if let Ok(doc) = Document::load_mem(pdf_bytes) {
-        if doc.trailer.get(b"Encrypt").is_ok() {
+    // 0. Handle encrypted PDFs: try empty-password decrypt (owner-only encryption),
+    //    otherwise reject early — encrypted content produces garbage output.
+    let decrypted;
+    let pdf_bytes = match try_decrypt_pdf(pdf_bytes) {
+        DecryptResult::NotEncrypted => pdf_bytes,
+        DecryptResult::Decrypted(bytes) => {
+            decrypted = bytes;
+            &decrypted
+        }
+        DecryptResult::NeedsPassword => {
             return Err(XfaError::Encrypted(
-                "PDF is encrypted; decrypt before flattening".into(),
+                "PDF is encrypted and requires a password".into(),
             ));
         }
-    }
+    };
 
     // 1. Extract XFA packets.
     let packets = match extract_xfa_from_bytes(pdf_bytes.to_vec()) {
@@ -1360,5 +1399,49 @@ ET
             matches!(err, XfaError::Encrypted(_)),
             "expected XfaError::Encrypted, got: {err:?}"
         );
+    }
+
+    #[test]
+    fn owner_only_encrypted_pdf_is_handled_transparently() {
+        // Owner-only encrypted PDFs (empty user password) are auto-decrypted by lopdf.
+        // Verify that flatten_xfa_to_pdf processes them without error.
+        let mut doc = Document::with_version("2.0");
+        let pages_id = doc.new_object_id();
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"     => Object::Name(b"Page".to_vec()),
+            "Parent"   => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type"  => Object::Name(b"Pages".to_vec()),
+                "Kids"  => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+        let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type"  => Object::Name(b"Catalog".to_vec()),
+            "Pages" => Object::Reference(pages_id),
+        }));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        // Encrypt with owner password "secret", empty user password.
+        let state = lopdf::aes256_encryption_state("secret", "", lopdf::Permissions::default())
+            .expect("create encryption state");
+        doc.encrypt(&state).expect("encrypt document");
+
+        let mut buf = Vec::new();
+        doc.save_to(&mut buf).expect("save encrypted PDF");
+
+        // lopdf auto-decrypts owner-only encrypted PDFs, so is_pdf_encrypted returns false.
+        assert!(!is_pdf_encrypted(&buf), "lopdf should auto-decrypt owner-only PDFs");
+
+        // flatten_xfa_to_pdf should succeed — no XFA content, returns input as-is.
+        let result = flatten_xfa_to_pdf(&buf);
+        assert!(result.is_ok(), "owner-only encrypted PDF should be handled, got: {result:?}");
     }
 }
