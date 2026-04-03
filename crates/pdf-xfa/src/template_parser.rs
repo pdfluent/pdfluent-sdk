@@ -1248,7 +1248,10 @@ fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
 /// Returns `(raw_image_data, mime_type)` for supported image types:
 /// - `image/jpeg` → JPEG bytes
 /// - `image/png` → PNG bytes
-/// - `image/bmp` → BMP bytes (PDF doesn't support BMP natively, so we pass as-is)
+/// - `image/bmp` → converted to PNG (PDF doesn't support BMP natively)
+///
+/// BMP images (magic bytes `0x42 0x4D`) are automatically converted to PNG
+/// regardless of the declared `contentType`.
 fn extract_value_image(elem: Node<'_, '_>) -> Option<(Vec<u8>, String)> {
     let value = find_first_child_by_name(elem, "value")?;
     let image = find_first_child_by_name(value, "image")?;
@@ -1257,7 +1260,31 @@ fn extract_value_image(elem: Node<'_, '_>) -> Option<(Vec<u8>, String)> {
         .to_string();
     let data = image.text().unwrap_or_default();
     let decoded = base64_decode(&data);
+
+    // BMP is not supported by PDF — convert to PNG.
+    // Detect by magic bytes (0x42 0x4D = "BM") or declared content type.
+    if decoded.starts_with(b"BM") || content_type == "image/bmp" {
+        if let Some(png_data) = bmp_to_png(&decoded) {
+            return Some((png_data, "image/png".to_string()));
+        }
+        // Conversion failed — log and skip this image.
+        log::warn!("BMP to PNG conversion failed; skipping image");
+        return None;
+    }
+
     Some((decoded, content_type))
+}
+
+/// Convert BMP image data to PNG format.
+fn bmp_to_png(bmp_data: &[u8]) -> Option<Vec<u8>> {
+    let img = image::load_from_memory_with_format(bmp_data, image::ImageFormat::Bmp).ok()?;
+    let mut buf = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut buf),
+        image::ImageFormat::Png,
+    )
+    .ok()?;
+    Some(buf)
 }
 
 fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
@@ -1759,5 +1786,68 @@ mod tests {
             TextAlign::Right,
             "right_draw should be Right"
         );
+    }
+
+    /// BMP images in `<image contentType="image/bmp">` must be converted to PNG.
+    /// PDF does not support BMP natively, so the parser converts on extraction. (#670)
+    #[test]
+    fn bmp_image_converted_to_png() {
+        // Minimal 1×1 BMP (24-bit, no compression): 58 bytes.
+        let bmp_bytes: [u8; 58] = [
+            0x42, 0x4D, // "BM" magic
+            0x3A, 0x00, 0x00, 0x00, // file size = 58
+            0x00, 0x00, 0x00, 0x00, // reserved
+            0x36, 0x00, 0x00, 0x00, // pixel data offset = 54
+            0x28, 0x00, 0x00, 0x00, // DIB header size = 40
+            0x01, 0x00, 0x00, 0x00, // width = 1
+            0x01, 0x00, 0x00, 0x00, // height = 1
+            0x01, 0x00, // planes = 1
+            0x18, 0x00, // bits per pixel = 24
+            0x00, 0x00, 0x00, 0x00, // compression = 0
+            0x04, 0x00, 0x00, 0x00, // image size = 4 (1 pixel + 1 byte padding)
+            0x13, 0x0B, 0x00, 0x00, // h-res
+            0x13, 0x0B, 0x00, 0x00, // v-res
+            0x00, 0x00, 0x00, 0x00, // colors
+            0x00, 0x00, 0x00, 0x00, // important colors
+            0xFF, 0x00, 0x00, 0x00, // pixel (BGR: blue=FF, green=0, red=0) + 1 byte row padding
+        ];
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
+
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="body" layout="tb" w="7.5in">
+      <draw name="barcode_img" w="2in" h="0.5in">
+        <value>
+          <image contentType="image/bmp">{b64}</image>
+        </value>
+      </draw>
+    </subform>
+  </subform>
+</template>"#
+        );
+        let (tree, root_id) = parse_template(&xml, None).unwrap();
+        let node =
+            find_node_by_name(&tree, root_id, "barcode_img").expect("barcode_img not found");
+        match &node.node_type {
+            FormNodeType::Image { data, mime_type } => {
+                assert_eq!(mime_type, "image/png", "BMP should be converted to PNG");
+                // PNG magic bytes: 0x89 P N G
+                assert!(
+                    data.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+                    "expected PNG magic bytes, got {:?}",
+                    &data[..4.min(data.len())]
+                );
+            }
+            other => panic!("expected Image, got {other:?}"),
+        }
     }
 }

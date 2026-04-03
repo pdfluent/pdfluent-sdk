@@ -4391,6 +4391,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "base64 0.22.1",
  "formcalc-interpreter",
+ "image",
  "log",
  "lopdf",
  "pdf-font",
