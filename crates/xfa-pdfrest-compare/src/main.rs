@@ -78,6 +78,21 @@ fn window_stats(
     (mean_a, mean_b, var_a, var_b, covar)
 }
 
+fn find_png(dir: &Path, prefix: &str, page: u32) -> Option<PathBuf> {
+    let p1 = dir.join(format!("{}-{}.png", prefix, page));
+    let p2 = dir.join(format!("{}-{:02}.png", prefix, page));
+    let p3 = dir.join(format!("{}-{:03}.png", prefix, page));
+    if p1.exists() {
+        Some(p1)
+    } else if p2.exists() {
+        Some(p2)
+    } else if p3.exists() {
+        Some(p3)
+    } else {
+        None
+    }
+}
+
 fn compute_ssim(img_a: &[u8], w_a: u32, h_a: u32, img_b: &[u8], w_b: u32, h_b: u32) -> f64 {
     let w = w_a.min(w_b) as usize;
     let h = h_a.min(h_b) as usize;
@@ -155,9 +170,7 @@ fn find_matching_pages(dir: &Path) -> (Vec<(u32, PathBuf, PathBuf)>, usize, usiz
             None => continue,
         };
         let our_path = entry.path();
-        let pdfrest_name = format!("pdfrest_page-{}.png", page_num);
-        let pdfrest_path = dir.join(&pdfrest_name);
-        if pdfrest_path.exists() {
+        if let Some(pdfrest_path) = find_png(dir, "pdfrest_page", page_num) {
             matches.push((page_num, our_path, pdfrest_path));
         }
     }
