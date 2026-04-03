@@ -13,6 +13,7 @@ image = "0.25"
 sha2 = "0.10"
 rayon = "1.10"
 walkdir = "2"
+regex = "1"
 anyhow = "1"
 thiserror = "2"
 
