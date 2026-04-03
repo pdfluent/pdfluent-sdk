@@ -78,6 +78,8 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
     }
 
     // Apply border from the XFA template.
+    // Only draw borders when explicitly specified; otherwise match Adobe behavior.
+    cfg.draw_borders = false;
     if let Some(bw) = style.border_width_pt {
         if bw > 0.0 {
             cfg.border_width = bw;

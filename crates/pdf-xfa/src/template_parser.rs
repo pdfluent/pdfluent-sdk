@@ -467,18 +467,21 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     let mut style = FormNodeStyle::default();
 
     // Parse <fill><color value="r,g,b"/> for background color.
+    // Skip when presence="hidden"/"invisible"/"inactive".
     if let Some(fill) = find_first_child_by_name(elem, "fill") {
-        if let Some(color) = find_first_child_by_name(fill, "color") {
-            if let Some(rgb) = parse_xfa_color(color) {
-                style.bg_color = Some(rgb);
+        if !is_hidden(fill) {
+            if let Some(color) = find_first_child_by_name(fill, "color") {
+                if let Some(rgb) = parse_xfa_color(color) {
+                    style.bg_color = Some(rgb);
+                }
             }
-        }
-        // Also check <fill><solid><color .../> pattern.
-        if style.bg_color.is_none() {
-            if let Some(solid) = find_first_child_by_name(fill, "solid") {
-                if let Some(color) = find_first_child_by_name(solid, "color") {
-                    if let Some(rgb) = parse_xfa_color(color) {
-                        style.bg_color = Some(rgb);
+            // Also check <fill><solid><color .../> pattern.
+            if style.bg_color.is_none() {
+                if let Some(solid) = find_first_child_by_name(fill, "solid") {
+                    if let Some(color) = find_first_child_by_name(solid, "color") {
+                        if let Some(rgb) = parse_xfa_color(color) {
+                            style.bg_color = Some(rgb);
+                        }
                     }
                 }
             }
@@ -495,11 +498,14 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             }
         }
         // Also parse <border><fill><color .../> for border background (field bg).
+        // Skip when fill has presence="hidden"/"invisible"/"inactive".
         if style.bg_color.is_none() {
             if let Some(fill) = find_first_child_by_name(border, "fill") {
-                if let Some(color) = find_first_child_by_name(fill, "color") {
-                    if let Some(rgb) = parse_xfa_color(color) {
-                        style.bg_color = Some(rgb);
+                if !is_hidden(fill) {
+                    if let Some(color) = find_first_child_by_name(fill, "color") {
+                        if let Some(rgb) = parse_xfa_color(color) {
+                            style.bg_color = Some(rgb);
+                        }
                     }
                 }
             }
