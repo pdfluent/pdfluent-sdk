@@ -189,19 +189,20 @@ fn open_db(path: &Path) -> anyhow::Result<Connection> {
             status TEXT,
             our_pages INTEGER,
             pdfrest_pages INTEGER,
+            pdfrest_truncated INTEGER DEFAULT 0,
             timestamp TEXT DEFAULT (datetime('now'))
         )",
     )?;
     Ok(conn)
 }
 
-fn process_directory(dir: &Path) -> Option<(String, f64, usize, String, usize, usize)> {
+fn process_directory(dir: &Path) -> Option<(String, f64, usize, String, usize, usize, bool)> {
     let input_path = dir.join("input.pdf");
     let input_data = std::fs::read(&input_path).ok()?;
     let hash = hash_bytes(&input_data);
 
     if pdf_xfa::is_pdf_encrypted(&input_data) {
-        return Some((hash, 0.0, 0, "encrypted_skip".to_string(), 0, 0));
+        return Some((hash, 0.0, 0, "encrypted_skip".to_string(), 0, 0, false));
     }
 
     let (page_matches, our_pages, pdfrest_pages) = find_matching_pages(dir);
@@ -226,6 +227,7 @@ fn process_directory(dir: &Path) -> Option<(String, f64, usize, String, usize, u
     }
 
     let avg_ssim = total_ssim / page_count as f64;
+    let pdfrest_truncated = pdfrest_pages == 3 && our_pages > 3;
     let status = if avg_ssim >= SSIM_PASS_THRESHOLD {
         "pass"
     } else {
@@ -239,6 +241,7 @@ fn process_directory(dir: &Path) -> Option<(String, f64, usize, String, usize, u
         status.to_string(),
         our_pages,
         pdfrest_pages,
+        pdfrest_truncated,
     ))
 }
 
@@ -272,6 +275,7 @@ fn main() -> anyhow::Result<()> {
     let mut valid_count = 0usize;
     let mut no_render = 0usize;
     let mut encrypted_skip = 0usize;
+    let mut pdfrest_truncated_count = 0usize;
     let mut worst_cases = Vec::new();
 
     for dir in &entries {
@@ -282,30 +286,31 @@ fn main() -> anyhow::Result<()> {
 
         let result = process_directory(dir);
 
-        let (hash, ssim, page_count, status, our_pages, pdfrest_pages) = match result {
-            Some(r) => r,
-            None => {
-                no_render += 1;
-                let input_path = dir.join("input.pdf");
-                let hash = std::fs::read(&input_path)
-                    .map(|d| hash_bytes(&d))
-                    .unwrap_or_default();
-                if let Err(e) = conn.execute(
-                    "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages)
-                     VALUES (?1, NULL, 0, 'no_render', 0, 0)",
+        let (hash, ssim, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated) =
+            match result {
+                Some(r) => r,
+                None => {
+                    no_render += 1;
+                    let input_path = dir.join("input.pdf");
+                    let hash = std::fs::read(&input_path)
+                        .map(|d| hash_bytes(&d))
+                        .unwrap_or_default();
+                    if let Err(e) = conn.execute(
+                    "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated)
+                     VALUES (?1, NULL, 0, 'no_render', 0, 0, 0)",
                     params![hash],
                 ) {
                     eprintln!("DB error: {}", e);
                 }
-                continue;
-            }
-        };
+                    continue;
+                }
+            };
 
         if status == "encrypted_skip" {
             encrypted_skip += 1;
             if let Err(e) = conn.execute(
-                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages)
-                 VALUES (?1, NULL, 0, 'encrypted_skip', 0, 0)",
+                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated)
+                 VALUES (?1, NULL, 0, 'encrypted_skip', 0, 0, 0)",
                 params![hash],
             ) {
                 eprintln!("DB error: {}", e);
@@ -323,6 +328,10 @@ fn main() -> anyhow::Result<()> {
             fail_count += 1;
         }
 
+        if pdfrest_truncated {
+            pdfrest_truncated_count += 1;
+        }
+
         total_ssim += ssim_val;
         valid_count += 1;
         worst_cases.push((dir_name.clone(), ssim_val));
@@ -332,16 +341,24 @@ fn main() -> anyhow::Result<()> {
         }
 
         if let Err(e) = conn.execute(
-            "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![hash, ssim_val, page_count as i64, status, our_pages as i64, pdfrest_pages as i64],
+            "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![hash, ssim_val, page_count as i64, status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64],
         ) {
             eprintln!("DB error: {}", e);
         }
 
         println!(
-            "[{}] ssim={:.4} pages={} status={}",
-            dir_name, ssim_val, page_count, status
+            "[{}] ssim={:.4} pages={} status={}{}",
+            dir_name,
+            ssim_val,
+            page_count,
+            status,
+            if pdfrest_truncated {
+                " (pdfrest_truncated)"
+            } else {
+                ""
+            }
         );
     }
 
@@ -359,6 +376,10 @@ fn main() -> anyhow::Result<()> {
     println!("Have both PNGs: {}", has_comparable);
     println!("Pass (≥{:.2}): {}", SSIM_PASS_THRESHOLD, pass_count);
     println!("Fail: {}", fail_count);
+    println!(
+        "pdfrest truncated (max 3 pages): {}",
+        pdfrest_truncated_count
+    );
     println!("Average SSIM: {:.4}", avg_ssim);
     println!();
     println!("=== Worst 10 Cases ===");
