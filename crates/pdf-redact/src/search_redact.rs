@@ -603,17 +603,57 @@ fn remove_text_ops_via_editor(
     // differently from extract_positioned_chars, causing the word to be found
     // during bbox computation but missed by both text-matching and spatial
     // matching on the content stream.  Fixes #476.
+    // Also handles words split across adjacent TJ operators by joining them
+    // on the same Y-line before matching. Fixes #654.
     if !match_bboxes.is_empty() {
         let mut text_matched_set: HashSet<usize> = indices_to_remove.iter().cloned().collect();
+
+        // Build op_index → run.y map for Y-line lookups.
+        let op_to_y: HashMap<usize, f64> = runs
+            .iter()
+            .flat_map(|run| run.ops_range.clone().map(move |i| (i, run.y)))
+            .collect();
+
         let ops = editor.operations();
-        for (idx, op) in ops.iter().enumerate() {
-            if text_matched_set.contains(&idx) {
+
+        // Group ops by Y-line (within tolerance).
+        let mut ops_by_y: HashMap<i64, Vec<usize>> = HashMap::new();
+        for (idx, _) in ops.iter().enumerate() {
+            if let Some(&y) = op_to_y.get(&idx) {
+                let y_bucket = (y * 10.0).round() as i64;
+                ops_by_y.entry(y_bucket).or_default().push(idx);
+            }
+        }
+
+        for (_, mut op_indices) in ops_by_y {
+            op_indices.sort();
+            let mut combined = String::new();
+            let mut byte_to_op: Vec<usize> = Vec::new();
+
+            for &idx in &op_indices {
+                if text_matched_set.contains(&idx) {
+                    continue;
+                }
+                if let Some(raw) = raw_text_from_op(&ops[idx]) {
+                    let before = combined.len();
+                    combined.push_str(&raw);
+                    byte_to_op.extend(std::iter::repeat_n(idx, combined.len() - before));
+                }
+            }
+
+            if combined.is_empty() {
                 continue;
             }
-            if let Some(raw_text) = raw_text_from_op(op) {
-                if !matcher.find_all(&raw_text).is_empty() {
-                    indices_to_remove.push(idx);
-                    text_matched_set.insert(idx);
+
+            let matches = matcher.find_all(&combined);
+            for m in matches {
+                for i in m.start..m.end {
+                    if let Some(&op_idx) = byte_to_op.get(i) {
+                        if !text_matched_set.contains(&op_idx) {
+                            indices_to_remove.push(op_idx);
+                            text_matched_set.insert(op_idx);
+                        }
+                    }
                 }
             }
         }
@@ -923,17 +963,57 @@ fn remove_text_ops_from_stream(
     // differently from extract_positioned_chars, causing the word to be found
     // during bbox computation but missed by both text-matching and spatial
     // matching on the content stream.  Fixes #476.
+    // Also handles words split across adjacent TJ operators by joining them
+    // on the same Y-line before matching. Fixes #654.
     if !match_bboxes.is_empty() {
         let mut text_matched_set: HashSet<usize> = indices_to_remove.iter().cloned().collect();
+
+        // Build op_index → run.y map for Y-line lookups.
+        let op_to_y: HashMap<usize, f64> = runs
+            .iter()
+            .flat_map(|run| run.ops_range.clone().map(move |i| (i, run.y)))
+            .collect();
+
         let ops = editor.operations();
-        for (idx, op) in ops.iter().enumerate() {
-            if text_matched_set.contains(&idx) {
+
+        // Group ops by Y-line (within tolerance).
+        let mut ops_by_y: HashMap<i64, Vec<usize>> = HashMap::new();
+        for (idx, _) in ops.iter().enumerate() {
+            if let Some(&y) = op_to_y.get(&idx) {
+                let y_bucket = (y * 10.0).round() as i64;
+                ops_by_y.entry(y_bucket).or_default().push(idx);
+            }
+        }
+
+        for (_, mut op_indices) in ops_by_y {
+            op_indices.sort();
+            let mut combined = String::new();
+            let mut byte_to_op: Vec<usize> = Vec::new();
+
+            for &idx in &op_indices {
+                if text_matched_set.contains(&idx) {
+                    continue;
+                }
+                if let Some(raw) = raw_text_from_op(&ops[idx]) {
+                    let before = combined.len();
+                    combined.push_str(&raw);
+                    byte_to_op.extend(std::iter::repeat_n(idx, combined.len() - before));
+                }
+            }
+
+            if combined.is_empty() {
                 continue;
             }
-            if let Some(raw_text) = raw_text_from_op(op) {
-                if !matcher.find_all(&raw_text).is_empty() {
-                    indices_to_remove.push(idx);
-                    text_matched_set.insert(idx);
+
+            let matches = matcher.find_all(&combined);
+            for m in matches {
+                for i in m.start..m.end {
+                    if let Some(&op_idx) = byte_to_op.get(i) {
+                        if !text_matched_set.contains(&op_idx) {
+                            indices_to_remove.push(op_idx);
+                            text_matched_set.insert(op_idx);
+                        }
+                    }
                 }
             }
         }
