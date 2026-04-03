@@ -169,6 +169,28 @@ fn xfa_flatten_inner(
 
     let _ = apply_dynamic_scripts(&mut tree, root_id);
 
+    // Temporary tree dump for debugging
+    fn dump_tree(tree: &xfa_layout_engine::form::FormTree, id: xfa_layout_engine::form::FormNodeId, depth: usize) {
+        if depth > 6 { return; }
+        let node = tree.get(id);
+        let meta = tree.meta(id);
+        let indent = "  ".repeat(depth);
+        let val = match &node.node_type {
+            xfa_layout_engine::form::FormNodeType::Field { value } if !value.is_empty() => format!(" val={:?}", &value[..value.len().min(30)]),
+            _ => String::new(),
+        };
+        eprintln!("{indent}{:?} {:?} {:?} {:?} bm={}x{} presence={:?} children={}{}",
+            id, node.name, node.layout,
+            std::mem::discriminant(&node.node_type),
+            node.box_model.width.map_or("auto".to_string(), |w| format!("{:.0}", w)),
+            node.box_model.height.map_or("auto".to_string(), |h| format!("{:.0}", h)),
+            meta.presence, node.children.len(), val);
+        for &cid in &node.children {
+            dump_tree(tree, cid, depth + 1);
+        }
+    }
+    dump_tree(&tree, root_id, 0);
+
     let engine = LayoutEngine::new(&tree);
     let layout = engine
         .layout(root_id)
