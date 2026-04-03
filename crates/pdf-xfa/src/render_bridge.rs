@@ -51,16 +51,25 @@ impl Default for XfaRenderConfig {
 /// Maps XFA coordinates (top-left origin) to PDF coordinates (bottom-left origin).
 pub struct CoordinateMapper {
     page_height: f64,
+    page_width: f64,
 }
 
 impl CoordinateMapper {
-    pub fn new(page_height: f64) -> Self {
-        Self { page_height }
+    pub fn new(page_height: f64, page_width: f64) -> Self {
+        Self {
+            page_height,
+            page_width,
+        }
     }
 
     /// Convert XFA y-coordinate to PDF y-coordinate.
     pub fn xfa_to_pdf_y(&self, xfa_y: f64, element_height: f64) -> f64 {
         self.page_height - xfa_y - element_height
+    }
+
+    /// Returns the page width for bounding content.
+    pub fn page_width(&self) -> f64 {
+        self.page_width
     }
 }
 
@@ -100,7 +109,7 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
 
 /// Generate a PDF content stream overlay for a single page.
 pub fn generate_page_overlay(page: &LayoutPage, config: &XfaRenderConfig) -> Result<Vec<u8>> {
-    let mapper = CoordinateMapper::new(page.height);
+    let mapper = CoordinateMapper::new(page.height, page.width);
     let mut ops = Vec::new();
     ops.extend_from_slice(b"q\n");
     render_nodes(&page.nodes, 0.0, 0.0, &mapper, config, &mut ops);
@@ -629,7 +638,7 @@ mod tests {
 
     #[test]
     fn coordinate_mapping() {
-        let mapper = CoordinateMapper::new(792.0);
+        let mapper = CoordinateMapper::new(792.0, 612.0);
         let pdf_y = mapper.xfa_to_pdf_y(0.0, 20.0);
         assert!((pdf_y - 772.0).abs() < 0.001);
     }
