@@ -256,24 +256,22 @@ fn pages_have_static_content(doc: &Document) -> bool {
             continue;
         }
 
-        // Check for real text content (Tj/TJ operators), not just byte size.
-        // A byte-size threshold is unreliable: 200 bytes catches form chrome
-        // as "static", 20KB misses real pre-rendered pages.  Instead, look
-        // for actual text-drawing operators which indicate the page has been
-        // pre-rendered with real content (not just borders/lines).
-        let has_text_operators = streams.iter().any(|s| stream_has_text_operators(s));
-        if !has_text_operators {
-            continue;
+        // Count text-drawing operators (Tj/TJ) across all non-placeholder
+        // content streams for this page. A real pre-rendered form page has
+        // dozens of text operators; a watermark or evaluation overlay has
+        // only 1–3. We require ≥5 non-placeholder text operators to
+        // consider the page as having substantial static content.
+        let mut text_op_count = 0usize;
+        for stream in &streams {
+            if is_xfa_placeholder_stream(stream) || is_watermark_stream(stream) {
+                continue;
+            }
+            text_op_count += count_text_operators(stream);
         }
 
-        if streams
-            .iter()
-            .all(|stream| is_xfa_placeholder_stream(stream))
-        {
-            continue;
+        if text_op_count >= 5 {
+            return true;
         }
-
-        return true;
     }
     false
 }
@@ -306,20 +304,18 @@ fn resolve_stream_content(doc: &Document, object: &Object) -> Option<Vec<u8>> {
         .or_else(|| Some(stream.content.clone()))
 }
 
-/// Check if a content stream contains text-drawing operators (Tj or TJ).
-/// This is a better heuristic than byte-size for detecting pre-rendered pages.
-fn stream_has_text_operators(stream: &[u8]) -> bool {
-    // Look for " Tj" or " TJ" preceded by whitespace/closing paren
-    // to avoid false positives on random byte sequences.
+/// Count text-drawing operators (Tj / TJ) in a content stream.
+fn count_text_operators(stream: &[u8]) -> usize {
+    let mut count = 0;
     for window in stream.windows(3) {
         if (window[0] == b' ' || window[0] == b')' || window[0] == b']')
             && window[1] == b'T'
             && (window[2] == b'j' || window[2] == b'J')
         {
-            return true;
+            count += 1;
         }
     }
-    false
+    count
 }
 
 fn is_xfa_placeholder_stream(stream: &[u8]) -> bool {
@@ -332,6 +328,20 @@ fn is_xfa_placeholder_stream(stream: &[u8]) -> bool {
     ];
 
     PLACEHOLDER_MARKERS
+        .iter()
+        .any(|marker| contains_ascii_case_insensitive(stream, marker))
+}
+
+/// Detect evaluation-software watermark overlays (e.g. "Qoppa Software",
+/// "For Evaluation Only"). These are short streams with ≤3 Tj operators
+/// that should not count as real pre-rendered form content.
+fn is_watermark_stream(stream: &[u8]) -> bool {
+    const WATERMARK_MARKERS: [&[u8]; 3] = [
+        b"Evaluation Only",
+        b"Qoppa Software",
+        b"For Evaluation",
+    ];
+    WATERMARK_MARKERS
         .iter()
         .any(|marker| contains_ascii_case_insensitive(stream, marker))
 }
@@ -1186,7 +1196,8 @@ ET
             },
             b"0 G\n0.5 0.5 119 29 re\ns\n".to_vec(),
         ));
-        let page_content = b"BT /F1 12 Tf 72 720 Td (Static page text) Tj ET\n".to_vec();
+        // Enough Tj operators (≥5) to exceed the static content threshold.
+        let page_content = b"BT /F1 12 Tf 72 720 Td (Line 1) Tj 0 -14 Td (Line 2) Tj 0 -14 Td (Line 3) Tj 0 -14 Td (Line 4) Tj 0 -14 Td (Line 5) Tj ET\n".to_vec();
         let pdf_bytes = build_xfa_pdf_with_widget_appearance(
             page_content,
             appearance,
