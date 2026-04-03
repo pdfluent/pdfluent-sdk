@@ -13,7 +13,7 @@ use roxmltree::Node;
 
 use xfa_layout_engine::form::{
     ContentArea, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle, FormNodeType,
-    FormTree, GroupKind, Occur,
+    FormTree, GroupKind, Occur, Presence,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
@@ -154,8 +154,8 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let bm = parse_box_model(elem);
 
     // Always extract the field value and preserve the Field node type.
-    // Visibility is controlled by FormNodeMeta.presence_hidden — the layout
-    // engine skips hidden nodes, and the renderer checks metadata.
+    // Visibility is controlled by FormNodeMeta.presence -- the layout
+    // engine skips invisible/inactive nodes; hidden ones produce empty space.
     // Dynamic scripts can later toggle presence to "visible", so we must
     // preserve the content for all fields.
     let value = extract_value_text(elem).unwrap_or_default();
@@ -371,13 +371,13 @@ fn parse_page_area(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> 
 fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     let tag = elem.tag_name().name();
 
-    // (a) Presence attribute.
-    let presence = attr(elem, "presence");
-    let presence_hidden = matches!(
-        presence,
-        Some("hidden") | Some("inactive") | Some("invisible")
-    );
-    let presence_invisible = presence == Some("invisible");
+    // (a) Presence attribute (XFA 3.3 S3.2.8).
+    let presence = match attr(elem, "presence") {
+        Some("hidden") => Presence::Hidden,
+        Some("invisible") => Presence::Invisible,
+        Some("inactive") => Presence::Inactive,
+        _ => Presence::Visible,
+    };
 
     // (b) Page break detection: look for <breakBefore>, <breakAfter>, or <break> child.
     let (page_break_before, break_before_target) = detect_page_break_before(elem);
@@ -423,8 +423,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
 
     FormNodeMeta {
         xfa_id,
-        presence_hidden,
-        presence_invisible,
+        presence,
         page_break_before,
         page_break_after,
         break_target,
@@ -1715,7 +1714,7 @@ mod tests {
             other => panic!("expected Draw, got {other:?}"),
         }
         let hidden_draw_id = find_node_id_by_name(&tree, root_id, "hidden_draw").unwrap();
-        assert!(tree.meta(hidden_draw_id).presence_hidden);
+        assert!(tree.meta(hidden_draw_id).presence.is_not_visible());
 
         // Hidden fields preserve content and remain Field type — layout
         // engine skips them via metadata.
@@ -1725,7 +1724,7 @@ mod tests {
             other => panic!("expected Field, got {other:?}"),
         }
         let hidden_field_id = find_node_id_by_name(&tree, root_id, "hidden_field").unwrap();
-        assert!(tree.meta(hidden_field_id).presence_hidden);
+        assert!(tree.meta(hidden_field_id).presence.is_not_visible());
     }
 
     /// Font sizes given as bare numbers (`<font size="10">`) must be treated as

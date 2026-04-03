@@ -217,13 +217,15 @@ impl<'a> LayoutEngine<'a> {
     // -------------------------------------------------------------------
 
     /// Returns true if the node should be completely skipped during layout
-    /// (XFA `presence="hidden"` — no layout space consumed, OR the node
-    /// targets a specific contentArea via `breakBefore targetType="contentArea"`
-    /// and should not participate in the primary content flow).
-    /// `presence="invisible"` still takes space, so it is NOT hidden for layout.
+    /// (no layout space consumed).
+    ///
+    /// XFA `presence` semantics (S3.2.8):
+    /// - `invisible` / `inactive` -- no layout space, not rendered.
+    /// - `hidden` -- reserves layout space but not rendered (NOT layout-hidden).
+    /// - `visible` -- normal.
     fn is_layout_hidden(&self, id: FormNodeId) -> bool {
         let meta = self.form.meta(id);
-        if meta.presence_hidden && !meta.presence_invisible {
+        if meta.presence.is_layout_hidden() {
             return true;
         }
         // Content-area-targeted nodes (breakBefore targetType="contentArea")
@@ -1283,6 +1285,19 @@ impl<'a> LayoutEngine<'a> {
         extent: Size,
         children_override: Option<&[FormNodeId]>,
     ) -> Result<LayoutNode> {
+        // Non-visible nodes (hidden/invisible/inactive) reserve space but
+        // produce no visual content or children.
+        if self.form.meta(id).presence.is_not_visible() {
+            return Ok(LayoutNode {
+                form_node: id,
+                rect: Rect::new(x, y, extent.width, extent.height),
+                name: node.name.clone(),
+                content: LayoutContent::None,
+                children: Vec::new(),
+                style: Default::default(),
+            });
+        }
+
         let content = match &node.node_type {
             FormNodeType::Field { value } => {
                 if !value.is_empty() && node.children.is_empty() {

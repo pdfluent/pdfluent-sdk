@@ -9,7 +9,7 @@ use roxmltree::Node;
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
 use xfa_layout_engine::form::{
     ContentArea, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle, FormNodeType,
-    FormTree, GroupKind, Occur,
+    FormTree, GroupKind, Occur, Presence,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
@@ -652,12 +652,12 @@ fn parse_col_span(elem: Node<'_, '_>) -> i32 {
 
 fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     let tag = elem.tag_name().name();
-    let presence = attr(elem, "presence");
-    let presence_hidden = matches!(
-        presence,
-        Some("hidden") | Some("inactive") | Some("invisible")
-    );
-    let presence_invisible = presence == Some("invisible");
+    let presence = match attr(elem, "presence") {
+        Some("hidden") => Presence::Hidden,
+        Some("invisible") => Presence::Invisible,
+        Some("inactive") => Presence::Inactive,
+        _ => Presence::Visible,
+    };
 
     let (page_break_before, break_before_target) = detect_page_break_before(elem);
     let (page_break_after, break_after_target) = detect_page_break_after(elem);
@@ -688,8 +688,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
 
     FormNodeMeta {
         xfa_id,
-        presence_hidden,
-        presence_invisible,
+        presence,
         page_break_before,
         page_break_after,
         break_target,

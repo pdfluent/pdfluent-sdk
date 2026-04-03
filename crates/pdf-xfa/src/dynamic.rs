@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree, GroupKind};
+use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree, GroupKind, Presence};
 
 const MAX_SCRIPT_PASSES: usize = 8;
 
@@ -47,7 +47,7 @@ fn has_hidden_ancestor(
 ) -> bool {
     let mut cursor = parents.get(&node_id).copied();
     while let Some(ancestor) = cursor {
-        if form.meta(ancestor).presence_hidden {
+        if form.meta(ancestor).presence.is_not_visible() {
             return true;
         }
         cursor = parents.get(&ancestor).copied();
@@ -347,18 +347,15 @@ fn eval_value(
             return ScriptValue::Null;
         };
         let meta = form.meta(node_id);
-        return if meta.presence_hidden {
-            ScriptValue::String(
-                if meta.presence_invisible {
-                    "invisible"
-                } else {
-                    "hidden"
-                }
-                .to_string(),
-            )
-        } else {
-            ScriptValue::String("visible".to_string())
-        };
+        return ScriptValue::String(
+            match meta.presence {
+                Presence::Visible => "visible",
+                Presence::Hidden => "hidden",
+                Presence::Invisible => "invisible",
+                Presence::Inactive => "inactive",
+            }
+            .to_string(),
+        );
     }
 
     ScriptValue::Null
@@ -560,19 +557,19 @@ fn set_presence(form: &mut FormTree, node_id: FormNodeId, value: ScriptValue) ->
         ScriptValue::String(value) => value,
     };
     let normalized = value.trim().to_ascii_lowercase();
-    let (presence_hidden, presence_invisible) = match normalized.as_str() {
-        "visible" | "open" => (false, false),
-        "invisible" => (true, true),
-        "hidden" | "inactive" => (true, false),
+    let new_presence = match normalized.as_str() {
+        "visible" | "open" => Presence::Visible,
+        "hidden" => Presence::Hidden,
+        "invisible" => Presence::Invisible,
+        "inactive" => Presence::Inactive,
         _ => return 0,
     };
 
     let meta = form.meta_mut(node_id);
-    if meta.presence_hidden == presence_hidden && meta.presence_invisible == presence_invisible {
+    if meta.presence == new_presence {
         return 0;
     }
-    meta.presence_hidden = presence_hidden;
-    meta.presence_invisible = presence_invisible;
+    meta.presence = new_presence;
     1
 }
 
@@ -740,11 +737,11 @@ mod tests {
         ];
         tree.meta_mut(option1).item_value = Some("1".into());
         tree.meta_mut(option2).item_value = Some("2".into());
-        tree.meta_mut(details).presence_hidden = true;
+        tree.meta_mut(details).presence = Presence::Hidden;
 
         apply_dynamic_scripts(&mut tree, root);
 
-        assert!(!tree.meta(details).presence_hidden);
+        assert_eq!(tree.meta(details).presence, Presence::Visible);
     }
 
     #[test]
@@ -770,14 +767,14 @@ mod tests {
 
         tree.get_mut(root).children = vec![section];
         tree.get_mut(section).children = vec![option1, option2, details];
-        tree.meta_mut(details).presence_hidden = true;
+        tree.meta_mut(details).presence = Presence::Hidden;
         tree.meta_mut(details).event_scripts = vec![
             "this.presence = 'hidden';\nif ((Opt1.rawValue == 1) || (Opt2.rawValue == 1)) {\n  this.presence = 'visible';\n}".into(),
         ];
 
         apply_dynamic_scripts(&mut tree, root);
 
-        assert!(!tree.meta(details).presence_hidden);
+        assert_eq!(tree.meta(details).presence, Presence::Visible);
     }
 
     #[test]
@@ -806,7 +803,7 @@ mod tests {
 
         tree.meta_mut(controller).event_scripts =
             vec!["if (this.rawValue == 1) {\n  Target.rawValue = 1;\n}".into()];
-        tree.meta_mut(details).presence_hidden = true;
+        tree.meta_mut(details).presence = Presence::Hidden;
         tree.meta_mut(details).event_scripts = vec![
             "this.presence = 'hidden';\nif (Target.rawValue == 1) {\n  this.presence = 'visible';\n}".into(),
         ];
@@ -818,7 +815,7 @@ mod tests {
         } else {
             panic!("expected field");
         }
-        assert!(!tree.meta(details).presence_hidden);
+        assert_eq!(tree.meta(details).presence, Presence::Visible);
     }
 
     #[test]
@@ -873,7 +870,7 @@ mod tests {
 
         apply_dynamic_scripts(&mut tree, root);
 
-        assert!(tree.meta(empty).presence_hidden);
+        assert!(tree.meta(empty).presence.is_not_visible());
     }
 
     #[test]
@@ -895,7 +892,7 @@ mod tests {
 
         apply_dynamic_scripts(&mut tree, root);
 
-        assert!(tree.meta(container).presence_hidden);
+        assert!(tree.meta(container).presence.is_not_visible());
     }
 
     #[test]
