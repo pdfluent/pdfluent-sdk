@@ -3,7 +3,7 @@ use pdf_render::pdf_interpret::font::Glyph;
 use pdf_render::pdf_interpret::{
     BlendMode, ClipPath, Device, FillRule, GlyphDrawMode, Image, Paint, PathDrawMode, SoftMask,
 };
-use xfa_wasm::canvas2d_device::{CanvasPathCommand, fill_rule_name, path_commands};
+use xfa_wasm::canvas2d_device::{fill_rule_name, path_commands, CanvasPathCommand};
 
 #[derive(Default)]
 struct CommandRecorder {
@@ -24,13 +24,7 @@ impl Device<'_> for CommandRecorder {
 
     fn set_blend_mode(&mut self, _: BlendMode) {}
 
-    fn draw_path(
-        &mut self,
-        path: &BezPath,
-        _: Affine,
-        _: &Paint<'_>,
-        draw_mode: &PathDrawMode,
-    ) {
+    fn draw_path(&mut self, path: &BezPath, _: Affine, _: &Paint<'_>, draw_mode: &PathDrawMode) {
         self.record_path(path);
         match draw_mode {
             PathDrawMode::Fill(fill_rule) => self

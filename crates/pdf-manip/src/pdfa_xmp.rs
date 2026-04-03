@@ -146,12 +146,24 @@ pub fn repair_xmp_metadata(
 
     // 2. Merge metadata: provided > info > xmp.
     let mut meta = merge_metadata(metadata, &info_meta);
-    if meta.title.is_none() { meta.title = xmp_meta.title; }
-    if meta.creator.is_none() { meta.creator = xmp_meta.creator; }
-    if meta.description.is_none() { meta.description = xmp_meta.description; }
-    if meta.producer.is_none() { meta.producer = xmp_meta.producer; }
-    if meta.creator_tool.is_none() { meta.creator_tool = xmp_meta.creator_tool; }
-    if meta.keywords.is_none() { meta.keywords = xmp_meta.keywords; }
+    if meta.title.is_none() {
+        meta.title = xmp_meta.title;
+    }
+    if meta.creator.is_none() {
+        meta.creator = xmp_meta.creator;
+    }
+    if meta.description.is_none() {
+        meta.description = xmp_meta.description;
+    }
+    if meta.producer.is_none() {
+        meta.producer = xmp_meta.producer;
+    }
+    if meta.creator_tool.is_none() {
+        meta.creator_tool = xmp_meta.creator_tool;
+    }
+    if meta.keywords.is_none() {
+        meta.keywords = xmp_meta.keywords;
+    }
 
     // 3. Synchronize dates and ensure same timezone (§6.7.3).
     // Preference: provided > info > xmp.

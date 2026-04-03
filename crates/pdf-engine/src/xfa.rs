@@ -8,7 +8,7 @@ use crate::PdfDocument;
 
 pub use pdf_xfa::error::XfaError;
 pub use pdf_xfa::extract::XfaPackets;
-pub use xfa_json::{FormData, FormSchema, export_schema, form_tree_to_json, form_tree_to_value};
+pub use xfa_json::{export_schema, form_tree_to_json, form_tree_to_value, FormData, FormSchema};
 pub use xfa_layout_engine::form::{FormNodeId, FormTree};
 
 /// Extract the XFA packets embedded in a document.

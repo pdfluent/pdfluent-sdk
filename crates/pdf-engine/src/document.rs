@@ -10,11 +10,11 @@ use crate::thumbnail::ThumbnailOptions;
 use pdf_forms::parse::parse_acroform;
 use pdf_forms::tree::FieldValue;
 use pdf_render::pdf_interpret::PageExt;
-use pdf_render::pdf_interpret::{Context, InterpreterSettings, interpret_page};
-use pdf_render::pdf_syntax::Pdf;
-use pdf_render::pdf_syntax::object::Dict;
+use pdf_render::pdf_interpret::{interpret_page, Context, InterpreterSettings};
 use pdf_render::pdf_syntax::object::dict::keys::{FIRST, NEXT, OUTLINES, TITLE};
+use pdf_render::pdf_syntax::object::Dict;
 use pdf_render::pdf_syntax::page::Page;
+use pdf_render::pdf_syntax::Pdf;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -550,7 +550,7 @@ mod tests {
     }
 
     fn solid_fill_pdf_bytes(color_operator: &str) -> Vec<u8> {
-        use lopdf::{Document, Object, Stream, dictionary};
+        use lopdf::{dictionary, Document, Object, Stream};
 
         let mut doc = Document::with_version("1.4");
 
@@ -600,7 +600,7 @@ mod tests {
     }
 
     fn mixed_rgb_cmyk_pdf_bytes() -> Vec<u8> {
-        use lopdf::{Document, Object, Stream, dictionary};
+        use lopdf::{dictionary, Document, Object, Stream};
 
         let mut doc = Document::with_version("1.4");
         let pages_id = doc.new_object_id();
@@ -642,7 +642,7 @@ mod tests {
     }
 
     fn transparent_cmyk_pdf_bytes() -> Vec<u8> {
-        use lopdf::{Document, Object, Stream, dictionary};
+        use lopdf::{dictionary, Document, Object, Stream};
 
         let mut doc = Document::with_version("1.4");
         let pages_id = doc.new_object_id();
@@ -693,7 +693,7 @@ mod tests {
     }
 
     fn cmyk_image_pdf_bytes() -> Vec<u8> {
-        use lopdf::{Document, Object, Stream, dictionary};
+        use lopdf::{dictionary, Document, Object, Stream};
 
         let mut doc = Document::with_version("1.4");
         let pages_id = doc.new_object_id();
