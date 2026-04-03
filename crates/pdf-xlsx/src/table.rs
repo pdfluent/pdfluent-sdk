@@ -89,11 +89,18 @@ struct Line {
 
 /// Detect all tables on a page from text blocks.
 pub fn detect_tables(blocks: &[TextBlock], page: u32) -> Vec<DetectedTable> {
+    // Filter out blocks with empty text — these carry position but no data,
+    // which would cause phantom table detection with all-empty cells (#651).
+    let blocks: Vec<_> = blocks
+        .iter()
+        .filter(|b| !b.text.is_empty())
+        .cloned()
+        .collect();
     if blocks.is_empty() {
         return Vec::new();
     }
 
-    let lines = group_into_lines(blocks);
+    let lines = group_into_lines(&blocks);
 
     // Find column positions across all lines.
     let columns = find_columns(&lines);
