@@ -316,4 +316,123 @@ mod tests {
             "Empty XLSX should still have a worksheet"
         );
     }
+
+    /// Helper: create a PDF with table content inside a Form XObject.
+    fn make_form_xobject_pdf(xobj_content: &[u8], page_content: &[u8]) -> Document {
+        let mut doc = Document::with_version("1.7");
+        let xobj_stream = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            },
+            xobj_content.to_vec(),
+        );
+        let xobj_id = doc.add_object(Object::Stream(xobj_stream));
+        let xobj_dict = dictionary! { "Fm0" => Object::Reference(xobj_id) };
+        let resources = dictionary! { "XObject" => Object::Dictionary(xobj_dict) };
+        let content_stream = Stream::new(dictionary! {}, page_content.to_vec());
+        let content_id = doc.add_object(Object::Stream(content_stream));
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Dictionary(resources),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+        doc
+    }
+
+    #[test]
+    fn form_xobject_table_extraction() {
+        let xobj_content = b"BT /F1 12 Tf \
+            1 0 0 1 72 700 Tm (Name) Tj \
+            1 0 0 1 200 700 Tm (Age) Tj \
+            1 0 0 1 72 684 Tm (Alice) Tj \
+            1 0 0 1 200 684 Tm (30) Tj \
+            1 0 0 1 72 668 Tm (Bob) Tj \
+            1 0 0 1 200 668 Tm (25) Tj ET";
+        let doc = make_form_xobject_pdf(xobj_content, b"q /Fm0 Do Q");
+        let tables = extract_tables(&doc);
+        assert!(!tables.is_empty(), "Should detect table in Form XObject");
+        let all_text: String = tables
+            .iter()
+            .flat_map(|t| t.rows.iter())
+            .flat_map(|r| r.iter())
+            .map(|c| c.as_text())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(all_text.contains("Name"), "Missing 'Name': {all_text}");
+        assert!(all_text.contains("Alice"), "Missing 'Alice': {all_text}");
+    }
+
+    #[test]
+    fn form_xobject_inherited_resources() {
+        let xobj_content = b"BT /F1 12 Tf \
+            1 0 0 1 72 700 Tm (X) Tj \
+            1 0 0 1 200 700 Tm (Y) Tj \
+            1 0 0 1 72 684 Tm (1) Tj \
+            1 0 0 1 200 684 Tm (2) Tj ET";
+        let mut doc = Document::with_version("1.7");
+        let xobj_stream = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Form",
+                "BBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            },
+            xobj_content.to_vec(),
+        );
+        let xobj_id = doc.add_object(Object::Stream(xobj_stream));
+        let resources = dictionary! {
+            "XObject" => Object::Dictionary(dictionary! {
+                "Fm0" => Object::Reference(xobj_id),
+            }),
+        };
+        let content_stream = Stream::new(dictionary! {}, b"q /Fm0 Do Q".to_vec());
+        let content_id = doc.add_object(Object::Stream(content_stream));
+        // Page has NO Resources — inherited from parent Pages node.
+        let page_dict = dictionary! {
+            "Type" => "Page",
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => Object::Reference(content_id),
+        };
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+        let pages_dict = dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![Object::Reference(page_id)],
+            "Count" => 1_i64,
+            "Resources" => Object::Dictionary(resources),
+        };
+        let pages_id = doc.add_object(Object::Dictionary(pages_dict));
+        if let Ok(Object::Dictionary(ref mut d)) = doc.get_object_mut(page_id) {
+            d.set("Parent", Object::Reference(pages_id));
+        }
+        let catalog = dictionary! {
+            "Type" => "Catalog",
+            "Pages" => Object::Reference(pages_id),
+        };
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let tables = extract_tables(&doc);
+        assert!(
+            !tables.is_empty(),
+            "Should detect table with inherited Resources"
+        );
+    }
 }

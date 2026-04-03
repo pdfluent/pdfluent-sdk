@@ -1243,18 +1243,23 @@ fn extract_blocks_from_ops_inner(
             "Tj" => {
                 let fi = font_map.get(&state.font_name);
                 if let Some(text) = extract_string_operand_with_font(&op.operands, fi) {
-                    let x = state.tm[4];
-                    let y = state.tm[5];
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                    let text_width = text.len() as f64 * char_w;
 
-                    blocks.push(TextBlock {
-                        text: text.clone(),
-                        page,
-                        bbox: [x, y, x + text_width, y + state.font_size],
-                        font_name: state.font_name.clone(),
-                        font_size: state.font_size,
-                    });
+                    // Skip empty text blocks (consistent with TJ handler) — empty
+                    // blocks carry position but no data, causing phantom table
+                    // detection with all-empty cells (#651).
+                    if !text.is_empty() {
+                        let x = state.tm[4];
+                        let y = state.tm[5];
+                        let text_width = text.len() as f64 * char_w;
+                        blocks.push(TextBlock {
+                            text: text.clone(),
+                            page,
+                            bbox: [x, y, x + text_width, y + state.font_size],
+                            font_name: state.font_name.clone(),
+                            font_size: state.font_size,
+                        });
+                    }
 
                     // Advance text position.
                     for _ in text.chars() {
@@ -1302,24 +1307,27 @@ fn extract_blocks_from_ops_inner(
             }
             "'" => {
                 // Move to next line and show text.
-                let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, 0.0, -state.tl]);
+                let new_tlm =
+                    multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, 0.0, -state.tl]);
                 state.tlm = new_tlm;
                 state.tm = new_tlm;
 
                 let fi = font_map.get(&state.font_name);
                 if let Some(text) = extract_string_operand_with_font(&op.operands, fi) {
-                    let x = state.tm[4];
-                    let y = state.tm[5];
                     let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                    let text_width = text.len() as f64 * char_w;
 
-                    blocks.push(TextBlock {
-                        text: text.clone(),
-                        page,
-                        bbox: [x, y, x + text_width, y + state.font_size],
-                        font_name: state.font_name.clone(),
-                        font_size: state.font_size,
-                    });
+                    if !text.is_empty() {
+                        let x = state.tm[4];
+                        let y = state.tm[5];
+                        let text_width = text.len() as f64 * char_w;
+                        blocks.push(TextBlock {
+                            text: text.clone(),
+                            page,
+                            bbox: [x, y, x + text_width, y + state.font_size],
+                            font_name: state.font_name.clone(),
+                            font_size: state.font_size,
+                        });
+                    }
 
                     for _ in text.chars() {
                         state.tm[4] += char_w + state.tc;
@@ -1341,20 +1349,26 @@ fn extract_blocks_from_ops_inner(
                     state.tlm = new_tlm;
                     state.tm = new_tlm;
 
-                    let fi = font_map.get(&state.font_name);
-                    if let Some(text) = extract_string_operand_with_font(&op.operands[2..], fi) {
-                        let x = state.tm[4];
-                        let y = state.tm[5];
-                        let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
-                        let text_width = text.len() as f64 * char_w;
+                    let fi =
+                        font_map.get(&state.font_name);
+                    if let Some(text) =
+                        extract_string_operand_with_font(&op.operands[2..], fi)
+                    {
+                        let char_w =
+                            state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
 
-                        blocks.push(TextBlock {
-                            text: text.clone(),
-                            page,
-                            bbox: [x, y, x + text_width, y + state.font_size],
-                            font_name: state.font_name.clone(),
-                            font_size: state.font_size,
-                        });
+                        if !text.is_empty() {
+                            let x = state.tm[4];
+                            let y = state.tm[5];
+                            let text_width = text.len() as f64 * char_w;
+                            blocks.push(TextBlock {
+                                text: text.clone(),
+                                page,
+                                bbox: [x, y, x + text_width, y + state.font_size],
+                                font_name: state.font_name.clone(),
+                                font_size: state.font_size,
+                            });
+                        }
 
                         for _ in text.chars() {
                             state.tm[4] += char_w + state.tc;
@@ -1439,16 +1453,15 @@ fn extract_form_xobject_text(
         .unwrap_or_else(|| stream.content.clone());
     let content = Content::decode(&content_bytes).ok()?;
 
-    // Build font map from the XObject's own Resources (if any), falling back to page fonts.
+    // Build font map: XObject's own fonts take priority over inherited page fonts.
+    // A Form XObject may reuse font names (e.g. /F1) with different encodings.
     let mut xobj_font_map = font_map.clone();
     if let Some(xobj_resources) = resolve_dict(doc, &stream.dict, b"Resources") {
         if let Some(xobj_fonts) = resolve_dict(doc, &xobj_resources, b"Font") {
             for (name_bytes, value) in xobj_fonts.iter() {
                 let fname = String::from_utf8_lossy(name_bytes).to_string();
-                if !xobj_font_map.contains_key(&fname) {
-                    if let Some(fi) = build_font_info_from_value(doc, value) {
-                        xobj_font_map.insert(fname, fi);
-                    }
+                if let Some(fi) = build_font_info_from_value(doc, value) {
+                    xobj_font_map.insert(fname, fi);
                 }
             }
         }
@@ -1494,10 +1507,15 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
         if let Some(Object::Array(descendants)) = font.get(b"DescendantFonts").ok() {
             for d in descendants {
                 let desc_dict = match d {
-                    Object::Reference(r) => match doc.get_object(*r).ok()? {
-                        Object::Dictionary(d) => d,
-                        _ => continue,
-                    },
+                    Object::Reference(r) => {
+                        // Don't use `?` here — a bad reference in one descendant
+                        // should not abort the entire font info construction.
+                        let Some(Object::Dictionary(d)) = doc.get_object(*r).ok()
+                        else {
+                            continue;
+                        };
+                        d
+                    }
                     Object::Dictionary(d) => d,
                     _ => continue,
                 };
