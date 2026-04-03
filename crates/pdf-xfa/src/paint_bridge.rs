@@ -73,7 +73,27 @@ pub enum XfaPaintCommand {
         /// Text color.
         color: Color,
     },
+    /// Draw an image.
+    DrawImage {
+        /// X coordinate in PDF points.
+        x: f64,
+        /// Y coordinate in PDF points (bottom-left origin).
+        y: f64,
+        /// Width.
+        w: f64,
+        /// Height.
+        h: f64,
+        /// Raw image data.
+        image_data: Vec<u8>,
+        /// MIME type ("image/jpeg" or "image/png").
+        mime_type: String,
+    },
 }
+
+// TODO: connect XFA <draw>/<image> parser to DrawImage (#666)
+// Currently FormNodeType::Draw only has text content. When XFA image
+// parsing is added, connect LayoutContent::Image variant to emit
+// XfaPaintCommand::DrawImage here.
 
 /// Convert an XFA layout page into abstract paint commands.
 pub fn layout_to_commands(page: &LayoutPage, config: &XfaRenderConfig) -> Vec<XfaPaintCommand> {
@@ -178,6 +198,151 @@ fn emit_node_commands(
     for child in &node.children {
         emit_node_commands(child, page_height, config, commands);
     }
+}
+
+/// Execute paint commands and return PDF content stream bytes.
+///
+/// The returned content stream includes the save/normalize state (q/Q) wrappers.
+/// Image XObjects are referenced as /Im0, /Im1, etc. and must be added
+/// to the page's resource dictionary separately.
+pub fn execute_commands(commands: &[XfaPaintCommand]) -> Vec<u8> {
+    let mut ops = Vec::new();
+    ops.extend_from_slice(b"q\n");
+
+    let mut image_index = 0usize;
+
+    for cmd in commands {
+        match cmd {
+            XfaPaintCommand::FillRect { x, y, w, h, color } => {
+                let rgba = color.to_rgba();
+                let [r, g, b, _] = rgba.to_rgba8();
+                ops.extend(
+                    format!(
+                        "{:.3} {:.3} {:.3} rg\n",
+                        r as f32 / 255.0,
+                        g as f32 / 255.0,
+                        b as f32 / 255.0
+                    )
+                    .bytes(),
+                );
+                ops.extend(format!("{:.2} {:.2} {:.2} {:.2} re\nf\n", x, y, w, h).bytes());
+            }
+            XfaPaintCommand::StrokeRect {
+                x,
+                y,
+                w,
+                h,
+                color,
+                width,
+            } => {
+                let rgba = color.to_rgba();
+                let [r, g, b, _] = rgba.to_rgba8();
+                ops.extend(format!("{:.2} w\n", width).bytes());
+                ops.extend(
+                    format!(
+                        "{:.3} {:.3} {:.3} RG\n",
+                        r as f32 / 255.0,
+                        g as f32 / 255.0,
+                        b as f32 / 255.0
+                    )
+                    .bytes(),
+                );
+                ops.extend(format!("{:.2} {:.2} {:.2} {:.2} re\nS\n", x, y, w, h).bytes());
+            }
+            XfaPaintCommand::DrawText {
+                x,
+                y,
+                text,
+                font_name,
+                font_size,
+                color,
+            } => {
+                let rgba = color.to_rgba();
+                let [r, g, b, _] = rgba.to_rgba8();
+                let font_ref = match font_name.as_str() {
+                    "Helvetica" | "sans-serif" => "/F1",
+                    "Times-Roman" | "serif" => "/F2",
+                    "Courier" | "monospace" => "/F3",
+                    _ => "/F1",
+                };
+                ops.extend(
+                    format!(
+                        "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n",
+                        r as f32 / 255.0,
+                        g as f32 / 255.0,
+                        b as f32 / 255.0,
+                        font_ref,
+                        font_size,
+                        x,
+                        y
+                    )
+                    .bytes(),
+                );
+                ops.extend(format!("({}) Tj\nET\n", pdf_escape(text)).bytes());
+            }
+            XfaPaintCommand::DrawMultilineText {
+                x,
+                y,
+                lines,
+                font_name,
+                font_size,
+                line_height,
+                color,
+            } => {
+                let rgba = color.to_rgba();
+                let [r, g, b, _] = rgba.to_rgba8();
+                let font_ref = match font_name.as_str() {
+                    "Helvetica" | "sans-serif" => "/F1",
+                    "Times-Roman" | "serif" => "/F2",
+                    "Courier" | "monospace" => "/F3",
+                    _ => "/F1",
+                };
+                ops.extend(
+                    format!(
+                        "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                        r as f32 / 255.0,
+                        g as f32 / 255.0,
+                        b as f32 / 255.0,
+                        font_ref,
+                        font_size
+                    )
+                    .bytes(),
+                );
+                for (i, line) in lines.iter().enumerate() {
+                    let ly = y - (i as f64 * line_height);
+                    ops.extend(format!("{:.2} {:.2} Td\n", x, ly).bytes());
+                    ops.extend(format!("({}) Tj\n", pdf_escape(line)).bytes());
+                }
+                ops.extend_from_slice(b"ET\n");
+            }
+            XfaPaintCommand::DrawImage {
+                x,
+                y,
+                w,
+                h,
+                image_data: _,
+                mime_type: _,
+            } => {
+                ops.extend(
+                    format!(
+                        "q\n{:.2} 0 0 {:.2} {:.2} {:.2} cm\n/Im{} Do\nQ\n",
+                        w, h, x, y, image_index
+                    )
+                    .bytes(),
+                );
+                image_index += 1;
+            }
+        }
+    }
+
+    ops.extend_from_slice(b"Q\n");
+    ops
+}
+
+fn pdf_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
 }
 
 #[cfg(test)]
