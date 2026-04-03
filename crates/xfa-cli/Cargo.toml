@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "xfa-cli"
-path = "src/main.rs"
+path = "src/bin/xfa-cli.rs"
 
 [[bin]]
 name = "xfa-collector"
