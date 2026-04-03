@@ -202,8 +202,27 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
 fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let bm = parse_box_model(elem);
-    // Always extract content — visibility is controlled by metadata.
-    let content = extract_value_text(elem).unwrap_or_default();
+
+    if let Some((image_data, mime_type)) = extract_value_image(elem) {
+        let node = FormNode {
+            name,
+            node_type: FormNodeType::Image {
+                data: image_data,
+                mime_type,
+            },
+            box_model: bm,
+            layout: LayoutStrategy::Positioned,
+            children: Vec::new(),
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: Vec::new(),
+            col_span: 1,
+        };
+        let _ = tree;
+        return Ok(node);
+    }
 
     let mut font = parse_font_metrics(elem);
     // If the content came from <exData contentType="text/html">, extract
@@ -212,6 +231,9 @@ fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     if let Some(html_size) = extract_exdata_font_size(elem) {
         font.size = html_size;
     }
+
+    // Always extract content — visibility is controlled by metadata.
+    let content = extract_value_text(elem).unwrap_or_default();
 
     let node = FormNode {
         name,
@@ -1221,6 +1243,23 @@ fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
 /// stripping the HTML/XHTML markup and returning the concatenated plain text.
 /// This covers XFA draw elements whose content is rich-text (e.g. IRS form
 /// instructions stored as inline XHTML). (#557)
+/// Extract image data from `<value><image contentType="image/…">…</image></value>`.
+///
+/// Returns `(raw_image_data, mime_type)` for supported image types:
+/// - `image/jpeg` → JPEG bytes
+/// - `image/png` → PNG bytes
+/// - `image/bmp` → BMP bytes (PDF doesn't support BMP natively, so we pass as-is)
+fn extract_value_image(elem: Node<'_, '_>) -> Option<(Vec<u8>, String)> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let image = find_first_child_by_name(value, "image")?;
+    let content_type = attr(image, "contentType")
+        .unwrap_or("image/png")
+        .to_string();
+    let data = image.text().unwrap_or_default();
+    let decoded = base64_decode(&data);
+    Some((decoded, content_type))
+}
+
 fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
     let value = find_first_child_by_name(elem, "value")?;
     // Try <text>, <float>, <integer>, <date>
@@ -1259,6 +1298,13 @@ fn extract_text_from_descendants(node: Node<'_, '_>) -> String {
         }
     }
     parts.join(" ")
+}
+
+fn base64_decode(input: &str) -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(input.trim())
+        .unwrap_or_default()
 }
 
 /// Extract the dominant font size from `<exData contentType="text/html">` HTML.
