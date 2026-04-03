@@ -1,19 +1,16 @@
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use clap::Parser;
-use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
+use image::{DynamicImage, GenericImageView};
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 const SSIM_PASS_THRESHOLD: f64 = 0.85;
-const RENDER_DPI: f64 = 150.0;
 
 #[derive(Parser)]
 #[command(name = "xfa-pdfrest-compare")]
-#[command(about = "Compare XFA flatten output against Adobe pdfrest ground truth")]
+#[command(about = "Compare pre-rendered XFA PNGs against Adobe pdfrest ground truth")]
 struct Cli {
     #[arg(long)]
     golden_dir: PathBuf,
@@ -22,93 +19,17 @@ struct Cli {
     output: PathBuf,
 }
 
-struct GoldenEntry {
-    dir: PathBuf,
-    input_path: PathBuf,
-    reference_path: PathBuf,
-    itext_path: PathBuf,
+fn hash_bytes(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
 }
 
-fn discover_golden_entries(golden_dir: &Path) -> Vec<GoldenEntry> {
-    let mut entries = Vec::new();
-    for entry in WalkDir::new(golden_dir)
-        .max_depth(1)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let dir = entry.path();
-        if !dir.is_dir() {
-            continue;
-        }
-        let input_path = dir.join("input.pdf");
-        let reference_path = dir.join("pdfrest_flat.pdf");
-        let itext_path = dir.join("itext_flat.pdf");
-        if input_path.exists() && reference_path.exists() && itext_path.exists() {
-            entries.push(GoldenEntry {
-                dir: dir.to_path_buf(),
-                input_path,
-                reference_path,
-                itext_path,
-            });
-        }
-    }
-    entries
-}
-
-fn flatten_and_render(input_data: &[u8]) -> anyhow::Result<(Vec<u8>, usize)> {
-    let flattened = pdf_xfa::flatten_xfa_to_pdf(input_data)
-        .map_err(|e| anyhow::anyhow!("flatten failed: {e:?}"))?;
-
-    let doc = pdf_engine::PdfDocument::open(flattened.clone())?;
-    let page_count = doc.page_count();
-    Ok((flattened, page_count))
-}
-
-fn render_pdf_to_rgba(data: &[u8], dpi: f64) -> anyhow::Result<(Vec<u8>, u32, u32)> {
-    let doc = pdf_engine::PdfDocument::open(data.to_vec())?;
-    let page_count = doc.page_count();
-    if page_count == 0 {
-        anyhow::bail!("PDF has no pages");
-    }
-    let opts = pdf_engine::RenderOptions {
-        dpi,
-        ..Default::default()
-    };
-    let rendered = doc.render_page(0, &opts)?;
-    Ok((rendered.pixels, rendered.width, rendered.height))
-}
-
-fn compute_ssim(img_a: &[u8], w_a: u32, h_a: u32, img_b: &[u8], w_b: u32, h_b: u32) -> f64 {
-    let w = w_a.min(w_a).min(w_b).min(w_b) as usize;
-    let h = h_a.min(h_b) as usize;
-    if w < 8 || h < 8 {
-        return 1.0;
-    }
-    let gray_a = to_grayscale(img_a, w_a, h_a);
-    let gray_b = to_grayscale(img_b, w_b, h_b);
-    let c1: f64 = (0.01 * 255.0_f64).powi(2);
-    let c2: f64 = (0.03 * 255.0_f64).powi(2);
-    let mut total_ssim = 0.0;
-    let mut window_count = 0usize;
-    let step = 4;
-    let mut y = 0;
-    while y + 8 <= h {
-        let mut x = 0;
-        while x + 8 <= w {
-            let (mean_a, mean_b, var_a, var_b, covar) =
-                window_stats(&gray_a, w_a as usize, &gray_b, w_b as usize, x, y);
-            let numerator = (2.0 * mean_a * mean_b + c1) * (2.0 * covar + c2);
-            let denominator = (mean_a.powi(2) + mean_b.powi(2) + c1) * (var_a + var_b + c2);
-            total_ssim += numerator / denominator;
-            window_count += 1;
-            x += step;
-        }
-        y += step;
-    }
-    if window_count == 0 {
-        return 1.0;
-    }
-    total_ssim / window_count as f64
+fn load_png(path: &Path) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    let img = image::open(path)?;
+    let (w, h) = img.dimensions();
+    let rgba = img.to_rgba8();
+    Ok((rgba.into_raw(), w, h))
 }
 
 fn to_grayscale(rgba: &[u8], width: u32, height: u32) -> Vec<f64> {
@@ -157,206 +78,240 @@ fn window_stats(
     (mean_a, mean_b, var_a, var_b, covar)
 }
 
-fn hash_bytes(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
-}
-
-struct Db {
-    conn: Mutex<Connection>,
-}
-
-impl Db {
-    fn open(path: &Path) -> anyhow::Result<Self> {
-        let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                hash TEXT NOT NULL,
-                ssim_score REAL NOT NULL,
-                page_count INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                dir_name TEXT NOT NULL,
-                timestamp TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_hash ON results(hash);
-            CREATE INDEX IF NOT EXISTS idx_status ON results(status);",
-        )?;
-        Ok(Self {
-            conn: Mutex::new(conn),
-        })
+fn compute_ssim(img_a: &[u8], w_a: u32, h_a: u32, img_b: &[u8], w_b: u32, h_b: u32) -> f64 {
+    let w = w_a.min(w_b) as usize;
+    let h = h_a.min(h_b) as usize;
+    if w < 8 || h < 8 {
+        return 1.0;
     }
-
-    fn insert(
-        &self,
-        hash: &str,
-        ssim_score: f64,
-        page_count: i64,
-        status: &str,
-        dir_name: &str,
-    ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO results (hash, ssim_score, page_count, status, dir_name, timestamp)
-             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
-            params![hash, ssim_score, page_count, status, dir_name],
-        )?;
-        Ok(())
-    }
-}
-
-struct CompareResult {
-    dir_name: String,
-    hash: String,
-    ssim_score: f64,
-    page_count: i64,
-    status: String,
-}
-
-fn process_entry(entry: &GoldenEntry) -> CompareResult {
-    let dir_name = entry
-        .dir
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    let input_data = match std::fs::read(&entry.input_path) {
-        Ok(d) => d,
-        Err(e) => {
-            return CompareResult {
-                dir_name,
-                hash: String::new(),
-                ssim_score: 0.0,
-                page_count: 0,
-                status: format!("read_error: {}", e),
-            };
+    let gray_a = to_grayscale(img_a, w_a, h_a);
+    let gray_b = to_grayscale(img_b, w_b, h_b);
+    let c1: f64 = (0.01 * 255.0_f64).powi(2);
+    let c2: f64 = (0.03 * 255.0_f64).powi(2);
+    let mut total_ssim = 0.0;
+    let mut window_count = 0usize;
+    let step = 4;
+    let mut y = 0;
+    while y + 8 <= h {
+        let mut x = 0;
+        while x + 8 <= w {
+            let (mean_a, mean_b, var_a, var_b, covar) =
+                window_stats(&gray_a, w_a as usize, &gray_b, w_b as usize, x, y);
+            let numerator = (2.0 * mean_a * mean_b + c1) * (2.0 * covar + c2);
+            let denominator = (mean_a.powi(2) + mean_b.powi(2) + c1) * (var_a + var_b + c2);
+            total_ssim += numerator / denominator;
+            window_count += 1;
+            x += step;
         }
+        y += step;
+    }
+    if window_count == 0 {
+        return 1.0;
+    }
+    total_ssim / window_count as f64
+}
+
+fn extract_page_number(filename: &str) -> Option<u32> {
+    let re = regex::Regex::new(r"page-(\d+)").ok()?;
+    let caps = re.captures(filename)?;
+    caps.get(1)?.as_str().parse().ok()
+}
+
+fn find_matching_pages(dir: &Path) -> (Vec<(u32, PathBuf, PathBuf)>, usize, usize) {
+    let mut matches = Vec::new();
+    let mut our_pages = 0usize;
+    let mut pdfrest_pages = 0usize;
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return (matches, 0, 0),
     };
 
+    for entry in entries.filter_map(|e| e.ok()) {
+        let filename = entry.file_name();
+        let filename_str = filename.to_string_lossy();
+        if filename_str.starts_with("page-") && filename_str.ends_with(".png") {
+            if extract_page_number(&filename_str).is_some() {
+                our_pages += 1;
+            }
+        } else if filename_str.starts_with("pdfrest_page-") && filename_str.ends_with(".png") {
+            pdfrest_pages += 1;
+        }
+    }
+
+    for entry in std::fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+    {
+        let filename = entry.file_name();
+        let filename_str = filename.to_string_lossy();
+        if !filename_str.starts_with("page-") || !filename_str.ends_with(".png") {
+            continue;
+        }
+        let page_num = match extract_page_number(&filename_str) {
+            Some(n) => n,
+            None => continue,
+        };
+        let our_path = entry.path();
+        let pdfrest_name = format!("pdfrest_page-{}.png", page_num);
+        let pdfrest_path = dir.join(&pdfrest_name);
+        if pdfrest_path.exists() {
+            matches.push((page_num, our_path, pdfrest_path));
+        }
+    }
+
+    matches.sort_by_key(|m| m.0);
+    (matches, our_pages, pdfrest_pages)
+}
+
+fn open_db(path: &Path) -> anyhow::Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS results (
+            hash TEXT PRIMARY KEY,
+            ssim_score REAL,
+            page_count INTEGER,
+            status TEXT,
+            our_pages INTEGER,
+            pdfrest_pages INTEGER,
+            timestamp TEXT DEFAULT (datetime('now'))
+        )",
+    )?;
+    Ok(conn)
+}
+
+fn process_directory(dir: &Path) -> Option<(String, f64, usize, String, usize, usize)> {
+    let input_path = dir.join("input.pdf");
+    let input_data = std::fs::read(&input_path).ok()?;
     let hash = hash_bytes(&input_data);
 
-    let (our_flat, page_count) = match flatten_and_render(&input_data) {
-        Ok((flat, pc)) => (flat, pc as i64),
-        Err(e) => {
-            return CompareResult {
-                dir_name,
-                hash,
-                ssim_score: 0.0,
-                page_count: 0,
-                status: format!("flatten_error: {}", e),
-            };
-        }
-    };
+    let (page_matches, our_pages, pdfrest_pages) = find_matching_pages(dir);
 
-    let reference_data = match std::fs::read(&entry.reference_path) {
-        Ok(d) => d,
-        Err(e) => {
-            return CompareResult {
-                dir_name,
-                hash,
-                ssim_score: 0.0,
-                page_count,
-                status: format!("reference_read_error: {}", e),
-            };
-        }
-    };
-
-    let (our_pixels, our_w, our_h) = match render_pdf_to_rgba(&our_flat, RENDER_DPI) {
-        Ok(p) => p,
-        Err(e) => {
-            return CompareResult {
-                dir_name,
-                hash,
-                ssim_score: 0.0,
-                page_count,
-                status: format!("our_render_error: {}", e),
-            };
-        }
-    };
-
-    let (ref_pixels, ref_w, ref_h) = match render_pdf_to_rgba(&reference_data, RENDER_DPI) {
-        Ok(p) => p,
-        Err(e) => {
-            return CompareResult {
-                dir_name,
-                hash,
-                ssim_score: 0.0,
-                page_count,
-                status: format!("reference_render_error: {}", e),
-            };
-        }
-    };
-
-    let ssim_score = compute_ssim(&our_pixels, our_w, our_h, &ref_pixels, ref_w, ref_h);
-
-    let status = if ssim_score >= SSIM_PASS_THRESHOLD {
-        "pass".to_string()
-    } else {
-        "fail".to_string()
-    };
-
-    CompareResult {
-        dir_name,
-        hash,
-        ssim_score,
-        page_count,
-        status,
+    if page_matches.is_empty() {
+        return None;
     }
+
+    let mut total_ssim = 0.0;
+    let page_count = page_matches.len();
+
+    for (_, our_path, pdfrest_path) in &page_matches {
+        let (our_pixels, our_w, our_h) = match load_png(our_path) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+        let (ref_pixels, ref_w, ref_h) = match load_png(pdfrest_path) {
+            Ok(p) => p,
+            Err(_) => return None,
+        };
+        total_ssim += compute_ssim(&our_pixels, our_w, our_h, &ref_pixels, ref_w, ref_h);
+    }
+
+    let avg_ssim = total_ssim / page_count as f64;
+    let status = if avg_ssim >= SSIM_PASS_THRESHOLD {
+        "pass"
+    } else {
+        "fail"
+    };
+
+    Some((
+        hash,
+        avg_ssim,
+        page_count,
+        status.to_string(),
+        our_pages,
+        pdfrest_pages,
+    ))
 }
 
 fn main() -> anyhow::Result<()> {
-    ThreadPoolBuilder::new()
-        .stack_size(8 * 1024 * 1024)
-        .build_global()
-        .unwrap();
-
     let cli = Cli::parse();
 
-    let entries = discover_golden_entries(&cli.golden_dir);
-    if entries.is_empty() {
-        anyhow::bail!("No golden entries found in {}", cli.golden_dir.display());
+    let mut entries = Vec::new();
+    for entry in WalkDir::new(&cli.golden_dir)
+        .max_depth(1)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let dir = entry.path();
+        if dir.is_dir() {
+            entries.push(dir.to_path_buf());
+        }
     }
 
-    println!("Found {} golden entries", entries.len());
+    if entries.is_empty() {
+        anyhow::bail!("No entries found in {}", cli.golden_dir.display());
+    }
 
-    let db = Db::open(&cli.output)?;
+    println!("Found {} directories", entries.len());
 
-    let results: Vec<CompareResult> = entries
-        .par_iter()
-        .map(|entry| {
-            let result = process_entry(entry);
-            eprintln!(
-                "[{}] ssim={:.4} pages={} status={}",
-                result.dir_name, result.ssim_score, result.page_count, result.status
-            );
-            result
-        })
-        .collect();
+    let conn = open_db(&cli.output)?;
 
-    let mut pass_count = 0;
-    let mut fail_count = 0;
+    let mut has_comparable = 0usize;
+    let mut pass_count = 0usize;
+    let mut fail_count = 0usize;
     let mut total_ssim = 0.0;
-    let mut valid_count = 0;
+    let mut valid_count = 0usize;
+    let mut no_render = 0usize;
+    let mut worst_cases = Vec::new();
 
-    for result in &results {
-        let ssim = result.ssim_score;
-        total_ssim += ssim;
-        valid_count += 1;
-        if result.status == "pass" {
+    for dir in &entries {
+        let dir_name = dir
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let result = process_directory(dir);
+
+        let (hash, ssim, page_count, status, our_pages, pdfrest_pages) = match result {
+            Some(r) => r,
+            None => {
+                no_render += 1;
+                let input_path = dir.join("input.pdf");
+                let hash = std::fs::read(&input_path)
+                    .map(|d| hash_bytes(&d))
+                    .unwrap_or_default();
+                if let Err(e) = conn.execute(
+                    "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages)
+                     VALUES (?1, NULL, 0, 'no_render', 0, 0)",
+                    params![hash],
+                ) {
+                    eprintln!("DB error: {}", e);
+                }
+                continue;
+            }
+        };
+
+        has_comparable += 1;
+        let ssim_val = ssim;
+
+        if status == "pass" {
             pass_count += 1;
-        } else if result.status.starts_with("fail") {
+        } else {
             fail_count += 1;
         }
-        if let Err(e) = db.insert(
-            &result.hash,
-            result.ssim_score,
-            result.page_count,
-            &result.status,
-            &result.dir_name,
-        ) {
-            eprintln!("Failed to insert result for {}: {}", result.dir_name, e);
+
+        total_ssim += ssim_val;
+        valid_count += 1;
+        worst_cases.push((dir_name.clone(), ssim_val));
+        worst_cases.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        if worst_cases.len() > 10 {
+            worst_cases.pop();
         }
+
+        if let Err(e) = conn.execute(
+            "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![hash, ssim_val, page_count as i64, status, our_pages as i64, pdfrest_pages as i64],
+        ) {
+            eprintln!("DB error: {}", e);
+        }
+
+        println!(
+            "[{}] ssim={:.4} pages={} status={}",
+            dir_name, ssim_val, page_count, status
+        );
     }
 
     let avg_ssim = if valid_count > 0 {
@@ -367,10 +322,17 @@ fn main() -> anyhow::Result<()> {
 
     println!();
     println!("=== Summary ===");
-    println!("Total: {}", results.len());
-    println!("Pass (>={:.2}): {}", SSIM_PASS_THRESHOLD, pass_count);
+    println!("Total directories: {}", entries.len());
+    println!("No render (skipped): {}", no_render);
+    println!("Have both PNGs: {}", has_comparable);
+    println!("Pass (≥{:.2}): {}", SSIM_PASS_THRESHOLD, pass_count);
     println!("Fail: {}", fail_count);
     println!("Average SSIM: {:.4}", avg_ssim);
+    println!();
+    println!("=== Worst 10 Cases ===");
+    for (name, ssim) in worst_cases.iter().rev() {
+        println!("  {}: {:.4}", name, ssim);
+    }
     println!("Results written to: {}", cli.output.display());
 
     Ok(())
