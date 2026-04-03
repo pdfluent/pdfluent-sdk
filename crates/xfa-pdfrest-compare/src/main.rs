@@ -319,47 +319,50 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
 
-        has_comparable += 1;
-        let ssim_val = ssim;
-
-        if status == "pass" {
-            pass_count += 1;
-        } else {
-            fail_count += 1;
-        }
-
         if pdfrest_truncated {
             pdfrest_truncated_count += 1;
-        }
-
-        total_ssim += ssim_val;
-        valid_count += 1;
-        worst_cases.push((dir_name.clone(), ssim_val));
-        worst_cases.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-        if worst_cases.len() > 10 {
-            worst_cases.pop();
-        }
-
-        if let Err(e) = conn.execute(
-            "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![hash, ssim_val, page_count as i64, status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64],
-        ) {
-            eprintln!("DB error: {}", e);
-        }
-
-        println!(
-            "[{}] ssim={:.4} pages={} status={}{}",
-            dir_name,
-            ssim_val,
-            page_count,
-            status,
-            if pdfrest_truncated {
-                " (pdfrest_truncated)"
-            } else {
-                ""
+            if let Err(e) = conn.execute(
+                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated)
+                 VALUES (?1, NULL, ?3, ?4, ?5, ?6, ?7)",
+                params![hash, page_count as i64, status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64],
+            ) {
+                eprintln!("DB error: {}", e);
             }
-        );
+            println!(
+                "[{}] pages={} status={} (pdfrest_truncated - excluded from metrics)",
+                dir_name, page_count, status
+            );
+        } else {
+            has_comparable += 1;
+            let ssim_val = ssim;
+
+            if status == "pass" {
+                pass_count += 1;
+            } else {
+                fail_count += 1;
+            }
+
+            total_ssim += ssim_val;
+            valid_count += 1;
+            worst_cases.push((dir_name.clone(), ssim_val));
+            worst_cases.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            if worst_cases.len() > 10 {
+                worst_cases.pop();
+            }
+
+            if let Err(e) = conn.execute(
+                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![hash, ssim_val, page_count as i64, status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64],
+            ) {
+                eprintln!("DB error: {}", e);
+            }
+
+            println!(
+                "[{}] ssim={:.4} pages={} status={}",
+                dir_name, ssim_val, page_count, status
+            );
+        }
     }
 
     let avg_ssim = if valid_count > 0 {
@@ -373,13 +376,26 @@ fn main() -> anyhow::Result<()> {
     println!("Total directories: {}", entries.len());
     println!("No render (skipped): {}", no_render);
     println!("Encrypted (skipped): {}", encrypted_skip);
-    println!("Have both PNGs: {}", has_comparable);
-    println!("Pass (≥{:.2}): {}", SSIM_PASS_THRESHOLD, pass_count);
-    println!("Fail: {}", fail_count);
     println!(
-        "pdfrest truncated (max 3 pages): {}",
+        "pdfrest truncated (max 3 pages - excluded): {}",
         pdfrest_truncated_count
     );
+    println!("Comparable entries: {}", has_comparable);
+    let pass_rate = if has_comparable > 0 {
+        (pass_count as f64 / has_comparable as f64) * 100.0
+    } else {
+        0.0
+    };
+    let fail_rate = if has_comparable > 0 {
+        (fail_count as f64 / has_comparable as f64) * 100.0
+    } else {
+        0.0
+    };
+    println!(
+        "Pass (≥{:.2}): {} ({:.1}%)",
+        SSIM_PASS_THRESHOLD, pass_count, pass_rate
+    );
+    println!("Fail: {} ({:.1}%)", fail_count, fail_rate);
     println!("Average SSIM: {:.4}", avg_ssim);
     println!();
     println!("=== Worst 10 Cases ===");
