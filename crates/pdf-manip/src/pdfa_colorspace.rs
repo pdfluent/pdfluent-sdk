@@ -103,6 +103,16 @@ pub fn has_pdfa_output_intent(doc: &Document) -> bool {
 
 /// Check if the existing OutputIntent already uses a CMYK ICC profile.
 fn existing_output_intent_is_cmyk(doc: &Document) -> bool {
+    existing_output_intent_has_n(doc, 4)
+}
+
+/// Check if the existing OutputIntent already uses an RGB (sRGB) ICC profile.
+fn existing_output_intent_has_srgb(doc: &Document) -> bool {
+    existing_output_intent_has_n(doc, 3)
+}
+
+/// Check if any OutputIntent has an ICC profile with the given N value.
+fn existing_output_intent_has_n(doc: &Document, expected_n: i64) -> bool {
     let catalog = match get_catalog(doc) {
         Some(c) => c,
         None => return false,
@@ -135,7 +145,7 @@ fn existing_output_intent_is_cmyk(doc: &Document) -> bool {
         if let Ok(Object::Reference(icc_id)) = dict.get(b"DestOutputProfile") {
             if let Some(Object::Stream(icc_stream)) = doc.objects.get(&icc_id) {
                 if let Ok(Object::Integer(n)) = icc_stream.dict.get(b"N") {
-                    if *n == 4 {
+                    if *n == expected_n {
                         return true;
                     }
                 }
@@ -174,7 +184,15 @@ pub fn add_srgb_output_intent(doc: &mut Document) -> Result<()> {
                     _ => continue,
                 };
                 if let Ok(Object::Reference(icc_id)) = dict.get(b"DestOutputProfile") {
-                    return Some(*icc_id);
+                    // Only reuse if it's an RGB profile (N=3). A CMYK profile
+                    // (N=4) must not be shared with an sRGB OutputIntent.
+                    if let Some(Object::Stream(s)) = doc.objects.get(icc_id) {
+                        if s.dict.get(b"N").ok().and_then(|o| o.as_i64().ok()) == Some(3) {
+                            return Some(*icc_id);
+                        }
+                    } else {
+                        return Some(*icc_id);
+                    }
                 }
             }
             None
@@ -247,21 +265,31 @@ pub fn normalize_colorspaces(doc: &mut Document) -> Result<ColorSpaceReport> {
     // Also scan for DeviceCMYK usage in content streams and image XObjects.
     let has_cmyk =
         unique_names.iter().any(|n| n.contains("DeviceCMYK")) || has_device_cmyk_in_objects(doc);
+    let has_rgb = unique_names.iter().any(|n| n.contains("DeviceRGB"));
 
-    // Force CMYK OutputIntent when DeviceCMYK is detected, even if a non-CMYK
-    // OutputIntent already exists (PDF/A rule 6.2.4.3:3).
+    // Ensure an OutputIntent exists for each device-dependent color space used.
+    // PDF/A-2 allows multiple OutputIntent entries (one per color space).
+    // When both DeviceRGB and DeviceCMYK are present, we need both an sRGB
+    // and a CMYK OutputIntent to avoid veraPDF 6.2.4.3 failures. (#648)
     let output_intent_added = if !had_output_intent {
         if has_cmyk {
             add_cmyk_output_intent(doc)?;
-        } else {
+        }
+        if has_rgb || !has_cmyk {
             add_srgb_output_intent(doc)?;
         }
         true
-    } else if has_cmyk && !existing_output_intent_is_cmyk(doc) {
-        add_cmyk_output_intent(doc)?;
-        true
     } else {
-        false
+        let mut added = false;
+        if has_cmyk && !existing_output_intent_is_cmyk(doc) {
+            add_cmyk_output_intent(doc)?;
+            added = true;
+        }
+        if (has_rgb || !has_cmyk) && !existing_output_intent_has_srgb(doc) {
+            add_srgb_output_intent(doc)?;
+            added = true;
+        }
+        added
     };
 
     // Always add Default{CMYK,RGB,Gray} to all pages — even if we don't detect
