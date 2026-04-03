@@ -170,21 +170,39 @@ fn xfa_flatten_inner(
     let _ = apply_dynamic_scripts(&mut tree, root_id);
 
     // Temporary tree dump for debugging
-    fn dump_tree(tree: &xfa_layout_engine::form::FormTree, id: xfa_layout_engine::form::FormNodeId, depth: usize) {
-        if depth > 6 { return; }
+    fn dump_tree(
+        tree: &xfa_layout_engine::form::FormTree,
+        id: xfa_layout_engine::form::FormNodeId,
+        depth: usize,
+    ) {
+        if depth > 6 {
+            return;
+        }
         let node = tree.get(id);
         let meta = tree.meta(id);
         let indent = "  ".repeat(depth);
         let val = match &node.node_type {
-            xfa_layout_engine::form::FormNodeType::Field { value } if !value.is_empty() => format!(" val={:?}", &value[..value.len().min(30)]),
+            xfa_layout_engine::form::FormNodeType::Field { value } if !value.is_empty() => {
+                format!(" val={:?}", &value[..value.len().min(30)])
+            }
             _ => String::new(),
         };
-        eprintln!("{indent}{:?} {:?} {:?} {:?} bm={}x{} presence={:?} children={}{}",
-            id, node.name, node.layout,
+        eprintln!(
+            "{indent}{:?} {:?} {:?} {:?} bm={}x{} presence={:?} children={}{}",
+            id,
+            node.name,
+            node.layout,
             std::mem::discriminant(&node.node_type),
-            node.box_model.width.map_or("auto".to_string(), |w| format!("{:.0}", w)),
-            node.box_model.height.map_or("auto".to_string(), |h| format!("{:.0}", h)),
-            meta.presence, node.children.len(), val);
+            node.box_model
+                .width
+                .map_or("auto".to_string(), |w| format!("{:.0}", w)),
+            node.box_model
+                .height
+                .map_or("auto".to_string(), |h| format!("{:.0}", h)),
+            meta.presence,
+            node.children.len(),
+            val
+        );
         for &cid in &node.children {
             dump_tree(tree, cid, depth + 1);
         }
@@ -370,11 +388,8 @@ fn is_xfa_placeholder_stream(stream: &[u8]) -> bool {
 /// "For Evaluation Only"). These are short streams with ≤3 Tj operators
 /// that should not count as real pre-rendered form content.
 fn is_watermark_stream(stream: &[u8]) -> bool {
-    const WATERMARK_MARKERS: [&[u8]; 3] = [
-        b"Evaluation Only",
-        b"Qoppa Software",
-        b"For Evaluation",
-    ];
+    const WATERMARK_MARKERS: [&[u8]; 3] =
+        [b"Evaluation Only", b"Qoppa Software", b"For Evaluation"];
     WATERMARK_MARKERS
         .iter()
         .any(|marker| contains_ascii_case_insensitive(stream, marker))
@@ -1483,10 +1498,16 @@ ET
         doc.save_to(&mut buf).expect("save encrypted PDF");
 
         // lopdf auto-decrypts owner-only encrypted PDFs, so is_pdf_encrypted returns false.
-        assert!(!is_pdf_encrypted(&buf), "lopdf should auto-decrypt owner-only PDFs");
+        assert!(
+            !is_pdf_encrypted(&buf),
+            "lopdf should auto-decrypt owner-only PDFs"
+        );
 
         // flatten_xfa_to_pdf should succeed — no XFA content, returns input as-is.
         let result = flatten_xfa_to_pdf(&buf);
-        assert!(result.is_ok(), "owner-only encrypted PDF should be handled, got: {result:?}");
+        assert!(
+            result.is_ok(),
+            "owner-only encrypted PDF should be handled, got: {result:?}"
+        );
     }
 }
