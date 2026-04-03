@@ -110,7 +110,11 @@ impl DataDom {
         let mut dom = Self::new();
         let root_element = doc.root_element();
         let root_id = dom.build_from_xml_node(&root_element, None);
-        dom.root = Some(root_id);
+        // XFA datasets packets wrap the actual data in <xfa:datasets><xfa:data>...
+        // Navigate through these wrappers so root points to <xfa:data>, making
+        // the form data (e.g. <form1>) directly accessible as root children.
+        let effective_root = dom.unwrap_datasets_root(root_id);
+        dom.root = Some(effective_root);
         Ok(dom)
     }
 
@@ -189,6 +193,24 @@ impl DataDom {
                 parent,
             })
         }
+    }
+
+    /// Skip `<xfa:datasets>` and descend into `<xfa:data>` so that the
+    /// form data elements are direct children of root.
+    fn unwrap_datasets_root(&self, id: DataNodeId) -> DataNodeId {
+        if let Some(node) = self.get(id) {
+            if node.name() == "datasets" {
+                // Look for a child named "data"
+                for &child in self.children(id) {
+                    if let Some(cn) = self.get(child) {
+                        if cn.name() == "data" && cn.is_group() {
+                            return child;
+                        }
+                    }
+                }
+            }
+        }
+        id
     }
 
     /// Allocate a new node in the arena (does not attach to any parent).

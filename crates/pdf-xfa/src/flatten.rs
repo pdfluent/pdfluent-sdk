@@ -38,27 +38,39 @@ enum DecryptResult {
 /// Try to handle encryption: if not encrypted return as-is, if encrypted try
 /// empty password (owner-only encryption), otherwise report needs-password.
 fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
-    let doc = match Document::load_mem(pdf_bytes) {
+    let mut doc = match Document::load_mem(pdf_bytes) {
         Ok(d) => d,
         Err(_) => return DecryptResult::NotEncrypted, // Can't parse — let downstream handle it
     };
-    if doc.trailer.get(b"Encrypt").is_err() {
-        return DecryptResult::NotEncrypted;
+
+    // lopdf auto-decrypts with empty password on load and removes /Encrypt.
+    // Use was_encrypted() to detect this — the original bytes are still encrypted
+    // and downstream parsers (pdf_syntax) can't read them.
+    if doc.was_encrypted() {
+        // Already decrypted by lopdf — save the decrypted document.
+        let mut buf = Vec::new();
+        match doc.save_to(&mut buf) {
+            Ok(()) => return DecryptResult::Decrypted(buf),
+            Err(_) => return DecryptResult::NeedsPassword,
+        }
     }
 
-    // /Encrypt present — try loading with empty password (owner-only encryption).
-    match Document::load_mem_with_password(pdf_bytes, "") {
-        Ok(mut decrypted_doc) => {
-            // Remove encryption artifacts so the output is a clean PDF.
-            decrypted_doc.trailer.remove(b"Encrypt");
-            let mut buf = Vec::new();
-            match decrypted_doc.save_to(&mut buf) {
-                Ok(()) => DecryptResult::Decrypted(buf),
-                Err(_) => DecryptResult::NeedsPassword,
+    if doc.trailer.get(b"Encrypt").is_ok() {
+        // /Encrypt present but lopdf couldn't auto-decrypt — try explicit empty password.
+        match Document::load_mem_with_password(pdf_bytes, "") {
+            Ok(mut decrypted_doc) => {
+                decrypted_doc.trailer.remove(b"Encrypt");
+                let mut buf = Vec::new();
+                match decrypted_doc.save_to(&mut buf) {
+                    Ok(()) => return DecryptResult::Decrypted(buf),
+                    Err(_) => return DecryptResult::NeedsPassword,
+                }
             }
+            Err(_) => return DecryptResult::NeedsPassword,
         }
-        Err(_) => DecryptResult::NeedsPassword,
     }
+
+    DecryptResult::NotEncrypted
 }
 
 /// Flatten all XFA content in `pdf_bytes` to static PDF content streams.
