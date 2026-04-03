@@ -37,7 +37,7 @@ use super::{PdfTest, TestResult, TestStatus};
 use crate::oracles::itext::ITextOracle;
 use crate::oracles::ssim;
 
-const SSIM_PASS_THRESHOLD: f64 = 0.85;
+const SSIM_PASS_THRESHOLD: f64 = 0.95;
 const RENDER_DPI: f64 = 150.0;
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
