@@ -13,14 +13,14 @@
 //! The result is a static PDF with no XFA dependency: it can be rendered
 //! by any standard PDF viewer.
 
-use lopdf::{Dictionary, Document, Object, ObjectId, Stream, dictionary};
+use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
 use std::collections::HashMap;
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
 use crate::font_bridge::{ResolvedFont, XfaFontResolver, XfaFontSpec};
 use crate::merger::FormMerger;
-use crate::render_bridge::{FontMetricsData, XfaRenderConfig, generate_all_overlays};
+use crate::render_bridge::{generate_all_overlays, FontMetricsData, XfaRenderConfig};
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::layout::LayoutEngine;
 
@@ -211,6 +211,11 @@ fn xfa_flatten_inner(
     }
     dump_tree(&tree, root_id, 0);
 
+    // Resolve fonts BEFORE layout so the layout engine uses actual font metrics
+    // (widths, ascender, descender) instead of generic AFM tables.
+    let resolved_fonts = resolve_template_fonts(template_xml, pdf_bytes);
+    inject_resolved_metrics(&mut tree, &resolved_fonts);
+
     let engine = LayoutEngine::new(&tree);
     let layout = engine
         .layout(root_id)
@@ -224,7 +229,7 @@ fn xfa_flatten_inner(
         .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
 
     let (font_map, embedded_font_objects, metrics_data) =
-        resolve_and_embed_fonts(&mut doc, template_xml, pdf_bytes);
+        embed_resolved_fonts(&mut doc, &resolved_fonts);
 
     let mut config = XfaRenderConfig::default();
     config.font_map = font_map;
@@ -259,12 +264,12 @@ fn xfa_flatten_inner(
     let n_layout = overlays.len();
     let n_existing = existing_page_ids.len();
 
-    for (i, overlay_bytes) in overlays.iter().enumerate() {
+    for (i, overlay) in overlays.iter().enumerate() {
         if i < n_existing {
             write_page_content(
                 &mut doc,
                 existing_page_ids[i],
-                overlay_bytes,
+                overlay,
                 &font_ids,
                 &embedded_font_objects,
             )?;
@@ -274,7 +279,7 @@ fn xfa_flatten_inner(
                 &mut doc,
                 lp.width,
                 lp.height,
-                overlay_bytes,
+                overlay,
                 &font_ids,
                 &embedded_font_objects,
             )?;
@@ -283,7 +288,16 @@ fn xfa_flatten_inner(
 
     if n_layout < n_existing {
         for &page_id in &existing_page_ids[n_layout..n_existing] {
-            write_page_content(&mut doc, page_id, &[], &font_ids, &embedded_font_objects)?;
+            write_page_content(
+                &mut doc,
+                page_id,
+                &PageOverlay {
+                    content_stream: Vec::new(),
+                    images: Vec::new(),
+                },
+                &font_ids,
+                &embedded_font_objects,
+            )?;
         }
     }
 
@@ -392,10 +406,73 @@ fn embed_font_in_pdf(doc: &mut Document, font: &ResolvedFont) -> ObjectId {
     doc.add_object(Object::Dictionary(font_dict))
 }
 
-fn resolve_and_embed_fonts(
-    doc: &mut Document,
+/// Resolve all fonts referenced in the XFA template without embedding them.
+///
+/// Returns a map from typeface name to `ResolvedFont`. Called BEFORE layout so
+/// that resolved metrics can be injected into the `FormTree`.
+fn resolve_template_fonts(
     template_xml: &str,
     pdf_bytes: &[u8],
+) -> HashMap<String, ResolvedFont> {
+    let mut resolved = HashMap::new();
+    let font_names = collect_template_font_names(template_xml);
+    if font_names.is_empty() {
+        return resolved;
+    }
+    let source_doc = match Document::load_mem(pdf_bytes) {
+        Ok(d) => d,
+        Err(_) => return resolved,
+    };
+    let embedded_fonts = extract_embedded_fonts(&source_doc);
+    let mut resolver = XfaFontResolver::new(embedded_fonts);
+    for name in &font_names {
+        let spec = XfaFontSpec::from_xfa_attrs(name, None, None, None);
+        match resolver.resolve(&spec) {
+            Ok(font) => {
+                resolved.insert(name.clone(), font);
+            }
+            Err(e) => {
+                eprintln!("Font resolution failed for '{}': {}", name, e);
+            }
+        }
+    }
+    resolved
+}
+
+/// Inject resolved font metrics into the FormTree before layout.
+///
+/// For each node whose style metadata carries a `font_family`, looks up the
+/// matching `ResolvedFont` and populates the `resolved_widths`, `resolved_upem`,
+/// `resolved_ascender`, and `resolved_descender` fields on the node's `FontMetrics`.
+/// This makes `measure_width()` and `line_height_pt()` in the layout engine use
+/// actual font data instead of generic AFM tables.
+fn inject_resolved_metrics(
+    tree: &mut xfa_layout_engine::form::FormTree,
+    resolved: &HashMap<String, ResolvedFont>,
+) {
+    for i in 0..tree.nodes.len() {
+        let id = xfa_layout_engine::form::FormNodeId(i);
+        let font_family = tree.meta(id).style.font_family.clone();
+        if let Some(ref family) = font_family {
+            if let Some(font) = resolved.get(family) {
+                let (_first_char, widths) = font.pdf_glyph_widths();
+                let node = tree.get_mut(id);
+                node.font.resolved_widths = Some(widths);
+                node.font.resolved_upem = Some(font.units_per_em);
+                node.font.resolved_ascender = Some(font.ascender);
+                node.font.resolved_descender = Some(font.descender);
+            }
+        }
+    }
+}
+
+/// Embed already-resolved fonts into the PDF document.
+///
+/// Called AFTER layout. Returns the font_map (typeface -> PDF resource name),
+/// the font objects for page resources, and the metrics data for render_bridge.
+fn embed_resolved_fonts(
+    doc: &mut Document,
+    resolved: &HashMap<String, ResolvedFont>,
 ) -> (
     HashMap<String, String>,
     Vec<(String, ObjectId)>,
@@ -404,39 +481,21 @@ fn resolve_and_embed_fonts(
     let mut font_map = HashMap::new();
     let mut font_objects = Vec::new();
     let mut metrics_data = HashMap::new();
-    let font_names = collect_template_font_names(template_xml);
-    if font_names.is_empty() {
-        return (font_map, font_objects, metrics_data);
-    }
-    let source_doc = match Document::load_mem(pdf_bytes) {
-        Ok(d) => d,
-        Err(_) => return (font_map, font_objects, metrics_data),
-    };
-    let embedded_fonts = extract_embedded_fonts(&source_doc);
-    let mut resolver = XfaFontResolver::new(embedded_fonts);
-    for (idx, name) in font_names.iter().enumerate() {
-        let spec = XfaFontSpec::from_xfa_attrs(name, None, None, None);
-        match resolver.resolve(&spec) {
-            Ok(resolved) => {
-                let resource_name = format!("XFA_F{}", idx);
-                let obj_id = embed_font_in_pdf(doc, &resolved);
-                font_map.insert(name.clone(), format!("/{}", resource_name));
-                font_objects.push((resource_name, obj_id));
-                let (_first_char, widths) = resolved.pdf_glyph_widths();
-                metrics_data.insert(
-                    name.clone(),
-                    FontMetricsData {
-                        widths,
-                        upem: resolved.units_per_em,
-                        ascender: resolved.ascender,
-                        descender: resolved.descender,
-                    },
-                );
-            }
-            Err(e) => {
-                eprintln!("Font resolution failed for '{}': {}", name, e);
-            }
-        }
+    for (idx, (name, font)) in resolved.iter().enumerate() {
+        let resource_name = format!("XFA_F{}", idx);
+        let obj_id = embed_font_in_pdf(doc, font);
+        font_map.insert(name.clone(), format!("/{}", resource_name));
+        font_objects.push((resource_name, obj_id));
+        let (_first_char, widths) = font.pdf_glyph_widths();
+        metrics_data.insert(
+            name.clone(),
+            FontMetricsData {
+                widths,
+                upem: font.units_per_em,
+                ascender: font.ascender,
+                descender: font.descender,
+            },
+        );
     }
     (font_map, font_objects, metrics_data)
 }
@@ -1030,7 +1089,7 @@ mod tests {
 
     /// Build a minimal XFA PDF in memory (same as generate_xfa_layout_fixtures).
     fn build_xfa_pdf_with_content(xdp: &str, page_content: Vec<u8>) -> Vec<u8> {
-        use lopdf::{Document, Object, Stream, dictionary};
+        use lopdf::{dictionary, Document, Object, Stream};
         let mut doc = Document::with_version("1.4");
         let xdp_bytes = xdp.as_bytes().to_vec();
         let xfa_stream = Stream::new(
@@ -1085,7 +1144,7 @@ mod tests {
         normal_appearance: Object,
         widget_extra: Dictionary,
     ) -> Vec<u8> {
-        use lopdf::{Document, Object, Stream, dictionary};
+        use lopdf::{dictionary, Document, Object, Stream};
 
         let mut doc = Document::with_version("1.4");
         let xdp_bytes = SIMPLE_XDP.as_bytes().to_vec();
