@@ -971,17 +971,37 @@ impl<'a> LayoutEngine<'a> {
     fn expand_occur(&self, children: &[FormNodeId]) -> Vec<FormNodeId> {
         let mut expanded = Vec::new();
         for &child_id in children {
-            // Skip layout-hidden nodes — they occupy no space (XFA 3.3 §3.2.8).
             if self.is_layout_hidden(child_id) {
                 continue;
             }
             let child = self.form.get(child_id);
-            let count = child.occur.count();
+            // #701: limit blank repeating subforms to occur.min
+            let count = if child.occur.is_repeating()
+                && child.occur.count() > child.occur.min
+                && self.has_field_descendants(child_id)
+                && self.subtree_is_blank(child_id)
+            {
+                child.occur.min
+            } else {
+                child.occur.count()
+            };
             for _ in 0..count {
                 expanded.push(child_id);
             }
         }
         expanded
+    }
+
+    /// Returns true if the subtree contains at least one Field/Draw/Image node.
+    fn has_field_descendants(&self, id: FormNodeId) -> bool {
+        let node = self.form.get(id);
+        match &node.node_type {
+            FormNodeType::Field { .. } | FormNodeType::Draw { .. } | FormNodeType::Image { .. } => {
+                true
+            }
+            FormNodeType::Subform => node.children.iter().any(|&c| self.has_field_descendants(c)),
+            _ => false,
+        }
     }
 
     /// Positioned layout: each child uses its own x,y from the box model.
@@ -1504,21 +1524,21 @@ impl<'a> LayoutEngine<'a> {
             let expanded = self.expand_occur(node_children);
             match node.layout {
                 LayoutStrategy::TopToBottom => {
+                    // #687: pass available so text wrapping is considered
                     for &child_id in &expanded {
-                        let cs = self.compute_extent(child_id);
+                        let cs = self.compute_extent_with_available(child_id, available);
                         content_size.width = content_size.width.max(cs.width);
                         content_size.height += cs.height;
                     }
                 }
                 LayoutStrategy::LeftToRightTB | LayoutStrategy::Row => {
                     for &child_id in &expanded {
-                        let cs = self.compute_extent(child_id);
+                        let cs = self.compute_extent_with_available(child_id, available);
                         content_size.width += cs.width;
                         content_size.height = content_size.height.max(cs.height);
                     }
                 }
                 LayoutStrategy::Table => {
-                    // Table width = sum of resolved column widths
                     let avail_w = available.map(|a| a.width).unwrap_or(f64::MAX);
                     let col_widths =
                         self.resolve_column_widths_with_override(node, avail_w, children_override);
@@ -1526,7 +1546,7 @@ impl<'a> LayoutEngine<'a> {
                     content_size.width = content_size.width.max(table_width);
                     // Table height = sum of row heights
                     for &row_id in &expanded {
-                        let row_extent = self.compute_extent(row_id);
+                        let row_extent = self.compute_extent_with_available(row_id, available);
                         content_size.height += row_extent.height;
                     }
                 }
