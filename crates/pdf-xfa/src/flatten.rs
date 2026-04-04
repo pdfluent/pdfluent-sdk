@@ -14,9 +14,11 @@
 //! by any standard PDF viewer.
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
+use std::collections::HashMap;
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
+use crate::font_bridge::{ResolvedFont, XfaFontResolver, XfaFontSpec};
 use crate::merger::FormMerger;
 use crate::render_bridge::{generate_all_overlays, XfaRenderConfig};
 use xfa_dom_resolver::data_dom::DataDom;
@@ -218,12 +220,17 @@ fn xfa_flatten_inner(
         return Err(XfaError::LayoutFailed("layout produced 0 pages".into()));
     }
 
-    let config = XfaRenderConfig::default();
-    let overlays = generate_all_overlays(&layout, &config)
-        .map_err(|e| XfaError::LayoutFailed(format!("overlay generation: {e:?}")))?;
-
     let mut doc = Document::load_mem(pdf_bytes)
         .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
+
+    let (font_map, embedded_font_objects) =
+        resolve_and_embed_fonts(&mut doc, template_xml, pdf_bytes);
+
+    let mut config = XfaRenderConfig::default();
+    config.font_map = font_map;
+
+    let overlays = generate_all_overlays(&layout, &config)
+        .map_err(|e| XfaError::LayoutFailed(format!("overlay generation: {e:?}")))?;
 
     // Register standard PDF fonts: F1=Times-Roman (serif), F2=Helvetica (sans), F3=Courier (mono).
     let font_ids: [ObjectId; 3] = [
@@ -253,16 +260,16 @@ fn xfa_flatten_inner(
 
     for (i, overlay_bytes) in overlays.iter().enumerate() {
         if i < n_existing {
-            write_page_content(&mut doc, existing_page_ids[i], overlay_bytes, &font_ids)?;
+            write_page_content(&mut doc, existing_page_ids[i], overlay_bytes, &font_ids, &embedded_font_objects)?;
         } else {
             let lp = &layout.pages[i];
-            add_new_page(&mut doc, lp.width, lp.height, overlay_bytes, &font_ids)?;
+            add_new_page(&mut doc, lp.width, lp.height, overlay_bytes, &font_ids, &embedded_font_objects)?;
         }
     }
 
     if n_layout < n_existing {
         for &page_id in &existing_page_ids[n_layout..n_existing] {
-            write_page_content(&mut doc, page_id, &[], &font_ids)?;
+            write_page_content(&mut doc, page_id, &[], &font_ids, &embedded_font_objects)?;
         }
     }
 
@@ -272,6 +279,91 @@ fn xfa_flatten_inner(
     doc.save_to(&mut out)
         .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Font extraction, resolution, and embedding
+// ---------------------------------------------------------------------------
+
+fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>)> {
+    let mut fonts = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (_id, obj) in &doc.objects {
+        let dict = match obj.as_dict() { Ok(d) => d, Err(_) => continue };
+        let is_font = dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"Font".as_slice());
+        if !is_font { continue; }
+        let base_font = match dict.get(b"BaseFont").ok().and_then(|o| o.as_name().ok()) {
+            Some(n) => String::from_utf8_lossy(n).to_string(), None => continue,
+        };
+        let fd_id = match dict.get(b"FontDescriptor").ok() { Some(Object::Reference(id)) => *id, _ => continue };
+        let fd = match doc.get_dictionary(fd_id) { Ok(d) => d, Err(_) => continue };
+        let font_stream_id = fd.get(b"FontFile2").or_else(|_| fd.get(b"FontFile3")).or_else(|_| fd.get(b"FontFile")).ok().and_then(|o| o.as_reference().ok());
+        let Some(stream_id) = font_stream_id else { continue };
+        if !seen.insert(stream_id) { continue; }
+        let Ok(stream) = doc.get_object(stream_id).and_then(|o| o.as_stream()) else { continue };
+        let data = stream.get_plain_content().unwrap_or_else(|_| stream.content.clone());
+        if !data.is_empty() {
+            let clean_name = if let Some(pos) = base_font.find('+') { base_font[pos + 1..].to_string() } else { base_font.clone() };
+            fonts.push((clean_name, data));
+        }
+    }
+    fonts
+}
+
+fn collect_template_font_names(template_xml: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Ok(xml_doc) = roxmltree::Document::parse(template_xml) {
+        for node in xml_doc.descendants() {
+            if node.tag_name().name() == "font" {
+                if let Some(typeface) = node.attribute("typeface") {
+                    let name = typeface.to_string();
+                    if !name.is_empty() && seen.insert(name.to_lowercase()) { names.push(name); }
+                }
+            }
+        }
+    }
+    names
+}
+
+fn embed_font_in_pdf(doc: &mut Document, font: &ResolvedFont) -> ObjectId {
+    let font_stream = Stream::new(dictionary! { "Length" => Object::Integer(font.data.len() as i64), "Length1" => Object::Integer(font.data.len() as i64) }, font.data.clone());
+    let font_file_id = doc.add_object(Object::Stream(font_stream));
+    let upem = font.units_per_em as f64;
+    let scale = 1000.0 / upem.max(1.0);
+    let ascent = (font.ascender as f64 * scale) as i64;
+    let descent = (font.descender as f64 * scale) as i64;
+    let cap_height = (ascent as f64 * 0.7) as i64;
+    let fd = dictionary! { "Type" => Object::Name(b"FontDescriptor".to_vec()), "FontName" => Object::Name(font.name.replace(' ', "-").into_bytes()), "Flags" => Object::Integer(32), "FontBBox" => Object::Array(vec![Object::Integer(0), Object::Integer(descent), Object::Integer(1000), Object::Integer(ascent)]), "ItalicAngle" => Object::Integer(0), "Ascent" => Object::Integer(ascent), "Descent" => Object::Integer(descent), "CapHeight" => Object::Integer(cap_height), "StemV" => Object::Integer(80), "FontFile2" => Object::Reference(font_file_id) };
+    let fd_id = doc.add_object(Object::Dictionary(fd));
+    let (first_char, widths) = font.pdf_glyph_widths();
+    let last_char = first_char + widths.len() as u16 - 1;
+    let widths_arr: Vec<Object> = widths.iter().map(|&w| Object::Integer(w as i64)).collect();
+    let font_dict = dictionary! { "Type" => Object::Name(b"Font".to_vec()), "Subtype" => Object::Name(b"TrueType".to_vec()), "BaseFont" => Object::Name(font.name.replace(' ', "-").into_bytes()), "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()), "FirstChar" => Object::Integer(first_char as i64), "LastChar" => Object::Integer(last_char as i64), "Widths" => Object::Array(widths_arr), "FontDescriptor" => Object::Reference(fd_id) };
+    doc.add_object(Object::Dictionary(font_dict))
+}
+
+fn resolve_and_embed_fonts(doc: &mut Document, template_xml: &str, pdf_bytes: &[u8]) -> (HashMap<String, String>, Vec<(String, ObjectId)>) {
+    let mut font_map = HashMap::new();
+    let mut font_objects = Vec::new();
+    let font_names = collect_template_font_names(template_xml);
+    if font_names.is_empty() { return (font_map, font_objects); }
+    let source_doc = match Document::load_mem(pdf_bytes) { Ok(d) => d, Err(_) => return (font_map, font_objects) };
+    let embedded_fonts = extract_embedded_fonts(&source_doc);
+    let mut resolver = XfaFontResolver::new(embedded_fonts);
+    for (idx, name) in font_names.iter().enumerate() {
+        let spec = XfaFontSpec::from_xfa_attrs(name, None, None, None);
+        match resolver.resolve(&spec) {
+            Ok(resolved) => {
+                let resource_name = format!("XFA_F{}", idx);
+                let obj_id = embed_font_in_pdf(doc, &resolved);
+                font_map.insert(name.clone(), format!("/{}", resource_name));
+                font_objects.push((resource_name, obj_id));
+            }
+            Err(e) => { eprintln!("Font resolution failed for '{}': {}", name, e); }
+        }
+    }
+    (font_map, font_objects)
 }
 
 /// Fallback: preserve existing page content, strip AcroForm/widgets only.
@@ -749,8 +841,9 @@ fn write_page_content(
     page_id: ObjectId,
     content: &[u8],
     font_ids: &[ObjectId; 3],
+    embedded_fonts: &[(String, ObjectId)],
 ) -> Result<()> {
-    let resources = make_resources_dict(font_ids);
+    let resources = make_resources_dict(font_ids, embedded_fonts);
 
     // Build content stream.
     let stream = Stream::new(
@@ -774,8 +867,9 @@ fn add_new_page(
     h: f64,
     content: &[u8],
     font_ids: &[ObjectId; 3],
+    embedded_fonts: &[(String, ObjectId)],
 ) -> Result<()> {
-    let resources = make_resources_dict(font_ids);
+    let resources = make_resources_dict(font_ids, embedded_fonts);
     let stream = Stream::new(
         dictionary! { "Length" => Object::Integer(content.len() as i64) },
         content.to_vec(),
@@ -808,11 +902,12 @@ fn add_new_page(
     Ok(())
 }
 
-fn make_resources_dict(font_ids: &[ObjectId; 3]) -> Dictionary {
+fn make_resources_dict(font_ids: &[ObjectId; 3], embedded_fonts: &[(String, ObjectId)]) -> Dictionary {
     let mut fonts = Dictionary::new();
-    fonts.set("F1", Object::Reference(font_ids[0])); // Times-Roman (serif)
-    fonts.set("F2", Object::Reference(font_ids[1])); // Helvetica (sans-serif)
-    fonts.set("F3", Object::Reference(font_ids[2])); // Courier (monospace)
+    fonts.set("F1", Object::Reference(font_ids[0]));
+    fonts.set("F2", Object::Reference(font_ids[1]));
+    fonts.set("F3", Object::Reference(font_ids[2]));
+    for (name, obj_id) in embedded_fonts { fonts.set(name.as_str(), Object::Reference(*obj_id)); }
     let mut resources = Dictionary::new();
     resources.set("Font", Object::Dictionary(fonts));
     resources
