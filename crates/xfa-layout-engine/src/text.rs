@@ -18,6 +18,14 @@ pub struct FontMetrics {
     pub text_align: TextAlign,
     /// Font family for per-character width lookup.
     pub typeface: FontFamily,
+    /// Resolved glyph widths from the actual PDF font (units per `resolved_upem`).
+    pub resolved_widths: Option<Vec<u16>>,
+    /// Units-per-em of the resolved font (typically 1000 or 2048).
+    pub resolved_upem: Option<u16>,
+    /// Typographic ascender of the resolved font (font units).
+    pub resolved_ascender: Option<i16>,
+    /// Typographic descender of the resolved font (font units, typically negative).
+    pub resolved_descender: Option<i16>,
 }
 
 /// Font family classification for width table selection.
@@ -68,6 +76,10 @@ impl Default for FontMetrics {
             avg_char_width: 0.50,
             text_align: TextAlign::Left,
             typeface: FontFamily::SansSerif,
+            resolved_widths: None,
+            resolved_upem: None,
+            resolved_ascender: None,
+            resolved_descender: None,
         }
     }
 }
@@ -80,13 +92,37 @@ impl FontMetrics {
         }
     }
 
-    /// The height of a single line of text.
+    /// Uses resolved ascender/descender when available, else `size * 1.2`.
     pub fn line_height_pt(&self) -> f64 {
+        if let (Some(asc), Some(desc), Some(upem)) = (
+            self.resolved_ascender,
+            self.resolved_descender,
+            self.resolved_upem,
+        ) {
+            if upem > 0 {
+                return ((asc as f64) - (desc as f64)) / (upem as f64) * self.size;
+            }
+        }
         self.size * self.line_height
     }
 
-    /// Estimated width of a string in points using per-character width tables.
+    /// Uses resolved_widths when available, else AFM tables.
     pub fn measure_width(&self, text: &str) -> f64 {
+        if let (Some(ref widths), Some(upem)) = (&self.resolved_widths, self.resolved_upem) {
+            if upem > 0 {
+                let mut w = 0.0;
+                for byte in text.bytes() {
+                    let idx = byte as usize;
+                    let cw = if idx < widths.len() {
+                        widths[idx] as f64
+                    } else {
+                        widths.get(b' ' as usize).copied().unwrap_or(0) as f64
+                    };
+                    w += cw / (upem as f64) * self.size;
+                }
+                return w;
+            }
+        }
         let table = match self.typeface {
             FontFamily::Serif => &TIMES_WIDTHS,
             FontFamily::SansSerif => &HELVETICA_WIDTHS,
@@ -391,6 +427,34 @@ mod tests {
         let result = wrap_text("", 100.0, &f);
         assert_eq!(result.lines.len(), 0);
         assert_eq!(result.size.height, 0.0);
+    }
+
+    #[test]
+    fn resolved_widths_measure() {
+        let mut widths = vec![0u16; 256];
+        widths[b'H' as usize] = 700;
+        widths[b'i' as usize] = 300;
+        let f = FontMetrics {
+            size: 10.0,
+            resolved_widths: Some(widths),
+            resolved_upem: Some(1000),
+            ..Default::default()
+        };
+        let w = f.measure_width("Hi");
+        assert!((w - 10.0).abs() < 0.01, "resolved Hi={w}, expected 10.0");
+    }
+
+    #[test]
+    fn resolved_line_height() {
+        let f = FontMetrics {
+            size: 12.0,
+            resolved_ascender: Some(800),
+            resolved_descender: Some(-200),
+            resolved_upem: Some(1000),
+            ..Default::default()
+        };
+        let lh = f.line_height_pt();
+        assert!((lh - 12.0).abs() < 0.01, "resolved lh={lh}, expected 12.0");
     }
 
     #[test]
