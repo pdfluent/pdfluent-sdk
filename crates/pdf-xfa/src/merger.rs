@@ -14,6 +14,7 @@ use xfa_layout_engine::form::{
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
     BoxModel, Caption, CaptionPlacement, Insets, LayoutStrategy, Measurement, TextAlign,
+    VerticalAlign,
 };
 
 /// Merges an XFA template (XML) with data from a DataDom to produce a FormTree.
@@ -984,6 +985,46 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             }
         }
     }
+
+    // Parse <para> for paragraph attributes (XFA 3.3 §D.7).
+    if let Some(para) = find_first_child_by_name(elem, "para") {
+        if let Some(v) = attr(para, "spaceAbove").and_then(Measurement::parse) {
+            style.space_above_pt = Some(v.to_points());
+        }
+        if let Some(v) = attr(para, "spaceBelow").and_then(Measurement::parse) {
+            style.space_below_pt = Some(v.to_points());
+        }
+        if let Some(v) = attr(para, "marginLeft").and_then(Measurement::parse) {
+            style.margin_left_pt = Some(v.to_points());
+        }
+        if let Some(v) = attr(para, "marginRight").and_then(Measurement::parse) {
+            style.margin_right_pt = Some(v.to_points());
+        }
+        if let Some(va) = attr(para, "vAlign") {
+            style.v_align = Some(match va {
+                "middle" => VerticalAlign::Middle,
+                "bottom" => VerticalAlign::Bottom,
+                _ => VerticalAlign::Top,
+            });
+        }
+    }
+
+    // Parse <border><corner> for border radius and <border><edge> for border style.
+    if let Some(border) = border {
+        if let Some(corner) = find_first_child_by_name(border, "corner") {
+            if let Some(v) = attr(corner, "radius").and_then(Measurement::parse) {
+                style.border_radius_pt = Some(v.to_points());
+            }
+        }
+        if let Some(edge) = find_first_child_by_name(border, "edge") {
+            if let Some(stroke) = attr(edge, "stroke") {
+                if stroke != "none" {
+                    style.border_style = Some(stroke.to_string());
+                }
+            }
+        }
+    }
+
     style
 }
 
