@@ -4390,6 +4390,7 @@ name = "pdf-xfa"
 version = "1.0.0-beta.1"
 dependencies = [
  "base64 0.22.1",
+ "flate2",
  "formcalc-interpreter",
  "image",
  "log",
