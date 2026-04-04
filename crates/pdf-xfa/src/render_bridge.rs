@@ -110,6 +110,31 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
     cfg
 }
 
+fn resolve_font_ref(
+    font_map: &HashMap<String, String>,
+    node_style: &FormNodeStyle,
+    fallback_family: FontFamily,
+) -> String {
+    if let Some(typeface) = &node_style.font_family {
+        if let Some(pdf_name) = font_map.get(typeface) {
+            return pdf_name.clone();
+        }
+    }
+    match fallback_family {
+        FontFamily::Serif => "/F1".to_string(),
+        FontFamily::SansSerif => "/F2".to_string(),
+        FontFamily::Monospace => "/F3".to_string(),
+    }
+}
+
+fn font_ascender_pt(font_family: FontFamily, font_size: f64) -> f64 {
+    match font_family {
+        FontFamily::Serif => font_size * 0.8,
+        FontFamily::SansSerif => font_size * 0.8,
+        FontFamily::Monospace => font_size * 0.8,
+    }
+}
+
 /// Generate a PDF content stream overlay for a single page.
 pub fn generate_page_overlay(page: &LayoutPage, config: &XfaRenderConfig) -> Result<Vec<u8>> {
     let mapper = CoordinateMapper::new(page.height, page.width);
@@ -206,6 +231,7 @@ fn render_nodes(
                     value,
                     *font_size,
                     *font_family,
+                    &node.style,
                     &node_config,
                     ops,
                 ),
@@ -227,6 +253,7 @@ fn render_nodes(
                 is_bold,
                 mapper,
                 abs_y,
+                &node.style,
                 &node_config,
                 ops,
             ),
@@ -262,6 +289,7 @@ fn render_field(
     value: &str,
     font_size: f64,
     font_family: FontFamily,
+    node_style: &FormNodeStyle,
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
@@ -303,11 +331,7 @@ fn render_field(
             typeface: font_family,
             ..Default::default()
         };
-        let font_ref = match font_family {
-            FontFamily::Serif => "/F1",
-            FontFamily::SansSerif => "/F2",
-            FontFamily::Monospace => "/F3",
-        };
+        let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
         let text_w = metrics.measure_width(value);
 
         if text_w <= content_w || content_w <= 0.0 {
@@ -449,6 +473,7 @@ fn render_multiline(
     _is_bold: bool,
     mapper: &CoordinateMapper,
     abs_y_xfa: f64,
+    node_style: &FormNodeStyle,
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
@@ -458,11 +483,7 @@ fn render_multiline(
     let p = config.text_padding;
     let line_height = font_size * 1.2;
     // Select PDF font resource based on the template's font family.
-    let font_ref = match font_family {
-        FontFamily::Serif => "/F1",
-        FontFamily::SansSerif => "/F2",
-        FontFamily::Monospace => "/F3",
-    };
+    let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
     // Use per-character width measurement for alignment calculations.
     let font_metrics = xfa_layout_engine::text::FontMetrics {
         size: font_size,
@@ -480,7 +501,8 @@ fn render_multiline(
     // Do NOT add text_padding vertically: draw elements often have tight height
     // budgets (h ≈ font_size), and adding padding would push the baseline below
     // the element boundary, causing the clip-guard below to suppress all text.
-    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + font_size, 0.0);
+    let ascender_pt = font_ascender_pt(font_family, font_size);
+    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + ascender_pt, 0.0);
     let content_w = (container_width - p * 2.0).max(0.0);
     let mut prev_x = x + p;
     for (i, line) in lines.iter().enumerate() {
