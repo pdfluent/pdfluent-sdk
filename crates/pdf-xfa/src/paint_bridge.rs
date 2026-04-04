@@ -716,6 +716,7 @@ mod tests {
             background_color: Some([1.0, 1.0, 1.0]),
             text_padding: 2.0,
             font_map: std::collections::HashMap::new(),
+            font_metrics_data: std::collections::HashMap::new(),
         }
     }
 

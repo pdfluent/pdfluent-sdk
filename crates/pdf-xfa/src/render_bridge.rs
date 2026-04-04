@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use xfa_layout_engine::form::{FieldKind, FormNodeStyle};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
-use xfa_layout_engine::types::TextAlign;
+use xfa_layout_engine::types::{TextAlign, VerticalAlign};
 
 /// Configuration for PDF overlay rendering.
 #[derive(Debug, Clone)]
@@ -32,15 +32,16 @@ pub struct XfaRenderConfig {
     pub background_color: Option<[f64; 3]>,
     /// Text padding from field edges.
     pub text_padding: f64,
+    /// Map from typeface name to PDF font resource name (e.g. "/XFA_F0").
     pub font_map: HashMap<String, String>,
-    /// Resolved font metrics keyed by XFA typeface name.
+    /// Resolved font metrics per typeface.
     pub font_metrics_data: HashMap<String, FontMetricsData>,
 }
 
-/// Resolved font metrics from an embedded/system font.
+/// Resolved font metrics for a typeface, used for accurate text measurement.
 #[derive(Debug, Clone)]
 pub struct FontMetricsData {
-    /// PDF glyph widths (1000-unit scale, indices 0..255).
+    /// PDF glyph widths (indices 0..255).
     pub widths: Vec<u16>,
     /// Units per em of the font.
     pub upem: u16,
@@ -50,31 +51,18 @@ pub struct FontMetricsData {
     pub descender: i16,
 }
 
-/// Metadata for an image that needs to be embedded in the PDF.
+/// Image data collected during rendering for XObject embedding.
 #[derive(Debug, Clone)]
 pub struct ImageInfo {
-    /// PDF resource name (e.g. "XImg0").
     pub name: String,
-    /// Raw image data (JPEG/PNG).
     pub data: Vec<u8>,
-    /// MIME type (e.g. "image/jpeg").
     pub mime_type: String,
-    /// X position in PDF points (from left).
-    pub x: f64,
-    /// Y position in PDF points (from bottom).
-    pub y: f64,
-    /// Width in PDF points.
-    pub w: f64,
-    /// Height in PDF points.
-    pub h: f64,
 }
 
-/// A rendered page overlay containing the content stream and image metadata.
+/// Overlay result for a single page, including content stream and images.
 #[derive(Debug, Clone)]
 pub struct PageOverlay {
-    /// PDF content stream bytes.
     pub content_stream: Vec<u8>,
-    /// Images that need to be embedded and referenced in the content stream.
     pub images: Vec<ImageInfo>,
 }
 
@@ -121,20 +109,16 @@ impl CoordinateMapper {
 }
 
 /// Create a per-node config by applying XFA template style overrides to the
-/// global config. Returns the original config unchanged if the node has no
-/// style overrides (common case — avoids allocation).
+/// global config.
 fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRenderConfig {
     let mut cfg = config.clone();
 
-    // Apply background color — skip white (would cover underlying page content).
     if let Some((r, g, b)) = style.bg_color {
         if !(r >= 250 && g >= 250 && b >= 250) {
             cfg.background_color = Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]);
         }
     }
 
-    // Apply border from the XFA template.
-    // Only draw borders when explicitly specified; otherwise match Adobe behavior.
     cfg.draw_borders = false;
     if let Some(bw) = style.border_width_pt {
         if bw > 0.0 {
@@ -146,7 +130,6 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
         }
     }
 
-    // Apply text color — skip black (default).
     if let Some((r, g, b)) = style.text_color {
         cfg.text_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
     }
@@ -154,88 +137,21 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
     cfg
 }
 
-fn resolve_font_ref(
-    font_map: &HashMap<String, String>,
-    node_style: &FormNodeStyle,
-    fallback_family: FontFamily,
-) -> String {
-    if let Some(typeface) = &node_style.font_family {
-        if let Some(pdf_name) = font_map.get(typeface) {
-            return pdf_name.clone();
-        }
-    }
-    match fallback_family {
-        FontFamily::Serif => "/F1".to_string(),
-        FontFamily::SansSerif => "/F2".to_string(),
-        FontFamily::Monospace => "/F3".to_string(),
-    }
-}
-
-fn build_font_metrics(
-    font_size: f64,
-    font_family: FontFamily,
-    node_style: &FormNodeStyle,
-    config: &XfaRenderConfig,
-) -> FontMetrics {
-    let mut m = FontMetrics {
-        size: font_size,
-        typeface: font_family,
-        ..Default::default()
-    };
-    if let Some(typeface) = &node_style.font_family {
-        if let Some(data) = config.font_metrics_data.get(typeface) {
-            m.resolved_widths = Some(data.widths.clone());
-            m.resolved_upem = Some(data.upem);
-            m.resolved_ascender = Some(data.ascender);
-            m.resolved_descender = Some(data.descender);
-        }
-    }
-    m
-}
-
-fn font_ascender_pt(
-    font_family: FontFamily,
-    font_size: f64,
-    node_style: &FormNodeStyle,
-    config: &XfaRenderConfig,
-) -> f64 {
-    if let Some(typeface) = &node_style.font_family {
-        if let Some(data) = config.font_metrics_data.get(typeface) {
-            if data.upem > 0 {
-                return data.ascender as f64 / data.upem as f64 * font_size;
-            }
-        }
-    }
-    font_size * 0.8
-}
-
 /// Generate a PDF content stream overlay for a single page.
 pub fn generate_page_overlay(page: &LayoutPage, config: &XfaRenderConfig) -> Result<PageOverlay> {
     let mapper = CoordinateMapper::new(page.height, page.width);
     let mut ops = Vec::new();
-    let mut images = Vec::new();
     ops.extend_from_slice(b"q\n");
-    render_nodes(
-        &page.nodes,
-        0.0,
-        0.0,
-        &mapper,
-        config,
-        &mut ops,
-        &mut images,
-    );
+    render_nodes(&page.nodes, 0.0, 0.0, &mapper, config, &mut ops);
     ops.extend_from_slice(b"Q\n");
     Ok(PageOverlay {
         content_stream: ops,
-        images,
+        images: Vec::new(),
     })
 }
 
 /// Generate PDF content stream overlays for all pages in a layout.
-pub fn generate_all_overlays(
-    layout: &LayoutDom,
-    config: &XfaRenderConfig,
-) -> Result<Vec<PageOverlay>> {
+pub fn generate_all_overlays(layout: &LayoutDom, config: &XfaRenderConfig) -> Result<Vec<PageOverlay>> {
     layout
         .pages
         .iter()
@@ -258,24 +174,19 @@ fn render_nodes(
         let h = node.rect.height;
         let pdf_y = mapper.xfa_to_pdf_y(abs_y, h);
 
-        // Apply per-node style overrides from the XFA template.
         let node_config = apply_node_style(config, &node.style);
 
-        // Draw background fill and borders for non-Field nodes (Draw, Subform, etc.)
-        // Only when the XFA template explicitly defines bg/border styles.
-        // Fields handle their own bg/borders in render_field.
         if !matches!(node.content, LayoutContent::Field { .. }) {
-            // Background: only from explicit node style (set by apply_node_style).
+            let border_radius = node.style.border_radius_pt.unwrap_or(0.0);
+            let border_style = node.style.border_style.as_deref();
             if let Some(bg) = &node_config.background_color {
                 write_ops(
                     ops,
-                    format_args!(
-                        "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
-                        bg[0], bg[1], bg[2], abs_x, pdf_y, w, h
-                    ),
+                    format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
                 );
+                emit_rect_path(ops, abs_x, pdf_y, w, h, border_radius);
+                ops.extend_from_slice(b"f\n");
             }
-            // Borders: only when the XFA template explicitly set border_width_pt.
             if let Some(bw) = node.style.border_width_pt {
                 if bw > 0.0 && w > 0.0 && h > 0.0 {
                     let bc = node
@@ -287,15 +198,18 @@ fn render_nodes(
                     write_ops(
                         ops,
                         format_args!(
-                            "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
-                            bw, bc[0], bc[1], bc[2], abs_x, pdf_y, w, h
+                            "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
+                            bw, bc[0], bc[1], bc[2]
                         ),
                     );
+                    apply_border_dash(ops, border_style);
+                    emit_rect_path(ops, abs_x, pdf_y, w, h, border_radius);
+                    ops.extend_from_slice(b"S\n");
+                    reset_border_dash(ops, border_style);
                 }
             }
         }
 
-        // Check if this node's font is bold (from XFA template style).
         let is_bold = node
             .style
             .font_weight
@@ -354,19 +268,62 @@ fn render_nodes(
                     )
                     .bytes(),
                 );
-                // TODO: add image data to page resource dictionary as XObject
-                // The caller must add: /XObject << /Im0 << /Type /XObject /Subtype /Image ... >> >>
                 let _ = (data, mime_type);
             }
             LayoutContent::None => {}
         }
 
         if !node.children.is_empty() {
-            // Pass the GLOBAL config to children, not node_config — background_color
-            // and other style properties should not cascade from parent to children.
-            // Each child applies its own style via apply_node_style.
             render_nodes(&node.children, abs_x, abs_y, mapper, config, ops);
         }
+    }
+}
+
+/// Emit a rectangle path with optional rounded corners.
+fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64) {
+    if radius <= 0.0 {
+        write_ops(ops, format_args!("{:.2} {:.2} {:.2} {:.2} re\n", x, y, w, h));
+    } else {
+        let r = radius.min(w / 2.0).min(h / 2.0);
+        let k = r * 0.5522847498;
+        write_ops(
+            ops,
+            format_args!(
+                "{:.2} {:.2} m\n\
+                 {:.2} {:.2} l\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} l\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} l\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} l\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 h\n",
+                x, y + r,
+                x, y + h - r,
+                x, y + h - r + k, x + r - k, y + h, x + r, y + h,
+                x + w - r, y + h,
+                x + w - r + k, y + h, x + w, y + h - r + k, x + w, y + h - r,
+                x + w, y + r,
+                x + w, y + r - k, x + w - r + k, y, x + w - r, y,
+                x + r, y,
+                x + r - k, y, x, y + r - k, x, y + r,
+            ),
+        );
+    }
+}
+
+fn apply_border_dash(ops: &mut Vec<u8>, style: Option<&str>) {
+    match style {
+        Some("dashed") => write_ops(ops, format_args!("[3 2] 0 d\n")),
+        Some("dotted") => write_ops(ops, format_args!("[1 1] 0 d\n")),
+        _ => {}
+    }
+}
+
+fn reset_border_dash(ops: &mut Vec<u8>, style: Option<&str>) {
+    if matches!(style, Some("dashed") | Some("dotted")) {
+        write_ops(ops, format_args!("[] 0 d\n"));
     }
 }
 
@@ -382,30 +339,32 @@ fn render_field(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
+    let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
+    let border_style = node_style.border_style.as_deref();
+
     if let Some(bg) = &config.background_color {
         write_ops(
             ops,
-            format_args!(
-                "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
-                bg[0], bg[1], bg[2], x, pdf_y, w, h
-            ),
+            format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
         );
+        emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+        ops.extend_from_slice(b"f\n");
     }
     if config.draw_borders && config.border_width > 0.0 {
         write_ops(
             ops,
             format_args!(
-                "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
+                "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
                 config.border_width,
                 config.border_color[0],
                 config.border_color[1],
                 config.border_color[2],
-                x,
-                pdf_y,
-                w,
-                h
             ),
         );
+        apply_border_dash(ops, border_style);
+        emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+        ops.extend_from_slice(b"S\n");
+        reset_border_dash(ops, border_style);
     }
     if !value.is_empty() {
         let fs = if font_size > 0.0 {
@@ -413,14 +372,29 @@ fn render_field(
         } else {
             config.default_font_size
         };
-        let p = config.text_padding;
-        let content_w = (w - p * 2.0).max(0.0);
-        let metrics = build_font_metrics(fs, font_family, node_style, config);
-        let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+        let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
+        let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
+        let space_above = node_style.space_above_pt.unwrap_or(0.0);
+        let content_w = (w - pad_left - pad_right).max(0.0);
+        let metrics = FontMetrics {
+            size: fs,
+            typeface: font_family,
+            ..Default::default()
+        };
+        let font_ref = match font_family {
+            FontFamily::Serif => "/F1",
+            FontFamily::SansSerif => "/F2",
+            FontFamily::Monospace => "/F3",
+        };
         let text_w = metrics.measure_width(value);
 
         if text_w <= content_w || content_w <= 0.0 {
-            // Single line — fits within field.
+            let line_h = metrics.line_height_pt();
+            let text_y = match node_style.v_align {
+                Some(VerticalAlign::Middle) => pdf_y + (h - line_h) / 2.0,
+                Some(VerticalAlign::Bottom) => pdf_y + space_above,
+                _ => pdf_y + h - space_above - fs,
+            };
             write_ops(
                 ops,
                 format_args!(
@@ -430,13 +404,12 @@ fn render_field(
                     config.text_color[2],
                     font_ref,
                     fs,
-                    x + p,
-                    pdf_y + p,
+                    x + pad_left,
+                    text_y,
                     pdf_escape(value)
                 ),
             );
         } else {
-            // Multi-line: word-wrap within field width.
             let lines = wrap_text(value, content_w, &metrics);
             let line_height = metrics.line_height_pt();
             write_ops(
@@ -448,17 +421,16 @@ fn render_field(
                     config.text_color[2],
                     font_ref,
                     fs,
-                    x + p,
-                    pdf_y + h - p - fs,
+                    x + pad_left,
+                    pdf_y + h - space_above - fs,
                 ),
             );
             for (i, line) in lines.iter().enumerate() {
                 if i > 0 {
                     write_ops(ops, format_args!("0 {:.2} Td\n", -line_height));
                 }
-                // Stop if we'd go below the field bottom.
-                let line_top = h - p - fs - (i as f64 * line_height);
-                if line_top < -p {
+                let line_top = h - space_above - fs - (i as f64 * line_height);
+                if line_top < 0.0 {
                     break;
                 }
                 write_ops(ops, format_args!("({}) Tj\n", pdf_escape(line)));
@@ -477,7 +449,6 @@ fn render_checkbox(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
-    // Draw checkbox border (square box)
     let bw = config.border_width.max(0.5);
     write_ops(
         ops,
@@ -487,20 +458,15 @@ fn render_checkbox(
             config.border_color[0],
             config.border_color[1],
             config.border_color[2],
-            x,
-            pdf_y,
-            w,
-            h
+            x, pdf_y, w, h
         ),
     );
-    // If checked (non-empty value, not "0" or "off"), draw a checkmark
     let checked = !value.is_empty()
         && !value.eq_ignore_ascii_case("0")
         && !value.eq_ignore_ascii_case("off")
         && !value.eq_ignore_ascii_case("false");
     if checked {
-        // Draw an X mark inside the box
-        let m = w.min(h) * 0.15; // margin
+        let m = w.min(h) * 0.15;
         write_ops(
             ops,
             format_args!(
@@ -508,17 +474,9 @@ fn render_checkbox(
                  {:.2} {:.2} m {:.2} {:.2} l S\n\
                  {:.2} {:.2} m {:.2} {:.2} l S\n",
                 bw.max(1.0),
-                config.text_color[0],
-                config.text_color[1],
-                config.text_color[2],
-                x + m,
-                pdf_y + m,
-                x + w - m,
-                pdf_y + h - m,
-                x + m,
-                pdf_y + h - m,
-                x + w - m,
-                pdf_y + m,
+                config.text_color[0], config.text_color[1], config.text_color[2],
+                x + m, pdf_y + m, x + w - m, pdf_y + h - m,
+                x + m, pdf_y + h - m, x + w - m, pdf_y + m,
             ),
         );
     }
@@ -535,13 +493,8 @@ fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &m
         ops,
         format_args!(
             "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-            config.text_color[0],
-            config.text_color[1],
-            config.text_color[2],
-            fs,
-            x + p,
-            pdf_y + p,
-            pdf_escape(text)
+            config.text_color[0], config.text_color[1], config.text_color[2],
+            fs, x + p, pdf_y + p, pdf_escape(text)
         ),
     );
 }
@@ -565,12 +518,20 @@ fn render_multiline(
     if lines.is_empty() {
         return;
     }
-    let p = config.text_padding;
-    // Select PDF font resource based on the template's font family.
-    let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
-    // Use resolved font metrics for accurate width/height measurement.
-    let font_metrics = build_font_metrics(font_size, font_family, node_style, config);
-    let line_height = font_metrics.line_height_pt();
+    let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
+    let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
+    let space_above = node_style.space_above_pt.unwrap_or(0.0);
+    let line_height = font_size * 1.2;
+    let font_ref = match font_family {
+        FontFamily::Serif => "/F1",
+        FontFamily::SansSerif => "/F2",
+        FontFamily::Monospace => "/F3",
+    };
+    let font_metrics = FontMetrics {
+        size: font_size,
+        typeface: font_family,
+        ..Default::default()
+    };
     write_ops(
         ops,
         format_args!(
@@ -578,26 +539,20 @@ fn render_multiline(
             config.text_color[0], config.text_color[1], config.text_color[2], font_ref, font_size
         ),
     );
-    // Place the first-line baseline at `font_size` below the element's XFA top.
-    // Do NOT add text_padding vertically: draw elements often have tight height
-    // budgets (h ≈ font_size), and adding padding would push the baseline below
-    // the element boundary, causing the clip-guard below to suppress all text.
-    let ascender_pt = font_ascender_pt(font_family, font_size, node_style, config);
-    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + ascender_pt, 0.0);
-    let content_w = (container_width - p * 2.0).max(0.0);
-    let mut prev_x = x + p;
+    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + font_size, 0.0);
+    let content_w = (container_width - pad_left - pad_right).max(0.0);
+    let mut prev_x = x + pad_left;
     for (i, line) in lines.iter().enumerate() {
         let line_y = first_line_pdf_y - (i as f64 * line_height);
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
-            TextAlign::Center => x + p + ((content_w - line_w) / 2.0).max(0.0),
-            TextAlign::Right => x + p + (content_w - line_w).max(0.0),
-            _ => x + p,
+            TextAlign::Center => x + pad_left + ((content_w - line_w) / 2.0).max(0.0),
+            TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
+            _ => x + pad_left,
         };
         if i == 0 {
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
         } else {
-            // Td is relative to previous text position; compute delta from previous x.
             let dx = text_x - prev_x;
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", dx, -line_height));
         }
@@ -607,11 +562,9 @@ fn render_multiline(
     ops.extend_from_slice(b"ET\n");
 }
 
-/// Word-wrap text to fit within `max_width` using `metrics` for measurement.
 fn wrap_text(text: &str, max_width: f64, metrics: &FontMetrics) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
-
     for word in text.split_whitespace() {
         if current.is_empty() {
             current = word.to_string();
@@ -634,12 +587,6 @@ fn wrap_text(text: &str, max_width: f64, metrics: &FontMetrics) -> Vec<String> {
     lines
 }
 
-/// Escape a Unicode string for use inside a PDF literal string `(…)`.
-///
-/// The fonts we register use WinAnsiEncoding, so every character must be
-/// mapped to its single-byte WinAnsi code point. Characters outside the
-/// WinAnsi range are replaced with `?`. Bytes outside printable ASCII
-/// (0x20–0x7E) are emitted as octal escapes `\NNN`.
 fn pdf_escape(s: &str) -> String {
     let mut r = String::with_capacity(s.len());
     for c in s.chars() {
@@ -647,11 +594,9 @@ fn pdf_escape(s: &str) -> String {
             '(' => r.push_str("\\("),
             ')' => r.push_str("\\)"),
             '\\' => r.push_str("\\\\"),
-            // Printable ASCII passes through directly.
             '\x20'..='\x7e' => r.push(c),
             _ => {
                 if let Some(b) = unicode_to_winansi(c) {
-                    // Emit as octal escape for non-ASCII WinAnsi bytes.
                     use std::fmt::Write;
                     let _ = write!(r, "\\{:03o}", b);
                 } else {
@@ -663,46 +608,39 @@ fn pdf_escape(s: &str) -> String {
     r
 }
 
-/// Map a Unicode code point to its WinAnsiEncoding byte value.
-///
-/// Returns `None` for characters that have no WinAnsi representation.
-/// Covers the 0x80–0x9F range (where WinAnsi differs from Latin-1) and
-/// the 0xA0–0xFF Latin-1 supplement range.
 fn unicode_to_winansi(c: char) -> Option<u8> {
-    // Latin-1 Supplement range 0xA0–0xFF maps 1:1.
     let cp = c as u32;
     if (0xA0..=0xFF).contains(&cp) {
         return Some(cp as u8);
     }
-    // WinAnsi 0x80–0x9F special mappings (Windows-1252).
     match c {
-        '\u{20AC}' => Some(0x80), // €
-        '\u{201A}' => Some(0x82), // ‚
-        '\u{0192}' => Some(0x83), // ƒ
-        '\u{201E}' => Some(0x84), // „
-        '\u{2026}' => Some(0x85), // …
-        '\u{2020}' => Some(0x86), // †
-        '\u{2021}' => Some(0x87), // ‡
-        '\u{02C6}' => Some(0x88), // ˆ
-        '\u{2030}' => Some(0x89), // ‰
-        '\u{0160}' => Some(0x8A), // Š
-        '\u{2039}' => Some(0x8B), // ‹
-        '\u{0152}' => Some(0x8C), // Œ
-        '\u{017D}' => Some(0x8E), // Ž
-        '\u{2018}' => Some(0x91), // '
-        '\u{2019}' => Some(0x92), // '
-        '\u{201C}' => Some(0x93), // "
-        '\u{201D}' => Some(0x94), // "
-        '\u{2022}' => Some(0x95), // •  (bullet)
-        '\u{2013}' => Some(0x96), // –  (en-dash)
-        '\u{2014}' => Some(0x97), // —  (em-dash)
-        '\u{02DC}' => Some(0x98), // ˜
-        '\u{2122}' => Some(0x99), // ™
-        '\u{0161}' => Some(0x9A), // š
-        '\u{203A}' => Some(0x9B), // ›
-        '\u{0153}' => Some(0x9C), // œ
-        '\u{017E}' => Some(0x9E), // ž
-        '\u{0178}' => Some(0x9F), // Ÿ
+        '\u{20AC}' => Some(0x80),
+        '\u{201A}' => Some(0x82),
+        '\u{0192}' => Some(0x83),
+        '\u{201E}' => Some(0x84),
+        '\u{2026}' => Some(0x85),
+        '\u{2020}' => Some(0x86),
+        '\u{2021}' => Some(0x87),
+        '\u{02C6}' => Some(0x88),
+        '\u{2030}' => Some(0x89),
+        '\u{0160}' => Some(0x8A),
+        '\u{2039}' => Some(0x8B),
+        '\u{0152}' => Some(0x8C),
+        '\u{017D}' => Some(0x8E),
+        '\u{2018}' => Some(0x91),
+        '\u{2019}' => Some(0x92),
+        '\u{201C}' => Some(0x93),
+        '\u{201D}' => Some(0x94),
+        '\u{2022}' => Some(0x95),
+        '\u{2013}' => Some(0x96),
+        '\u{2014}' => Some(0x97),
+        '\u{02DC}' => Some(0x98),
+        '\u{2122}' => Some(0x99),
+        '\u{0161}' => Some(0x9A),
+        '\u{203A}' => Some(0x9B),
+        '\u{0153}' => Some(0x9C),
+        '\u{017E}' => Some(0x9E),
+        '\u{0178}' => Some(0x9F),
         _ => None,
     }
 }
@@ -719,11 +657,7 @@ mod tests {
     use xfa_layout_engine::types::Rect;
 
     fn make_page(nodes: Vec<LayoutNode>) -> LayoutPage {
-        LayoutPage {
-            width: 612.0,
-            height: 792.0,
-            nodes,
-        }
+        LayoutPage { width: 612.0, height: 792.0, nodes }
     }
 
     fn make_field_node(x: f64, y: f64, w: f64, h: f64, value: &str) -> LayoutNode {
@@ -733,50 +667,58 @@ mod tests {
             name: "field1".to_string(),
             content: LayoutContent::Field {
                 value: value.to_string(),
-                field_kind: xfa_layout_engine::form::FieldKind::Text,
+                field_kind: FieldKind::Text,
                 font_size: 0.0,
-                font_family: xfa_layout_engine::text::FontFamily::Serif,
+                font_family: FontFamily::Serif,
             },
             children: vec![],
             style: Default::default(),
         }
     }
 
+    fn make_styled_field(x: f64, y: f64, w: f64, h: f64, value: &str, style: FormNodeStyle) -> LayoutNode {
+        LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(x, y, w, h),
+            name: "styled".to_string(),
+            content: LayoutContent::Field {
+                value: value.to_string(),
+                field_kind: FieldKind::Text,
+                font_size: 10.0,
+                font_family: FontFamily::Serif,
+            },
+            children: vec![],
+            style,
+        }
+    }
+
     #[test]
     fn coordinate_mapping() {
         let mapper = CoordinateMapper::new(792.0, 612.0);
-        let pdf_y = mapper.xfa_to_pdf_y(0.0, 20.0);
-        assert!((pdf_y - 772.0).abs() < 0.001);
+        assert!((mapper.xfa_to_pdf_y(0.0, 20.0) - 772.0).abs() < 0.001);
+    }
+
+    fn overlay_str(page: &LayoutPage) -> String {
+        let o = generate_page_overlay(page, &XfaRenderConfig::default()).unwrap();
+        String::from_utf8_lossy(&o.content_stream).into_owned()
     }
 
     #[test]
     fn empty_page_overlay() {
-        let page = make_page(vec![]);
-        let config = XfaRenderConfig::default();
-        let overlay = generate_page_overlay(&page, &config).unwrap();
-        let content = String::from_utf8_lossy(&overlay);
-        assert!(content.starts_with("q\n"));
-        assert!(content.ends_with("Q\n"));
+        let s = overlay_str(&make_page(vec![]));
+        assert!(s.starts_with("q\n") && s.ends_with("Q\n"));
     }
 
     #[test]
     fn field_renders_text() {
-        let page = make_page(vec![make_field_node(10.0, 10.0, 100.0, 20.0, "Hello")]);
-        let config = XfaRenderConfig::default();
-        let overlay = generate_page_overlay(&page, &config).unwrap();
-        let content = String::from_utf8_lossy(&overlay);
-        assert!(content.contains("(Hello) Tj"));
-        assert!(content.contains("BT"));
-        assert!(content.contains("ET"));
+        let s = overlay_str(&make_page(vec![make_field_node(10.0, 10.0, 100.0, 20.0, "Hello")]));
+        assert!(s.contains("(Hello) Tj") && s.contains("BT") && s.contains("ET"));
     }
 
     #[test]
     fn empty_field_no_text() {
-        let page = make_page(vec![make_field_node(10.0, 10.0, 100.0, 20.0, "")]);
-        let config = XfaRenderConfig::default();
-        let overlay = generate_page_overlay(&page, &config).unwrap();
-        let content = String::from_utf8_lossy(&overlay);
-        assert!(!content.contains("BT"));
+        let s = overlay_str(&make_page(vec![make_field_node(10.0, 10.0, 100.0, 20.0, "")]));
+        assert!(!s.contains("BT"));
     }
 
     #[test]
@@ -787,24 +729,67 @@ mod tests {
                 make_page(vec![make_field_node(0.0, 0.0, 50.0, 20.0, "P2")]),
             ],
         };
-        let config = XfaRenderConfig::default();
-        let overlays = generate_all_overlays(&layout, &config).unwrap();
-        assert_eq!(overlays.len(), 2);
+        assert_eq!(generate_all_overlays(&layout, &XfaRenderConfig::default()).unwrap().len(), 2);
     }
 
     #[test]
     fn pdf_escape_winansi_encoding() {
-        // ASCII passes through.
         assert_eq!(pdf_escape("Hello"), "Hello");
-        // Parentheses and backslash are escaped.
         assert_eq!(pdf_escape("a(b)c\\d"), "a\\(b\\)c\\\\d");
-        // En-dash U+2013 → WinAnsi 0x96 → octal \226.
         assert_eq!(pdf_escape("\u{2013}"), "\\226");
-        // Bullet U+2022 → WinAnsi 0x95 → octal \225.
         assert_eq!(pdf_escape("\u{2022}"), "\\225");
-        // Latin-1: © U+00A9 → WinAnsi 0xA9 → octal \251.
         assert_eq!(pdf_escape("\u{00A9}"), "\\251");
-        // Unmapped character → '?'.
-        assert_eq!(pdf_escape("\u{4E16}"), "?"); // CJK char
+        assert_eq!(pdf_escape("\u{4E16}"), "?");
+    }
+
+    fn styled_overlay_str(node: LayoutNode) -> String {
+        let o = generate_page_overlay(&make_page(vec![node]), &XfaRenderConfig::default()).unwrap();
+        String::from_utf8_lossy(&o.content_stream).into_owned()
+    }
+
+    #[test]
+    fn rounded_border_emits_bezier() {
+        let style = FormNodeStyle {
+            border_width_pt: Some(1.0),
+            border_radius_pt: Some(5.0),
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_field(10.0, 10.0, 100.0, 20.0, "Hi", style));
+        assert!(s.contains(" c\n"), "expected Bezier");
+        assert!(s.contains("h\n"), "expected close-path");
+    }
+
+    #[test]
+    fn dashed_border_emits_dash_pattern() {
+        let style = FormNodeStyle {
+            border_width_pt: Some(1.0),
+            border_style: Some("dashed".to_string()),
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_field(10.0, 10.0, 100.0, 20.0, "Hi", style));
+        assert!(s.contains("[3 2] 0 d"), "expected dash");
+        assert!(s.contains("[] 0 d"), "expected reset");
+    }
+
+    #[test]
+    fn para_margins_applied() {
+        let style = FormNodeStyle {
+            margin_left_pt: Some(5.0),
+            margin_right_pt: Some(3.0),
+            space_above_pt: Some(2.0),
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_field(10.0, 10.0, 200.0, 30.0, "Test", style));
+        assert!(s.contains("15.00"), "expected margin_left offset 10+5=15");
+    }
+
+    #[test]
+    fn v_align_middle() {
+        let style = FormNodeStyle {
+            v_align: Some(VerticalAlign::Middle),
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_field(0.0, 0.0, 200.0, 40.0, "Mid", style));
+        assert!(s.contains("(Mid) Tj"));
     }
 }
