@@ -33,6 +33,49 @@ pub struct XfaRenderConfig {
     /// Text padding from field edges.
     pub text_padding: f64,
     pub font_map: HashMap<String, String>,
+    /// Resolved font metrics keyed by XFA typeface name.
+    pub font_metrics_data: HashMap<String, FontMetricsData>,
+}
+
+/// Resolved font metrics from an embedded/system font.
+#[derive(Debug, Clone)]
+pub struct FontMetricsData {
+    /// PDF glyph widths (1000-unit scale, indices 0..255).
+    pub widths: Vec<u16>,
+    /// Units per em of the font.
+    pub upem: u16,
+    /// Font ascender in font units.
+    pub ascender: i16,
+    /// Font descender in font units (typically negative).
+    pub descender: i16,
+}
+
+/// Metadata for an image that needs to be embedded in the PDF.
+#[derive(Debug, Clone)]
+pub struct ImageInfo {
+    /// PDF resource name (e.g. "XImg0").
+    pub name: String,
+    /// Raw image data (JPEG/PNG).
+    pub data: Vec<u8>,
+    /// MIME type (e.g. "image/jpeg").
+    pub mime_type: String,
+    /// X position in PDF points (from left).
+    pub x: f64,
+    /// Y position in PDF points (from bottom).
+    pub y: f64,
+    /// Width in PDF points.
+    pub w: f64,
+    /// Height in PDF points.
+    pub h: f64,
+}
+
+/// A rendered page overlay containing the content stream and image metadata.
+#[derive(Debug, Clone)]
+pub struct PageOverlay {
+    /// PDF content stream bytes.
+    pub content_stream: Vec<u8>,
+    /// Images that need to be embedded and referenced in the content stream.
+    pub images: Vec<ImageInfo>,
 }
 
 impl Default for XfaRenderConfig {
@@ -47,6 +90,7 @@ impl Default for XfaRenderConfig {
             background_color: None,
             text_padding: 1.0,
             font_map: HashMap::new(),
+            font_metrics_data: HashMap::new(),
         }
     }
 }
@@ -127,26 +171,71 @@ fn resolve_font_ref(
     }
 }
 
-fn font_ascender_pt(font_family: FontFamily, font_size: f64) -> f64 {
-    match font_family {
-        FontFamily::Serif => font_size * 0.8,
-        FontFamily::SansSerif => font_size * 0.8,
-        FontFamily::Monospace => font_size * 0.8,
+fn build_font_metrics(
+    font_size: f64,
+    font_family: FontFamily,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+) -> FontMetrics {
+    let mut m = FontMetrics {
+        size: font_size,
+        typeface: font_family,
+        ..Default::default()
+    };
+    if let Some(typeface) = &node_style.font_family {
+        if let Some(data) = config.font_metrics_data.get(typeface) {
+            m.resolved_widths = Some(data.widths.clone());
+            m.resolved_upem = Some(data.upem);
+            m.resolved_ascender = Some(data.ascender);
+            m.resolved_descender = Some(data.descender);
+        }
     }
+    m
+}
+
+fn font_ascender_pt(
+    font_family: FontFamily,
+    font_size: f64,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+) -> f64 {
+    if let Some(typeface) = &node_style.font_family {
+        if let Some(data) = config.font_metrics_data.get(typeface) {
+            if data.upem > 0 {
+                return data.ascender as f64 / data.upem as f64 * font_size;
+            }
+        }
+    }
+    font_size * 0.8
 }
 
 /// Generate a PDF content stream overlay for a single page.
-pub fn generate_page_overlay(page: &LayoutPage, config: &XfaRenderConfig) -> Result<Vec<u8>> {
+pub fn generate_page_overlay(page: &LayoutPage, config: &XfaRenderConfig) -> Result<PageOverlay> {
     let mapper = CoordinateMapper::new(page.height, page.width);
     let mut ops = Vec::new();
+    let mut images = Vec::new();
     ops.extend_from_slice(b"q\n");
-    render_nodes(&page.nodes, 0.0, 0.0, &mapper, config, &mut ops);
+    render_nodes(
+        &page.nodes,
+        0.0,
+        0.0,
+        &mapper,
+        config,
+        &mut ops,
+        &mut images,
+    );
     ops.extend_from_slice(b"Q\n");
-    Ok(ops)
+    Ok(PageOverlay {
+        content_stream: ops,
+        images,
+    })
 }
 
 /// Generate PDF content stream overlays for all pages in a layout.
-pub fn generate_all_overlays(layout: &LayoutDom, config: &XfaRenderConfig) -> Result<Vec<Vec<u8>>> {
+pub fn generate_all_overlays(
+    layout: &LayoutDom,
+    config: &XfaRenderConfig,
+) -> Result<Vec<PageOverlay>> {
     layout
         .pages
         .iter()
@@ -326,11 +415,7 @@ fn render_field(
         };
         let p = config.text_padding;
         let content_w = (w - p * 2.0).max(0.0);
-        let metrics = FontMetrics {
-            size: fs,
-            typeface: font_family,
-            ..Default::default()
-        };
+        let metrics = build_font_metrics(fs, font_family, node_style, config);
         let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
         let text_w = metrics.measure_width(value);
 
@@ -353,7 +438,7 @@ fn render_field(
         } else {
             // Multi-line: word-wrap within field width.
             let lines = wrap_text(value, content_w, &metrics);
-            let line_height = fs * 1.2;
+            let line_height = metrics.line_height_pt();
             write_ops(
                 ops,
                 format_args!(
@@ -481,15 +566,11 @@ fn render_multiline(
         return;
     }
     let p = config.text_padding;
-    let line_height = font_size * 1.2;
     // Select PDF font resource based on the template's font family.
     let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
-    // Use per-character width measurement for alignment calculations.
-    let font_metrics = xfa_layout_engine::text::FontMetrics {
-        size: font_size,
-        typeface: font_family,
-        ..Default::default()
-    };
+    // Use resolved font metrics for accurate width/height measurement.
+    let font_metrics = build_font_metrics(font_size, font_family, node_style, config);
+    let line_height = font_metrics.line_height_pt();
     write_ops(
         ops,
         format_args!(
@@ -501,7 +582,7 @@ fn render_multiline(
     // Do NOT add text_padding vertically: draw elements often have tight height
     // budgets (h ≈ font_size), and adding padding would push the baseline below
     // the element boundary, causing the clip-guard below to suppress all text.
-    let ascender_pt = font_ascender_pt(font_family, font_size);
+    let ascender_pt = font_ascender_pt(font_family, font_size, node_style, config);
     let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + ascender_pt, 0.0);
     let content_w = (container_width - p * 2.0).max(0.0);
     let mut prev_x = x + p;
