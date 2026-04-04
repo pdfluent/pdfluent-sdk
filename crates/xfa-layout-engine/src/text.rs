@@ -29,20 +29,15 @@ pub struct FontMetrics {
 }
 
 /// Font family classification for width table selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FontFamily {
     /// Times New Roman, Times, Georgia, etc.
     Serif,
     /// Arial, Helvetica, Verdana, Myriad Pro, etc.
+    #[default]
     SansSerif,
     /// Courier New, Courier, Consolas, etc.
     Monospace,
-}
-
-impl Default for FontFamily {
-    fn default() -> Self {
-        FontFamily::SansSerif
-    }
 }
 
 impl FontFamily {
