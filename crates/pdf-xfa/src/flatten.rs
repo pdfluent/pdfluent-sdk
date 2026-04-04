@@ -13,14 +13,14 @@
 //! The result is a static PDF with no XFA dependency: it can be rendered
 //! by any standard PDF viewer.
 
-use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
+use lopdf::{Dictionary, Document, Object, ObjectId, Stream, dictionary};
 use std::collections::HashMap;
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
 use crate::font_bridge::{ResolvedFont, XfaFontResolver, XfaFontSpec};
 use crate::merger::FormMerger;
-use crate::render_bridge::{generate_all_overlays, XfaRenderConfig};
+use crate::render_bridge::{FontMetricsData, XfaRenderConfig, generate_all_overlays};
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::layout::LayoutEngine;
 
@@ -223,11 +223,12 @@ fn xfa_flatten_inner(
     let mut doc = Document::load_mem(pdf_bytes)
         .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
 
-    let (font_map, embedded_font_objects) =
+    let (font_map, embedded_font_objects, metrics_data) =
         resolve_and_embed_fonts(&mut doc, template_xml, pdf_bytes);
 
     let mut config = XfaRenderConfig::default();
     config.font_map = font_map;
+    config.font_metrics_data = metrics_data;
 
     let overlays = generate_all_overlays(&layout, &config)
         .map_err(|e| XfaError::LayoutFailed(format!("overlay generation: {e:?}")))?;
@@ -260,10 +261,23 @@ fn xfa_flatten_inner(
 
     for (i, overlay_bytes) in overlays.iter().enumerate() {
         if i < n_existing {
-            write_page_content(&mut doc, existing_page_ids[i], overlay_bytes, &font_ids, &embedded_font_objects)?;
+            write_page_content(
+                &mut doc,
+                existing_page_ids[i],
+                overlay_bytes,
+                &font_ids,
+                &embedded_font_objects,
+            )?;
         } else {
             let lp = &layout.pages[i];
-            add_new_page(&mut doc, lp.width, lp.height, overlay_bytes, &font_ids, &embedded_font_objects)?;
+            add_new_page(
+                &mut doc,
+                lp.width,
+                lp.height,
+                overlay_bytes,
+                &font_ids,
+                &embedded_font_objects,
+            )?;
         }
     }
 
@@ -289,21 +303,51 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>)> {
     let mut fonts = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (_id, obj) in &doc.objects {
-        let dict = match obj.as_dict() { Ok(d) => d, Err(_) => continue };
-        let is_font = dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"Font".as_slice());
-        if !is_font { continue; }
-        let base_font = match dict.get(b"BaseFont").ok().and_then(|o| o.as_name().ok()) {
-            Some(n) => String::from_utf8_lossy(n).to_string(), None => continue,
+        let dict = match obj.as_dict() {
+            Ok(d) => d,
+            Err(_) => continue,
         };
-        let fd_id = match dict.get(b"FontDescriptor").ok() { Some(Object::Reference(id)) => *id, _ => continue };
-        let fd = match doc.get_dictionary(fd_id) { Ok(d) => d, Err(_) => continue };
-        let font_stream_id = fd.get(b"FontFile2").or_else(|_| fd.get(b"FontFile3")).or_else(|_| fd.get(b"FontFile")).ok().and_then(|o| o.as_reference().ok());
-        let Some(stream_id) = font_stream_id else { continue };
-        if !seen.insert(stream_id) { continue; }
-        let Ok(stream) = doc.get_object(stream_id).and_then(|o| o.as_stream()) else { continue };
-        let data = stream.get_plain_content().unwrap_or_else(|_| stream.content.clone());
+        let is_font =
+            dict.get(b"Type").ok().and_then(|o| o.as_name().ok()) == Some(b"Font".as_slice());
+        if !is_font {
+            continue;
+        }
+        let base_font = match dict.get(b"BaseFont").ok().and_then(|o| o.as_name().ok()) {
+            Some(n) => String::from_utf8_lossy(n).to_string(),
+            None => continue,
+        };
+        let fd_id = match dict.get(b"FontDescriptor").ok() {
+            Some(Object::Reference(id)) => *id,
+            _ => continue,
+        };
+        let fd = match doc.get_dictionary(fd_id) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let font_stream_id = fd
+            .get(b"FontFile2")
+            .or_else(|_| fd.get(b"FontFile3"))
+            .or_else(|_| fd.get(b"FontFile"))
+            .ok()
+            .and_then(|o| o.as_reference().ok());
+        let Some(stream_id) = font_stream_id else {
+            continue;
+        };
+        if !seen.insert(stream_id) {
+            continue;
+        }
+        let Ok(stream) = doc.get_object(stream_id).and_then(|o| o.as_stream()) else {
+            continue;
+        };
+        let data = stream
+            .get_plain_content()
+            .unwrap_or_else(|_| stream.content.clone());
         if !data.is_empty() {
-            let clean_name = if let Some(pos) = base_font.find('+') { base_font[pos + 1..].to_string() } else { base_font.clone() };
+            let clean_name = if let Some(pos) = base_font.find('+') {
+                base_font[pos + 1..].to_string()
+            } else {
+                base_font.clone()
+            };
             fonts.push((clean_name, data));
         }
     }
@@ -318,7 +362,9 @@ fn collect_template_font_names(template_xml: &str) -> Vec<String> {
             if node.tag_name().name() == "font" {
                 if let Some(typeface) = node.attribute("typeface") {
                     let name = typeface.to_string();
-                    if !name.is_empty() && seen.insert(name.to_lowercase()) { names.push(name); }
+                    if !name.is_empty() && seen.insert(name.to_lowercase()) {
+                        names.push(name);
+                    }
                 }
             }
         }
@@ -327,7 +373,10 @@ fn collect_template_font_names(template_xml: &str) -> Vec<String> {
 }
 
 fn embed_font_in_pdf(doc: &mut Document, font: &ResolvedFont) -> ObjectId {
-    let font_stream = Stream::new(dictionary! { "Length" => Object::Integer(font.data.len() as i64), "Length1" => Object::Integer(font.data.len() as i64) }, font.data.clone());
+    let font_stream = Stream::new(
+        dictionary! { "Length" => Object::Integer(font.data.len() as i64), "Length1" => Object::Integer(font.data.len() as i64) },
+        font.data.clone(),
+    );
     let font_file_id = doc.add_object(Object::Stream(font_stream));
     let upem = font.units_per_em as f64;
     let scale = 1000.0 / upem.max(1.0);
@@ -343,12 +392,26 @@ fn embed_font_in_pdf(doc: &mut Document, font: &ResolvedFont) -> ObjectId {
     doc.add_object(Object::Dictionary(font_dict))
 }
 
-fn resolve_and_embed_fonts(doc: &mut Document, template_xml: &str, pdf_bytes: &[u8]) -> (HashMap<String, String>, Vec<(String, ObjectId)>) {
+fn resolve_and_embed_fonts(
+    doc: &mut Document,
+    template_xml: &str,
+    pdf_bytes: &[u8],
+) -> (
+    HashMap<String, String>,
+    Vec<(String, ObjectId)>,
+    HashMap<String, FontMetricsData>,
+) {
     let mut font_map = HashMap::new();
     let mut font_objects = Vec::new();
+    let mut metrics_data = HashMap::new();
     let font_names = collect_template_font_names(template_xml);
-    if font_names.is_empty() { return (font_map, font_objects); }
-    let source_doc = match Document::load_mem(pdf_bytes) { Ok(d) => d, Err(_) => return (font_map, font_objects) };
+    if font_names.is_empty() {
+        return (font_map, font_objects, metrics_data);
+    }
+    let source_doc = match Document::load_mem(pdf_bytes) {
+        Ok(d) => d,
+        Err(_) => return (font_map, font_objects, metrics_data),
+    };
     let embedded_fonts = extract_embedded_fonts(&source_doc);
     let mut resolver = XfaFontResolver::new(embedded_fonts);
     for (idx, name) in font_names.iter().enumerate() {
@@ -359,11 +422,23 @@ fn resolve_and_embed_fonts(doc: &mut Document, template_xml: &str, pdf_bytes: &[
                 let obj_id = embed_font_in_pdf(doc, &resolved);
                 font_map.insert(name.clone(), format!("/{}", resource_name));
                 font_objects.push((resource_name, obj_id));
+                let (_first_char, widths) = resolved.pdf_glyph_widths();
+                metrics_data.insert(
+                    name.clone(),
+                    FontMetricsData {
+                        widths,
+                        upem: resolved.units_per_em,
+                        ascender: resolved.ascender,
+                        descender: resolved.descender,
+                    },
+                );
             }
-            Err(e) => { eprintln!("Font resolution failed for '{}': {}", name, e); }
+            Err(e) => {
+                eprintln!("Font resolution failed for '{}': {}", name, e);
+            }
         }
     }
-    (font_map, font_objects)
+    (font_map, font_objects, metrics_data)
 }
 
 /// Fallback: preserve existing page content, strip AcroForm/widgets only.
@@ -902,12 +977,17 @@ fn add_new_page(
     Ok(())
 }
 
-fn make_resources_dict(font_ids: &[ObjectId; 3], embedded_fonts: &[(String, ObjectId)]) -> Dictionary {
+fn make_resources_dict(
+    font_ids: &[ObjectId; 3],
+    embedded_fonts: &[(String, ObjectId)],
+) -> Dictionary {
     let mut fonts = Dictionary::new();
     fonts.set("F1", Object::Reference(font_ids[0]));
     fonts.set("F2", Object::Reference(font_ids[1]));
     fonts.set("F3", Object::Reference(font_ids[2]));
-    for (name, obj_id) in embedded_fonts { fonts.set(name.as_str(), Object::Reference(*obj_id)); }
+    for (name, obj_id) in embedded_fonts {
+        fonts.set(name.as_str(), Object::Reference(*obj_id));
+    }
     let mut resources = Dictionary::new();
     resources.set("Font", Object::Dictionary(fonts));
     resources
@@ -950,7 +1030,7 @@ mod tests {
 
     /// Build a minimal XFA PDF in memory (same as generate_xfa_layout_fixtures).
     fn build_xfa_pdf_with_content(xdp: &str, page_content: Vec<u8>) -> Vec<u8> {
-        use lopdf::{dictionary, Document, Object, Stream};
+        use lopdf::{Document, Object, Stream, dictionary};
         let mut doc = Document::with_version("1.4");
         let xdp_bytes = xdp.as_bytes().to_vec();
         let xfa_stream = Stream::new(
@@ -1005,7 +1085,7 @@ mod tests {
         normal_appearance: Object,
         widget_extra: Dictionary,
     ) -> Vec<u8> {
-        use lopdf::{dictionary, Document, Object, Stream};
+        use lopdf::{Document, Object, Stream, dictionary};
 
         let mut doc = Document::with_version("1.4");
         let xdp_bytes = SIMPLE_XDP.as_bytes().to_vec();
