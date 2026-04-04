@@ -171,6 +171,15 @@ pub enum LayoutStrategy {
     Row,
 }
 
+/// Vertical text alignment (XFA `<para vAlign>`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VerticalAlign {
+    #[default]
+    Top,
+    Middle,
+    Bottom,
+}
+
 /// Caption placement relative to content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CaptionPlacement {
