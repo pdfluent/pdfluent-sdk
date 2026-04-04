@@ -7,6 +7,7 @@ rust-version = "1.80.0"
 [dependencies]
 pdf-xfa = { path = "../pdf-xfa" }
 pdf-engine = { path = "../pdf-engine", features = ["xfa"] }
+lopdf = "0.34"
 rusqlite = { version = "0.31", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 image = "0.25"

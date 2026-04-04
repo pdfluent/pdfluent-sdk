@@ -3148,6 +3148,26 @@ dependencies = [
 
 [[package]]
 name = "lopdf"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5c8ecfc6c72051981c0459f75ccc585e7ff67c70829560cda8e647882a9abff"
+dependencies = [
+ "chrono",
+ "encoding_rs",
+ "flate2",
+ "indexmap 2.13.0",
+ "itoa",
+ "log",
+ "md-5",
+ "nom 7.1.3",
+ "rangemap",
+ "rayon",
+ "time",
+ "weezl",
+]
+
+[[package]]
+name = "lopdf"
 version = "0.39.0"
 dependencies = [
  "aes",
@@ -4047,7 +4067,7 @@ name = "pdf-annot"
 version = "1.0.0-beta.1"
 dependencies = [
  "log",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-syntax",
  "thiserror 2.0.18",
 ]
@@ -4058,7 +4078,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "criterion",
  "formcalc-interpreter",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
  "pdf-extract",
@@ -4074,7 +4094,7 @@ dependencies = [
 name = "pdf-capi"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
  "pdf-extract",
@@ -4091,7 +4111,7 @@ dependencies = [
  "cff-parser",
  "flate2",
  "log",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-syntax",
  "thiserror 2.0.18",
  "ttf-parser",
@@ -4103,7 +4123,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "base64 0.22.1",
  "image",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-annot",
  "pdf-engine",
  "serde",
@@ -4125,7 +4145,7 @@ dependencies = [
 name = "pdf-docx"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-extract",
  "quick-xml 0.37.5",
  "tempfile",
@@ -4143,7 +4163,7 @@ dependencies = [
  "hmac",
  "image",
  "kurbo 0.13.0",
- "lopdf",
+ "lopdf 0.39.0",
  "ocrs",
  "pdf-forms",
  "pdf-interpret",
@@ -4170,7 +4190,7 @@ name = "pdf-extract"
 version = "1.0.0-beta.1"
 dependencies = [
  "flate2",
- "lopdf",
+ "lopdf 0.39.0",
  "tempfile",
  "thiserror 2.0.18",
 ]
@@ -4189,7 +4209,7 @@ name = "pdf-forms"
 version = "1.0.0-beta.1"
 dependencies = [
  "log",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-syntax",
  "thiserror 2.0.18",
 ]
@@ -4220,7 +4240,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "chrono",
  "flate2",
- "lopdf",
+ "lopdf 0.39.0",
  "quick-xml 0.37.5",
  "roxmltree",
  "serde",
@@ -4234,7 +4254,7 @@ name = "pdf-java"
 version = "1.0.0-beta.1"
 dependencies = [
  "jni",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-annot",
  "pdf-compliance",
  "pdf-engine",
@@ -4252,7 +4272,7 @@ dependencies = [
  "flate2",
  "hayro-jbig2",
  "image",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
  "pdf-font",
@@ -4273,7 +4293,7 @@ dependencies = [
 name = "pdf-node"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf",
+ "lopdf 0.39.0",
  "napi",
  "napi-build",
  "napi-derive",
@@ -4297,7 +4317,7 @@ dependencies = [
  "dirs-next",
  "image",
  "leptess",
- "lopdf",
+ "lopdf 0.39.0",
  "ndarray",
  "ort",
  "tempfile",
@@ -4309,7 +4329,7 @@ dependencies = [
 name = "pdf-pptx"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-extract",
  "quick-xml 0.37.5",
  "tempfile",
@@ -4322,7 +4342,7 @@ name = "pdf-redact"
 version = "1.0.0-beta.1"
 dependencies = [
  "flate2",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-extract",
  "pdf-manip",
  "regex",
@@ -4339,7 +4359,7 @@ dependencies = [
  "image",
  "kurbo 0.13.0",
  "log",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-interpret",
  "vello_cpu",
 ]
@@ -4352,7 +4372,7 @@ dependencies = [
  "digest",
  "ecdsa",
  "log",
- "lopdf",
+ "lopdf 0.39.0",
  "p12",
  "p256",
  "p384",
@@ -4394,7 +4414,7 @@ dependencies = [
  "formcalc-interpreter",
  "image",
  "log",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-font",
  "pdf-interpret",
  "pdf-syntax",
@@ -4410,7 +4430,7 @@ dependencies = [
 name = "pdf-xlsx"
 version = "1.0.0-beta.1"
 dependencies = [
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-extract",
  "quick-xml 0.37.5",
  "rust_xlsxwriter",
@@ -8469,7 +8489,7 @@ version = "1.0.0-beta.1"
 dependencies = [
  "axum",
  "indexmap 2.13.0",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-xfa",
  "roxmltree",
  "serde",
@@ -8497,7 +8517,7 @@ dependencies = [
  "clap_mangen",
  "formcalc-interpreter",
  "image",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-compliance",
  "pdf-engine",
  "pdf-sign",
@@ -8525,7 +8545,7 @@ name = "xfa-golden-tests"
 version = "1.0.0-beta.1"
 dependencies = [
  "image",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-engine",
  "thiserror 2.0.18",
  "xfa-layout-engine",
@@ -8580,6 +8600,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "lopdf 0.34.0",
  "pdf-engine",
  "pdf-xfa",
  "rayon",
@@ -8600,7 +8621,7 @@ dependencies = [
  "image",
  "indicatif",
  "libc",
- "lopdf",
+ "lopdf 0.39.0",
  "num_cpus",
  "pdf-annot",
  "pdf-compliance",
@@ -8639,7 +8660,7 @@ dependencies = [
  "indexmap 2.13.0",
  "js-sys",
  "kurbo 0.13.0",
- "lopdf",
+ "lopdf 0.39.0",
  "pdf-annot",
  "pdf-compliance",
  "pdf-engine",
