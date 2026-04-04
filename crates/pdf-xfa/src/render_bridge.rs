@@ -7,6 +7,7 @@
 //! PDF uses bottom-left origin (y grows upward).
 
 use crate::error::Result;
+use std::collections::HashMap;
 use xfa_layout_engine::form::{FieldKind, FormNodeStyle};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
@@ -31,6 +32,7 @@ pub struct XfaRenderConfig {
     pub background_color: Option<[f64; 3]>,
     /// Text padding from field edges.
     pub text_padding: f64,
+    pub font_map: HashMap<String, String>,
 }
 
 impl Default for XfaRenderConfig {
@@ -44,6 +46,7 @@ impl Default for XfaRenderConfig {
             text_color: [0.0, 0.0, 0.0],
             background_color: None,
             text_padding: 1.0,
+            font_map: HashMap::new(),
         }
     }
 }
