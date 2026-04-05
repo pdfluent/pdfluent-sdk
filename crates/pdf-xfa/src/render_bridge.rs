@@ -240,6 +240,33 @@ fn render_nodes(
                 FieldKind::Checkbox | FieldKind::Radio => {
                     render_checkbox(abs_x, pdf_y, w, h, value, &node_config, ops)
                 }
+                FieldKind::Dropdown => render_dropdown(
+                    abs_x,
+                    pdf_y,
+                    w,
+                    h,
+                    value,
+                    *font_size,
+                    *font_family,
+                    &node.style,
+                    &node_config,
+                    ops,
+                ),
+                FieldKind::Button => render_button(
+                    abs_x,
+                    pdf_y,
+                    w,
+                    h,
+                    value,
+                    *font_size,
+                    *font_family,
+                    &node.style,
+                    &node_config,
+                    ops,
+                ),
+                FieldKind::Signature => {
+                    render_signature(abs_x, pdf_y, w, h, value, &node.style, &node_config, ops)
+                }
                 _ => render_field(
                     abs_x,
                     pdf_y,
@@ -589,6 +616,234 @@ fn render_checkbox(
         );
     }
     write_ops(ops, format_args!("Q\n"));
+}
+
+fn render_dropdown(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    value: &str,
+    font_size: f64,
+    font_family: FontFamily,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
+
+    if let Some(bg) = &config.background_color {
+        write_ops(
+            ops,
+            format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
+        );
+        emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+        ops.extend_from_slice(b"f\n");
+    }
+
+    if config.draw_borders && config.border_width > 0.0 {
+        write_ops(
+            ops,
+            format_args!(
+                "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
+                config.border_width,
+                config.border_color[0],
+                config.border_color[1],
+                config.border_color[2],
+            ),
+        );
+        emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+        ops.extend_from_slice(b"S\n");
+    }
+
+    let arrow_w = h.min(12.0);
+
+    if !value.is_empty() {
+        let fs = if font_size > 0.0 {
+            font_size
+        } else {
+            config.default_font_size
+        };
+        let _metrics = build_font_metrics(fs, font_family, node_style, config);
+        let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+        let idh_metrics = lookup_font_metrics(node_style, config);
+
+        let v_offset = pdf_y + h / 2.0 - fs / 2.0;
+        let encoded = pdf_encode_text(value, idh_metrics);
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n{} Tj\nET\n",
+                config.text_color[0],
+                config.text_color[1],
+                config.text_color[2],
+                font_ref,
+                fs,
+                x + 2.0,
+                v_offset,
+                encoded
+            ),
+        );
+    }
+
+    let arrow_x = x + w - arrow_w - 1.0;
+    let arrow_y_center = pdf_y + h / 2.0;
+    let arrow_size = arrow_w * 0.6;
+    let arrow_char = "\u{25BC}";
+    write_ops(
+        ops,
+        format_args!(
+            "BT\n/F2 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+            arrow_size,
+            arrow_x,
+            arrow_y_center - arrow_size / 2.0,
+            arrow_char
+        ),
+    );
+}
+
+fn render_button(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    value: &str,
+    font_size: f64,
+    font_family: FontFamily,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    let border_radius = node_style.border_radius_pt.unwrap_or(1.0);
+    let bw = config.border_width.max(1.0);
+
+    let light_shade = [
+        (config.border_color[0] + 0.3).min(1.0),
+        (config.border_color[1] + 0.3).min(1.0),
+        (config.border_color[2] + 0.3).min(1.0),
+    ];
+    let dark_shade = [
+        (config.border_color[0] - 0.3).max(0.0),
+        (config.border_color[1] - 0.3).max(0.0),
+        (config.border_color[2] - 0.3).max(0.0),
+    ];
+
+    write_ops(
+        ops,
+        format_args!(
+            "q\n{:.3} {:.3} {:.3} rg\n",
+            light_shade[0], light_shade[1], light_shade[2]
+        ),
+    );
+    emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+    ops.extend_from_slice(b"f\n");
+
+    write_ops(
+        ops,
+        format_args!(
+            "{:.3} {:.3} {:.3} RG\n{:.2} w\n",
+            dark_shade[0], dark_shade[1], dark_shade[2], bw
+        ),
+    );
+    emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+    ops.extend_from_slice(b"S\n");
+
+    write_ops(ops, format_args!("{:.2} w\n", bw / 2.0));
+    write_ops(
+        ops,
+        format_args!(
+            "{:.3} {:.3} {:.3} RG\n",
+            light_shade[0], light_shade[1], light_shade[2]
+        ),
+    );
+    emit_rect_path(ops, x + 0.5, pdf_y + 0.5, w - 1.0, h - 1.0, border_radius);
+    ops.extend_from_slice(b"S\n");
+
+    if !value.is_empty() {
+        let fs = if font_size > 0.0 {
+            font_size
+        } else {
+            config.default_font_size
+        };
+        let metrics = build_font_metrics(fs, font_family, node_style, config);
+        let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+        let idh_metrics = lookup_font_metrics(node_style, config);
+        let text_w = metrics.measure_width(value);
+        let text_x = x + (w - text_w) / 2.0;
+        let v_offset = pdf_y + h / 2.0 - fs / 2.0;
+        let encoded = pdf_encode_text(value, idh_metrics);
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n{} Tj\nET\n",
+                config.text_color[0],
+                config.text_color[1],
+                config.text_color[2],
+                font_ref,
+                fs,
+                text_x,
+                v_offset,
+                encoded
+            ),
+        );
+    }
+    write_ops(ops, format_args!("Q\n"));
+}
+
+fn render_signature(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    value: &str,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
+
+    if let Some(bg) = &config.background_color {
+        write_ops(
+            ops,
+            format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
+        );
+        emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+        ops.extend_from_slice(b"f\n");
+    }
+
+    write_ops(
+        ops,
+        format_args!(
+            "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
+            config.border_width,
+            config.border_color[0],
+            config.border_color[1],
+            config.border_color[2],
+        ),
+    );
+    write_ops(ops, format_args!("[4 2] 0 d\n"));
+    emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+    ops.extend_from_slice(b"S\n");
+    write_ops(ops, format_args!("[] 0 d\n"));
+
+    if !value.is_empty() {
+        let fs = config.default_font_size * 0.8;
+        let text_x = x + config.text_padding;
+        let v_offset = pdf_y + h / 2.0 - fs / 2.0;
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+                config.text_color[0],
+                config.text_color[1],
+                config.text_color[2],
+                fs,
+                text_x,
+                v_offset,
+                pdf_escape(value)
+            ),
+        );
+    }
 }
 
 fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &mut Vec<u8>) {
