@@ -5,7 +5,7 @@
 
 use crate::types::{FieldValue, FormData};
 use indexmap::IndexMap;
-use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree};
+use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeType, FormTree};
 
 /// Merge JSON field values into an existing FormTree.
 ///
@@ -50,12 +50,10 @@ fn merge_node(data: &FormData, tree: &mut FormTree, node_id: FormNodeId, parent_
                 };
             }
         }
-        FormNodeType::Draw { .. } => {
+        FormNodeType::Draw(..) => {
             if let Some(value) = data.fields.get(&path) {
                 let string_value = field_value_to_string(value);
-                tree.get_mut(node_id).node_type = FormNodeType::Draw {
-                    content: string_value,
-                };
+                tree.get_mut(node_id).node_type = FormNodeType::Draw(DrawContent::Text(string_value));
             }
         }
         FormNodeType::Image { .. } => {
@@ -136,12 +134,10 @@ fn merge_instance(
                     };
                 }
             }
-            FormNodeType::Draw { .. } => {
+            FormNodeType::Draw(..) => {
                 if let Some(value) = instance_data.get(&child_name) {
                     let string_value = field_value_to_string(value);
-                    tree.get_mut(child_id).node_type = FormNodeType::Draw {
-                        content: string_value,
-                    };
+                    tree.get_mut(child_id).node_type = FormNodeType::Draw(DrawContent::Text(string_value));
                 }
             }
             FormNodeType::Subform => {

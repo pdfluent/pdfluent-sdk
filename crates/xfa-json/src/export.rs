@@ -6,7 +6,7 @@
 use crate::coerce::coerce_value;
 use crate::types::{FieldValue, FormData};
 use indexmap::IndexMap;
-use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree};
+use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeType, FormTree};
 
 /// Convert a FormTree into a JSON-friendly `FormData` structure.
 ///
@@ -58,13 +58,13 @@ fn walk_node(
         FormNodeType::Field { value } => {
             fields.insert(path, coerce_value(value));
         }
-        FormNodeType::Draw { content } => {
+        FormNodeType::Draw(DrawContent::Text(content)) => {
             if !content.is_empty() {
                 fields.insert(path, FieldValue::Text(content.clone()));
             }
         }
-        FormNodeType::Image { .. } => {
-            // Images are static content - not exported as form data
+        FormNodeType::Draw(_) | FormNodeType::Image { .. } => {
+            // Non-text draws and images are static content - not exported as form data
         }
         FormNodeType::Subform => {
             if node.occur.is_repeating() {
@@ -111,13 +111,13 @@ fn walk_node_into_map(
         FormNodeType::Field { value } => {
             map.insert(node.name.clone(), coerce_value(value));
         }
-        FormNodeType::Draw { content } => {
+        FormNodeType::Draw(DrawContent::Text(content)) => {
             if !content.is_empty() {
                 map.insert(node.name.clone(), FieldValue::Text(content.clone()));
             }
         }
-        FormNodeType::Image { .. } => {
-            // Images are static content
+        FormNodeType::Draw(_) | FormNodeType::Image { .. } => {
+            // Non-text draws and images are static content
         }
         FormNodeType::Subform => {
             if node.occur.is_repeating() {
@@ -142,7 +142,7 @@ fn walk_node_into_map(
                         FormNodeType::Field { value } => {
                             map.insert(key, coerce_value(value));
                         }
-                        FormNodeType::Draw { content } => {
+                        FormNodeType::Draw(DrawContent::Text(content)) => {
                             if !content.is_empty() {
                                 map.insert(key, FieldValue::Text(content.clone()));
                             }

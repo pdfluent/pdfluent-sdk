@@ -7,10 +7,8 @@
 use crate::error::{Result, XfaError};
 use roxmltree::Node;
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
-use xfa_layout_engine::form::{
-    ContentArea, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle, FormNodeType,
-    FormTree, GroupKind, Occur, Presence,
-};
+use xfa_layout_engine::form::{DrawContent, ContentArea, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle, FormNodeType,
+    FormTree, GroupKind, Occur, Presence,};
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
     BoxModel, Caption, CaptionPlacement, Insets, LayoutStrategy, Measurement, TextAlign,
@@ -270,7 +268,7 @@ impl<'a> FormMerger<'a> {
 
         Ok(FormNode {
             name,
-            node_type: FormNodeType::Draw { content },
+            node_type: FormNodeType::Draw(DrawContent::Text(content)),
             box_model: bm,
             layout: LayoutStrategy::Positioned,
             children: Vec::new(),

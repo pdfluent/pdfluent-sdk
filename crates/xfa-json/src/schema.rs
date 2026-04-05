@@ -62,7 +62,7 @@ fn walk_schema(
                 },
             );
         }
-        FormNodeType::Draw { .. } | FormNodeType::Image { .. } => {
+        FormNodeType::Draw(..) | FormNodeType::Image { .. } => {
             fields.insert(
                 path.clone(),
                 FieldSchema {

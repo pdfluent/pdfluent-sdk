@@ -76,7 +76,7 @@ impl ResolvedFont {
         }
     }
 
-    /// Generate PDF glyph widths array for embedding.
+    /// Generate PDF glyph widths array for embedding (WinAnsiEncoding, 256 entries).
     pub fn pdf_glyph_widths(&self) -> (u16, Vec<u16>) {
         if let Ok(face) = ttf_parser::Face::parse(&self.data, self.face_index) {
             let upem = face.units_per_em() as f64;
@@ -95,6 +95,48 @@ impl ResolvedFont {
             (0, vec![500; 256])
         }
     }
+
+    /// Generate CID font data for Identity-H encoding.
+    ///
+    /// Returns glyph widths indexed by GID and a GID→Unicode mapping for
+    /// the ToUnicode CMap.
+    pub fn cid_font_info(&self) -> Option<CidFontInfo> {
+        let face = ttf_parser::Face::parse(&self.data, self.face_index).ok()?;
+        let upem = face.units_per_em() as f64;
+        let scale = 1000.0 / upem;
+        let num_glyphs = face.number_of_glyphs();
+
+        let mut widths = Vec::with_capacity(num_glyphs as usize);
+        for gid_val in 0..num_glyphs {
+            let w = face
+                .glyph_hor_advance(ttf_parser::GlyphId(gid_val))
+                .map(|a| (a as f64 * scale) as u16)
+                .unwrap_or(0);
+            widths.push(w);
+        }
+
+        let mut gid_to_unicode = Vec::new();
+        for cp in 0x0020u32..=0xFFFDu32 {
+            if let Some(ch) = char::from_u32(cp) {
+                if let Some(gid) = face.glyph_index(ch) {
+                    gid_to_unicode.push((gid.0, ch));
+                }
+            }
+        }
+
+        Some(CidFontInfo {
+            widths,
+            gid_to_unicode,
+        })
+    }
+}
+
+/// Data needed for CIDFont (Identity-H) embedding.
+pub struct CidFontInfo {
+    /// Width in 1/1000 units for each glyph, indexed by GID.
+    pub widths: Vec<u16>,
+    /// Mapping from glyph ID to Unicode codepoint (for ToUnicode CMap).
+    pub gid_to_unicode: Vec<(u16, char)>,
 }
 
 /// XFA font specification from the template.
@@ -339,5 +381,22 @@ mod tests {
     fn system_font_dirs_not_empty() {
         let dirs = system_font_dirs();
         assert!(!dirs.is_empty());
+    }
+
+    #[test]
+    fn cid_font_info_with_system_font() {
+        // Try to resolve a system font and verify cid_font_info works
+        let mut resolver = XfaFontResolver::new(vec![]);
+        let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, None);
+        if let Ok(font) = resolver.resolve(&spec) {
+            let info = font.cid_font_info();
+            assert!(info.is_some(), "cid_font_info should succeed for a valid font");
+            let info = info.unwrap();
+            assert!(!info.widths.is_empty(), "widths should not be empty");
+            assert!(!info.gid_to_unicode.is_empty(), "gid_to_unicode should not be empty");
+            // Verify that 'A' (U+0041) is mapped
+            let has_a = info.gid_to_unicode.iter().any(|&(_, ch)| ch == 'A');
+            assert!(has_a, "font should have a mapping for 'A'");
+        }
     }
 }

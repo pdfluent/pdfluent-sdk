@@ -4,7 +4,7 @@
 //! Supports positioned layout and flowed layout (tb, lr-tb, rl-tb).
 
 use crate::error::Result;
-use crate::form::{ContentArea, FormNode, FormNodeId, FormNodeType, FormTree};
+use crate::form::{ContentArea, DrawContent, FormNode, FormNodeId, FormNodeType, FormTree};
 use crate::text::{self, FontFamily};
 use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
 
@@ -68,6 +68,8 @@ pub enum LayoutContent {
         data: Vec<u8>,
         mime_type: String,
     },
+    /// A static draw element (line, rectangle, arc, text).
+    Draw(DrawContent),
 }
 
 /// A content node queued for pagination, carrying page-break flags.
@@ -282,7 +284,13 @@ impl<'a> LayoutEngine<'a> {
         let node = self.form.get(id);
         match &node.node_type {
             FormNodeType::Field { value } => value.is_empty(),
-            FormNodeType::Draw { content } => content.is_empty(),
+            FormNodeType::Draw(ref content) => {
+                if let DrawContent::Text(text) = content {
+                    text.is_empty()
+                } else {
+                    false
+                }
+            }
             FormNodeType::Image { data, .. } => data.is_empty(),
             FormNodeType::Root | FormNodeType::PageSet | FormNodeType::PageArea { .. } => true,
             FormNodeType::Subform => node.children.iter().all(|&c| self.subtree_is_blank(c)),
@@ -397,7 +405,7 @@ impl<'a> LayoutEngine<'a> {
                                 .filter(|&cid| {
                                     matches!(
                                         self.form.get(cid).node_type,
-                                        FormNodeType::Draw { .. } | FormNodeType::Subform
+                                        FormNodeType::Draw(..) | FormNodeType::Subform
                                     )
                                 })
                                 .collect();
@@ -421,7 +429,7 @@ impl<'a> LayoutEngine<'a> {
                         .filter(|&cid| {
                             matches!(
                                 self.form.get(cid).node_type,
-                                FormNodeType::Draw { .. } | FormNodeType::Subform
+                                FormNodeType::Draw(..) | FormNodeType::Subform
                             )
                         })
                         .collect();
@@ -915,7 +923,8 @@ impl<'a> LayoutEngine<'a> {
                 font_size: node.font.size,
                 font_family: node.font.typeface,
             },
-            FormNodeType::Draw { content } => LayoutContent::Text(content.clone()),
+            FormNodeType::Draw(DrawContent::Text(content)) => LayoutContent::Text(content.clone()),
+            FormNodeType::Draw(_) => LayoutContent::None,
             _ => LayoutContent::None,
         };
 
@@ -1004,7 +1013,7 @@ impl<'a> LayoutEngine<'a> {
     fn has_field_descendants(&self, id: FormNodeId) -> bool {
         let node = self.form.get(id);
         match &node.node_type {
-            FormNodeType::Field { .. } | FormNodeType::Draw { .. } | FormNodeType::Image { .. } => {
+            FormNodeType::Field { .. } | FormNodeType::Draw(..) | FormNodeType::Image { .. } => {
                 true
             }
             FormNodeType::Subform => node.children.iter().any(|&c| self.has_field_descendants(c)),
@@ -1366,7 +1375,7 @@ impl<'a> LayoutEngine<'a> {
                     }
                 }
             }
-            FormNodeType::Draw { content } => {
+            FormNodeType::Draw(DrawContent::Text(content)) => {
                 if !content.is_empty() && node.children.is_empty() {
                     let insets_w =
                         node.box_model.margins.horizontal() + node.box_model.border_width * 2.0;
@@ -1567,7 +1576,7 @@ impl<'a> LayoutEngine<'a> {
         } else {
             // Leaf node: measure text content for Draw/Field nodes
             let text_content = match &node.node_type {
-                FormNodeType::Draw { content } => Some(content.as_str()),
+                FormNodeType::Draw(DrawContent::Text(content)) => Some(content.as_str()),
                 FormNodeType::Field { value } => Some(value.as_str()),
                 _ => None,
             };
@@ -3729,9 +3738,7 @@ mod tests {
         let mut tree = FormTree::new();
         let draw = tree.add_node(FormNode {
             name: "Label".to_string(),
-            node_type: FormNodeType::Draw {
-                content: "Hello World".to_string(),
-            },
+            node_type: FormNodeType::Draw(DrawContent::Text("Hello World".to_string())),
             box_model: BoxModel {
                 width: Some(200.0),
                 height: None, // growable
@@ -3773,9 +3780,7 @@ mod tests {
         let mut tree = FormTree::new();
         let draw = tree.add_node(FormNode {
             name: "Label".to_string(),
-            node_type: FormNodeType::Draw {
-                content: "Hello World".to_string(),
-            },
+            node_type: FormNodeType::Draw(DrawContent::Text("Hello World".to_string())),
             box_model: BoxModel {
                 width: Some(40.0), // narrow: "Hello" = 25pt fits, "World" wraps
                 height: None,
@@ -3864,9 +3869,7 @@ mod tests {
         let mut tree = FormTree::new();
         let draw = tree.add_node(FormNode {
             name: "Auto".to_string(),
-            node_type: FormNodeType::Draw {
-                content: "Test".to_string(),
-            },
+            node_type: FormNodeType::Draw(DrawContent::Text("Test".to_string())),
             box_model: BoxModel {
                 width: None,
                 height: None,
@@ -3896,9 +3899,7 @@ mod tests {
         let mut tree = FormTree::new();
         let draw = tree.add_node(FormNode {
             name: "Big".to_string(),
-            node_type: FormNodeType::Draw {
-                content: "Hi".to_string(),
-            },
+            node_type: FormNodeType::Draw(DrawContent::Text("Hi".to_string())),
             box_model: BoxModel {
                 width: None,
                 height: None,

@@ -240,6 +240,7 @@ fn print_layout_tree(nodes: &[xfa_layout_engine::layout::LayoutNode], indent: us
                 format!(" wrapped_text[{}lines, {font_size}pt]", lines.len())
             }
             xfa_layout_engine::layout::LayoutContent::Image { .. } => " image".to_string(),
+            xfa_layout_engine::layout::LayoutContent::Draw(_) => " draw".to_string(),
             xfa_layout_engine::layout::LayoutContent::None => String::new(),
         };
         println!(
