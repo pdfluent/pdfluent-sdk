@@ -1307,8 +1307,7 @@ fn extract_blocks_from_ops_inner(
             }
             "'" => {
                 // Move to next line and show text.
-                let new_tlm =
-                    multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, 0.0, -state.tl]);
+                let new_tlm = multiply_matrix(&state.tlm, &[1.0, 0.0, 0.0, 1.0, 0.0, -state.tl]);
                 state.tlm = new_tlm;
                 state.tm = new_tlm;
 
@@ -1349,13 +1348,9 @@ fn extract_blocks_from_ops_inner(
                     state.tlm = new_tlm;
                     state.tm = new_tlm;
 
-                    let fi =
-                        font_map.get(&state.font_name);
-                    if let Some(text) =
-                        extract_string_operand_with_font(&op.operands[2..], fi)
-                    {
-                        let char_w =
-                            state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
+                    let fi = font_map.get(&state.font_name);
+                    if let Some(text) = extract_string_operand_with_font(&op.operands[2..], fi) {
+                        let char_w = state.font_size * APPROX_CHAR_WIDTH * (state.th / 100.0);
 
                         if !text.is_empty() {
                             let x = state.tm[4];
@@ -1510,8 +1505,7 @@ fn build_font_info_from_value(doc: &Document, value: &Object) -> Option<FontInfo
                     Object::Reference(r) => {
                         // Don't use `?` here — a bad reference in one descendant
                         // should not abort the entire font info construction.
-                        let Some(Object::Dictionary(d)) = doc.get_object(*r).ok()
-                        else {
+                        let Some(Object::Dictionary(d)) = doc.get_object(*r).ok() else {
                             continue;
                         };
                         d

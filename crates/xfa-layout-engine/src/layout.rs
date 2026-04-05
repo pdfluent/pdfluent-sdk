@@ -1432,12 +1432,7 @@ impl<'a> LayoutEngine<'a> {
                         extent.width - margins.horizontal() - bw * 2.0,
                         reserve,
                     ),
-                    CaptionPlacement::Inline => (
-                        margins.left + bw,
-                        margins.top + bw,
-                        0.0,
-                        0.0,
-                    ),
+                    CaptionPlacement::Inline => (margins.left + bw, margins.top + bw, 0.0, 0.0),
                 };
                 if cw > 0.0 && ch > 0.0 {
                     let cap_content = {
