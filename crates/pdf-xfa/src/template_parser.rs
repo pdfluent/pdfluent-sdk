@@ -165,19 +165,12 @@ fn parse_field(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     // preserve the content for all fields.
     let value = extract_value_text(elem).unwrap_or_default();
 
-    // Extract caption text (from <caption><value><text>…</text></value>).
-    let caption_text = if !is_hidden(elem) {
-        extract_caption_text(elem)
-    } else {
-        None
-    };
+    // Extract caption from <caption> child element (placement, reserve, text).
     let mut bm_with_caption = bm.clone();
-    if let Some(ref cap_text) = caption_text {
-        bm_with_caption.caption = Some(Caption {
-            placement: CaptionPlacement::Left,
-            reserve: Some(72.0), // ~1 inch for caption by default
-            text: cap_text.clone(),
-        });
+    if !is_hidden(elem) {
+        if let Some(cap) = parse_caption(elem) {
+            bm_with_caption.caption = Some(cap);
+        }
     }
 
     let mut font = parse_font_metrics(elem);
@@ -1493,10 +1486,36 @@ fn extract_exdata_font_size(elem: Node<'_, '_>) -> Option<f64> {
     None
 }
 
-/// Extract caption text from `<caption><value><text>…</text></value></caption>`.
-fn extract_caption_text(elem: Node<'_, '_>) -> Option<String> {
-    let cap = find_first_child_by_name(elem, "caption")?;
-    extract_value_text(cap)
+/// Parse caption from `<caption placement="..." reserve="...">` element.
+///
+/// Reads placement (left/right/top/bottom/inline) and reserve width
+/// from the XFA caption element attributes. Falls back to left placement
+/// and auto-sized reserve when attributes are absent.
+fn parse_caption(elem: Node<'_, '_>) -> Option<Caption> {
+    let cap_elem = find_first_child_by_name(elem, "caption")?;
+    // Skip captions with presence="hidden"/"invisible"/"inactive".
+    if is_hidden(cap_elem) {
+        return None;
+    }
+    let text = extract_value_text(cap_elem)?;
+    if text.is_empty() {
+        return None;
+    }
+    let placement = match attr(cap_elem, "placement") {
+        Some("right") => CaptionPlacement::Right,
+        Some("top") => CaptionPlacement::Top,
+        Some("bottom") => CaptionPlacement::Bottom,
+        Some("inline") => CaptionPlacement::Inline,
+        _ => CaptionPlacement::Left,
+    };
+    let reserve = attr(cap_elem, "reserve")
+        .and_then(Measurement::parse)
+        .map(|m| m.to_points());
+    Some(Caption {
+        placement,
+        reserve,
+        text,
+    })
 }
 
 /// Get an attribute value by local name, ignoring namespace prefixes.
@@ -1611,9 +1630,11 @@ mod tests {
         let row_ids = tree.get(items_id).children.clone();
 
         assert_eq!(row_ids.len(), 3);
-        assert!(row_ids
-            .iter()
-            .all(|&row_id| tree.get(row_id).occur.count() == 1));
+        assert!(
+            row_ids
+                .iter()
+                .all(|&row_id| tree.get(row_id).occur.count() == 1)
+        );
 
         let values: Vec<String> = row_ids
             .iter()
@@ -1670,9 +1691,11 @@ mod tests {
         let row_ids = tree.get(items_id).children.clone();
 
         assert_eq!(row_ids.len(), 3);
-        assert!(row_ids
-            .iter()
-            .all(|&row_id| tree.get(row_id).occur.count() == 1));
+        assert!(
+            row_ids
+                .iter()
+                .all(|&row_id| tree.get(row_id).occur.count() == 1)
+        );
 
         let values: Vec<String> = row_ids
             .iter()
