@@ -19,8 +19,9 @@ use std::collections::HashMap;
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
 use crate::font_bridge::{ResolvedFont, XfaFontResolver, XfaFontSpec};
+use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
-use crate::render_bridge::{generate_all_overlays, FontMetricsData, XfaRenderConfig};
+use crate::render_bridge::{generate_all_overlays, FontMetricsData, PageOverlay, XfaRenderConfig};
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::layout::LayoutEngine;
 
@@ -410,10 +411,7 @@ fn embed_font_in_pdf(doc: &mut Document, font: &ResolvedFont) -> ObjectId {
 ///
 /// Returns a map from typeface name to `ResolvedFont`. Called BEFORE layout so
 /// that resolved metrics can be injected into the `FormTree`.
-fn resolve_template_fonts(
-    template_xml: &str,
-    pdf_bytes: &[u8],
-) -> HashMap<String, ResolvedFont> {
+fn resolve_template_fonts(template_xml: &str, pdf_bytes: &[u8]) -> HashMap<String, ResolvedFont> {
     let mut resolved = HashMap::new();
     let font_names = collect_template_font_names(template_xml);
     if font_names.is_empty() {
@@ -973,20 +971,33 @@ fn strip_widgets_and_acroform(doc: &mut Document) {
 fn write_page_content(
     doc: &mut Document,
     page_id: ObjectId,
-    content: &[u8],
+    overlay: &PageOverlay,
     font_ids: &[ObjectId; 3],
     embedded_fonts: &[(String, ObjectId)],
 ) -> Result<()> {
-    let resources = make_resources_dict(font_ids, embedded_fonts);
+    let mut resources = make_resources_dict(font_ids, embedded_fonts);
 
-    // Build content stream.
+    let mut xobjects = Dictionary::new();
+    for img in &overlay.images {
+        match embed_image(doc, &img.data, &img.mime_type) {
+            Ok(result) => {
+                xobjects.set(img.name.as_str(), Object::Reference(result.object_id));
+            }
+            Err(e) => {
+                eprintln!("failed to embed image {}: {}", img.name, e);
+            }
+        }
+    }
+    if !xobjects.is_empty() {
+        resources.set("XObject", Object::Dictionary(xobjects));
+    }
+
     let stream = Stream::new(
-        dictionary! { "Length" => Object::Integer(content.len() as i64) },
-        content.to_vec(),
+        dictionary! { "Length" => Object::Integer(overlay.content_stream.len() as i64) },
+        overlay.content_stream.clone(),
     );
     let stream_id = doc.add_object(Object::Stream(stream));
 
-    // Mutate the page dict.
     if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
         page_dict.set("Contents", Object::Reference(stream_id));
         page_dict.set("Resources", Object::Dictionary(resources));
@@ -999,14 +1010,30 @@ fn add_new_page(
     doc: &mut Document,
     w: f64,
     h: f64,
-    content: &[u8],
+    overlay: &PageOverlay,
     font_ids: &[ObjectId; 3],
     embedded_fonts: &[(String, ObjectId)],
 ) -> Result<()> {
-    let resources = make_resources_dict(font_ids, embedded_fonts);
+    let mut resources = make_resources_dict(font_ids, embedded_fonts);
+
+    let mut xobjects = Dictionary::new();
+    for img in &overlay.images {
+        match embed_image(doc, &img.data, &img.mime_type) {
+            Ok(result) => {
+                xobjects.set(img.name.as_str(), Object::Reference(result.object_id));
+            }
+            Err(e) => {
+                eprintln!("failed to embed image {}: {}", img.name, e);
+            }
+        }
+    }
+    if !xobjects.is_empty() {
+        resources.set("XObject", Object::Dictionary(xobjects));
+    }
+
     let stream = Stream::new(
-        dictionary! { "Length" => Object::Integer(content.len() as i64) },
-        content.to_vec(),
+        dictionary! { "Length" => Object::Integer(overlay.content_stream.len() as i64) },
+        overlay.content_stream.clone(),
     );
     let stream_id = doc.add_object(Object::Stream(stream));
 
