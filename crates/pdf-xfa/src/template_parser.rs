@@ -201,6 +201,25 @@ fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
     let name = attr(elem, "name").unwrap_or("").to_string();
     let bm = parse_box_model(elem);
 
+    // Try geometric draw content (line, rectangle, arc) first
+    if let Some(draw_content) = extract_draw_content(elem) {
+        let node = FormNode {
+            name,
+            node_type: FormNodeType::Draw(draw_content),
+            box_model: bm,
+            layout: LayoutStrategy::Positioned,
+            children: Vec::new(),
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: Vec::new(),
+            col_span: 1,
+        };
+        let _ = tree;
+        return Ok(node);
+    }
+
     if let Some((image_data, mime_type)) = extract_value_image(elem) {
         let node = FormNode {
             name,
@@ -1404,7 +1423,6 @@ fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
     None
 }
 
-#[allow(dead_code)] // prepared for draw element parsing integration
 fn extract_draw_content(elem: Node<'_, '_>) -> Option<DrawContent> {
     let value = find_first_child_by_name(elem, "value")?;
 
@@ -1567,7 +1585,6 @@ fn attr<'a>(elem: Node<'a, '_>, name: &str) -> Option<&'a str> {
         .map(|a| a.value())
 }
 
-#[allow(dead_code)] // prepared for draw element parsing integration
 fn attr_as_f64(elem: Node<'_, '_>, name: &str) -> Option<f64> {
     attr(elem, name)?.parse().ok()
 }
