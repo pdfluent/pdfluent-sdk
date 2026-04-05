@@ -302,6 +302,93 @@ xfa (root)
 
 JSON serialization of XFA layout output via `serde` + `indexmap` (ordered maps).
 
+### 5.5 pdf-xfa Modules (Flatten & Render Pipeline)
+
+The `pdf-xfa` crate provides the integration layer that connects XFA layout to PDF rendering:
+
+```
+XFA Template XML
+    ↓ extract::extract_xfa_from_bytes()
+XFA Packets (template, datasets, config, locale)
+    ↓ font_bridge::XfaFontResolver
+Font Resolution (embedded fonts → system fonts → fallbacks)
+    ↓ template_parser::parse_template()
+Form Tree + Layout Engine
+    ↓ flatten::flatten_xfa_to_pdf()
+Flattened PDF (static PDF with embedded fonts, images)
+```
+
+#### 5.5.1 font_bridge — Font Resolution
+
+**Purpose:** Resolves XFA `<font typeface="...">` declarations to actual font data.
+
+**Resolution order:**
+1. Fonts embedded in the source PDF (via `extract_embedded_fonts()`)
+2. System fonts found on disk (TTF/OTF/TTC/OTC)
+3. Base font name stripping (e.g., "Arial-Bold" → "Arial")
+4. Fallback fonts: Helvetica → Arial → DejaVuSans → LiberationSans
+
+**Key types:**
+- `ResolvedFont` — parsed font with metrics (upem, ascender, descender)
+- `XfaFontSpec` — XFA font attributes (typeface, weight, posture, size)
+- `XfaFontResolver` — resolver with embedded/system font caches
+
+**Font metrics injection:**
+```rust
+// Resolved metrics injected into FontMetrics
+resolved_widths: Option<Vec<u16>>      // per-glyph widths (1000-unit scale)
+resolved_upem: Option<u16>             // units-per-em (typically 1000)
+resolved_ascender: Option<i16>         // typographic ascender
+resolved_descender: Option<i16>        // typographic descender
+```
+
+#### 5.5.2 image_bridge — Image Embedding
+
+**Purpose:** Converts XFA image data (JPEG/PNG) into PDF Image XObject dictionaries.
+
+**Supported formats:**
+- JPEG (embedded directly via `/Filter /DCTDecode`)
+- PNG (decoded → FlateDecode compressed, alpha via SMask)
+
+**Key functions:**
+- `detect_image_format()` — magic byte detection (JPEG: `FF D8 FF`, PNG: `89 50 4E 47`)
+- `embed_jpeg()` / `embed_png()` — create Image XObject in lopdf document
+- `render_image_ops()` — PDF content stream `q cm Do Q` operators
+
+#### 5.5.3 render_bridge — PDF Content Stream Generation
+
+**Purpose:** Converts `LayoutDom` into PDF content stream operators for overlay rendering.
+
+**Coordinate mapping:**
+- XFA: top-left origin (y grows downward)
+- PDF: bottom-left origin (y grows upward)
+- `CoordinateMapper::xfa_to_pdf_y()` performs the conversion
+
+**Content stream generation:**
+- `generate_page_overlay()` — single page with `PageOverlay { content_stream, images }`
+- `generate_all_overlays()` — all pages via iterator
+- Text rendering with `BT ... ET` blocks, `Td` positioning, `Tj`/`TJ` text
+- Border rendering with `re` (rectangle), `S` (stroke), rounded corners via Bezier curves
+- Image rendering via `Do` (paint XObject)
+
+**Resolved metrics integration:**
+- `resolve_font_ref()` — selects `/XFA_F0` for embedded fonts, `/F1`/`/F2`/`/F3` for Base14
+- `build_font_metrics()` — injects `resolved_widths`/`resolved_upem` into `FontMetrics`
+
+#### 5.5.4 flatten — End-to-End XFA→PDF Pipeline
+
+**Entry point:** `flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>>`
+
+**Pipeline:**
+1. Extract XFA packets from PDF
+2. Parse template XML → Form Tree
+3. Resolve fonts (embedded → system → fallback)
+4. Run layout engine → `LayoutDom`
+5. Generate overlays per page with resolved metrics
+6. Embed resolved fonts as PDF Font objects
+7. Merge overlays onto source PDF pages
+8. Return flattened PDF bytes
+
 ---
 
 ## 6. Layer 3: Document Abstraction
