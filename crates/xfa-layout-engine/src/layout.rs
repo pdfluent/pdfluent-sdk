@@ -754,7 +754,10 @@ impl<'a> LayoutEngine<'a> {
         let node = self.form.get(id);
         matches!(
             node.layout,
-            LayoutStrategy::TopToBottom | LayoutStrategy::Table
+            LayoutStrategy::TopToBottom
+                | LayoutStrategy::LeftToRightTB
+                | LayoutStrategy::RightToLeftTB
+                | LayoutStrategy::Table
         ) && !node.children.is_empty()
             && node.box_model.height.is_none()
     }
@@ -764,7 +767,12 @@ impl<'a> LayoutEngine<'a> {
     /// point even if it fits in the remaining space.
     fn has_inner_break(&self, id: FormNodeId) -> bool {
         let node = self.form.get(id);
-        if node.layout != LayoutStrategy::TopToBottom {
+        if !matches!(
+            node.layout,
+            LayoutStrategy::TopToBottom
+                | LayoutStrategy::LeftToRightTB
+                | LayoutStrategy::RightToLeftTB
+        ) {
             return false;
         }
         let expanded = self.expand_occur(&node.children);
