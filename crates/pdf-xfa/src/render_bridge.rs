@@ -141,17 +141,29 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
 pub fn generate_page_overlay(page: &LayoutPage, config: &XfaRenderConfig) -> Result<PageOverlay> {
     let mapper = CoordinateMapper::new(page.height, page.width);
     let mut ops = Vec::new();
+    let mut images: Vec<ImageInfo> = Vec::new();
     ops.extend_from_slice(b"q\n");
-    render_nodes(&page.nodes, 0.0, 0.0, &mapper, config, &mut ops);
+    render_nodes(
+        &page.nodes,
+        0.0,
+        0.0,
+        &mapper,
+        config,
+        &mut ops,
+        &mut images,
+    );
     ops.extend_from_slice(b"Q\n");
     Ok(PageOverlay {
         content_stream: ops,
-        images: Vec::new(),
+        images,
     })
 }
 
 /// Generate PDF content stream overlays for all pages in a layout.
-pub fn generate_all_overlays(layout: &LayoutDom, config: &XfaRenderConfig) -> Result<Vec<PageOverlay>> {
+pub fn generate_all_overlays(
+    layout: &LayoutDom,
+    config: &XfaRenderConfig,
+) -> Result<Vec<PageOverlay>> {
     layout
         .pages
         .iter()
@@ -166,6 +178,7 @@ fn render_nodes(
     mapper: &CoordinateMapper,
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
+    images: &mut Vec<ImageInfo>,
 ) {
     for node in nodes {
         let abs_x = node.rect.x + parent_x;
@@ -197,10 +210,7 @@ fn render_nodes(
                         });
                     write_ops(
                         ops,
-                        format_args!(
-                            "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
-                            bw, bc[0], bc[1], bc[2]
-                        ),
+                        format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bw, bc[0], bc[1], bc[2]),
                     );
                     apply_border_dash(ops, border_style);
                     emit_rect_path(ops, abs_x, pdf_y, w, h, border_radius);
@@ -261,20 +271,21 @@ fn render_nodes(
                 ops,
             ),
             LayoutContent::Image { data, mime_type } => {
-                ops.extend(
-                    format!(
-                        "q\n{:.2} 0 0 {:.2} {:.2} {:.2} cm\n/Im0 Do\nQ\n",
-                        w, h, abs_x, pdf_y
-                    )
-                    .bytes(),
-                );
-                let _ = (data, mime_type);
+                let img_name = format!("XImg{}", images.len());
+                ops.extend(crate::image_bridge::render_image_ops(
+                    &img_name, abs_x, pdf_y, w, h,
+                ));
+                images.push(ImageInfo {
+                    name: img_name,
+                    data: data.clone(),
+                    mime_type: mime_type.clone(),
+                });
             }
             LayoutContent::None => {}
         }
 
         if !node.children.is_empty() {
-            render_nodes(&node.children, abs_x, abs_y, mapper, config, ops);
+            render_nodes(&node.children, abs_x, abs_y, mapper, config, ops, images);
         }
     }
 }
@@ -282,7 +293,10 @@ fn render_nodes(
 /// Emit a rectangle path with optional rounded corners.
 fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64) {
     if radius <= 0.0 {
-        write_ops(ops, format_args!("{:.2} {:.2} {:.2} {:.2} re\n", x, y, w, h));
+        write_ops(
+            ops,
+            format_args!("{:.2} {:.2} {:.2} {:.2} re\n", x, y, w, h),
+        );
     } else {
         let r = radius.min(w / 2.0).min(h / 2.0);
         let k = r * 0.5522847498;
@@ -299,15 +313,40 @@ fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64
                  {:.2} {:.2} l\n\
                  {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
                  h\n",
-                x, y + r,
-                x, y + h - r,
-                x, y + h - r + k, x + r - k, y + h, x + r, y + h,
-                x + w - r, y + h,
-                x + w - r + k, y + h, x + w, y + h - r + k, x + w, y + h - r,
-                x + w, y + r,
-                x + w, y + r - k, x + w - r + k, y, x + w - r, y,
-                x + r, y,
-                x + r - k, y, x, y + r - k, x, y + r,
+                x,
+                y + r,
+                x,
+                y + h - r,
+                x,
+                y + h - r + k,
+                x + r - k,
+                y + h,
+                x + r,
+                y + h,
+                x + w - r,
+                y + h,
+                x + w - r + k,
+                y + h,
+                x + w,
+                y + h - r + k,
+                x + w,
+                y + h - r,
+                x + w,
+                y + r,
+                x + w,
+                y + r - k,
+                x + w - r + k,
+                y,
+                x + w - r,
+                y,
+                x + r,
+                y,
+                x + r - k,
+                y,
+                x,
+                y + r - k,
+                x,
+                y + r,
             ),
         );
     }
@@ -325,6 +364,50 @@ fn reset_border_dash(ops: &mut Vec<u8>, style: Option<&str>) {
     if matches!(style, Some("dashed") | Some("dotted")) {
         write_ops(ops, format_args!("[] 0 d\n"));
     }
+}
+
+/// Select the PDF font resource reference for a node.
+///
+/// Uses the embedded font from `font_map` when the typeface is resolved,
+/// otherwise falls back to the standard Base14 fonts (F1/F2/F3).
+fn resolve_font_ref<'a>(
+    font_map: &'a HashMap<String, String>,
+    node_style: &FormNodeStyle,
+    font_family: FontFamily,
+) -> &'a str {
+    if let Some(typeface) = &node_style.font_family {
+        if let Some(mapped) = font_map.get(typeface) {
+            return mapped;
+        }
+    }
+    match font_family {
+        FontFamily::Serif => "/F1",
+        FontFamily::SansSerif => "/F2",
+        FontFamily::Monospace => "/F3",
+    }
+}
+
+/// Build a `FontMetrics` with resolved data injected from `config.font_metrics_data`.
+fn build_font_metrics(
+    font_size: f64,
+    font_family: FontFamily,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+) -> FontMetrics {
+    let mut metrics = FontMetrics {
+        size: font_size,
+        typeface: font_family,
+        ..Default::default()
+    };
+    if let Some(typeface) = &node_style.font_family {
+        if let Some(data) = config.font_metrics_data.get(typeface) {
+            metrics.resolved_widths = Some(data.widths.clone());
+            metrics.resolved_upem = Some(data.upem);
+            metrics.resolved_ascender = Some(data.ascender);
+            metrics.resolved_descender = Some(data.descender);
+        }
+    }
+    metrics
 }
 
 fn render_field(
@@ -376,16 +459,8 @@ fn render_field(
         let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
         let space_above = node_style.space_above_pt.unwrap_or(0.0);
         let content_w = (w - pad_left - pad_right).max(0.0);
-        let metrics = FontMetrics {
-            size: fs,
-            typeface: font_family,
-            ..Default::default()
-        };
-        let font_ref = match font_family {
-            FontFamily::Serif => "/F1",
-            FontFamily::SansSerif => "/F2",
-            FontFamily::Monospace => "/F3",
-        };
+        let metrics = build_font_metrics(fs, font_family, node_style, config);
+        let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
         let text_w = metrics.measure_width(value);
 
         if text_w <= content_w || content_w <= 0.0 {
@@ -458,7 +533,10 @@ fn render_checkbox(
             config.border_color[0],
             config.border_color[1],
             config.border_color[2],
-            x, pdf_y, w, h
+            x,
+            pdf_y,
+            w,
+            h
         ),
     );
     let checked = !value.is_empty()
@@ -474,9 +552,17 @@ fn render_checkbox(
                  {:.2} {:.2} m {:.2} {:.2} l S\n\
                  {:.2} {:.2} m {:.2} {:.2} l S\n",
                 bw.max(1.0),
-                config.text_color[0], config.text_color[1], config.text_color[2],
-                x + m, pdf_y + m, x + w - m, pdf_y + h - m,
-                x + m, pdf_y + h - m, x + w - m, pdf_y + m,
+                config.text_color[0],
+                config.text_color[1],
+                config.text_color[2],
+                x + m,
+                pdf_y + m,
+                x + w - m,
+                pdf_y + h - m,
+                x + m,
+                pdf_y + h - m,
+                x + w - m,
+                pdf_y + m,
             ),
         );
     }
@@ -493,8 +579,13 @@ fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &m
         ops,
         format_args!(
             "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-            config.text_color[0], config.text_color[1], config.text_color[2],
-            fs, x + p, pdf_y + p, pdf_escape(text)
+            config.text_color[0],
+            config.text_color[1],
+            config.text_color[2],
+            fs,
+            x + p,
+            pdf_y + p,
+            pdf_escape(text)
         ),
     );
 }
@@ -521,17 +612,9 @@ fn render_multiline(
     let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
     let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
     let space_above = node_style.space_above_pt.unwrap_or(0.0);
-    let line_height = font_size * 1.2;
-    let font_ref = match font_family {
-        FontFamily::Serif => "/F1",
-        FontFamily::SansSerif => "/F2",
-        FontFamily::Monospace => "/F3",
-    };
-    let font_metrics = FontMetrics {
-        size: font_size,
-        typeface: font_family,
-        ..Default::default()
-    };
+    let font_metrics = build_font_metrics(font_size, font_family, node_style, config);
+    let line_height = font_metrics.line_height_pt();
+    let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
     write_ops(
         ops,
         format_args!(
@@ -539,7 +622,15 @@ fn render_multiline(
             config.text_color[0], config.text_color[1], config.text_color[2], font_ref, font_size
         ),
     );
-    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + font_size, 0.0);
+    let ascender_pt = if let (Some(asc), Some(upem)) = (
+        font_metrics.resolved_ascender,
+        font_metrics.resolved_upem,
+    ) {
+        if upem > 0 { asc as f64 / upem as f64 * font_size } else { font_size }
+    } else {
+        font_size
+    };
+    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + ascender_pt, 0.0);
     let content_w = (container_width - pad_left - pad_right).max(0.0);
     let mut prev_x = x + pad_left;
     for (i, line) in lines.iter().enumerate() {
@@ -657,7 +748,11 @@ mod tests {
     use xfa_layout_engine::types::Rect;
 
     fn make_page(nodes: Vec<LayoutNode>) -> LayoutPage {
-        LayoutPage { width: 612.0, height: 792.0, nodes }
+        LayoutPage {
+            width: 612.0,
+            height: 792.0,
+            nodes,
+        }
     }
 
     fn make_field_node(x: f64, y: f64, w: f64, h: f64, value: &str) -> LayoutNode {
@@ -676,7 +771,14 @@ mod tests {
         }
     }
 
-    fn make_styled_field(x: f64, y: f64, w: f64, h: f64, value: &str, style: FormNodeStyle) -> LayoutNode {
+    fn make_styled_field(
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        value: &str,
+        style: FormNodeStyle,
+    ) -> LayoutNode {
         LayoutNode {
             form_node: FormNodeId(0),
             rect: Rect::new(x, y, w, h),
@@ -711,13 +813,17 @@ mod tests {
 
     #[test]
     fn field_renders_text() {
-        let s = overlay_str(&make_page(vec![make_field_node(10.0, 10.0, 100.0, 20.0, "Hello")]));
+        let s = overlay_str(&make_page(vec![make_field_node(
+            10.0, 10.0, 100.0, 20.0, "Hello",
+        )]));
         assert!(s.contains("(Hello) Tj") && s.contains("BT") && s.contains("ET"));
     }
 
     #[test]
     fn empty_field_no_text() {
-        let s = overlay_str(&make_page(vec![make_field_node(10.0, 10.0, 100.0, 20.0, "")]));
+        let s = overlay_str(&make_page(vec![make_field_node(
+            10.0, 10.0, 100.0, 20.0, "",
+        )]));
         assert!(!s.contains("BT"));
     }
 
@@ -729,7 +835,12 @@ mod tests {
                 make_page(vec![make_field_node(0.0, 0.0, 50.0, 20.0, "P2")]),
             ],
         };
-        assert_eq!(generate_all_overlays(&layout, &XfaRenderConfig::default()).unwrap().len(), 2);
+        assert_eq!(
+            generate_all_overlays(&layout, &XfaRenderConfig::default())
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[test]
