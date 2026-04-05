@@ -16,6 +16,8 @@
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFormat};
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
+use std::thread;
+use std::time::Duration;
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
@@ -142,10 +144,31 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     // 2. Try XFA template → layout → render pipeline.
     //    If this fails (parse error, empty template, layout 0 pages, lopdf error),
     //    fall back to preserving the existing page content with AcroForm stripped.
-    match xfa_flatten_inner(pdf_bytes, &template_xml, packets.datasets()) {
-        Ok(out) => Ok(out),
-        Err(e) => {
+    //
+    //    Wrap in a thread-based timeout (30s) to prevent hangs on pathological
+    //    XFA documents. If the timeout fires, the join handle's result is an Err
+    //    and we fall back to static_fallback.
+    const FLATTEN_TIMEOUT: Duration = Duration::from_secs(30);
+    let pdf_bytes_ref = pdf_bytes.to_vec();
+    let template_xml_owned = template_xml.clone();
+    let datasets_xml_owned = packets.datasets().map(|s| s.to_string());
+
+    let handle = thread::spawn(move || {
+        xfa_flatten_inner(
+            &pdf_bytes_ref,
+            &template_xml_owned,
+            datasets_xml_owned.as_deref(),
+        )
+    });
+
+    match handle.join() {
+        Ok(Ok(out)) => Ok(out),
+        Ok(Err(e)) => {
             eprintln!("XFA flatten failed: {e:?}");
+            static_fallback(pdf_bytes)
+        }
+        Err(_) => {
+            eprintln!("XFA flatten timed out after {:?}", FLATTEN_TIMEOUT);
             static_fallback(pdf_bytes)
         }
     }
@@ -595,15 +618,23 @@ fn embed_resolved_fonts(
 /// Fallback: preserve existing page content, strip AcroForm/widgets only.
 /// If lopdf can't parse the PDF (corrupt xref), return the original bytes
 /// unchanged — the PDF is too corrupt for us to modify but still renderable.
+///
+/// This function ALWAYS returns Ok — errors are logged but the original bytes
+/// are always returned as a last resort.
 fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     let mut doc = match Document::load_mem(pdf_bytes) {
         Ok(d) => d,
-        Err(_) => return Ok(pdf_bytes.to_vec()), // Too corrupt — return as-is
+        Err(e) => {
+            eprintln!("static_fallback: lopdf load failed ({e}), returning original bytes");
+            return Ok(pdf_bytes.to_vec());
+        }
     };
     strip_widgets_and_acroform(&mut doc);
     let mut out = Vec::new();
-    doc.save_to(&mut out)
-        .map_err(|e| XfaError::LayoutFailed(format!("fallback save: {e}")))?;
+    if let Err(e) = doc.save_to(&mut out) {
+        eprintln!("static_fallback: save failed ({e}), returning original bytes");
+        return Ok(pdf_bytes.to_vec());
+    }
     Ok(out)
 }
 
