@@ -102,35 +102,39 @@ impl FontMetrics {
     }
 
     /// Uses resolved_widths when available, else AFM tables.
+    ///
+    /// Resolved widths are in per-1000 units (from `pdf_glyph_widths()`), indexed
+    /// by Unicode codepoint 0-255.  We iterate over **characters** (not bytes) so
+    /// that multi-byte UTF-8 sequences count as one glyph, and divide by 1000
+    /// (matching the per-1000 convention) rather than by the font's raw upem.
     pub fn measure_width(&self, text: &str) -> f64 {
-        if let (Some(ref widths), Some(upem)) = (&self.resolved_widths, self.resolved_upem) {
-            if upem > 0 {
-                let mut w = 0.0;
-                for byte in text.bytes() {
-                    let idx = byte as usize;
-                    let cw = if idx < widths.len() {
-                        widths[idx] as f64
-                    } else {
-                        widths.get(b' ' as usize).copied().unwrap_or(0) as f64
-                    };
-                    w += cw / (upem as f64) * self.size;
-                }
-                return w;
+        if let (Some(ref widths), Some(_upem)) = (&self.resolved_widths, self.resolved_upem) {
+            let space_w = widths.get(b' ' as usize).copied().unwrap_or(0) as f64;
+            let mut w = 0.0;
+            for ch in text.chars() {
+                let code = ch as u32;
+                let cw = if (code as usize) < widths.len() {
+                    widths[code as usize] as f64
+                } else {
+                    space_w
+                };
+                w += cw / 1000.0 * self.size;
             }
+            return w;
         }
         let table = match self.typeface {
             FontFamily::Serif => &TIMES_WIDTHS,
             FontFamily::SansSerif => &HELVETICA_WIDTHS,
             FontFamily::Monospace => &COURIER_WIDTHS,
         };
+        let default_w = table[b'n' as usize] as f64;
         let mut width = 0.0;
-        for byte in text.bytes() {
-            let idx = byte as usize;
-            let char_width = if idx < 128 {
-                table[idx] as f64
+        for ch in text.chars() {
+            let code = ch as u32;
+            let char_width = if code < 128 {
+                table[code as usize] as f64
             } else {
-                // Non-ASCII: use the font's default width (same as 'n')
-                table[b'n' as usize] as f64
+                default_w
             };
             width += char_width / 1000.0 * self.size;
         }
@@ -466,6 +470,64 @@ mod tests {
             1,
             "Should fit on 1 line but got: {:?}",
             result.lines
+        );
+    }
+
+    #[test]
+    fn resolved_widths_upem_2048() {
+        // Widths from pdf_glyph_widths() are per-1000 units regardless of upem.
+        // With upem=2048, measure_width must still divide by 1000, not 2048.
+        let mut widths = vec![0u16; 256];
+        widths[b'A' as usize] = 600; // per-1000 unit width
+        let f = FontMetrics {
+            size: 10.0,
+            resolved_widths: Some(widths),
+            resolved_upem: Some(2048),
+            ..Default::default()
+        };
+        let w = f.measure_width("A");
+        // Correct: 600/1000*10 = 6.0
+        // Old bug: 600/2048*10 = 2.93 (too narrow)
+        assert!(
+            (w - 6.0).abs() < 0.01,
+            "upem=2048: A width={w}, expected 6.0"
+        );
+    }
+
+    #[test]
+    fn multibyte_utf8_single_char_width() {
+        // 'é' (U+00E9) is 2 bytes in UTF-8 but must be measured as ONE character.
+        let mut widths = vec![0u16; 256];
+        widths[0xE9] = 500; // width of é
+        let f = FontMetrics {
+            size: 10.0,
+            resolved_widths: Some(widths),
+            resolved_upem: Some(1000),
+            ..Default::default()
+        };
+        let w = f.measure_width("\u{00E9}");
+        // Correct: 500/1000*10 = 5.0 (one char)
+        // Old bug: two bytes 0xC3+0xA9 → widths[0xC3]+widths[0xA9] = double lookup
+        assert!(
+            (w - 5.0).abs() < 0.01,
+            "é width={w}, expected 5.0 (one glyph, not two bytes)"
+        );
+    }
+
+    #[test]
+    fn afm_fallback_multibyte_char() {
+        // Non-ASCII char in AFM fallback should count as one 'n'-width, not two.
+        let f = FontMetrics {
+            size: 10.0,
+            typeface: FontFamily::SansSerif,
+            ..Default::default()
+        };
+        let w_n = f.measure_width("n");
+        let w_e_accent = f.measure_width("\u{00E9}");
+        // AFM fallback maps non-ASCII to 'n' width: one char = one 'n' width.
+        assert!(
+            (w_e_accent - w_n).abs() < 0.01,
+            "AFM fallback: é={w_e_accent} should equal n={w_n}"
         );
     }
 }
