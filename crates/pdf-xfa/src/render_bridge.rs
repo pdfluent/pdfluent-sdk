@@ -394,6 +394,16 @@ fn resolve_font_ref<'a>(
     }
 }
 
+/// Calculate the ascender height in points for a given font size and metrics.
+fn ascender_pt(font_metrics: &FontMetrics, font_size: f64) -> f64 {
+    if let (Some(asc), Some(upem)) = (font_metrics.resolved_ascender, font_metrics.resolved_upem) {
+        if upem > 0 {
+            return asc as f64 / upem as f64 * font_size;
+        }
+    }
+    font_size
+}
+
 /// Build a `FontMetrics` with resolved data injected from `config.font_metrics_data`.
 fn build_font_metrics(
     font_size: f64,
@@ -474,10 +484,11 @@ fn render_field(
 
         if text_w <= content_w || content_w <= 0.0 {
             let line_h = metrics.line_height_pt();
+            let asc_pt = ascender_pt(&metrics, fs);
             let text_y = match node_style.v_align {
                 Some(VerticalAlign::Middle) => pdf_y + (h - line_h) / 2.0,
                 Some(VerticalAlign::Bottom) => pdf_y + space_above,
-                _ => pdf_y + h - space_above - fs,
+                _ => pdf_y + h - space_above - asc_pt,
             };
             let encoded = pdf_encode_text(value, idh_metrics);
             write_ops(
@@ -586,6 +597,7 @@ fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &m
     }
     let fs = config.default_font_size;
     let p = config.text_padding;
+    let asc_pt = fs * 0.8;
     write_ops(
         ops,
         format_args!(
@@ -595,7 +607,7 @@ fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &m
             config.text_color[2],
             fs,
             x + p,
-            pdf_y + p,
+            pdf_y + p - asc_pt * 0.2,
             pdf_escape(text)
         ),
     );
