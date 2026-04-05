@@ -144,6 +144,7 @@ fn collect_appearances(
                 config,
             )),
             LayoutContent::Image { .. } => None,
+            LayoutContent::Draw(_) => None,
             LayoutContent::None => None,
         };
         if let Some(ap) = ap {

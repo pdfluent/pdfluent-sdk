@@ -13,12 +13,13 @@
 //! The result is a static PDF with no XFA dependency: it can be rendered
 //! by any standard PDF viewer.
 
-use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream};
+use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFormat};
 use std::collections::HashMap;
+use std::fmt::Write as FmtWrite;
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
-use crate::font_bridge::{ResolvedFont, XfaFontResolver, XfaFontSpec};
+use crate::font_bridge::{CidFontInfo, ResolvedFont, XfaFontResolver, XfaFontSpec};
 use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
 use crate::render_bridge::{generate_all_overlays, FontMetricsData, PageOverlay, XfaRenderConfig};
@@ -389,22 +390,113 @@ fn collect_template_font_names(template_xml: &str) -> Vec<String> {
 
 fn embed_font_in_pdf(doc: &mut Document, font: &ResolvedFont) -> ObjectId {
     let font_stream = Stream::new(
-        dictionary! { "Length" => Object::Integer(font.data.len() as i64), "Length1" => Object::Integer(font.data.len() as i64) },
+        dictionary! {
+            "Length" => Object::Integer(font.data.len() as i64),
+            "Length1" => Object::Integer(font.data.len() as i64)
+        },
         font.data.clone(),
     );
     let font_file_id = doc.add_object(Object::Stream(font_stream));
+
     let upem = font.units_per_em as f64;
     let scale = 1000.0 / upem.max(1.0);
     let ascent = (font.ascender as f64 * scale) as i64;
     let descent = (font.descender as f64 * scale) as i64;
     let cap_height = (ascent as f64 * 0.7) as i64;
-    let fd = dictionary! { "Type" => Object::Name(b"FontDescriptor".to_vec()), "FontName" => Object::Name(font.name.replace(' ', "-").into_bytes()), "Flags" => Object::Integer(32), "FontBBox" => Object::Array(vec![Object::Integer(0), Object::Integer(descent), Object::Integer(1000), Object::Integer(ascent)]), "ItalicAngle" => Object::Integer(0), "Ascent" => Object::Integer(ascent), "Descent" => Object::Integer(descent), "CapHeight" => Object::Integer(cap_height), "StemV" => Object::Integer(80), "FontFile2" => Object::Reference(font_file_id) };
+    let base_name = font.name.replace(' ', "-");
+
+    let fd = dictionary! {
+        "Type" => Object::Name(b"FontDescriptor".to_vec()),
+        "FontName" => Object::Name(base_name.as_bytes().to_vec()),
+        "Flags" => Object::Integer(32),
+        "FontBBox" => Object::Array(vec![
+            Object::Integer(0),
+            Object::Integer(descent),
+            Object::Integer(1000),
+            Object::Integer(ascent),
+        ]),
+        "ItalicAngle" => Object::Integer(0),
+        "Ascent" => Object::Integer(ascent),
+        "Descent" => Object::Integer(descent),
+        "CapHeight" => Object::Integer(cap_height),
+        "StemV" => Object::Integer(80),
+        "FontFile2" => Object::Reference(font_file_id)
+    };
     let fd_id = doc.add_object(Object::Dictionary(fd));
-    let (first_char, widths) = font.pdf_glyph_widths();
-    let last_char = first_char + widths.len() as u16 - 1;
-    let widths_arr: Vec<Object> = widths.iter().map(|&w| Object::Integer(w as i64)).collect();
-    let font_dict = dictionary! { "Type" => Object::Name(b"Font".to_vec()), "Subtype" => Object::Name(b"TrueType".to_vec()), "BaseFont" => Object::Name(font.name.replace(' ', "-").into_bytes()), "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()), "FirstChar" => Object::Integer(first_char as i64), "LastChar" => Object::Integer(last_char as i64), "Widths" => Object::Array(widths_arr), "FontDescriptor" => Object::Reference(fd_id) };
-    doc.add_object(Object::Dictionary(font_dict))
+
+    // Build CID font data for Identity-H encoding.
+    let cid_info = font.cid_font_info().unwrap_or(CidFontInfo {
+        widths: vec![500],
+        gid_to_unicode: vec![],
+    });
+
+    // /W array: [ 0 [w0 w1 w2 ... wN] ]
+    let widths_inner: Vec<Object> = cid_info
+        .widths
+        .iter()
+        .map(|&w| Object::Integer(w as i64))
+        .collect();
+    let w_array = vec![Object::Integer(0), Object::Array(widths_inner)];
+
+    let cid_font = dictionary! {
+        "Type" => Object::Name(b"Font".to_vec()),
+        "Subtype" => Object::Name(b"CIDFontType2".to_vec()),
+        "BaseFont" => Object::Name(base_name.as_bytes().to_vec()),
+        "CIDSystemInfo" => Object::Dictionary(dictionary! {
+            "Registry" => Object::String(b"Adobe".to_vec(), StringFormat::Literal),
+            "Ordering" => Object::String(b"Identity".to_vec(), StringFormat::Literal),
+            "Supplement" => Object::Integer(0)
+        }),
+        "FontDescriptor" => Object::Reference(fd_id),
+        "W" => Object::Array(w_array),
+        "CIDToGIDMap" => Object::Name(b"Identity".to_vec())
+    };
+    let cid_font_id = doc.add_object(Object::Dictionary(cid_font));
+
+    // ToUnicode CMap for text extraction / copy-paste.
+    let tounicode_data = generate_tounicode_cmap(&cid_info.gid_to_unicode);
+    let tounicode_stream = Stream::new(
+        dictionary! { "Length" => Object::Integer(tounicode_data.len() as i64) },
+        tounicode_data,
+    );
+    let tounicode_id = doc.add_object(Object::Stream(tounicode_stream));
+
+    // Type0 (composite) font with Identity-H encoding.
+    let type0_font = dictionary! {
+        "Type" => Object::Name(b"Font".to_vec()),
+        "Subtype" => Object::Name(b"Type0".to_vec()),
+        "BaseFont" => Object::Name(base_name.as_bytes().to_vec()),
+        "Encoding" => Object::Name(b"Identity-H".to_vec()),
+        "DescendantFonts" => Object::Array(vec![Object::Reference(cid_font_id)]),
+        "ToUnicode" => Object::Reference(tounicode_id)
+    };
+    doc.add_object(Object::Dictionary(type0_font))
+}
+
+/// Generate a ToUnicode CMap stream mapping glyph IDs to Unicode codepoints.
+fn generate_tounicode_cmap(gid_to_unicode: &[(u16, char)]) -> Vec<u8> {
+    let mut cmap = String::with_capacity(gid_to_unicode.len() * 24 + 256);
+    cmap.push_str("/CIDInit /ProcSet findresource begin\n");
+    cmap.push_str("12 dict begin\n");
+    cmap.push_str("begincmap\n");
+    cmap.push_str("/CIDSystemInfo\n");
+    cmap.push_str("<< /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n");
+    cmap.push_str("/CMapName /Adobe-Identity-UCS def\n");
+    cmap.push_str("/CMapType 2 def\n");
+    cmap.push_str("1 begincodespacerange\n");
+    cmap.push_str("<0000> <FFFF>\n");
+    cmap.push_str("endcodespacerange\n");
+    for chunk in gid_to_unicode.chunks(100) {
+        let _ = write!(cmap, "{} beginbfchar\n", chunk.len());
+        for &(gid, ch) in chunk {
+            let _ = write!(cmap, "<{:04X}> <{:04X}>\n", gid, ch as u32);
+        }
+        cmap.push_str("endbfchar\n");
+    }
+    cmap.push_str("endcmap\n");
+    cmap.push_str("CMapName currentdict /CMap defineresource pop\n");
+    cmap.push_str("end\nend\n");
+    cmap.into_bytes()
 }
 
 /// Resolve all fonts referenced in the XFA template without embedding them.
@@ -492,6 +584,8 @@ fn embed_resolved_fonts(
                 upem: font.units_per_em,
                 ascender: font.ascender,
                 descender: font.descender,
+                font_data: Some(font.data.clone()),
+                face_index: font.face_index,
             },
         );
     }

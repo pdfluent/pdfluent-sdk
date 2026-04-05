@@ -105,6 +105,33 @@ pub struct FormNode {
     pub col_span: i32,
 }
 
+/// Content for draw nodes (static graphic elements).
+#[derive(Debug, Clone)]
+pub enum DrawContent {
+    Text(String),
+    Line {
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+    },
+    Rectangle {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        radius: f64,
+    },
+    Arc {
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        start_angle: f64,
+        sweep_angle: f64,
+    },
+}
+
 /// The type of form node.
 #[derive(Debug, Clone)]
 pub enum FormNodeType {
@@ -119,7 +146,7 @@ pub enum FormNodeType {
     /// A form field (text field, checkbox, etc.).
     Field { value: String },
     /// A static draw element (text, image, line, etc.).
-    Draw { content: String },
+    Draw(DrawContent),
     /// A static image draw element.
     Image { data: Vec<u8>, mime_type: String },
 }

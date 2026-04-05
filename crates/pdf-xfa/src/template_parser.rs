@@ -12,8 +12,8 @@
 use roxmltree::Node;
 
 use xfa_layout_engine::form::{
-    ContentArea, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle, FormNodeType,
-    FormTree, GroupKind, Occur, Presence,
+    ContentArea, DrawContent, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle,
+    FormNodeType, FormTree, GroupKind, Occur, Presence,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
@@ -235,7 +235,7 @@ fn parse_draw(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> {
 
     let node = FormNode {
         name,
-        node_type: FormNodeType::Draw { content },
+        node_type: FormNodeType::Draw(DrawContent::Text(content)),
         box_model: bm,
         layout: LayoutStrategy::Positioned,
         children: Vec::new(),
@@ -1404,6 +1404,48 @@ fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
     None
 }
 
+#[allow(dead_code)] // prepared for draw element parsing integration
+fn extract_draw_content(elem: Node<'_, '_>) -> Option<DrawContent> {
+    let value = find_first_child_by_name(elem, "value")?;
+
+    if let Some(line) = find_first_child_by_name(value, "line") {
+        let x1 = attr_as_f64(line, "x1").unwrap_or(0.0);
+        let y1 = attr_as_f64(line, "y1").unwrap_or(0.0);
+        let x2 = attr_as_f64(line, "x2").unwrap_or(0.0);
+        let y2 = attr_as_f64(line, "y2").unwrap_or(0.0);
+        return Some(DrawContent::Line { x1, y1, x2, y2 });
+    }
+
+    if let Some(rect) = find_first_child_by_name(value, "rectangle") {
+        let x = attr_as_f64(rect, "x").unwrap_or(0.0);
+        let y = attr_as_f64(rect, "y").unwrap_or(0.0);
+        let w = attr_as_f64(rect, "w").unwrap_or(attr_as_f64(rect, "width").unwrap_or(0.0));
+        let h = attr_as_f64(rect, "h").unwrap_or(attr_as_f64(rect, "height").unwrap_or(0.0));
+        let radius =
+            attr_as_f64(rect, "r").unwrap_or(attr_as_f64(rect, "cornerRadius").unwrap_or(0.0));
+        return Some(DrawContent::Rectangle { x, y, w, h, radius });
+    }
+
+    if let Some(arc) = find_first_child_by_name(value, "arc") {
+        let x = attr_as_f64(arc, "x").unwrap_or(0.0);
+        let y = attr_as_f64(arc, "y").unwrap_or(0.0);
+        let w = attr_as_f64(arc, "w").unwrap_or(attr_as_f64(arc, "width").unwrap_or(0.0));
+        let h = attr_as_f64(arc, "h").unwrap_or(attr_as_f64(arc, "height").unwrap_or(0.0));
+        let start_angle = attr_as_f64(arc, "startAngle").unwrap_or(0.0);
+        let sweep_angle = attr_as_f64(arc, "sweepAngle").unwrap_or(0.0);
+        return Some(DrawContent::Arc {
+            x,
+            y,
+            w,
+            h,
+            start_angle,
+            sweep_angle,
+        });
+    }
+
+    None
+}
+
 /// Walk all descendant nodes of `node` and return text content joined
 /// by newlines between block-level elements (e.g. `<p>`, `<div>`), preserving
 /// paragraph structure. Used to extract plain text from XHTML-encoded
@@ -1525,6 +1567,11 @@ fn attr<'a>(elem: Node<'a, '_>, name: &str) -> Option<&'a str> {
         .map(|a| a.value())
 }
 
+#[allow(dead_code)] // prepared for draw element parsing integration
+fn attr_as_f64(elem: Node<'_, '_>, name: &str) -> Option<f64> {
+    attr(elem, name)?.parse().ok()
+}
+
 /// Find the first direct child element with a given local tag name.
 fn find_first_child_by_name<'a, 'input>(
     elem: Node<'a, 'input>,
@@ -1630,11 +1677,9 @@ mod tests {
         let row_ids = tree.get(items_id).children.clone();
 
         assert_eq!(row_ids.len(), 3);
-        assert!(
-            row_ids
-                .iter()
-                .all(|&row_id| tree.get(row_id).occur.count() == 1)
-        );
+        assert!(row_ids
+            .iter()
+            .all(|&row_id| tree.get(row_id).occur.count() == 1));
 
         let values: Vec<String> = row_ids
             .iter()
@@ -1691,11 +1736,9 @@ mod tests {
         let row_ids = tree.get(items_id).children.clone();
 
         assert_eq!(row_ids.len(), 3);
-        assert!(
-            row_ids
-                .iter()
-                .all(|&row_id| tree.get(row_id).occur.count() == 1)
-        );
+        assert!(row_ids
+            .iter()
+            .all(|&row_id| tree.get(row_id).occur.count() == 1));
 
         let values: Vec<String> = row_ids
             .iter()
@@ -1797,7 +1840,7 @@ mod tests {
         let node =
             find_node_by_name(&tree, root_id, "instructions").expect("instructions draw not found");
         match &node.node_type {
-            FormNodeType::Draw { content } => {
+            FormNodeType::Draw(DrawContent::Text(content)) => {
                 assert!(
                     content.contains("not") && content.contains("file"),
                     "expected HTML text extracted, got: {content:?}"
@@ -1839,7 +1882,7 @@ mod tests {
         // Visible draw retains its content.
         let visible = find_node_by_name(&tree, root_id, "visible_draw").unwrap();
         match &visible.node_type {
-            FormNodeType::Draw { content } => assert_eq!(content, "Visible text"),
+            FormNodeType::Draw(DrawContent::Text(content)) => assert_eq!(content, "Visible text"),
             other => panic!("expected Draw, got {other:?}"),
         }
 
@@ -1847,7 +1890,7 @@ mod tests {
         // Visibility is tracked in FormNodeMeta.
         let hidden_draw = find_node_by_name(&tree, root_id, "hidden_draw").unwrap();
         match &hidden_draw.node_type {
-            FormNodeType::Draw { content } => assert_eq!(content, "DRAFT"),
+            FormNodeType::Draw(DrawContent::Text(content)) => assert_eq!(content, "DRAFT"),
             other => panic!("expected Draw, got {other:?}"),
         }
         let hidden_draw_id = find_node_id_by_name(&tree, root_id, "hidden_draw").unwrap();

@@ -8,7 +8,7 @@
 
 use crate::error::Result;
 use std::collections::HashMap;
-use xfa_layout_engine::form::{FieldKind, FormNodeStyle};
+use xfa_layout_engine::form::{DrawContent, FieldKind, FormNodeStyle};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{TextAlign, VerticalAlign};
@@ -49,6 +49,10 @@ pub struct FontMetricsData {
     pub ascender: i16,
     /// Font descender in font units (typically negative).
     pub descender: i16,
+    /// Raw font data for glyph ID lookup (Identity-H fonts).
+    pub font_data: Option<Vec<u8>>,
+    /// Font face index within a collection.
+    pub face_index: u32,
 }
 
 /// Image data collected during rendering for XObject embedding.
@@ -281,6 +285,9 @@ fn render_nodes(
                     mime_type: mime_type.clone(),
                 });
             }
+            LayoutContent::Draw(draw_content) => {
+                render_draw(draw_content, abs_x, pdf_y, w, h, ops);
+            }
             LayoutContent::None => {}
         }
 
@@ -463,6 +470,8 @@ fn render_field(
         let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
         let text_w = metrics.measure_width(value);
 
+        let idh_metrics = lookup_font_metrics(node_style, config);
+
         if text_w <= content_w || content_w <= 0.0 {
             let line_h = metrics.line_height_pt();
             let text_y = match node_style.v_align {
@@ -470,10 +479,11 @@ fn render_field(
                 Some(VerticalAlign::Bottom) => pdf_y + space_above,
                 _ => pdf_y + h - space_above - fs,
             };
+            let encoded = pdf_encode_text(value, idh_metrics);
             write_ops(
                 ops,
                 format_args!(
-                    "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+                    "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n{} Tj\nET\n",
                     config.text_color[0],
                     config.text_color[1],
                     config.text_color[2],
@@ -481,7 +491,7 @@ fn render_field(
                     fs,
                     x + pad_left,
                     text_y,
-                    pdf_escape(value)
+                    encoded
                 ),
             );
         } else {
@@ -508,7 +518,8 @@ fn render_field(
                 if line_top < 0.0 {
                     break;
                 }
-                write_ops(ops, format_args!("({}) Tj\n", pdf_escape(line)));
+                let encoded = pdf_encode_text(line, idh_metrics);
+                write_ops(ops, format_args!("{} Tj\n", encoded));
             }
             ops.extend_from_slice(b"ET\n");
         }
@@ -622,16 +633,20 @@ fn render_multiline(
             config.text_color[0], config.text_color[1], config.text_color[2], font_ref, font_size
         ),
     );
-    let ascender_pt = if let (Some(asc), Some(upem)) = (
-        font_metrics.resolved_ascender,
-        font_metrics.resolved_upem,
-    ) {
-        if upem > 0 { asc as f64 / upem as f64 * font_size } else { font_size }
+    let ascender_pt = if let (Some(asc), Some(upem)) =
+        (font_metrics.resolved_ascender, font_metrics.resolved_upem)
+    {
+        if upem > 0 {
+            asc as f64 / upem as f64 * font_size
+        } else {
+            font_size
+        }
     } else {
         font_size
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + ascender_pt, 0.0);
     let content_w = (container_width - pad_left - pad_right).max(0.0);
+    let idh_metrics = lookup_font_metrics(node_style, config);
     let mut prev_x = x + pad_left;
     for (i, line) in lines.iter().enumerate() {
         let line_y = first_line_pdf_y - (i as f64 * line_height);
@@ -648,7 +663,8 @@ fn render_multiline(
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", dx, -line_height));
         }
         prev_x = text_x;
-        write_ops(ops, format_args!("({}) Tj\n", pdf_escape(line)));
+        let encoded = pdf_encode_text(line, idh_metrics);
+        write_ops(ops, format_args!("{} Tj\n", encoded));
     }
     ops.extend_from_slice(b"ET\n");
 }
@@ -697,6 +713,177 @@ fn pdf_escape(s: &str) -> String {
         }
     }
     r
+}
+
+/// Encode text for a PDF content stream, choosing Identity-H (hex glyph IDs)
+/// when the font has embedded data, or WinAnsi parenthesized string otherwise.
+fn pdf_encode_text(s: &str, metrics: Option<&FontMetricsData>) -> String {
+    if let Some(data) = metrics {
+        if let Some(ref font_bytes) = data.font_data {
+            if let Ok(face) = ttf_parser::Face::parse(font_bytes, data.face_index) {
+                let mut hex = String::with_capacity(s.len() * 4 + 2);
+                hex.push('<');
+                for ch in s.chars() {
+                    let gid = face.glyph_index(ch).map(|g| g.0).unwrap_or(0);
+                    use std::fmt::Write;
+                    let _ = write!(hex, "{:04X}", gid);
+                }
+                hex.push('>');
+                return hex;
+            }
+        }
+    }
+    format!("({})", pdf_escape(s))
+}
+
+/// Look up font metrics for a typeface from the render config.
+fn lookup_font_metrics<'a>(
+    node_style: &FormNodeStyle,
+    config: &'a XfaRenderConfig,
+) -> Option<&'a FontMetricsData> {
+    node_style
+        .font_family
+        .as_ref()
+        .and_then(|tf| config.font_metrics_data.get(tf))
+        .filter(|m| m.font_data.is_some())
+}
+
+fn render_draw(
+    draw_content: &DrawContent,
+    abs_x: f64,
+    pdf_y: f64,
+    _w: f64,
+    _h: f64,
+    ops: &mut Vec<u8>,
+) {
+    match draw_content {
+        DrawContent::Text(text) => {
+            if !text.is_empty() {
+                let fs = 10.0;
+                write_ops(
+                    ops,
+                    format_args!(
+                        "BT\n0 0 0 rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
+                        fs,
+                        abs_x,
+                        pdf_y,
+                        pdf_escape(text)
+                    ),
+                );
+            }
+        }
+        DrawContent::Line { x1, y1, x2, y2 } => {
+            let start_x = abs_x + x1;
+            let start_y = pdf_y + y1;
+            let end_x = abs_x + x2;
+            let end_y = pdf_y + y2;
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                    start_x, start_y, end_x, end_y
+                ),
+            );
+        }
+        DrawContent::Rectangle { x, y, w, h, radius } => {
+            let rx = abs_x + x;
+            let ry = pdf_y + y;
+            if *radius <= 0.0 {
+                write_ops(
+                    ops,
+                    format_args!("{:.2} {:.2} {:.2} {:.2} re\nS\n", rx, ry, w, h),
+                );
+            } else {
+                let r = radius.min(w / 2.0).min(h / 2.0);
+                let k = r * 0.5522847498;
+                write_ops(
+                    ops,
+                    format_args!(
+                        "{:.2} {:.2} m\n\
+                         {:.2} {:.2} l\n\
+                         {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                         {:.2} {:.2} l\n\
+                         {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                         {:.2} {:.2} l\n\
+                         {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                         {:.2} {:.2} l\n\
+                         {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                         h\nS\n",
+                        rx,
+                        ry + r,
+                        rx,
+                        ry + h - r,
+                        rx,
+                        ry + h - r + k,
+                        rx + r - k,
+                        ry + h,
+                        rx + r,
+                        ry + h,
+                        rx + w - r,
+                        ry + h,
+                        rx + w - r + k,
+                        ry + h,
+                        rx + w,
+                        ry + h - r + k,
+                        rx + w,
+                        ry + h - r,
+                        rx + w,
+                        ry + r,
+                        rx + w,
+                        ry + r - k,
+                        rx + w - r + k,
+                        ry,
+                        rx + w - r,
+                        ry,
+                        rx + r,
+                        ry,
+                        rx + r - k,
+                        ry,
+                        rx,
+                        ry + r - k,
+                        rx,
+                        ry + r,
+                    ),
+                );
+            }
+        }
+        DrawContent::Arc {
+            x,
+            y,
+            w,
+            h,
+            start_angle,
+            sweep_angle,
+        } => {
+            let cx = abs_x + x + w / 2.0;
+            let cy = pdf_y + y + h / 2.0;
+            let rx = w / 2.0;
+            let ry = h / 2.0;
+            let start_rad = start_angle.to_radians();
+            let sweep_rad = sweep_angle.to_radians();
+            let end_angle = start_rad + sweep_rad;
+            let k = 0.5522847498;
+            let cos_start = start_rad.cos();
+            let sin_start = start_rad.sin();
+            let cos_end = end_angle.cos();
+            let sin_end = end_angle.sin();
+            let p1x = cx + rx * cos_start;
+            let p1y = cy + ry * sin_start;
+            let p2x = cx + rx * cos_end;
+            let p2y = cy + ry * sin_end;
+            let cp1x = cx - rx * k * sin_start;
+            let cp1y = cy + ry * k * cos_start;
+            let cp2x = cx + rx * k * sin_end;
+            let cp2y = cy - ry * k * cos_end;
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\nS\n",
+                    p1x, p1y, cp1x, cp1y, cp2x, cp2y, p2x, p2y
+                ),
+            );
+        }
+    }
 }
 
 fn unicode_to_winansi(c: char) -> Option<u8> {
@@ -902,5 +1089,34 @@ mod tests {
         };
         let s = styled_overlay_str(make_styled_field(0.0, 0.0, 200.0, 40.0, "Mid", style));
         assert!(s.contains("(Mid) Tj"));
+    }
+
+    #[test]
+    fn pdf_escape_polish_chars_fallback() {
+        // Without Identity-H font data, Polish chars should fall back to '?'
+        assert_eq!(pdf_escape("łżść"), "????");
+    }
+
+    #[test]
+    fn pdf_encode_text_winansi_fallback() {
+        // Without font data, pdf_encode_text wraps in parentheses like pdf_escape
+        let encoded = pdf_encode_text("Hello", None);
+        assert_eq!(encoded, "(Hello)");
+    }
+
+    #[test]
+    fn pdf_encode_text_identity_h() {
+        // With Identity-H font data, text should be encoded as hex glyph IDs
+        let metrics = FontMetricsData {
+            widths: vec![500; 256],
+            upem: 1000,
+            ascender: 800,
+            descender: -200,
+            font_data: None,
+            face_index: 0,
+        };
+        // Without font_data, should fall back to WinAnsi
+        let encoded = pdf_encode_text("AB", Some(&metrics));
+        assert_eq!(encoded, "(AB)");
     }
 }

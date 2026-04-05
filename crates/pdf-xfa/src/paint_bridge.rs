@@ -294,6 +294,7 @@ fn emit_node_commands(
             }
         }
         LayoutContent::Image { .. } => {}
+        LayoutContent::Draw(_) => {}
         LayoutContent::None => {}
     }
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use xfa_layout_engine::form::{FormNodeId, FormNodeType, FormTree, GroupKind, Presence};
+use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeType, FormTree, GroupKind, Presence};
 
 const MAX_SCRIPT_PASSES: usize = 8;
 
@@ -239,7 +239,7 @@ fn delete_container_if_empty(
 fn node_is_empty(form: &FormTree, node_id: FormNodeId) -> bool {
     match &form.get(node_id).node_type {
         FormNodeType::Field { value } => value.trim().is_empty(),
-        FormNodeType::Draw { content } => content.trim().is_empty(),
+        FormNodeType::Draw(DrawContent::Text(content)) => content.trim().is_empty(),
         FormNodeType::Subform => form
             .get(node_id)
             .children
