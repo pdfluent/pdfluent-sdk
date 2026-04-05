@@ -6,7 +6,6 @@
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use image::GenericImageView;
-use lopdf::content::Operation;
 use lopdf::{dictionary, Object, ObjectId, Stream};
 use std::io::Write;
 
@@ -156,25 +155,6 @@ pub fn render_image_ops(name: &str, x: f64, y: f64, w: f64, h: f64) -> Vec<u8> {
     ops.extend(format!("/{name} Do\n",).bytes());
     ops.extend_from_slice(b"Q\n");
     ops
-}
-
-pub fn render_image_ops_via_lopdf(name: &str, x: f64, y: f64, w: f64, h: f64) -> Vec<Operation> {
-    vec![
-        Operation::new("q", vec![]),
-        Operation::new(
-            "cm",
-            vec![
-                Object::Real(w as f32),
-                Object::Real(0.0),
-                Object::Real(0.0),
-                Object::Real(h as f32),
-                Object::Real(x as f32),
-                Object::Real(y as f32),
-            ],
-        ),
-        Operation::new("Do", vec![Object::Name(name.as_bytes().to_vec())]),
-        Operation::new("Q", vec![]),
-    ]
 }
 
 fn parse_jpeg_dimensions(data: &[u8]) -> Result<(u32, u32, u8), String> {
