@@ -21,12 +21,29 @@ use std::time::Duration;
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
-use crate::font_bridge::{font_variant_key, CidFontInfo, ResolvedFont, XfaFontResolver, XfaFontSpec};
+use crate::font_bridge::{
+    font_variant_key, CidFontInfo, ResolvedFont, XfaFontResolver, XfaFontSpec,
+};
 use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
 use crate::render_bridge::{generate_all_overlays, FontMetricsData, PageOverlay, XfaRenderConfig};
 use xfa_dom_resolver::data_dom::DataDom;
 use xfa_layout_engine::layout::LayoutEngine;
+
+fn create_minimal_pdf_document() -> Document {
+    let mut doc = Document::new();
+    let pages_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Pages".to_vec()),
+        "Kids" => Object::Array(vec![]),
+        "Count" => Object::Integer(0)
+    }));
+    let catalog_id = doc.add_object(Object::Dictionary(dictionary! {
+        "Type" => Object::Name(b"Catalog".to_vec()),
+        "Pages" => Object::Reference(pages_id)
+    }));
+    doc.trailer.set("Root", Object::Reference(catalog_id));
+    doc
+}
 
 /// Returns `true` if the PDF bytes contain an `/Encrypt` entry in the trailer.
 pub fn is_pdf_encrypted(pdf_bytes: &[u8]) -> bool {
@@ -228,8 +245,13 @@ fn xfa_flatten_inner(
         return Err(XfaError::LayoutFailed("layout produced 0 pages".into()));
     }
 
-    let mut doc = Document::load_mem(pdf_bytes)
-        .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
+    let mut doc = match Document::load_mem(pdf_bytes) {
+        Ok(d) => d,
+        Err(_) => {
+            eprintln!("lopdf load failed, creating minimal PDF structure for XFA layout");
+            create_minimal_pdf_document()
+        }
+    };
 
     let (font_map, embedded_font_objects, metrics_data) =
         embed_resolved_fonts(&mut doc, &resolved_fonts);
@@ -296,7 +318,9 @@ fn xfa_flatten_inner(
     if n_layout < n_existing {
         // delete_pages takes 1-indexed page numbers, highest first to avoid
         // index shifts.
-        let excess: Vec<u32> = ((n_layout + 1) as u32..=(n_existing as u32)).rev().collect();
+        let excess: Vec<u32> = ((n_layout + 1) as u32..=(n_existing as u32))
+            .rev()
+            .collect();
         doc.delete_pages(&excess);
     }
 
@@ -446,11 +470,7 @@ fn collect_template_font_entries(template_xml: &str) -> Vec<TemplateFontEntry> {
                     let name = typeface.to_string();
                     let weight = node.attribute("weight").map(|s| s.to_string());
                     let posture = node.attribute("posture").map(|s| s.to_string());
-                    let key = font_variant_key(
-                        &name,
-                        weight.as_deref(),
-                        posture.as_deref(),
-                    );
+                    let key = font_variant_key(&name, weight.as_deref(), posture.as_deref());
                     if !name.is_empty() && seen.insert(key.to_lowercase()) {
                         entries.push(TemplateFontEntry {
                             typeface: name,
@@ -638,11 +658,8 @@ fn inject_resolved_metrics(
         let font_style = style.font_style.clone();
         if let Some(ref family) = font_family {
             // Try variant-specific key first, then fall back to base key.
-            let variant_key = font_variant_key(
-                family,
-                font_weight.as_deref(),
-                font_style.as_deref(),
-            );
+            let variant_key =
+                font_variant_key(family, font_weight.as_deref(), font_style.as_deref());
             let base_key = font_variant_key(family, None, None);
             let font = resolved
                 .get(&variant_key)
