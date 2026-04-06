@@ -539,6 +539,7 @@ fn render_field(
         } else {
             let lines = wrap_text(value, content_w, &metrics);
             let line_height = metrics.line_height_pt();
+            let asc_pt = ascender_pt(&metrics, fs);
             write_ops(
                 ops,
                 format_args!(
@@ -549,14 +550,14 @@ fn render_field(
                     font_ref,
                     fs,
                     x + pad_left,
-                    pdf_y + h - space_above - fs,
+                    pdf_y + h - space_above - asc_pt,
                 ),
             );
             for (i, line) in lines.iter().enumerate() {
                 if i > 0 {
                     write_ops(ops, format_args!("0 {:.2} Td\n", -line_height));
                 }
-                let line_top = h - space_above - fs - (i as f64 * line_height);
+                let line_top = h - space_above - asc_pt - (i as f64 * line_height);
                 if line_top < 0.0 {
                     break;
                 }
