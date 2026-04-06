@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
-use crate::font_bridge::{CidFontInfo, ResolvedFont, XfaFontResolver, XfaFontSpec};
+use crate::font_bridge::{font_variant_key, CidFontInfo, ResolvedFont, XfaFontResolver, XfaFontSpec};
 use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
 use crate::render_bridge::{generate_all_overlays, FontMetricsData, PageOverlay, XfaRenderConfig};
@@ -448,22 +448,40 @@ fn ps_name_to_family(ps_name: &str) -> String {
     result
 }
 
-fn collect_template_font_names(template_xml: &str) -> Vec<String> {
-    let mut names = Vec::new();
+/// Collected font specification from the XFA template.
+struct TemplateFontEntry {
+    typeface: String,
+    weight: Option<String>,
+    posture: Option<String>,
+}
+
+fn collect_template_font_entries(template_xml: &str) -> Vec<TemplateFontEntry> {
+    let mut entries = Vec::new();
     let mut seen = std::collections::HashSet::new();
     if let Ok(xml_doc) = roxmltree::Document::parse(template_xml) {
         for node in xml_doc.descendants() {
             if node.tag_name().name() == "font" {
                 if let Some(typeface) = node.attribute("typeface") {
                     let name = typeface.to_string();
-                    if !name.is_empty() && seen.insert(name.to_lowercase()) {
-                        names.push(name);
+                    let weight = node.attribute("weight").map(|s| s.to_string());
+                    let posture = node.attribute("posture").map(|s| s.to_string());
+                    let key = font_variant_key(
+                        &name,
+                        weight.as_deref(),
+                        posture.as_deref(),
+                    );
+                    if !name.is_empty() && seen.insert(key.to_lowercase()) {
+                        entries.push(TemplateFontEntry {
+                            typeface: name,
+                            weight,
+                            posture,
+                        });
                     }
                 }
             }
         }
     }
-    names
+    entries
 }
 
 fn embed_font_in_pdf(doc: &mut Document, font: &ResolvedFont) -> ObjectId {
@@ -579,12 +597,14 @@ fn generate_tounicode_cmap(gid_to_unicode: &[(u16, char)]) -> Vec<u8> {
 
 /// Resolve all fonts referenced in the XFA template without embedding them.
 ///
-/// Returns a map from typeface name to `ResolvedFont`. Called BEFORE layout so
-/// that resolved metrics can be injected into the `FormTree`.
+/// Returns a map from variant key to `ResolvedFont`. The key encodes typeface,
+/// weight, and posture so that "Arial bold" and "Arial regular" are resolved
+/// separately. Called BEFORE layout so that resolved metrics can be injected
+/// into the `FormTree`.
 fn resolve_template_fonts(template_xml: &str, pdf_bytes: &[u8]) -> HashMap<String, ResolvedFont> {
     let mut resolved = HashMap::new();
-    let font_names = collect_template_font_names(template_xml);
-    if font_names.is_empty() {
+    let entries = collect_template_font_entries(template_xml);
+    if entries.is_empty() {
         return resolved;
     }
     let source_doc = match Document::load_mem(pdf_bytes) {
@@ -593,14 +613,24 @@ fn resolve_template_fonts(template_xml: &str, pdf_bytes: &[u8]) -> HashMap<Strin
     };
     let embedded_fonts = extract_embedded_fonts(&source_doc);
     let mut resolver = XfaFontResolver::new(embedded_fonts);
-    for name in &font_names {
-        let spec = XfaFontSpec::from_xfa_attrs(name, None, None, None);
+    for entry in &entries {
+        let spec = XfaFontSpec::from_xfa_attrs(
+            &entry.typeface,
+            entry.weight.as_deref(),
+            entry.posture.as_deref(),
+            None,
+        );
+        let key = font_variant_key(
+            &entry.typeface,
+            entry.weight.as_deref(),
+            entry.posture.as_deref(),
+        );
         match resolver.resolve(&spec) {
             Ok(font) => {
-                resolved.insert(name.clone(), font);
+                resolved.insert(key, font);
             }
             Err(e) => {
-                eprintln!("Font resolution failed for '{}': {}", name, e);
+                eprintln!("Font resolution failed for '{}': {}", entry.typeface, e);
             }
         }
     }
@@ -610,8 +640,9 @@ fn resolve_template_fonts(template_xml: &str, pdf_bytes: &[u8]) -> HashMap<Strin
 /// Inject resolved font metrics into the FormTree before layout.
 ///
 /// For each node whose style metadata carries a `font_family`, looks up the
-/// matching `ResolvedFont` and populates the `resolved_widths`, `resolved_upem`,
-/// `resolved_ascender`, and `resolved_descender` fields on the node's `FontMetrics`.
+/// matching `ResolvedFont` (using the variant key that includes weight/posture)
+/// and populates the `resolved_widths`, `resolved_upem`, `resolved_ascender`,
+/// and `resolved_descender` fields on the node's `FontMetrics`.
 /// This makes `measure_width()` and `line_height_pt()` in the layout engine use
 /// actual font data instead of generic AFM tables.
 fn inject_resolved_metrics(
@@ -620,9 +651,22 @@ fn inject_resolved_metrics(
 ) {
     for i in 0..tree.nodes.len() {
         let id = xfa_layout_engine::form::FormNodeId(i);
-        let font_family = tree.meta(id).style.font_family.clone();
+        let style = &tree.meta(id).style;
+        let font_family = style.font_family.clone();
+        let font_weight = style.font_weight.clone();
+        let font_style = style.font_style.clone();
         if let Some(ref family) = font_family {
-            if let Some(font) = resolved.get(family) {
+            // Try variant-specific key first, then fall back to base key.
+            let variant_key = font_variant_key(
+                family,
+                font_weight.as_deref(),
+                font_style.as_deref(),
+            );
+            let base_key = font_variant_key(family, None, None);
+            let font = resolved
+                .get(&variant_key)
+                .or_else(|| resolved.get(&base_key));
+            if let Some(font) = font {
                 let (_first_char, widths) = font.pdf_glyph_widths();
                 let node = tree.get_mut(id);
                 node.font.resolved_widths = Some(widths);

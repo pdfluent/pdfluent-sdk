@@ -7,6 +7,7 @@
 //! PDF uses bottom-left origin (y grows upward).
 
 use crate::error::Result;
+use crate::font_bridge::font_variant_key;
 use std::collections::HashMap;
 use xfa_layout_engine::form::{DrawContent, FieldKind, FormNodeStyle};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
@@ -410,6 +411,16 @@ fn resolve_font_ref<'a>(
     font_family: FontFamily,
 ) -> &'a str {
     if let Some(typeface) = &node_style.font_family {
+        // Try variant-specific key first (includes weight/posture).
+        let vkey = font_variant_key(
+            typeface,
+            node_style.font_weight.as_deref(),
+            node_style.font_style.as_deref(),
+        );
+        if let Some(mapped) = font_map.get(&vkey) {
+            return mapped;
+        }
+        // Fallback to base typeface name.
         if let Some(mapped) = font_map.get(typeface) {
             return mapped;
         }
@@ -463,6 +474,9 @@ fn ascender_pt(font_metrics: &FontMetrics, font_size: f64) -> f64 {
 }
 
 /// Build a `FontMetrics` with resolved data injected from `config.font_metrics_data`.
+///
+/// Uses a variant key (including weight/posture) to look up the correct font
+/// metrics. Falls back to the base typeface name if no variant entry exists.
 fn build_font_metrics(
     font_size: f64,
     font_family: FontFamily,
@@ -475,7 +489,16 @@ fn build_font_metrics(
         ..Default::default()
     };
     if let Some(typeface) = &node_style.font_family {
-        if let Some(data) = config.font_metrics_data.get(typeface) {
+        let vkey = font_variant_key(
+            typeface,
+            node_style.font_weight.as_deref(),
+            node_style.font_style.as_deref(),
+        );
+        let data = config
+            .font_metrics_data
+            .get(&vkey)
+            .or_else(|| config.font_metrics_data.get(typeface));
+        if let Some(data) = data {
             metrics.resolved_widths = Some(data.widths.clone());
             metrics.resolved_upem = Some(data.upem);
             metrics.resolved_ascender = Some(data.ascender);
@@ -1093,6 +1116,9 @@ fn pdf_encode_text(s: &str, metrics: Option<&FontMetricsData>) -> String {
 }
 
 /// Look up font metrics for a typeface from the render config.
+///
+/// Tries the variant key (with weight/posture) first, then falls back to
+/// the plain typeface name.
 fn lookup_font_metrics<'a>(
     node_style: &FormNodeStyle,
     config: &'a XfaRenderConfig,
@@ -1100,7 +1126,17 @@ fn lookup_font_metrics<'a>(
     node_style
         .font_family
         .as_ref()
-        .and_then(|tf| config.font_metrics_data.get(tf))
+        .and_then(|tf| {
+            let vkey = font_variant_key(
+                tf,
+                node_style.font_weight.as_deref(),
+                node_style.font_style.as_deref(),
+            );
+            config
+                .font_metrics_data
+                .get(&vkey)
+                .or_else(|| config.font_metrics_data.get(tf))
+        })
         .filter(|m| m.font_data.is_some())
 }
 
