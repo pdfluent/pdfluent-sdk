@@ -367,4 +367,10 @@ pub struct FormNodeStyle {
     pub border_radius_pt: Option<f64>,
     /// Border edge stroke style (XFA `<border><edge stroke>`).
     pub border_style: Option<String>,
+    /// Font horizontal scale factor (XFA `<font fontHorizontalScale>`).
+    /// 1.0 = 100% (default), 0.96 = 96%, etc.
+    pub font_horizontal_scale: Option<f64>,
+    /// Letter spacing in points (XFA `<font letterSpacing>`).
+    /// 0.0 = normal (default). Negative values tighten, positive widen.
+    pub letter_spacing_pt: Option<f64>,
 }
