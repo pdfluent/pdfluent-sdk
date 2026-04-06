@@ -466,6 +466,10 @@ fn render_field(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
+    // Adobe behavior: empty fields are invisible (no border/background)
+    if value.is_empty() {
+        return;
+    }
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
     let border_style = node_style.border_style.as_deref();
 
@@ -573,6 +577,10 @@ fn render_checkbox(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
+    // Adobe behavior: empty checkboxes are invisible
+    if value.is_empty() {
+        return;
+    }
     let bw = config.border_width.max(0.5);
     write_ops(
         ops,
@@ -630,6 +638,10 @@ fn render_dropdown(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
+    // Adobe behavior: empty dropdowns are invisible
+    if value.is_empty() {
+        return;
+    }
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
 
     if let Some(bg) = &config.background_color {
@@ -714,6 +726,10 @@ fn render_button(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
+    // Adobe behavior: empty buttons are invisible
+    if value.is_empty() {
+        return;
+    }
     let border_radius = node_style.border_radius_pt.unwrap_or(1.0);
     let bw = config.border_width.max(1.0);
 
@@ -800,6 +816,10 @@ fn render_signature(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
+    // Adobe behavior: empty signatures are invisible
+    if value.is_empty() {
+        return;
+    }
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
 
     if let Some(bg) = &config.background_color {
