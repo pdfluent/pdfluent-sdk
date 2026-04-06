@@ -343,7 +343,7 @@ pub enum FieldKind {
 }
 
 /// Visual style properties for a form node.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FormNodeStyle {
     pub font_family: Option<String>,
     pub font_size: Option<f64>,
@@ -367,10 +367,37 @@ pub struct FormNodeStyle {
     pub border_radius_pt: Option<f64>,
     /// Border edge stroke style (XFA `<border><edge stroke>`).
     pub border_style: Option<String>,
+    /// Per-edge visibility: [top, right, bottom, left]. All true when absent.
+    pub border_edges: [bool; 4],
     /// Font horizontal scale factor (XFA `<font fontHorizontalScale>`).
     /// 1.0 = 100% (default), 0.96 = 96%, etc.
     pub font_horizontal_scale: Option<f64>,
     /// Letter spacing in points (XFA `<font letterSpacing>`).
     /// 0.0 = normal (default). Negative values tighten, positive widen.
     pub letter_spacing_pt: Option<f64>,
+}
+
+impl Default for FormNodeStyle {
+    fn default() -> Self {
+        Self {
+            font_family: None,
+            font_size: None,
+            font_weight: None,
+            font_style: None,
+            text_color: None,
+            bg_color: None,
+            border_color: None,
+            border_width_pt: None,
+            space_above_pt: None,
+            space_below_pt: None,
+            margin_left_pt: None,
+            margin_right_pt: None,
+            v_align: None,
+            border_radius_pt: None,
+            border_style: None,
+            border_edges: [true, true, true, true],
+            font_horizontal_scale: None,
+            letter_spacing_pt: None,
+        }
+    }
 }

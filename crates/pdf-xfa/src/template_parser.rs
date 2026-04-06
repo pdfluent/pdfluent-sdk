@@ -545,16 +545,22 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             .find_map(|widget| find_first_child_by_name(widget, "border"))
     });
     if let Some(border) = border {
-        if let Some(edge) = find_first_child_by_name(border, "edge") {
-            if let Some(color) = find_first_child_by_name(edge, "color") {
+        // Collect all <edge> children for per-edge visibility (XFA §D.7).
+        let edges: Vec<_> = border
+            .children()
+            .filter(|c| c.is_element() && c.tag_name().name() == "edge")
+            .collect();
+        // Use first visible edge for color/thickness (backward compat).
+        let first_visible = edges.iter().find(|e| !is_hidden(**e)).or_else(|| edges.first());
+        if let Some(edge) = first_visible {
+            if let Some(color) = find_first_child_by_name(*edge, "color") {
                 if let Some(rgb) = parse_xfa_color(color) {
                     style.border_color = Some(rgb);
                 }
             }
-            // Parse edge thickness; default 0.5pt per XFA 3.3 spec §D.7.
-            let stroke = attr(edge, "stroke").unwrap_or("solid");
+            let stroke = attr(*edge, "stroke").unwrap_or("solid");
             if stroke != "none" {
-                let thickness = attr(edge, "thickness")
+                let thickness = attr(*edge, "thickness")
                     .and_then(Measurement::parse)
                     .map(|m| m.to_points())
                     .unwrap_or(0.5);
@@ -563,6 +569,34 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 }
             }
         }
+        // Per-edge visibility: 1=all, 2=even/odd, 3=T/RL/B, 4=T/R/B/L.
+        let edge_visible = |e: &roxmltree::Node| -> bool {
+            !is_hidden(*e) && attr(*e, "stroke").unwrap_or("solid") != "none"
+        };
+        style.border_edges = match edges.len() {
+            0 => [true, true, true, true],
+            1 => {
+                let v = edge_visible(&edges[0]);
+                [v, v, v, v]
+            }
+            2 => {
+                let even = edge_visible(&edges[0]);
+                let odd = edge_visible(&edges[1]);
+                [even, odd, even, odd]
+            }
+            3 => {
+                let top = edge_visible(&edges[0]);
+                let rl = edge_visible(&edges[1]);
+                let bot = edge_visible(&edges[2]);
+                [top, rl, bot, rl]
+            }
+            _ => [
+                edge_visible(&edges[0]),
+                edge_visible(&edges[1]),
+                edge_visible(&edges[2]),
+                edge_visible(&edges[3]),
+            ],
+        };
         // Also parse <border><fill><color .../> for border background (field bg).
         // Skip when fill has presence="hidden"/"invisible"/"inactive".
         if style.bg_color.is_none() {

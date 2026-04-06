@@ -218,8 +218,13 @@ fn render_nodes(
                         format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bw, bc[0], bc[1], bc[2]),
                     );
                     apply_border_dash(ops, border_style);
-                    emit_rect_path(ops, abs_x, pdf_y, w, h, border_radius);
-                    ops.extend_from_slice(b"S\n");
+                    let edges = node.style.border_edges;
+                    if edges[0] && edges[1] && edges[2] && edges[3] {
+                        emit_rect_path(ops, abs_x, pdf_y, w, h, border_radius);
+                        ops.extend_from_slice(b"S\n");
+                    } else {
+                        emit_individual_edges(ops, abs_x, pdf_y, w, h, &edges);
+                    }
                     reset_border_dash(ops, border_style);
                 }
             }
@@ -384,6 +389,22 @@ fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64
                 y + r,
             ),
         );
+    }
+}
+
+/// Draw individual border edges. `edges` = [top, right, bottom, left].
+fn emit_individual_edges(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, edges: &[bool; 4]) {
+    if edges[0] {
+        write_ops(ops, format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y + h, x + w, y + h));
+    }
+    if edges[1] {
+        write_ops(ops, format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x + w, y, x + w, y + h));
+    }
+    if edges[2] {
+        write_ops(ops, format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y, x + w, y));
+    }
+    if edges[3] {
+        write_ops(ops, format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y, x, y + h));
     }
 }
 
@@ -563,10 +584,6 @@ fn render_field(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
-    // Adobe behavior: empty fields are invisible (no border/background)
-    if value.is_empty() {
-        return;
-    }
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
     let border_style = node_style.border_style.as_deref();
 
@@ -590,8 +607,13 @@ fn render_field(
             ),
         );
         apply_border_dash(ops, border_style);
-        emit_rect_path(ops, x, pdf_y, w, h, border_radius);
-        ops.extend_from_slice(b"S\n");
+        let edges = node_style.border_edges;
+        if edges[0] && edges[1] && edges[2] && edges[3] {
+            emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+            ops.extend_from_slice(b"S\n");
+        } else {
+            emit_individual_edges(ops, x, pdf_y, w, h, &edges);
+        }
         reset_border_dash(ops, border_style);
     }
     if !value.is_empty() {
