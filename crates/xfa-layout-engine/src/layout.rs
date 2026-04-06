@@ -924,7 +924,7 @@ impl<'a> LayoutEngine<'a> {
                 font_family: node.font.typeface,
             },
             FormNodeType::Draw(DrawContent::Text(content)) => LayoutContent::Text(content.clone()),
-            FormNodeType::Draw(_) => LayoutContent::None,
+            FormNodeType::Draw(dc) => LayoutContent::Draw(dc.clone()),
             _ => LayoutContent::None,
         };
 
@@ -1391,6 +1391,7 @@ impl<'a> LayoutEngine<'a> {
                     LayoutContent::Text(content.clone())
                 }
             }
+            FormNodeType::Draw(dc) => LayoutContent::Draw(dc.clone()),
             _ => LayoutContent::None,
         };
 
