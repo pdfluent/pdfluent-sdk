@@ -422,16 +422,21 @@ fn process_directory(dir: &Path) -> Option<(String, f64, usize, String, usize, u
     let mut total_ssim = 0.0;
     let page_count = page_matches.len();
 
+    let mut skipped = 0usize;
     for (_, our_path, pdfrest_path) in &page_matches {
         let (our_pixels, our_w, our_h) = match load_png(our_path) {
             Ok(p) => p,
-            Err(_) => return None,
+            Err(_) => { skipped += 1; continue; }
         };
         let (ref_pixels, ref_w, ref_h) = match load_png(pdfrest_path) {
             Ok(p) => p,
-            Err(_) => return None,
+            Err(_) => { skipped += 1; continue; }
         };
         total_ssim += compute_ssim(&our_pixels, our_w, our_h, &ref_pixels, ref_w, ref_h);
+    }
+    let page_count = page_count - skipped;
+    if page_count == 0 {
+        return None;
     }
 
     let avg_ssim = total_ssim / page_count as f64;
