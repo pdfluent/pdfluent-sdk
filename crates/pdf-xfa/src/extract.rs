@@ -21,7 +21,14 @@ impl XfaPackets {
         self.get_packet("template")
     }
     pub fn datasets(&self) -> Option<&str> {
-        self.get_packet("datasets")
+        // When multiple "datasets" packets exist (e.g. from incremental saves),
+        // prefer the largest one — the small/empty one is the original blank form
+        // and the larger one contains the filled data.
+        self.packets
+            .iter()
+            .filter(|(n, _)| n == "datasets")
+            .max_by_key(|(_, v)| v.len())
+            .map(|(_, v)| v.as_str())
     }
     pub fn config(&self) -> Option<&str> {
         self.get_packet("config")
@@ -32,12 +39,39 @@ impl XfaPackets {
 }
 
 pub fn extract_xfa(pdf: &Pdf) -> Result<XfaPackets> {
-    if let Some(p) = extract_xfa_from_acroform(pdf) {
+    if let Some(mut p) = extract_xfa_from_acroform(pdf) {
         if !p.packets.is_empty() || p.full_xml.is_some() {
+            // If the datasets packet is empty/tiny (common with incremental saves
+            // where Adobe Reader writes a new datasets object but doesn't update
+            // the XFA array reference), scan all objects for a larger one.
+            let current_ds_len = p.datasets().map(|s| s.len()).unwrap_or(0);
+            if current_ds_len < 200 {
+                if let Some(better_ds) = scan_for_datasets(pdf, current_ds_len) {
+                    p.packets.push(("datasets".to_string(), better_ds));
+                }
+            }
             return Ok(p);
         }
     }
     scan_for_xfa(pdf)
+}
+
+/// Scan all PDF stream objects for a datasets packet larger than `min_len`.
+/// Returns the largest found, if any.
+fn scan_for_datasets(pdf: &Pdf, min_len: usize) -> Option<String> {
+    let mut best: Option<String> = None;
+    for obj in pdf.objects() {
+        if let Object::Stream(s) = obj {
+            if let Some(d) = decode_stream(&s) {
+                if d.len() > min_len && d.contains("<xfa:datasets") {
+                    if best.as_ref().is_none_or(|b| d.len() > b.len()) {
+                        best = Some(d);
+                    }
+                }
+            }
+        }
+    }
+    best
 }
 
 pub fn extract_xfa_from_bytes(data: impl Into<pdf_syntax::PdfData>) -> Result<XfaPackets> {

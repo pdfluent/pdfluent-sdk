@@ -95,6 +95,18 @@ impl<'a> FormMerger<'a> {
                         let matches = self.data_dom.children_by_name(root, &name);
                         if let Some(&first) = matches.first() {
                             child_context = Some(first);
+                        } else if data_context.is_none() {
+                            // XFA §4.7.2: root subform binds to the data root.
+                            // When the subform name doesn't match a direct child
+                            // of the data root, use the first child group as the
+                            // context (common pattern: template root="form1" but
+                            // data root child="DOCUMENT" or "MCD").
+                            let children = self.data_dom.children(root);
+                            if let Some(&first_child) = children.first() {
+                                if self.data_dom.get(first_child).is_some_and(|n| n.is_group()) {
+                                    child_context = Some(first_child);
+                                }
+                            }
                         }
                     }
                 }
@@ -203,6 +215,27 @@ impl<'a> FormMerger<'a> {
         Ok((container_id, (false, None)))
     }
 
+    /// Search descendants of a data node for a DataValue with the given name.
+    /// Returns the first matching value (breadth-first).
+    fn find_value_in_descendants(&self, node: DataNodeId, name: &str) -> Option<String> {
+        for &child in self.data_dom.children(node) {
+            if let Some(cn) = self.data_dom.get(child) {
+                if cn.name() == name && cn.is_value() {
+                    return self.data_dom.value(child).ok().map(|s| s.to_string());
+                }
+            }
+        }
+        // Recurse into child groups
+        for &child in self.data_dom.children(node) {
+            if self.data_dom.get(child).is_some_and(|n| n.is_group()) {
+                if let Some(val) = self.find_value_in_descendants(child, name) {
+                    return Some(val);
+                }
+            }
+        }
+        None
+    }
+
     fn parse_field(
         &mut self,
         elem: Node<'_, '_>,
@@ -213,7 +246,8 @@ impl<'a> FormMerger<'a> {
 
         let mut value = extract_value_text(elem).unwrap_or_default();
 
-        // Data binding
+        // Data binding: try current context first, then walk up to root
+        // (XFA §4.7.2 global data binding fallback).
         if !name.is_empty() {
             if let Some(ctx) = data_context {
                 let matches = self.data_dom.children_by_name(ctx, &name);
@@ -222,6 +256,13 @@ impl<'a> FormMerger<'a> {
                         if dv.is_value() {
                             value = self.data_dom.value(val_id).unwrap_or_default().to_string();
                         }
+                    }
+                } else if let Some(root) = self.data_dom.root() {
+                    // Fallback: search descendants of data root for a matching
+                    // value node. This handles data saved in a flat structure
+                    // while the template uses nested subforms.
+                    if let Some(val) = self.find_value_in_descendants(root, &name) {
+                        value = val;
                     }
                 }
             }
