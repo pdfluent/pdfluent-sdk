@@ -119,28 +119,6 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         }
     };
 
-    // 1b. Detect pre-rendered pages: if the PDF's existing pages already contain
-    // substantial static content (non-empty content streams), this is a "hybrid"
-    // XFA+static PDF.  Preserve the existing static rendering and, when
-    // widget appearance streams are available, bake them into the page
-    // content before removing the interactive layer.
-    if let Ok(doc) = Document::load_mem(pdf_bytes) {
-        if pages_have_static_content(&doc) {
-            let mut doc_mut = Document::load_mem(pdf_bytes)
-                .map_err(|e| XfaError::LoadFailed(format!("lopdf load: {e}")))?;
-            if flatten_widget_appearances(&mut doc_mut) == 0 {
-                strip_widgets_and_acroform(&mut doc_mut);
-            } else {
-                remove_acroform(&mut doc_mut);
-            }
-            let mut out = Vec::new();
-            doc_mut
-                .save_to(&mut out)
-                .map_err(|e| XfaError::LayoutFailed(format!("save: {e}")))?;
-            return Ok(out);
-        }
-    }
-
     // 2. Try XFA template → layout → render pipeline.
     //    If this fails (parse error, empty template, layout 0 pages, lopdf error),
     //    fall back to preserving the existing page content with AcroForm stripped.
@@ -311,18 +289,21 @@ fn xfa_flatten_inner(
         }
     }
 
+    // Remove excess pages when XFA layout produces fewer pages than the
+    // original static content. This is the core fix for over-pagination
+    // (#744): XFA PDFs often carry pre-rendered static pages that far exceed
+    // the dynamic page count Adobe would produce.
     if n_layout < n_existing {
-        for &page_id in &existing_page_ids[n_layout..n_existing] {
-            write_page_content(
-                &mut doc,
-                page_id,
-                &PageOverlay {
-                    content_stream: Vec::new(),
-                    images: Vec::new(),
-                },
-                &font_ids,
-                &embedded_font_objects,
-            )?;
+        // delete_pages takes 1-indexed page numbers, highest first to avoid
+        // index shifts.
+        let excess: Vec<u32> = ((n_layout + 1) as u32..=(n_existing as u32)).rev().collect();
+        doc.delete_pages(&excess);
+    }
+
+    // Strip widget annotations from pages that were overwritten by XFA layout.
+    for &page_id in existing_page_ids.iter().take(n_layout.min(n_existing)) {
+        if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
+            dict.remove(b"Annots");
         }
     }
 
@@ -1712,7 +1693,10 @@ ET
     }
 
     #[test]
-    fn hybrid_static_pdf_flattens_widget_appearance_into_page_content() {
+    fn hybrid_static_pdf_uses_xfa_layout_over_static_content() {
+        // When a PDF has both XFA template and static page content,
+        // XFA layout should always take priority — the static content
+        // may be a pre-rendered preview with wrong page count (#744).
         let appearance = Object::Stream(Stream::new(
             dictionary! {
                 "Type" => Object::Name(b"XObject".to_vec()),
@@ -1730,7 +1714,7 @@ ET
             },
             b"0 G\n0.5 0.5 119 29 re\ns\n".to_vec(),
         ));
-        // Enough Tj operators (≥5) to exceed the static content threshold.
+        // Enough Tj operators (≥5) to exceed the old static content threshold.
         let page_content = b"BT /F1 12 Tf 72 720 Td (Line 1) Tj 0 -14 Td (Line 2) Tj 0 -14 Td (Line 3) Tj 0 -14 Td (Line 4) Tj 0 -14 Td (Line 5) Tj ET\n".to_vec();
         let pdf_bytes = build_xfa_pdf_with_widget_appearance(
             page_content,
@@ -1746,20 +1730,11 @@ ET
         let page_id = doc.page_iter().next().expect("page");
         let page_dict = doc.get_dictionary(page_id).expect("page dict");
 
+        // XFA layout produces pages without widget annotations.
         assert!(
             page_dict.get(b"Annots").is_err(),
-            "flattened widgets should be removed from page annotations"
+            "XFA-flattened page should have no annotations"
         );
-
-        let stream = find_last_content_stream(&doc, page_id);
-        let content = String::from_utf8_lossy(&stream.content);
-        assert!(
-            content.contains("Do"),
-            "flattened page content should paint the widget appearance"
-        );
-
-        let xobjects = page_xobjects(&doc, page_id);
-        assert_eq!(xobjects.len(), 1, "expected one widget appearance XObject");
     }
 
     #[test]
