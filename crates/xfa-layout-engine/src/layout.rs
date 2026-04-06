@@ -18,6 +18,11 @@ pub struct LayoutDom {
     pub pages: Vec<LayoutPage>,
 }
 
+/// Maximum number of pages to prevent pagination explosion.
+/// XFA templates with unbounded repeat subforms can otherwise cause
+/// thousands of pages to be generated. (#729)
+const MAX_PAGES: usize = 100;
+
 /// A single page in the layout output.
 #[derive(Debug)]
 pub struct LayoutPage {
@@ -126,6 +131,13 @@ impl<'a> LayoutEngine<'a> {
                 // TB layout supports pagination: split content across pages
                 let mut remaining = content_queued;
                 while !remaining.is_empty() {
+                    if pages.len() >= MAX_PAGES {
+                        eprintln!(
+                            "WARNING: Max page limit ({}) reached, truncating layout for {}",
+                            MAX_PAGES, root_node.name
+                        );
+                        break;
+                    }
                     let (page, rest, consumed_break_only, _) =
                         self.layout_content_fitting(&area, &remaining, page_w, page_h)?;
                     if page.nodes.is_empty() && !consumed_break_only {
@@ -185,6 +197,14 @@ impl<'a> LayoutEngine<'a> {
             if !remaining.is_empty() {
                 let last_idx = page_areas.len() - 1;
                 while !remaining.is_empty() {
+                    if pages.len() >= MAX_PAGES {
+                        eprintln!(
+                            "WARNING: Max page limit ({}) reached, truncating layout overflow for {}",
+                            MAX_PAGES,
+                            root_node.name
+                        );
+                        break;
+                    }
                     let pa_idx = last_idx;
                     let pa = &page_areas[pa_idx];
                     let ca = primary_content_area(pa);
