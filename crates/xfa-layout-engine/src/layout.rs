@@ -777,17 +777,25 @@ impl<'a> LayoutEngine<'a> {
 
     /// Check if a node can be split across pages.
     ///
-    /// Only tb-layout subforms and Table subforms with children can be split.
+    /// Flowed layout subforms (tb, lr-tb, rl-tb, table) with children can be
+    /// split.  Positioned subforms can also be split when they have no explicit
+    /// height -- their children are sorted by y-coordinate and placed on
+    /// successive pages based on where they fall relative to the page boundary.
+    /// This matches Adobe's behaviour for forms where positioned content
+    /// overflows the page content area (#736).
     fn can_split(&self, id: FormNodeId) -> bool {
         let node = self.form.get(id);
+        if node.children.is_empty() || node.box_model.height.is_some() {
+            return false;
+        }
         matches!(
             node.layout,
             LayoutStrategy::TopToBottom
                 | LayoutStrategy::LeftToRightTB
                 | LayoutStrategy::RightToLeftTB
                 | LayoutStrategy::Table
-        ) && !node.children.is_empty()
-            && node.box_model.height.is_none()
+                | LayoutStrategy::Positioned
+        )
     }
 
     /// Check if any direct (expanded) child of a tb-layout subform has
@@ -824,6 +832,12 @@ impl<'a> LayoutEngine<'a> {
         children_override: Option<&[FormNodeId]>,
     ) -> Result<(LayoutNode, Vec<QueuedNode>)> {
         let node = self.form.get(id);
+
+        // Delegate to positioned splitter for positioned subforms (#736).
+        if node.layout == LayoutStrategy::Positioned {
+            return self.split_positioned_node(id, y_offset, remaining_height, children_override);
+        }
+
         let node_children = children_override.unwrap_or(&node.children);
         let expanded_children = self.expand_occur(node_children);
 
@@ -974,6 +988,121 @@ impl<'a> LayoutEngine<'a> {
                 })
                 .collect()
         });
+        Ok((partial_node, rest))
+    }
+
+    /// Split a positioned-layout subform across pages (#736).
+    ///
+    /// Children are sorted by their y-coordinate.  Those whose bottom edge
+    /// (y + height, shifted by y_base) fits within `remaining_height` are
+    /// placed on the current page.  Remaining children are returned for
+    /// layout on subsequent pages.
+    ///
+    /// When called for overflow children (via `children_override`), a y_base
+    /// shift is computed from the minimum y-position so they render starting
+    /// near the top of the new page.  The same shift is applied by
+    /// `compute_extent_with_available_and_override` so the reported height
+    /// is consistent.
+    fn split_positioned_node(
+        &self,
+        id: FormNodeId,
+        y_offset: f64,
+        remaining_height: f64,
+        children_override: Option<&[FormNodeId]>,
+    ) -> Result<(LayoutNode, Vec<QueuedNode>)> {
+        let node = self.form.get(id);
+        let node_children = children_override.unwrap_or(&node.children);
+        let expanded_children = self.expand_occur(node_children);
+
+        // Sort children by their y-position for deterministic splitting.
+        let mut sorted: Vec<FormNodeId> = expanded_children.clone();
+        sorted.sort_by(|&a, &b| {
+            let ay = self.form.get(a).box_model.y;
+            let by = self.form.get(b).box_model.y;
+            ay.partial_cmp(&by).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // When processing overflow children (children_override is set),
+        // shift all y-positions so the topmost child starts at y=0.
+        // This mirrors the y_base logic in compute_extent.
+        let y_base = if children_override.is_some() {
+            sorted
+                .first()
+                .map(|&cid| self.form.get(cid).box_model.y)
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
+        let mut placed_children = Vec::new();
+        let mut rest_children = Vec::new();
+        let mut max_placed_bottom = 0.0_f64;
+
+        for &child_id in &sorted {
+            let child = self.form.get(child_id);
+            let child_size = self.compute_extent(child_id);
+            let shifted_y = child.box_model.y - y_base;
+            let child_bottom = shifted_y + child_size.height;
+
+            if child_bottom <= remaining_height + 1.0 {
+                // Child fits on this page -- place at shifted position.
+                let child_node = self.layout_single_node(
+                    child_id,
+                    child,
+                    child.box_model.x,
+                    shifted_y,
+                    None,
+                )?;
+                max_placed_bottom = max_placed_bottom.max(child_bottom);
+                placed_children.push(child_node);
+            } else {
+                // Child overflows -- defer to next page.
+                rest_children.push(child_id);
+            }
+        }
+
+        let content = match &node.node_type {
+            FormNodeType::Field { value } => LayoutContent::Field {
+                value: value.clone(),
+                field_kind: self.form.meta(id).field_kind,
+                font_size: node.font.size,
+                font_family: node.font.typeface,
+            },
+            FormNodeType::Draw(DrawContent::Text(content)) => LayoutContent::Text(content.clone()),
+            FormNodeType::Draw(dc) => LayoutContent::Draw(dc.clone()),
+            _ => LayoutContent::None,
+        };
+
+        let partial_width = self
+            .compute_extent_with_override(id, children_override)
+            .width;
+
+        let partial_node = LayoutNode {
+            form_node: id,
+            rect: Rect::new(0.0, y_offset, partial_width, max_placed_bottom),
+            name: node.name.clone(),
+            content,
+            children: placed_children,
+            style: self.form.meta(id).style.clone(),
+        };
+
+        // Remaining children are wrapped in a QueuedNode for the same
+        // parent with children_override.  On the next page, compute_extent
+        // will apply y_base shifting to produce a correct relative height,
+        // and split_positioned_node will shift y-positions so children
+        // render near the top of the new page.
+        let rest = if rest_children.is_empty() {
+            Vec::new()
+        } else {
+            vec![QueuedNode {
+                id,
+                break_before: false,
+                break_after: self.form.meta(id).page_break_after,
+                break_target: None,
+                children_override: Some(rest_children),
+            }]
+        };
+
         Ok((partial_node, rest))
     }
 
@@ -1584,13 +1713,26 @@ impl<'a> LayoutEngine<'a> {
                     }
                 }
                 _ => {
-                    // Positioned: envelope all children (occur doesn't stack in positioned)
+                    // Positioned: envelope all children (occur doesn't stack in positioned).
+                    // When a children_override is active (from a positioned split),
+                    // compute relative height from the minimum y so that remaining
+                    // children after a page break produce a sensible extent instead
+                    // of the full original height (#736).
+                    let y_base = if children_override.is_some() {
+                        node_children
+                            .iter()
+                            .map(|&cid| self.form.get(cid).box_model.y)
+                            .fold(f64::MAX, f64::min)
+                    } else {
+                        0.0
+                    };
                     for &child_id in node_children {
                         let child = self.form.get(child_id);
                         let cs = self.compute_extent(child_id);
                         content_size.width = content_size.width.max(child.box_model.x + cs.width);
-                        content_size.height =
-                            content_size.height.max(child.box_model.y + cs.height);
+                        content_size.height = content_size
+                            .height
+                            .max(child.box_model.y - y_base + cs.height);
                     }
                 }
             }
@@ -1753,6 +1895,23 @@ mod tests {
             column_widths: vec![],
             col_span: 1,
         })
+    }
+
+    /// Count leaf layout nodes (fields/draws) recursively across a page.
+    fn count_leaf_nodes(page: &LayoutPage) -> usize {
+        fn count(nodes: &[LayoutNode]) -> usize {
+            nodes
+                .iter()
+                .map(|n| {
+                    if n.children.is_empty() {
+                        1
+                    } else {
+                        count(&n.children)
+                    }
+                })
+                .sum()
+        }
+        count(&page.nodes)
     }
 
     #[test]
@@ -3450,8 +3609,173 @@ mod tests {
 
         let engine = LayoutEngine::new(&tree);
         assert!(engine.can_split(tb_sub));
-        assert!(!engine.can_split(pos_sub));
+        // Positioned subforms without explicit height can now be split (#736).
+        assert!(engine.can_split(pos_sub));
         assert!(!engine.can_split(empty_sub));
+    }
+
+    #[test]
+    fn positioned_subform_paginates_across_pages() {
+        // A positioned subform with many fields should split across pages
+        // when its content exceeds the page content area (#736).
+        let mut tree = FormTree::new();
+
+        // Create 10 fields at y = 0, 80, 160, ..., 720
+        // Each field is 60pt tall, total extent = 780pt.
+        let mut fields = Vec::new();
+        for i in 0..10 {
+            let f = tree.add_node(FormNode {
+                name: format!("F{i}"),
+                node_type: FormNodeType::Field {
+                    value: format!("Value{i}"),
+                },
+                box_model: BoxModel {
+                    width: Some(200.0),
+                    height: Some(60.0),
+                    x: 10.0,
+                    y: i as f64 * 80.0,
+                    max_width: f64::MAX,
+                    max_height: f64::MAX,
+                    ..Default::default()
+                },
+                layout: LayoutStrategy::Positioned,
+                children: vec![],
+                occur: Occur::once(),
+                font: FontMetrics::default(),
+                calculate: None,
+                validate: None,
+                column_widths: vec![],
+                col_span: 1,
+            });
+            fields.push(f);
+        }
+
+        // Positioned subform with no explicit height containing all fields.
+        let positioned = tree.add_node(FormNode {
+            name: "PositionedBody".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: fields,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        // Page area with 400pt content height (fits ~5 fields)
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 400.0,
+                    leader: None,
+                    trailer: None,
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![page_area, positioned],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // 10 fields at y=0,80,...,720 with height 60, page height 400.
+        // Page 1: fields at y=0..319 (y+h<=400) = F0(0+60), F1(80+60), F2(160+60),
+        //         F3(240+60), F4(320+60=380) -> 5 fields
+        // Page 2: fields at y=400..719, shifted -> F5(0+60), F6(80+60), F7(160+60),
+        //         F8(240+60), F9(320+60=380) -> 5 fields
+        assert!(
+            result.pages.len() >= 2,
+            "Expected at least 2 pages, got {}",
+            result.pages.len()
+        );
+
+        // Page 1 should have the positioned subform with some children
+        let page1_children = count_leaf_nodes(&result.pages[0]);
+        let page2_children = count_leaf_nodes(&result.pages[1]);
+        assert!(page1_children > 0, "Page 1 should have content");
+        assert!(page2_children > 0, "Page 2 should have content");
+        assert_eq!(
+            page1_children + page2_children,
+            10,
+            "All 10 fields should be placed across pages"
+        );
+    }
+
+    #[test]
+    fn positioned_subform_with_explicit_height_not_split() {
+        // A positioned subform with explicit height should NOT be split.
+        let mut tree = FormTree::new();
+        let f1 = make_field(&mut tree, "F1", 100.0, 20.0);
+
+        let positioned = tree.add_node(FormNode {
+            name: "FixedBlock".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(500.0), // explicit height
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![f1],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        assert!(
+            !engine.can_split(positioned),
+            "Positioned subform with explicit height should not be splittable"
+        );
     }
 
     // --- Leaders & trailers tests (Epic 3.10) ---
