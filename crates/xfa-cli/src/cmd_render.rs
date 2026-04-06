@@ -6,6 +6,10 @@ use std::path::Path;
 use crate::error::CliError;
 use pdf_engine::{PdfDocument, RenderOptions};
 
+fn try_xfa_flatten(data: &[u8]) -> Option<Vec<u8>> {
+    pdf_xfa::flatten_xfa_to_pdf(data).ok()
+}
+
 pub fn run(input: &Path, output: &Path, dpi: f64, pages: Option<&str>) -> Result<()> {
     let data = std::fs::read(input).map_err(|e| {
         anyhow::anyhow!(CliError {
@@ -16,14 +20,30 @@ pub fn run(input: &Path, output: &Path, dpi: f64, pages: Option<&str>) -> Result
         })
     })?;
 
-    let doc = PdfDocument::open(data).map_err(|e| {
-        anyhow::anyhow!(CliError {
-            message: format!("Could not open PDF: {}", input.display()),
-            why: Some(e.to_string()),
-            fix: Some("Ensure the file is a valid PDF document and not corrupted.".to_string()),
-            docs: Some("https://docs.pdfluent.com/errors/E005".to_string()),
-        })
-    })?;
+    let doc = match PdfDocument::open(data.clone()) {
+        Ok(doc) => doc,
+        Err(e) => {
+            if let Some(flattened) = try_xfa_flatten(&data) {
+                PdfDocument::open(flattened).map_err(|e| {
+                    anyhow::anyhow!(CliError {
+                        message: format!("Could not open flattened XFA: {}", input.display()),
+                        why: Some(e.to_string()),
+                        fix: Some("XFA flattening failed to produce valid PDF".to_string()),
+                        docs: Some("https://docs.pdfluent.com/errors/E005".to_string()),
+                    })
+                })?
+            } else {
+                return Err(anyhow::anyhow!(CliError {
+                    message: format!("Could not open PDF: {}", input.display()),
+                    why: Some(e.to_string()),
+                    fix: Some(
+                        "Ensure the file is a valid PDF document and not corrupted.".to_string()
+                    ),
+                    docs: Some("https://docs.pdfluent.com/errors/E005".to_string()),
+                }));
+            }
+        }
+    };
     let total = doc.page_count();
 
     let page_indices = match pages {
