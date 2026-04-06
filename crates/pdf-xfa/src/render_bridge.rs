@@ -455,16 +455,23 @@ fn is_bold_style(node_style: &FormNodeStyle) -> bool {
         .map_or(false, |w| w == "bold")
 }
 
+/// Returns true if the font reference indicates a bold variant.
+/// PDF font names typically include "Bold" in the name for bold fonts.
+fn font_ref_is_bold(font_ref: &str) -> bool {
+    font_ref.to_uppercase().contains("BOLD")
+}
+
 /// Emit synthetic bold operators: fill+stroke rendering mode with thin stroke.
 /// Uses text rendering mode 2 (fill then stroke) to simulate bold weight when
 /// the actual bold font variant is unavailable.
 fn emit_synthetic_bold_ops(
     node_style: &FormNodeStyle,
+    font_ref: &str,
     font_size: f64,
     text_color: &[f64; 3],
     ops: &mut Vec<u8>,
 ) {
-    if is_bold_style(node_style) {
+    if is_bold_style(node_style) && !font_ref_is_bold(font_ref) {
         let stroke_w = font_size * 0.03;
         write_ops(
             ops,
@@ -477,8 +484,8 @@ fn emit_synthetic_bold_ops(
 }
 
 /// Reset synthetic bold state back to fill-only rendering.
-fn reset_synthetic_bold_ops(node_style: &FormNodeStyle, ops: &mut Vec<u8>) {
-    if is_bold_style(node_style) {
+fn reset_synthetic_bold_ops(node_style: &FormNodeStyle, font_ref: &str, ops: &mut Vec<u8>) {
+    if is_bold_style(node_style) && !font_ref_is_bold(font_ref) {
         write_ops(ops, format_args!("0 Tr\n"));
     }
 }
@@ -616,26 +623,17 @@ fn render_field(
                 ops,
                 format_args!(
                     "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                    config.text_color[0],
-                    config.text_color[1],
-                    config.text_color[2],
-                    font_ref,
-                    fs,
+                    config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
                 ),
             );
-            emit_synthetic_bold_ops(node_style, fs, &config.text_color, ops);
+            emit_synthetic_bold_ops(node_style, font_ref, fs, &config.text_color, ops);
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
-                format_args!(
-                    "{:.2} {:.2} Td\n{} Tj\n",
-                    x + pad_left,
-                    text_y,
-                    encoded
-                ),
+                format_args!("{:.2} {:.2} Td\n{} Tj\n", x + pad_left, text_y, encoded),
             );
             reset_text_style_ops(node_style, ops);
-            reset_synthetic_bold_ops(node_style, ops);
+            reset_synthetic_bold_ops(node_style, font_ref, ops);
             ops.extend_from_slice(b"ET\n");
         } else {
             let lines = wrap_text(value, content_w, &metrics);
@@ -645,14 +643,10 @@ fn render_field(
                 ops,
                 format_args!(
                     "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                    config.text_color[0],
-                    config.text_color[1],
-                    config.text_color[2],
-                    font_ref,
-                    fs,
+                    config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
                 ),
             );
-            emit_synthetic_bold_ops(node_style, fs, &config.text_color, ops);
+            emit_synthetic_bold_ops(node_style, font_ref, fs, &config.text_color, ops);
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
@@ -674,7 +668,7 @@ fn render_field(
                 write_ops(ops, format_args!("{} Tj\n", encoded));
             }
             reset_text_style_ops(node_style, ops);
-            reset_synthetic_bold_ops(node_style, ops);
+            reset_synthetic_bold_ops(node_style, font_ref, ops);
             ops.extend_from_slice(b"ET\n");
         }
     }
@@ -798,26 +792,17 @@ fn render_dropdown(
             ops,
             format_args!(
                 "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                config.text_color[0],
-                config.text_color[1],
-                config.text_color[2],
-                font_ref,
-                fs,
+                config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
             ),
         );
-        emit_synthetic_bold_ops(node_style, fs, &config.text_color, ops);
+        emit_synthetic_bold_ops(node_style, font_ref, fs, &config.text_color, ops);
         emit_text_style_ops(node_style, ops);
         write_ops(
             ops,
-            format_args!(
-                "{:.2} {:.2} Td\n{} Tj\n",
-                x + 2.0,
-                v_offset,
-                encoded
-            ),
+            format_args!("{:.2} {:.2} Td\n{} Tj\n", x + 2.0, v_offset, encoded),
         );
         reset_text_style_ops(node_style, ops);
-        reset_synthetic_bold_ops(node_style, ops);
+        reset_synthetic_bold_ops(node_style, font_ref, ops);
         ops.extend_from_slice(b"ET\n");
     }
 
@@ -915,26 +900,17 @@ fn render_button(
             ops,
             format_args!(
                 "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                config.text_color[0],
-                config.text_color[1],
-                config.text_color[2],
-                font_ref,
-                fs,
+                config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
             ),
         );
-        emit_synthetic_bold_ops(node_style, fs, &config.text_color, ops);
+        emit_synthetic_bold_ops(node_style, font_ref, fs, &config.text_color, ops);
         emit_text_style_ops(node_style, ops);
         write_ops(
             ops,
-            format_args!(
-                "{:.2} {:.2} Td\n{} Tj\n",
-                text_x,
-                v_offset,
-                encoded
-            ),
+            format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, v_offset, encoded),
         );
         reset_text_style_ops(node_style, ops);
-        reset_synthetic_bold_ops(node_style, ops);
+        reset_synthetic_bold_ops(node_style, font_ref, ops);
         ops.extend_from_slice(b"ET\n");
     }
     write_ops(ops, format_args!("Q\n"));
@@ -1054,7 +1030,7 @@ fn render_multiline(
             config.text_color[0], config.text_color[1], config.text_color[2], font_ref, font_size
         ),
     );
-    emit_synthetic_bold_ops(node_style, font_size, &config.text_color, ops);
+    emit_synthetic_bold_ops(node_style, font_ref, font_size, &config.text_color, ops);
     emit_text_style_ops(node_style, ops);
     let ascender_pt = if let (Some(asc), Some(upem)) =
         (font_metrics.resolved_ascender, font_metrics.resolved_upem)
@@ -1090,7 +1066,7 @@ fn render_multiline(
         write_ops(ops, format_args!("{} Tj\n", encoded));
     }
     reset_text_style_ops(node_style, ops);
-    reset_synthetic_bold_ops(node_style, ops);
+    reset_synthetic_bold_ops(node_style, font_ref, ops);
     ops.extend_from_slice(b"ET\n");
 }
 
