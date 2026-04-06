@@ -447,6 +447,42 @@ fn emit_text_style_ops(node_style: &FormNodeStyle, ops: &mut Vec<u8>) {
     }
 }
 
+/// Returns true if this node requests bold weight.
+fn is_bold_style(node_style: &FormNodeStyle) -> bool {
+    node_style
+        .font_weight
+        .as_deref()
+        .map_or(false, |w| w == "bold")
+}
+
+/// Emit synthetic bold operators: fill+stroke rendering mode with thin stroke.
+/// Uses text rendering mode 2 (fill then stroke) to simulate bold weight when
+/// the actual bold font variant is unavailable.
+fn emit_synthetic_bold_ops(
+    node_style: &FormNodeStyle,
+    font_size: f64,
+    text_color: &[f64; 3],
+    ops: &mut Vec<u8>,
+) {
+    if is_bold_style(node_style) {
+        let stroke_w = font_size * 0.03;
+        write_ops(
+            ops,
+            format_args!(
+                "2 Tr\n{:.4} w\n{:.3} {:.3} {:.3} RG\n",
+                stroke_w, text_color[0], text_color[1], text_color[2],
+            ),
+        );
+    }
+}
+
+/// Reset synthetic bold state back to fill-only rendering.
+fn reset_synthetic_bold_ops(node_style: &FormNodeStyle, ops: &mut Vec<u8>) {
+    if is_bold_style(node_style) {
+        write_ops(ops, format_args!("0 Tr\n"));
+    }
+}
+
 /// Reset text style operators to defaults after a BT/ET block (for safety).
 fn reset_text_style_ops(node_style: &FormNodeStyle, ops: &mut Vec<u8>) {
     if node_style
@@ -587,6 +623,7 @@ fn render_field(
                     fs,
                 ),
             );
+            emit_synthetic_bold_ops(node_style, fs, &config.text_color, ops);
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
@@ -598,6 +635,7 @@ fn render_field(
                 ),
             );
             reset_text_style_ops(node_style, ops);
+            reset_synthetic_bold_ops(node_style, ops);
             ops.extend_from_slice(b"ET\n");
         } else {
             let lines = wrap_text(value, content_w, &metrics);
@@ -614,6 +652,7 @@ fn render_field(
                     fs,
                 ),
             );
+            emit_synthetic_bold_ops(node_style, fs, &config.text_color, ops);
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
@@ -635,6 +674,7 @@ fn render_field(
                 write_ops(ops, format_args!("{} Tj\n", encoded));
             }
             reset_text_style_ops(node_style, ops);
+            reset_synthetic_bold_ops(node_style, ops);
             ops.extend_from_slice(b"ET\n");
         }
     }
@@ -765,6 +805,7 @@ fn render_dropdown(
                 fs,
             ),
         );
+        emit_synthetic_bold_ops(node_style, fs, &config.text_color, ops);
         emit_text_style_ops(node_style, ops);
         write_ops(
             ops,
@@ -776,6 +817,7 @@ fn render_dropdown(
             ),
         );
         reset_text_style_ops(node_style, ops);
+        reset_synthetic_bold_ops(node_style, ops);
         ops.extend_from_slice(b"ET\n");
     }
 
@@ -880,6 +922,7 @@ fn render_button(
                 fs,
             ),
         );
+        emit_synthetic_bold_ops(node_style, fs, &config.text_color, ops);
         emit_text_style_ops(node_style, ops);
         write_ops(
             ops,
@@ -891,6 +934,7 @@ fn render_button(
             ),
         );
         reset_text_style_ops(node_style, ops);
+        reset_synthetic_bold_ops(node_style, ops);
         ops.extend_from_slice(b"ET\n");
     }
     write_ops(ops, format_args!("Q\n"));
@@ -1010,6 +1054,7 @@ fn render_multiline(
             config.text_color[0], config.text_color[1], config.text_color[2], font_ref, font_size
         ),
     );
+    emit_synthetic_bold_ops(node_style, font_size, &config.text_color, ops);
     emit_text_style_ops(node_style, ops);
     let ascender_pt = if let (Some(asc), Some(upem)) =
         (font_metrics.resolved_ascender, font_metrics.resolved_upem)
@@ -1045,6 +1090,7 @@ fn render_multiline(
         write_ops(ops, format_args!("{} Tj\n", encoded));
     }
     reset_text_style_ops(node_style, ops);
+    reset_synthetic_bold_ops(node_style, ops);
     ops.extend_from_slice(b"ET\n");
 }
 
