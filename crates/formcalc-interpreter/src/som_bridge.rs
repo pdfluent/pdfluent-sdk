@@ -1,13 +1,44 @@
-//! SOM bridge — connects FormCalc interpreter to the XFA Data DOM.
+//! SOM bridge — connects FormCalc interpreter to SOM-backed stores.
 //!
-//! Provides DOM-aware built-in functions that resolve SOM paths and
-//! read/write Data DOM nodes from within FormCalc scripts.
+//! The primary implementation in this crate targets the XFA Data DOM, but the
+//! interpreter can also be bound to other resolvers such as the merged FormTree.
 
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
 use xfa_dom_resolver::som;
 
 use crate::error::{FormCalcError, Result};
 use crate::value::Value;
+
+/// Generic SOM resolver used by the FormCalc interpreter.
+pub trait SomResolver {
+    /// Resolve a SOM path to a runtime value.
+    fn resolve_path(&mut self, path: &str) -> Result<Option<Value>>;
+
+    /// Assign a runtime value to a SOM path.
+    ///
+    /// Returns `true` when a matching path was updated or successfully handled.
+    fn assign_path(&mut self, path: &str, value: Value) -> Result<bool>;
+
+    /// Count the nodes matched by a SOM path.
+    fn count_path_matches(&mut self, path: &str) -> Result<usize> {
+        Ok(usize::from(self.resolve_path(path)?.is_some()))
+    }
+
+    /// Check whether a SOM path resolves to at least one node.
+    fn exists_path(&mut self, path: &str) -> Result<bool> {
+        Ok(self.count_path_matches(path)? > 0)
+    }
+
+    /// Add a node below a SOM path. Unsupported by default.
+    fn add_node(&mut self, _parent_path: &str, _name: &str, _value: Value) -> Result<bool> {
+        Ok(false)
+    }
+
+    /// Remove a node resolved by a SOM path. Unsupported by default.
+    fn remove_node(&mut self, _path: &str) -> Result<bool> {
+        Ok(false)
+    }
+}
 
 /// Binding between the FormCalc interpreter and a Data DOM.
 pub struct DomContext<'a> {
@@ -32,6 +63,88 @@ impl<'a> DomContext<'a> {
     }
 }
 
+impl SomResolver for DomContext<'_> {
+    fn resolve_path(&mut self, path: &str) -> Result<Option<Value>> {
+        let results = som::resolve_data_path(self.dom, path, self.current_node).map_err(|e| {
+            FormCalcError::RuntimeError(format!("SOM resolution failed for '{path}': {e}"))
+        })?;
+
+        let Some(first) = results.first().copied() else {
+            return Ok(None);
+        };
+
+        match self.dom.value(first) {
+            Ok(v) => {
+                if let Ok(n) = v.parse::<f64>() {
+                    Ok(Some(Value::Number(n)))
+                } else {
+                    Ok(Some(Value::String(v.to_string())))
+                }
+            }
+            Err(_) => Ok(Some(Value::Null)),
+        }
+    }
+
+    fn assign_path(&mut self, path: &str, value: Value) -> Result<bool> {
+        let results = som::resolve_data_path(self.dom, path, self.current_node).map_err(|e| {
+            FormCalcError::RuntimeError(format!("SOM resolution failed for '{path}': {e}"))
+        })?;
+
+        let Some(first) = results.first().copied() else {
+            return Ok(false);
+        };
+
+        self.dom
+            .set_value(first, value.to_string_val())
+            .map_err(|e| FormCalcError::RuntimeError(format!("Set failed for '{path}': {e}")))?;
+
+        Ok(true)
+    }
+
+    fn count_path_matches(&mut self, path: &str) -> Result<usize> {
+        let results = som::resolve_data_path(self.dom, path, self.current_node).map_err(|e| {
+            FormCalcError::RuntimeError(format!("SOM resolution failed for '{path}': {e}"))
+        })?;
+        Ok(results.len())
+    }
+
+    fn add_node(&mut self, parent_path: &str, name: &str, value: Value) -> Result<bool> {
+        let parents = som::resolve_data_path(self.dom, parent_path, self.current_node).map_err(
+            |e| {
+                FormCalcError::RuntimeError(format!(
+                    "SOM resolution failed for '{parent_path}': {e}"
+                ))
+            },
+        )?;
+
+        let Some(parent) = parents.first().copied() else {
+            return Ok(false);
+        };
+
+        self.dom
+            .create_value(parent, name, &value.to_string_val())
+            .map_err(|e| FormCalcError::RuntimeError(format!("AddNode failed: {e}")))?;
+
+        Ok(true)
+    }
+
+    fn remove_node(&mut self, path: &str) -> Result<bool> {
+        let results = som::resolve_data_path(self.dom, path, self.current_node).map_err(|e| {
+            FormCalcError::RuntimeError(format!("SOM resolution failed for '{path}': {e}"))
+        })?;
+
+        let Some(first) = results.first().copied() else {
+            return Ok(false);
+        };
+
+        self.dom
+            .detach(first)
+            .map_err(|e| FormCalcError::RuntimeError(format!("RemoveNode failed for '{path}': {e}")))?;
+
+        Ok(true)
+    }
+}
+
 /// Try to handle a DOM-aware built-in function call.
 ///
 /// Returns `Ok(Some(value))` if the function was handled,
@@ -41,19 +154,27 @@ pub fn call_dom_builtin(
     name: &str,
     args: &[Value],
 ) -> Result<Option<Value>> {
+    call_som_builtin(ctx, name, args)
+}
+
+/// Try to handle a SOM-aware built-in function call.
+pub fn call_som_builtin(
+    resolver: &mut dyn SomResolver,
+    name: &str,
+    args: &[Value],
+) -> Result<Option<Value>> {
     match name.to_ascii_lowercase().as_str() {
-        "get" => Ok(Some(dom_get(ctx, args)?)),
-        "set" => Ok(Some(dom_set(ctx, args)?)),
-        "exists" => Ok(Some(dom_exists(ctx, args)?)),
-        "nodes" => Ok(Some(dom_nodes(ctx, args)?)),
-        "addnode" => Ok(Some(dom_add_node(ctx, args)?)),
-        "removenode" => Ok(Some(dom_remove_node(ctx, args)?)),
+        "get" => Ok(Some(som_get(resolver, args)?)),
+        "set" => Ok(Some(som_set(resolver, args)?)),
+        "exists" => Ok(Some(som_exists(resolver, args)?)),
+        "nodes" => Ok(Some(som_nodes(resolver, args)?)),
+        "addnode" => Ok(Some(som_add_node(resolver, args)?)),
+        "removenode" => Ok(Some(som_remove_node(resolver, args)?)),
         _ => Ok(None),
     }
 }
 
-/// Get(som_path) — resolve a SOM path and return its value.
-fn dom_get(ctx: &DomContext<'_>, args: &[Value]) -> Result<Value> {
+fn som_get(resolver: &mut dyn SomResolver, args: &[Value]) -> Result<Value> {
     if args.is_empty() {
         return Err(FormCalcError::ArityError {
             name: "Get".to_string(),
@@ -61,31 +182,12 @@ fn dom_get(ctx: &DomContext<'_>, args: &[Value]) -> Result<Value> {
             got: 0,
         });
     }
+
     let path = args[0].to_string_val();
-    let results = som::resolve_data_path(ctx.dom, &path, ctx.current_node).map_err(|e| {
-        FormCalcError::RuntimeError(format!("SOM resolution failed for '{path}': {e}"))
-    })?;
-
-    if results.is_empty() {
-        return Ok(Value::Null);
-    }
-
-    // Return value of first match
-    match ctx.dom.value(results[0]) {
-        Ok(v) => {
-            // Try to parse as number
-            if let Ok(n) = v.parse::<f64>() {
-                Ok(Value::Number(n))
-            } else {
-                Ok(Value::String(v.to_string()))
-            }
-        }
-        Err(_) => Ok(Value::Null), // DataGroup nodes have no value
-    }
+    Ok(resolver.resolve_path(&path)?.unwrap_or(Value::Null))
 }
 
-/// Set(som_path, value) — resolve a SOM path and set its value.
-fn dom_set(ctx: &mut DomContext<'_>, args: &[Value]) -> Result<Value> {
+fn som_set(resolver: &mut dyn SomResolver, args: &[Value]) -> Result<Value> {
     if args.len() < 2 {
         return Err(FormCalcError::ArityError {
             name: "Set".to_string(),
@@ -93,28 +195,20 @@ fn dom_set(ctx: &mut DomContext<'_>, args: &[Value]) -> Result<Value> {
             got: args.len(),
         });
     }
+
     let path = args[0].to_string_val();
-    let value = args[1].to_string_val();
+    let value = args[1].clone();
 
-    let results = som::resolve_data_path(ctx.dom, &path, ctx.current_node).map_err(|e| {
-        FormCalcError::RuntimeError(format!("SOM resolution failed for '{path}': {e}"))
-    })?;
-
-    if results.is_empty() {
-        return Err(FormCalcError::RuntimeError(format!(
+    if resolver.assign_path(&path, value.clone())? {
+        Ok(value)
+    } else {
+        Err(FormCalcError::RuntimeError(format!(
             "Set: no node found for path '{path}'"
-        )));
+        )))
     }
-
-    ctx.dom
-        .set_value(results[0], value.clone())
-        .map_err(|e| FormCalcError::RuntimeError(format!("Set failed for '{path}': {e}")))?;
-
-    Ok(Value::String(value))
 }
 
-/// Exists(som_path) — check if a SOM path resolves to any node.
-fn dom_exists(ctx: &DomContext<'_>, args: &[Value]) -> Result<Value> {
+fn som_exists(resolver: &mut dyn SomResolver, args: &[Value]) -> Result<Value> {
     if args.is_empty() {
         return Err(FormCalcError::ArityError {
             name: "Exists".to_string(),
@@ -122,14 +216,16 @@ fn dom_exists(ctx: &DomContext<'_>, args: &[Value]) -> Result<Value> {
             got: 0,
         });
     }
-    let path = args[0].to_string_val();
-    let results = som::resolve_data_path(ctx.dom, &path, ctx.current_node).unwrap_or_default();
 
-    Ok(Value::Number(if results.is_empty() { 0.0 } else { 1.0 }))
+    let path = args[0].to_string_val();
+    Ok(Value::Number(if resolver.exists_path(&path)? {
+        1.0
+    } else {
+        0.0
+    }))
 }
 
-/// Nodes(som_path) — return the count of nodes matching a SOM path.
-fn dom_nodes(ctx: &DomContext<'_>, args: &[Value]) -> Result<Value> {
+fn som_nodes(resolver: &mut dyn SomResolver, args: &[Value]) -> Result<Value> {
     if args.is_empty() {
         return Err(FormCalcError::ArityError {
             name: "Nodes".to_string(),
@@ -137,14 +233,12 @@ fn dom_nodes(ctx: &DomContext<'_>, args: &[Value]) -> Result<Value> {
             got: 0,
         });
     }
-    let path = args[0].to_string_val();
-    let results = som::resolve_data_path(ctx.dom, &path, ctx.current_node).unwrap_or_default();
 
-    Ok(Value::Number(results.len() as f64))
+    let path = args[0].to_string_val();
+    Ok(Value::Number(resolver.count_path_matches(&path)? as f64))
 }
 
-/// AddNode(parent_path, name, value?) — create a new DataValue node.
-fn dom_add_node(ctx: &mut DomContext<'_>, args: &[Value]) -> Result<Value> {
+fn som_add_node(resolver: &mut dyn SomResolver, args: &[Value]) -> Result<Value> {
     if args.len() < 2 {
         return Err(FormCalcError::ArityError {
             name: "AddNode".to_string(),
@@ -152,33 +246,25 @@ fn dom_add_node(ctx: &mut DomContext<'_>, args: &[Value]) -> Result<Value> {
             got: args.len(),
         });
     }
+
     let parent_path = args[0].to_string_val();
     let name = args[1].to_string_val();
     let value = if args.len() > 2 {
-        args[2].to_string_val()
+        args[2].clone()
     } else {
-        String::new()
+        Value::Null
     };
 
-    let parents = som::resolve_data_path(ctx.dom, &parent_path, ctx.current_node).map_err(|e| {
-        FormCalcError::RuntimeError(format!("SOM resolution failed for '{parent_path}': {e}"))
-    })?;
-
-    if parents.is_empty() {
-        return Err(FormCalcError::RuntimeError(format!(
+    if resolver.add_node(&parent_path, &name, value)? {
+        Ok(Value::Number(1.0))
+    } else {
+        Err(FormCalcError::RuntimeError(format!(
             "AddNode: no parent found for path '{parent_path}'"
-        )));
+        )))
     }
-
-    ctx.dom
-        .create_value(parents[0], &name, &value)
-        .map_err(|e| FormCalcError::RuntimeError(format!("AddNode failed: {e}")))?;
-
-    Ok(Value::Number(1.0))
 }
 
-/// RemoveNode(som_path) — remove a node from its parent.
-fn dom_remove_node(ctx: &mut DomContext<'_>, args: &[Value]) -> Result<Value> {
+fn som_remove_node(resolver: &mut dyn SomResolver, args: &[Value]) -> Result<Value> {
     if args.is_empty() {
         return Err(FormCalcError::ArityError {
             name: "RemoveNode".to_string(),
@@ -186,20 +272,13 @@ fn dom_remove_node(ctx: &mut DomContext<'_>, args: &[Value]) -> Result<Value> {
             got: 0,
         });
     }
+
     let path = args[0].to_string_val();
-    let results = som::resolve_data_path(ctx.dom, &path, ctx.current_node).map_err(|e| {
-        FormCalcError::RuntimeError(format!("SOM resolution failed for '{path}': {e}"))
-    })?;
-
-    if results.is_empty() {
-        return Ok(Value::Number(0.0));
-    }
-
-    ctx.dom
-        .detach(results[0])
-        .map_err(|e| FormCalcError::RuntimeError(format!("RemoveNode failed for '{path}': {e}")))?;
-
-    Ok(Value::Number(1.0))
+    Ok(Value::Number(if resolver.remove_node(&path)? {
+        1.0
+    } else {
+        0.0
+    }))
 }
 
 #[cfg(test)]

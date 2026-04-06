@@ -1,12 +1,20 @@
 use std::collections::HashMap;
 
-use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeType, FormTree, GroupKind, Presence};
+use formcalc_interpreter::{
+    interpreter::Interpreter, lexer::tokenize, parser, som_bridge::SomResolver,
+    value::Value as FormCalcValue,
+};
+use xfa_dom_resolver::som::{parse_som, SomExpression, SomIndex, SomRoot, SomSelector};
+use xfa_layout_engine::form::{
+    DrawContent, EventScript, FormNodeId, FormNodeType, FormTree, GroupKind, Presence,
+    ScriptLanguage,
+};
 
 const MAX_SCRIPT_PASSES: usize = 8;
 
 pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize {
     let parents = build_parent_map(form, root_id);
-    let scripts: Vec<(FormNodeId, Vec<String>)> = form
+    let scripts: Vec<(FormNodeId, Vec<EventScript>)> = form
         .nodes
         .iter()
         .enumerate()
@@ -17,27 +25,21 @@ pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize 
         })
         .collect();
 
-    let mut total_changes = 0;
-    for _ in 0..MAX_SCRIPT_PASSES {
-        let mut pass_changes = 0;
-        for (node_id, node_scripts) in &scripts {
-            // Skip scripts on nodes whose ancestors are hidden — mirrors
-            // Adobe Reader behavior where hidden containers don't fire events.
-            if has_hidden_ancestor(form, &parents, *node_id) {
-                continue;
-            }
-            for script in node_scripts {
-                pass_changes += execute_script(form, root_id, &parents, *node_id, script);
-            }
-        }
-
-        total_changes += pass_changes;
-        if pass_changes == 0 {
-            break;
-        }
-    }
-
-    total_changes
+    run_script_phase(
+        form,
+        root_id,
+        &parents,
+        &scripts,
+        ScriptPhase::Initialize,
+        1,
+    ) + run_script_phase(
+        form,
+        root_id,
+        &parents,
+        &scripts,
+        ScriptPhase::Calculate,
+        MAX_SCRIPT_PASSES,
+    )
 }
 
 fn has_hidden_ancestor(
@@ -55,7 +57,107 @@ fn has_hidden_ancestor(
     false
 }
 
-fn execute_script(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptPhase {
+    Initialize,
+    Calculate,
+}
+
+fn run_script_phase(
+    form: &mut FormTree,
+    root_id: FormNodeId,
+    parents: &HashMap<FormNodeId, FormNodeId>,
+    scripts: &[(FormNodeId, Vec<EventScript>)],
+    phase: ScriptPhase,
+    max_passes: usize,
+) -> usize {
+    let mut total_changes = 0;
+
+    for _ in 0..max_passes {
+        let mut pass_changes = 0;
+
+        for (node_id, node_scripts) in scripts {
+            if has_hidden_ancestor(form, parents, *node_id) {
+                continue;
+            }
+
+            for script in node_scripts
+                .iter()
+                .filter(|script| should_run_script(script, phase))
+            {
+                pass_changes +=
+                    execute_event_script(form, root_id, parents, *node_id, script, phase);
+            }
+        }
+
+        total_changes += pass_changes;
+        if pass_changes == 0 {
+            break;
+        }
+    }
+
+    total_changes
+}
+
+fn should_run_script(script: &EventScript, phase: ScriptPhase) -> bool {
+    match phase {
+        ScriptPhase::Initialize => script.activity.as_deref() == Some("initialize"),
+        ScriptPhase::Calculate => script.activity.as_deref() == Some("calculate"),
+    }
+}
+
+fn execute_event_script(
+    form: &mut FormTree,
+    root_id: FormNodeId,
+    parents: &HashMap<FormNodeId, FormNodeId>,
+    current_id: FormNodeId,
+    script: &EventScript,
+    phase: ScriptPhase,
+) -> usize {
+    match script.language {
+        ScriptLanguage::FormCalc => {
+            execute_formcalc_script(form, root_id, parents, current_id, script, phase)
+        }
+        ScriptLanguage::JavaScript | ScriptLanguage::Other => {
+            execute_javascript_script(form, root_id, parents, current_id, &script.script)
+        }
+    }
+}
+
+fn execute_formcalc_script(
+    form: &mut FormTree,
+    root_id: FormNodeId,
+    parents: &HashMap<FormNodeId, FormNodeId>,
+    current_id: FormNodeId,
+    script: &EventScript,
+    phase: ScriptPhase,
+) -> usize {
+    let Ok(tokens) = tokenize(&script.script) else {
+        return 0;
+    };
+    let Ok(ast) = parser::parse(tokens) else {
+        return 0;
+    };
+
+    let mut interpreter = Interpreter::new();
+    let mut resolver = FormTreeSomResolver::new(form, root_id, parents, current_id);
+    let Ok(result) = interpreter.exec_with_resolver(&ast, &mut resolver) else {
+        return resolver.changes;
+    };
+
+    if matches!(phase, ScriptPhase::Calculate) {
+        resolver.changes += write_formcalc_value(
+            resolver.form,
+            current_id,
+            ResolvedProperty::RawValue,
+            result,
+        );
+    }
+
+    resolver.changes
+}
+
+fn execute_javascript_script(
     form: &mut FormTree,
     root_id: FormNodeId,
     parents: &HashMap<FormNodeId, FormNodeId>,
@@ -64,10 +166,10 @@ fn execute_script(
 ) -> usize {
     let lines = preprocess_script(script);
     let mut idx = 0;
-    execute_block(form, root_id, parents, current_id, &lines, &mut idx, false)
+    execute_javascript_block(form, root_id, parents, current_id, &lines, &mut idx, false)
 }
 
-fn execute_block(
+fn execute_javascript_block(
     form: &mut FormTree,
     root_id: FormNodeId,
     parents: &HashMap<FormNodeId, FormNodeId>,
@@ -95,19 +197,488 @@ fn execute_block(
 
         if let Some(condition) = parse_if_condition(line) {
             *idx += 1;
-            if eval_condition(form, root_id, parents, current_id, &condition) {
-                changes += execute_block(form, root_id, parents, current_id, lines, idx, true);
+            if eval_condition_legacy(form, root_id, parents, current_id, &condition) {
+                changes +=
+                    execute_javascript_block(form, root_id, parents, current_id, lines, idx, true);
             } else {
                 skip_block(lines, idx);
             }
             continue;
         }
 
-        changes += execute_assignment(form, root_id, parents, current_id, line);
+        changes += execute_assignment_legacy(form, root_id, parents, current_id, line);
         *idx += 1;
     }
 
     changes
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolvedProperty {
+    RawValue,
+    Presence,
+    SomExpression,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResolvedTarget {
+    node_id: FormNodeId,
+    property: ResolvedProperty,
+}
+
+struct FormTreeSomResolver<'a> {
+    form: &'a mut FormTree,
+    root_id: FormNodeId,
+    parents: &'a HashMap<FormNodeId, FormNodeId>,
+    current_id: FormNodeId,
+    changes: usize,
+}
+
+impl<'a> FormTreeSomResolver<'a> {
+    fn new(
+        form: &'a mut FormTree,
+        root_id: FormNodeId,
+        parents: &'a HashMap<FormNodeId, FormNodeId>,
+        current_id: FormNodeId,
+    ) -> Self {
+        Self {
+            form,
+            root_id,
+            parents,
+            current_id,
+            changes: 0,
+        }
+    }
+
+    fn resolve_target(&self, path: &str) -> Option<ResolvedTarget> {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if matches!(trimmed, "rawValue" | "presence" | "somExpression") {
+            return Some(ResolvedTarget {
+                node_id: self.current_id,
+                property: parse_property_name(trimmed)?,
+            });
+        }
+
+        let (expr, property) = split_property_path(trimmed)?;
+        let node_id = self.resolve_expression(&expr)?.into_iter().next()?;
+        Some(ResolvedTarget { node_id, property })
+    }
+
+    fn count_targets(&self, path: &str) -> usize {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return 0;
+        }
+        if matches!(trimmed, "rawValue" | "presence" | "somExpression") {
+            return 1;
+        }
+        let Some((expr, _property)) = split_property_path(trimmed) else {
+            return 0;
+        };
+        self.resolve_expression(&expr)
+            .map_or(0, |nodes| nodes.len())
+    }
+
+    fn resolve_expression(&self, expr: &SomExpression) -> Option<Vec<FormNodeId>> {
+        match expr.root {
+            SomRoot::Data | SomRoot::Record | SomRoot::Template => None,
+            SomRoot::CurrentContainer => {
+                if expr.segments.is_empty() {
+                    Some(vec![self.current_id])
+                } else {
+                    Some(self.follow_absolute(vec![self.current_id], &expr.segments))
+                }
+            }
+            SomRoot::Form => {
+                if expr.segments.is_empty() {
+                    Some(vec![self.root_id])
+                } else {
+                    Some(self.follow_absolute(vec![self.root_id], &expr.segments))
+                }
+            }
+            SomRoot::Xfa => {
+                let segments = strip_xfa_form_prefix(&expr.segments);
+                if segments.is_empty() {
+                    Some(vec![self.root_id])
+                } else {
+                    Some(self.follow_absolute(vec![self.root_id], segments))
+                }
+            }
+            SomRoot::Unqualified => {
+                if expr.segments.is_empty() {
+                    Some(vec![self.current_id])
+                } else {
+                    Some(self.follow_unqualified(&expr.segments))
+                }
+            }
+        }
+    }
+
+    fn follow_absolute(
+        &self,
+        mut current: Vec<FormNodeId>,
+        segments: &[xfa_dom_resolver::som::SomSegment],
+    ) -> Vec<FormNodeId> {
+        for (idx, segment) in segments.iter().enumerate() {
+            let allow_self = idx == 0;
+            current = current
+                .into_iter()
+                .flat_map(|node_id| self.step_from_node(node_id, segment, allow_self))
+                .collect();
+            if current.is_empty() {
+                break;
+            }
+        }
+        current
+    }
+
+    fn follow_unqualified(
+        &self,
+        segments: &[xfa_dom_resolver::som::SomSegment],
+    ) -> Vec<FormNodeId> {
+        let Some((first, rest)) = segments.split_first() else {
+            return vec![self.current_id];
+        };
+
+        let mut scope = Some(self.current_id);
+        while let Some(scope_id) = scope {
+            let anchors: Vec<_> = descendants_inclusive(self.form, scope_id)
+                .into_iter()
+                .filter(|node_id| self.node_matches_segment(*node_id, first))
+                .collect();
+            let matched = self.follow_remaining(anchors, rest);
+            if !matched.is_empty() {
+                return matched;
+            }
+            scope = self.parents.get(&scope_id).copied();
+        }
+
+        let anchors: Vec<_> = descendants_inclusive(self.form, self.root_id)
+            .into_iter()
+            .filter(|node_id| self.node_matches_segment(*node_id, first))
+            .collect();
+        self.follow_remaining(anchors, rest)
+    }
+
+    fn follow_remaining(
+        &self,
+        mut current: Vec<FormNodeId>,
+        segments: &[xfa_dom_resolver::som::SomSegment],
+    ) -> Vec<FormNodeId> {
+        for segment in segments {
+            current = current
+                .into_iter()
+                .flat_map(|node_id| self.step_from_node(node_id, segment, false))
+                .collect();
+            if current.is_empty() {
+                break;
+            }
+        }
+        current
+    }
+
+    fn step_from_node(
+        &self,
+        node_id: FormNodeId,
+        segment: &xfa_dom_resolver::som::SomSegment,
+        allow_self: bool,
+    ) -> Vec<FormNodeId> {
+        if allow_self && self.node_matches_selector(node_id, &segment.selector) {
+            return apply_index_to_single(node_id, segment.index);
+        }
+
+        let matches: Vec<_> = self
+            .form
+            .get(node_id)
+            .children
+            .iter()
+            .copied()
+            .filter(|child_id| self.node_matches_selector(*child_id, &segment.selector))
+            .collect();
+
+        apply_index(matches, segment.index)
+    }
+
+    fn node_matches_segment(
+        &self,
+        node_id: FormNodeId,
+        segment: &xfa_dom_resolver::som::SomSegment,
+    ) -> bool {
+        if !self.node_matches_selector(node_id, &segment.selector) {
+            return false;
+        }
+
+        match segment.index {
+            SomIndex::All => true,
+            SomIndex::None => self.sibling_position(node_id, &segment.selector) == Some(0),
+            SomIndex::Specific(idx) => {
+                self.sibling_position(node_id, &segment.selector) == Some(idx)
+            }
+        }
+    }
+
+    fn sibling_position(&self, node_id: FormNodeId, selector: &SomSelector) -> Option<usize> {
+        let Some(parent_id) = self.parents.get(&node_id).copied() else {
+            return self.node_matches_selector(node_id, selector).then_some(0);
+        };
+
+        self.form
+            .get(parent_id)
+            .children
+            .iter()
+            .copied()
+            .filter(|candidate| self.node_matches_selector(*candidate, selector))
+            .position(|candidate| candidate == node_id)
+    }
+
+    fn node_matches_selector(&self, node_id: FormNodeId, selector: &SomSelector) -> bool {
+        match selector {
+            SomSelector::Name(name) => self.form.get(node_id).name == *name,
+            SomSelector::Class(class_name) => self.node_matches_class(node_id, class_name),
+            SomSelector::AllChildren => true,
+        }
+    }
+
+    fn node_matches_class(&self, node_id: FormNodeId, class_name: &str) -> bool {
+        let class_name = class_name.to_ascii_lowercase();
+        match class_name.as_str() {
+            "subform" => matches!(
+                self.form.get(node_id).node_type,
+                FormNodeType::Root | FormNodeType::Subform
+            ),
+            "pageset" => {
+                matches!(self.form.get(node_id).node_type, FormNodeType::PageSet)
+            }
+            "pagearea" => matches!(
+                self.form.get(node_id).node_type,
+                FormNodeType::PageArea { .. }
+            ),
+            "field" => matches!(self.form.get(node_id).node_type, FormNodeType::Field { .. }),
+            "draw" => matches!(
+                self.form.get(node_id).node_type,
+                FormNodeType::Draw(_) | FormNodeType::Image { .. }
+            ),
+            "exclgroup" => self.form.meta(node_id).group_kind == GroupKind::ExclusiveChoice,
+            _ => false,
+        }
+    }
+}
+
+impl SomResolver for FormTreeSomResolver<'_> {
+    fn resolve_path(
+        &mut self,
+        path: &str,
+    ) -> formcalc_interpreter::error::Result<Option<FormCalcValue>> {
+        let Some(target) = self.resolve_target(path) else {
+            return Ok(None);
+        };
+        Ok(Some(read_formcalc_value(
+            self.form,
+            self.root_id,
+            self.parents,
+            target,
+        )))
+    }
+
+    fn assign_path(
+        &mut self,
+        path: &str,
+        value: FormCalcValue,
+    ) -> formcalc_interpreter::error::Result<bool> {
+        let Some(target) = self.resolve_target(path) else {
+            return Ok(false);
+        };
+        self.changes += write_formcalc_value(self.form, target.node_id, target.property, value);
+        Ok(true)
+    }
+
+    fn count_path_matches(&mut self, path: &str) -> formcalc_interpreter::error::Result<usize> {
+        Ok(self.count_targets(path))
+    }
+}
+
+fn split_property_path(path: &str) -> Option<(SomExpression, ResolvedProperty)> {
+    let normalized = if let Some(rest) = path.strip_prefix("this.") {
+        format!("$.{rest}")
+    } else if path == "this" {
+        "$".to_string()
+    } else {
+        path.to_string()
+    };
+
+    let mut expr = parse_som(&normalized).ok()?;
+    let property = if let Some(last) = expr.segments.last() {
+        match &last.selector {
+            SomSelector::Name(name) => parse_property_name(name)?,
+            _ => ResolvedProperty::RawValue,
+        }
+    } else {
+        ResolvedProperty::RawValue
+    };
+
+    if matches!(
+        expr.segments.last().map(|segment| &segment.selector),
+        Some(SomSelector::Name(name)) if parse_property_name(name).is_some()
+    ) {
+        expr.segments.pop();
+    }
+
+    Some((expr, property))
+}
+
+fn parse_property_name(name: &str) -> Option<ResolvedProperty> {
+    match name {
+        "rawValue" => Some(ResolvedProperty::RawValue),
+        "presence" => Some(ResolvedProperty::Presence),
+        "somExpression" => Some(ResolvedProperty::SomExpression),
+        _ => None,
+    }
+}
+
+fn strip_xfa_form_prefix(
+    segments: &[xfa_dom_resolver::som::SomSegment],
+) -> &[xfa_dom_resolver::som::SomSegment] {
+    match segments.first() {
+        Some(segment)
+            if matches!(&segment.selector, SomSelector::Name(name) if name == "form")
+                && matches!(segment.index, SomIndex::None) =>
+        {
+            &segments[1..]
+        }
+        _ => segments,
+    }
+}
+
+fn apply_index(matches: Vec<FormNodeId>, index: SomIndex) -> Vec<FormNodeId> {
+    match index {
+        SomIndex::None => matches.into_iter().take(1).collect(),
+        SomIndex::Specific(idx) => matches.get(idx).copied().into_iter().collect(),
+        SomIndex::All => matches,
+    }
+}
+
+fn apply_index_to_single(node_id: FormNodeId, index: SomIndex) -> Vec<FormNodeId> {
+    match index {
+        SomIndex::None | SomIndex::Specific(0) | SomIndex::All => vec![node_id],
+        SomIndex::Specific(_) => Vec::new(),
+    }
+}
+
+fn read_formcalc_value(
+    form: &FormTree,
+    root_id: FormNodeId,
+    parents: &HashMap<FormNodeId, FormNodeId>,
+    target: ResolvedTarget,
+) -> FormCalcValue {
+    match target.property {
+        ResolvedProperty::RawValue => get_formcalc_raw_value(form, target.node_id),
+        ResolvedProperty::Presence => FormCalcValue::String(
+            match form.meta(target.node_id).presence {
+                Presence::Visible => "visible",
+                Presence::Hidden => "hidden",
+                Presence::Invisible => "invisible",
+                Presence::Inactive => "inactive",
+            }
+            .to_string(),
+        ),
+        ResolvedProperty::SomExpression => {
+            FormCalcValue::String(build_som_expression(form, root_id, parents, target.node_id))
+        }
+    }
+}
+
+fn get_formcalc_raw_value(form: &FormTree, node_id: FormNodeId) -> FormCalcValue {
+    match &form.get(node_id).node_type {
+        FormNodeType::Field { value } => string_to_formcalc_value(value),
+        _ if form.meta(node_id).group_kind == GroupKind::ExclusiveChoice => {
+            for &child_id in &form.get(node_id).children {
+                if let FormNodeType::Field { value } = &form.get(child_id).node_type {
+                    if !value.is_empty() {
+                        let selected = form.meta(child_id).item_value.as_deref().unwrap_or(value);
+                        return string_to_formcalc_value(selected);
+                    }
+                }
+            }
+            FormCalcValue::Null
+        }
+        _ => FormCalcValue::Null,
+    }
+}
+
+fn write_formcalc_value(
+    form: &mut FormTree,
+    node_id: FormNodeId,
+    property: ResolvedProperty,
+    value: FormCalcValue,
+) -> usize {
+    match property {
+        ResolvedProperty::RawValue => set_raw_value(form, node_id, formcalc_to_script_value(value)),
+        ResolvedProperty::Presence => {
+            set_presence(form, node_id, ScriptValue::String(value.to_string_val()))
+        }
+        ResolvedProperty::SomExpression => 0,
+    }
+}
+
+fn string_to_formcalc_value(value: &str) -> FormCalcValue {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        FormCalcValue::Null
+    } else if let Ok(number) = trimmed.parse::<f64>() {
+        FormCalcValue::Number(number)
+    } else {
+        FormCalcValue::String(value.to_string())
+    }
+}
+
+fn formcalc_to_script_value(value: FormCalcValue) -> ScriptValue {
+    match value {
+        FormCalcValue::Null => ScriptValue::Null,
+        FormCalcValue::Number(number) => ScriptValue::String(normalize_number(number)),
+        FormCalcValue::String(value) => ScriptValue::String(value),
+    }
+}
+
+fn build_som_expression(
+    form: &FormTree,
+    root_id: FormNodeId,
+    parents: &HashMap<FormNodeId, FormNodeId>,
+    node_id: FormNodeId,
+) -> String {
+    let mut parts = Vec::new();
+    let mut cursor = Some(node_id);
+    while let Some(current) = cursor {
+        let node = form.get(current);
+        if !node.name.is_empty() {
+            let index = if let Some(parent_id) = parents.get(&current).copied() {
+                form.get(parent_id)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|sibling_id| form.get(*sibling_id).name == node.name)
+                    .position(|sibling_id| sibling_id == current)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            parts.push(format!("{}[{index}]", node.name));
+        }
+        if current == root_id {
+            break;
+        }
+        cursor = parents.get(&current).copied();
+    }
+    parts.reverse();
+
+    if parts.is_empty() {
+        "$form".to_string()
+    } else {
+        format!("$form.{}", parts.join("."))
+    }
 }
 
 fn preprocess_script(script: &str) -> Vec<String> {
@@ -169,7 +740,7 @@ fn skip_block(lines: &[String], idx: &mut usize) {
     }
 }
 
-fn execute_assignment(
+fn execute_assignment_legacy(
     form: &mut FormTree,
     root_id: FormNodeId,
     parents: &HashMap<FormNodeId, FormNodeId>,
@@ -194,21 +765,22 @@ fn execute_assignment(
     let rhs = statement[eq_pos + 1..].trim();
 
     if let Some(target) = lhs.strip_suffix(".rawValue") {
-        let Some(node_id) = resolve_reference(form, root_id, parents, current_id, target.trim())
+        let Some(node_id) =
+            resolve_reference_legacy(form, root_id, parents, current_id, target.trim())
         else {
             return 0;
         };
-        let value = eval_value(form, root_id, parents, current_id, rhs);
+        let value = eval_value_legacy(form, root_id, parents, current_id, rhs);
         return set_raw_value(form, node_id, value);
     }
 
     if let Some(target) = lhs.strip_suffix(".presence") {
         let target_trimmed = target.trim();
-        let resolved = resolve_reference(form, root_id, parents, current_id, target_trimmed);
+        let resolved = resolve_reference_legacy(form, root_id, parents, current_id, target_trimmed);
         let Some(node_id) = resolved else {
             return 0;
         };
-        let value = eval_value(form, root_id, parents, current_id, rhs);
+        let value = eval_value_legacy(form, root_id, parents, current_id, rhs);
         return set_presence(form, node_id, value);
     }
 
@@ -265,7 +837,7 @@ fn find_assignment_operator(statement: &str) -> Option<usize> {
     None
 }
 
-fn eval_condition(
+fn eval_condition_legacy(
     form: &FormTree,
     root_id: FormNodeId,
     parents: &HashMap<FormNodeId, FormNodeId>,
@@ -278,24 +850,24 @@ fn eval_condition(
     if or_parts.len() > 1 {
         return or_parts
             .iter()
-            .any(|part| eval_condition(form, root_id, parents, current_id, part));
+            .any(|part| eval_condition_legacy(form, root_id, parents, current_id, part));
     }
 
     let and_parts = split_top_level(expr, "&&");
     if and_parts.len() > 1 {
         return and_parts
             .iter()
-            .all(|part| eval_condition(form, root_id, parents, current_id, part));
+            .all(|part| eval_condition_legacy(form, root_id, parents, current_id, part));
     }
 
     if let Some((lhs, rhs, negated)) = split_comparison(expr) {
-        let left = eval_value(form, root_id, parents, current_id, lhs);
-        let right = eval_value(form, root_id, parents, current_id, rhs);
+        let left = eval_value_legacy(form, root_id, parents, current_id, lhs);
+        let right = eval_value_legacy(form, root_id, parents, current_id, rhs);
         let equals = values_equal(&left, &right);
         return if negated { !equals } else { equals };
     }
 
-    match eval_value(form, root_id, parents, current_id, expr) {
+    match eval_value_legacy(form, root_id, parents, current_id, expr) {
         ScriptValue::Null => false,
         ScriptValue::String(value) => !value.trim().is_empty() && value.trim() != "0",
     }
@@ -309,7 +881,7 @@ fn split_comparison(expr: &str) -> Option<(&str, &str, bool)> {
         })
 }
 
-fn eval_value(
+fn eval_value_legacy(
     form: &FormTree,
     root_id: FormNodeId,
     parents: &HashMap<FormNodeId, FormNodeId>,
@@ -334,7 +906,8 @@ fn eval_value(
     }
 
     if let Some(target) = expr.strip_suffix(".rawValue") {
-        let Some(node_id) = resolve_reference(form, root_id, parents, current_id, target.trim())
+        let Some(node_id) =
+            resolve_reference_legacy(form, root_id, parents, current_id, target.trim())
         else {
             return ScriptValue::Null;
         };
@@ -342,7 +915,8 @@ fn eval_value(
     }
 
     if let Some(target) = expr.strip_suffix(".presence") {
-        let Some(node_id) = resolve_reference(form, root_id, parents, current_id, target.trim())
+        let Some(node_id) =
+            resolve_reference_legacy(form, root_id, parents, current_id, target.trim())
         else {
             return ScriptValue::Null;
         };
@@ -372,7 +946,7 @@ fn parse_quoted_string(expr: &str) -> Option<String> {
     None
 }
 
-fn resolve_reference(
+fn resolve_reference_legacy(
     form: &FormTree,
     root_id: FormNodeId,
     parents: &HashMap<FormNodeId, FormNodeId>,
@@ -705,6 +1279,14 @@ mod tests {
         }
     }
 
+    fn formcalc_script(script: &str, activity: &str) -> EventScript {
+        EventScript::formcalc(script, Some(activity))
+    }
+
+    fn javascript_script(script: &str, activity: &str) -> EventScript {
+        EventScript::javascript(script, Some(activity))
+    }
+
     #[test]
     fn change_event_toggles_relative_hidden_subform() {
         let mut tree = FormTree::new();
@@ -732,9 +1314,15 @@ mod tests {
         tree.get_mut(group).children = vec![option1, option2];
 
         tree.meta_mut(group).group_kind = GroupKind::ExclusiveChoice;
-        tree.meta_mut(group).event_scripts = vec![
-            "Details.presence = 'hidden';\nif (this.rawValue == 1) {\n  Details.presence = 'visible';\n}".into(),
-        ];
+        tree.meta_mut(group).event_scripts = vec![formcalc_script(
+            r#"
+Details.presence = "hidden"
+if (this.rawValue == 1) then
+  Details.presence = "visible"
+endif
+"#,
+            "initialize",
+        )];
         tree.meta_mut(option1).item_value = Some("1".into());
         tree.meta_mut(option2).item_value = Some("2".into());
         tree.meta_mut(details).presence = Presence::Hidden;
@@ -768,9 +1356,15 @@ mod tests {
         tree.get_mut(root).children = vec![section];
         tree.get_mut(section).children = vec![option1, option2, details];
         tree.meta_mut(details).presence = Presence::Hidden;
-        tree.meta_mut(details).event_scripts = vec![
-            "this.presence = 'hidden';\nif ((Opt1.rawValue == 1) || (Opt2.rawValue == 1)) {\n  this.presence = 'visible';\n}".into(),
-        ];
+        tree.meta_mut(details).event_scripts = vec![formcalc_script(
+            r#"
+this.presence = "hidden"
+if ((Opt1.rawValue == 1) or (Opt2.rawValue == 1)) then
+  this.presence = "visible"
+endif
+"#,
+            "calculate",
+        )];
 
         apply_dynamic_scripts(&mut tree, root);
 
@@ -801,12 +1395,24 @@ mod tests {
         tree.get_mut(root).children = vec![section];
         tree.get_mut(section).children = vec![controller, target, details];
 
-        tree.meta_mut(controller).event_scripts =
-            vec!["if (this.rawValue == 1) {\n  Target.rawValue = 1;\n}".into()];
+        tree.meta_mut(controller).event_scripts = vec![formcalc_script(
+            r#"
+if (this.rawValue == 1) then
+  Target.rawValue = 1
+endif
+"#,
+            "calculate",
+        )];
         tree.meta_mut(details).presence = Presence::Hidden;
-        tree.meta_mut(details).event_scripts = vec![
-            "this.presence = 'hidden';\nif (Target.rawValue == 1) {\n  this.presence = 'visible';\n}".into(),
-        ];
+        tree.meta_mut(details).event_scripts = vec![formcalc_script(
+            r#"
+this.presence = "hidden"
+if (Target.rawValue == 1) then
+  this.presence = "visible"
+endif
+"#,
+            "calculate",
+        )];
 
         apply_dynamic_scripts(&mut tree, root);
 
@@ -842,8 +1448,10 @@ mod tests {
         tree.get_mut(root).children = vec![form];
         tree.get_mut(form).children = vec![admin, reset];
         tree.get_mut(admin).children = vec![lock];
-        tree.meta_mut(reset).event_scripts =
-            vec!["xfa.resolveNode(\"formulier1.ADMIN.LockForm_AD\").rawValue = 0;".into()];
+        tree.meta_mut(reset).event_scripts = vec![javascript_script(
+            r#"xfa.resolveNode("formulier1.ADMIN.LockForm_AD").rawValue = 0;"#,
+            "initialize",
+        )];
 
         apply_dynamic_scripts(&mut tree, root);
 
@@ -866,7 +1474,8 @@ mod tests {
             },
         );
         tree.get_mut(root).children = vec![empty];
-        tree.meta_mut(empty).event_scripts = vec!["Utils.hideIfEmpty(this);".into()];
+        tree.meta_mut(empty).event_scripts =
+            vec![javascript_script("Utils.hideIfEmpty(this);", "initialize")];
 
         apply_dynamic_scripts(&mut tree, root);
 
@@ -888,7 +1497,10 @@ mod tests {
 
         tree.get_mut(root).children = vec![container];
         tree.get_mut(container).children = vec![empty];
-        tree.meta_mut(empty).event_scripts = vec!["Utils.deleteContainerIfEmpty(this);".into()];
+        tree.meta_mut(empty).event_scripts = vec![javascript_script(
+            "Utils.deleteContainerIfEmpty(this);",
+            "initialize",
+        )];
 
         apply_dynamic_scripts(&mut tree, root);
 
@@ -899,5 +1511,55 @@ mod tests {
     fn default_meta_helper_is_constructible() {
         let meta = empty_meta();
         assert_eq!(meta.group_kind, GroupKind::None);
+    }
+
+    #[test]
+    fn calculate_event_applies_formcalc_return_value() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let total = add_node(
+            &mut tree,
+            "Total",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![total];
+        tree.meta_mut(total).event_scripts = vec![formcalc_script("40 + 2", "calculate")];
+
+        apply_dynamic_scripts(&mut tree, root);
+
+        match &tree.get(total).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "42"),
+            _ => panic!("expected field"),
+        }
+    }
+
+    #[test]
+    fn click_events_are_skipped_during_flatten() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let trigger = add_node(
+            &mut tree,
+            "Trigger",
+            FormNodeType::Field {
+                value: "1".to_string(),
+            },
+        );
+        let details = add_node(&mut tree, "Details", FormNodeType::Subform);
+
+        tree.get_mut(root).children = vec![trigger, details];
+        tree.meta_mut(details).presence = Presence::Hidden;
+        tree.meta_mut(trigger).event_scripts = vec![formcalc_script(
+            r#"
+Details.presence = "visible"
+"#,
+            "click",
+        )];
+
+        apply_dynamic_scripts(&mut tree, root);
+
+        assert_eq!(tree.meta(details).presence, Presence::Hidden);
     }
 }

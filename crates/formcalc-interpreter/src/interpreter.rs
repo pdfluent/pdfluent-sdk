@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crate::ast::{BinOp, Expr};
 use crate::builtins;
 use crate::error::{FormCalcError, Result};
-use crate::som_bridge::{self, DomContext};
+use crate::som_bridge::{self, DomContext, SomResolver};
 use crate::value::Value;
 
 /// Control flow signal from expression evaluation.
@@ -72,9 +72,9 @@ impl Env {
 /// The FormCalc interpreter.
 pub struct Interpreter {
     env: Env,
-    /// Raw pointer to a DomContext, set during `exec_with_dom`.
-    /// SAFETY: only valid for the duration of `exec_with_dom`.
-    dom_ctx: *mut DomContext<'static>,
+    /// Raw pointer to a SOM resolver, set during `exec_with_*`.
+    /// SAFETY: only valid for the duration of the surrounding call.
+    som_resolver: Option<*mut (dyn SomResolver + 'static)>,
 }
 
 impl Default for Interpreter {
@@ -87,7 +87,7 @@ impl Interpreter {
     pub fn new() -> Self {
         Self {
             env: Env::new(),
-            dom_ctx: std::ptr::null_mut(),
+            som_resolver: None,
         }
     }
 
@@ -115,14 +115,23 @@ impl Interpreter {
 
     /// Execute with a DOM context for SOM path resolution.
     pub fn exec_with_dom(&mut self, exprs: &[Expr], ctx: &mut DomContext<'_>) -> Result<Value> {
-        // SAFETY: we store the pointer only for the duration of this call,
-        // and clear it before returning. The DomContext outlives this call.
+        self.exec_with_resolver(exprs, ctx)
+    }
+
+    /// Execute with a generic SOM resolver.
+    pub fn exec_with_resolver(
+        &mut self,
+        exprs: &[Expr],
+        resolver: &mut dyn SomResolver,
+    ) -> Result<Value> {
         #[allow(clippy::unnecessary_cast)]
         {
-            self.dom_ctx = ctx as *mut DomContext<'_> as *mut DomContext<'static>;
+            self.som_resolver = Some(
+                resolver as *mut dyn SomResolver as *mut (dyn SomResolver + 'static),
+            );
         }
         let result = self.exec(exprs);
-        self.dom_ctx = std::ptr::null_mut();
+        self.som_resolver = None;
         result
     }
 
@@ -146,13 +155,22 @@ impl Interpreter {
             Expr::Null => Ok(Signal::Value(Value::Null)),
 
             Expr::Ident(name) => {
-                let val = self.env.get(name).cloned().unwrap_or(Value::Null);
+                let val = self
+                    .env
+                    .get(name)
+                    .cloned()
+                    .or_else(|| self.resolve_som_value(name))
+                    .unwrap_or(Value::Null);
                 Ok(Signal::Value(val))
             }
 
             Expr::MemberAccess { object, member } => {
                 let path = flatten_som_path(object, member);
-                let val = self.env.get(&path).cloned().unwrap_or(Value::Null);
+                let val = if self.som_resolver.is_some() {
+                    self.resolve_som_value(&path).unwrap_or(Value::Null)
+                } else {
+                    self.env.get(&path).cloned().unwrap_or(Value::Null)
+                };
                 Ok(Signal::Value(val))
             }
 
@@ -189,12 +207,20 @@ impl Interpreter {
                 let val = self.eval(value)?;
                 match target.as_ref() {
                     Expr::Ident(name) => {
-                        self.env.set(name, val.clone());
+                        if self.env.get(name).is_some() {
+                            self.env.set(name, val.clone());
+                        } else if !self.assign_som_value(name, val.clone())? {
+                            self.env.set(name, val.clone());
+                        }
                         Ok(Signal::Value(val))
                     }
                     Expr::MemberAccess { object, member } => {
                         let path = flatten_som_path(object, member);
-                        self.env.set(&path, val.clone());
+                        if self.som_resolver.is_some() {
+                            let _ = self.assign_som_value(&path, val.clone())?;
+                        } else {
+                            self.env.set(&path, val.clone());
+                        }
                         Ok(Signal::Value(val))
                     }
                     _ => Err(FormCalcError::RuntimeError(
@@ -209,11 +235,9 @@ impl Interpreter {
                     arg_vals.push(self.eval(arg)?);
                 }
 
-                // Try DOM built-ins first (if a DOM context is bound)
-                if !self.dom_ctx.is_null() {
-                    // SAFETY: pointer is valid for the duration of exec_with_dom
-                    let ctx = unsafe { &mut *self.dom_ctx };
-                    if let Some(result) = som_bridge::call_dom_builtin(ctx, name, &arg_vals)? {
+                // Try SOM built-ins first (if a resolver is bound)
+                if let Some(resolver) = self.resolver_mut() {
+                    if let Some(result) = som_bridge::call_som_builtin(resolver, name, &arg_vals)? {
                         return Ok(Signal::Value(result));
                     }
                 }
@@ -400,6 +424,24 @@ impl Interpreter {
             }
         }
         Ok(Signal::Value(result))
+    }
+
+    fn resolver_mut(&mut self) -> Option<&mut dyn SomResolver> {
+        let resolver = self.som_resolver?;
+        // SAFETY: pointer is only set by exec_with_resolver and cleared before return.
+        Some(unsafe { &mut *resolver })
+    }
+
+    fn resolve_som_value(&mut self, path: &str) -> Option<Value> {
+        self.resolver_mut()
+            .and_then(|resolver| resolver.resolve_path(path).ok().flatten())
+    }
+
+    fn assign_som_value(&mut self, path: &str, value: Value) -> Result<bool> {
+        let Some(resolver) = self.resolver_mut() else {
+            return Ok(false);
+        };
+        resolver.assign_path(path, value)
     }
 }
 
