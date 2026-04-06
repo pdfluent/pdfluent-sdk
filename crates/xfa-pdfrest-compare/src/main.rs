@@ -205,12 +205,15 @@ fn open_db(path: &Path) -> anyhow::Result<Connection> {
             our_pages INTEGER,
             pdfrest_pages INTEGER,
             pdfrest_truncated INTEGER DEFAULT 0,
+            pages_compared INTEGER,
             diff_path TEXT,
             font_analysis TEXT,
             root_cause TEXT,
             timestamp TEXT DEFAULT (datetime('now'))
         )",
     )?;
+    // Add pages_compared column to existing databases that lack it.
+    let _ = conn.execute_batch("ALTER TABLE results ADD COLUMN pages_compared INTEGER");
     Ok(conn)
 }
 
@@ -426,11 +429,17 @@ fn process_directory(dir: &Path) -> Option<(String, f64, usize, String, usize, u
     for (_, our_path, pdfrest_path) in &page_matches {
         let (our_pixels, our_w, our_h) = match load_png(our_path) {
             Ok(p) => p,
-            Err(_) => { skipped += 1; continue; }
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
         };
         let (ref_pixels, ref_w, ref_h) = match load_png(pdfrest_path) {
             Ok(p) => p,
-            Err(_) => { skipped += 1; continue; }
+            Err(_) => {
+                skipped += 1;
+                continue;
+            }
         };
         total_ssim += compute_ssim(&our_pixels, our_w, our_h, &ref_pixels, ref_w, ref_h);
     }
@@ -635,16 +644,52 @@ fn main() -> anyhow::Result<()> {
 
         if pdfrest_truncated {
             pdfrest_truncated_count += 1;
+            let ssim_val = ssim;
+            let partial_status = if ssim_val >= SSIM_PASS_THRESHOLD {
+                "partial_match"
+            } else {
+                "partial_fail"
+            };
+
+            histogram.add(ssim_val);
+            total_ssim += ssim_val;
+            valid_count += 1;
+            has_comparable += 1;
+
+            if ssim_val >= SSIM_PASS_THRESHOLD {
+                pass_count += 1;
+            } else {
+                fail_count += 1;
+            }
+
+            if ssim_val >= SSIM_HIGH_THRESHOLD {
+                ssim_bucket_095_099 += 1;
+            } else if ssim_val >= 0.95 {
+                ssim_bucket_085_095 += 1;
+            } else if ssim_val >= 0.80 {
+                ssim_bucket_080_085 += 1;
+            } else if ssim_val >= 0.50 {
+                ssim_bucket_050_080 += 1;
+            } else {
+                ssim_bucket_000_050 += 1;
+            }
+
+            worst_cases.push((dir_name.clone(), ssim_val));
+            worst_cases.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            if worst_cases.len() > cli.top_low_ssim {
+                worst_cases.pop();
+            }
+
             if let Err(e) = conn.execute(
-                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated)
-                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
-                params![hash, page_count as i64, status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64],
+                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated, pages_compared, root_cause)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![hash, ssim_val, page_count as i64, partial_status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64, page_count as i64, partial_status],
             ) {
                 eprintln!("DB error: {}", e);
             }
             println!(
-                "[{}] pages={} status={} (pdfrest_truncated - excluded from metrics)",
-                dir_name, page_count, status
+                "[{}] ssim={:.4} pages_compared={}/{} status={} (pdfrest_truncated)",
+                dir_name, ssim_val, page_count, our_pages, partial_status
             );
         } else {
             has_comparable += 1;
@@ -740,9 +785,9 @@ fn main() -> anyhow::Result<()> {
             }
 
             if let Err(e) = conn.execute(
-                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated, diff_path, font_analysis, root_cause)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![hash, ssim_val, page_count as i64, status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64, diff_path.as_ref().and_then(|p| p.to_str()), font_analysis.as_deref(), root_cause],
+                "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated, pages_compared, diff_path, font_analysis, root_cause)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![hash, ssim_val, page_count as i64, status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64, page_count as i64, diff_path.as_ref().and_then(|p| p.to_str()), font_analysis.as_deref(), root_cause],
             ) {
                 eprintln!("DB error: {}", e);
             }
@@ -789,8 +834,8 @@ fn main() -> anyhow::Result<()> {
     println!("No render (skipped): {}", no_render);
     println!("Encrypted (skipped): {}", encrypted_skip);
     println!(
-        "pdfrest truncated (max 3 pages - excluded): {}",
-        pdfrest_truncated_count
+        "pdfrest truncated (partial compare on first {} pages): {}",
+        3, pdfrest_truncated_count
     );
     println!("Comparable entries: {}", has_comparable);
     let pass_rate = if has_comparable > 0 {
