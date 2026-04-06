@@ -632,7 +632,7 @@ fn main() -> anyhow::Result<()> {
             pdfrest_truncated_count += 1;
             if let Err(e) = conn.execute(
                 "INSERT OR REPLACE INTO results (hash, ssim_score, page_count, status, our_pages, pdfrest_pages, pdfrest_truncated)
-                 VALUES (?1, NULL, ?3, ?4, ?5, ?6, ?7)",
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6)",
                 params![hash, page_count as i64, status, our_pages as i64, pdfrest_pages as i64, pdfrest_truncated as i64],
             ) {
                 eprintln!("DB error: {}", e);
