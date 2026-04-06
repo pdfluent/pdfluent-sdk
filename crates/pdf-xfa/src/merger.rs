@@ -502,6 +502,27 @@ fn parse_dim(s: &str) -> Option<f64> {
     Measurement::parse(s).map(|m: Measurement| m.to_points())
 }
 
+/// Parse a percentage string like `"96%"` → `0.96`, `"110%"` → `1.1`.
+fn parse_percentage(s: &str) -> Option<f64> {
+    let s = s.trim();
+    let num_str = s.strip_suffix('%')?;
+    let v: f64 = num_str.trim().parse().ok()?;
+    Some(v / 100.0)
+}
+
+/// Parse a letter-spacing string (`"-0.018em"`, `"0.5pt"`, etc.) to points.
+fn parse_letter_spacing(s: &str, font_size_pt: f64) -> Option<f64> {
+    let s = s.trim();
+    if s == "0" {
+        return Some(0.0);
+    }
+    if let Some(num_str) = s.strip_suffix("em") {
+        let v: f64 = num_str.trim().parse().ok()?;
+        return Some(v * font_size_pt);
+    }
+    Measurement::parse(s).map(|m| m.to_points())
+}
+
 fn parse_occur(elem: Node<'_, '_>) -> Occur {
     if let Some(occur) = find_first_child_by_name(elem, "occur") {
         let min: u32 = attr(occur, "min").and_then(|s| s.parse().ok()).unwrap_or(1);
@@ -994,6 +1015,18 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 if let Some(rgb) = parse_xfa_color(color) {
                     style.text_color = Some(rgb);
                 }
+            }
+        }
+        // fontHorizontalScale="96%" → 0.96
+        if let Some(scale_str) = attr(font, "fontHorizontalScale") {
+            if let Some(v) = parse_percentage(scale_str) {
+                style.font_horizontal_scale = Some(v);
+            }
+        }
+        // letterSpacing="-0.018em" or "0.5pt"
+        if let Some(ls_str) = attr(font, "letterSpacing") {
+            if let Some(v) = parse_letter_spacing(ls_str, style.font_size.unwrap_or(10.0)) {
+                style.letter_spacing_pt = Some(v);
             }
         }
     }

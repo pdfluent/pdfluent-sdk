@@ -293,6 +293,34 @@ fn parse_font_size(s: &str) -> Option<f64> {
     Measurement::parse(s).map(|m| m.to_points())
 }
 
+/// Parse a percentage string like `"96%"` → `0.96`, `"110%"` → `1.1`.
+/// Returns `None` if the string is not a valid percentage.
+fn parse_percentage(s: &str) -> Option<f64> {
+    let s = s.trim();
+    let num_str = s.strip_suffix('%')?;
+    let v: f64 = num_str.trim().parse().ok()?;
+    Some(v / 100.0)
+}
+
+/// Parse a letter-spacing string. Supported formats:
+/// - `"-0.018em"` → converted to points using the given font size
+/// - `"0.5pt"` → points directly
+/// - `"1mm"` → converted to points via Measurement
+/// Returns `None` if the string cannot be parsed.
+fn parse_letter_spacing(s: &str, font_size_pt: f64) -> Option<f64> {
+    let s = s.trim();
+    if s == "0" {
+        return Some(0.0);
+    }
+    // Try em-based value: "-0.018em"
+    if let Some(num_str) = s.strip_suffix("em") {
+        let v: f64 = num_str.trim().parse().ok()?;
+        return Some(v * font_size_pt);
+    }
+    // Try standard measurement ("0.5pt", "1mm", etc.)
+    Measurement::parse(s).map(|m| m.to_points())
+}
+
 /// Parse font size and text alignment from `<font size="…">` and `<para hAlign="…">` child
 /// elements (XFA 3.3 §7.1). Returns `FontMetrics::default()` when no matching elements found.
 fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
@@ -572,6 +600,18 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 if let Some(rgb) = parse_xfa_color(color) {
                     style.text_color = Some(rgb);
                 }
+            }
+        }
+        // fontHorizontalScale="96%" → 0.96
+        if let Some(scale_str) = attr(font, "fontHorizontalScale") {
+            if let Some(v) = parse_percentage(scale_str) {
+                style.font_horizontal_scale = Some(v);
+            }
+        }
+        // letterSpacing="-0.018em" or "0.5pt"
+        if let Some(ls_str) = attr(font, "letterSpacing") {
+            if let Some(v) = parse_letter_spacing(ls_str, style.font_size.unwrap_or(10.0)) {
+                style.letter_spacing_pt = Some(v);
             }
         }
     }
@@ -2054,5 +2094,64 @@ mod tests {
             }
             other => panic!("expected Image, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parse_percentage_values() {
+        assert!((parse_percentage("96%").unwrap() - 0.96).abs() < 1e-10);
+        assert!((parse_percentage("110%").unwrap() - 1.10).abs() < 1e-10);
+        assert!((parse_percentage("100%").unwrap() - 1.0).abs() < 1e-10);
+        assert!((parse_percentage("50%").unwrap() - 0.50).abs() < 1e-10);
+        assert!(parse_percentage("notanumber%").is_none());
+        assert!(parse_percentage("96").is_none()); // no % suffix
+    }
+
+    #[test]
+    fn parse_letter_spacing_values() {
+        let font_size = 10.0;
+        // em-based
+        let v = parse_letter_spacing("-0.018em", font_size).unwrap();
+        assert!((v - (-0.018 * 10.0)).abs() < 1e-10);
+        let v = parse_letter_spacing("0.1em", font_size).unwrap();
+        assert!((v - 1.0).abs() < 1e-10);
+        // bare zero
+        assert_eq!(parse_letter_spacing("0", font_size), Some(0.0));
+        // pt-based (via Measurement)
+        let v = parse_letter_spacing("0.5pt", font_size).unwrap();
+        assert!((v - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn font_horizontal_scale_and_letter_spacing_parsed() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="body" layout="tb" w="7.5in">
+      <draw name="scaled_text" w="7in" h="0.5in">
+        <value><text>Scaled</text></value>
+        <font typeface="Arial" size="10pt" fontHorizontalScale="96%" letterSpacing="-0.018em"/>
+      </draw>
+    </subform>
+  </subform>
+</template>"#;
+        let (tree, root_id) = parse_template(xml, None).unwrap();
+        let id = find_node_id_by_name(&tree, root_id, "scaled_text").unwrap();
+        let style = &tree.meta(id).style;
+        assert!(
+            (style.font_horizontal_scale.unwrap() - 0.96).abs() < 1e-10,
+            "expected 0.96, got {:?}",
+            style.font_horizontal_scale
+        );
+        assert!(
+            (style.letter_spacing_pt.unwrap() - (-0.18)).abs() < 0.01,
+            "expected -0.18pt, got {:?}",
+            style.letter_spacing_pt
+        );
     }
 }
