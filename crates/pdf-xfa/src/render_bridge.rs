@@ -1041,7 +1041,7 @@ fn render_draw(
     abs_x: f64,
     pdf_y: f64,
     _w: f64,
-    _h: f64,
+    container_h: f64,
     ops: &mut Vec<u8>,
 ) {
     match draw_content {
@@ -1062,9 +1062,9 @@ fn render_draw(
         }
         DrawContent::Line { x1, y1, x2, y2 } => {
             let start_x = abs_x + x1;
-            let start_y = pdf_y + y1;
+            let start_y = pdf_y + container_h - y1;
             let end_x = abs_x + x2;
-            let end_y = pdf_y + y2;
+            let end_y = pdf_y + container_h - y2;
             write_ops(
                 ops,
                 format_args!(
@@ -1075,7 +1075,7 @@ fn render_draw(
         }
         DrawContent::Rectangle { x, y, w, h, radius } => {
             let rx = abs_x + x;
-            let ry = pdf_y + y;
+            let ry = pdf_y + container_h - y - h;
             if *radius <= 0.0 {
                 write_ops(
                     ops,
@@ -1144,7 +1144,7 @@ fn render_draw(
             sweep_angle,
         } => {
             let cx = abs_x + x + w / 2.0;
-            let cy = pdf_y + y + h / 2.0;
+            let cy = pdf_y + container_h - y - h / 2.0;
             let rx = w / 2.0;
             let ry = h / 2.0;
             let start_rad = start_angle.to_radians();
