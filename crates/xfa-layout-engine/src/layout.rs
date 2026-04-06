@@ -21,7 +21,11 @@ pub struct LayoutDom {
 /// Maximum number of pages to prevent pagination explosion.
 /// XFA templates with unbounded repeat subforms can otherwise cause
 /// thousands of pages to be generated. (#729)
-const MAX_PAGES: usize = 100;
+///
+/// Set high enough to accommodate legitimately large forms (some real-world
+/// XFA forms produce 100-200 pages in Adobe) while still catching runaway
+/// pagination loops.
+const MAX_PAGES: usize = 500;
 
 /// A single page in the layout output.
 #[derive(Debug)]
@@ -894,14 +898,28 @@ impl<'a> LayoutEngine<'a> {
                         child_y += placed_children.last().unwrap().rect.height;
                         split_idx = i + 1;
 
+                        // When the recursive split returns a single QueuedNode
+                        // that wraps the same parent (e.g. a positioned subform
+                        // split via split_positioned_node), preserve its
+                        // children_override so the next page only processes the
+                        // remaining children.  Without this, the override is
+                        // discarded and the full subform is re-split every page,
+                        // causing an infinite pagination loop (#737).
+                        let child_override = if child_rest.len() == 1
+                            && child_rest[0].id == child_id
+                            && child_rest[0].children_override.is_some()
+                        {
+                            child_rest[0].children_override.clone()
+                        } else {
+                            Some(child_rest.into_iter().map(|qn| qn.id).collect())
+                        };
+
                         let mut rest = vec![QueuedNode {
                             id: child_id,
                             break_before: false,
                             break_after: self.form.meta(child_id).page_break_after,
                             break_target: None,
-                            children_override: Some(
-                                child_rest.into_iter().map(|qn| qn.id).collect(),
-                            ),
+                            children_override: child_override,
                         }];
                         rest.extend(expanded_children[i + 1..].iter().map(|&cid| QueuedNode {
                             id: cid,
@@ -3742,6 +3760,166 @@ mod tests {
             page1_children + page2_children,
             10,
             "All 10 fields should be placed across pages"
+        );
+    }
+
+    #[test]
+    fn positioned_inside_tb_no_infinite_pagination() {
+        // Regression test for #737: a positioned subform nested inside a
+        // tb-layout parent caused infinite pagination because the
+        // children_override from split_positioned_node was discarded when
+        // split_tb_node re-wrapped the rest.
+        //
+        // Structure:
+        //   Root (tb)
+        //     PageArea (content height = 300)
+        //     TbWrapper (tb, no height)
+        //       PositionedBody (positioned, no height)
+        //         8 fields at y = 0, 80, 160, ..., 560 (each 60pt tall)
+        //
+        // Content spans 620pt.  With 300pt pages, we expect 3 pages max.
+        // Before the fix, this produced MAX_PAGES pages.
+        let mut tree = FormTree::new();
+
+        let mut fields = Vec::new();
+        for i in 0..8 {
+            let f = tree.add_node(FormNode {
+                name: format!("F{i}"),
+                node_type: FormNodeType::Field {
+                    value: format!("Val{i}"),
+                },
+                box_model: BoxModel {
+                    width: Some(200.0),
+                    height: Some(60.0),
+                    x: 10.0,
+                    y: i as f64 * 80.0,
+                    max_width: f64::MAX,
+                    max_height: f64::MAX,
+                    ..Default::default()
+                },
+                layout: LayoutStrategy::Positioned,
+                children: vec![],
+                occur: Occur::once(),
+                font: FontMetrics::default(),
+                calculate: None,
+                validate: None,
+                column_widths: vec![],
+                col_span: 1,
+            });
+            fields.push(f);
+        }
+
+        let positioned = tree.add_node(FormNode {
+            name: "PositionedBody".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: fields,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        // Wrap the positioned subform in a tb-layout parent — this is the
+        // configuration that triggered the bug.
+        let tb_wrapper = tree.add_node(FormNode {
+            name: "TbWrapper".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(400.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![positioned],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 400.0,
+                    height: 300.0,
+                    leader: None,
+                    trailer: None,
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(400.0),
+                height: Some(300.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![page_area, tb_wrapper],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        // 8 fields spanning 620pt, pages of 300pt → should be 3 pages.
+        // The critical assertion: we must NOT produce hundreds of pages.
+        assert!(
+            result.pages.len() <= 5,
+            "Expected at most 5 pages for 8 fields across 300pt pages, got {} \
+             (infinite pagination bug #737)",
+            result.pages.len()
+        );
+        assert!(
+            result.pages.len() >= 2,
+            "Expected at least 2 pages, got {}",
+            result.pages.len()
+        );
+
+        // All 8 fields should be distributed across the pages.
+        let total_leaves: usize = result.pages.iter().map(|p| count_leaf_nodes(p)).sum();
+        assert_eq!(
+            total_leaves, 8,
+            "All 8 fields should appear across pages, found {}",
+            total_leaves
         );
     }
 
