@@ -252,9 +252,7 @@ fn font_family_aliases(name: &str) -> &'static [&'static str] {
         "myriad pro" | "myriadpro" => &["liberationsans", "arimo", "dejavusans"],
         // Reverse mappings: Linux fonts -> common equivalents
         "liberationsans" | "liberation sans" => &["arial", "arimo", "freesans", "helvetica"],
-        "liberationserif" | "liberation serif" => {
-            &["times new roman", "tinos", "freeserif"]
-        }
+        "liberationserif" | "liberation serif" => &["times new roman", "tinos", "freeserif"],
         "liberationmono" | "liberation mono" => &["courier new", "cousine", "freemono"],
         _ => &[],
     }
@@ -327,18 +325,8 @@ fn family_fallback_chain(family: FontFamily) -> &'static [&'static str] {
             "helvetica",
             "arial",
         ],
-        FontFamily::Serif => &[
-            "liberationserif",
-            "tinos",
-            "dejavuserif",
-            "freeserif",
-        ],
-        FontFamily::Monospace => &[
-            "liberationmono",
-            "cousine",
-            "dejavusansmono",
-            "freemono",
-        ],
+        FontFamily::Serif => &["liberationserif", "tinos", "dejavuserif", "freeserif"],
+        FontFamily::Monospace => &["liberationmono", "cousine", "dejavusansmono", "freemono"],
     }
 }
 
@@ -388,8 +376,7 @@ impl XfaFontResolver {
                     .or_else(|| self.try_system(vn))
                     .or_else(|| {
                         let norm = normalize_font_name(vn);
-                        self.try_embedded(&norm)
-                            .or_else(|| self.try_system(&norm))
+                        self.try_embedded(&norm).or_else(|| self.try_system(&norm))
                     })
             })
             // Then try the base name as before.
@@ -468,7 +455,12 @@ impl XfaFontResolver {
     }
 
     fn try_fallbacks(&self) -> Option<ResolvedFont> {
-        for name in &["Helvetica", "Arial", "DejaVuSans", "LiberationSans"] {
+        #[cfg(target_os = "macos")]
+        let fallback_chain = ["Arial", "Helvetica", "DejaVuSans", "LiberationSans"];
+        #[cfg(not(target_os = "macos"))]
+        let fallback_chain = ["Helvetica", "Arial", "DejaVuSans", "LiberationSans"];
+
+        for name in &fallback_chain {
             if let Some(font) = self.try_system(name) {
                 return Some(font);
             }
@@ -482,11 +474,7 @@ impl XfaFontResolver {
 /// Given a base typeface name ("Arial") and weight/posture, produces names
 /// like "Arial-Bold", "ArialBold", "Arial Bold" etc. Returns an empty vec
 /// when both weight and posture are Normal.
-fn build_variant_names(
-    typeface: &str,
-    weight: FontWeight,
-    posture: FontPosture,
-) -> Vec<String> {
+fn build_variant_names(typeface: &str, weight: FontWeight, posture: FontPosture) -> Vec<String> {
     let suffix = match (weight, posture) {
         (FontWeight::Bold, FontPosture::Italic) => "BoldItalic",
         (FontWeight::Bold, FontPosture::Normal) => "Bold",
@@ -528,10 +516,16 @@ fn parse_font_data(name: &str, data: &[u8]) -> Option<ResolvedFont> {
 
 fn load_system_font(path: &PathBuf, name: &str) -> Option<ResolvedFont> {
     let data = std::fs::read(path).ok()?;
-    for idx in 0..ttf_parser::fonts_in_collection(&data).unwrap_or(1) {
+    let num_fonts = ttf_parser::fonts_in_collection(&data).unwrap_or(1);
+    for idx in 0..num_fonts {
         if let Ok(face) = ttf_parser::Face::parse(&data, idx) {
+            let name_id_matches = |name_id: u16| {
+                name_id == ttf_parser::name_id::FULL_NAME
+                    || name_id == ttf_parser::name_id::POST_SCRIPT_NAME
+                    || name_id == ttf_parser::name_id::FAMILY
+            };
             let matches = face.names().into_iter().any(|n| {
-                n.name_id == ttf_parser::name_id::FULL_NAME
+                name_id_matches(n.name_id)
                     && n.to_string().is_some_and(|s| s.eq_ignore_ascii_case(name))
             });
             if matches || idx == 0 {
@@ -698,10 +692,16 @@ mod tests {
         let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, None);
         if let Ok(font) = resolver.resolve(&spec) {
             let info = font.cid_font_info();
-            assert!(info.is_some(), "cid_font_info should succeed for a valid font");
+            assert!(
+                info.is_some(),
+                "cid_font_info should succeed for a valid font"
+            );
             let info = info.unwrap();
             assert!(!info.widths.is_empty(), "widths should not be empty");
-            assert!(!info.gid_to_unicode.is_empty(), "gid_to_unicode should not be empty");
+            assert!(
+                !info.gid_to_unicode.is_empty(),
+                "gid_to_unicode should not be empty"
+            );
             // Verify that 'A' (U+0041) is mapped
             let has_a = info.gid_to_unicode.iter().any(|&(_, ch)| ch == 'A');
             assert!(has_a, "font should have a mapping for 'A'");
@@ -711,7 +711,10 @@ mod tests {
     #[test]
     fn normalize_font_name_strips_subset_prefix() {
         assert_eq!(normalize_font_name("ABCDEF+Arial"), "arial");
-        assert_eq!(normalize_font_name("XYZABC+TimesNewRomanPSMT"), "timesnewroman");
+        assert_eq!(
+            normalize_font_name("XYZABC+TimesNewRomanPSMT"),
+            "timesnewroman"
+        );
     }
 
     #[test]
@@ -754,7 +757,10 @@ mod tests {
         assert_eq!(classify_font_family("Arial"), FontFamily::SansSerif);
         assert_eq!(classify_font_family("Helvetica"), FontFamily::SansSerif);
         assert_eq!(classify_font_family("DejaVuSans"), FontFamily::SansSerif);
-        assert_eq!(classify_font_family("LiberationSans"), FontFamily::SansSerif);
+        assert_eq!(
+            classify_font_family("LiberationSans"),
+            FontFamily::SansSerif
+        );
     }
 
     #[test]
@@ -767,7 +773,10 @@ mod tests {
     #[test]
     fn classify_font_family_mono() {
         assert_eq!(classify_font_family("Courier New"), FontFamily::Monospace);
-        assert_eq!(classify_font_family("LiberationMono"), FontFamily::Monospace);
+        assert_eq!(
+            classify_font_family("LiberationMono"),
+            FontFamily::Monospace
+        );
         assert_eq!(classify_font_family("Consolas"), FontFamily::Monospace);
     }
 
