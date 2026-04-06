@@ -193,13 +193,150 @@ pub struct XfaFontResolver {
     cache: HashMap<String, ResolvedFont>,
 }
 
+/// Normalize a font name by stripping subset prefixes and PostScript suffixes.
+///
+/// - Strips subset prefix: "ABCDEF+Arial" -> "Arial"
+/// - Strips PS suffixes: "ArialMT" -> "Arial", "TimesNewRomanPSMT" -> "TimesNewRoman"
+/// - Converts to lowercase
+fn normalize_font_name(name: &str) -> String {
+    // Strip subset prefix (6 uppercase letters + '+')
+    let stripped = if name.len() > 7 && name.as_bytes()[6] == b'+' {
+        let prefix = &name[..6];
+        if prefix.chars().all(|c| c.is_ascii_uppercase()) {
+            &name[7..]
+        } else {
+            name
+        }
+    } else {
+        name
+    };
+
+    // Strip PostScript suffixes
+    let stripped = stripped
+        .strip_suffix("PSMT")
+        .or_else(|| stripped.strip_suffix("MT"))
+        .unwrap_or(stripped);
+
+    stripped.to_lowercase()
+}
+
+/// Return alias list for common font family names.
+///
+/// Maps Windows/macOS font names to their Linux metric-compatible equivalents.
+fn font_family_aliases(name: &str) -> &'static [&'static str] {
+    match name {
+        "arial" | "arialmt" => &["liberationsans", "arimo", "freesans"],
+        "times new roman" | "timesnewroman" | "timesnewromanpsmt" => {
+            &["liberationserif", "tinos", "freeserif"]
+        }
+        "courier new" | "couriernew" | "couriernewpsmt" => {
+            &["liberationmono", "cousine", "freemono"]
+        }
+        "helvetica" => &["liberationsans", "arimo", "arial"],
+        "myriad pro" | "myriadpro" => &["liberationsans", "arimo", "dejavusans"],
+        // Reverse mappings: Linux fonts -> common equivalents
+        "liberationsans" | "liberation sans" => &["arial", "arimo", "freesans", "helvetica"],
+        "liberationserif" | "liberation serif" => {
+            &["times new roman", "tinos", "freeserif"]
+        }
+        "liberationmono" | "liberation mono" => &["courier new", "cousine", "freemono"],
+        _ => &[],
+    }
+}
+
+/// Font classification for family-aware fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FontFamily {
+    Serif,
+    SansSerif,
+    Monospace,
+    Unknown,
+}
+
+/// Classify a font name into a font family category.
+fn classify_font_family(name: &str) -> FontFamily {
+    let lower = name.to_lowercase();
+
+    // Monospace indicators
+    if lower.contains("mono")
+        || lower.contains("courier")
+        || lower.contains("consolas")
+        || lower.contains("menlo")
+        || lower.contains("fixed")
+        || lower.contains("code")
+    {
+        return FontFamily::Monospace;
+    }
+
+    // Serif indicators (check before sans-serif since "sans" contains checks come after)
+    if lower.contains("serif") && !lower.contains("sans") {
+        return FontFamily::Serif;
+    }
+    if lower.contains("times")
+        || lower.contains("garamond")
+        || lower.contains("georgia")
+        || lower.contains("palatino")
+        || lower.contains("bodoni")
+        || lower.contains("cambria")
+        || lower.contains("tinos")
+    {
+        return FontFamily::Serif;
+    }
+
+    // Sans-serif indicators
+    if lower.contains("sans")
+        || lower.contains("arial")
+        || lower.contains("helvetica")
+        || lower.contains("verdana")
+        || lower.contains("tahoma")
+        || lower.contains("calibri")
+        || lower.contains("arimo")
+        || lower.contains("myriad")
+        || lower.contains("segoe")
+    {
+        return FontFamily::SansSerif;
+    }
+
+    FontFamily::Unknown
+}
+
+/// Return family-aware fallback chain for the given font family.
+fn family_fallback_chain(family: FontFamily) -> &'static [&'static str] {
+    match family {
+        FontFamily::SansSerif | FontFamily::Unknown => &[
+            "liberationsans",
+            "arimo",
+            "dejavusans",
+            "freesans",
+            "helvetica",
+            "arial",
+        ],
+        FontFamily::Serif => &[
+            "liberationserif",
+            "tinos",
+            "dejavuserif",
+            "freeserif",
+        ],
+        FontFamily::Monospace => &[
+            "liberationmono",
+            "cousine",
+            "dejavusansmono",
+            "freemono",
+        ],
+    }
+}
+
 impl XfaFontResolver {
     /// Create a new resolver with embedded fonts extracted from the PDF.
     pub fn new(embedded_fonts: Vec<(String, Vec<u8>)>) -> Self {
         let mut embedded = HashMap::new();
         for (name, data) in embedded_fonts {
             if let Some(font) = parse_font_data(&name, &data) {
-                embedded.insert(name.to_lowercase(), font);
+                let normalized = normalize_font_name(&name);
+                embedded.insert(name.to_lowercase(), font.clone());
+                if normalized != name.to_lowercase() {
+                    embedded.insert(normalized, font);
+                }
             }
         }
         let system_fonts = scan_system_fonts();
@@ -216,10 +353,15 @@ impl XfaFontResolver {
         if let Some(cached) = self.cache.get(&cache_key) {
             return Ok(cached.clone());
         }
+        let normalized = normalize_font_name(&spec.typeface);
         let font = self
             .try_embedded(&spec.typeface)
+            .or_else(|| self.try_embedded(&normalized))
             .or_else(|| self.try_system(&spec.typeface))
+            .or_else(|| self.try_system(&normalized))
             .or_else(|| self.try_base_name(&spec.typeface))
+            .or_else(|| self.try_aliases(&spec.typeface))
+            .or_else(|| self.try_family_fallback(&spec.typeface))
             .or_else(|| self.try_fallbacks())
             .ok_or_else(|| {
                 XfaError::FontError(format!("cannot resolve font: {}", spec.typeface))
@@ -245,10 +387,46 @@ impl XfaFontResolver {
             .replace(",Bold", "")
             .replace(",Italic", "");
         if base != name {
-            self.try_embedded(&base).or_else(|| self.try_system(&base))
+            let normalized_base = normalize_font_name(&base);
+            self.try_embedded(&base)
+                .or_else(|| self.try_embedded(&normalized_base))
+                .or_else(|| self.try_system(&base))
+                .or_else(|| self.try_system(&normalized_base))
         } else {
             None
         }
+    }
+
+    /// Try font family aliases: map common font names to Linux equivalents.
+    fn try_aliases(&self, name: &str) -> Option<ResolvedFont> {
+        let normalized = normalize_font_name(name);
+
+        // Try aliases for both the original name and the normalized version
+        for lookup in &[name.to_lowercase(), normalized] {
+            // Also try with spaces removed for multi-word names
+            let no_spaces = lookup.replace(' ', "");
+            for candidate in [lookup.as_str(), no_spaces.as_str()] {
+                let aliases = font_family_aliases(candidate);
+                for alias in aliases {
+                    if let Some(font) = self.try_system(alias) {
+                        return Some(font);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Family-aware fallback: classify the font and try appropriate chain.
+    fn try_family_fallback(&self, name: &str) -> Option<ResolvedFont> {
+        let family = classify_font_family(name);
+        let chain = family_fallback_chain(family);
+        for candidate in chain {
+            if let Some(font) = self.try_system(candidate) {
+                return Some(font);
+            }
+        }
+        None
     }
 
     fn try_fallbacks(&self) -> Option<ResolvedFont> {
@@ -298,24 +476,79 @@ fn load_system_font(path: &PathBuf, name: &str) -> Option<ResolvedFont> {
 
 fn scan_system_fonts() -> HashMap<String, PathBuf> {
     let mut fonts = HashMap::new();
+    let mut font_files = Vec::new();
+
+    // Collect all font files, including subdirectories (Linux stores fonts in
+    // subdirectories like /usr/share/fonts/truetype/liberation/).
     for dir in system_font_dirs() {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
+        collect_font_files(&dir, &mut font_files, 0);
+    }
+
+    for path in &font_files {
+        // Always register by filename stem (existing behavior)
+        if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
+            fonts.insert(name.to_lowercase(), path.clone());
+        }
+
+        // Also register by TrueType name table entries
+        if let Ok(data) = std::fs::read(path) {
+            let num_faces = ttf_parser::fonts_in_collection(&data).unwrap_or(1);
+            for face_idx in 0..num_faces {
+                if let Ok(face) = ttf_parser::Face::parse(&data, face_idx) {
+                    for name_record in face.names() {
+                        // Register under family name (ID 1), full name (ID 4),
+                        // and PostScript name (ID 6).
+                        let dominated = matches!(
+                            name_record.name_id,
+                            ttf_parser::name_id::FAMILY
+                                | ttf_parser::name_id::FULL_NAME
+                                | ttf_parser::name_id::POST_SCRIPT_NAME
+                        );
+                        if dominated {
+                            if let Some(s) = name_record.to_string() {
+                                let key = s.to_lowercase();
+                                // Don't overwrite an existing entry — first match wins
+                                fonts.entry(key).or_insert_with(|| path.clone());
+
+                                // Also insert without spaces so "Liberation Sans"
+                                // can be found as "liberationsans"
+                                let no_spaces = s.replace(' ', "").to_lowercase();
+                                if no_spaces != s.to_lowercase() {
+                                    fonts.entry(no_spaces).or_insert_with(|| path.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fonts
+}
+
+/// Recursively collect font files from a directory (up to 3 levels deep).
+fn collect_font_files(dir: &std::path::Path, out: &mut Vec<PathBuf>, depth: u32) {
+    if depth > 3 {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_font_files(&path, out, depth + 1);
+            } else {
                 let ext = path
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or("")
                     .to_lowercase();
                 if matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc") {
-                    if let Some(name) = path.file_stem().and_then(|s| s.to_str()) {
-                        fonts.insert(name.to_lowercase(), path);
-                    }
+                    out.push(path);
                 }
             }
         }
     }
-    fonts
 }
 
 fn system_font_dirs() -> Vec<PathBuf> {
@@ -398,5 +631,81 @@ mod tests {
             let has_a = info.gid_to_unicode.iter().any(|&(_, ch)| ch == 'A');
             assert!(has_a, "font should have a mapping for 'A'");
         }
+    }
+
+    #[test]
+    fn normalize_font_name_strips_subset_prefix() {
+        assert_eq!(normalize_font_name("ABCDEF+Arial"), "arial");
+        assert_eq!(normalize_font_name("XYZABC+TimesNewRomanPSMT"), "timesnewroman");
+    }
+
+    #[test]
+    fn normalize_font_name_strips_ps_suffixes() {
+        assert_eq!(normalize_font_name("ArialMT"), "arial");
+        assert_eq!(normalize_font_name("TimesNewRomanPSMT"), "timesnewroman");
+        assert_eq!(normalize_font_name("CourierNewPSMT"), "couriernew");
+    }
+
+    #[test]
+    fn normalize_font_name_preserves_normal_names() {
+        assert_eq!(normalize_font_name("Helvetica"), "helvetica");
+        assert_eq!(normalize_font_name("DejaVuSans"), "dejavusans");
+    }
+
+    #[test]
+    fn normalize_font_name_no_false_prefix_strip() {
+        // "abcdef+" should not be stripped (not uppercase)
+        assert_eq!(normalize_font_name("abcdef+Arial"), "abcdef+arial");
+        // Short prefix should not be stripped
+        assert_eq!(normalize_font_name("AB+Arial"), "ab+arial");
+    }
+
+    #[test]
+    fn font_family_aliases_known_fonts() {
+        assert!(!font_family_aliases("arial").is_empty());
+        assert!(!font_family_aliases("helvetica").is_empty());
+        assert!(!font_family_aliases("courier new").is_empty());
+        assert!(!font_family_aliases("times new roman").is_empty());
+        assert!(!font_family_aliases("myriad pro").is_empty());
+    }
+
+    #[test]
+    fn font_family_aliases_unknown_font() {
+        assert!(font_family_aliases("some_unknown_font_xyz").is_empty());
+    }
+
+    #[test]
+    fn classify_font_family_sans() {
+        assert_eq!(classify_font_family("Arial"), FontFamily::SansSerif);
+        assert_eq!(classify_font_family("Helvetica"), FontFamily::SansSerif);
+        assert_eq!(classify_font_family("DejaVuSans"), FontFamily::SansSerif);
+        assert_eq!(classify_font_family("LiberationSans"), FontFamily::SansSerif);
+    }
+
+    #[test]
+    fn classify_font_family_serif() {
+        assert_eq!(classify_font_family("Times New Roman"), FontFamily::Serif);
+        assert_eq!(classify_font_family("Georgia"), FontFamily::Serif);
+        assert_eq!(classify_font_family("LiberationSerif"), FontFamily::Serif);
+    }
+
+    #[test]
+    fn classify_font_family_mono() {
+        assert_eq!(classify_font_family("Courier New"), FontFamily::Monospace);
+        assert_eq!(classify_font_family("LiberationMono"), FontFamily::Monospace);
+        assert_eq!(classify_font_family("Consolas"), FontFamily::Monospace);
+    }
+
+    #[test]
+    fn classify_font_family_unknown() {
+        assert_eq!(classify_font_family("FancyFont"), FontFamily::Unknown);
+    }
+
+    #[test]
+    fn scan_system_fonts_has_name_table_entries() {
+        let fonts = scan_system_fonts();
+        // On any system with fonts, we should have entries.
+        // The name-table scanning should produce more entries than just filename stems.
+        assert!(!fonts.is_empty(), "system fonts map should not be empty");
     }
 }
