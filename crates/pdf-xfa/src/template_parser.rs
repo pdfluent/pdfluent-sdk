@@ -12,8 +12,8 @@
 use roxmltree::Node;
 
 use xfa_layout_engine::form::{
-    ContentArea, DrawContent, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle,
-    FormNodeType, FormTree, GroupKind, Occur, Presence,
+    ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId, FormNodeMeta,
+    FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, ScriptLanguage,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
@@ -99,7 +99,11 @@ fn parse_node(
         }
     };
 
-    let meta = parse_node_meta(elem);
+    let mut meta = parse_node_meta(elem);
+    meta.style.inset_top_pt = Some(node.box_model.margins.top);
+    meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
+    meta.style.inset_left_pt = Some(node.box_model.margins.left);
+    meta.style.inset_right_pt = Some(node.box_model.margins.right);
     Ok((tree.add_node_with_meta(node, meta), trailing_info))
 }
 
@@ -460,6 +464,13 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         None
     };
 
+    // (g2) Choice list items for dropdown fields (XFA 3.3 §7.7).
+    let (display_items, save_items) = if tag == "field" {
+        parse_items_lists(elem)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     // (h) XFA id attribute.
     let xfa_id = attr(elem, "id").map(|s| s.to_string());
 
@@ -489,6 +500,8 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         item_value,
         field_kind,
         style,
+        display_items,
+        save_items,
         ..Default::default()
     }
 }
@@ -551,7 +564,10 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             .filter(|c| c.is_element() && c.tag_name().name() == "edge")
             .collect();
         // Use first visible edge for color/thickness (backward compat).
-        let first_visible = edges.iter().find(|e| !is_hidden(**e)).or_else(|| edges.first());
+        let first_visible = edges
+            .iter()
+            .find(|e| !is_hidden(**e))
+            .or_else(|| edges.first());
         if let Some(edge) = first_visible {
             if let Some(color) = find_first_child_by_name(*edge, "color") {
                 if let Some(rgb) = parse_xfa_color(color) {
@@ -845,7 +861,7 @@ fn detect_content_area_break(elem: Node<'_, '_>) -> bool {
 }
 
 /// Collect event scripts from `<event>` and `<calculate>` children.
-fn collect_event_scripts(elem: Node<'_, '_>) -> Vec<String> {
+fn collect_event_scripts(elem: Node<'_, '_>) -> Vec<EventScript> {
     let mut scripts = Vec::new();
     for child in elem.children().filter(|n| n.is_element()) {
         let child_tag = child.tag_name().name();
@@ -858,26 +874,65 @@ fn collect_event_scripts(elem: Node<'_, '_>) -> Vec<String> {
             }
             // Look for a <script> child.
             if let Some(script_elem) = find_first_child_by_name(child, "script") {
-                if let Some(text) = script_elem.text() {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        scripts.push(trimmed.to_string());
-                    }
+                if let Some(script) =
+                    build_event_script(script_elem, activity, event_ref, attr(script_elem, "runAt"))
+                {
+                    scripts.push(script);
                 }
             }
         } else if child_tag == "calculate" {
             // Direct <calculate><script>...</script></calculate>
             if let Some(script_elem) = find_first_child_by_name(child, "script") {
-                if let Some(text) = script_elem.text() {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        scripts.push(trimmed.to_string());
-                    }
+                if let Some(script) = build_event_script(
+                    script_elem,
+                    Some("calculate"),
+                    None,
+                    attr(script_elem, "runAt"),
+                ) {
+                    scripts.push(script);
                 }
             }
         }
     }
     scripts
+}
+
+fn build_event_script(
+    script_elem: Node<'_, '_>,
+    activity: Option<&str>,
+    event_ref: Option<&str>,
+    run_at: Option<&str>,
+) -> Option<EventScript> {
+    let text = script_elem.text()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(EventScript::new(
+        text.to_string(),
+        detect_script_language(attr(script_elem, "contentType")),
+        activity.map(str::to_string),
+        event_ref.map(str::to_string),
+        run_at.map(str::to_string),
+    ))
+}
+
+fn detect_script_language(content_type: Option<&str>) -> ScriptLanguage {
+    match content_type.map(|value| value.trim().to_ascii_lowercase()) {
+        None => ScriptLanguage::FormCalc,
+        Some(value) if value == "application/x-formcalc" || value.ends_with("/x-formcalc") => {
+            ScriptLanguage::FormCalc
+        }
+        Some(value)
+            if value == "application/x-javascript"
+                || value == "application/javascript"
+                || value == "text/javascript"
+                || value.ends_with("/x-javascript") =>
+        {
+            ScriptLanguage::JavaScript
+        }
+        Some(_) => ScriptLanguage::Other,
+    }
 }
 
 /// Parse `<keep>` child element attributes.
@@ -912,6 +967,47 @@ fn parse_item_value(elem: Node<'_, '_>) -> Option<String> {
         None
     } else {
         Some(text.to_string())
+    }
+}
+
+/// Extract all text values from an `<items>` element.
+fn collect_items_texts(items_elem: Node<'_, '_>) -> Vec<String> {
+    items_elem
+        .children()
+        .filter(|n| n.is_element())
+        .filter_map(|child| {
+            let txt = child.text().unwrap_or("").trim().to_string();
+            if txt.is_empty() {
+                None
+            } else {
+                Some(txt)
+            }
+        })
+        .collect()
+}
+
+/// Parse choice list `<items>` elements from a `<field>` node (XFA 3.3 §7.7).
+fn parse_items_lists(elem: Node<'_, '_>) -> (Vec<String>, Vec<String>) {
+    let items_elems: Vec<_> = elem
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "items")
+        .collect();
+    match items_elems.len() {
+        0 => (Vec::new(), Vec::new()),
+        1 => {
+            let vals = collect_items_texts(items_elems[0]);
+            (vals, Vec::new())
+        }
+        _ => {
+            let first = items_elems[0];
+            let second = items_elems[1];
+            let first_is_save = attr(first, "save") == Some("1");
+            if first_is_save {
+                (collect_items_texts(second), collect_items_texts(first))
+            } else {
+                (collect_items_texts(first), collect_items_texts(second))
+            }
+        }
     }
 }
 
@@ -2295,5 +2391,72 @@ mod tests {
             "expected -0.18pt, got {:?}",
             style.letter_spacing_pt
         );
+    }
+
+    #[test]
+    fn choice_list_items_parsed() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="root" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="8in" h="10in"/>
+      </pageArea>
+    </pageSet>
+    <field name="country" w="3in" h="0.3in">
+      <ui><choiceList/></ui>
+      <value><text>US</text></value>
+      <items>
+        <text>United States</text>
+        <text>United Kingdom</text>
+        <text>Canada</text>
+      </items>
+      <items save="1">
+        <text>US</text>
+        <text>UK</text>
+        <text>CA</text>
+      </items>
+    </field>
+    <field name="single_items" w="3in" h="0.3in">
+      <ui><choiceList/></ui>
+      <value><text>Red</text></value>
+      <items>
+        <text>Red</text>
+        <text>Green</text>
+        <text>Blue</text>
+      </items>
+    </field>
+  </subform>
+</template>"#;
+
+        let (tree, _pages) = parse_template(xml, None).unwrap();
+
+        // Find the "country" field — should have display + save items
+        let country = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "country")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("country field not found");
+        let meta = tree.meta(country);
+        assert_eq!(meta.field_kind, FieldKind::Dropdown);
+        assert_eq!(
+            meta.display_items,
+            vec!["United States", "United Kingdom", "Canada"]
+        );
+        assert_eq!(meta.save_items, vec!["US", "UK", "CA"]);
+
+        // Find the "single_items" field — only display items, no save
+        let single = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "single_items")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("single_items field not found");
+        let meta_s = tree.meta(single);
+        assert_eq!(meta_s.display_items, vec!["Red", "Green", "Blue"]);
+        assert!(meta_s.save_items.is_empty());
     }
 }

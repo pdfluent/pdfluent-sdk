@@ -7,8 +7,10 @@
 use crate::error::{Result, XfaError};
 use roxmltree::Node;
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
-use xfa_layout_engine::form::{DrawContent, ContentArea, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeStyle, FormNodeType,
-    FormTree, GroupKind, Occur, Presence,};
+use xfa_layout_engine::form::{
+    ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId, FormNodeMeta,
+    FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, ScriptLanguage,
+};
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
     BoxModel, Caption, CaptionPlacement, Insets, LayoutStrategy, Measurement, TextAlign,
@@ -773,6 +775,12 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         None
     };
 
+    let (display_items, save_items) = if tag == "field" {
+        parse_items_lists(elem)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     let xfa_id = attr(elem, "id").map(|s| s.to_string());
     let field_kind = detect_field_kind(elem);
     let style = parse_node_style(elem);
@@ -797,6 +805,8 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         item_value,
         field_kind,
         style,
+        display_items,
+        save_items,
         ..Default::default()
     }
 }
@@ -853,7 +863,7 @@ fn detect_content_area_break(elem: Node<'_, '_>) -> bool {
     false
 }
 
-fn collect_event_scripts(elem: Node<'_, '_>) -> Vec<String> {
+fn collect_event_scripts(elem: Node<'_, '_>) -> Vec<EventScript> {
     let mut scripts = Vec::new();
     for child in elem.children().filter(|n| n.is_element()) {
         let child_tag = child.tag_name().name();
@@ -864,25 +874,64 @@ fn collect_event_scripts(elem: Node<'_, '_>) -> Vec<String> {
                 continue;
             }
             if let Some(script_elem) = find_first_child_by_name(child, "script") {
-                if let Some(text) = script_elem.text() {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        scripts.push(trimmed.to_string());
-                    }
+                if let Some(script) =
+                    build_event_script(script_elem, activity, event_ref, attr(script_elem, "runAt"))
+                {
+                    scripts.push(script);
                 }
             }
         } else if child_tag == "calculate" {
             if let Some(script_elem) = find_first_child_by_name(child, "script") {
-                if let Some(text) = script_elem.text() {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        scripts.push(trimmed.to_string());
-                    }
+                if let Some(script) = build_event_script(
+                    script_elem,
+                    Some("calculate"),
+                    None,
+                    attr(script_elem, "runAt"),
+                ) {
+                    scripts.push(script);
                 }
             }
         }
     }
     scripts
+}
+
+fn build_event_script(
+    script_elem: Node<'_, '_>,
+    activity: Option<&str>,
+    event_ref: Option<&str>,
+    run_at: Option<&str>,
+) -> Option<EventScript> {
+    let text = script_elem.text()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(EventScript::new(
+        text.to_string(),
+        detect_script_language(attr(script_elem, "contentType")),
+        activity.map(str::to_string),
+        event_ref.map(str::to_string),
+        run_at.map(str::to_string),
+    ))
+}
+
+fn detect_script_language(content_type: Option<&str>) -> ScriptLanguage {
+    match content_type.map(|value| value.trim().to_ascii_lowercase()) {
+        None => ScriptLanguage::FormCalc,
+        Some(value) if value == "application/x-formcalc" || value.ends_with("/x-formcalc") => {
+            ScriptLanguage::FormCalc
+        }
+        Some(value)
+            if value == "application/x-javascript"
+                || value == "application/javascript"
+                || value == "text/javascript"
+                || value.ends_with("/x-javascript") =>
+        {
+            ScriptLanguage::JavaScript
+        }
+        Some(_) => ScriptLanguage::Other,
+    }
 }
 
 fn parse_keep(elem: Node<'_, '_>) -> (bool, bool, bool) {
@@ -914,6 +963,47 @@ fn parse_item_value(elem: Node<'_, '_>) -> Option<String> {
         None
     } else {
         Some(text.to_string())
+    }
+}
+
+/// Extract all text values from an `<items>` element.
+fn collect_items_texts(items_elem: Node<'_, '_>) -> Vec<String> {
+    items_elem
+        .children()
+        .filter(|n| n.is_element())
+        .filter_map(|child| {
+            let txt = child.text().unwrap_or("").trim().to_string();
+            if txt.is_empty() {
+                None
+            } else {
+                Some(txt)
+            }
+        })
+        .collect()
+}
+
+/// Parse choice list `<items>` elements from a `<field>` node (XFA 3.3 §7.7).
+fn parse_items_lists(elem: Node<'_, '_>) -> (Vec<String>, Vec<String>) {
+    let items_elems: Vec<_> = elem
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "items")
+        .collect();
+    match items_elems.len() {
+        0 => (Vec::new(), Vec::new()),
+        1 => {
+            let vals = collect_items_texts(items_elems[0]);
+            (vals, Vec::new())
+        }
+        _ => {
+            let first = items_elems[0];
+            let second = items_elems[1];
+            let first_is_save = attr(first, "save") == Some("1");
+            if first_is_save {
+                (collect_items_texts(second), collect_items_texts(first))
+            } else {
+                (collect_items_texts(first), collect_items_texts(second))
+            }
+        }
     }
 }
 
@@ -1078,6 +1168,22 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         }
     }
 
+    // Parse <caption> for caption text, placement, and reserve (XFA 3.3 §7.4).
+    if let Some(cap) = parse_caption(elem) {
+        style.caption_text = Some(cap.text);
+        style.caption_placement = Some(
+            match cap.placement {
+                CaptionPlacement::Left => "left",
+                CaptionPlacement::Right => "right",
+                CaptionPlacement::Top => "top",
+                CaptionPlacement::Bottom => "bottom",
+                CaptionPlacement::Inline => "inline",
+            }
+            .to_string(),
+        );
+        style.caption_reserve = cap.reserve;
+    }
+
     style
 }
 
@@ -1143,4 +1249,112 @@ fn parse_bind(elem: Node<'_, '_>) -> (Option<String>, bool) {
         attr(bind, "ref").map(|s| s.trim().to_string())
     };
     (bind_ref, bind_none)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xfa_dom_resolver::data_dom::DataDom;
+
+    #[test]
+    fn repeating_subform_expands_from_data() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <subform name="Orders" layout="tb" w="500pt">
+      <subform name="Order" layout="position" w="500pt" h="60pt">
+        <occur min="0" max="10" initial="1"/>
+        <field name="Item" w="200pt" h="20pt" x="0pt" y="0pt"/>
+        <field name="Qty" w="100pt" h="20pt" x="200pt" y="0pt"/>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <Order><Item>Widget A</Item><Qty>5</Qty></Order>
+      <Order><Item>Widget B</Item><Qty>3</Qty></Order>
+      <Order><Item>Widget C</Item><Qty>7</Qty></Order>
+    </form1>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let orders_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "Orders")
+            .map(|(i, _)| FormNodeId(i))
+            .unwrap();
+        let container_id = tree.get(orders_id).children[0];
+        let container = tree.get(container_id);
+        assert_eq!(container.name, "Order_container");
+        assert_eq!(container.children.len(), 3);
+    }
+
+    /// Double-wrapped <xfa:data> must be unwrapped for data binding to work.
+    #[test]
+    fn repeating_subform_double_wrapped_data() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <subform name="Orders" layout="tb" w="559pt">
+      <subform name="CoreOrders" layout="tb" w="361pt">
+        <subform name="Order" layout="position" w="360pt" h="162pt">
+          <occur min="0" max="3" initial="1"/>
+          <field name="Item" w="200pt" h="25pt" x="9pt" y="9pt"/>
+        </subform>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = concat!(
+            r#"<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">"#,
+            r#"<xfa:data><xfa:data xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">"#,
+            r#"<form1>"#,
+            r#"<Order><Item>A</Item></Order>"#,
+            r#"<Order><Item>B</Item></Order>"#,
+            r#"<Order><Item>C</Item></Order>"#,
+            r#"</form1>"#,
+            r#"</xfa:data></xfa:data></xfa:datasets>"#,
+        );
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let container_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "Order_container")
+            .map(|(i, _)| FormNodeId(i))
+            .unwrap();
+        let container = tree.get(container_id);
+        assert_eq!(
+            container.children.len(),
+            3,
+            "Expected 3 Order instances from double-wrapped data"
+        );
+    }
 }

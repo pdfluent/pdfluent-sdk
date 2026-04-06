@@ -105,6 +105,66 @@ pub struct FormNode {
     pub col_span: i32,
 }
 
+/// The scripting language used by an XFA `<script>` element.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScriptLanguage {
+    /// FormCalc is the XFA default when `contentType` is omitted.
+    #[default]
+    FormCalc,
+    /// JavaScript event handlers and calculations.
+    JavaScript,
+    /// Any other declared script language (for example VBScript).
+    Other,
+}
+
+/// Script metadata collected from `<event>` / `<calculate>` elements.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EventScript {
+    pub script: String,
+    pub language: ScriptLanguage,
+    pub activity: Option<String>,
+    pub event_ref: Option<String>,
+    pub run_at: Option<String>,
+}
+
+impl EventScript {
+    pub fn new(
+        script: String,
+        language: ScriptLanguage,
+        activity: Option<String>,
+        event_ref: Option<String>,
+        run_at: Option<String>,
+    ) -> Self {
+        Self {
+            script,
+            language,
+            activity,
+            event_ref,
+            run_at,
+        }
+    }
+
+    pub fn formcalc(script: impl Into<String>, activity: Option<&str>) -> Self {
+        Self::new(
+            script.into(),
+            ScriptLanguage::FormCalc,
+            activity.map(str::to_string),
+            None,
+            None,
+        )
+    }
+
+    pub fn javascript(script: impl Into<String>, activity: Option<&str>) -> Self {
+        Self::new(
+            script.into(),
+            ScriptLanguage::JavaScript,
+            activity.map(str::to_string),
+            None,
+            None,
+        )
+    }
+}
+
 /// Content for draw nodes (static graphic elements).
 #[derive(Debug, Clone)]
 pub enum DrawContent {
@@ -300,7 +360,7 @@ pub struct FormNodeMeta {
     /// Layout-ready script (XFA S14.3).
     pub layout_ready_script: Option<String>,
     /// Event scripts collected from `<event>` and `<calculate>` children.
-    pub event_scripts: Vec<String>,
+    pub event_scripts: Vec<EventScript>,
     /// Explicit XFA data binding ref from `<bind ref="...">`.
     pub data_bind_ref: Option<String>,
     /// Whether the node explicitly opts out of data binding via `<bind match="none">`.
@@ -315,6 +375,10 @@ pub struct FormNodeMeta {
     pub item_value: Option<String>,
     /// Check box / radio button size in points.
     pub check_size: Option<f64>,
+    /// Display items for choice list fields (XFA 3.3 §7.7).
+    pub display_items: Vec<String>,
+    /// Save items for choice list fields (XFA 3.3 §7.7).
+    pub save_items: Vec<String>,
 }
 
 /// The kind of group container.
@@ -361,6 +425,14 @@ pub struct FormNodeStyle {
     pub margin_left_pt: Option<f64>,
     /// Paragraph right margin in points (XFA `<para marginRight>`).
     pub margin_right_pt: Option<f64>,
+    /// Margin top inset in points (XFA `<margin topInset>`).
+    pub inset_top_pt: Option<f64>,
+    /// Margin bottom inset in points (XFA `<margin bottomInset>`).
+    pub inset_bottom_pt: Option<f64>,
+    /// Margin left inset in points (XFA `<margin leftInset>`).
+    pub inset_left_pt: Option<f64>,
+    /// Margin right inset in points (XFA `<margin rightInset>`).
+    pub inset_right_pt: Option<f64>,
     /// Vertical text alignment (XFA `<para vAlign>`).
     pub v_align: Option<VerticalAlign>,
     /// Border corner radius in points (XFA `<border><corner radius>`).
@@ -375,6 +447,12 @@ pub struct FormNodeStyle {
     /// Letter spacing in points (XFA `<font letterSpacing>`).
     /// 0.0 = normal (default). Negative values tighten, positive widen.
     pub letter_spacing_pt: Option<f64>,
+    /// Caption text (XFA `<caption><value><text>`).
+    pub caption_text: Option<String>,
+    /// Caption placement (left/right/top/bottom/inline).
+    pub caption_placement: Option<String>,
+    /// Caption reserve width/height in points.
+    pub caption_reserve: Option<f64>,
 }
 
 impl Default for FormNodeStyle {
@@ -392,12 +470,19 @@ impl Default for FormNodeStyle {
             space_below_pt: None,
             margin_left_pt: None,
             margin_right_pt: None,
+            inset_top_pt: None,
+            inset_bottom_pt: None,
+            inset_left_pt: None,
+            inset_right_pt: None,
             v_align: None,
             border_radius_pt: None,
             border_style: None,
             border_edges: [true, true, true, true],
             font_horizontal_scale: None,
             letter_spacing_pt: None,
+            caption_text: None,
+            caption_placement: None,
+            caption_reserve: None,
         }
     }
 }
