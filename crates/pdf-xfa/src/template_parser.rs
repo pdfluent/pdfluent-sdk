@@ -602,6 +602,14 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 }
             }
         }
+        // <font color="#RRGGBB"> attribute (fallback when <fill><color> not present)
+        if style.text_color.is_none() {
+            if let Some(color_str) = attr(font, "color") {
+                if let Some(rgb) = parse_font_color_attr(color_str) {
+                    style.text_color = Some(rgb);
+                }
+            }
+        }
         // fontHorizontalScale="96%" → 0.96
         if let Some(scale_str) = attr(font, "fontHorizontalScale") {
             if let Some(v) = parse_percentage(scale_str) {
@@ -669,6 +677,44 @@ fn parse_xfa_color(color_node: Node<'_, '_>) -> Option<(u8, u8, u8)> {
         Some((r, g, b))
     } else {
         None
+    }
+}
+
+/// Parse a color string from a `color` attribute on `<font>`.
+///
+/// Supported formats:
+/// - `#RRGGBB` (e.g. `#000080`)
+/// - `#RGB` shorthand (e.g. `#00F` → `#0000FF`)
+/// - `r,g,b` with decimal values 0-255 (e.g. `0,0,128`)
+fn parse_font_color_attr(s: &str) -> Option<(u8, u8, u8)> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        match hex.len() {
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                Some((r, g, b))
+            }
+            3 => {
+                let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+                let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+                let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+                Some((r * 17, g * 17, b * 17))
+            }
+            _ => None,
+        }
+    } else {
+        // Try "r,g,b" decimal format
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() >= 3 {
+            let r = parts[0].trim().parse::<u8>().ok()?;
+            let g = parts[1].trim().parse::<u8>().ok()?;
+            let b = parts[2].trim().parse::<u8>().ok()?;
+            Some((r, g, b))
+        } else {
+            None
+        }
     }
 }
 
@@ -2119,6 +2165,68 @@ mod tests {
         // pt-based (via Measurement)
         let v = parse_letter_spacing("0.5pt", font_size).unwrap();
         assert!((v - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_font_color_attr_hex6() {
+        assert_eq!(parse_font_color_attr("#000080"), Some((0, 0, 128)));
+        assert_eq!(parse_font_color_attr("#FF0000"), Some((255, 0, 0)));
+        assert_eq!(parse_font_color_attr("#00ff00"), Some((0, 255, 0)));
+        assert_eq!(parse_font_color_attr("#ABCDEF"), Some((0xAB, 0xCD, 0xEF)));
+    }
+
+    #[test]
+    fn parse_font_color_attr_hex3() {
+        // #RGB shorthand: each digit is doubled (e.g. #F00 → #FF0000)
+        assert_eq!(parse_font_color_attr("#F00"), Some((255, 0, 0)));
+        assert_eq!(parse_font_color_attr("#0F0"), Some((0, 255, 0)));
+        assert_eq!(parse_font_color_attr("#00F"), Some((0, 0, 255)));
+        assert_eq!(parse_font_color_attr("#ABC"), Some((0xAA, 0xBB, 0xCC)));
+    }
+
+    #[test]
+    fn parse_font_color_attr_decimal_csv() {
+        assert_eq!(parse_font_color_attr("0,0,128"), Some((0, 0, 128)));
+        assert_eq!(parse_font_color_attr("255, 128, 0"), Some((255, 128, 0)));
+    }
+
+    #[test]
+    fn parse_font_color_attr_invalid() {
+        assert_eq!(parse_font_color_attr(""), None);
+        assert_eq!(parse_font_color_attr("#GG0000"), None);
+        assert_eq!(parse_font_color_attr("#12345"), None);
+        assert_eq!(parse_font_color_attr("not_a_color"), None);
+    }
+
+    /// `<font color="#000080">` attribute must be parsed into
+    /// `style.text_color` when no `<fill><color>` child is present. (#740)
+    #[test]
+    fn font_color_attribute_parsed() {
+        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="body" layout="tb" w="7.5in">
+      <draw name="blue_text" w="7in" h="0.5in">
+        <value><text>Navy blue</text></value>
+        <font typeface="Arial" size="10pt" color="#000080"/>
+      </draw>
+    </subform>
+  </subform>
+</template>"##;
+        let (tree, root_id) = parse_template(xml, None).unwrap();
+        let id = find_node_id_by_name(&tree, root_id, "blue_text").unwrap();
+        let style = &tree.meta(id).style;
+        assert_eq!(
+            style.text_color,
+            Some((0, 0, 128)),
+            "font color=#000080 should parse to (0, 0, 128)"
+        );
     }
 
     #[test]

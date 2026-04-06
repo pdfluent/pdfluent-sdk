@@ -1017,6 +1017,14 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 }
             }
         }
+        // <font color="#RRGGBB"> attribute (fallback when <fill><color> not present)
+        if style.text_color.is_none() {
+            if let Some(color_str) = attr(font, "color") {
+                if let Some(rgb) = parse_font_color_attr(color_str) {
+                    style.text_color = Some(rgb);
+                }
+            }
+        }
         // fontHorizontalScale="96%" → 0.96
         if let Some(scale_str) = attr(font, "fontHorizontalScale") {
             if let Some(v) = parse_percentage(scale_str) {
@@ -1083,6 +1091,44 @@ fn parse_xfa_color(color_node: Node<'_, '_>) -> Option<(u8, u8, u8)> {
         Some((r, g, b))
     } else {
         None
+    }
+}
+
+/// Parse a color string from a `color` attribute on `<font>`.
+///
+/// Supported formats:
+/// - `#RRGGBB` (e.g. `#000080`)
+/// - `#RGB` shorthand (e.g. `#00F` → `#0000FF`)
+/// - `r,g,b` with decimal values 0-255 (e.g. `0,0,128`)
+fn parse_font_color_attr(s: &str) -> Option<(u8, u8, u8)> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        match hex.len() {
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                Some((r, g, b))
+            }
+            3 => {
+                let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+                let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+                let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+                Some((r * 17, g * 17, b * 17))
+            }
+            _ => None,
+        }
+    } else {
+        // Try "r,g,b" decimal format
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() >= 3 {
+            let r = parts[0].trim().parse::<u8>().ok()?;
+            let g = parts[1].trim().parse::<u8>().ok()?;
+            let b = parts[2].trim().parse::<u8>().ok()?;
+            Some((r, g, b))
+        } else {
+            None
+        }
     }
 }
 
