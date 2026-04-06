@@ -86,6 +86,15 @@ fn parse_node(
         "subform" | "exclGroup" => {
             let mut n = parse_subform_node(tree, elem, is_root)?;
             let ti = add_children(tree, &mut n, elem)?;
+            // Per XFA 3.3: checkButton inside exclGroup renders as radio button (circle).
+            if tag == "exclGroup" {
+                for &child_id in &n.children {
+                    let child_meta = tree.meta_mut(child_id);
+                    if child_meta.field_kind == FieldKind::Checkbox {
+                        child_meta.field_kind = FieldKind::Radio;
+                    }
+                }
+            }
             (n, ti)
         }
         "field" => (parse_field(tree, elem)?, (false, None)),
@@ -775,7 +784,15 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
     };
     for child in ui.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
-            "checkButton" => return FieldKind::Checkbox,
+            "checkButton" => {
+                // XFA 3.3 §7.2.7: shape="round" → radio button (circle).
+                let shape = attr(child, "shape").unwrap_or("square");
+                return if shape == "round" {
+                    FieldKind::Radio
+                } else {
+                    FieldKind::Checkbox
+                };
+            }
             "choiceList" => return FieldKind::Dropdown,
             "dateTimeEdit" => return FieldKind::DateTimePicker,
             "numericEdit" => return FieldKind::NumericEdit,

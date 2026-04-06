@@ -243,8 +243,11 @@ fn render_nodes(
                 font_size,
                 font_family,
             } => match field_kind {
-                FieldKind::Checkbox | FieldKind::Radio => {
+                FieldKind::Checkbox => {
                     render_checkbox(abs_x, pdf_y, w, h, value, &node_config, ops)
+                }
+                FieldKind::Radio => {
+                    render_radio(abs_x, pdf_y, w, h, value, &node_config, ops)
                 }
                 FieldKind::Dropdown => render_dropdown(
                     abs_x,
@@ -395,16 +398,28 @@ fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64
 /// Draw individual border edges. `edges` = [top, right, bottom, left].
 fn emit_individual_edges(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, edges: &[bool; 4]) {
     if edges[0] {
-        write_ops(ops, format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y + h, x + w, y + h));
+        write_ops(
+            ops,
+            format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y + h, x + w, y + h),
+        );
     }
     if edges[1] {
-        write_ops(ops, format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x + w, y, x + w, y + h));
+        write_ops(
+            ops,
+            format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x + w, y, x + w, y + h),
+        );
     }
     if edges[2] {
-        write_ops(ops, format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y, x + w, y));
+        write_ops(
+            ops,
+            format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y, x + w, y),
+        );
     }
     if edges[3] {
-        write_ops(ops, format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y, x, y + h));
+        write_ops(
+            ops,
+            format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y, x, y + h),
+        );
     }
 }
 
@@ -587,6 +602,155 @@ fn render_field(
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
     let border_style = node_style.border_style.as_deref();
 
+    if let Some(caption_text) = &node_style.caption_text {
+        if !caption_text.is_empty() {
+            let caption_placement = node_style.caption_placement.as_deref().unwrap_or("left");
+            let caption_reserve = node_style.caption_reserve.unwrap_or(0.0);
+            let fs = if font_size > 0.0 {
+                font_size
+            } else {
+                config.default_font_size
+            };
+            let metrics = build_font_metrics(fs, font_family, node_style, config);
+            let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+            let idh_metrics = lookup_font_metrics(node_style, config);
+
+            match caption_placement {
+                "right" => {
+                    let cap_x = x + w + caption_reserve;
+                    let _cap_w = caption_reserve.max(1.0);
+                    let _cap_h = h;
+                    let _line_h = metrics.line_height_pt();
+                    let asc_pt = ascender_pt(&metrics, fs);
+                    let text_y = pdf_y + h - asc_pt;
+                    let encoded = pdf_encode_text(caption_text, idh_metrics);
+                    write_ops(
+                        ops,
+                        format_args!(
+                            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                            config.text_color[0],
+                            config.text_color[1],
+                            config.text_color[2],
+                            font_ref,
+                            fs,
+                        ),
+                    );
+                    emit_text_style_ops(node_style, ops);
+                    write_ops(
+                        ops,
+                        format_args!("{:.2} {:.2} Td\n{} Tj\n", cap_x, text_y, encoded),
+                    );
+                    reset_text_style_ops(node_style, ops);
+                    ops.extend_from_slice(b"ET\n");
+                }
+                "top" => {
+                    let cap_x = x;
+                    let cap_w = w;
+                    let _cap_h = caption_reserve.max(1.0);
+                    let cap_pdf_y = pdf_y + h;
+                    let _line_h = metrics.line_height_pt();
+                    let asc_pt = ascender_pt(&metrics, fs);
+                    let text_y = cap_pdf_y - asc_pt;
+                    let content_w = cap_w.max(1.0);
+                    let text_w = metrics.measure_width(caption_text);
+                    let text_x = if text_w <= content_w {
+                        cap_x
+                    } else {
+                        cap_x + (content_w - text_w) / 2.0
+                    };
+                    let encoded = pdf_encode_text(caption_text, idh_metrics);
+                    write_ops(
+                        ops,
+                        format_args!(
+                            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                            config.text_color[0],
+                            config.text_color[1],
+                            config.text_color[2],
+                            font_ref,
+                            fs,
+                        ),
+                    );
+                    emit_text_style_ops(node_style, ops);
+                    write_ops(
+                        ops,
+                        format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, text_y, encoded),
+                    );
+                    reset_text_style_ops(node_style, ops);
+                    ops.extend_from_slice(b"ET\n");
+                }
+                "bottom" => {
+                    let cap_x = x;
+                    let cap_w = w;
+                    let cap_h = caption_reserve.max(1.0);
+                    let cap_pdf_y = pdf_y - caption_reserve;
+                    let _line_h = metrics.line_height_pt();
+                    let asc_pt = ascender_pt(&metrics, fs);
+                    let text_y = cap_pdf_y + cap_h - asc_pt;
+                    let content_w = cap_w.max(1.0);
+                    let text_w = metrics.measure_width(caption_text);
+                    let text_x = if text_w <= content_w {
+                        cap_x
+                    } else {
+                        cap_x + (content_w - text_w) / 2.0
+                    };
+                    let encoded = pdf_encode_text(caption_text, idh_metrics);
+                    write_ops(
+                        ops,
+                        format_args!(
+                            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                            config.text_color[0],
+                            config.text_color[1],
+                            config.text_color[2],
+                            font_ref,
+                            fs,
+                        ),
+                    );
+                    emit_text_style_ops(node_style, ops);
+                    write_ops(
+                        ops,
+                        format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, text_y, encoded),
+                    );
+                    reset_text_style_ops(node_style, ops);
+                    ops.extend_from_slice(b"ET\n");
+                }
+                _ => {
+                    let cap_x = x - caption_reserve;
+                    let cap_w = caption_reserve.max(1.0);
+                    let _cap_h = h;
+                    let _line_h = metrics.line_height_pt();
+                    let asc_pt = ascender_pt(&metrics, fs);
+                    let text_y = pdf_y + h - asc_pt;
+                    let content_w = cap_w.max(1.0);
+                    let text_w = metrics.measure_width(caption_text);
+                    let text_x = if text_w <= content_w {
+                        cap_x
+                    } else {
+                        cap_x + (content_w - text_w) / 2.0
+                    };
+                    let encoded = pdf_encode_text(caption_text, idh_metrics);
+                    write_ops(
+                        ops,
+                        format_args!(
+                            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                            config.text_color[0],
+                            config.text_color[1],
+                            config.text_color[2],
+                            font_ref,
+                            fs,
+                        ),
+                    );
+                    emit_text_style_ops(node_style, ops);
+                    write_ops(
+                        ops,
+                        format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, text_y, encoded),
+                    );
+                    reset_text_style_ops(node_style, ops);
+                    ops.extend_from_slice(b"ET\n");
+                }
+            }
+        }
+    }
+
     if let Some(bg) = &config.background_color {
         write_ops(
             ops,
@@ -636,7 +800,9 @@ fn render_field(
             let line_h = metrics.line_height_pt();
             let asc_pt = ascender_pt(&metrics, fs);
             let text_y = match node_style.v_align {
-                Some(VerticalAlign::Middle) => pdf_y + (h - line_h) / 2.0,
+                Some(VerticalAlign::Middle) => {
+                    pdf_y + space_above + (h - space_above - line_h) / 2.0
+                }
                 Some(VerticalAlign::Bottom) => pdf_y + space_above,
                 _ => pdf_y + h - space_above - asc_pt,
             };
@@ -705,7 +871,6 @@ fn render_checkbox(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
-    // Adobe behavior: empty checkboxes are invisible
     if value.is_empty() {
         return;
     }
@@ -748,6 +913,85 @@ fn render_checkbox(
                 pdf_y + h - m,
                 x + w - m,
                 pdf_y + m,
+            ),
+        );
+    }
+    write_ops(ops, format_args!("Q\n"));
+}
+
+fn render_radio(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    value: &str,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    if value.is_empty() {
+        return;
+    }
+    let bw = config.border_width.max(0.5);
+    let cx = x + w / 2.0;
+    let cy = pdf_y + h / 2.0;
+    let r = w.min(h) / 2.0;
+
+    // Draw circle using 4 Bezier curves (standard circle approximation).
+    let k = 0.5523; // kappa ≈ 4*(√2-1)/3
+    let kx = r * k;
+    let ky = r * k;
+    write_ops(
+        ops,
+        format_args!(
+            "q\n{:.2} w\n{:.3} {:.3} {:.3} RG\n",
+            bw,
+            config.border_color[0],
+            config.border_color[1],
+            config.border_color[2],
+        ),
+    );
+    write_ops(
+        ops,
+        format_args!(
+            "{:.2} {:.2} m\n\
+             {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+             {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+             {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+             {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+             S\n",
+            cx + r, cy,
+            cx + r, cy + ky, cx + kx, cy + r, cx, cy + r,
+            cx - kx, cy + r, cx - r, cy + ky, cx - r, cy,
+            cx - r, cy - ky, cx - kx, cy - r, cx, cy - r,
+            cx + kx, cy - r, cx + r, cy - ky, cx + r, cy,
+        ),
+    );
+
+    let checked = !value.is_empty()
+        && !value.eq_ignore_ascii_case("0")
+        && !value.eq_ignore_ascii_case("off")
+        && !value.eq_ignore_ascii_case("false");
+    if checked {
+        // Draw filled inner circle (bullet).
+        let ir = r * 0.4;
+        let ikx = ir * k;
+        let iky = ir * k;
+        write_ops(
+            ops,
+            format_args!(
+                "{:.3} {:.3} {:.3} rg\n\
+                 {:.2} {:.2} m\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 f\n",
+                config.text_color[0], config.text_color[1], config.text_color[2],
+                cx + ir, cy,
+                cx + ir, cy + iky, cx + ikx, cy + ir, cx, cy + ir,
+                cx - ikx, cy + ir, cx - ir, cy + iky, cx - ir, cy,
+                cx - ir, cy - iky, cx - ikx, cy - ir, cx, cy - ir,
+                cx + ikx, cy - ir, cx + ir, cy - iky, cx + ir, cy,
             ),
         );
     }
