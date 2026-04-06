@@ -289,25 +289,60 @@ fn xfa_flatten_inner(
     let n_layout = overlays.len();
     let n_existing = existing_page_ids.len();
 
-    for (i, overlay) in overlays.iter().enumerate() {
-        if i < n_existing {
-            write_page_content(
-                &mut doc,
-                existing_page_ids[i],
-                overlay,
-                &font_ids,
-                &embedded_font_objects,
-            )?;
-        } else {
-            let lp = &layout.pages[i];
-            add_new_page(
-                &mut doc,
-                lp.width,
-                lp.height,
-                overlay,
-                &font_ids,
-                &embedded_font_objects,
-            )?;
+    // Detect static/hybrid XFA forms: baseProfile="interactiveForms" means the
+    // visual layout lives in the PDF content streams, not in XFA <draw> elements.
+    // For these forms we must preserve the original page content and overlay the
+    // XFA-rendered field values on top instead of replacing everything.
+    let is_static_form = template_xml.contains("baseProfile=\"interactiveForms\"");
+    let preserve_static = is_static_form && pages_have_static_content(&doc);
+
+    if preserve_static {
+        // Static XFA form: bake widget appearances (field values, checkboxes,
+        // etc.) into the page content, then overlay any XFA-rendered content.
+        flatten_widget_appearances(&mut doc);
+
+        for (i, overlay) in overlays.iter().enumerate() {
+            if i < n_existing {
+                overlay_page_content(
+                    &mut doc,
+                    existing_page_ids[i],
+                    overlay,
+                    &font_ids,
+                    &embedded_font_objects,
+                )?;
+            } else {
+                let lp = &layout.pages[i];
+                add_new_page(
+                    &mut doc,
+                    lp.width,
+                    lp.height,
+                    overlay,
+                    &font_ids,
+                    &embedded_font_objects,
+                )?;
+            }
+        }
+    } else {
+        for (i, overlay) in overlays.iter().enumerate() {
+            if i < n_existing {
+                write_page_content(
+                    &mut doc,
+                    existing_page_ids[i],
+                    overlay,
+                    &font_ids,
+                    &embedded_font_objects,
+                )?;
+            } else {
+                let lp = &layout.pages[i];
+                add_new_page(
+                    &mut doc,
+                    lp.width,
+                    lp.height,
+                    overlay,
+                    &font_ids,
+                    &embedded_font_objects,
+                )?;
+            }
         }
     }
 
@@ -315,7 +350,10 @@ fn xfa_flatten_inner(
     // original static content. This is the core fix for over-pagination
     // (#744): XFA PDFs often carry pre-rendered static pages that far exceed
     // the dynamic page count Adobe would produce.
-    if n_layout < n_existing {
+    // But for static/hybrid forms (preserve_static), keep all original pages —
+    // the static content lives in the PDF page streams, not in XFA draw
+    // elements (#750).
+    if n_layout < n_existing && !preserve_static {
         // delete_pages takes 1-indexed page numbers, highest first to avoid
         // index shifts.
         let excess: Vec<u32> = ((n_layout + 1) as u32..=(n_existing as u32))
@@ -324,10 +362,13 @@ fn xfa_flatten_inner(
         doc.delete_pages(&excess);
     }
 
-    // Strip widget annotations from pages that were overwritten by XFA layout.
-    for &page_id in existing_page_ids.iter().take(n_layout.min(n_existing)) {
-        if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
-            dict.remove(b"Annots");
+    if !preserve_static {
+        // Strip widget annotations from pages that were overwritten by XFA layout.
+        // For static forms the widgets were already baked by flatten_widget_appearances.
+        for &page_id in existing_page_ids.iter().take(n_layout.min(n_existing)) {
+            if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
+                dict.remove(b"Annots");
+            }
         }
     }
 
@@ -1225,6 +1266,109 @@ fn write_page_content(
         page_dict.set("Resources", Object::Dictionary(resources));
     }
     Ok(())
+}
+
+/// Overlay XFA content on top of existing page content (for static XFA forms).
+///
+/// Unlike `write_page_content` which replaces the page content entirely, this
+/// preserves the original content stream and appends the XFA overlay on top.
+/// The original resources are preserved and XFA font resources are merged in.
+fn overlay_page_content(
+    doc: &mut Document,
+    page_id: ObjectId,
+    overlay: &PageOverlay,
+    font_ids: &[ObjectId; 3],
+    embedded_fonts: &[(String, ObjectId)],
+) -> Result<()> {
+    let xfa_resources = make_resources_dict(font_ids, embedded_fonts);
+
+    let mut xfa_xobjects = Dictionary::new();
+    for img in &overlay.images {
+        match embed_image(doc, &img.data, &img.mime_type) {
+            Ok(result) => {
+                xfa_xobjects.set(img.name.as_str(), Object::Reference(result.object_id));
+            }
+            Err(e) => {
+                eprintln!("failed to embed image {}: {}", img.name, e);
+            }
+        }
+    }
+
+    merge_xfa_resources_into_page(doc, page_id, &xfa_resources, &xfa_xobjects);
+
+    if !overlay.content_stream.is_empty() {
+        append_to_page_content(doc, page_id, &overlay.content_stream);
+    }
+
+    Ok(())
+}
+
+/// Merge XFA font/xobject resources into the existing page resources without
+/// overwriting original entries.
+fn merge_xfa_resources_into_page(
+    doc: &mut Document,
+    page_id: ObjectId,
+    xfa_resources: &Dictionary,
+    xfa_xobjects: &Dictionary,
+) {
+    let existing_resources = doc
+        .get_dictionary(page_id)
+        .ok()
+        .and_then(|page_dict| {
+            page_dict.get(b"Resources").ok().and_then(|obj| match obj {
+                Object::Reference(id) => doc.get_dictionary(*id).ok().cloned(),
+                Object::Dictionary(d) => Some(d.clone()),
+                _ => None,
+            })
+        })
+        .unwrap_or_default();
+
+    let mut merged = existing_resources;
+
+    // Merge Font entries: add XFA fonts (F1, F2, F3, embedded) without
+    // overwriting the page's own fonts.
+    if let Ok(xfa_font_dict) = xfa_resources.get(b"Font").and_then(|o| o.as_dict()) {
+        let existing_font = merged
+            .get(b"Font")
+            .ok()
+            .and_then(|obj| match obj {
+                Object::Dictionary(d) => Some(d.clone()),
+                Object::Reference(id) => doc.get_dictionary(*id).ok().cloned(),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let mut font_merged = existing_font;
+        for (key, val) in xfa_font_dict.iter() {
+            if font_merged.get(key).is_err() {
+                font_merged.set(key.clone(), val.clone());
+            }
+        }
+        merged.set("Font", Object::Dictionary(font_merged));
+    }
+
+    // Merge XObject entries.
+    if !xfa_xobjects.is_empty() {
+        let existing_xobj = merged
+            .get(b"XObject")
+            .ok()
+            .and_then(|obj| match obj {
+                Object::Dictionary(d) => Some(d.clone()),
+                Object::Reference(id) => doc.get_dictionary(*id).ok().cloned(),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let mut xobj_merged = existing_xobj;
+        for (key, val) in xfa_xobjects.iter() {
+            xobj_merged.set(key.clone(), val.clone());
+        }
+        merged.set("XObject", Object::Dictionary(xobj_merged));
+    }
+
+    if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
+        page_dict.set("Resources", Object::Dictionary(merged));
+    }
 }
 
 /// Add a new page to the document's /Pages tree.
