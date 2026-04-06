@@ -421,6 +421,37 @@ fn resolve_font_ref<'a>(
     }
 }
 
+/// Emit PDF text state operators for fontHorizontalScale (Tz) and letterSpacing (Tc).
+/// Only emits operators when values differ from defaults (100% scale, 0 spacing).
+fn emit_text_style_ops(node_style: &FormNodeStyle, ops: &mut Vec<u8>) {
+    if let Some(h_scale) = node_style.font_horizontal_scale {
+        if (h_scale - 1.0).abs() > 0.001 {
+            write_ops(ops, format_args!("{:.1} Tz\n", h_scale * 100.0));
+        }
+    }
+    if let Some(spacing) = node_style.letter_spacing_pt {
+        if spacing.abs() > 0.001 {
+            write_ops(ops, format_args!("{:.3} Tc\n", spacing));
+        }
+    }
+}
+
+/// Reset text style operators to defaults after a BT/ET block (for safety).
+fn reset_text_style_ops(node_style: &FormNodeStyle, ops: &mut Vec<u8>) {
+    if node_style
+        .font_horizontal_scale
+        .is_some_and(|s| (s - 1.0).abs() > 0.001)
+    {
+        write_ops(ops, format_args!("100 Tz\n"));
+    }
+    if node_style
+        .letter_spacing_pt
+        .is_some_and(|s| s.abs() > 0.001)
+    {
+        write_ops(ops, format_args!("0 Tc\n"));
+    }
+}
+
 /// Calculate the ascender height in points for a given font size and metrics.
 fn ascender_pt(font_metrics: &FontMetrics, font_size: f64) -> f64 {
     if let (Some(asc), Some(upem)) = (font_metrics.resolved_ascender, font_metrics.resolved_upem) {
@@ -525,17 +556,26 @@ fn render_field(
             write_ops(
                 ops,
                 format_args!(
-                    "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n{} Tj\nET\n",
+                    "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
                     config.text_color[0],
                     config.text_color[1],
                     config.text_color[2],
                     font_ref,
                     fs,
+                ),
+            );
+            emit_text_style_ops(node_style, ops);
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} Td\n{} Tj\n",
                     x + pad_left,
                     text_y,
                     encoded
                 ),
             );
+            reset_text_style_ops(node_style, ops);
+            ops.extend_from_slice(b"ET\n");
         } else {
             let lines = wrap_text(value, content_w, &metrics);
             let line_height = metrics.line_height_pt();
@@ -543,12 +583,19 @@ fn render_field(
             write_ops(
                 ops,
                 format_args!(
-                    "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n",
+                    "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
                     config.text_color[0],
                     config.text_color[1],
                     config.text_color[2],
                     font_ref,
                     fs,
+                ),
+            );
+            emit_text_style_ops(node_style, ops);
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} Td\n",
                     x + pad_left,
                     pdf_y + h - space_above - asc_pt,
                 ),
@@ -564,6 +611,7 @@ fn render_field(
                 let encoded = pdf_encode_text(line, idh_metrics);
                 write_ops(ops, format_args!("{} Tj\n", encoded));
             }
+            reset_text_style_ops(node_style, ops);
             ops.extend_from_slice(b"ET\n");
         }
     }
@@ -686,17 +734,26 @@ fn render_dropdown(
         write_ops(
             ops,
             format_args!(
-                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n{} Tj\nET\n",
+                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
                 config.text_color[0],
                 config.text_color[1],
                 config.text_color[2],
                 font_ref,
                 fs,
+            ),
+        );
+        emit_text_style_ops(node_style, ops);
+        write_ops(
+            ops,
+            format_args!(
+                "{:.2} {:.2} Td\n{} Tj\n",
                 x + 2.0,
                 v_offset,
                 encoded
             ),
         );
+        reset_text_style_ops(node_style, ops);
+        ops.extend_from_slice(b"ET\n");
     }
 
     let arrow_x = x + w - arrow_w - 1.0;
@@ -792,17 +849,26 @@ fn render_button(
         write_ops(
             ops,
             format_args!(
-                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n{:.2} {:.2} Td\n{} Tj\nET\n",
+                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
                 config.text_color[0],
                 config.text_color[1],
                 config.text_color[2],
                 font_ref,
                 fs,
+            ),
+        );
+        emit_text_style_ops(node_style, ops);
+        write_ops(
+            ops,
+            format_args!(
+                "{:.2} {:.2} Td\n{} Tj\n",
                 text_x,
                 v_offset,
                 encoded
             ),
         );
+        reset_text_style_ops(node_style, ops);
+        ops.extend_from_slice(b"ET\n");
     }
     write_ops(ops, format_args!("Q\n"));
 }
@@ -921,6 +987,7 @@ fn render_multiline(
             config.text_color[0], config.text_color[1], config.text_color[2], font_ref, font_size
         ),
     );
+    emit_text_style_ops(node_style, ops);
     let ascender_pt = if let (Some(asc), Some(upem)) =
         (font_metrics.resolved_ascender, font_metrics.resolved_upem)
     {
@@ -954,6 +1021,7 @@ fn render_multiline(
         let encoded = pdf_encode_text(line, idh_metrics);
         write_ops(ops, format_args!("{} Tj\n", encoded));
     }
+    reset_text_style_ops(node_style, ops);
     ops.extend_from_slice(b"ET\n");
 }
 
