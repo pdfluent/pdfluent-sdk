@@ -456,9 +456,15 @@ impl XfaFontResolver {
 
     fn try_fallbacks(&self) -> Option<ResolvedFont> {
         #[cfg(target_os = "macos")]
-        let fallback_chain = ["Arial", "Helvetica", "DejaVuSans", "LiberationSans"];
+        let fallback_chain = ["Arial", "Helvetica.ttc", "DejaVuSans", "LiberationSans"];
         #[cfg(not(target_os = "macos"))]
-        let fallback_chain = ["Helvetica", "Arial", "DejaVuSans", "LiberationSans"];
+        let fallback_chain = [
+            "LiberationSans",
+            "DejaVuSans",
+            "Arial",
+            "Helvetica",
+            "FreeSans",
+        ];
 
         for name in &fallback_chain {
             if let Some(font) = self.try_system(name) {
