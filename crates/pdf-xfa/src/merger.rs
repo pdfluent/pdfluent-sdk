@@ -80,7 +80,18 @@ impl<'a> FormMerger<'a> {
 
                 // Repeating subform expansion
                 if occur.is_repeating() && !name.is_empty() {
-                    return self.expand_repeating_subform(elem, &name, occur, data_context);
+                    // Use bind ref data name if present (e.g.
+                    // <bind match="dataRef" ref="$.listInitiales[*]"> →
+                    // data name "listInitiales"), otherwise fall back to
+                    // the subform name.
+                    let data_name = parse_bind_data_name(elem).unwrap_or_else(|| name.clone());
+                    return self.expand_repeating_subform(
+                        elem,
+                        &name,
+                        &data_name,
+                        occur,
+                        data_context,
+                    );
                 }
 
                 // Normal subform
@@ -92,19 +103,25 @@ impl<'a> FormMerger<'a> {
                             child_context = Some(first);
                         }
                     } else if let Some(root) = self.data_dom.root() {
-                        let matches = self.data_dom.children_by_name(root, &name);
-                        if let Some(&first) = matches.first() {
-                            child_context = Some(first);
-                        } else if data_context.is_none() {
-                            // XFA §4.7.2: root subform binds to the data root.
-                            // When the subform name doesn't match a direct child
-                            // of the data root, use the first child group as the
-                            // context (common pattern: template root="form1" but
-                            // data root child="DOCUMENT" or "MCD").
-                            let children = self.data_dom.children(root);
-                            if let Some(&first_child) = children.first() {
-                                if self.data_dom.get(first_child).is_some_and(|n| n.is_group()) {
-                                    child_context = Some(first_child);
+                        // XFA §4.7.2: the root subform binds to the data root
+                        // element if their names match. Check root name first
+                        // before searching among its children.
+                        if self.data_dom.get(root).is_some_and(|n| n.name() == name) {
+                            child_context = Some(root);
+                        } else {
+                            let matches = self.data_dom.children_by_name(root, &name);
+                            if let Some(&first) = matches.first() {
+                                child_context = Some(first);
+                            } else {
+                                // Fallback: use the first child group as the
+                                // context (common pattern: template root="form1"
+                                // but data root child="DOCUMENT" or "MCD").
+                                let children = self.data_dom.children(root);
+                                if let Some(&first_child) = children.first() {
+                                    if self.data_dom.get(first_child).is_some_and(|n| n.is_group())
+                                    {
+                                        child_context = Some(first_child);
+                                    }
                                 }
                             }
                         }
@@ -147,13 +164,14 @@ impl<'a> FormMerger<'a> {
         &mut self,
         element: Node<'_, '_>,
         name: &str,
+        data_name: &str,
         occur: Occur,
         data_context: Option<DataNodeId>,
     ) -> Result<(FormNodeId, (bool, Option<String>))> {
         let data_instances = if let Some(ctx) = data_context {
-            self.data_dom.children_by_name(ctx, name)
+            self.data_dom.children_by_name(ctx, data_name)
         } else if let Some(root) = self.data_dom.root() {
-            self.data_dom.children_by_name(root, name)
+            self.data_dom.children_by_name(root, data_name)
         } else {
             Vec::new()
         };
@@ -1279,6 +1297,22 @@ fn parse_font_color_attr(s: &str) -> Option<(u8, u8, u8)> {
     }
 }
 
+/// Extract the data field name from a bind ref like `$.listInitiales[*]`.
+/// Returns `Some("listInitiales")` for that example, or None if no bind/ref.
+fn parse_bind_data_name(elem: Node<'_, '_>) -> Option<String> {
+    let bind = find_first_child_by_name(elem, "bind")?;
+    let ref_val = attr(bind, "ref")?;
+    // Typical refs: "$.fieldName", "$.fieldName[*]", "$record.fieldName"
+    // Extract the last dot-separated segment, strip any trailing [*] etc.
+    let segment = ref_val.rsplit('.').next().unwrap_or(ref_val);
+    let name = segment.split('[').next().unwrap_or(segment).trim();
+    if name.is_empty() || name == "$" {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
 fn parse_bind(elem: Node<'_, '_>) -> (Option<String>, bool) {
     let Some(bind) = find_first_child_by_name(elem, "bind") else {
         return (None, false);
@@ -1397,5 +1431,98 @@ mod tests {
             3,
             "Expected 3 Order instances from double-wrapped data"
         );
+    }
+
+    /// Bind ref resolution: when subform name differs from data name,
+    /// <bind match="dataRef" ref="$.dataName[*]"> should use the data name.
+    #[test]
+    fn repeating_subform_bind_ref_resolves_data_name() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <subform name="ListItems" layout="tb" w="500pt">
+      <subform name="ItemGroup" layout="tb" w="500pt" h="50pt">
+        <occur min="0" max="-1"/>
+        <bind match="dataRef" ref="$.itemGroup[*]"/>
+        <field name="title" w="200pt" h="20pt" x="0pt" y="0pt"/>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form>
+      <itemGroup><title>Group A</title></itemGroup>
+      <itemGroup><title>Group B</title></itemGroup>
+    </form>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let container = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "ItemGroup_container")
+            .expect("ItemGroup_container must exist");
+        assert_eq!(
+            container.children.len(),
+            2,
+            "Expected 2 instances from bind ref $.itemGroup[*]"
+        );
+    }
+
+    /// Root subform binds to data root when names match (XFA §4.7.2).
+    #[test]
+    fn root_subform_binds_to_matching_data_root() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="title" w="200pt" h="20pt" x="0pt" y="0pt"/>
+    <field name="code" w="200pt" h="20pt" x="0pt" y="20pt"/>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form>
+      <title>Hello World</title>
+      <code>42</code>
+    </form>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let title_node = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "title")
+            .expect("title field must exist");
+        match &title_node.node_type {
+            FormNodeType::Field { value } => {
+                assert_eq!(value, "Hello World", "title should bind to data root");
+            }
+            _ => panic!("title should be a field"),
+        }
     }
 }

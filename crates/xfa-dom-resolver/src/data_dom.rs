@@ -195,22 +195,30 @@ impl DataDom {
         }
     }
 
-    /// Skip `<xfa:datasets>` and descend into `<xfa:data>` so that the
+    /// Skip `<xfa:datasets>` and `<xfa:data>` wrappers so that the
     /// form data elements are direct children of root.
+    ///
+    /// Some XFA producers double-wrap data: `<datasets><data><data>...`
+    /// This loop peels through all wrapper levels until it reaches actual
+    /// form data.
     fn unwrap_datasets_root(&self, id: DataNodeId) -> DataNodeId {
-        if let Some(node) = self.get(id) {
-            if node.name() == "datasets" {
-                // Look for a child named "data"
-                for &child in self.children(id) {
-                    if let Some(cn) = self.get(child) {
-                        if cn.name() == "data" && cn.is_group() {
-                            return child;
-                        }
-                    }
+        let mut current = id;
+        while let Some(node) = self.get(current) {
+            let name = node.name();
+            if name == "datasets" || name == "data" {
+                let children = self.children(current);
+                let data_child = children.iter().find(|&&c| {
+                    self.get(c)
+                        .is_some_and(|n| n.name() == "data" && n.is_group())
+                });
+                if let Some(&child) = data_child {
+                    current = child;
+                    continue;
                 }
             }
+            break;
         }
-        id
+        current
     }
 
     /// Allocate a new node in the arena (does not attach to any parent).
