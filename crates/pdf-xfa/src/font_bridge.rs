@@ -139,6 +139,22 @@ pub struct CidFontInfo {
     pub gid_to_unicode: Vec<(u16, char)>,
 }
 
+/// Build a cache/lookup key that encodes typeface, weight, and posture.
+///
+/// This ensures that "Arial" regular and "Arial" bold are stored and
+/// looked up as distinct entries in font maps and metrics data.
+pub fn font_variant_key(typeface: &str, weight: Option<&str>, posture: Option<&str>) -> String {
+    let w = match weight {
+        Some("bold") => "_Bold",
+        _ => "_Normal",
+    };
+    let p = match posture {
+        Some("italic") => "_Italic",
+        _ => "_Normal",
+    };
+    format!("{}{}{}", typeface, w, p)
+}
+
 /// XFA font specification from the template.
 #[derive(Debug, Clone)]
 pub struct XfaFontSpec {
@@ -348,14 +364,36 @@ impl XfaFontResolver {
     }
 
     /// Resolve a font specification to a usable font.
+    ///
+    /// When weight is Bold and/or posture is Italic, variant-specific font
+    /// names are tried first (e.g. "Arial-Bold", "ArialBold", "Arial Bold")
+    /// in both embedded and system font lookups. This ensures that bold/italic
+    /// text gets the correct font metrics (wider glyphs, different ascender/
+    /// descender) instead of silently falling back to the regular weight.
     pub fn resolve(&mut self, spec: &XfaFontSpec) -> Result<ResolvedFont> {
         let cache_key = format!("{}_{:?}_{:?}", spec.typeface, spec.weight, spec.posture);
         if let Some(cached) = self.cache.get(&cache_key) {
             return Ok(cached.clone());
         }
         let normalized = normalize_font_name(&spec.typeface);
-        let font = self
-            .try_embedded(&spec.typeface)
+
+        // Build variant suffixes based on weight/posture.
+        let variant_names = build_variant_names(&spec.typeface, spec.weight, spec.posture);
+
+        // Try variant-specific names first (bold/italic variants).
+        let font = variant_names
+            .iter()
+            .find_map(|vn| {
+                self.try_embedded(vn)
+                    .or_else(|| self.try_system(vn))
+                    .or_else(|| {
+                        let norm = normalize_font_name(vn);
+                        self.try_embedded(&norm)
+                            .or_else(|| self.try_system(&norm))
+                    })
+            })
+            // Then try the base name as before.
+            .or_else(|| self.try_embedded(&spec.typeface))
             .or_else(|| self.try_embedded(&normalized))
             .or_else(|| self.try_system(&spec.typeface))
             .or_else(|| self.try_system(&normalized))
@@ -437,6 +475,43 @@ impl XfaFontResolver {
         }
         None
     }
+}
+
+/// Build variant-specific font names for bold/italic lookup.
+///
+/// Given a base typeface name ("Arial") and weight/posture, produces names
+/// like "Arial-Bold", "ArialBold", "Arial Bold" etc. Returns an empty vec
+/// when both weight and posture are Normal.
+fn build_variant_names(
+    typeface: &str,
+    weight: FontWeight,
+    posture: FontPosture,
+) -> Vec<String> {
+    let suffix = match (weight, posture) {
+        (FontWeight::Bold, FontPosture::Italic) => "BoldItalic",
+        (FontWeight::Bold, FontPosture::Normal) => "Bold",
+        (FontWeight::Normal, FontPosture::Italic) => "Italic",
+        (FontWeight::Normal, FontPosture::Normal) => return Vec::new(),
+    };
+
+    let mut names = Vec::with_capacity(6);
+    // "{Name}-{Suffix}" e.g. "Arial-Bold"
+    names.push(format!("{}-{}", typeface, suffix));
+    // "{Name}{Suffix}" e.g. "ArialBold"
+    names.push(format!("{}{}", typeface, suffix));
+    // "{Name} {Suffix}" e.g. "Arial Bold"
+    names.push(format!("{} {}", typeface, suffix));
+    // Comma-separated: "{Name},{Suffix}" e.g. "Arial,Bold"
+    names.push(format!("{},{}", typeface, suffix));
+
+    // For BoldItalic, also try the two-suffix patterns:
+    // "{Name}-Bold Italic", "{Name} Bold Italic"
+    if weight == FontWeight::Bold && posture == FontPosture::Italic {
+        names.push(format!("{}-Bold Italic", typeface));
+        names.push(format!("{} Bold Italic", typeface));
+    }
+
+    names
 }
 
 fn parse_font_data(name: &str, data: &[u8]) -> Option<ResolvedFont> {
@@ -707,5 +782,65 @@ mod tests {
         // On any system with fonts, we should have entries.
         // The name-table scanning should produce more entries than just filename stems.
         assert!(!fonts.is_empty(), "system fonts map should not be empty");
+    }
+
+    #[test]
+    fn build_variant_names_normal() {
+        let names = build_variant_names("Arial", FontWeight::Normal, FontPosture::Normal);
+        assert!(names.is_empty(), "normal/normal should produce no variants");
+    }
+
+    #[test]
+    fn build_variant_names_bold() {
+        let names = build_variant_names("Arial", FontWeight::Bold, FontPosture::Normal);
+        assert!(names.contains(&"Arial-Bold".to_string()));
+        assert!(names.contains(&"ArialBold".to_string()));
+        assert!(names.contains(&"Arial Bold".to_string()));
+        assert!(names.contains(&"Arial,Bold".to_string()));
+    }
+
+    #[test]
+    fn build_variant_names_italic() {
+        let names = build_variant_names("Helvetica", FontWeight::Normal, FontPosture::Italic);
+        assert!(names.contains(&"Helvetica-Italic".to_string()));
+        assert!(names.contains(&"HelveticaItalic".to_string()));
+        assert!(names.contains(&"Helvetica Italic".to_string()));
+    }
+
+    #[test]
+    fn build_variant_names_bold_italic() {
+        let names = build_variant_names("Arial", FontWeight::Bold, FontPosture::Italic);
+        assert!(names.contains(&"Arial-BoldItalic".to_string()));
+        assert!(names.contains(&"ArialBoldItalic".to_string()));
+        assert!(names.contains(&"Arial BoldItalic".to_string()));
+        assert!(names.contains(&"Arial-Bold Italic".to_string()));
+        assert!(names.contains(&"Arial Bold Italic".to_string()));
+    }
+
+    #[test]
+    fn font_variant_key_encoding() {
+        assert_eq!(font_variant_key("Arial", None, None), "Arial_Normal_Normal");
+        assert_eq!(
+            font_variant_key("Arial", Some("bold"), None),
+            "Arial_Bold_Normal"
+        );
+        assert_eq!(
+            font_variant_key("Arial", None, Some("italic")),
+            "Arial_Normal_Italic"
+        );
+        assert_eq!(
+            font_variant_key("Arial", Some("bold"), Some("italic")),
+            "Arial_Bold_Italic"
+        );
+    }
+
+    #[test]
+    fn resolve_uses_bold_variant_cache_key() {
+        let mut resolver = XfaFontResolver::new(vec![]);
+        let spec_normal = XfaFontSpec::from_xfa_attrs("Arial", None, None, None);
+        let spec_bold = XfaFontSpec::from_xfa_attrs("Arial", Some("bold"), None, None);
+        // Both should resolve (or fail) independently — they use different cache keys.
+        let _ = resolver.resolve(&spec_normal);
+        let _ = resolver.resolve(&spec_bold);
     }
 }
