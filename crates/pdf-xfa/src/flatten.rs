@@ -387,10 +387,65 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>)> {
             } else {
                 base_font.clone()
             };
-            fonts.push((clean_name, data));
+            // Store under the PostScript name (subset prefix already stripped)
+            fonts.push((clean_name.clone(), data.clone()));
+            // Also store under the font family name from the name table,
+            // since XFA templates use family names (e.g. "Arial") while PDF
+            // BaseFont uses PostScript names (e.g. "ArialMT").
+            if let Ok(face) = ttf_parser::Face::parse(&data, 0) {
+                for name_record in face.names() {
+                    if name_record.name_id == ttf_parser::name_id::FAMILY {
+                        if let Some(family) = name_record.to_string() {
+                            if family != clean_name {
+                                fonts.push((family, data.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+            // Common PostScript-to-family normalization as fallback
+            let normalized = ps_name_to_family(&clean_name);
+            if normalized != clean_name {
+                fonts.push((normalized, data.clone()));
+            }
         }
     }
     fonts
+}
+
+/// Convert a PostScript font name to its likely family name.
+///
+/// Examples: `ArialMT` → `Arial`, `TimesNewRomanPSMT` → `Times New Roman`,
+/// `MyriadPro-Regular` → `Myriad Pro`.
+fn ps_name_to_family(ps_name: &str) -> String {
+    // Strip weight/style suffixes first
+    let base = ps_name
+        .strip_suffix("PSMT")
+        .or_else(|| ps_name.strip_suffix("PS-BoldItalicMT"))
+        .or_else(|| ps_name.strip_suffix("PS-BoldMT"))
+        .or_else(|| ps_name.strip_suffix("PS-ItalicMT"))
+        .or_else(|| ps_name.strip_suffix("-BoldItalicMT"))
+        .or_else(|| ps_name.strip_suffix("-BoldMT"))
+        .or_else(|| ps_name.strip_suffix("-ItalicMT"))
+        .or_else(|| ps_name.strip_suffix("MT"))
+        .or_else(|| ps_name.strip_suffix("-Regular"))
+        .or_else(|| ps_name.strip_suffix("-Bold"))
+        .or_else(|| ps_name.strip_suffix("-Italic"))
+        .or_else(|| ps_name.strip_suffix("-BoldItalic"))
+        .unwrap_or(ps_name);
+    // Insert spaces before uppercase letters that follow a lowercase letter
+    // e.g. "TimesNewRoman" → "Times New Roman", "MyriadPro" → "Myriad Pro"
+    let mut result = String::with_capacity(base.len() + 4);
+    for (i, ch) in base.chars().enumerate() {
+        if i > 0 && ch.is_uppercase() {
+            let prev = base.as_bytes()[i - 1] as char;
+            if prev.is_lowercase() {
+                result.push(' ');
+            }
+        }
+        result.push(ch);
+    }
+    result
 }
 
 fn collect_template_font_names(template_xml: &str) -> Vec<String> {
