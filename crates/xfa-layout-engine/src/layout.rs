@@ -190,9 +190,20 @@ impl<'a> LayoutEngine<'a> {
                     self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
                     pages.push(placed);
                     remaining = rest;
+                } else if !pa.fixed_nodes.is_empty() {
+                    // Content nodes are invisible but the page area has
+                    // fixed elements (headers, footers, decorations).
+                    // Create the page with just the fixed chrome — this
+                    // matches Adobe's behavior for explicit page areas
+                    // whose flowing content is blank/hidden.
+                    self.prepend_fixed_nodes(&pa.fixed_nodes, &mut placed)?;
+                    if Self::has_visible_content(&placed.nodes) {
+                        pages.push(placed);
+                    }
+                    remaining = rest;
                 } else {
-                    // Content nodes exist but are all hidden/invisible —
-                    // suppress the blank page and advance.
+                    // Content nodes are all hidden/invisible and the page
+                    // area has no fixed elements — suppress the blank page.
                     remaining = rest;
                 }
             }
