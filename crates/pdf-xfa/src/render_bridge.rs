@@ -399,7 +399,15 @@ fn render_nodes(
             // so offset by the parent's margin insets (XFA <margin leftInset/topInset>).
             let child_origin_x = abs_x + node.style.inset_left_pt.unwrap_or(0.0);
             let child_origin_y = abs_y + node.style.inset_top_pt.unwrap_or(0.0);
-            render_nodes(&node.children, child_origin_x, child_origin_y, mapper, config, ops, images);
+            render_nodes(
+                &node.children,
+                child_origin_x,
+                child_origin_y,
+                mapper,
+                config,
+                ops,
+                images,
+            );
         }
     }
 }
@@ -916,27 +924,10 @@ fn render_checkbox(
         && !value.eq_ignore_ascii_case("off")
         && !value.eq_ignore_ascii_case("false");
     if checked {
+        let mark = config.check_button_mark.as_deref().unwrap_or("cross");
         let m = w.min(h) * 0.15;
-        write_ops(
-            ops,
-            format_args!(
-                "{:.2} w\n{:.3} {:.3} {:.3} RG\n\
-                 {:.2} {:.2} m {:.2} {:.2} l S\n\
-                 {:.2} {:.2} m {:.2} {:.2} l S\n",
-                bw.max(1.0),
-                config.text_color[0],
-                config.text_color[1],
-                config.text_color[2],
-                x + m,
-                pdf_y + m,
-                x + w - m,
-                pdf_y + h - m,
-                x + m,
-                pdf_y + h - m,
-                x + w - m,
-                pdf_y + m,
-            ),
-        );
+        let color = config.text_color;
+        draw_check_mark(mark, x, pdf_y, w, h, m, color, ops);
     }
     write_ops(ops, format_args!("Q\n"));
 }
