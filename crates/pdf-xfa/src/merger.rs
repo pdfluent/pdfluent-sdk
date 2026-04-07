@@ -1716,20 +1716,42 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             .find_map(|widget| find_first_child_by_name(widget, "border"))
     });
     if let Some(border) = border {
-        if let Some(edge) = find_first_child_by_name(border, "edge") {
-            if let Some(color) = find_first_child_by_name(edge, "color") {
+        // Collect all <edge> elements (XFA §9.3.3).
+        let edge_elems: Vec<_> = border
+            .children()
+            .filter(|n| n.is_element() && n.tag_name().name() == "edge")
+            .collect();
+        if !edge_elems.is_empty() {
+            let first = edge_elems[0];
+            if let Some(color) = find_first_child_by_name(first, "color") {
                 if let Some(rgb) = parse_xfa_color(color) {
                     style.border_color = Some(rgb);
                 }
             }
-            let stroke = attr(edge, "stroke").unwrap_or("solid");
+            let stroke = attr(first, "stroke").unwrap_or("solid");
             if stroke != "none" {
-                let thickness = attr(edge, "thickness")
+                let thickness = attr(first, "thickness")
                     .and_then(Measurement::parse)
                     .map(|m: Measurement| m.to_points())
                     .unwrap_or(0.5);
                 if thickness > 0.0 {
                     style.border_width_pt = Some(thickness);
+                }
+            }
+            if edge_elems.len() > 1 {
+                let default_rgb = style.border_color.unwrap_or((0, 0, 0));
+                let edge_color = |idx: usize| -> (u8, u8, u8) {
+                    let e = edge_elems.get(idx).copied().unwrap_or(edge_elems[0]);
+                    find_first_child_by_name(e, "color")
+                        .and_then(|c| parse_xfa_color(c))
+                        .unwrap_or(default_rgb)
+                };
+                let top = edge_color(0);
+                let bottom = edge_color(1);
+                let left = edge_color(2);
+                let right = edge_color(3);
+                if !(top == bottom && bottom == left && left == right) {
+                    style.border_colors = Some([top, right, bottom, left]);
                 }
             }
         }
@@ -1816,19 +1838,28 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         }
     }
 
-    // Parse <border><corner> for border radius and <border><edge> for border style.
+    // Parse <border><corner> for border radius and <border><edge> for style/visibility.
     if let Some(border) = border {
         if let Some(corner) = find_first_child_by_name(border, "corner") {
             if let Some(v) = attr(corner, "radius").and_then(Measurement::parse) {
                 style.border_radius_pt = Some(v.to_points());
             }
         }
-        if let Some(edge) = find_first_child_by_name(border, "edge") {
-            if let Some(stroke) = attr(edge, "stroke") {
+        let edge_elems2: Vec<_> = border
+            .children()
+            .filter(|n| n.is_element() && n.tag_name().name() == "edge")
+            .collect();
+        if !edge_elems2.is_empty() {
+            if let Some(stroke) = attr(edge_elems2[0], "stroke") {
                 if stroke != "none" {
                     style.border_style = Some(stroke.to_string());
                 }
             }
+            let vis = |idx: usize| -> bool {
+                let e = edge_elems2.get(idx).copied().unwrap_or(edge_elems2[0]);
+                attr(e, "presence").unwrap_or("visible") == "visible"
+            };
+            style.border_edges = [vis(0), vis(3), vis(1), vis(2)];
         }
     }
 
