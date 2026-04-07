@@ -727,6 +727,14 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 style.letter_spacing_pt = Some(v);
             }
         }
+        // XFA Spec 3.3 §2.6 — underline="1" (single) or "2" (double)
+        if let Some(underline_str) = attr(font, "underline") {
+            style.underline = underline_str == "1" || underline_str == "2";
+        }
+        // XFA Spec 3.3 §2.6 — lineThrough="1"
+        if let Some(line_through_str) = attr(font, "lineThrough") {
+            style.line_through = line_through_str == "1";
+        }
     }
 
     // XFA Spec 3.3 §17 "para" (p803) — Paragraph-level formatting attributes:
