@@ -798,10 +798,11 @@ impl<'a> LayoutEngine<'a> {
                     }
                 } else if idx == 0 || page.nodes.len() <= header_node_count {
                     // First content item too large and can't split — force place it
+                    let x = self.child_h_align_offset(child_id, child_size.width, available.width);
                     let node = self.layout_single_node_with_extent(
                         child_id,
                         child,
-                        0.0,
+                        x,
                         y_cursor,
                         child_size,
                         qn.children_override.as_deref(),
@@ -849,10 +850,12 @@ impl<'a> LayoutEngine<'a> {
                 break;
             }
 
+            // XFA Spec 3.3 §8.3 — hAlign positions child within content area
+            let x = self.child_h_align_offset(child_id, child_size.width, available.width);
             let node = self.layout_single_node_with_extent(
                 child_id,
                 child,
-                0.0,
+                x,
                 y_cursor,
                 child_size,
                 qn.children_override.as_deref(),
@@ -1360,12 +1363,35 @@ impl<'a> LayoutEngine<'a> {
         Ok(nodes)
     }
 
-    /// XFA Spec 3.3 §8.2 — Top-to-Bottom Layout (p280): place first child at
-    /// top-left, next immediately below the nominal extent of the previous,
-    /// aligned with the left edge. If it doesn't fit, attempt splitting (§8.7).
-    ///
-    /// TODO §8.3 (p282): child hAlign should offset x within parent width.
-    /// Currently always places children at x=0 (left-aligned).
+    /// XFA Spec 3.3 §8.3 (p282-284) — compute x offset for a child based on
+    /// its `<para hAlign>` within the parent container width.
+    fn child_h_align_offset(&self, child_id: FormNodeId, child_w: f64, parent_w: f64) -> f64 {
+        match self.form.meta(child_id).style.h_align {
+            Some(TextAlign::Center) => ((parent_w - child_w) / 2.0).max(0.0),
+            Some(TextAlign::Right) => (parent_w - child_w).max(0.0),
+            _ => 0.0,
+        }
+    }
+
+    /// Shift all nodes in a completed LR-TB row by the hAlign-derived offset.
+    /// Uses the first node's hAlign to determine the row alignment
+    /// (XFA Spec 3.3 §8.3 Example 8.12, p284).
+    fn shift_row_h_align(&self, row: &mut [LayoutNode], row_width: f64, parent_width: f64) {
+        let align = row
+            .first()
+            .and_then(|n| self.form.meta(n.form_node).style.h_align);
+        let offset = match align {
+            Some(TextAlign::Center) => ((parent_width - row_width) / 2.0).max(0.0),
+            Some(TextAlign::Right) => (parent_width - row_width).max(0.0),
+            _ => return,
+        };
+        for node in row {
+            node.rect.x += offset;
+        }
+    }
+
+    /// XFA Spec 3.3 §8.2 — Top-to-Bottom Layout (p280).
+    /// §8.3 (p282-284): child hAlign offsets x within parent width.
     fn layout_tb(&self, children: &[FormNodeId], available: Size) -> Result<Vec<LayoutNode>> {
         let mut nodes = Vec::new();
         let mut y_cursor = 0.0;
@@ -1374,29 +1400,30 @@ impl<'a> LayoutEngine<'a> {
             let child = self.form.get(child_id);
             let child_size = self.compute_extent_with_available(child_id, Some(available));
 
+            let x = self.child_h_align_offset(child_id, child_size.width, available.width);
+
             let node = self
-                .layout_single_node_with_extent(child_id, child, 0.0, y_cursor, child_size, None)?;
+                .layout_single_node_with_extent(child_id, child, x, y_cursor, child_size, None)?;
             nodes.push(node);
 
             y_cursor += child_size.height;
 
-            // If overflow, we just continue (pagination will handle splitting)
             if y_cursor > available.height {
-                // In a full implementation, this would trigger pagination
+                // pagination will handle splitting
             }
         }
         Ok(nodes)
     }
 
-    /// XFA Spec 3.3 §8.2 — Left-to-Right Top-to-Bottom Tiled Layout (p281):
-    /// place first child at top-left, next to the right of the previous. If it
-    /// doesn't fit horizontally, wrap to a new row below aligned with the left
-    /// edge. Default for subforms with layout="lr-tb" and for text in draws/fields.
+    /// XFA Spec 3.3 §8.2 — Left-to-Right Top-to-Bottom Tiled Layout (p281).
+    /// §8.3 Example 8.12 (p284): when children specify hAlign, the entire row
+    /// is shifted within the parent width (first child's hAlign determines row).
     fn layout_lr_tb(&self, children: &[FormNodeId], available: Size) -> Result<Vec<LayoutNode>> {
         let mut nodes = Vec::new();
         let mut x_cursor = 0.0;
         let mut y_cursor = 0.0;
         let mut row_height = 0.0_f64;
+        let mut row_start = 0_usize;
 
         for &child_id in children {
             let child = self.form.get(child_id);
@@ -1404,6 +1431,8 @@ impl<'a> LayoutEngine<'a> {
 
             // Wrap to next row if doesn't fit horizontally
             if x_cursor + child_size.width > available.width && x_cursor > 0.0 {
+                self.shift_row_h_align(&mut nodes[row_start..], x_cursor, available.width);
+                row_start = nodes.len();
                 y_cursor += row_height;
                 x_cursor = 0.0;
                 row_height = 0.0;
@@ -1415,12 +1444,13 @@ impl<'a> LayoutEngine<'a> {
             x_cursor += child_size.width;
             row_height = row_height.max(child_size.height);
         }
+        self.shift_row_h_align(&mut nodes[row_start..], x_cursor, available.width);
         Ok(nodes)
     }
 
-    /// XFA Spec 3.3 §8.2 — Right-to-Left Top-to-Bottom Tiled Layout (p282):
-    /// same as LR-TB but objects placed right-to-left. Default for subforms
-    /// with layout="rl-tb" and for text in RTL locales.
+    /// XFA Spec 3.3 §8.2 — Right-to-Left Top-to-Bottom Tiled Layout (p282).
+    /// §8.3 (p282): default hAlign is "right" for RTL. Per-child hAlign
+    /// overrides flow position (Example 8.11, p283).
     fn layout_rl_tb(&self, children: &[FormNodeId], available: Size) -> Result<Vec<LayoutNode>> {
         let mut nodes = Vec::new();
         let mut x_cursor = available.width;
@@ -1438,8 +1468,23 @@ impl<'a> LayoutEngine<'a> {
                 row_height = 0.0;
             }
 
-            x_cursor -= child_size.width;
-            let node = self.layout_single_node(child_id, child, x_cursor, y_cursor, None)?;
+            // §8.3: explicit hAlign overrides default RTL flow position
+            let h_align = self.form.meta(child_id).style.h_align;
+            let x = match h_align {
+                Some(TextAlign::Left) => {
+                    x_cursor -= child_size.width;
+                    0.0
+                }
+                Some(TextAlign::Center) => {
+                    x_cursor -= child_size.width;
+                    ((available.width - child_size.width) / 2.0).max(0.0)
+                }
+                _ => {
+                    x_cursor -= child_size.width;
+                    x_cursor
+                }
+            };
+            let node = self.layout_single_node(child_id, child, x, y_cursor, None)?;
             nodes.push(node);
 
             row_height = row_height.max(child_size.height);
@@ -5010,5 +5055,194 @@ mod tests {
         meta.display_items = vec!["United States".to_string()];
         // Non-dropdown field: no resolution
         assert_eq!(resolve_display_value("US", &meta), "US");
+    }
+}
+
+#[cfg(test)]
+mod halign_tests {
+    use super::*;
+    use crate::form::{FormNode, FormNodeType, FormTree, Occur};
+    use crate::text::FontMetrics;
+    use crate::types::{BoxModel, LayoutStrategy, TextAlign};
+
+    fn make_field(tree: &mut FormTree, name: &str, w: f64, h: f64) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Field {
+                value: name.to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(w),
+                height: Some(h),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    fn make_subform(
+        tree: &mut FormTree,
+        name: &str,
+        strategy: LayoutStrategy,
+        w: Option<f64>,
+        h: Option<f64>,
+        children: Vec<FormNodeId>,
+    ) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: w,
+                height: h,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: strategy,
+            children,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        })
+    }
+
+    /// XFA Spec 3.3 §8.3 Example 8.13 (p284):
+    /// TB parent w=10cm, child w=8cm hAlign="right" → child at x=2cm.
+    #[test]
+    fn tb_halign_right_offsets_child() {
+        let mut tree = FormTree::new();
+        let child = make_field(&mut tree, "A", 200.0, 30.0);
+        tree.meta_mut(child).style.h_align = Some(TextAlign::Right);
+
+        let parent = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(500.0),
+            Some(500.0),
+            vec![child],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(parent).unwrap();
+
+        let child_node = &layout.pages[0].nodes[0];
+        // child_w=200, parent_w=500 → x = 500 - 200 = 300
+        assert_eq!(child_node.rect.x, 300.0);
+    }
+
+    /// hAlign="center" centers child within TB parent.
+    #[test]
+    fn tb_halign_center_centers_child() {
+        let mut tree = FormTree::new();
+        let child = make_field(&mut tree, "A", 200.0, 30.0);
+        tree.meta_mut(child).style.h_align = Some(TextAlign::Center);
+
+        let parent = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(500.0),
+            Some(500.0),
+            vec![child],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(parent).unwrap();
+
+        let child_node = &layout.pages[0].nodes[0];
+        // (500 - 200) / 2 = 150
+        assert_eq!(child_node.rect.x, 150.0);
+    }
+
+    /// Default hAlign (left) keeps x=0 in TB layout.
+    #[test]
+    fn tb_halign_default_left() {
+        let mut tree = FormTree::new();
+        let child = make_field(&mut tree, "A", 200.0, 30.0);
+        // No h_align set — defaults to left
+
+        let parent = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::TopToBottom,
+            Some(500.0),
+            Some(500.0),
+            vec![child],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(parent).unwrap();
+
+        let child_node = &layout.pages[0].nodes[0];
+        assert_eq!(child_node.rect.x, 0.0);
+    }
+
+    /// XFA Spec 3.3 §8.3 Example 8.12 (p284):
+    /// LR-TB parent w=10, three children w=2 hAlign="right" →
+    /// row right-aligned: A at x=4, B at x=6, C at x=8.
+    #[test]
+    fn lr_tb_halign_right_shifts_row() {
+        let mut tree = FormTree::new();
+        let a = make_field(&mut tree, "A", 60.0, 20.0);
+        let b = make_field(&mut tree, "B", 60.0, 20.0);
+        let c = make_field(&mut tree, "C", 60.0, 20.0);
+        tree.meta_mut(a).style.h_align = Some(TextAlign::Right);
+        tree.meta_mut(b).style.h_align = Some(TextAlign::Right);
+        tree.meta_mut(c).style.h_align = Some(TextAlign::Right);
+
+        let parent = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::LeftToRightTB,
+            Some(300.0),
+            Some(300.0),
+            vec![a, b, c],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(parent).unwrap();
+        let page = &layout.pages[0];
+
+        // Row width = 3 * 60 = 180, parent = 300 → offset = 120
+        assert_eq!(page.nodes[0].rect.x, 120.0); // A
+        assert_eq!(page.nodes[1].rect.x, 180.0); // B
+        assert_eq!(page.nodes[2].rect.x, 240.0); // C
+    }
+
+    /// RL-TB with explicit hAlign="left" overrides default right flow.
+    #[test]
+    fn rl_tb_halign_left_overrides_flow() {
+        let mut tree = FormTree::new();
+        let child = make_field(&mut tree, "A", 100.0, 30.0);
+        tree.meta_mut(child).style.h_align = Some(TextAlign::Left);
+
+        let parent = make_subform(
+            &mut tree,
+            "Page",
+            LayoutStrategy::RightToLeftTB,
+            Some(500.0),
+            Some(500.0),
+            vec![child],
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let layout = engine.layout(parent).unwrap();
+
+        let child_node = &layout.pages[0].nodes[0];
+        // hAlign="left" in rl-tb → x=0
+        assert_eq!(child_node.rect.x, 0.0);
     }
 }

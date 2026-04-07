@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use crate::text::FontMetrics;
-use crate::types::{BoxModel, LayoutStrategy, VerticalAlign};
+use crate::types::{BoxModel, LayoutStrategy, TextAlign, VerticalAlign};
 
 /// A unique identifier for a form node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -454,6 +454,8 @@ pub struct FormNodeStyle {
     pub inset_right_pt: Option<f64>,
     /// Vertical text alignment (XFA `<para vAlign>`).
     pub v_align: Option<VerticalAlign>,
+    /// Horizontal alignment for layout positioning (XFA `<para hAlign>`, §8.3).
+    pub h_align: Option<TextAlign>,
     /// Border corner radius in points (XFA `<border><corner radius>`).
     pub border_radius_pt: Option<f64>,
     /// Border edge stroke style (XFA `<border><edge stroke>`).
@@ -494,6 +496,7 @@ impl Default for FormNodeStyle {
             inset_left_pt: None,
             inset_right_pt: None,
             v_align: None,
+            h_align: None,
             border_radius_pt: None,
             border_style: None,
             border_edges: [true, true, true, true],
