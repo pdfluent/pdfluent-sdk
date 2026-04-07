@@ -155,7 +155,14 @@ impl<'a> FormMerger<'a> {
             }
         };
 
-        let meta = parse_node_meta(elem);
+        let mut meta = parse_node_meta(elem);
+        // For draw elements with exData HTML: extract font-weight from HTML
+        // styles when the XFA <font> element doesn't specify weight.
+        if tag == "draw" && meta.style.font_weight.is_none() {
+            if let Some(weight) = extract_exdata_font_weight(elem) {
+                meta.style.font_weight = Some(weight);
+            }
+        }
         let id = self.form_tree.add_node_with_meta(node, meta);
         Ok((id, trailing_info))
     }
@@ -757,6 +764,32 @@ fn extract_exdata_font_size(elem: Node<'_, '_>) -> Option<f64> {
                             return Some(size);
                         }
                     }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract the dominant `font-weight` from `<exData contentType="text/html">` styles.
+/// Returns `Some("bold")` when the first styled `<p>` or `<span>` has `font-weight:bold`.
+fn extract_exdata_font_weight(elem: Node<'_, '_>) -> Option<String> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let ex = find_first_child_by_name(value, "exData")?;
+    for desc in ex.descendants() {
+        if !desc.is_element() {
+            continue;
+        }
+        let style = desc.attribute("style")?;
+        for part in style.split(';') {
+            let part = part.trim();
+            if let Some(val) = part
+                .strip_prefix("font-weight:")
+                .or_else(|| part.strip_prefix("font-weight :"))
+            {
+                let val = val.trim();
+                if val == "bold" {
+                    return Some("bold".to_string());
                 }
             }
         }
