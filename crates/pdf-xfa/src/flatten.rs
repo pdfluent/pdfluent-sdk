@@ -324,13 +324,16 @@ fn xfa_flatten_inner(
     // Preserve pre-rendered PDF page content when:
     // 1. Explicit static form (baseProfile="interactiveForms"), OR
     // 2. Pages have substantial pre-rendered content AND the XFA layout
-    //    produces the same page count — the static content is authoritative,
-    //    not a placeholder. Replacing it with XFA re-rendering causes subtle
+    //    produces at least as many pages as the original — the static content
+    //    is authoritative. Replacing it with XFA re-rendering causes subtle
     //    SSIM regressions due to font/rendering differences.
-    // When page counts differ (#744), the static content is a preview that
-    // must be replaced by the XFA engine's output.
-    let preserve_static = has_static_content
-        && (is_static_form || n_layout == n_existing);
+    //    When n_layout >= n_existing, the extra layout pages are template-defined
+    //    page-level subforms with no real data content; preserving the original
+    //    static pages matches pdfrest/Adobe behavior.
+    // When n_layout < n_existing (#744), the original carries pre-rendered static
+    // pages that exceed the dynamic page count — those excess pages are deleted.
+    let preserve_static =
+        has_static_content && (is_static_form || n_layout >= n_existing);
 
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
@@ -450,62 +453,141 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>)> {
             Some(n) => String::from_utf8_lossy(n).to_string(),
             None => continue,
         };
-        let fd_id = match dict.get(b"FontDescriptor").ok() {
-            Some(Object::Reference(id)) => *id,
-            _ => continue,
-        };
-        let fd = match doc.get_dictionary(fd_id) {
-            Ok(d) => d,
-            Err(_) => continue,
-        };
-        let font_stream_id = fd
-            .get(b"FontFile2")
-            .or_else(|_| fd.get(b"FontFile3"))
-            .or_else(|_| fd.get(b"FontFile"))
-            .ok()
-            .and_then(|o| o.as_reference().ok());
-        let Some(stream_id) = font_stream_id else {
-            continue;
-        };
-        if !seen.insert(stream_id) {
+
+        // First try direct FontDescriptor path (simple TrueType/OpenType fonts)
+        if let Some((stream_id, data)) = extract_font_from_direct_fd(doc, &dict, &base_font) {
+            if seen.insert(stream_id) {
+                store_font_data(&mut fonts, &base_font, data);
+            }
             continue;
         }
-        let Ok(stream) = doc.get_object(stream_id).and_then(|o| o.as_stream()) else {
-            continue;
-        };
-        let data = stream
-            .get_plain_content()
-            .unwrap_or_else(|_| stream.content.clone());
-        if !data.is_empty() {
-            let clean_name = if let Some(pos) = base_font.find('+') {
-                base_font[pos + 1..].to_string()
-            } else {
-                base_font.clone()
-            };
-            // Store under the PostScript name (subset prefix already stripped)
-            fonts.push((clean_name.clone(), data.clone()));
-            // Also store under the font family name from the name table,
-            // since XFA templates use family names (e.g. "Arial") while PDF
-            // BaseFont uses PostScript names (e.g. "ArialMT").
-            if let Ok(face) = ttf_parser::Face::parse(&data, 0) {
-                for name_record in face.names() {
-                    if name_record.name_id == ttf_parser::name_id::FAMILY {
-                        if let Some(family) = name_record.to_string() {
-                            if family != clean_name {
-                                fonts.push((family, data.clone()));
-                            }
-                        }
-                    }
-                }
-            }
-            // Common PostScript-to-family normalization as fallback
-            let normalized = ps_name_to_family(&clean_name);
-            if normalized != clean_name {
-                fonts.push((normalized, data.clone()));
+
+        // For CIDFont Type0: also check DescendantFonts path
+        // CIDFont fonts store their font data in /DescendantFonts[n]/FontDescriptor/FontFile*
+        if let Some((stream_id, data)) = extract_cidfont_data(doc, &dict, &base_font, &seen) {
+            if seen.insert(stream_id) {
+                store_font_data(&mut fonts, &base_font, data);
             }
         }
     }
     fonts
+}
+
+/// Extract font data from a direct FontDescriptor (FontFile2/3/1 in FontDescriptor).
+fn extract_font_from_direct_fd(
+    doc: &Document,
+    font_dict: &lopdf::Dictionary,
+    _base_font: &str,
+) -> Option<(lopdf::ObjectId, Vec<u8>)> {
+    let fd_id = font_dict.get(b"FontDescriptor").ok()?.as_reference().ok()?;
+    let fd = doc.get_dictionary(fd_id).ok()?;
+
+    let font_stream_id = fd
+        .get(b"FontFile2")
+        .or_else(|_| fd.get(b"FontFile3"))
+        .or_else(|_| fd.get(b"FontFile"))
+        .ok()?
+        .as_reference()
+        .ok()?;
+
+    let stream = doc
+        .get_object(font_stream_id)
+        .and_then(|o| o.as_stream())
+        .ok()?;
+
+    let data = stream
+        .get_plain_content()
+        .unwrap_or_else(|_| stream.content.clone());
+
+    if data.is_empty() {
+        return None;
+    }
+
+    Some((font_stream_id, data))
+}
+
+/// Extract font data from CIDFont Type0's DescendantFonts path.
+///
+/// CIDFont Type0 fonts have their font data in:
+///   /DescendantFonts[n] /CIDFont /FontDescriptor /FontFile*
+fn extract_cidfont_data(
+    doc: &Document,
+    font_dict: &lopdf::Dictionary,
+    _base_font: &str,
+    seen: &std::collections::HashSet<lopdf::ObjectId>,
+) -> Option<(lopdf::ObjectId, Vec<u8>)> {
+    // Check if this is a Type0 (composite) font by looking for DescendantFonts
+    let descendants = font_dict.get(b"DescendantFonts").ok()?.as_array().ok()?;
+
+    // Iterate through descendant CIDFonts
+    for desc_ref in descendants {
+        let desc_id = desc_ref.as_reference().ok()?;
+        let desc_dict = doc.get_dictionary(desc_id).ok()?;
+
+        // Check if this descendant is a CIDFont (has FontDescriptor)
+        let fd_id = desc_dict.get(b"FontDescriptor").ok()?.as_reference().ok()?;
+        let fd = doc.get_dictionary(fd_id).ok()?;
+
+        // Try FontFile3 first (CFF font for CIDFontType0C), then FontFile2 (TrueType)
+        let font_stream_id = fd
+            .get(b"FontFile3")
+            .or_else(|_| fd.get(b"FontFile2"))
+            .or_else(|_| fd.get(b"FontFile"))
+            .ok()?
+            .as_reference()
+            .ok()?;
+
+        if seen.contains(&font_stream_id) {
+            continue;
+        }
+
+        let stream = doc
+            .get_object(font_stream_id)
+            .and_then(|o| o.as_stream())
+            .ok()?;
+
+        let data = stream
+            .get_plain_content()
+            .unwrap_or_else(|_| stream.content.clone());
+
+        if !data.is_empty() {
+            return Some((font_stream_id, data));
+        }
+    }
+    None
+}
+
+/// Store font data under multiple names (PostScript name, family name, normalized name).
+fn store_font_data(fonts: &mut Vec<(String, Vec<u8>)>, base_font: &str, data: Vec<u8>) {
+    let clean_name = if let Some(pos) = base_font.find('+') {
+        base_font[pos + 1..].to_string()
+    } else {
+        base_font.to_string()
+    };
+
+    // Store under the PostScript name (subset prefix already stripped)
+    fonts.push((clean_name.clone(), data.clone()));
+
+    // Also store under the font family name from the name table,
+    // since XFA templates use family names (e.g. "Arial") while PDF
+    // BaseFont uses PostScript names (e.g. "ArialMT").
+    if let Ok(face) = ttf_parser::Face::parse(&data, 0) {
+        for name_record in face.names() {
+            if name_record.name_id == ttf_parser::name_id::FAMILY {
+                if let Some(family) = name_record.to_string() {
+                    if family != clean_name {
+                        fonts.push((family, data.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Common PostScript-to-family normalization as fallback
+    let normalized = ps_name_to_family(&clean_name);
+    if normalized != clean_name {
+        fonts.push((normalized, data.clone()));
+    }
 }
 
 /// Convert a PostScript font name to its likely family name.
@@ -561,8 +643,7 @@ fn collect_template_font_entries(template_xml: &str) -> Vec<TemplateFontEntry> {
                     let name = typeface.to_string();
                     let weight = node.attribute("weight").map(|s| s.to_string());
                     let posture = node.attribute("posture").map(|s| s.to_string());
-                    let generic_family =
-                        node.attribute("genericFamily").map(|s| s.to_string());
+                    let generic_family = node.attribute("genericFamily").map(|s| s.to_string());
                     let key = font_variant_key(&name, weight.as_deref(), posture.as_deref());
                     if !name.is_empty() && seen.insert(key.to_lowercase()) {
                         entries.push(TemplateFontEntry {
@@ -846,10 +927,7 @@ fn is_corrupt_xfa_template(pdf_size: usize, template_xml: &str) -> bool {
             let root = doc.root_element();
             !root.children().any(|c| {
                 c.is_element()
-                    && matches!(
-                        c.tag_name().name(),
-                        "subform" | "pageSet" | "subformSet"
-                    )
+                    && matches!(c.tag_name().name(), "subform" | "pageSet" | "subformSet")
             })
         }
         Err(_) => true, // Unparseable template is corrupt.
