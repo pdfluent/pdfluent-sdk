@@ -10,7 +10,7 @@ use xfa_layout_engine::form::{
     ScriptLanguage,
 };
 
-const MAX_SCRIPT_PASSES: usize = 8;
+const MAX_SCRIPT_PASSES: usize = 3;
 
 pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize {
     let parents = build_parent_map(form, root_id);

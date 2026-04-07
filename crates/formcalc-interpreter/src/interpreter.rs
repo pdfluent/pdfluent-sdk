@@ -69,12 +69,20 @@ impl Env {
     }
 }
 
+/// Maximum instructions to execute before aborting (prevents infinite loops).
+const MAX_INSTRUCTIONS: u64 = 100_000;
+
+/// Maximum loop iterations before aborting.
+const MAX_LOOP_ITERATIONS: u64 = 10_000;
+
 /// The FormCalc interpreter.
 pub struct Interpreter {
     env: Env,
     /// Raw pointer to a SOM resolver, set during `exec_with_*`.
     /// SAFETY: only valid for the duration of the surrounding call.
     som_resolver: Option<*mut (dyn SomResolver + 'static)>,
+    /// Instruction counter for timeout detection.
+    instruction_count: u64,
 }
 
 impl Default for Interpreter {
@@ -88,7 +96,13 @@ impl Interpreter {
         Self {
             env: Env::new(),
             som_resolver: None,
+            instruction_count: 0,
         }
+    }
+
+    /// Reset the instruction counter. Called between script passes.
+    pub fn reset_counter(&mut self) {
+        self.instruction_count = 0;
     }
 
     /// Execute a list of expressions (a script) and return the last value.
@@ -129,7 +143,9 @@ impl Interpreter {
         // of the trait object to 'static for storage, but we guarantee it
         // never outlives the borrow.
         let ptr: *mut dyn SomResolver = resolver;
-        self.som_resolver = Some(unsafe { std::mem::transmute::<*mut dyn SomResolver, *mut (dyn SomResolver + 'static)>(ptr) });
+        self.som_resolver = Some(unsafe {
+            std::mem::transmute::<*mut dyn SomResolver, *mut (dyn SomResolver + 'static)>(ptr)
+        });
         let result = self.exec(exprs);
         self.som_resolver = None;
         result
@@ -137,6 +153,12 @@ impl Interpreter {
 
     /// Evaluate an expression and return its value.
     pub fn eval(&mut self, expr: &Expr) -> Result<Value> {
+        self.instruction_count += 1;
+        if self.instruction_count > MAX_INSTRUCTIONS {
+            return Err(FormCalcError::RuntimeError(
+                "instruction limit exceeded (possible infinite loop)".to_string(),
+            ));
+        }
         match self.eval_signal(expr)? {
             Signal::Value(v) | Signal::Return(v) => Ok(v),
             Signal::Break => Err(FormCalcError::RuntimeError(
@@ -296,10 +318,17 @@ impl Interpreter {
 
             Expr::While { condition, body } => {
                 let mut result = Value::Null;
+                let mut iterations: u64 = 0;
                 loop {
+                    if iterations >= MAX_LOOP_ITERATIONS {
+                        return Err(FormCalcError::RuntimeError(
+                            "while loop iteration limit exceeded".to_string(),
+                        ));
+                    }
                     if !self.eval(condition)?.to_bool() {
                         break;
                     }
+                    iterations += 1;
                     match self.exec_block(body)? {
                         Signal::Value(v) => result = v,
                         Signal::Return(v) => return Ok(Signal::Return(v)),
@@ -329,9 +358,16 @@ impl Interpreter {
 
                 let mut i = start_val;
                 let mut result = Value::Null;
+                let mut iterations: u64 = 0;
 
                 self.env.push_scope();
                 loop {
+                    if iterations >= MAX_LOOP_ITERATIONS {
+                        self.env.pop_scope();
+                        return Err(FormCalcError::RuntimeError(
+                            "for loop iteration limit exceeded".to_string(),
+                        ));
+                    }
                     if *ascending && i > end_val {
                         break;
                     }
@@ -339,6 +375,7 @@ impl Interpreter {
                         break;
                     }
                     self.env.declare(var, Value::Number(i));
+                    iterations += 1;
 
                     match self.exec_block(body)? {
                         Signal::Value(v) => result = v,
@@ -361,15 +398,17 @@ impl Interpreter {
             }
 
             Expr::Foreach { var, list, body } => {
-                // For now, foreach only works with comma-separated string values
                 let list_val = self.eval(list)?;
-                let items: Vec<&str> = list_val.to_string_val().leak().split(',').collect();
+                let items: Vec<String> = list_val
+                    .to_string_val()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
                 let mut result = Value::Null;
 
                 self.env.push_scope();
-                for item in items {
-                    self.env
-                        .declare(var, Value::String(item.trim().to_string()));
+                for item in &items {
+                    self.env.declare(var, Value::String(item.clone()));
                     match self.exec_block(body)? {
                         Signal::Value(v) => result = v,
                         Signal::Return(v) => {
