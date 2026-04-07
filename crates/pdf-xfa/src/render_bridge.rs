@@ -1566,6 +1566,55 @@ fn render_text(
     );
     reset_synthetic_bold_ops(node_style, font_ref, ops);
     ops.extend_from_slice(b"ET\n");
+    let text_x = x + p;
+    let text_y = pdf_y + p;
+    let line_thickness = (fs * 0.05).max(0.5);
+    if node_style.underline {
+        let desc_pt =
+            if let (Some(desc), Some(upem)) = (metrics.resolved_descender, metrics.resolved_upem) {
+                if upem > 0 {
+                    desc as f64 / upem as f64 * fs
+                } else {
+                    fs * 0.2
+                }
+            } else {
+                fs * 0.2
+            };
+        let underline_y = text_y - desc_pt;
+        let text_w = metrics.measure_width(text);
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\nET\n",
+                line_thickness,
+                tc[0],
+                tc[1],
+                tc[2],
+                text_x,
+                underline_y,
+                text_x + text_w,
+                underline_y,
+            ),
+        );
+    }
+    if node_style.line_through {
+        let mid_y = text_y + fs * 0.5 - asc_pt * 0.1;
+        let text_w = metrics.measure_width(text);
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\nET\n",
+                line_thickness,
+                tc[0],
+                tc[1],
+                tc[2],
+                text_x,
+                mid_y,
+                text_x + text_w,
+                mid_y,
+            ),
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

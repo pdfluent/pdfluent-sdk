@@ -458,6 +458,7 @@ pub struct RichTextSpan {
     pub font_style: Option<String>,
     pub text_color: Option<(u8, u8, u8)>,
     pub underline: bool,
+    pub line_through: bool,
 }
 
 /// Visual style properties for a form node.
@@ -526,6 +527,10 @@ pub struct FormNodeStyle {
     pub check_button_mark: Option<String>,
     /// Rich text spans parsed from `<exData contentType="text/html">` XHTML.
     pub rich_text_spans: Option<Vec<RichTextSpan>>,
+    /// Font underline (XFA `<font underline="1">`).
+    pub underline: bool,
+    /// Font line-through / strikethrough (XFA `<font lineThrough="1">`).
+    pub line_through: bool,
 }
 
 impl Default for FormNodeStyle {
@@ -563,6 +568,8 @@ impl Default for FormNodeStyle {
             caption_reserve: None,
             check_button_mark: None,
             rich_text_spans: None,
+            underline: false,
+            line_through: false,
         }
     }
 }
