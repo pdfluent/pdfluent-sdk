@@ -361,22 +361,40 @@ fn render_nodes(
                 text_align,
                 font_family,
             } => {
-                if let Some(ref spans) = node.style.rich_text_spans {
-                    render_rich_multiline(
-                        val_x,
-                        val_w,
-                        lines,
-                        first_line_of_para,
-                        spans,
-                        *font_size,
-                        *text_align,
-                        *font_family,
-                        mapper,
-                        abs_y + val_y_offset,
-                        &node.style,
-                        &node_config,
-                        ops,
-                    );
+                // Only use the rich-text renderer when there are multiple
+                // spans with distinct formatting. Single-span rich text
+                // (or spans with no style overrides) renders better via
+                // the standard multiline path which has more mature
+                // positioning logic.
+                let use_rich = node.style.rich_text_spans.as_ref().map_or(false, |spans| {
+                    spans.len() > 1
+                        || spans.iter().any(|s| {
+                            s.font_size.is_some()
+                                || s.font_family.is_some()
+                                || s.font_weight.is_some()
+                                || s.font_style.is_some()
+                                || s.text_color.is_some()
+                                || s.underline
+                        })
+                });
+                if use_rich {
+                    if let Some(ref spans) = node.style.rich_text_spans {
+                        render_rich_multiline(
+                            val_x,
+                            val_w,
+                            lines,
+                            first_line_of_para,
+                            spans,
+                            *font_size,
+                            *text_align,
+                            *font_family,
+                            mapper,
+                            abs_y + val_y_offset,
+                            &node.style,
+                            &node_config,
+                            ops,
+                        );
+                    }
                 } else {
                     render_multiline(
                         val_x,
@@ -972,7 +990,10 @@ fn draw_check_mark(
 ) {
     write_ops(
         ops,
-        format_args!("{:.3} {:.3} {:.3} RG\n{:.3} {:.3} {:.3} rg\n", color[0], color[1], color[2], color[0], color[1], color[2]),
+        format_args!(
+            "{:.3} {:.3} {:.3} RG\n{:.3} {:.3} {:.3} rg\n",
+            color[0], color[1], color[2], color[0], color[1], color[2]
+        ),
     );
     let cx = x + w / 2.0;
     let cy = y + h / 2.0;
@@ -981,12 +1002,18 @@ fn draw_check_mark(
             // Checkmark: three line segments
             let lw = (w.min(h) * 0.08).max(0.5);
             write_ops(ops, format_args!("{:.2} w\n", lw));
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\nS\n",
-                x + m, cy,
-                cx - m * 0.3, y + m,
-                x + w - m, y + h - m,
-            ));
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\nS\n",
+                    x + m,
+                    cy,
+                    cx - m * 0.3,
+                    y + m,
+                    x + w - m,
+                    y + h - m,
+                ),
+            );
         }
         "circle" => {
             let r = (w.min(h) / 2.0 - m).max(1.0);
@@ -1002,41 +1029,75 @@ fn draw_check_mark(
         }
         "diamond" => {
             let d = (w.min(h) / 2.0 - m).max(1.0);
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\n{:.2} {:.2} l\nf\n",
-                cx, cy + d, cx - d, cy, cx, cy - d, cx + d, cy,
-            ));
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\n{:.2} {:.2} l\nf\n",
+                    cx,
+                    cy + d,
+                    cx - d,
+                    cy,
+                    cx,
+                    cy - d,
+                    cx + d,
+                    cy,
+                ),
+            );
         }
         "square" => {
             let s = (w.min(h) - 2.0 * m).max(1.0);
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} {:.2} {:.2} re\nf\n",
-                x + m, y + m, s, s,
-            ));
+            write_ops(
+                ops,
+                format_args!("{:.2} {:.2} {:.2} {:.2} re\nf\n", x + m, y + m, s, s,),
+            );
         }
         "star" => {
             // Simplified 5-point star via cross pattern
             let lw = (w.min(h) * 0.08).max(0.5);
             write_ops(ops, format_args!("{:.2} w\n", lw));
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
-                x + m, y + m, x + w - m, y + h - m,
-                x + w - m, y + m, x + m, y + h - m,
-            ));
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
-                cx, y + m * 0.5, cx, y + h - m * 0.5,
-            ));
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                    x + m,
+                    y + m,
+                    x + w - m,
+                    y + h - m,
+                    x + w - m,
+                    y + m,
+                    x + m,
+                    y + h - m,
+                ),
+            );
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                    cx,
+                    y + m * 0.5,
+                    cx,
+                    y + h - m * 0.5,
+                ),
+            );
         }
         _ => {
             // Default "cross"
             let lw = (w.min(h) * 0.08).max(0.5);
             write_ops(ops, format_args!("{:.2} w\n", lw));
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
-                x + m, y + m, x + w - m, y + h - m,
-                x + w - m, y + m, x + m, y + h - m,
-            ));
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                    x + m,
+                    y + m,
+                    x + w - m,
+                    y + h - m,
+                    x + w - m,
+                    y + m,
+                    x + m,
+                    y + h - m,
+                ),
+            );
         }
     }
 }
