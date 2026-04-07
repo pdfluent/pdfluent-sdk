@@ -352,7 +352,7 @@ fn render_nodes(
                 ),
             },
             LayoutContent::Text(text) => {
-                render_text(abs_x, pdf_y, text, &node.style, &node_config, ops)
+                render_text(abs_x, pdf_y, w, h, text, &node.style, &node_config, ops)
             }
             LayoutContent::WrappedText {
                 lines,
@@ -382,6 +382,7 @@ fn render_nodes(
                         render_rich_multiline(
                             val_x,
                             val_w,
+                            val_h,
                             lines,
                             first_line_of_para,
                             spans,
@@ -400,6 +401,7 @@ fn render_nodes(
                         val_x,
                         val_pdf_y,
                         val_w,
+                        val_h,
                         lines,
                         first_line_of_para,
                         *font_size,
@@ -1516,6 +1518,8 @@ fn render_signature(
 fn render_text(
     x: f64,
     pdf_y: f64,
+    _w: f64,
+    h: f64,
     text: &str,
     node_style: &FormNodeStyle,
     config: &XfaRenderConfig,
@@ -1545,8 +1549,14 @@ fn render_text(
         .unwrap_or(config.text_color);
     let metrics = build_font_metrics(fs, font_family, node_style, config);
     let asc_pt = ascender_pt(&metrics, fs);
+    let line_h = metrics.line_height_pt();
     let idh_metrics = lookup_font_metrics(node_style, config);
     let encoded = pdf_encode_text(text, idh_metrics);
+    let text_y = match node_style.v_align {
+        Some(VerticalAlign::Middle) => pdf_y + (h - line_h) / 2.0,
+        Some(VerticalAlign::Bottom) => pdf_y + p,
+        _ => pdf_y + h - p - asc_pt,
+    };
     write_ops(
         ops,
         format_args!(
@@ -1560,7 +1570,7 @@ fn render_text(
         format_args!(
             "{:.2} {:.2} Td\n{} Tj\n",
             x + p,
-            pdf_y + p - asc_pt * 0.2,
+            text_y,
             encoded
         ),
     );
@@ -1622,6 +1632,7 @@ fn render_multiline(
     x: f64,
     _pdf_y: f64,
     container_width: f64,
+    container_height: f64,
     lines: &[String],
     first_line_of_para: &[bool],
     font_size: f64,
@@ -1672,7 +1683,17 @@ fn render_multiline(
     } else {
         font_size
     };
-    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + ascender_pt, 0.0);
+    let total_text_h = lines.len() as f64 * line_height;
+    let first_line_y_xfa = match node_style.v_align {
+        Some(VerticalAlign::Middle) => {
+            abs_y_xfa + space_above + (container_height - space_above - total_text_h) / 2.0 + ascender_pt
+        }
+        Some(VerticalAlign::Bottom) => {
+            abs_y_xfa + container_height - total_text_h + ascender_pt
+        }
+        _ => abs_y_xfa + space_above + ascender_pt,
+    };
+    let first_line_pdf_y = mapper.xfa_to_pdf_y(first_line_y_xfa, 0.0);
     let content_w = (container_width - inset_left - inset_right - pad_left - pad_right).max(0.0);
     let idh_metrics = lookup_font_metrics(node_style, config);
     let mut prev_x = x + inset_left + pad_left;
@@ -1711,6 +1732,7 @@ fn render_multiline(
 fn render_rich_multiline(
     x: f64,
     container_width: f64,
+    container_height: f64,
     lines: &[String],
     first_line_of_para: &[bool],
     spans: &[RichTextSpan],
@@ -1747,7 +1769,17 @@ fn render_rich_multiline(
     } else {
         font_size
     };
-    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + asc_pt, 0.0);
+    let total_text_h = lines.len() as f64 * line_height;
+    let first_line_y_xfa = match node_style.v_align {
+        Some(VerticalAlign::Middle) => {
+            abs_y_xfa + space_above + (container_height - space_above - total_text_h) / 2.0 + asc_pt
+        }
+        Some(VerticalAlign::Bottom) => {
+            abs_y_xfa + container_height - total_text_h + asc_pt
+        }
+        _ => abs_y_xfa + space_above + asc_pt,
+    };
+    let first_line_pdf_y = mapper.xfa_to_pdf_y(first_line_y_xfa, 0.0);
     let content_w = (container_width - inset_left - inset_right - pad_left - pad_right).max(0.0);
     let line_segments = map_spans_to_lines(spans, lines);
 
