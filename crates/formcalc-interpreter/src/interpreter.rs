@@ -124,11 +124,12 @@ impl Interpreter {
         exprs: &[Expr],
         resolver: &mut dyn SomResolver,
     ) -> Result<Value> {
-        #[allow(clippy::unnecessary_cast)]
-        {
-            self.som_resolver =
-                Some(resolver as *mut dyn SomResolver as *mut (dyn SomResolver + 'static));
-        }
+        // SAFETY: The raw pointer is only used for the duration of this call
+        // and is cleared before returning. The transmute extends the lifetime
+        // of the trait object to 'static for storage, but we guarantee it
+        // never outlives the borrow.
+        let ptr: *mut dyn SomResolver = resolver;
+        self.som_resolver = Some(unsafe { std::mem::transmute::<*mut dyn SomResolver, *mut (dyn SomResolver + 'static)>(ptr) });
         let result = self.exec(exprs);
         self.som_resolver = None;
         result
