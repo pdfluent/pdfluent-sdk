@@ -333,6 +333,7 @@ fn render_nodes(
             }
             LayoutContent::WrappedText {
                 lines,
+                first_line_of_para,
                 font_size,
                 text_align,
                 font_family,
@@ -341,6 +342,7 @@ fn render_nodes(
                 val_pdf_y,
                 val_w,
                 lines,
+                first_line_of_para,
                 *font_size,
                 *text_align,
                 *font_family,
@@ -1336,6 +1338,7 @@ fn render_multiline(
     _pdf_y: f64,
     container_width: f64,
     lines: &[String],
+    first_line_of_para: &[bool],
     font_size: f64,
     text_align: TextAlign,
     font_family: FontFamily,
@@ -1352,8 +1355,11 @@ fn render_multiline(
     let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
     let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
     let space_above = node_style.space_above_pt.unwrap_or(0.0);
+    let text_indent = node_style.text_indent_pt.unwrap_or(0.0);
     let font_metrics = build_font_metrics(font_size, font_family, node_style, config);
-    let line_height = font_metrics.line_height_pt();
+    let line_height = node_style
+        .line_height_pt
+        .unwrap_or_else(|| font_metrics.line_height_pt());
     let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
     let tc = node_style
         .text_color
@@ -1384,12 +1390,16 @@ fn render_multiline(
     let idh_metrics = lookup_font_metrics(node_style, config);
     let mut prev_x = x + pad_left;
     for (i, line) in lines.iter().enumerate() {
+        let is_para_start = first_line_of_para.get(i).copied().unwrap_or(false);
+        let indent_offset = if is_para_start { text_indent } else { 0.0 };
         let line_y = first_line_pdf_y - (i as f64 * line_height);
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
-            TextAlign::Center => x + pad_left + ((content_w - line_w) / 2.0).max(0.0),
+            TextAlign::Center => {
+                x + pad_left + indent_offset + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
+            }
             TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
-            _ => x + pad_left,
+            _ => x + pad_left + indent_offset,
         };
         if i == 0 {
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));

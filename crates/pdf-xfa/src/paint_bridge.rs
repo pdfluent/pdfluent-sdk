@@ -270,6 +270,7 @@ fn emit_node_commands(
             font_size,
             text_align,
             font_family,
+            ..
         } => {
             let fs = *font_size;
             let line_height = fs * 1.2;
@@ -845,6 +846,7 @@ mod tests {
                 name: "memo".into(),
                 content: LayoutContent::WrappedText {
                     lines: vec!["Line 1".into(), "Line 2".into()],
+                    first_line_of_para: vec![true, false],
                     font_size: 10.0,
                     text_align: xfa_layout_engine::types::TextAlign::Left,
                     font_family: xfa_layout_engine::text::FontFamily::SansSerif,
