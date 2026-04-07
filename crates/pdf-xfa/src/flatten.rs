@@ -145,6 +145,13 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         }
     };
 
+    // 1b. Detect corrupt/minimal XFA: tiny PDFs (<1KB) whose template has no
+    //     real content (no <subform> or <pageSet> children) produce blank output.
+    //     Fall back to static page copy so the original pages are preserved.
+    if is_corrupt_xfa_template(pdf_bytes.len(), &template_xml) {
+        return static_fallback(pdf_bytes);
+    }
+
     // 2. Try XFA template → layout → render pipeline.
     //    If this fails (parse error, empty template, layout 0 pages, lopdf error),
     //    fall back to preserving the existing page content with AcroForm stripped.
@@ -796,6 +803,32 @@ fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
         return Ok(pdf_bytes.to_vec());
     }
     Ok(out)
+}
+
+/// Detect corrupt or minimal XFA templates that cannot produce useful output.
+///
+/// Tiny PDFs (<1KB) with XFA templates that lack essential elements (subform,
+/// pageSet) are corrupt stubs. Attempting to flatten these produces blank pages
+/// instead of preserving the original page content.
+fn is_corrupt_xfa_template(pdf_size: usize, template_xml: &str) -> bool {
+    // Only apply to small PDFs — larger files may have legitimate sparse templates.
+    if pdf_size >= 1024 {
+        return false;
+    }
+    // A valid XFA template must parse and contain at least one subform or pageSet.
+    match roxmltree::Document::parse(template_xml) {
+        Ok(doc) => {
+            let root = doc.root_element();
+            !root.children().any(|c| {
+                c.is_element()
+                    && matches!(
+                        c.tag_name().name(),
+                        "subform" | "pageSet" | "subformSet"
+                    )
+            })
+        }
+        Err(_) => true, // Unparseable template is corrupt.
+    }
 }
 
 // ---------------------------------------------------------------------------
