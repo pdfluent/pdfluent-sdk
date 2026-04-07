@@ -1160,6 +1160,7 @@ struct InheritedStyle {
     font_style: Option<String>,
     text_color: Option<(u8, u8, u8)>,
     underline: bool,
+    line_through: bool,
 }
 
 impl InheritedStyle {
@@ -1199,8 +1200,11 @@ impl InheritedStyle {
             } else if let Some(val) = strip_css_prop(part, "text-decoration") {
                 if val.contains("underline") {
                     child.underline = true;
+                } else if val.contains("line-through") {
+                    child.line_through = true;
                 } else if val == "none" {
                     child.underline = false;
+                    child.line_through = false;
                 }
             } else if let Some(val) = strip_css_prop(part, "color") {
                 if let Some(rgb) = parse_css_color(val) {
@@ -1220,6 +1224,7 @@ impl InheritedStyle {
             font_style: self.font_style.clone(),
             text_color: self.text_color,
             underline: self.underline,
+            line_through: self.line_through,
         }
     }
 }
@@ -1255,6 +1260,7 @@ fn parse_exdata_rich_text_spans(elem: Node<'_, '_>) -> Option<Vec<RichTextSpan>>
                     font_style: None,
                     text_color: None,
                     underline: false,
+                    line_through: false,
                 });
             }
             first_para = false;
@@ -1314,6 +1320,7 @@ fn collect_inline_spans(
                         font_style: None,
                         text_color: None,
                         underline: false,
+                        line_through: false,
                     });
                 }
                 "span" => {
@@ -1638,7 +1645,11 @@ fn collect_items_texts(items_elem: Node<'_, '_>) -> Vec<String> {
         .filter(|n| n.is_element())
         .filter_map(|child| {
             let txt = child.text().unwrap_or("").trim().to_string();
-            if txt.is_empty() { None } else { Some(txt) }
+            if txt.is_empty() {
+                None
+            } else {
+                Some(txt)
+            }
         })
         .collect()
 }
@@ -1812,6 +1823,14 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             if let Some(v) = parse_letter_spacing(ls_str, style.font_size.unwrap_or(10.0)) {
                 style.letter_spacing_pt = Some(v);
             }
+        }
+        // XFA Spec 3.3 §2.6 — underline="1" (single) or "2" (double)
+        if let Some(underline_str) = attr(font, "underline") {
+            style.underline = underline_str == "1" || underline_str == "2";
+        }
+        // XFA Spec 3.3 §2.6 — lineThrough="1"
+        if let Some(line_through_str) = attr(font, "lineThrough") {
+            style.line_through = line_through_str == "1";
         }
     }
 
