@@ -231,6 +231,8 @@ static COURIER_WIDTHS: [u16; 128] = [
 pub struct TextLayout {
     /// The wrapped lines of text.
     pub lines: Vec<String>,
+    /// Per-line flag: `true` when the line is the first line of a paragraph.
+    pub first_line_of_para: Vec<bool>,
     /// Total size of the text block.
     pub size: Size,
 }
@@ -239,10 +241,17 @@ pub struct TextLayout {
 ///
 /// Uses a simple word-wrapping algorithm: breaks at whitespace boundaries.
 /// Returns the lines and the total bounding box.
-pub fn wrap_text(text: &str, max_width: f64, font: &FontMetrics) -> TextLayout {
+pub fn wrap_text(
+    text: &str,
+    max_width: f64,
+    font: &FontMetrics,
+    text_indent: f64,
+    line_height_override: Option<f64>,
+) -> TextLayout {
     if text.is_empty() {
         return TextLayout {
             lines: vec![],
+            first_line_of_para: vec![],
             size: Size {
                 width: 0.0,
                 height: 0.0,
@@ -251,20 +260,24 @@ pub fn wrap_text(text: &str, max_width: f64, font: &FontMetrics) -> TextLayout {
     }
 
     let mut lines = Vec::new();
+    let mut first_line_of_para = Vec::new();
     let mut max_line_width = 0.0_f64;
 
     for paragraph in text.split('\n') {
         if paragraph.is_empty() {
             lines.push(String::new());
+            first_line_of_para.push(true);
             continue;
         }
 
         let words: Vec<&str> = paragraph.split_whitespace().collect();
         if words.is_empty() {
             lines.push(String::new());
+            first_line_of_para.push(true);
             continue;
         }
 
+        let mut is_first_line = true;
         let mut current_line = String::new();
         let mut current_width = 0.0;
 
@@ -276,10 +289,19 @@ pub fn wrap_text(text: &str, max_width: f64, font: &FontMetrics) -> TextLayout {
                 font.measure_width(" ")
             };
 
-            if current_width + space_width + word_width > max_width && !current_line.is_empty() {
+            let effective_max = if is_first_line {
+                (max_width - text_indent).max(0.0)
+            } else {
+                max_width
+            };
+
+            if current_width + space_width + word_width > effective_max && !current_line.is_empty()
+            {
                 // Wrap to new line
                 max_line_width = max_line_width.max(current_width);
                 lines.push(current_line);
+                first_line_of_para.push(is_first_line);
+                is_first_line = false;
                 current_line = word.to_string();
                 current_width = word_width;
             } else {
@@ -295,13 +317,16 @@ pub fn wrap_text(text: &str, max_width: f64, font: &FontMetrics) -> TextLayout {
         if !current_line.is_empty() {
             max_line_width = max_line_width.max(current_width);
             lines.push(current_line);
+            first_line_of_para.push(is_first_line);
         }
     }
 
-    let height = lines.len() as f64 * font.line_height_pt();
+    let lh = line_height_override.unwrap_or_else(|| font.line_height_pt());
+    let height = lines.len() as f64 * lh;
 
     TextLayout {
         lines,
+        first_line_of_para,
         size: Size {
             width: max_line_width,
             height,
@@ -428,7 +453,7 @@ mod tests {
     #[test]
     fn wrap_text_no_wrap_needed() {
         let f = FontMetrics::default();
-        let result = wrap_text("Short", 200.0, &f);
+        let result = wrap_text("Short", 200.0, &f, 0.0, None);
         assert_eq!(result.lines.len(), 1);
         assert_eq!(result.lines[0], "Short");
     }
@@ -436,7 +461,7 @@ mod tests {
     #[test]
     fn wrap_text_preserves_newlines() {
         let f = FontMetrics::default();
-        let result = wrap_text("Line 1\nLine 2", 200.0, &f);
+        let result = wrap_text("Line 1\nLine 2", 200.0, &f, 0.0, None);
         assert_eq!(result.lines.len(), 2);
         assert_eq!(result.lines[0], "Line 1");
         assert_eq!(result.lines[1], "Line 2");
@@ -445,7 +470,7 @@ mod tests {
     #[test]
     fn wrap_text_empty_string() {
         let f = FontMetrics::default();
-        let result = wrap_text("", 100.0, &f);
+        let result = wrap_text("", 100.0, &f, 0.0, None);
         assert_eq!(result.lines.len(), 0);
         assert_eq!(result.size.height, 0.0);
     }
@@ -486,7 +511,7 @@ mod tests {
             typeface: FontFamily::Serif,
             ..Default::default()
         };
-        let result = wrap_text("Given Name (First Name)", 140.0, &f);
+        let result = wrap_text("Given Name (First Name)", 140.0, &f, 0.0, None);
         assert_eq!(
             result.lines.len(),
             1,
