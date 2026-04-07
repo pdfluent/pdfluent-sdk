@@ -38,13 +38,9 @@ pub struct LayoutDom {
     pub pages: Vec<LayoutPage>,
 }
 
-/// Maximum number of pages to prevent pagination explosion.
-/// XFA templates with unbounded repeat subforms can otherwise cause
-/// thousands of pages to be generated. (#729)
-///
-/// Set high enough to accommodate legitimately large forms (some real-world
-/// XFA forms produce 100-200 pages in Adobe) while still catching runaway
-/// pagination loops.
+/// Absolute maximum number of pages to prevent pagination explosion.
+/// Used as a hard upper bound; the dynamic limit from
+/// `estimate_page_limit` is preferred. (#729, #764)
 const MAX_PAGES: usize = 500;
 
 /// A single page in the layout output.
@@ -154,11 +150,12 @@ impl<'a> LayoutEngine<'a> {
             if root_node.layout == LayoutStrategy::TopToBottom {
                 // TB layout supports pagination: split content across pages
                 let mut remaining = content_queued;
+                let page_limit = self.estimate_page_limit(&remaining, page_h);
                 while !remaining.is_empty() {
-                    if pages.len() >= MAX_PAGES {
+                    if pages.len() >= page_limit {
                         eprintln!(
-                            "WARNING: Max page limit ({}) reached, truncating layout for {}",
-                            MAX_PAGES, root_node.name
+                            "WARNING: Page limit ({}) reached, truncating layout for {}",
+                            page_limit, root_node.name
                         );
                         break;
                     }
@@ -231,11 +228,15 @@ impl<'a> LayoutEngine<'a> {
             // Overflow: repeat page templates until all content is placed.
             if !remaining.is_empty() {
                 let last_idx = page_areas.len() - 1;
+                let overflow_ca = primary_content_area(&page_areas[last_idx]);
+                // Dynamic page limit: estimated pages for remaining content + already placed.
+                let page_limit =
+                    self.estimate_page_limit(&remaining, overflow_ca.height) + pages.len();
                 while !remaining.is_empty() {
-                    if pages.len() >= MAX_PAGES {
+                    if pages.len() >= page_limit {
                         eprintln!(
-                            "WARNING: Max page limit ({}) reached, truncating layout overflow for {}",
-                            MAX_PAGES, root_node.name
+                            "WARNING: Page limit ({}) reached, truncating layout overflow for {}",
+                            page_limit, root_node.name
                         );
                         break;
                     }
@@ -278,6 +279,28 @@ impl<'a> LayoutEngine<'a> {
     // -------------------------------------------------------------------
     // Helper methods for queued/hidden-aware pagination
     // -------------------------------------------------------------------
+
+    /// Estimate a dynamic page limit based on total content height vs page
+    /// content area height.  Returns `min(estimated * 2, MAX_PAGES)` with a
+    /// floor of 10 so tiny forms still have room for splitting overhead. (#764)
+    fn estimate_page_limit(&self, content: &[QueuedNode], page_height: f64) -> usize {
+        if page_height <= 0.0 {
+            return MAX_PAGES;
+        }
+        let total_height: f64 = content
+            .iter()
+            .map(|qn| {
+                self.compute_extent_with_available_and_override(
+                    qn.id,
+                    None,
+                    qn.children_override.as_deref(),
+                )
+                .height
+            })
+            .sum();
+        let estimated = (total_height / page_height).ceil() as usize;
+        (estimated * 2).clamp(10, MAX_PAGES)
+    }
 
     /// Returns true if the layout nodes contain at least one visually rendered
     /// element (non-`None` content or a child with rendered content).
@@ -819,7 +842,21 @@ impl<'a> LayoutEngine<'a> {
     /// overflows the page content area (#736).
     fn can_split(&self, id: FormNodeId) -> bool {
         let node = self.form.get(id);
-        if node.children.is_empty() || node.box_model.height.is_some() {
+        if node.children.is_empty() {
+            return false;
+        }
+        if let Some(explicit_h) = node.box_model.height {
+            // TB subforms with explicit height: allow splitting only when
+            // content actually overflows the declared height (#768).
+            if node.layout == LayoutStrategy::TopToBottom {
+                let extent = self.compute_extent(id);
+                return extent.height > explicit_h;
+            }
+            return false;
+        }
+        // (#764) Positioned subforms with a finite maxH are bounded — treat
+        // them like explicit-height nodes and don't split.
+        if node.layout == LayoutStrategy::Positioned && node.box_model.max_height < f64::MAX {
             return false;
         }
         matches!(
@@ -873,7 +910,14 @@ impl<'a> LayoutEngine<'a> {
         }
 
         let node_children = children_override.unwrap_or(&node.children);
-        let expanded_children = self.expand_occur(node_children);
+        // (#764) When children_override is set, the list already contains
+        // occur-expanded IDs from a previous split.  Re-expanding would
+        // duplicate children on every page, causing infinite pagination.
+        let expanded_children = if children_override.is_some() {
+            node_children.to_vec()
+        } else {
+            self.expand_occur(node_children)
+        };
 
         let mut placed_children = Vec::new();
         let mut child_y = 0.0;
@@ -1063,7 +1107,13 @@ impl<'a> LayoutEngine<'a> {
     ) -> Result<(LayoutNode, Vec<QueuedNode>)> {
         let node = self.form.get(id);
         let node_children = children_override.unwrap_or(&node.children);
-        let expanded_children = self.expand_occur(node_children);
+        // (#764) Skip occur re-expansion when override is set — it already
+        // contains expanded IDs from the previous split.
+        let expanded_children = if children_override.is_some() {
+            node_children.to_vec()
+        } else {
+            self.expand_occur(node_children)
+        };
 
         // Sort children by their y-position for deterministic splitting.
         let mut sorted: Vec<FormNodeId> = expanded_children.clone();
@@ -1105,6 +1155,24 @@ impl<'a> LayoutEngine<'a> {
                 // Child overflows -- defer to next page.
                 rest_children.push(child_id);
             }
+        }
+
+        // (#764) Ensure progress: if nothing was placed, force-place the
+        // first child so the split always advances.  Without this guard,
+        // positioned subforms whose first child exceeds the remaining
+        // height return an empty partial on every page, causing the
+        // caller to loop indefinitely.
+        if placed_children.is_empty() && !sorted.is_empty() {
+            let first_id = sorted[0];
+            let first = self.form.get(first_id);
+            let first_size = self.compute_extent(first_id);
+            let shifted_y = first.box_model.y - y_base;
+            let child_node =
+                self.layout_single_node(first_id, first, first.box_model.x, shifted_y, None)?;
+            max_placed_bottom = shifted_y + first_size.height;
+            placed_children.push(child_node);
+            // Remove the force-placed child from rest.
+            rest_children.retain(|&cid| cid != first_id);
         }
 
         let content = match &node.node_type {
@@ -1662,12 +1730,18 @@ impl<'a> LayoutEngine<'a> {
         let node = self.form.get(id);
         let bm = &node.box_model;
 
-        // If explicit size is set, use it
+        // If explicit size is set, use it — except for TB subforms with
+        // children, where we must compute the actual content height so that
+        // pagination can detect overflow beyond the explicit height (#768).
+        let is_tb_with_children = node.layout == LayoutStrategy::TopToBottom
+            && !children_override.unwrap_or(&node.children).is_empty();
         if let (Some(w), Some(h)) = (bm.width, bm.height) {
-            return Size {
-                width: w,
-                height: h,
-            };
+            if !is_tb_with_children {
+                return Size {
+                    width: w,
+                    height: h,
+                };
+            }
         }
 
         // For growable dimensions, compute from children or text content
@@ -1676,7 +1750,14 @@ impl<'a> LayoutEngine<'a> {
         let node_children = children_override.unwrap_or(&node.children);
 
         if !node_children.is_empty() {
-            let expanded = self.expand_occur(node_children);
+            // (#764) When children_override is set the list is already
+            // occur-expanded from a prior split — re-expanding inflates the
+            // extent and contributes to over-pagination.
+            let expanded = if children_override.is_some() {
+                node_children.to_vec()
+            } else {
+                self.expand_occur(node_children)
+            };
             match node.layout {
                 LayoutStrategy::TopToBottom => {
                     // #687: pass available so text wrapping is considered
@@ -1765,7 +1846,28 @@ impl<'a> LayoutEngine<'a> {
             }
         }
 
-        bm.outer_size(content_size)
+        let mut result = bm.outer_size(content_size);
+
+        // For TB subforms with children AND an explicit height, ensure the
+        // reported height reflects actual content height (not clamped to the
+        // fixed h) so layout_content_fitting() detects overflow and triggers
+        // pagination.  max_height constraints on growable subforms are NOT
+        // overridden — only explicit height declarations (#768).
+        if is_tb_with_children && bm.height.is_some() {
+            let mut unclamped_h =
+                content_size.height + bm.margins.vertical() + bm.border_width * 2.0;
+            if let Some(ref cap) = bm.caption {
+                if matches!(
+                    cap.placement,
+                    crate::types::CaptionPlacement::Top | crate::types::CaptionPlacement::Bottom
+                ) {
+                    unclamped_h += cap.reserve.unwrap_or(0.0);
+                }
+            }
+            result.height = result.height.max(unclamped_h);
+        }
+
+        result
     }
 }
 
