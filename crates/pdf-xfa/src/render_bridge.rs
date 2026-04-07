@@ -270,7 +270,17 @@ fn render_nodes(
                     FontFamily::SansSerif,
                 ),
             };
-            render_caption(abs_x, pdf_y, w, h, cap_fs, cap_ff, &node.style, &node_config, ops);
+            render_caption(
+                abs_x,
+                pdf_y,
+                w,
+                h,
+                cap_fs,
+                cap_ff,
+                &node.style,
+                &node_config,
+                ops,
+            );
         }
 
         match &node.content {
@@ -279,55 +289,60 @@ fn render_nodes(
                 field_kind,
                 font_size,
                 font_family,
-            } => {
-                match field_kind {
-                    FieldKind::Checkbox => {
-                        render_checkbox(val_x, val_pdf_y, val_w, val_h, value, &node_config, ops)
-                    }
-                    FieldKind::Radio => {
-                        render_radio(val_x, val_pdf_y, val_w, val_h, value, &node_config, ops)
-                    }
-                    FieldKind::Dropdown => render_dropdown(
-                        val_x,
-                        val_pdf_y,
-                        val_w,
-                        val_h,
-                        value,
-                        *font_size,
-                        *font_family,
-                        &node.style,
-                        &node_config,
-                        ops,
-                    ),
-                    FieldKind::Button => render_button(
-                        val_x,
-                        val_pdf_y,
-                        val_w,
-                        val_h,
-                        value,
-                        *font_size,
-                        *font_family,
-                        &node.style,
-                        &node_config,
-                        ops,
-                    ),
-                    FieldKind::Signature => {
-                        render_signature(val_x, val_pdf_y, val_w, val_h, value, &node.style, &node_config, ops)
-                    }
-                    _ => render_field(
-                        val_x,
-                        val_pdf_y,
-                        val_w,
-                        val_h,
-                        value,
-                        *font_size,
-                        *font_family,
-                        &node.style,
-                        &node_config,
-                        ops,
-                    ),
+            } => match field_kind {
+                FieldKind::Checkbox => {
+                    render_checkbox(val_x, val_pdf_y, val_w, val_h, value, &node_config, ops)
                 }
-            }
+                FieldKind::Radio => {
+                    render_radio(val_x, val_pdf_y, val_w, val_h, value, &node_config, ops)
+                }
+                FieldKind::Dropdown => render_dropdown(
+                    val_x,
+                    val_pdf_y,
+                    val_w,
+                    val_h,
+                    value,
+                    *font_size,
+                    *font_family,
+                    &node.style,
+                    &node_config,
+                    ops,
+                ),
+                FieldKind::Button => render_button(
+                    val_x,
+                    val_pdf_y,
+                    val_w,
+                    val_h,
+                    value,
+                    *font_size,
+                    *font_family,
+                    &node.style,
+                    &node_config,
+                    ops,
+                ),
+                FieldKind::Signature => render_signature(
+                    val_x,
+                    val_pdf_y,
+                    val_w,
+                    val_h,
+                    value,
+                    &node.style,
+                    &node_config,
+                    ops,
+                ),
+                _ => render_field(
+                    val_x,
+                    val_pdf_y,
+                    val_w,
+                    val_h,
+                    value,
+                    *font_size,
+                    *font_family,
+                    &node.style,
+                    &node_config,
+                    ops,
+                ),
+            },
             LayoutContent::Text(text) => {
                 render_text(abs_x, pdf_y, text, &node.style, &node_config, ops)
             }
@@ -719,11 +734,7 @@ fn render_caption(
         ops,
         format_args!(
             "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-            config.text_color[0],
-            config.text_color[1],
-            config.text_color[2],
-            font_ref,
-            fs,
+            config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
         ),
     );
     emit_text_style_ops(node_style, ops);
@@ -826,6 +837,14 @@ fn render_field(
             let lines = wrap_text(value, content_w, &metrics);
             let line_height = metrics.line_height_pt();
             let asc_pt = ascender_pt(&metrics, fs);
+            let total_content_h = lines.len() as f64 * line_height;
+            let text_start_y = match node_style.v_align {
+                Some(VerticalAlign::Middle) => {
+                    pdf_y + space_above + (h - space_above - total_content_h) / 2.0
+                }
+                Some(VerticalAlign::Bottom) => pdf_y + space_above,
+                _ => pdf_y + h - space_above - total_content_h,
+            };
             write_ops(
                 ops,
                 format_args!(
@@ -840,7 +859,7 @@ fn render_field(
                 format_args!(
                     "{:.2} {:.2} Td\n",
                     x + pad_left,
-                    pdf_y + h - space_above - asc_pt,
+                    text_start_y + total_content_h - asc_pt,
                 ),
             );
             for (i, line) in lines.iter().enumerate() {
@@ -1326,7 +1345,12 @@ fn render_text(
     emit_synthetic_bold_ops(node_style, font_ref, fs, &tc, ops);
     write_ops(
         ops,
-        format_args!("{:.2} {:.2} Td\n{} Tj\n", x + p, pdf_y + p - asc_pt * 0.2, encoded),
+        format_args!(
+            "{:.2} {:.2} Td\n{} Tj\n",
+            x + p,
+            pdf_y + p - asc_pt * 0.2,
+            encoded
+        ),
     );
     reset_synthetic_bold_ops(node_style, font_ref, ops);
     ops.extend_from_slice(b"ET\n");
@@ -1524,7 +1548,14 @@ fn render_draw(
                 let fs = node_style.font_size.unwrap_or(config.default_font_size);
                 let font_family = match node_style.font_family.as_deref() {
                     Some(f) if f.contains("Courier") || f.contains("Mono") => FontFamily::Monospace,
-                    Some(f) if f.contains("Helvetica") || f.contains("Arial") || f.contains("Sans") || f.contains("Myriad") => FontFamily::SansSerif,
+                    Some(f)
+                        if f.contains("Helvetica")
+                            || f.contains("Arial")
+                            || f.contains("Sans")
+                            || f.contains("Myriad") =>
+                    {
+                        FontFamily::SansSerif
+                    }
                     _ => FontFamily::Serif,
                 };
                 let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
