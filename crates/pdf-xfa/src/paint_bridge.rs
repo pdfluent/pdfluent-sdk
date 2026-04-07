@@ -719,6 +719,7 @@ mod tests {
             text_padding: 2.0,
             font_map: std::collections::HashMap::new(),
             font_metrics_data: std::collections::HashMap::new(),
+            check_button_mark: None,
         }
     }
 

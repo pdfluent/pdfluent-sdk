@@ -363,6 +363,34 @@ fn family_fallback_chain(family: FontFamily) -> &'static [&'static str] {
     }
 }
 
+fn font_name_substring_match(requested: &str, available: &str) -> bool {
+    let requested_lower = requested.to_lowercase();
+    let available_lower = available.to_lowercase();
+
+    if requested_lower == available_lower {
+        return true;
+    }
+
+    if requested_lower.contains(&available_lower) || available_lower.contains(&requested_lower) {
+        return true;
+    }
+
+    let requested_stripped = normalize_font_name(requested);
+    let available_stripped = normalize_font_name(available);
+
+    if requested_stripped == available_stripped {
+        return true;
+    }
+
+    if requested_stripped.contains(&available_stripped)
+        || available_stripped.contains(&requested_stripped)
+    {
+        return true;
+    }
+
+    false
+}
+
 // XFA Spec 3.3 §28.2 (p1246) — Font mapping step 4: genericFamily mapping.
 // Maps genericFamily values to concrete font fallback chains.
 fn generic_family_fallback_chain(gf: GenericFamily) -> &'static [&'static str] {
@@ -464,6 +492,7 @@ impl XfaFontResolver {
             .or_else(|| self.try_system(&normalized))
             .or_else(|| self.try_base_name(&spec.typeface))
             .or_else(|| self.try_aliases(&spec.typeface))
+            .or_else(|| self.try_substring_match(&spec.typeface))
             // Step 4: genericFamily fallback (XFA §28.2 step 4).
             .or_else(|| self.try_generic_family_fallback(spec.generic_family))
             .or_else(|| self.try_family_fallback(&spec.typeface))
@@ -507,9 +536,7 @@ impl XfaFontResolver {
     fn try_aliases(&self, name: &str) -> Option<ResolvedFont> {
         let normalized = normalize_font_name(name);
 
-        // Try aliases for both the original name and the normalized version
         for lookup in &[name.to_lowercase(), normalized] {
-            // Also try with spaces removed for multi-word names
             let no_spaces = lookup.replace(' ', "");
             for candidate in [lookup.as_str(), no_spaces.as_str()] {
                 let aliases = font_family_aliases(candidate);
@@ -520,6 +547,31 @@ impl XfaFontResolver {
                 }
             }
         }
+        None
+    }
+
+    fn try_substring_match(&self, name: &str) -> Option<ResolvedFont> {
+        let name_lower = name.to_lowercase();
+        let name_normalized = normalize_font_name(name);
+
+        for (available_key, font) in &self.embedded {
+            if font_name_substring_match(&name_lower, available_key)
+                || font_name_substring_match(&name_normalized, available_key)
+            {
+                return Some(font.clone());
+            }
+        }
+
+        for (available_key, path) in &self.system_fonts {
+            if font_name_substring_match(&name_lower, available_key)
+                || font_name_substring_match(&name_normalized, available_key)
+            {
+                if let Some(font) = load_system_font(path, available_key) {
+                    return Some(font);
+                }
+            }
+        }
+
         None
     }
 
@@ -756,8 +808,7 @@ mod tests {
 
     #[test]
     fn font_spec_parsing() {
-        let spec =
-            XfaFontSpec::from_xfa_attrs("Helvetica", Some("bold"), None, Some("12pt"), None);
+        let spec = XfaFontSpec::from_xfa_attrs("Helvetica", Some("bold"), None, Some("12pt"), None);
         assert_eq!(spec.typeface, "Helvetica");
         assert_eq!(spec.weight, FontWeight::Bold);
         assert_eq!(spec.posture, FontPosture::Normal);
