@@ -972,7 +972,10 @@ fn draw_check_mark(
 ) {
     write_ops(
         ops,
-        format_args!("{:.3} {:.3} {:.3} RG\n{:.3} {:.3} {:.3} rg\n", color[0], color[1], color[2], color[0], color[1], color[2]),
+        format_args!(
+            "{:.3} {:.3} {:.3} RG\n{:.3} {:.3} {:.3} rg\n",
+            color[0], color[1], color[2], color[0], color[1], color[2]
+        ),
     );
     let cx = x + w / 2.0;
     let cy = y + h / 2.0;
@@ -981,12 +984,18 @@ fn draw_check_mark(
             // Checkmark: three line segments
             let lw = (w.min(h) * 0.08).max(0.5);
             write_ops(ops, format_args!("{:.2} w\n", lw));
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\nS\n",
-                x + m, cy,
-                cx - m * 0.3, y + m,
-                x + w - m, y + h - m,
-            ));
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\nS\n",
+                    x + m,
+                    cy,
+                    cx - m * 0.3,
+                    y + m,
+                    x + w - m,
+                    y + h - m,
+                ),
+            );
         }
         "circle" => {
             let r = (w.min(h) / 2.0 - m).max(1.0);
@@ -1002,41 +1011,75 @@ fn draw_check_mark(
         }
         "diamond" => {
             let d = (w.min(h) / 2.0 - m).max(1.0);
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\n{:.2} {:.2} l\nf\n",
-                cx, cy + d, cx - d, cy, cx, cy - d, cx + d, cy,
-            ));
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\n{:.2} {:.2} l\nf\n",
+                    cx,
+                    cy + d,
+                    cx - d,
+                    cy,
+                    cx,
+                    cy - d,
+                    cx + d,
+                    cy,
+                ),
+            );
         }
         "square" => {
             let s = (w.min(h) - 2.0 * m).max(1.0);
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} {:.2} {:.2} re\nf\n",
-                x + m, y + m, s, s,
-            ));
+            write_ops(
+                ops,
+                format_args!("{:.2} {:.2} {:.2} {:.2} re\nf\n", x + m, y + m, s, s,),
+            );
         }
         "star" => {
             // Simplified 5-point star via cross pattern
             let lw = (w.min(h) * 0.08).max(0.5);
             write_ops(ops, format_args!("{:.2} w\n", lw));
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
-                x + m, y + m, x + w - m, y + h - m,
-                x + w - m, y + m, x + m, y + h - m,
-            ));
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
-                cx, y + m * 0.5, cx, y + h - m * 0.5,
-            ));
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                    x + m,
+                    y + m,
+                    x + w - m,
+                    y + h - m,
+                    x + w - m,
+                    y + m,
+                    x + m,
+                    y + h - m,
+                ),
+            );
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                    cx,
+                    y + m * 0.5,
+                    cx,
+                    y + h - m * 0.5,
+                ),
+            );
         }
         _ => {
             // Default "cross"
             let lw = (w.min(h) * 0.08).max(0.5);
             write_ops(ops, format_args!("{:.2} w\n", lw));
-            write_ops(ops, format_args!(
-                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
-                x + m, y + m, x + w - m, y + h - m,
-                x + w - m, y + m, x + m, y + h - m,
-            ));
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                    x + m,
+                    y + m,
+                    x + w - m,
+                    y + h - m,
+                    x + w - m,
+                    y + m,
+                    x + m,
+                    y + h - m,
+                ),
+            );
         }
     }
 }
@@ -1498,6 +1541,55 @@ fn render_text(
     );
     reset_synthetic_bold_ops(node_style, font_ref, ops);
     ops.extend_from_slice(b"ET\n");
+    let text_x = x + p;
+    let text_y = pdf_y + p;
+    let line_thickness = (fs * 0.05).max(0.5);
+    if node_style.underline {
+        let desc_pt =
+            if let (Some(desc), Some(upem)) = (metrics.resolved_descender, metrics.resolved_upem) {
+                if upem > 0 {
+                    desc as f64 / upem as f64 * fs
+                } else {
+                    fs * 0.2
+                }
+            } else {
+                fs * 0.2
+            };
+        let underline_y = text_y - desc_pt;
+        let text_w = metrics.measure_width(text);
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\nET\n",
+                line_thickness,
+                tc[0],
+                tc[1],
+                tc[2],
+                text_x,
+                underline_y,
+                text_x + text_w,
+                underline_y,
+            ),
+        );
+    }
+    if node_style.line_through {
+        let mid_y = text_y + fs * 0.5 - asc_pt * 0.1;
+        let text_w = metrics.measure_width(text);
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\nET\n",
+                line_thickness,
+                tc[0],
+                tc[1],
+                tc[2],
+                text_x,
+                mid_y,
+                text_x + text_w,
+                mid_y,
+            ),
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
