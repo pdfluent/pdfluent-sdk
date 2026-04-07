@@ -891,10 +891,12 @@ fn render_field(
         } else {
             config.default_font_size
         };
+        let inset_left = node_style.inset_left_pt.unwrap_or(0.0);
+        let inset_right = node_style.inset_right_pt.unwrap_or(0.0);
         let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
         let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
         let space_above = node_style.space_above_pt.unwrap_or(0.0);
-        let content_w = (w - pad_left - pad_right).max(0.0);
+        let content_w = (w - inset_left - inset_right - pad_left - pad_right).max(0.0);
         let metrics = build_font_metrics(fs, font_family, node_style, config);
         let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
         let text_w = metrics.measure_width(value);
@@ -923,7 +925,12 @@ fn render_field(
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
-                format_args!("{:.2} {:.2} Td\n{} Tj\n", x + pad_left, text_y, encoded),
+                format_args!(
+                    "{:.2} {:.2} Td\n{} Tj\n",
+                    x + inset_left + pad_left,
+                    text_y,
+                    encoded
+                ),
             );
             reset_text_style_ops(node_style, ops);
             reset_synthetic_bold_ops(node_style, font_ref, ops);
@@ -953,7 +960,7 @@ fn render_field(
                 ops,
                 format_args!(
                     "{:.2} {:.2} Td\n",
-                    x + pad_left,
+                    x + inset_left + pad_left,
                     text_start_y + total_content_h - asc_pt,
                 ),
             );
@@ -1581,6 +1588,8 @@ fn render_multiline(
     if lines.is_empty() {
         return;
     }
+    let inset_left = node_style.inset_left_pt.unwrap_or(0.0);
+    let inset_right = node_style.inset_right_pt.unwrap_or(0.0);
     let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
     let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
     let space_above = node_style.space_above_pt.unwrap_or(0.0);
@@ -1615,9 +1624,9 @@ fn render_multiline(
         font_size
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + ascender_pt, 0.0);
-    let content_w = (container_width - pad_left - pad_right).max(0.0);
+    let content_w = (container_width - inset_left - inset_right - pad_left - pad_right).max(0.0);
     let idh_metrics = lookup_font_metrics(node_style, config);
-    let mut prev_x = x + pad_left;
+    let mut prev_x = x + inset_left + pad_left;
     for (i, line) in lines.iter().enumerate() {
         let is_para_start = first_line_of_para.get(i).copied().unwrap_or(false);
         let indent_offset = if is_para_start { text_indent } else { 0.0 };
@@ -1625,10 +1634,13 @@ fn render_multiline(
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => {
-                x + pad_left + indent_offset + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
+                x + inset_left
+                    + pad_left
+                    + indent_offset
+                    + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
             }
-            TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
-            _ => x + pad_left + indent_offset,
+            TextAlign::Right => x + inset_left + pad_left + (content_w - line_w).max(0.0),
+            _ => x + inset_left + pad_left + indent_offset,
         };
         if i == 0 {
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
@@ -1665,6 +1677,8 @@ fn render_rich_multiline(
     if lines.is_empty() || spans.is_empty() {
         return;
     }
+    let inset_left = node_style.inset_left_pt.unwrap_or(0.0);
+    let inset_right = node_style.inset_right_pt.unwrap_or(0.0);
     let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
     let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
     let space_above = node_style.space_above_pt.unwrap_or(0.0);
@@ -1685,7 +1699,7 @@ fn render_rich_multiline(
         font_size
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + asc_pt, 0.0);
-    let content_w = (container_width - pad_left - pad_right).max(0.0);
+    let content_w = (container_width - inset_left - inset_right - pad_left - pad_right).max(0.0);
     let line_segments = map_spans_to_lines(spans, lines);
 
     ops.extend_from_slice(b"BT\n");
@@ -1708,7 +1722,7 @@ fn render_rich_multiline(
     );
     emit_text_style_ops(node_style, ops);
 
-    let mut prev_x = x + pad_left;
+    let mut prev_x = x + inset_left + pad_left;
     for (i, line) in lines.iter().enumerate() {
         let is_para_start = first_line_of_para.get(i).copied().unwrap_or(false);
         let indent_offset = if is_para_start { text_indent } else { 0.0 };
@@ -1716,10 +1730,13 @@ fn render_rich_multiline(
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => {
-                x + pad_left + indent_offset + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
+                x + inset_left
+                    + pad_left
+                    + indent_offset
+                    + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
             }
-            TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
-            _ => x + pad_left + indent_offset,
+            TextAlign::Right => x + inset_left + pad_left + (content_w - line_w).max(0.0),
+            _ => x + inset_left + pad_left + indent_offset,
         };
         if i == 0 {
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
@@ -2444,6 +2461,35 @@ mod tests {
         assert!(
             s.contains("111.00"),
             "child x should include parent left inset offset: {s}"
+        );
+    }
+
+    #[test]
+    fn field_insets_reduce_text_wrap_width() {
+        // A field with leftInset=8, rightInset=8 on a 100pt-wide box should
+        // offset text x by inset_left + pad_left.
+        let node = LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(10.0, 10.0, 100.0, 30.0),
+            name: "field".to_string(),
+            content: LayoutContent::Field {
+                value: "Hello".to_string(),
+                field_kind: FieldKind::Text,
+                font_size: 10.0,
+                font_family: FontFamily::Serif,
+            },
+            children: vec![],
+            style: FormNodeStyle {
+                inset_left_pt: Some(8.0),
+                inset_right_pt: Some(8.0),
+                ..Default::default()
+            },
+        };
+        let s = overlay_str(&make_page(vec![node]));
+        // Text x = field_x + inset_left + pad_left = 10 + 8 + 1 = 19
+        assert!(
+            s.contains("19.00"),
+            "text x should include field left inset: {s}"
         );
     }
 }
