@@ -320,19 +320,29 @@ fn xfa_flatten_inner(
     // elements, but baseProfile is the standard signal in real-world PDFs.
     let is_static_form = template_xml.contains("baseProfile=\"interactiveForms\"");
     let has_static_content = pages_have_static_content(&doc);
-    eprintln!("[DEBUG] n_layout={n_layout} n_existing={n_existing} is_static={is_static_form} has_static={has_static_content}");
+
+    // Preserve pre-rendered PDF page content when:
     // 1. Explicit static form (baseProfile="interactiveForms"), OR
     // 2. Pages have substantial pre-rendered content AND the XFA layout
-    //    produces at least as many pages as the original — the static content
-    //    is authoritative. Replacing it with XFA re-rendering causes subtle
+    //    produces at least as many pages as the original AND the XFA overlay
+    //    has enough content to indicate a full page re-render.
+    //
+    //    When the XFA overlay is minimal (e.g. just a title/header), the form
+    //    relies on AcroForm widgets for its content. Preserving static content
+    //    + baking widgets adds spurious form fields. Using the XFA path gives
+    //    the correct minimal output matching pdfrest/Adobe behavior.
+    //    When the XFA overlay is substantial (re-renders the full page), the
+    //    pre-rendered content is authoritative — replacing it with XFA causes
     //    SSIM regressions due to font/rendering differences.
-    //    When n_layout >= n_existing, the extra layout pages are template-defined
-    //    page-level subforms with no real data content; preserving the original
-    //    static pages matches pdfrest/Adobe behavior.
-    // When n_layout < n_existing (#744), the original carries pre-rendered static
-    // pages that exceed the dynamic page count — those excess pages are deleted.
-    let preserve_static =
-        has_static_content && (is_static_form || n_layout >= n_existing);
+    //
+    // The 1000-byte threshold separates minimal XFA templates (title/header
+    // only, ~200-500 bytes) from full page re-renders (5000+ bytes).
+    let overlay_is_substantial = overlays
+        .iter()
+        .any(|o| o.content_stream.len() > 1000);
+    let preserve_static = has_static_content
+        && (is_static_form
+            || (n_layout >= n_existing && overlay_is_substantial));
 
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
