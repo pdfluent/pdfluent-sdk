@@ -957,6 +957,90 @@ fn render_field(
     }
 }
 
+/// Draw a check mark symbol inside a checkbox/radio bounding box.
+///
+/// Supported marks (XFA §8.2): check, circle, cross, diamond, square, star.
+fn draw_check_mark(
+    mark: &str,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    m: f64,
+    color: [f64; 3],
+    ops: &mut Vec<u8>,
+) {
+    write_ops(
+        ops,
+        format_args!("{:.3} {:.3} {:.3} RG\n{:.3} {:.3} {:.3} rg\n", color[0], color[1], color[2], color[0], color[1], color[2]),
+    );
+    let cx = x + w / 2.0;
+    let cy = y + h / 2.0;
+    match mark {
+        "check" => {
+            // Checkmark: three line segments
+            let lw = (w.min(h) * 0.08).max(0.5);
+            write_ops(ops, format_args!("{:.2} w\n", lw));
+            write_ops(ops, format_args!(
+                "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\nS\n",
+                x + m, cy,
+                cx - m * 0.3, y + m,
+                x + w - m, y + h - m,
+            ));
+        }
+        "circle" => {
+            let r = (w.min(h) / 2.0 - m).max(1.0);
+            let k = r * 0.5523; // bezier approx for circle
+            write_ops(ops, format_args!(
+                "{:.2} {:.2} m\n{:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n{:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n{:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n{:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\nf\n",
+                cx + r, cy,
+                cx + r, cy + k, cx + k, cy + r, cx, cy + r,
+                cx - k, cy + r, cx - r, cy + k, cx - r, cy,
+                cx - r, cy - k, cx - k, cy - r, cx, cy - r,
+                cx + k, cy - r, cx + r, cy - k, cx + r, cy,
+            ));
+        }
+        "diamond" => {
+            let d = (w.min(h) / 2.0 - m).max(1.0);
+            write_ops(ops, format_args!(
+                "{:.2} {:.2} m\n{:.2} {:.2} l\n{:.2} {:.2} l\n{:.2} {:.2} l\nf\n",
+                cx, cy + d, cx - d, cy, cx, cy - d, cx + d, cy,
+            ));
+        }
+        "square" => {
+            let s = (w.min(h) - 2.0 * m).max(1.0);
+            write_ops(ops, format_args!(
+                "{:.2} {:.2} {:.2} {:.2} re\nf\n",
+                x + m, y + m, s, s,
+            ));
+        }
+        "star" => {
+            // Simplified 5-point star via cross pattern
+            let lw = (w.min(h) * 0.08).max(0.5);
+            write_ops(ops, format_args!("{:.2} w\n", lw));
+            write_ops(ops, format_args!(
+                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                x + m, y + m, x + w - m, y + h - m,
+                x + w - m, y + m, x + m, y + h - m,
+            ));
+            write_ops(ops, format_args!(
+                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                cx, y + m * 0.5, cx, y + h - m * 0.5,
+            ));
+        }
+        _ => {
+            // Default "cross"
+            let lw = (w.min(h) * 0.08).max(0.5);
+            write_ops(ops, format_args!("{:.2} w\n", lw));
+            write_ops(ops, format_args!(
+                "{:.2} {:.2} m\n{:.2} {:.2} l\nS\n{:.2} {:.2} m\n{:.2} {:.2} l\nS\n",
+                x + m, y + m, x + w - m, y + h - m,
+                x + w - m, y + m, x + m, y + h - m,
+            ));
+        }
+    }
+}
+
 fn render_checkbox(
     x: f64,
     pdf_y: f64,
