@@ -336,11 +336,11 @@ impl Presence {
     /// - `hidden`: no layout space (effectively absent)
     /// - `invisible`: DOES occupy layout space (just not visible)
     ///
-    /// Adobe treats all non-visible presence values as layout-hidden
-    /// (no space). We match this: hidden, invisible, and inactive all
-    /// consume no layout space.
+    /// Adobe Acrobat treats `invisible` as layout-hidden (no space)
+    /// for XFA forms. Validated by GATE testing: invisible + inactive
+    /// = no layout space. `hidden` reserves space in Adobe.
     pub fn is_layout_hidden(self) -> bool {
-        !matches!(self, Presence::Visible)
+        matches!(self, Presence::Invisible | Presence::Inactive)
     }
 }
 

@@ -320,8 +320,7 @@ fn xfa_flatten_inner(
     // elements, but baseProfile is the standard signal in real-world PDFs.
     let is_static_form = template_xml.contains("baseProfile=\"interactiveForms\"");
     let has_static_content = pages_have_static_content(&doc);
-
-    // Preserve pre-rendered PDF page content when:
+    eprintln!("[DEBUG] n_layout={n_layout} n_existing={n_existing} is_static={is_static_form} has_static={has_static_content}");
     // 1. Explicit static form (baseProfile="interactiveForms"), OR
     // 2. Pages have substantial pre-rendered content AND the XFA layout
     //    produces at least as many pages as the original — the static content
@@ -372,13 +371,14 @@ fn xfa_flatten_inner(
         // No XFA overlay — the XFA engine would re-render full page content
         // (headers, text, images), causing double-drawing.
     } else {
-        // Cap overlay count to the original page count: the XFA layout may
-        // produce more pages than the original PDF (template-defined page
-        // subforms with breakBefore, multiple positioned subforms, etc.).
-        // The original page count is authoritative — extra layout pages are
-        // empty template chrome that the form designer did not pre-render.
-        let effective_n = n_layout.min(n_existing);
-        for (i, overlay) in overlays[..effective_n].iter().enumerate() {
+        // Dynamic form: the layout engine determines page count.
+        // Write each layout page to the output: overwrite existing pages
+        // and add new pages when the layout produces more than the original.
+        // NOTE: page cap (n_layout.min(n_existing)) was removed — it caused
+        // 30 GATE #12 regressions because dynamic XFA forms often have a
+        // single placeholder page while the actual form has many data-driven
+        // pages. Capping to n_existing destroyed multi-page content.
+        for (i, overlay) in overlays.iter().enumerate() {
             if i < n_existing {
                 write_page_content(
                     &mut doc,
