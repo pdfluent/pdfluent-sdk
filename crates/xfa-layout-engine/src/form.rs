@@ -444,6 +444,22 @@ pub enum FieldKind {
     Barcode,
 }
 
+/// A span of rich text with per-span style overrides.
+///
+/// XFA Spec 3.3 §4.2.7 (p155) — `<exData contentType="text/html">` stores
+/// XHTML content with inline CSS. Each span carries its own formatting
+/// (font, color, weight, etc.) that overrides the node-level defaults.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RichTextSpan {
+    pub text: String,
+    pub font_size: Option<f64>,
+    pub font_family: Option<String>,
+    pub font_weight: Option<String>,
+    pub font_style: Option<String>,
+    pub text_color: Option<(u8, u8, u8)>,
+    pub underline: bool,
+}
+
 /// Visual style properties for a form node.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormNodeStyle {
@@ -502,6 +518,8 @@ pub struct FormNodeStyle {
     pub caption_placement: Option<String>,
     /// Caption reserve width/height in points.
     pub caption_reserve: Option<f64>,
+    /// Rich text spans parsed from `<exData contentType="text/html">` XHTML.
+    pub rich_text_spans: Option<Vec<RichTextSpan>>,
 }
 
 impl Default for FormNodeStyle {
@@ -536,6 +554,7 @@ impl Default for FormNodeStyle {
             caption_text: None,
             caption_placement: None,
             caption_reserve: None,
+            rich_text_spans: None,
         }
     }
 }
