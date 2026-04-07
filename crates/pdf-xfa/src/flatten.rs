@@ -318,34 +318,55 @@ fn xfa_flatten_inner(
     // rigorous check would inspect the template grammar for XFAF-excluded
     // elements, but baseProfile is the standard signal in real-world PDFs.
     let is_static_form = template_xml.contains("baseProfile=\"interactiveForms\"");
-    let preserve_static = is_static_form && pages_have_static_content(&doc);
+    let has_static_content = pages_have_static_content(&doc);
+
+    // Preserve pre-rendered PDF page content when:
+    // 1. Explicit static form (baseProfile="interactiveForms"), OR
+    // 2. Pages have substantial pre-rendered content AND the XFA layout
+    //    produces the same page count — the static content is authoritative,
+    //    not a placeholder. Replacing it with XFA re-rendering causes subtle
+    //    SSIM regressions due to font/rendering differences.
+    // When page counts differ (#744), the static content is a preview that
+    // must be replaced by the XFA engine's output.
+    let preserve_static = has_static_content
+        && (is_static_form || n_layout == n_existing);
 
     if preserve_static {
-        // Static XFA form: bake widget appearances (field values, checkboxes,
-        // etc.) into the page content, then overlay any XFA-rendered content.
+        // Bake widget appearances (field values, checkboxes, etc.) into the
+        // page content so they survive AcroForm removal.
         flatten_widget_appearances(&mut doc);
 
-        for (i, overlay) in overlays.iter().enumerate() {
-            if i < n_existing {
-                overlay_page_content(
-                    &mut doc,
-                    existing_page_ids[i],
-                    overlay,
-                    &font_ids,
-                    &embedded_font_objects,
-                )?;
-            } else {
-                let lp = &layout.pages[i];
-                add_new_page(
-                    &mut doc,
-                    lp.width,
-                    lp.height,
-                    overlay,
-                    &font_ids,
-                    &embedded_font_objects,
-                )?;
+        if is_static_form {
+            // True static form (XFAF): overlay XFA field rendering on top of
+            // preserved pages. The XFA template only defines fields, not full
+            // page layouts, so overlaying adds field values without
+            // double-rendering.
+            for (i, overlay) in overlays.iter().enumerate() {
+                if i < n_existing {
+                    overlay_page_content(
+                        &mut doc,
+                        existing_page_ids[i],
+                        overlay,
+                        &font_ids,
+                        &embedded_font_objects,
+                    )?;
+                } else {
+                    let lp = &layout.pages[i];
+                    add_new_page(
+                        &mut doc,
+                        lp.width,
+                        lp.height,
+                        overlay,
+                        &font_ids,
+                        &embedded_font_objects,
+                    )?;
+                }
             }
         }
+        // Hybrid form (matching page count, no baseProfile): widget
+        // appearances are baked, original page content is preserved.
+        // No XFA overlay — the XFA engine would re-render full page content
+        // (headers, text, images), causing double-drawing.
     } else {
         for (i, overlay) in overlays.iter().enumerate() {
             if i < n_existing {
@@ -386,9 +407,12 @@ fn xfa_flatten_inner(
         doc.delete_pages(&excess);
     }
 
-    if !preserve_static {
-        // Strip widget annotations from pages that were overwritten by XFA layout.
-        // For static forms the widgets were already baked by flatten_widget_appearances.
+    if !is_static_form {
+        // Strip widget annotations from pages.
+        // - Dynamic forms: pages were overwritten by XFA layout.
+        // - Hybrid forms: widgets were baked by flatten_widget_appearances.
+        // True static (baseProfile) forms keep annotations — they may contain
+        // non-widget annotations that are part of the form design.
         for &page_id in existing_page_ids.iter().take(n_layout.min(n_existing)) {
             if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
                 dict.remove(b"Annots");
