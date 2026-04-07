@@ -718,7 +718,7 @@ fn parse_occur(elem: Node<'_, '_>) -> Occur {
         // XFA Spec 3.3 §9.2 p357: "if the max attribute is not supplied then
         // the max property defaults to the value of min."
         //
-        // NOTE: the `.map(…).unwrap_or()` chain previously let parse failures
+        // NOTE: the previous `.map(…).unwrap_or()` chain let parse failures
         // (e.g. max="") collapse to `None` (unlimited), causing massive
         // over-pagination.  Use an explicit match instead.
         let max: Option<u32> = match attr(occur, "max") {
