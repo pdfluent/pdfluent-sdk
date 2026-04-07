@@ -1371,6 +1371,10 @@ impl<'a> LayoutEngine<'a> {
             }
             FormNodeType::Draw(DrawContent::Text(content)) => LayoutContent::Text(content.clone()),
             FormNodeType::Draw(dc) => LayoutContent::Draw(dc.clone()),
+            FormNodeType::Image { data, mime_type } => LayoutContent::Image {
+                data: data.clone(),
+                mime_type: mime_type.clone(),
+            },
             _ => LayoutContent::None,
         };
 
@@ -1505,6 +1509,10 @@ impl<'a> LayoutEngine<'a> {
             }
             FormNodeType::Draw(DrawContent::Text(content)) => LayoutContent::Text(content.clone()),
             FormNodeType::Draw(dc) => LayoutContent::Draw(dc.clone()),
+            FormNodeType::Image { data, mime_type } => LayoutContent::Image {
+                data: data.clone(),
+                mime_type: mime_type.clone(),
+            },
             _ => LayoutContent::None,
         };
 
@@ -2069,6 +2077,10 @@ impl<'a> LayoutEngine<'a> {
                 }
             }
             FormNodeType::Draw(dc) => LayoutContent::Draw(dc.clone()),
+            FormNodeType::Image { data, mime_type } => LayoutContent::Image {
+                data: data.clone(),
+                mime_type: mime_type.clone(),
+            },
             _ => LayoutContent::None,
         };
 
