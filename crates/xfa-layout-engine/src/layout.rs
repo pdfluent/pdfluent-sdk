@@ -737,8 +737,17 @@ impl<'a> LayoutEngine<'a> {
             page.nodes.push(offset);
         }
 
-        // Available height for content = total - leader - trailer
-        let content_height = content_area.height - leader_height - trailer_height;
+        // Available height for content = total - leader - trailer.
+        // When the content area is shorter than the remaining page space,
+        // extend it to fill the page.  This matches Adobe/itext behavior:
+        // content areas define an initial region, but TB content is allowed
+        // to extend beyond it within the same page rather than overflowing
+        // to a new page.
+        let effective_ca_height = {
+            let remaining_page = page_height - content_area.y;
+            content_area.height.max(remaining_page)
+        };
+        let content_height = effective_ca_height - leader_height - trailer_height;
         let available = Size {
             width: content_area.width,
             height: content_height,
