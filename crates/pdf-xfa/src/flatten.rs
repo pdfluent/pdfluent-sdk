@@ -140,8 +140,9 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     let template_xml = match packets.template() {
         Some(t) => t.to_string(),
         None => {
-            // No template packet — nothing to flatten.
-            return Ok(pdf_bytes.to_vec());
+            // XFA present but template packet missing/unparseable (truncated XML).
+            // Strip AcroForm + NeedsRendering so renderers use static content.
+            return static_fallback(pdf_bytes);
         }
     };
 
@@ -1548,6 +1549,7 @@ fn remove_acroform(doc: &mut Document) {
     };
     if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(root_id) {
         dict.remove(b"AcroForm");
+        dict.remove(b"NeedsRendering");
     }
 }
 
