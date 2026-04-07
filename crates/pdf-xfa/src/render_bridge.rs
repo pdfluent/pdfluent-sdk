@@ -395,7 +395,11 @@ fn render_nodes(
         }
 
         if !node.children.is_empty() {
-            render_nodes(&node.children, abs_x, abs_y, mapper, config, ops, images);
+            // Children are laid out relative to the content area (after insets),
+            // so offset by the parent's margin insets (XFA <margin leftInset/topInset>).
+            let child_origin_x = abs_x + node.style.inset_left_pt.unwrap_or(0.0);
+            let child_origin_y = abs_y + node.style.inset_top_pt.unwrap_or(0.0);
+            render_nodes(&node.children, child_origin_x, child_origin_y, mapper, config, ops, images);
         }
     }
 }
@@ -1927,5 +1931,43 @@ mod tests {
         // Without font_data, should fall back to WinAnsi
         let encoded = pdf_encode_text("AB", Some(&metrics));
         assert_eq!(encoded, "(AB)");
+    }
+
+    #[test]
+    fn container_insets_offset_children() {
+        // A parent container with leftInset=10, topInset=5 should offset
+        // child positions by those amounts during rendering.
+        let child = LayoutNode {
+            form_node: FormNodeId(1),
+            rect: Rect::new(0.0, 0.0, 50.0, 20.0),
+            name: "child".to_string(),
+            content: LayoutContent::Field {
+                value: "Test".to_string(),
+                field_kind: FieldKind::Text,
+                font_size: 10.0,
+                font_family: FontFamily::Serif,
+            },
+            children: vec![],
+            style: Default::default(),
+        };
+        let parent = LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(100.0, 200.0, 200.0, 100.0),
+            name: "parent".to_string(),
+            content: LayoutContent::None,
+            children: vec![child],
+            style: FormNodeStyle {
+                inset_left_pt: Some(10.0),
+                inset_top_pt: Some(5.0),
+                ..Default::default()
+            },
+        };
+        let s = overlay_str(&make_page(vec![parent]));
+        // Child field at (0,0) rendered within parent at (100,200) with leftInset=10.
+        // Text x = parent_x + inset_left + pad_left = 100 + 10 + 1 = 111
+        assert!(
+            s.contains("111.00"),
+            "child x should include parent left inset offset: {s}"
+        );
     }
 }
