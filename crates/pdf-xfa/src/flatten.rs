@@ -326,10 +326,13 @@ fn xfa_flatten_inner(
     // 2. Pages have substantial pre-rendered content AND the XFA layout
     //    produces at least as many pages as the original AND the XFA overlay
     //    has enough content to indicate a full page re-render.
-    // 3. Layout engine produces fewer pages than the original AND the PDF
-    //    has pre-rendered static content — our layout is incomplete, so
-    //    preserving the original pages (which match Adobe's output) is safer
-    //    than showing truncated single-page output.
+    // 3. Layout engine produces fewer pages than the original — regardless
+    //    of whether we detect static content in page streams. XFA PDFs often
+    //    have form content in widget annotations rather than page content
+    //    streams, so `has_static_content` may return false even when pages
+    //    have substantial pre-rendered form content. When our layout is
+    //    incomplete (fewer pages), preserving the original pages matches
+    //    Adobe/pdfRest output better than truncated single-page output.
     //
     //    When the XFA overlay is minimal (e.g. just a title/header), the form
     //    relies on AcroForm widgets for its content. Preserving static content
@@ -344,10 +347,9 @@ fn xfa_flatten_inner(
     let overlay_is_substantial = overlays
         .iter()
         .any(|o| o.content_stream.len() > 1000);
-    let preserve_static = has_static_content
-        && (is_static_form
-            || (n_layout >= n_existing && overlay_is_substantial)
-            || (n_layout < n_existing));
+    let preserve_static = is_static_form
+        || (has_static_content && n_layout >= n_existing && overlay_is_substantial)
+        || (n_layout < n_existing);
 
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
