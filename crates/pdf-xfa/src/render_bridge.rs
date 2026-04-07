@@ -13,7 +13,7 @@
 use crate::error::Result;
 use crate::font_bridge::font_variant_key;
 use std::collections::HashMap;
-use xfa_layout_engine::form::{DrawContent, FieldKind, FormNodeStyle};
+use xfa_layout_engine::form::{DrawContent, FieldKind, FormNodeStyle, RichTextSpan};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutNode, LayoutPage};
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{TextAlign, VerticalAlign};
@@ -352,22 +352,42 @@ fn render_nodes(
                 font_size,
                 text_align,
                 font_family,
-            } => render_multiline(
-                val_x,
-                val_pdf_y,
-                val_w,
-                lines,
-                first_line_of_para,
-                *font_size,
-                *text_align,
-                *font_family,
-                is_bold,
-                mapper,
-                abs_y + val_y_offset,
-                &node.style,
-                &node_config,
-                ops,
-            ),
+            } => {
+                if let Some(ref spans) = node.style.rich_text_spans {
+                    render_rich_multiline(
+                        val_x,
+                        val_w,
+                        lines,
+                        first_line_of_para,
+                        spans,
+                        *font_size,
+                        *text_align,
+                        *font_family,
+                        mapper,
+                        abs_y + val_y_offset,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    );
+                } else {
+                    render_multiline(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        lines,
+                        first_line_of_para,
+                        *font_size,
+                        *text_align,
+                        *font_family,
+                        is_bold,
+                        mapper,
+                        abs_y + val_y_offset,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    );
+                }
+            }
             LayoutContent::Image { data, mime_type } => {
                 let img_name = format!("XImg{}", images.len());
                 ops.extend(crate::image_bridge::render_image_ops(
@@ -1433,6 +1453,281 @@ fn render_multiline(
     reset_text_style_ops(node_style, ops);
     reset_synthetic_bold_ops(node_style, font_ref, ops);
     ops.extend_from_slice(b"ET\n");
+}
+
+/// Render multiline rich text with per-span font/color/weight switching.
+#[allow(clippy::too_many_arguments)]
+fn render_rich_multiline(
+    x: f64,
+    container_width: f64,
+    lines: &[String],
+    first_line_of_para: &[bool],
+    spans: &[RichTextSpan],
+    font_size: f64,
+    text_align: TextAlign,
+    font_family: FontFamily,
+    mapper: &CoordinateMapper,
+    abs_y_xfa: f64,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    if lines.is_empty() || spans.is_empty() {
+        return;
+    }
+    let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
+    let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
+    let space_above = node_style.space_above_pt.unwrap_or(0.0);
+    let text_indent = node_style.text_indent_pt.unwrap_or(0.0);
+    let font_metrics = build_font_metrics(font_size, font_family, node_style, config);
+    let line_height = node_style
+        .line_height_pt
+        .unwrap_or_else(|| font_metrics.line_height_pt());
+    let asc_pt = if let (Some(asc), Some(upem)) =
+        (font_metrics.resolved_ascender, font_metrics.resolved_upem)
+    {
+        if upem > 0 {
+            asc as f64 / upem as f64 * font_size
+        } else {
+            font_size
+        }
+    } else {
+        font_size
+    };
+    let first_line_pdf_y = mapper.xfa_to_pdf_y(abs_y_xfa + space_above + asc_pt, 0.0);
+    let content_w = (container_width - pad_left - pad_right).max(0.0);
+    let line_segments = map_spans_to_lines(spans, lines);
+
+    ops.extend_from_slice(b"BT\n");
+    let base_font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+    let base_tc = node_style
+        .text_color
+        .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+        .unwrap_or(config.text_color);
+    let idh_metrics = lookup_font_metrics(node_style, config);
+
+    let mut cur_font_ref = base_font_ref;
+    let mut cur_fs = font_size;
+    let mut cur_tc = base_tc;
+    write_ops(
+        ops,
+        format_args!(
+            "{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+            cur_tc[0], cur_tc[1], cur_tc[2], cur_font_ref, cur_fs,
+        ),
+    );
+    emit_text_style_ops(node_style, ops);
+
+    let mut prev_x = x + pad_left;
+    for (i, line) in lines.iter().enumerate() {
+        let is_para_start = first_line_of_para.get(i).copied().unwrap_or(false);
+        let indent_offset = if is_para_start { text_indent } else { 0.0 };
+        let line_y = first_line_pdf_y - (i as f64 * line_height);
+        let line_w = font_metrics.measure_width(line);
+        let text_x = match text_align {
+            TextAlign::Center => {
+                x + pad_left + indent_offset + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
+            }
+            TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
+            _ => x + pad_left + indent_offset,
+        };
+        if i == 0 {
+            write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
+        } else {
+            let dx = text_x - prev_x;
+            write_ops(ops, format_args!("{:.2} {:.2} Td\n", dx, -line_height));
+        }
+        prev_x = text_x;
+
+        if let Some(segs) = line_segments.get(i) {
+            if segs.is_empty() {
+                let encoded = pdf_encode_text(line, idh_metrics);
+                write_ops(ops, format_args!("{} Tj\n", encoded));
+                continue;
+            }
+            for seg in segs {
+                let span = &spans[seg.span_idx];
+                let span_family = span
+                    .font_family
+                    .as_deref()
+                    .map(classify_font_family)
+                    .unwrap_or(font_family);
+                let span_style = span_to_node_style(span, node_style);
+                let span_font_ref = resolve_font_ref(&config.font_map, &span_style, span_family);
+                let span_fs = span.font_size.unwrap_or(font_size);
+                let span_tc = span
+                    .text_color
+                    .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+                    .unwrap_or(base_tc);
+
+                if span_font_ref != cur_font_ref || (span_fs - cur_fs).abs() > 0.01 {
+                    write_ops(ops, format_args!("{} {:.1} Tf\n", span_font_ref, span_fs));
+                    cur_font_ref = span_font_ref;
+                    cur_fs = span_fs;
+                }
+                if (span_tc[0] - cur_tc[0]).abs() > 0.001
+                    || (span_tc[1] - cur_tc[1]).abs() > 0.001
+                    || (span_tc[2] - cur_tc[2]).abs() > 0.001
+                {
+                    write_ops(
+                        ops,
+                        format_args!("{:.3} {:.3} {:.3} rg\n", span_tc[0], span_tc[1], span_tc[2]),
+                    );
+                    cur_tc = span_tc;
+                }
+                let is_span_bold = span.font_weight.as_deref().map_or(false, |w| w == "bold");
+                if is_span_bold && !font_ref_is_bold(span_font_ref) {
+                    let stroke_w = span_fs * 0.03;
+                    write_ops(
+                        ops,
+                        format_args!(
+                            "2 Tr\n{:.4} w\n{:.3} {:.3} {:.3} RG\n",
+                            stroke_w, span_tc[0], span_tc[1], span_tc[2],
+                        ),
+                    );
+                }
+                let encoded = pdf_encode_text(&seg.text, idh_metrics);
+                write_ops(ops, format_args!("{} Tj\n", encoded));
+                if is_span_bold && !font_ref_is_bold(span_font_ref) {
+                    write_ops(ops, format_args!("0 Tr\n"));
+                }
+            }
+        } else {
+            let encoded = pdf_encode_text(line, idh_metrics);
+            write_ops(ops, format_args!("{} Tj\n", encoded));
+        }
+    }
+    reset_text_style_ops(node_style, ops);
+    ops.extend_from_slice(b"ET\n");
+}
+
+fn span_to_node_style(span: &RichTextSpan, base: &FormNodeStyle) -> FormNodeStyle {
+    let mut style = base.clone();
+    if let Some(ref fam) = span.font_family {
+        style.font_family = Some(fam.clone());
+    }
+    if let Some(ref w) = span.font_weight {
+        style.font_weight = Some(w.clone());
+    }
+    if let Some(ref s) = span.font_style {
+        style.font_style = Some(s.clone());
+    }
+    style
+}
+
+fn classify_font_family(name: &str) -> FontFamily {
+    if name.contains("Courier") || name.contains("Mono") {
+        FontFamily::Monospace
+    } else if name.contains("Helvetica")
+        || name.contains("Arial")
+        || name.contains("Sans")
+        || name.contains("Myriad")
+    {
+        FontFamily::SansSerif
+    } else {
+        FontFamily::Serif
+    }
+}
+
+struct LineSpanSegment {
+    text: String,
+    span_idx: usize,
+}
+
+fn map_spans_to_lines(spans: &[RichTextSpan], lines: &[String]) -> Vec<Vec<LineSpanSegment>> {
+    let mut result = Vec::with_capacity(lines.len());
+    let mut span_idx = 0_usize;
+    let mut span_off = 0_usize;
+
+    for line in lines {
+        while span_idx < spans.len() {
+            if spans[span_idx].text == "\n" {
+                span_idx += 1;
+                span_off = 0;
+            } else if span_off >= spans[span_idx].text.len() {
+                span_idx += 1;
+                span_off = 0;
+            } else {
+                break;
+            }
+        }
+
+        let mut segs: Vec<LineSpanSegment> = Vec::new();
+        let mut line_pos = 0_usize;
+
+        while line_pos < line.len() && span_idx < spans.len() {
+            let span = &spans[span_idx];
+            if span.text == "\n" {
+                span_idx += 1;
+                span_off = 0;
+                continue;
+            }
+            let span_rest = &span.text[span_off..];
+            let line_rest = &line[line_pos..];
+
+            let common = line_rest
+                .bytes()
+                .zip(span_rest.bytes())
+                .take_while(|(a, b)| a == b)
+                .count();
+
+            if common > 0 {
+                segs.push(LineSpanSegment {
+                    text: line_rest[..common].to_string(),
+                    span_idx,
+                });
+                line_pos += common;
+                span_off += common;
+                if span_off >= span.text.len() {
+                    span_idx += 1;
+                    span_off = 0;
+                }
+            } else {
+                let skip = span_rest
+                    .bytes()
+                    .take_while(|b: &u8| b.is_ascii_whitespace())
+                    .count();
+                if skip > 0 {
+                    span_off += skip;
+                    if span_off >= span.text.len() {
+                        span_idx += 1;
+                        span_off = 0;
+                    }
+                } else {
+                    segs.push(LineSpanSegment {
+                        text: line_rest.to_string(),
+                        span_idx: 0,
+                    });
+                    break;
+                }
+            }
+        }
+
+        result.push(segs);
+
+        while span_idx < spans.len() {
+            let span = &spans[span_idx];
+            if span.text == "\n" {
+                break;
+            }
+            let rest = &span.text[span_off..];
+            let skip = rest
+                .bytes()
+                .take_while(|b: &u8| b.is_ascii_whitespace())
+                .count();
+            if skip > 0 {
+                span_off += skip;
+                if span_off >= span.text.len() {
+                    span_idx += 1;
+                    span_off = 0;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    result
 }
 
 fn wrap_text(text: &str, max_width: f64, metrics: &FontMetrics) -> Vec<String> {
