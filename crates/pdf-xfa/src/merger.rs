@@ -107,6 +107,10 @@ impl<'a> FormMerger<'a> {
                     // data name "listInitiales"), otherwise fall back to
                     // the subform name.
                     let data_name = parse_bind_data_name(elem).unwrap_or_else(|| name.clone());
+                    eprintln!(
+                        "[MERGER] expand_repeating: name={:?} data_name={:?} ctx={:?} occur=({},{})",
+                        name, data_name, data_context, occur.min, occur.max.map_or(-1, |m| m as i32)
+                    );
                     return self.expand_repeating_subform(
                         elem,
                         &name,
@@ -259,6 +263,12 @@ impl<'a> FormMerger<'a> {
         } else {
             count
         };
+        eprintln!(
+            "[MERGER]   -> data_instances={} count={} for {:?}",
+            data_instances.len(),
+            count,
+            data_name
+        );
 
         let mut instances = Vec::new();
         let layout = parse_layout_attr(element);
@@ -1927,6 +1937,29 @@ mod tests {
                 assert_eq!(value, "Hello World", "title should bind to data root");
             }
             _ => panic!("title should be a field"),
+        }
+    }
+
+    #[test]
+    fn dump_xfa_template_debug() {
+        let Ok(data) = std::fs::read("/tmp/overpag_b844.pdf") else {
+            eprintln!("SKIP: /tmp/overpag_b844.pdf not found");
+            return;
+        };
+        // Try direct extraction (may fail if encrypted)
+        if let Ok(packets) = crate::extract::extract_xfa_from_bytes(data.clone()) {
+            if let Some(t) = packets.template() {
+                std::fs::write("/tmp/xfa_template_b844.xml", t.as_bytes()).unwrap();
+                eprintln!("Template: {} bytes", t.len());
+            }
+            if let Some(d) = packets.datasets() {
+                std::fs::write("/tmp/xfa_datasets_b844.xml", d.as_bytes()).unwrap();
+                eprintln!("Datasets: {} bytes", d.len());
+            }
+        } else {
+            // Use flatten which handles decryption
+            let out = crate::flatten::flatten_xfa_to_pdf(&data).unwrap();
+            eprintln!("Flatten produced {} bytes", out.len());
         }
     }
 }
