@@ -23,7 +23,8 @@ use roxmltree::Node;
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
 use xfa_layout_engine::form::{
     ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId, FormNodeMeta,
-    FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, ScriptLanguage,
+    FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, RichTextSpan,
+    ScriptLanguage,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
@@ -221,6 +222,9 @@ impl<'a> FormMerger<'a> {
                         meta.style.space_below_pt = Some(below);
                     }
                 }
+            }
+            if meta.style.rich_text_spans.is_none() {
+                meta.style.rich_text_spans = parse_exdata_rich_text_spans(elem);
             }
         }
         let id = self.form_tree.add_node_with_meta(node, meta);
@@ -1147,6 +1151,225 @@ fn extract_exdata_margins(elem: Node<'_, '_>) -> Option<(f64, f64)> {
     }
 }
 
+/// Inline CSS style properties accumulated from parent elements.
+#[derive(Debug, Clone, Default)]
+struct InheritedStyle {
+    font_size: Option<f64>,
+    font_family: Option<String>,
+    font_weight: Option<String>,
+    font_style: Option<String>,
+    text_color: Option<(u8, u8, u8)>,
+    underline: bool,
+}
+
+impl InheritedStyle {
+    fn merge_with_css(&self, css: &str) -> Self {
+        let mut child = self.clone();
+        for part in css.split(';') {
+            let part = part.trim();
+            if let Some(val) = strip_css_prop(part, "font-size") {
+                if let Some(pt) = val.strip_suffix("pt") {
+                    if let Ok(size) = pt.trim().parse::<f64>() {
+                        if size > 0.0 {
+                            child.font_size = Some(size);
+                        }
+                    }
+                }
+            } else if let Some(val) = strip_css_prop(part, "font-family") {
+                let first = val
+                    .split(',')
+                    .next()
+                    .map(|s| s.trim().trim_matches(['"', '\'']))
+                    .filter(|s| !s.is_empty());
+                if let Some(fam) = first {
+                    child.font_family = Some(fam.to_string());
+                }
+            } else if let Some(val) = strip_css_prop(part, "font-weight") {
+                if val == "bold" || val == "700" || val == "800" || val == "900" {
+                    child.font_weight = Some("bold".to_string());
+                } else if val == "normal" || val == "400" || val == "500" {
+                    child.font_weight = Some("normal".to_string());
+                }
+            } else if let Some(val) = strip_css_prop(part, "font-style") {
+                if val == "italic" || val == "oblique" {
+                    child.font_style = Some("italic".to_string());
+                } else if val == "normal" {
+                    child.font_style = Some("normal".to_string());
+                }
+            } else if let Some(val) = strip_css_prop(part, "text-decoration") {
+                if val.contains("underline") {
+                    child.underline = true;
+                } else if val == "none" {
+                    child.underline = false;
+                }
+            } else if let Some(val) = strip_css_prop(part, "color") {
+                if let Some(rgb) = parse_css_color(val) {
+                    child.text_color = Some(rgb);
+                }
+            }
+        }
+        child
+    }
+
+    fn to_span(&self, text: String) -> RichTextSpan {
+        RichTextSpan {
+            text,
+            font_size: self.font_size,
+            font_family: self.font_family.clone(),
+            font_weight: self.font_weight.clone(),
+            font_style: self.font_style.clone(),
+            text_color: self.text_color,
+            underline: self.underline,
+        }
+    }
+}
+
+fn strip_css_prop<'a>(decl: &'a str, prop: &str) -> Option<&'a str> {
+    decl.strip_prefix(prop)
+        .and_then(|rest| rest.trim_start().strip_prefix(':'))
+        .map(|v| v.trim())
+}
+
+/// Parse `<exData contentType="text/html">` XHTML into rich text spans.
+fn parse_exdata_rich_text_spans(elem: Node<'_, '_>) -> Option<Vec<RichTextSpan>> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let ex = find_first_child_by_name(value, "exData")?;
+    let ct = ex.attribute("contentType").unwrap_or("");
+    if ct != "text/html" && ct != "text/xml" {
+        return None;
+    }
+    let body = ex
+        .descendants()
+        .find(|d| d.is_element() && d.tag_name().name() == "body")?;
+    let mut spans: Vec<RichTextSpan> = Vec::new();
+    let base_style = InheritedStyle::default();
+    let mut first_para = true;
+    for child in body.children() {
+        if child.is_element() && child.tag_name().name() == "p" {
+            if !first_para && !spans.is_empty() {
+                spans.push(RichTextSpan {
+                    text: "\n".to_string(),
+                    font_size: None,
+                    font_family: None,
+                    font_weight: None,
+                    font_style: None,
+                    text_color: None,
+                    underline: false,
+                });
+            }
+            first_para = false;
+            let p_style = match child.attribute("style") {
+                Some(css) => base_style.merge_with_css(css),
+                None => base_style.clone(),
+            };
+            collect_inline_spans(child, &p_style, &mut spans);
+        } else if child.is_text() {
+            if let Some(t) = child.text() {
+                let t = t.trim();
+                if !t.is_empty() {
+                    spans.push(base_style.to_span(t.to_string()));
+                }
+            }
+        }
+    }
+    if spans.is_empty() {
+        return None;
+    }
+    let all_default = spans.iter().all(|s| {
+        s.font_size.is_none()
+            && s.font_family.is_none()
+            && s.font_weight.is_none()
+            && s.font_style.is_none()
+            && s.text_color.is_none()
+            && !s.underline
+    });
+    if all_default {
+        return None;
+    }
+    Some(spans)
+}
+
+fn collect_inline_spans(
+    node: Node<'_, '_>,
+    inherited: &InheritedStyle,
+    spans: &mut Vec<RichTextSpan>,
+) {
+    for child in node.children() {
+        if child.is_text() {
+            if let Some(t) = child.text() {
+                let t = t.trim();
+                if !t.is_empty() {
+                    spans.push(inherited.to_span(t.to_string()));
+                }
+            }
+        } else if child.is_element() {
+            let tag = child.tag_name().name();
+            match tag {
+                "br" => {
+                    spans.push(RichTextSpan {
+                        text: "\n".to_string(),
+                        font_size: None,
+                        font_family: None,
+                        font_weight: None,
+                        font_style: None,
+                        text_color: None,
+                        underline: false,
+                    });
+                }
+                "span" => {
+                    let child_style = match child.attribute("style") {
+                        Some(css) => {
+                            if css.contains("xfa-spacerun:yes") {
+                                if let Some(t) = child.text() {
+                                    if !t.is_empty() {
+                                        spans.push(inherited.to_span(t.to_string()));
+                                    }
+                                }
+                                collect_inline_spans(child, inherited, spans);
+                                continue;
+                            }
+                            inherited.merge_with_css(css)
+                        }
+                        None => inherited.clone(),
+                    };
+                    collect_inline_spans(child, &child_style, spans);
+                }
+                "b" | "strong" => {
+                    let mut s = inherited.clone();
+                    s.font_weight = Some("bold".to_string());
+                    if let Some(css) = child.attribute("style") {
+                        s = s.merge_with_css(css);
+                    }
+                    collect_inline_spans(child, &s, spans);
+                }
+                "i" | "em" => {
+                    let mut s = inherited.clone();
+                    s.font_style = Some("italic".to_string());
+                    if let Some(css) = child.attribute("style") {
+                        s = s.merge_with_css(css);
+                    }
+                    collect_inline_spans(child, &s, spans);
+                }
+                "u" => {
+                    let mut s = inherited.clone();
+                    s.underline = true;
+                    if let Some(css) = child.attribute("style") {
+                        s = s.merge_with_css(css);
+                    }
+                    collect_inline_spans(child, &s, spans);
+                }
+                _ => {
+                    let child_style = match child.attribute("style") {
+                        Some(css) => inherited.merge_with_css(css),
+                        None => inherited.clone(),
+                    };
+                    collect_inline_spans(child, &child_style, spans);
+                }
+            }
+        }
+    }
+}
+
 fn parse_caption(elem: Node<'_, '_>) -> Option<Caption> {
     let cap_elem = find_first_child_by_name(elem, "caption")?;
     if is_hidden(cap_elem) {
@@ -1415,11 +1638,7 @@ fn collect_items_texts(items_elem: Node<'_, '_>) -> Vec<String> {
         .filter(|n| n.is_element())
         .filter_map(|child| {
             let txt = child.text().unwrap_or("").trim().to_string();
-            if txt.is_empty() {
-                None
-            } else {
-                Some(txt)
-            }
+            if txt.is_empty() { None } else { Some(txt) }
         })
         .collect()
 }
