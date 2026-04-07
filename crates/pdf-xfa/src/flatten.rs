@@ -138,7 +138,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     };
 
     let template_xml = match packets.template() {
-        Some(t) => t.to_string(),
+        Some(t) => strip_undefined_xml_entities(&t),
         None => {
             // XFA present but template packet missing/unparseable (truncated XML).
             // Strip AcroForm + NeedsRendering so renderers use static content.
@@ -163,7 +163,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     const FLATTEN_TIMEOUT: Duration = Duration::from_secs(30);
     let pdf_bytes_ref = pdf_bytes.to_vec();
     let template_xml_owned = template_xml.clone();
-    let datasets_xml_owned = packets.datasets().map(|s| s.to_string());
+    let datasets_xml_owned = packets.datasets().map(|s| strip_undefined_xml_entities(&s));
 
     let handle = thread::spawn(move || {
         xfa_flatten_inner(
@@ -955,6 +955,39 @@ fn is_corrupt_xfa_template(pdf_size: usize, template_xml: &str) -> bool {
         }
         Err(_) => true, // Unparseable template is corrupt.
     }
+}
+
+/// Strip undefined XML entity references from XFA template/datasets XML.
+///
+/// `roxmltree` only supports the five predefined XML entities (lt, gt, amp,
+/// quot, apos). Some XFA PDFs contain custom entity references like `&xxe;`
+/// (likely injected by iText or similar tools) that cause parse failures.
+/// This function removes them so the XML can be parsed.
+fn strip_undefined_xml_entities(xml: &str) -> String {
+    let predefined = ["lt", "gt", "amp", "quot", "apos"];
+    let mut result = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(amp_pos) = rest.find('&') {
+        result.push_str(&rest[..amp_pos]);
+        let after_amp = &rest[amp_pos + 1..];
+        if let Some(semi_pos) = after_amp.find(';') {
+            let entity_name = &after_amp[..semi_pos];
+            // Keep numeric character references (&#123; or &#x1F;)
+            if entity_name.starts_with('#') || predefined.contains(&entity_name) {
+                result.push('&');
+                result.push_str(entity_name);
+                result.push(';');
+            }
+            // else: drop the undefined entity reference entirely
+            rest = &after_amp[semi_pos + 1..];
+        } else {
+            // No closing semicolon — keep the ampersand as-is
+            result.push('&');
+            rest = after_amp;
+        }
+    }
+    result.push_str(rest);
+    result
 }
 
 // ---------------------------------------------------------------------------
