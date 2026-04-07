@@ -137,6 +137,8 @@ struct QueuedNode {
     break_target: Option<String>,
     /// Optional override for the children of this node (used for splitting subforms/tables).
     children_override: Option<Vec<FormNodeId>>,
+    /// Remaining text lines for a text leaf split across pages (§8.7).
+    text_lines_override: Option<Vec<String>>,
 }
 
 /// The layout engine.
@@ -390,6 +392,7 @@ impl<'a> LayoutEngine<'a> {
                     break_after: meta.page_break_after,
                     break_target: meta.break_target.clone(),
                     children_override: None,
+                    text_lines_override: None,
                 }
             })
             .collect()
@@ -748,11 +751,17 @@ impl<'a> LayoutEngine<'a> {
             }
 
             let child = self.form.get(child_id);
-            let child_size = self.compute_extent_with_available_and_override(
-                child_id,
-                Some(available),
-                qn.children_override.as_deref(),
-            );
+            let child_size = if let Some(ref override_lines) = qn.text_lines_override {
+                let lh = child.font.line_height_pt();
+                let w = self.compute_extent(child_id).width;
+                Size { width: w, height: override_lines.len() as f64 * lh }
+            } else {
+                self.compute_extent_with_available_and_override(
+                    child_id,
+                    Some(available),
+                    qn.children_override.as_deref(),
+                )
+            };
 
             // Keep-chain look-ahead: if this node starts a keep chain and
             // the chain doesn't fit in remaining space (but WOULD fit on a
@@ -771,8 +780,41 @@ impl<'a> LayoutEngine<'a> {
             if y_cursor + child_size.height > content_bottom {
                 let remaining_height = content_bottom - y_cursor;
 
+                // §8.7 Text leaf splitting at page boundary.
+                if remaining_height > 0.0
+                    && (qn.text_lines_override.is_some()
+                        || self.is_splittable_text_leaf(child_id))
+                {
+                    let lines = if let Some(ref ol) = qn.text_lines_override {
+                        ol.clone()
+                    } else {
+                        let txt = match &child.node_type {
+                            FormNodeType::Draw(DrawContent::Text(t)) => t.as_str(),
+                            FormNodeType::Field { value } => value.as_str(),
+                            _ => "",
+                        };
+                        let insets_w = child.box_model.margins.horizontal()
+                            + child.box_model.border_width * 2.0;
+                        let max_w = (child_size.width - insets_w).max(1.0);
+                        text::wrap_text(txt, max_w, &child.font, 0.0, None).lines
+                    };
+                    let (partial, rest_nodes) = self.split_text_node(
+                        child_id, y_cursor, remaining_height, &lines,
+                    )?;
+                    if partial.rect.height > 0.0
+                        && partial.rect.height <= remaining_height + 1.0
+                    {
+                        let mut offset_node = partial;
+                        offset_node.rect.x += content_area.x;
+                        offset_node.rect.y += content_area.y;
+                        page.nodes.push(offset_node);
+                        placed_count += 1;
+                        split_remaining = rest_nodes;
+                    } else if placed_count > 0 {
+                        break;
+                    }
                 // Try to split this node if it's a splittable container.
-                if remaining_height > 0.0 && self.can_split(child_id) {
+                } else if remaining_height > 0.0 && self.can_split(child_id) {
                     let (partial, rest_nodes) = self.split_tb_node(
                         child_id,
                         y_cursor,
@@ -854,14 +896,31 @@ impl<'a> LayoutEngine<'a> {
 
             // XFA Spec 3.3 §8.3 — hAlign positions child within content area
             let x = self.child_h_align_offset(child_id, child_size.width, available.width);
-            let node = self.layout_single_node_with_extent(
-                child_id,
-                child,
-                x,
-                y_cursor,
-                child_size,
-                qn.children_override.as_deref(),
-            )?;
+            let node = if let Some(ref override_lines) = qn.text_lines_override {
+                LayoutNode {
+                    form_node: child_id,
+                    rect: Rect::new(x, y_cursor, child_size.width, child_size.height),
+                    name: child.name.clone(),
+                    content: LayoutContent::WrappedText {
+                        lines: override_lines.clone(),
+                        first_line_of_para: vec![false; override_lines.len()],
+                        font_size: child.font.size,
+                        text_align: child.font.text_align,
+                        font_family: child.font.typeface,
+                    },
+                    children: Vec::new(),
+                    style: self.form.meta(child_id).style.clone(),
+                }
+            } else {
+                self.layout_single_node_with_extent(
+                    child_id,
+                    child,
+                    x,
+                    y_cursor,
+                    child_size,
+                    qn.children_override.as_deref(),
+                )?
+            };
             let mut offset_node = node;
             offset_node.rect.x += content_area.x;
             offset_node.rect.y += content_area.y;
@@ -894,7 +953,7 @@ impl<'a> LayoutEngine<'a> {
     fn can_split(&self, id: FormNodeId) -> bool {
         let node = self.form.get(id);
         if node.children.is_empty() {
-            return false;
+            return self.is_splittable_text_leaf(id);
         }
         if let Some(explicit_h) = node.box_model.height {
             // TB subforms with explicit height: allow splitting only when
@@ -918,6 +977,122 @@ impl<'a> LayoutEngine<'a> {
                 | LayoutStrategy::Table
                 | LayoutStrategy::Positioned
         )
+    }
+
+    /// Check if a childless node is a text leaf that can be split between lines.
+    ///
+    /// XFA Spec 3.3 §8.7 (p291): text may be split between lines.
+    /// Images, barcodes, geometric figures, and widgets may NOT be split.
+    fn is_splittable_text_leaf(&self, id: FormNodeId) -> bool {
+        let node = self.form.get(id);
+        if !node.children.is_empty() {
+            return false;
+        }
+        if self.form.meta(id).keep_intact_content_area {
+            return false;
+        }
+        match &node.node_type {
+            FormNodeType::Draw(DrawContent::Text(t)) => {
+                let line_count = text::wrap_text(
+                    t,
+                    node.box_model.content_width().max(1.0),
+                    &node.font, 0.0, None,
+                )
+                .lines
+                .len();
+                line_count > 1
+            }
+            FormNodeType::Field { value } if !value.is_empty() => {
+                let line_count = text::wrap_text(
+                    value,
+                    node.box_model.content_width().max(1.0),
+                    &node.font, 0.0, None,
+                )
+                .lines
+                .len();
+                line_count > 1
+            }
+            _ => false,
+        }
+    }
+
+    /// Split a text leaf node at a line boundary so the first portion fits
+    /// within `remaining_height`.
+    ///
+    /// XFA Spec 3.3 §8.7 (p291): text may be split between lines only.
+    fn split_text_node(
+        &self,
+        id: FormNodeId,
+        y_offset: f64,
+        remaining_height: f64,
+        lines: &[String],
+    ) -> Result<(LayoutNode, Vec<QueuedNode>)> {
+        let node = self.form.get(id);
+        let lh = node.font.line_height_pt();
+        let split_points = text::text_split_points(lines.len(), lh);
+
+        let mut split_at = 0;
+        for &sp in &split_points {
+            if sp <= remaining_height + 0.5 {
+                split_at += 1;
+            } else {
+                break;
+            }
+        }
+
+        if split_at == 0 {
+            let full_height = lines.len() as f64 * lh;
+            let full_node = LayoutNode {
+                form_node: id,
+                rect: Rect::new(0.0, y_offset, self.compute_extent(id).width, full_height),
+                name: node.name.clone(),
+                content: LayoutContent::WrappedText {
+                    lines: lines.to_vec(),
+                    first_line_of_para: vec![false; lines.len()],
+                    font_size: node.font.size,
+                    text_align: node.font.text_align,
+                    font_family: node.font.typeface,
+                },
+                children: Vec::new(),
+                style: self.form.meta(id).style.clone(),
+            };
+            return Ok((full_node, Vec::new()));
+        }
+
+        let top_lines: Vec<String> = lines[..split_at].to_vec();
+        let bottom_lines: Vec<String> = lines[split_at..].to_vec();
+        let partial_height = split_at as f64 * lh;
+        let node_width = self.compute_extent(id).width;
+
+        let partial_node = LayoutNode {
+            form_node: id,
+            rect: Rect::new(0.0, y_offset, node_width, partial_height),
+            name: node.name.clone(),
+            content: LayoutContent::WrappedText {
+                lines: top_lines.clone(),
+                first_line_of_para: vec![false; top_lines.len()],
+                font_size: node.font.size,
+                text_align: node.font.text_align,
+                font_family: node.font.typeface,
+            },
+            children: Vec::new(),
+            style: self.form.meta(id).style.clone(),
+        };
+
+        let rest = if bottom_lines.is_empty() {
+            Vec::new()
+        } else {
+            vec![QueuedNode {
+                id,
+                break_before: false,
+                break_after: self.form.meta(id).page_break_after,
+                break_target: None,
+                children_override: None,
+                text_lines_override: Some(bottom_lines),
+            }]
+        };
+
+        Ok((partial_node, rest))
     }
 
     /// Check if any direct (expanded) child of a tb-layout subform has
@@ -997,6 +1172,53 @@ impl<'a> LayoutEngine<'a> {
                 break;
             }
 
+            // §8.7 Text leaf splitting: if the overflowing child is a text
+            // leaf, split at a line boundary instead of a child boundary.
+            if child_y + child_size.height > remaining_height
+                && !child_meta.keep_intact_content_area
+                && self.is_splittable_text_leaf(child_id)
+            {
+                let child_remaining = (remaining_height - child_y).max(0.0);
+                if child_remaining > 0.0 {
+                    let cnode = self.form.get(child_id);
+                    let txt = match &cnode.node_type {
+                        FormNodeType::Draw(DrawContent::Text(t)) => t.as_str(),
+                        FormNodeType::Field { value } => value.as_str(),
+                        _ => "",
+                    };
+                    let insets_w =
+                        cnode.box_model.margins.horizontal() + cnode.box_model.border_width * 2.0;
+                    let max_w = (self.compute_extent(child_id).width - insets_w).max(1.0);
+                    let wrapped = text::wrap_text(txt, max_w, &cnode.font, 0.0, None);
+                    let (partial_child, child_rest) = self.split_text_node(
+                        child_id,
+                        child_y,
+                        child_remaining,
+                        &wrapped.lines,
+                    )?;
+
+                    if partial_child.rect.height > 0.0
+                        && partial_child.rect.height <= child_remaining + 0.5
+                    {
+                        placed_children.push(partial_child);
+                        child_y += placed_children.last().unwrap().rect.height;
+                        split_idx = i + 1;
+
+                        let mut rest: Vec<QueuedNode> = child_rest;
+                        rest.extend(expanded_children[i + 1..].iter().map(|&cid| QueuedNode {
+                            id: cid,
+                            break_before: self.form.meta(cid).page_break_before,
+                            break_after: self.form.meta(cid).page_break_after,
+                            break_target: None,
+                            children_override: None,
+                            text_lines_override: None,
+                        }));
+                        split_rest_override = Some(rest);
+                        break;
+                    }
+                }
+            }
+
             // If the next child itself is a splittable container and it is
             // the first overflowing child, split it recursively instead of
             // forcing the entire container onto a single page.
@@ -1049,6 +1271,7 @@ impl<'a> LayoutEngine<'a> {
                             break_after: self.form.meta(child_id).page_break_after,
                             break_target: None,
                             children_override: child_override,
+                            text_lines_override: None,
                         }];
                         rest.extend(expanded_children[i + 1..].iter().map(|&cid| QueuedNode {
                             id: cid,
@@ -1056,6 +1279,7 @@ impl<'a> LayoutEngine<'a> {
                             break_after: self.form.meta(cid).page_break_after,
                             break_target: None,
                             children_override: None,
+                            text_lines_override: None,
                         }));
                         split_rest_override = Some(rest);
                         break;
@@ -1135,6 +1359,7 @@ impl<'a> LayoutEngine<'a> {
                     break_after: self.form.meta(cid).page_break_after,
                     break_target: None,
                     children_override: None,
+                    text_lines_override: None,
                 })
                 .collect()
         });
@@ -1272,6 +1497,7 @@ impl<'a> LayoutEngine<'a> {
                 break_after: self.form.meta(id).page_break_after,
                 break_target: None,
                 children_override: Some(rest_children),
+                text_lines_override: None,
             }]
         };
 

@@ -356,6 +356,20 @@ pub fn measure_text(text: &str, font: &FontMetrics) -> Size {
     }
 }
 
+/// Compute valid split positions (y-offsets) for multiline text.
+///
+/// XFA Spec 3.3 §8.7 (p291): text may be split between lines only.
+/// Returns the y-position of each line boundary (after line 1, after line 2, …).
+/// A text with N lines has N−1 split points.
+pub fn text_split_points(line_count: usize, line_height: f64) -> Vec<f64> {
+    if line_count <= 1 {
+        return Vec::new();
+    }
+    (1..line_count)
+        .map(|i| i as f64 * line_height)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,5 +590,20 @@ mod tests {
             (w_e_accent - w_n).abs() < 0.01,
             "AFM fallback: é={w_e_accent} should equal n={w_n}"
         );
+    }
+
+    #[test]
+    fn text_split_points_multi() {
+        let pts = text_split_points(4, 12.0);
+        assert_eq!(pts.len(), 3);
+        assert!((pts[0] - 12.0).abs() < 0.01);
+        assert!((pts[1] - 24.0).abs() < 0.01);
+        assert!((pts[2] - 36.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn text_split_points_single_line() {
+        let pts = text_split_points(1, 12.0);
+        assert!(pts.is_empty());
     }
 }

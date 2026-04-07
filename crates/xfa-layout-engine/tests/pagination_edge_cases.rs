@@ -1,5 +1,7 @@
-use xfa_layout_engine::form::{FormNode, FormNodeId, FormNodeType, FormTree, Occur};
-use xfa_layout_engine::layout::{LayoutEngine, LayoutNode};
+use xfa_layout_engine::form::{
+    DrawContent, FormNode, FormNodeId, FormNodeType, FormTree, Occur,
+};
+use xfa_layout_engine::layout::{LayoutContent, LayoutEngine, LayoutNode};
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
 
@@ -265,4 +267,81 @@ fn tb_subform_with_explicit_height_overflowing_content_paginates() {
         .map(|p| count_nodes_with_prefix(&p.nodes, "Row"))
         .sum();
     assert_eq!(total_rows, 5, "all 5 rows should be placed across pages");
+}
+
+/// XFA Spec 3.3 §8.7 — multiline text that overflows a page should split
+/// between lines, placing fitting lines on the current page and the rest
+/// on the next.
+#[test]
+fn multiline_text_splits_across_pages() {
+    let mut tree = FormTree::new();
+
+    // Create a Draw(Text) node with 10 explicit lines (\n separated).
+    // Default font: 10pt, line_height=1.2 -> 12pt per line -> 120pt total.
+    // Page height = 72pt -> ~6 lines fit, 4 overflow.
+    let long_text = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n\
+                     Line 6\nLine 7\nLine 8\nLine 9\nLine 10";
+    let text_node = tree.add_node(FormNode {
+        name: "LongText".to_string(),
+        node_type: FormNodeType::Draw(DrawContent::Text(long_text.to_string())),
+        box_model: BoxModel {
+            width: Some(200.0),
+            height: None,
+            max_width: f64::MAX,
+            max_height: f64::MAX,
+            ..Default::default()
+        },
+        layout: LayoutStrategy::Positioned,
+        children: vec![],
+        occur: Occur::once(),
+        font: FontMetrics::default(), // 10pt, lh=12pt
+        calculate: None,
+        validate: None,
+        column_widths: vec![],
+        col_span: 1,
+    });
+
+    // Wrap in a TB subform so the layout engine can paginate.
+    let wrapper = make_subform(
+        &mut tree,
+        "Wrapper",
+        LayoutStrategy::TopToBottom,
+        Some(200.0),
+        None,
+        vec![text_node],
+    );
+
+    let root = make_root(&mut tree, 200.0, 72.0, vec![wrapper]);
+    let result = LayoutEngine::new(&tree).layout(root).unwrap();
+
+    // Should produce 2 pages: first page has some lines, second has the rest.
+    assert!(
+        result.pages.len() >= 2,
+        "expected >=2 pages for multiline text split, got {}",
+        result.pages.len()
+    );
+
+    // Collect all "LongText" nodes across all pages
+    let mut text_nodes = Vec::new();
+    for page in &result.pages {
+        collect_named_nodes(&page.nodes, "LongText", &mut text_nodes);
+    }
+    assert!(
+        text_nodes.len() >= 2,
+        "expected text node on at least 2 pages, got {} occurrences",
+        text_nodes.len()
+    );
+
+    // Both should have WrappedText content with non-empty lines
+    let mut total_lines = 0;
+    for tn in &text_nodes {
+        if let LayoutContent::WrappedText { lines, .. } = &tn.content {
+            assert!(!lines.is_empty(), "split text part should have lines");
+            total_lines += lines.len();
+        }
+    }
+    assert_eq!(
+        total_lines, 10,
+        "total lines across pages should equal original 10"
+    );
 }
