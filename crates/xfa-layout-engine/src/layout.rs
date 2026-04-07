@@ -232,8 +232,46 @@ impl<'a> LayoutEngine<'a> {
                 pages.push(page);
             }
         } else {
+            // XFA §4.2 — Positioned content: when ALL content nodes use
+            // positioned layout (absolute x/y coordinates), they share a
+            // single page.  Flowing them top-to-bottom across pages is
+            // incorrect and causes over-pagination (e.g. 2-page output for
+            // a 1-page form whose template defines two positioned subforms
+            // overlaid on the same pageArea).
+            let all_content_positioned = content_queued.len() > 1
+                && content_queued
+                    .iter()
+                    .all(|qn| {
+                        let node = self.form.get(qn.id);
+                        node.layout == LayoutStrategy::Positioned
+                            && matches!(node.node_type, FormNodeType::Subform)
+                            && !qn.break_before
+                    });
+
+            if all_content_positioned {
+                let pa = &page_areas[0];
+                let ca = primary_content_area(pa);
+                let ids: Vec<FormNodeId> =
+                    content_queued.iter().map(|qn| qn.id).collect();
+                let mut page = self.layout_content_on_page(
+                    ca,
+                    pa.page_width,
+                    pa.page_height,
+                    &ids,
+                    LayoutStrategy::Positioned,
+                )?;
+                self.prepend_fixed_nodes(&pa.fixed_nodes, &mut page)?;
+                if Self::has_visible_content(&page.nodes) {
+                    pages.push(page);
+                }
+            }
+
             // Layout content across page areas, then repeat last template for overflow.
-            let mut remaining = content_queued;
+            let mut remaining = if all_content_positioned {
+                Vec::new()
+            } else {
+                content_queued
+            };
             for pa in &page_areas {
                 if remaining.is_empty() {
                     break;
