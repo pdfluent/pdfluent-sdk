@@ -328,16 +328,364 @@ fn builtin_concat(args: &[Value]) -> Result<Value> {
     Ok(Value::String(result))
 }
 
-fn builtin_decode(_args: &[Value]) -> Result<Value> {
-    todo_builtin("Decode", "§25.7", 1123, "(s1 [, s2])")
+// XFA Spec 3.3 §25.7 "Decode" (p1123) — Decode(s1 [, s2])
+// Decode s1 using encoding s2 ("url", "html", "xml").  Default = "url".
+fn builtin_decode(args: &[Value]) -> Result<Value> {
+    arity_range("Decode", args, 1, 2)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
+    let s = args[0].to_string_val();
+    let enc = args
+        .get(1)
+        .map(|v| v.to_string_val())
+        .unwrap_or_else(|| "url".to_string());
+    match enc.to_ascii_lowercase().as_str() {
+        "url" => Ok(Value::String(decode_url(&s))),
+        "html" | "xml" => Ok(Value::String(decode_xml_html(&s))),
+        _ => Ok(Value::String(s)),
+    }
 }
 
-fn builtin_encode(_args: &[Value]) -> Result<Value> {
-    todo_builtin("Encode", "§25.7", 1124, "(s1 [, s2])")
+// XFA Spec 3.3 §25.7 "Encode" (p1124) — Encode(s1 [, s2])
+// Encode s1 using encoding s2 ("url", "html", "xml").  Default = "url".
+fn builtin_encode(args: &[Value]) -> Result<Value> {
+    arity_range("Encode", args, 1, 2)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
+    let s = args[0].to_string_val();
+    let enc = args
+        .get(1)
+        .map(|v| v.to_string_val())
+        .unwrap_or_else(|| "url".to_string());
+    match enc.to_ascii_lowercase().as_str() {
+        "url" => Ok(Value::String(encode_url(&s))),
+        "html" => Ok(Value::String(encode_html(&s))),
+        "xml" => Ok(Value::String(encode_xml(&s))),
+        _ => Ok(Value::String(s)),
+    }
 }
 
-fn builtin_format(_args: &[Value]) -> Result<Value> {
-    todo_builtin("Format", "§25.7", 1125, "(s1, s2[, s3...])")
+// XFA Spec 3.3 §25.7 "Format" (p1125) — Format(s1, s2)
+// Format value s2 using picture clause s1.
+fn builtin_format(args: &[Value]) -> Result<Value> {
+    arity_range("Format", args, 2, 10)?;
+    if args[0].is_null() {
+        return Ok(Value::Null);
+    }
+    let picture = args[0].to_string_val();
+    let value = args[1].to_string_val();
+    Ok(Value::String(format_picture(&picture, &value)))
+}
+
+// ---- Decode/Encode helpers ----
+
+fn decode_url(s: &str) -> String {
+    let mut result = Vec::new();
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(
+                &s[i + 1..i + 3],
+                16,
+            ) {
+                result.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        if bytes[i] == b'+' {
+            result.push(b' ');
+        } else {
+            result.push(bytes[i]);
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&result).into_owned()
+}
+
+fn encode_url(s: &str) -> String {
+    let mut result = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(b as char);
+            }
+            _ => {
+                result.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    result
+}
+
+fn decode_xml_html(s: &str) -> String {
+    let mut result = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '&' {
+            let mut entity = String::new();
+            for ec in chars.by_ref() {
+                if ec == ';' {
+                    break;
+                }
+                entity.push(ec);
+            }
+            match entity.as_str() {
+                "amp" => result.push('&'),
+                "lt" => result.push('<'),
+                "gt" => result.push('>'),
+                "apos" => result.push('\''),
+                "quot" => result.push('"'),
+                "nbsp" => result.push('\u{00A0}'),
+                _ if entity.starts_with('#') => {
+                    let code = if entity.starts_with("#x") || entity.starts_with("#X") {
+                        u32::from_str_radix(&entity[2..], 16).ok()
+                    } else {
+                        entity[1..].parse::<u32>().ok()
+                    };
+                    if let Some(c) = code.and_then(char::from_u32) {
+                        result.push(c);
+                    } else {
+                        result.push('&');
+                        result.push_str(&entity);
+                        result.push(';');
+                    }
+                }
+                _ => {
+                    result.push('&');
+                    result.push_str(&entity);
+                    result.push(';');
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+fn encode_html(s: &str) -> String {
+    let mut result = String::new();
+    for ch in s.chars() {
+        match ch {
+            '&' => result.push_str("&amp;"),
+            '<' => result.push_str("&lt;"),
+            '>' => result.push_str("&gt;"),
+            '"' => result.push_str("&quot;"),
+            _ => result.push(ch),
+        }
+    }
+    result
+}
+
+fn encode_xml(s: &str) -> String {
+    let mut result = String::new();
+    for ch in s.chars() {
+        match ch {
+            '&' => result.push_str("&amp;"),
+            '<' => result.push_str("&lt;"),
+            '>' => result.push_str("&gt;"),
+            '\'' => result.push_str("&apos;"),
+            '"' => result.push_str("&quot;"),
+            _ => result.push(ch),
+        }
+    }
+    result
+}
+
+// ---- Format helper ----
+
+/// Format a value according to a FormCalc picture clause.
+/// Supports `num{...}`, `date{...}`, `text{...}` patterns.
+fn format_picture(picture: &str, value: &str) -> String {
+    // Extract category and pattern from "category{pattern}"
+    if let Some(inner) = extract_picture_body(picture, "num") {
+        format_num(inner, value)
+    } else if let Some(inner) = extract_picture_body(picture, "date") {
+        format_date_picture(inner, value)
+    } else if let Some(inner) = extract_picture_body(picture, "text") {
+        format_text(inner, value)
+    } else {
+        // Fallback: return original value
+        value.to_string()
+    }
+}
+
+fn extract_picture_body<'a>(picture: &'a str, category: &str) -> Option<&'a str> {
+    let lower = picture.to_ascii_lowercase();
+    let prefix = format!("{}{{", category);
+    if lower.starts_with(&prefix) && picture.ends_with('}') {
+        Some(&picture[prefix.len()..picture.len() - 1])
+    } else {
+        None
+    }
+}
+
+/// Numeric formatting: z = suppress leading zero, 9 = always show digit.
+fn format_num(pattern: &str, value: &str) -> String {
+    let num: f64 = value.parse().unwrap_or(0.0);
+    let is_neg = num < 0.0;
+    let abs_num = num.abs();
+
+    // Count integer and decimal pattern digits
+    let (int_pat, dec_pat) = if let Some(dot_pos) = pattern.find('.') {
+        (&pattern[..dot_pos], Some(&pattern[dot_pos + 1..]))
+    } else {
+        (pattern, None)
+    };
+
+    let dec_digits = dec_pat.map_or(0, |p| p.chars().filter(|&c| c == '9' || c == 'z' || c == 'Z').count());
+    let rounded = if dec_digits > 0 {
+        let factor = 10f64.powi(dec_digits as i32);
+        (abs_num * factor).round() / factor
+    } else {
+        abs_num.round()
+    };
+
+    let int_part = rounded.trunc() as u64;
+    let dec_part = ((rounded.fract() * 10f64.powi(dec_digits as i32)).round()) as u64;
+
+    let int_str = int_part.to_string();
+    let int_pat_clean: String = int_pat.chars().filter(|&c| c == '9' || c == 'z' || c == 'Z').collect();
+    let int_width = int_pat_clean.len().max(int_str.len());
+
+    // Build integer portion
+    let padded_int = format!("{:0>width$}", int_str, width = int_width);
+    let mut int_result = String::new();
+    let suppress_zeros = int_pat_clean.starts_with(['z', 'Z']);
+
+    let mut leading = true;
+    let pat_chars: Vec<char> = int_pat_clean.chars().collect();
+    let padded_chars: Vec<char> = padded_int.chars().collect();
+    let offset = padded_chars.len().saturating_sub(pat_chars.len());
+
+    for (i, &pc) in padded_chars.iter().enumerate() {
+        let pat_idx = i.saturating_sub(offset);
+        let is_z = pat_idx < pat_chars.len() && (pat_chars[pat_idx] == 'z' || pat_chars[pat_idx] == 'Z');
+
+        if leading && pc == '0' && suppress_zeros && is_z {
+            int_result.push(' ');
+        } else {
+            leading = false;
+            int_result.push(pc);
+        }
+    }
+
+    // Re-inject separators from the original pattern (commas, etc.)
+    let mut formatted = String::new();
+    let mut result_idx = 0;
+    let result_chars: Vec<char> = int_result.chars().collect();
+    for ch in int_pat.chars() {
+        if ch == '9' || ch == 'z' || ch == 'Z' {
+            if result_idx < result_chars.len() {
+                formatted.push(result_chars[result_idx]);
+                result_idx += 1;
+            }
+        } else {
+            formatted.push(ch);
+        }
+    }
+    while result_idx < result_chars.len() {
+        formatted.push(result_chars[result_idx]);
+        result_idx += 1;
+    }
+
+    // Add decimal part
+    if let Some(dp) = dec_pat {
+        formatted.push('.');
+        let dec_str = format!("{:0>width$}", dec_part, width = dec_digits);
+        let mut dec_idx = 0;
+        for ch in dp.chars() {
+            if ch == '9' || ch == 'z' || ch == 'Z' {
+                if dec_idx < dec_str.len() {
+                    formatted.push(dec_str.as_bytes()[dec_idx] as char);
+                    dec_idx += 1;
+                }
+            } else {
+                formatted.push(ch);
+            }
+        }
+    }
+
+    if is_neg {
+        format!("-{}", formatted.trim_start())
+    } else {
+        formatted
+    }
+}
+
+/// Date formatting: YYYY, MM, DD, MMM, etc.
+fn format_date_picture(pattern: &str, value: &str) -> String {
+    // Try to parse value as days-since-1900 (number) or ISO date
+    let (y, m, d) = if let Ok(days) = value.parse::<f64>() {
+        days_to_date(days as i64)
+    } else if value.len() >= 10 && value.as_bytes()[4] == b'-' {
+        // ISO date: YYYY-MM-DD
+        let parts: Vec<&str> = value.split('-').collect();
+        if parts.len() >= 3 {
+            (
+                parts[0].parse::<i32>().unwrap_or(2000),
+                parts[1].parse::<u32>().unwrap_or(1),
+                parts[2].parse::<u32>().unwrap_or(1),
+            )
+        } else {
+            return value.to_string();
+        }
+    } else {
+        return value.to_string();
+    };
+
+    let month_names = [
+        "", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let month_full = [
+        "",
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+
+    let mut result = pattern.to_string();
+    result = result.replace("YYYY", &format!("{:04}", y));
+    result = result.replace("YY", &format!("{:02}", y % 100));
+    if result.contains("MMMM") {
+        result = result.replace("MMMM", month_full.get(m as usize).unwrap_or(&""));
+    } else if result.contains("MMM") {
+        result = result.replace("MMM", month_names.get(m as usize).unwrap_or(&""));
+    } else {
+        result = result.replace("MM", &format!("{:02}", m));
+    }
+    result = result.replace("DD", &format!("{:02}", d));
+    result
+}
+
+/// Text formatting: each A/X/9 in pattern accepts one character.
+fn format_text(pattern: &str, value: &str) -> String {
+    let mut result = String::new();
+    let mut chars = value.chars();
+    for p in pattern.chars() {
+        match p {
+            'A' | 'X' | 'O' | '9' | '0' => {
+                if let Some(c) = chars.next() {
+                    result.push(c);
+                }
+            }
+            _ => result.push(p),
+        }
+    }
+    result
 }
 
 fn builtin_left(args: &[Value]) -> Result<Value> {
