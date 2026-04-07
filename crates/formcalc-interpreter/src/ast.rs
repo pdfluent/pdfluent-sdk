@@ -13,6 +13,10 @@ pub enum Expr {
     Ident(String),
     /// Member access: object.member (SOM path resolution)
     MemberAccess { object: Box<Expr>, member: String },
+    /// Indexed access: object[index] — index is 0-based integer or `*` for all.
+    IndexAccess { object: Box<Expr>, index: AccessIndex },
+    /// Recursive descent: object..member (SOM `..` separator)
+    RecursiveDescent { object: Box<Expr>, member: String },
 
     /// Unary negation: -expr
     Negate(Box<Expr>),
@@ -104,4 +108,13 @@ pub enum BinOp {
     Ge,
     And,
     Or,
+}
+
+/// Index for bracket access in SOM expressions.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AccessIndex {
+    /// Numeric 0-based index: `name[0]`, `name[2]`
+    Numeric(i64),
+    /// Wildcard: `name[*]` — all occurrences
+    All,
 }

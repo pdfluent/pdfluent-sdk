@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{BinOp, Expr};
+use crate::ast::{AccessIndex, BinOp, Expr};
 use crate::builtins;
 use crate::error::{FormCalcError, Result};
 use crate::som_bridge::{self, DomContext, SomResolver};
@@ -196,6 +196,28 @@ impl Interpreter {
                 Ok(Signal::Value(val))
             }
 
+            Expr::IndexAccess { object, index } => {
+                let path = flatten_index_path(object, index);
+                let val = if self.som_resolver.is_some() {
+                    self.resolve_som_value(&path).unwrap_or(Value::Null)
+                } else {
+                    self.env.get(&path).cloned().unwrap_or(Value::Null)
+                };
+                Ok(Signal::Value(val))
+            }
+
+            Expr::RecursiveDescent { object, member } => {
+                let base = expr_to_accessor_path(object)
+                    .unwrap_or_else(|| "<expr>".to_string());
+                let path = format!("{}..{}", base, member);
+                let val = if self.som_resolver.is_some() {
+                    self.resolve_som_value(&path).unwrap_or(Value::Null)
+                } else {
+                    self.env.get(&path).cloned().unwrap_or(Value::Null)
+                };
+                Ok(Signal::Value(val))
+            }
+
             Expr::Negate(inner) => {
                 let val = self.eval(inner)?;
                 if val.is_null() {
@@ -251,6 +273,15 @@ impl Interpreter {
                     }
                     Expr::MemberAccess { object, member } => {
                         let path = flatten_som_path(object, member);
+                        if self.som_resolver.is_some() {
+                            let _ = self.assign_som_value(&path, val.clone())?;
+                        } else {
+                            self.env.set(&path, val.clone());
+                        }
+                        Ok(Signal::Value(val))
+                    }
+                    Expr::IndexAccess { object, index } => {
+                        let path = flatten_index_path(object, index);
                         if self.som_resolver.is_some() {
                             let _ = self.assign_som_value(&path, val.clone())?;
                         } else {
@@ -569,7 +600,34 @@ fn collect_path_parts(expr: &Expr, parts: &mut Vec<String>) {
             collect_path_parts(object, parts);
             parts.push(member.clone());
         }
+        Expr::IndexAccess { object, index } => {
+            collect_path_parts(object, parts);
+            if let Some(last) = parts.last_mut() {
+                match index {
+                    AccessIndex::All => last.push_str("[*]"),
+                    AccessIndex::Numeric(n) => {
+                        last.push_str(&format!("[{}]", n));
+                    }
+                }
+            }
+        }
+        Expr::RecursiveDescent { object, member } => {
+            collect_path_parts(object, parts);
+            if let Some(last) = parts.last_mut() {
+                *last = format!("{}..{}", last, member);
+            } else {
+                parts.push(format!("..{}", member));
+            }
+        }
         _ => parts.push("<expr>".to_string()),
+    }
+}
+
+fn flatten_index_path(object: &Expr, index: &AccessIndex) -> String {
+    let base = expr_to_accessor_path(object).unwrap_or_else(|| "<expr>".to_string());
+    match index {
+        AccessIndex::All => format!("{}[*]", base),
+        AccessIndex::Numeric(n) => format!("{}[{}]", base, n),
     }
 }
 
@@ -581,6 +639,16 @@ fn expr_to_accessor_path(expr: &Expr) -> Option<String> {
             expr_to_accessor_path(object)?,
             member
         )),
+        Expr::IndexAccess { object, index } => {
+            let base = expr_to_accessor_path(object)?;
+            Some(match index {
+                AccessIndex::All => format!("{}[*]", base),
+                AccessIndex::Numeric(n) => format!("{}[{}]", base, n),
+            })
+        }
+        Expr::RecursiveDescent { object, member } => {
+            Some(format!("{}..{}", expr_to_accessor_path(object)?, member))
+        }
         _ => None,
     }
 }

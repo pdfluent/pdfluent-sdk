@@ -12,7 +12,7 @@
 //! 8. Unary (+, -, not)
 //! 9. Primary (literals, idents, function calls, parenthesized exprs)
 
-use crate::ast::{BinOp, Expr};
+use crate::ast::{AccessIndex, BinOp, Expr};
 use crate::error::{FormCalcError, Result};
 use crate::lexer::{Token, TokenKind};
 
@@ -594,45 +594,7 @@ impl Parser {
                     Ok(Expr::FuncCall { name, args })
                 } else {
                     let mut expr = Expr::Ident(name);
-                    while self.peek() == &TokenKind::Dot {
-                        if let Some(next) = self.tokens.get(self.pos + 1) {
-                            if let TokenKind::Ident(_) = &next.kind {
-                                self.advance(); // consume dot
-                                if let TokenKind::Ident(member) = self.peek().clone() {
-                                    self.advance(); // consume member
-                                                    // Method call: obj.member(args)
-                                    if self.peek() == &TokenKind::LParen {
-                                        self.advance(); // consume (
-                                        let mut args = Vec::new();
-                                        if self.peek() != &TokenKind::RParen {
-                                            loop {
-                                                self.skip_newlines();
-                                                args.push(self.parse_or()?);
-                                                if self.peek() != &TokenKind::Comma {
-                                                    break;
-                                                }
-                                                self.advance();
-                                            }
-                                        }
-                                        self.expect(&TokenKind::RParen)?;
-                                        let path = expr_to_som_path(&expr);
-                                        return Ok(Expr::FuncCall {
-                                            name: format!("{}.{}", path, member),
-                                            args,
-                                        });
-                                    }
-                                    expr = Expr::MemberAccess {
-                                        object: Box::new(expr),
-                                        member,
-                                    };
-                                }
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
+                    expr = self.parse_accessor_tail(expr)?;
                     Ok(expr)
                 }
             }
@@ -646,6 +608,123 @@ impl Parser {
             }
             _ => Err(self.error(&format!("unexpected token: {:?}", self.peek()))),
         }
+    }
+
+    /// Parse accessor tail: `.member`, `[index]`, `..member`, `.#name` chains.
+    ///
+    /// XFA Spec 3.3 §25.1 (p1055) — SOM accessor grammar:
+    /// - `.name`  — child access
+    /// - `[n]`   — 0-based index
+    /// - `[*]`   — all occurrences
+    /// - `..name` — recursive descent
+    /// - `.#name` — class-based access
+    fn parse_accessor_tail(&mut self, mut expr: Expr) -> Result<Expr> {
+        loop {
+            match self.peek().clone() {
+                // `.member` or `.#member`
+                TokenKind::Dot => {
+                    // Check if next token is an identifier or Hash
+                    let next_kind = self
+                        .tokens
+                        .get(self.pos + 1)
+                        .map(|t| t.kind.clone());
+                    match next_kind {
+                        Some(TokenKind::Ident(_)) => {
+                            self.advance(); // consume dot
+                            if let TokenKind::Ident(member) = self.peek().clone() {
+                                self.advance(); // consume member
+                                // Method call: obj.member(args)
+                                if self.peek() == &TokenKind::LParen {
+                                    self.advance(); // consume (
+                                    let mut args = Vec::new();
+                                    if self.peek() != &TokenKind::RParen {
+                                        loop {
+                                            self.skip_newlines();
+                                            args.push(self.parse_or()?);
+                                            if self.peek() != &TokenKind::Comma {
+                                                break;
+                                            }
+                                            self.advance();
+                                        }
+                                    }
+                                    self.expect(&TokenKind::RParen)?;
+                                    let path = expr_to_som_path(&expr);
+                                    return Ok(Expr::FuncCall {
+                                        name: format!("{}.{}", path, member),
+                                        args,
+                                    });
+                                }
+                                expr = Expr::MemberAccess {
+                                    object: Box::new(expr),
+                                    member,
+                                };
+                            }
+                        }
+                        Some(TokenKind::Hash) => {
+                            // `.#name` — class-based access: flatten to MemberAccess with "#name"
+                            self.advance(); // consume dot
+                            self.advance(); // consume hash
+                            if let TokenKind::Ident(member) = self.peek().clone() {
+                                self.advance(); // consume member name
+                                expr = Expr::MemberAccess {
+                                    object: Box::new(expr),
+                                    member: format!("#{}", member),
+                                };
+                            } else {
+                                break;
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                // `..member` — recursive descent
+                TokenKind::DotDot => {
+                    let next_kind = self
+                        .tokens
+                        .get(self.pos + 1)
+                        .map(|t| t.kind.clone());
+                    if let Some(TokenKind::Ident(member)) = next_kind {
+                        self.advance(); // consume ..
+                        self.advance(); // consume member
+                        expr = Expr::RecursiveDescent {
+                            object: Box::new(expr),
+                            member,
+                        };
+                    } else {
+                        break;
+                    }
+                }
+                // `[index]` or `[*]`
+                TokenKind::LBracket => {
+                    self.advance(); // consume [
+                    let index = match self.peek().clone() {
+                        TokenKind::Star => {
+                            self.advance(); // consume *
+                            AccessIndex::All
+                        }
+                        TokenKind::NumberLit(n) => {
+                            self.advance(); // consume number
+                            AccessIndex::Numeric(n as i64)
+                        }
+                        _ => {
+                            // Expression index: evaluate to number
+                            let idx_expr = self.parse_or()?;
+                            match idx_expr {
+                                Expr::Number(n) => AccessIndex::Numeric(n as i64),
+                                _ => AccessIndex::Numeric(0),
+                            }
+                        }
+                    };
+                    self.expect(&TokenKind::RBracket)?;
+                    expr = Expr::IndexAccess {
+                        object: Box::new(expr),
+                        index,
+                    };
+                }
+                _ => break,
+            }
+        }
+        Ok(expr)
     }
 
     fn error(&self, message: &str) -> FormCalcError {
@@ -667,6 +746,16 @@ fn expr_to_som_path(expr: &Expr) -> String {
         Expr::Ident(name) => name.clone(),
         Expr::MemberAccess { object, member } => {
             format!("{}.{}", expr_to_som_path(object), member)
+        }
+        Expr::IndexAccess { object, index } => {
+            let idx = match index {
+                AccessIndex::All => "[*]".to_string(),
+                AccessIndex::Numeric(n) => format!("[{}]", n),
+            };
+            format!("{}{}", expr_to_som_path(object), idx)
+        }
+        Expr::RecursiveDescent { object, member } => {
+            format!("{}..{}", expr_to_som_path(object), member)
         }
         _ => "<expr>".to_string(),
     }
