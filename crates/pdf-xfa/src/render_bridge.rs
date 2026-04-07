@@ -194,19 +194,31 @@ fn render_nodes(
 
         let node_config = apply_node_style(config, &node.style);
 
+        // Compute caption offset: the value area starts after the caption reserve.
+        let (cap_dx, cap_dy, val_w, val_h) = caption_value_offset(&node.style, w, h);
+        let val_x = abs_x + cap_dx;
+        let val_y_offset = cap_dy;
+        let val_pdf_y = mapper.xfa_to_pdf_y(abs_y + val_y_offset, val_h);
+
         if !matches!(node.content, LayoutContent::Field { .. }) {
             let border_radius = node.style.border_radius_pt.unwrap_or(0.0);
             let border_style = node.style.border_style.as_deref();
+            // Use caption-offset coordinates for border/bg when field has caption
+            let (bx, by, bw, bh) = if node.style.caption_text.is_some() {
+                (val_x, val_pdf_y, val_w, val_h)
+            } else {
+                (abs_x, pdf_y, w, h)
+            };
             if let Some(bg) = &node_config.background_color {
                 write_ops(
                     ops,
                     format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
                 );
-                emit_rect_path(ops, abs_x, pdf_y, w, h, border_radius);
+                emit_rect_path(ops, bx, by, bw, bh, border_radius);
                 ops.extend_from_slice(b"f\n");
             }
-            if let Some(bw) = node.style.border_width_pt {
-                if bw > 0.0 && w > 0.0 && h > 0.0 {
+            if let Some(bwid) = node.style.border_width_pt {
+                if bwid > 0.0 && bw > 0.0 && bh > 0.0 {
                     let bc = node
                         .style
                         .border_color
@@ -215,15 +227,15 @@ fn render_nodes(
                         });
                     write_ops(
                         ops,
-                        format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bw, bc[0], bc[1], bc[2]),
+                        format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bwid, bc[0], bc[1], bc[2]),
                     );
                     apply_border_dash(ops, border_style);
                     let edges = node.style.border_edges;
                     if edges[0] && edges[1] && edges[2] && edges[3] {
-                        emit_rect_path(ops, abs_x, pdf_y, w, h, border_radius);
+                        emit_rect_path(ops, bx, by, bw, bh, border_radius);
                         ops.extend_from_slice(b"S\n");
                     } else {
-                        emit_individual_edges(ops, abs_x, pdf_y, w, h, &edges);
+                        emit_individual_edges(ops, bx, by, bw, bh, &edges);
                     }
                     reset_border_dash(ops, border_style);
                 }
@@ -236,74 +248,101 @@ fn render_nodes(
             .as_deref()
             .map_or(false, |w| w == "bold");
 
+        // Render caption for any node that has caption_text in its style.
+        if node.style.caption_text.is_some() {
+            let (cap_fs, cap_ff) = match &node.content {
+                LayoutContent::Field {
+                    font_size,
+                    font_family,
+                    ..
+                } => (*font_size, *font_family),
+                LayoutContent::WrappedText {
+                    font_size,
+                    font_family,
+                    ..
+                } => (*font_size, *font_family),
+                _ => (
+                    node.style.font_size.unwrap_or(config.default_font_size),
+                    FontFamily::SansSerif,
+                ),
+            };
+            render_caption(abs_x, pdf_y, w, h, cap_fs, cap_ff, &node.style, &node_config, ops);
+        }
+
         match &node.content {
             LayoutContent::Field {
                 value,
                 field_kind,
                 font_size,
                 font_family,
-            } => match field_kind {
-                FieldKind::Checkbox => {
-                    render_checkbox(abs_x, pdf_y, w, h, value, &node_config, ops)
+            } => {
+                match field_kind {
+                    FieldKind::Checkbox => {
+                        render_checkbox(val_x, val_pdf_y, val_w, val_h, value, &node_config, ops)
+                    }
+                    FieldKind::Radio => {
+                        render_radio(val_x, val_pdf_y, val_w, val_h, value, &node_config, ops)
+                    }
+                    FieldKind::Dropdown => render_dropdown(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        value,
+                        *font_size,
+                        *font_family,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    ),
+                    FieldKind::Button => render_button(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        value,
+                        *font_size,
+                        *font_family,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    ),
+                    FieldKind::Signature => {
+                        render_signature(val_x, val_pdf_y, val_w, val_h, value, &node.style, &node_config, ops)
+                    }
+                    _ => render_field(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        value,
+                        *font_size,
+                        *font_family,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    ),
                 }
-                FieldKind::Radio => render_radio(abs_x, pdf_y, w, h, value, &node_config, ops),
-                FieldKind::Dropdown => render_dropdown(
-                    abs_x,
-                    pdf_y,
-                    w,
-                    h,
-                    value,
-                    *font_size,
-                    *font_family,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
-                FieldKind::Button => render_button(
-                    abs_x,
-                    pdf_y,
-                    w,
-                    h,
-                    value,
-                    *font_size,
-                    *font_family,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
-                FieldKind::Signature => {
-                    render_signature(abs_x, pdf_y, w, h, value, &node.style, &node_config, ops)
-                }
-                _ => render_field(
-                    abs_x,
-                    pdf_y,
-                    w,
-                    h,
-                    value,
-                    *font_size,
-                    *font_family,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
-            },
-            LayoutContent::Text(text) => render_text(abs_x, pdf_y, text, &node_config, ops),
+            }
+            LayoutContent::Text(text) => {
+                render_text(abs_x, pdf_y, text, &node.style, &node_config, ops)
+            }
             LayoutContent::WrappedText {
                 lines,
                 font_size,
                 text_align,
                 font_family,
             } => render_multiline(
-                abs_x,
-                pdf_y,
-                w,
+                val_x,
+                val_pdf_y,
+                val_w,
                 lines,
                 *font_size,
                 *text_align,
                 *font_family,
                 is_bold,
                 mapper,
-                abs_y,
+                abs_y + val_y_offset,
                 &node.style,
                 &node_config,
                 ops,
@@ -320,7 +359,16 @@ fn render_nodes(
                 });
             }
             LayoutContent::Draw(draw_content) => {
-                render_draw(draw_content, abs_x, pdf_y, w, h, ops);
+                render_draw(
+                    draw_content,
+                    abs_x,
+                    pdf_y,
+                    w,
+                    h,
+                    &node.style,
+                    &node_config,
+                    ops,
+                );
             }
             LayoutContent::None => {}
         }
@@ -585,6 +633,102 @@ fn build_font_metrics(
     metrics
 }
 
+/// Compute the offset and size of the value area within a field that has a caption.
+///
+/// Returns (dx, dy, value_width, value_height) where dx/dy are the offsets from
+/// the field origin to the value area origin.
+fn caption_value_offset(style: &FormNodeStyle, w: f64, h: f64) -> (f64, f64, f64, f64) {
+    let reserve = style.caption_reserve.unwrap_or(0.0);
+    if reserve <= 0.0 || style.caption_text.is_none() {
+        return (0.0, 0.0, w, h);
+    }
+    match style.caption_placement.as_deref().unwrap_or("left") {
+        "left" => (reserve, 0.0, (w - reserve).max(0.0), h),
+        "right" => (0.0, 0.0, (w - reserve).max(0.0), h),
+        "top" => (0.0, reserve, w, (h - reserve).max(0.0)),
+        "bottom" => (0.0, 0.0, w, (h - reserve).max(0.0)),
+        _ => (0.0, 0.0, w, h),
+    }
+}
+
+/// Render field caption text (shared across all field types).
+///
+/// This renders `<caption>` text at the placement offset (left/right/top/bottom)
+/// relative to the field box. Called before the field-specific renderer so that
+/// captions appear for Dropdown, Checkbox, Radio, Button, Signature, and Text.
+fn render_caption(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    font_size: f64,
+    font_family: FontFamily,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    let caption_text = match &node_style.caption_text {
+        Some(t) if !t.is_empty() => t,
+        _ => return,
+    };
+    let caption_placement = node_style.caption_placement.as_deref().unwrap_or("left");
+    let caption_reserve = node_style.caption_reserve.unwrap_or(0.0);
+    let fs = if font_size > 0.0 {
+        font_size
+    } else {
+        config.default_font_size
+    };
+    let metrics = build_font_metrics(fs, font_family, node_style, config);
+    let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+    let idh_metrics = lookup_font_metrics(node_style, config);
+
+    let (text_x, text_y) = match caption_placement {
+        "right" => {
+            // Caption in the right portion of the field
+            let cap_x = x + w - caption_reserve;
+            let asc_pt = ascender_pt(&metrics, fs);
+            (cap_x, pdf_y + h - asc_pt)
+        }
+        "top" => {
+            // Caption above the value area (within the field's total height)
+            let asc_pt = ascender_pt(&metrics, fs);
+            let text_y = pdf_y + h - asc_pt;
+            (x, text_y)
+        }
+        "bottom" => {
+            // Caption below the value area (within the field's total height)
+            let asc_pt = ascender_pt(&metrics, fs);
+            let text_y = pdf_y + caption_reserve - asc_pt;
+            (x, text_y)
+        }
+        _ => {
+            // "left" (default): caption in the left portion of the field
+            let asc_pt = ascender_pt(&metrics, fs);
+            (x, pdf_y + h - asc_pt)
+        }
+    };
+
+    let encoded = pdf_encode_text(caption_text, idh_metrics);
+    write_ops(
+        ops,
+        format_args!(
+            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+            config.text_color[0],
+            config.text_color[1],
+            config.text_color[2],
+            font_ref,
+            fs,
+        ),
+    );
+    emit_text_style_ops(node_style, ops);
+    write_ops(
+        ops,
+        format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, text_y, encoded),
+    );
+    reset_text_style_ops(node_style, ops);
+    ops.extend_from_slice(b"ET\n");
+}
+
 fn render_field(
     x: f64,
     pdf_y: f64,
@@ -599,155 +743,6 @@ fn render_field(
 ) {
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
     let border_style = node_style.border_style.as_deref();
-
-    if let Some(caption_text) = &node_style.caption_text {
-        if !caption_text.is_empty() {
-            let caption_placement = node_style.caption_placement.as_deref().unwrap_or("left");
-            let caption_reserve = node_style.caption_reserve.unwrap_or(0.0);
-            let fs = if font_size > 0.0 {
-                font_size
-            } else {
-                config.default_font_size
-            };
-            let metrics = build_font_metrics(fs, font_family, node_style, config);
-            let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
-            let idh_metrics = lookup_font_metrics(node_style, config);
-
-            match caption_placement {
-                "right" => {
-                    let cap_x = x + w + caption_reserve;
-                    let _cap_w = caption_reserve.max(1.0);
-                    let _cap_h = h;
-                    let _line_h = metrics.line_height_pt();
-                    let asc_pt = ascender_pt(&metrics, fs);
-                    let text_y = pdf_y + h - asc_pt;
-                    let encoded = pdf_encode_text(caption_text, idh_metrics);
-                    write_ops(
-                        ops,
-                        format_args!(
-                            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                            config.text_color[0],
-                            config.text_color[1],
-                            config.text_color[2],
-                            font_ref,
-                            fs,
-                        ),
-                    );
-                    emit_text_style_ops(node_style, ops);
-                    write_ops(
-                        ops,
-                        format_args!("{:.2} {:.2} Td\n{} Tj\n", cap_x, text_y, encoded),
-                    );
-                    reset_text_style_ops(node_style, ops);
-                    ops.extend_from_slice(b"ET\n");
-                }
-                "top" => {
-                    let cap_x = x;
-                    let cap_w = w;
-                    let _cap_h = caption_reserve.max(1.0);
-                    let cap_pdf_y = pdf_y + h;
-                    let _line_h = metrics.line_height_pt();
-                    let asc_pt = ascender_pt(&metrics, fs);
-                    let text_y = cap_pdf_y - asc_pt;
-                    let content_w = cap_w.max(1.0);
-                    let text_w = metrics.measure_width(caption_text);
-                    let text_x = if text_w <= content_w {
-                        cap_x
-                    } else {
-                        cap_x + (content_w - text_w) / 2.0
-                    };
-                    let encoded = pdf_encode_text(caption_text, idh_metrics);
-                    write_ops(
-                        ops,
-                        format_args!(
-                            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                            config.text_color[0],
-                            config.text_color[1],
-                            config.text_color[2],
-                            font_ref,
-                            fs,
-                        ),
-                    );
-                    emit_text_style_ops(node_style, ops);
-                    write_ops(
-                        ops,
-                        format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, text_y, encoded),
-                    );
-                    reset_text_style_ops(node_style, ops);
-                    ops.extend_from_slice(b"ET\n");
-                }
-                "bottom" => {
-                    let cap_x = x;
-                    let cap_w = w;
-                    let cap_h = caption_reserve.max(1.0);
-                    let cap_pdf_y = pdf_y - caption_reserve;
-                    let _line_h = metrics.line_height_pt();
-                    let asc_pt = ascender_pt(&metrics, fs);
-                    let text_y = cap_pdf_y + cap_h - asc_pt;
-                    let content_w = cap_w.max(1.0);
-                    let text_w = metrics.measure_width(caption_text);
-                    let text_x = if text_w <= content_w {
-                        cap_x
-                    } else {
-                        cap_x + (content_w - text_w) / 2.0
-                    };
-                    let encoded = pdf_encode_text(caption_text, idh_metrics);
-                    write_ops(
-                        ops,
-                        format_args!(
-                            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                            config.text_color[0],
-                            config.text_color[1],
-                            config.text_color[2],
-                            font_ref,
-                            fs,
-                        ),
-                    );
-                    emit_text_style_ops(node_style, ops);
-                    write_ops(
-                        ops,
-                        format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, text_y, encoded),
-                    );
-                    reset_text_style_ops(node_style, ops);
-                    ops.extend_from_slice(b"ET\n");
-                }
-                _ => {
-                    let cap_x = x - caption_reserve;
-                    let cap_w = caption_reserve.max(1.0);
-                    let _cap_h = h;
-                    let _line_h = metrics.line_height_pt();
-                    let asc_pt = ascender_pt(&metrics, fs);
-                    let text_y = pdf_y + h - asc_pt;
-                    let content_w = cap_w.max(1.0);
-                    let text_w = metrics.measure_width(caption_text);
-                    let text_x = if text_w <= content_w {
-                        cap_x
-                    } else {
-                        cap_x + (content_w - text_w) / 2.0
-                    };
-                    let encoded = pdf_encode_text(caption_text, idh_metrics);
-                    write_ops(
-                        ops,
-                        format_args!(
-                            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                            config.text_color[0],
-                            config.text_color[1],
-                            config.text_color[2],
-                            font_ref,
-                            fs,
-                        ),
-                    );
-                    emit_text_style_ops(node_style, ops);
-                    write_ops(
-                        ops,
-                        format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, text_y, encoded),
-                    );
-                    reset_text_style_ops(node_style, ops);
-                    ops.extend_from_slice(b"ET\n");
-                }
-            }
-        }
-    }
 
     if let Some(bg) = &config.background_color {
         write_ops(
@@ -1281,26 +1276,54 @@ fn render_signature(
     }
 }
 
-fn render_text(x: f64, pdf_y: f64, text: &str, config: &XfaRenderConfig, ops: &mut Vec<u8>) {
+fn render_text(
+    x: f64,
+    pdf_y: f64,
+    text: &str,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
     if text.is_empty() {
         return;
     }
-    let fs = config.default_font_size;
+    let fs = node_style.font_size.unwrap_or(config.default_font_size);
     let p = config.text_padding;
-    let asc_pt = fs * 0.8;
+    let font_family = match node_style.font_family.as_deref() {
+        Some(f) if f.contains("Courier") || f.contains("Mono") => FontFamily::Monospace,
+        Some(f)
+            if f.contains("Helvetica")
+                || f.contains("Arial")
+                || f.contains("Sans")
+                || f.contains("Myriad") =>
+        {
+            FontFamily::SansSerif
+        }
+        _ => FontFamily::Serif,
+    };
+    let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+    let tc = node_style
+        .text_color
+        .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+        .unwrap_or(config.text_color);
+    let metrics = build_font_metrics(fs, font_family, node_style, config);
+    let asc_pt = ascender_pt(&metrics, fs);
+    let idh_metrics = lookup_font_metrics(node_style, config);
+    let encoded = pdf_encode_text(text, idh_metrics);
     write_ops(
         ops,
         format_args!(
-            "BT\n{:.3} {:.3} {:.3} rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-            config.text_color[0],
-            config.text_color[1],
-            config.text_color[2],
-            fs,
-            x + p,
-            pdf_y + p - asc_pt * 0.2,
-            pdf_escape(text)
+            "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+            tc[0], tc[1], tc[2], font_ref, fs,
         ),
     );
+    emit_synthetic_bold_ops(node_style, font_ref, fs, &tc, ops);
+    write_ops(
+        ops,
+        format_args!("{:.2} {:.2} Td\n{} Tj\n", x + p, pdf_y + p - asc_pt * 0.2, encoded),
+    );
+    reset_synthetic_bold_ops(node_style, font_ref, ops);
+    ops.extend_from_slice(b"ET\n");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1328,14 +1351,18 @@ fn render_multiline(
     let font_metrics = build_font_metrics(font_size, font_family, node_style, config);
     let line_height = font_metrics.line_height_pt();
     let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+    let tc = node_style
+        .text_color
+        .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+        .unwrap_or(config.text_color);
     write_ops(
         ops,
         format_args!(
             "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-            config.text_color[0], config.text_color[1], config.text_color[2], font_ref, font_size
+            tc[0], tc[1], tc[2], font_ref, font_size
         ),
     );
-    emit_synthetic_bold_ops(node_style, font_ref, font_size, &config.text_color, ops);
+    emit_synthetic_bold_ops(node_style, font_ref, font_size, &tc, ops);
     emit_text_style_ops(node_style, ops);
     let ascender_pt = if let (Some(asc), Some(upem)) =
         (font_metrics.resolved_ascender, font_metrics.resolved_upem)
@@ -1473,22 +1500,40 @@ fn render_draw(
     pdf_y: f64,
     _w: f64,
     container_h: f64,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
     match draw_content {
         DrawContent::Text(text) => {
             if !text.is_empty() {
-                let fs = 10.0;
+                let fs = node_style.font_size.unwrap_or(config.default_font_size);
+                let font_family = match node_style.font_family.as_deref() {
+                    Some(f) if f.contains("Courier") || f.contains("Mono") => FontFamily::Monospace,
+                    Some(f) if f.contains("Helvetica") || f.contains("Arial") || f.contains("Sans") || f.contains("Myriad") => FontFamily::SansSerif,
+                    _ => FontFamily::Serif,
+                };
+                let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+                let tc = node_style
+                    .text_color
+                    .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+                    .unwrap_or(config.text_color);
+                let idh_metrics = lookup_font_metrics(node_style, config);
+                let encoded = pdf_encode_text(text, idh_metrics);
                 write_ops(
                     ops,
                     format_args!(
-                        "BT\n0 0 0 rg\n/F1 {:.1} Tf\n{:.2} {:.2} Td\n({}) Tj\nET\n",
-                        fs,
-                        abs_x,
-                        pdf_y,
-                        pdf_escape(text)
+                        "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                        tc[0], tc[1], tc[2], font_ref, fs,
                     ),
                 );
+                emit_synthetic_bold_ops(node_style, font_ref, fs, &tc, ops);
+                write_ops(
+                    ops,
+                    format_args!("{:.2} {:.2} Td\n{} Tj\n", abs_x, pdf_y, encoded),
+                );
+                reset_synthetic_bold_ops(node_style, font_ref, ops);
+                ops.extend_from_slice(b"ET\n");
             }
         }
         DrawContent::Line { x1, y1, x2, y2 } => {
