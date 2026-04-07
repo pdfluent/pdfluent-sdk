@@ -201,20 +201,32 @@ fn render_nodes(
 
         let node_config = apply_node_style(config, &node.style);
 
-        // Compute caption offset: the value area starts after the caption reserve.
-        let (cap_dx, cap_dy, val_w, val_h) = caption_value_offset(&node.style, w, h);
-        let val_x = abs_x + cap_dx;
-        let val_y_offset = cap_dy;
+        // XFA §2.5.6 — Margin insets define the space between the element's
+        // outer edges and its border/content.  Compute the inner rect (after
+        // insets) and use it for caption/value offset and border/bg drawing.
+        let inset_l = node.style.inset_left_pt.unwrap_or(0.0);
+        let inset_t = node.style.inset_top_pt.unwrap_or(0.0);
+        let inset_r = node.style.inset_right_pt.unwrap_or(0.0);
+        let inset_b = node.style.inset_bottom_pt.unwrap_or(0.0);
+        let inner_w = (w - inset_l - inset_r).max(0.0);
+        let inner_h = (h - inset_t - inset_b).max(0.0);
+
+        // Caption/value offset computed from inner rect (after margin insets).
+        let (cap_dx, cap_dy, val_w, val_h) = caption_value_offset(&node.style, inner_w, inner_h);
+        let val_x = abs_x + inset_l + cap_dx;
+        let val_y_offset = inset_t + cap_dy;
         let val_pdf_y = mapper.xfa_to_pdf_y(abs_y + val_y_offset, val_h);
 
         if !matches!(node.content, LayoutContent::Field { .. }) {
             let border_radius = node.style.border_radius_pt.unwrap_or(0.0);
             let border_style = node.style.border_style.as_deref();
-            // Use caption-offset coordinates for border/bg when field has caption
+            // Border/bg at inner rect (after margin insets), or at value
+            // area when a caption is present.
             let (bx, by, bw, bh) = if node.style.caption_text.is_some() {
                 (val_x, val_pdf_y, val_w, val_h)
             } else {
-                (abs_x, pdf_y, w, h)
+                let inner_pdf_y = mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h);
+                (abs_x + inset_l, inner_pdf_y, inner_w, inner_h)
             };
             if let Some(bg) = &node_config.background_color {
                 write_ops(
@@ -279,10 +291,10 @@ fn render_nodes(
                 ),
             };
             render_caption(
-                abs_x,
-                pdf_y,
-                w,
-                h,
+                abs_x + inset_l,
+                mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h),
+                inner_w,
+                inner_h,
                 cap_fs,
                 cap_ff,
                 &node.style,
@@ -352,7 +364,8 @@ fn render_nodes(
                 ),
             },
             LayoutContent::Text(text) => {
-                render_text(abs_x, pdf_y, w, h, text, &node.style, &node_config, ops)
+                let inner_pdf_y = mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h);
+                render_text(abs_x + inset_l, inner_pdf_y, inner_w, inner_h, text, &node.style, &node_config, ops)
             }
             LayoutContent::WrappedText {
                 lines,
@@ -893,12 +906,12 @@ fn render_field(
         } else {
             config.default_font_size
         };
-        let inset_left = node_style.inset_left_pt.unwrap_or(0.0);
-        let inset_right = node_style.inset_right_pt.unwrap_or(0.0);
+        // Insets already applied by render_nodes — x, w, h are the value
+        // area inside margin insets.  Only para marginLeft/Right apply here.
         let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
         let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
         let space_above = node_style.space_above_pt.unwrap_or(0.0);
-        let content_w = (w - inset_left - inset_right - pad_left - pad_right).max(0.0);
+        let content_w = (w - pad_left - pad_right).max(0.0);
         let metrics = build_font_metrics(fs, font_family, node_style, config);
         let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
         let text_w = metrics.measure_width(value);
@@ -929,7 +942,7 @@ fn render_field(
                 ops,
                 format_args!(
                     "{:.2} {:.2} Td\n{} Tj\n",
-                    x + inset_left + pad_left,
+                    x + pad_left,
                     text_y,
                     encoded
                 ),
@@ -962,7 +975,7 @@ fn render_field(
                 ops,
                 format_args!(
                     "{:.2} {:.2} Td\n",
-                    x + inset_left + pad_left,
+                    x + pad_left,
                     text_start_y + total_content_h - asc_pt,
                 ),
             );
@@ -1648,8 +1661,8 @@ fn render_multiline(
     if lines.is_empty() {
         return;
     }
-    let inset_left = node_style.inset_left_pt.unwrap_or(0.0);
-    let inset_right = node_style.inset_right_pt.unwrap_or(0.0);
+    // Insets already applied by render_nodes — x, container_width, and
+    // abs_y_xfa are the value area inside margin insets.
     let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
     let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
     let space_above = node_style.space_above_pt.unwrap_or(0.0);
@@ -1694,9 +1707,9 @@ fn render_multiline(
         _ => abs_y_xfa + space_above + ascender_pt,
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(first_line_y_xfa, 0.0);
-    let content_w = (container_width - inset_left - inset_right - pad_left - pad_right).max(0.0);
+    let content_w = (container_width - pad_left - pad_right).max(0.0);
     let idh_metrics = lookup_font_metrics(node_style, config);
-    let mut prev_x = x + inset_left + pad_left;
+    let mut prev_x = x + pad_left;
     for (i, line) in lines.iter().enumerate() {
         let is_para_start = first_line_of_para.get(i).copied().unwrap_or(false);
         let indent_offset = if is_para_start { text_indent } else { 0.0 };
@@ -1704,13 +1717,12 @@ fn render_multiline(
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => {
-                x + inset_left
-                    + pad_left
+                x + pad_left
                     + indent_offset
                     + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
             }
-            TextAlign::Right => x + inset_left + pad_left + (content_w - line_w).max(0.0),
-            _ => x + inset_left + pad_left + indent_offset,
+            TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
+            _ => x + pad_left + indent_offset,
         };
         if i == 0 {
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
@@ -1748,8 +1760,8 @@ fn render_rich_multiline(
     if lines.is_empty() || spans.is_empty() {
         return;
     }
-    let inset_left = node_style.inset_left_pt.unwrap_or(0.0);
-    let inset_right = node_style.inset_right_pt.unwrap_or(0.0);
+    // Insets already applied by render_nodes — x, container_width, and
+    // abs_y_xfa are the value area inside margin insets.
     let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
     let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
     let space_above = node_style.space_above_pt.unwrap_or(0.0);
@@ -1780,7 +1792,7 @@ fn render_rich_multiline(
         _ => abs_y_xfa + space_above + asc_pt,
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(first_line_y_xfa, 0.0);
-    let content_w = (container_width - inset_left - inset_right - pad_left - pad_right).max(0.0);
+    let content_w = (container_width - pad_left - pad_right).max(0.0);
     let line_segments = map_spans_to_lines(spans, lines);
 
     ops.extend_from_slice(b"BT\n");
@@ -1803,7 +1815,7 @@ fn render_rich_multiline(
     );
     emit_text_style_ops(node_style, ops);
 
-    let mut prev_x = x + inset_left + pad_left;
+    let mut prev_x = x + pad_left;
     for (i, line) in lines.iter().enumerate() {
         let is_para_start = first_line_of_para.get(i).copied().unwrap_or(false);
         let indent_offset = if is_para_start { text_indent } else { 0.0 };
@@ -1811,13 +1823,12 @@ fn render_rich_multiline(
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => {
-                x + inset_left
-                    + pad_left
+                x + pad_left
                     + indent_offset
                     + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
             }
-            TextAlign::Right => x + inset_left + pad_left + (content_w - line_w).max(0.0),
-            _ => x + inset_left + pad_left + indent_offset,
+            TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
+            _ => x + pad_left + indent_offset,
         };
         if i == 0 {
             write_ops(ops, format_args!("{:.2} {:.2} Td\n", text_x, line_y));
