@@ -1349,15 +1349,41 @@ impl<'a> LayoutEngine<'a> {
     /// XFA Spec 3.3 §8.2 — Positioned Layout: each child uses its own x,y
     /// coordinates. pageArea and contentArea always use positioned layout.
     /// Subforms default to positioned when no `layout` attribute is present.
+    ///
+    /// §2.6 + Appendix A (p1510): the `anchorType` attribute determines which
+    /// point of the element's nominal extent is placed at (x,y).  The default
+    /// is `topLeft` (no adjustment).
     fn layout_positioned(&self, children: &[FormNodeId]) -> Result<Vec<LayoutNode>> {
+        use crate::form::AnchorType;
+
         let mut nodes = Vec::new();
         for &child_id in children {
             let child = self.form.get(child_id);
-            let node = self.layout_single_node(
+            let anchor = self.form.meta(child_id).anchor_type;
+
+            // Compute nominal extent so we can offset for the anchor point.
+            let extent = self.compute_extent(child_id);
+            let w = extent.width;
+            let h = extent.height;
+
+            let (dx, dy) = match anchor {
+                AnchorType::TopLeft => (0.0, 0.0),
+                AnchorType::TopCenter => (-w / 2.0, 0.0),
+                AnchorType::TopRight => (-w, 0.0),
+                AnchorType::MiddleLeft => (0.0, -h / 2.0),
+                AnchorType::MiddleCenter => (-w / 2.0, -h / 2.0),
+                AnchorType::MiddleRight => (-w, -h / 2.0),
+                AnchorType::BottomLeft => (0.0, -h),
+                AnchorType::BottomCenter => (-w / 2.0, -h),
+                AnchorType::BottomRight => (-w, -h),
+            };
+
+            let node = self.layout_single_node_with_extent(
                 child_id,
                 child,
-                child.box_model.x,
-                child.box_model.y,
+                child.box_model.x + dx,
+                child.box_model.y + dy,
+                extent,
                 None,
             )?;
             nodes.push(node);
@@ -5249,4 +5275,39 @@ mod halign_tests {
         // hAlign="left" in rl-tb → x=0
         assert_eq!(child_node.rect.x, 0.0);
     }
+
+    // -------------------------------------------------------------------
+    // anchorType tests (XFA 3.3 §2.6 + App A p1510)
+    // -------------------------------------------------------------------
+
+    fn make_positioned_field(tree: &mut FormTree, name: &str, x: f64, y: f64, w: f64, h: f64) -> FormNodeId {
+        tree.add_node(FormNode {
+            name: name.to_string(),
+            node_type: FormNodeType::Field { value: name.to_string() },
+            box_model: BoxModel { width: Some(w), height: Some(h), x, y, max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
+            layout: LayoutStrategy::Positioned,
+            children: vec![], occur: Occur::once(), font: FontMetrics::default(),
+            calculate: None, validate: None, column_widths: vec![], col_span: 1,
+        })
+    }
+
+    fn layout_with_anchor(anchor: crate::form::AnchorType, x: f64, y: f64, w: f64, h: f64) -> Rect {
+        let mut tree = FormTree::new();
+        let field = make_positioned_field(&mut tree, "F", x, y, w, h);
+        tree.meta_mut(field).anchor_type = anchor;
+        let root = make_subform(&mut tree, "Root", LayoutStrategy::Positioned, Some(612.0), Some(792.0), vec![field]);
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+        result.pages[0].nodes[0].rect
+    }
+
+    #[test] fn anchor_top_left_no_adjustment() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::TopLeft, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 100.0); assert_eq!(r.y, 200.0); assert_eq!(r.width, 80.0); assert_eq!(r.height, 40.0); }
+    #[test] fn anchor_top_center() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::TopCenter, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 60.0); assert_eq!(r.y, 200.0); }
+    #[test] fn anchor_top_right() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::TopRight, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 20.0); assert_eq!(r.y, 200.0); }
+    #[test] fn anchor_middle_left() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::MiddleLeft, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 100.0); assert_eq!(r.y, 180.0); }
+    #[test] fn anchor_middle_center() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::MiddleCenter, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 60.0); assert_eq!(r.y, 180.0); }
+    #[test] fn anchor_middle_right() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::MiddleRight, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 20.0); assert_eq!(r.y, 180.0); }
+    #[test] fn anchor_bottom_left() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::BottomLeft, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 100.0); assert_eq!(r.y, 160.0); }
+    #[test] fn anchor_bottom_center() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::BottomCenter, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 60.0); assert_eq!(r.y, 160.0); }
+    #[test] fn anchor_bottom_right() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::BottomRight, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 20.0); assert_eq!(r.y, 160.0); }
 }

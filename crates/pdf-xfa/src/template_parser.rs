@@ -16,8 +16,9 @@
 use roxmltree::Node;
 
 use xfa_layout_engine::form::{
-    ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId, FormNodeMeta,
-    FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, ScriptLanguage,
+    AnchorType, ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId,
+    FormNodeMeta, FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence,
+    ScriptLanguage,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
@@ -523,6 +524,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     // (j) Visual style: colors, borders, font from XFA template elements.
     let style = parse_node_style(elem);
     let (data_bind_ref, data_bind_none) = parse_bind(elem);
+    let anchor_type = parse_anchor_type(elem);
 
     FormNodeMeta {
         xfa_id,
@@ -545,6 +547,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         style,
         display_items,
         save_items,
+        anchor_type,
         ..Default::default()
     }
 }
@@ -1545,6 +1548,24 @@ fn parse_layout_attr(elem: Node<'_, '_>) -> LayoutStrategy {
     }
 }
 
+/// Parse the `anchorType` attribute (XFA 3.3 §2.6, App A p1510).
+///
+/// Determines which anchor point of the element is placed at (x,y) in
+/// positioned layout.  Default is `topLeft`.
+fn parse_anchor_type(elem: Node<'_, '_>) -> AnchorType {
+    match attr(elem, "anchorType").unwrap_or("") {
+        "topCenter" => AnchorType::TopCenter,
+        "topRight" => AnchorType::TopRight,
+        "middleLeft" => AnchorType::MiddleLeft,
+        "middleCenter" => AnchorType::MiddleCenter,
+        "middleRight" => AnchorType::MiddleRight,
+        "bottomLeft" => AnchorType::BottomLeft,
+        "bottomCenter" => AnchorType::BottomCenter,
+        "bottomRight" => AnchorType::BottomRight,
+        _ => AnchorType::TopLeft,
+    }
+}
+
 /// Parse dimensional attributes (w, h, x, y) into a `BoxModel`.
 ///
 /// XFA Spec 3.3 §2.6 — Box Model (p49): nominal extent is w × h.
@@ -1552,7 +1573,6 @@ fn parse_layout_attr(elem: Node<'_, '_>) -> LayoutStrategy {
 /// Caption may occupy part of the nominal content region.
 /// Constraints: minW/minH/maxW/maxH (§2.6 p53).
 ///
-/// TODO(§2.6): anchorType not parsed — affects positioned layout anchor point.
 /// TODO(§2.6): rotate not parsed — counter-clockwise rotation in degrees (multiples of 90).
 fn parse_box_model(elem: Node<'_, '_>) -> BoxModel {
     let w = attr(elem, "w").and_then(parse_dim);

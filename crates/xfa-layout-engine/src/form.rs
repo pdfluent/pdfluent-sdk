@@ -398,6 +398,26 @@ pub struct FormNodeMeta {
     pub display_items: Vec<String>,
     /// Save items for choice list fields (XFA 3.3 §7.7).
     pub save_items: Vec<String>,
+    /// XFA anchorType for positioned layout (XFA 3.3 §2.6, App A p1510).
+    pub anchor_type: AnchorType,
+}
+
+/// XFA `anchorType` attribute (XFA 3.3 §2.6, Appendix A p1510).
+///
+/// Determines which point of an element is placed at the (x,y) coordinate
+/// in positioned layout.  Default is `TopLeft`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnchorType {
+    #[default]
+    TopLeft,
+    TopCenter,
+    TopRight,
+    MiddleLeft,
+    MiddleCenter,
+    MiddleRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
 }
 
 /// The kind of group container.
