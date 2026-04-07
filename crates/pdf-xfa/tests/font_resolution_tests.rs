@@ -7,13 +7,14 @@
 //! - Serif/Monospace fallback
 //! - Case insensitive matching
 //! - Base name stripping
+//! - genericFamily fallback
 
-use pdf_xfa::font_bridge::{FontPosture, FontWeight, XfaFontResolver, XfaFontSpec};
+use pdf_xfa::font_bridge::{FontPosture, FontWeight, GenericFamily, XfaFontResolver, XfaFontSpec};
 
 #[test]
 fn test_postscript_name_normalization() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("ArialMT", None, None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("ArialMT", None, None, None, None);
     let result = resolver.resolve(&spec);
     assert!(result.is_ok(), "Should resolve ArialMT to a valid font");
 }
@@ -21,7 +22,7 @@ fn test_postscript_name_normalization() {
 #[test]
 fn test_subset_prefix_stripping() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("ABCDEF+Arial", None, None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("ABCDEF+Arial", None, None, None, None);
     let result = resolver.resolve(&spec);
     assert!(result.is_ok(), "Should resolve ABCDEF+Arial to Arial");
 }
@@ -29,7 +30,7 @@ fn test_subset_prefix_stripping() {
 #[test]
 fn test_font_alias_arial() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("Arial", None, None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("Arial", None, None, None, None);
     let result = resolver.resolve(&spec);
     assert!(result.is_ok(), "Should resolve Arial");
 }
@@ -37,7 +38,7 @@ fn test_font_alias_arial() {
 #[test]
 fn test_font_alias_times() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("TimesNewRoman", None, None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("TimesNewRoman", None, None, None, None);
     let result = resolver.resolve(&spec);
     assert!(result.is_ok(), "Should resolve TimesNewRoman");
 }
@@ -45,7 +46,7 @@ fn test_font_alias_times() {
 #[test]
 fn test_font_alias_courier() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("CourierNew", None, None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("CourierNew", None, None, None, None);
     let result = resolver.resolve(&spec);
     assert!(result.is_ok(), "Should resolve CourierNew");
 }
@@ -53,9 +54,9 @@ fn test_font_alias_courier() {
 #[test]
 fn test_case_insensitive_arial() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec_lower = XfaFontSpec::from_xfa_attrs("arial", None, None, None);
-    let spec_upper = XfaFontSpec::from_xfa_attrs("ARIAL", None, None, None);
-    let spec_mixed = XfaFontSpec::from_xfa_attrs("Arial", None, None, None);
+    let spec_lower = XfaFontSpec::from_xfa_attrs("arial", None, None, None, None);
+    let spec_upper = XfaFontSpec::from_xfa_attrs("ARIAL", None, None, None, None);
+    let spec_mixed = XfaFontSpec::from_xfa_attrs("Arial", None, None, None, None);
     assert!(resolver.resolve(&spec_lower).is_ok());
     assert!(resolver.resolve(&spec_upper).is_ok());
     assert!(resolver.resolve(&spec_mixed).is_ok());
@@ -64,7 +65,7 @@ fn test_case_insensitive_arial() {
 #[test]
 fn test_base_name_stripping_bold() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("Arial-Bold", Some("bold"), None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("Arial-Bold", Some("bold"), None, None, None);
     let result = resolver.resolve(&spec);
     assert!(
         result.is_ok(),
@@ -75,7 +76,7 @@ fn test_base_name_stripping_bold() {
 #[test]
 fn test_base_name_stripping_italic() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("Arial-Italic", None, Some("italic"), None);
+    let spec = XfaFontSpec::from_xfa_attrs("Arial-Italic", None, Some("italic"), None, None);
     let result = resolver.resolve(&spec);
     assert!(
         result.is_ok(),
@@ -86,7 +87,13 @@ fn test_base_name_stripping_italic() {
 #[test]
 fn test_base_name_stripping_bolditalic() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("Arial-BoldItalic", Some("bold"), Some("italic"), None);
+    let spec = XfaFontSpec::from_xfa_attrs(
+        "Arial-BoldItalic",
+        Some("bold"),
+        Some("italic"),
+        None,
+        None,
+    );
     let result = resolver.resolve(&spec);
     assert!(
         result.is_ok(),
@@ -96,7 +103,7 @@ fn test_base_name_stripping_bolditalic() {
 
 #[test]
 fn test_font_spec_parsing_bold() {
-    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", Some("bold"), None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", Some("bold"), None, None, None);
     assert_eq!(spec.typeface, "Helvetica");
     assert_eq!(spec.weight, FontWeight::Bold);
     assert_eq!(spec.posture, FontPosture::Normal);
@@ -104,7 +111,7 @@ fn test_font_spec_parsing_bold() {
 
 #[test]
 fn test_font_spec_parsing_italic() {
-    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, Some("italic"), None);
+    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, Some("italic"), None, None);
     assert_eq!(spec.typeface, "Helvetica");
     assert_eq!(spec.weight, FontWeight::Normal);
     assert_eq!(spec.posture, FontPosture::Italic);
@@ -112,10 +119,10 @@ fn test_font_spec_parsing_italic() {
 
 #[test]
 fn test_font_spec_parsing_size() {
-    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("12pt"));
+    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("12pt"), None);
     assert!((spec.size_pt - 12.0).abs() < 0.001, "Size should be 12pt");
 
-    let spec_no_unit = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("10"));
+    let spec_no_unit = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("10"), None);
     assert!(
         (spec_no_unit.size_pt - 10.0).abs() < 0.001,
         "Size should default to 10pt for bare numbers"
@@ -124,7 +131,7 @@ fn test_font_spec_parsing_size() {
 
 #[test]
 fn test_font_spec_default_values() {
-    let spec = XfaFontSpec::from_xfa_attrs("Arial", None, None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("Arial", None, None, None, None);
     assert_eq!(spec.weight, FontWeight::Normal);
     assert_eq!(spec.posture, FontPosture::Normal);
     assert!(
@@ -134,9 +141,57 @@ fn test_font_spec_default_values() {
 }
 
 #[test]
+fn test_generic_family_parsing() {
+    let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("serif"));
+    assert_eq!(spec.generic_family, Some(GenericFamily::Serif));
+
+    let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("sansSerif"));
+    assert_eq!(spec.generic_family, Some(GenericFamily::SansSerif));
+
+    let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("monospaced"));
+    assert_eq!(spec.generic_family, Some(GenericFamily::Monospaced));
+
+    let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("decorative"));
+    assert_eq!(spec.generic_family, Some(GenericFamily::Decorative));
+
+    let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("fantasy"));
+    assert_eq!(spec.generic_family, Some(GenericFamily::Fantasy));
+
+    let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("cursive"));
+    assert_eq!(spec.generic_family, Some(GenericFamily::Cursive));
+
+    let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("bogus"));
+    assert_eq!(spec.generic_family, None);
+}
+
+#[test]
+fn test_generic_family_serif_fallback() {
+    let mut resolver = XfaFontResolver::new(vec![]);
+    let spec =
+        XfaFontSpec::from_xfa_attrs("UnknownSerifFont999", None, None, None, Some("serif"));
+    let result = resolver.resolve(&spec);
+    assert!(
+        result.is_ok(),
+        "genericFamily=serif should resolve to a serif fallback font"
+    );
+}
+
+#[test]
+fn test_generic_family_monospaced_fallback() {
+    let mut resolver = XfaFontResolver::new(vec![]);
+    let spec =
+        XfaFontSpec::from_xfa_attrs("UnknownMonoFont999", None, None, None, Some("monospaced"));
+    let result = resolver.resolve(&spec);
+    assert!(
+        result.is_ok(),
+        "genericFamily=monospaced should resolve to a mono fallback font"
+    );
+}
+
+#[test]
 fn test_nonexistent_font_falls_back() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("NonExistentFont12345", None, None, None);
+    let spec = XfaFontSpec::from_xfa_attrs("NonExistentFont12345", None, None, None, None);
     let result = resolver.resolve(&spec);
     assert!(
         result.is_ok(),
@@ -147,7 +202,7 @@ fn test_nonexistent_font_falls_back() {
 #[test]
 fn test_resolved_font_has_metrics() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("12pt"));
+    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("12pt"), None);
     let result = resolver.resolve(&spec);
     assert!(result.is_ok());
     let font = result.unwrap();
@@ -159,7 +214,7 @@ fn test_resolved_font_has_metrics() {
 #[test]
 fn test_resolved_font_measure_string() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("12pt"));
+    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("12pt"), None);
     let result = resolver.resolve(&spec);
     assert!(result.is_ok());
     let font = result.unwrap();
@@ -170,7 +225,7 @@ fn test_resolved_font_measure_string() {
 #[test]
 fn test_resolved_font_line_height() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("12pt"));
+    let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, Some("12pt"), None);
     let result = resolver.resolve(&spec);
     assert!(result.is_ok());
     let font = result.unwrap();

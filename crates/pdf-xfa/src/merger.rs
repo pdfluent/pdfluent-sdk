@@ -1373,6 +1373,9 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         if let Some(typeface) = attr(font, "typeface") {
             style.font_family = Some(typeface.to_string());
         }
+        if let Some(gf) = attr(font, "genericFamily") {
+            style.generic_family = Some(gf.to_string());
+        }
         if let Some(size_str) = attr(font, "size") {
             if let Some(m) = Measurement::parse(size_str) {
                 let m: Measurement = m;

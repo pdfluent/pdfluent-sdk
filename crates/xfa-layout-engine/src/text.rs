@@ -48,6 +48,16 @@ pub enum FontFamily {
 }
 
 impl FontFamily {
+    /// XFA Spec 3.3 §17 (p716) — Map genericFamily attribute to FontFamily.
+    pub fn from_generic_family(gf: &str) -> Self {
+        match gf {
+            "serif" | "decorative" | "cursive" => FontFamily::Serif,
+            "monospaced" => FontFamily::Monospace,
+            // sansSerif, fantasy, and unknown values default to SansSerif
+            _ => FontFamily::SansSerif,
+        }
+    }
+
     /// Classify a typeface name into a font family.
     pub fn from_typeface(name: &str) -> Self {
         let lower = name.to_ascii_lowercase();
