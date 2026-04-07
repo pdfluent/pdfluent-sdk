@@ -225,3 +225,44 @@ fn empty_subform_with_break_before_page_still_forces_second_page() {
     assert_eq!(result.pages[0].nodes[0].name, "Header");
     assert_eq!(result.pages[1].nodes[0].name, "ForcedBreak");
 }
+
+/// TB subform with explicit height whose children exceed that height AND
+/// the page height should be split across pages (#768 — under-pagination).
+#[test]
+fn tb_subform_with_explicit_height_overflowing_content_paginates() {
+    let mut tree = FormTree::new();
+
+    // TB subform with h=60 but 5 children of 30pt each = 150pt content.
+    // Page height is 100pt, so 150pt requires >=2 pages.
+    // Before #768 compute_extent returned 60pt (explicit h), fitting on
+    // one page; now it returns 150pt, triggering pagination.
+    let r1 = make_field(&mut tree, "Row1", 200.0, 30.0);
+    let r2 = make_field(&mut tree, "Row2", 200.0, 30.0);
+    let r3 = make_field(&mut tree, "Row3", 200.0, 30.0);
+    let r4 = make_field(&mut tree, "Row4", 200.0, 30.0);
+    let r5 = make_field(&mut tree, "Row5", 200.0, 30.0);
+    let inner = make_subform(
+        &mut tree,
+        "OverflowTB",
+        LayoutStrategy::TopToBottom,
+        Some(200.0),
+        Some(60.0), // explicit height << actual content (150pt)
+        vec![r1, r2, r3, r4, r5],
+    );
+    let root = make_root(&mut tree, 200.0, 100.0, vec![inner]);
+
+    let result = LayoutEngine::new(&tree).layout(root).unwrap();
+
+    assert!(
+        result.pages.len() >= 2,
+        "expected >=2 pages for overflowing TB subform, got {}",
+        result.pages.len()
+    );
+    // All 5 rows should appear across all pages
+    let total_rows: usize = result
+        .pages
+        .iter()
+        .map(|p| count_nodes_with_prefix(&p.nodes, "Row"))
+        .sum();
+    assert_eq!(total_rows, 5, "all 5 rows should be placed across pages");
+}
