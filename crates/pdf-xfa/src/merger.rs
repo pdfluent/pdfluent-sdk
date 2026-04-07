@@ -717,9 +717,15 @@ fn parse_occur(elem: Node<'_, '_>) -> Occur {
         let min: u32 = attr(occur, "min").and_then(|s| s.parse().ok()).unwrap_or(1);
         // XFA Spec 3.3 §9.2 p357: "if the max attribute is not supplied then
         // the max property defaults to the value of min."
-        let max: Option<u32> = attr(occur, "max")
-            .map(|s| if s == "-1" { None } else { s.parse().ok() })
-            .unwrap_or(Some(min));
+        //
+        // NOTE: the `.map(…).unwrap_or()` chain previously let parse failures
+        // (e.g. max="") collapse to `None` (unlimited), causing massive
+        // over-pagination.  Use an explicit match instead.
+        let max: Option<u32> = match attr(occur, "max") {
+            Some("-1") => None, // -1 means unlimited
+            Some(s) => Some(s.parse::<u32>().unwrap_or(min)),
+            None => Some(min),
+        };
         // XFA Spec 3.3 §9.2 p357: "if the initial attribute is not supplied
         // then the initial property defaults to the value of min."
         let initial: u32 = attr(occur, "initial")
