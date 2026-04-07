@@ -516,6 +516,7 @@ struct TemplateFontEntry {
     typeface: String,
     weight: Option<String>,
     posture: Option<String>,
+    generic_family: Option<String>,
 }
 
 fn collect_template_font_entries(template_xml: &str) -> Vec<TemplateFontEntry> {
@@ -528,12 +529,15 @@ fn collect_template_font_entries(template_xml: &str) -> Vec<TemplateFontEntry> {
                     let name = typeface.to_string();
                     let weight = node.attribute("weight").map(|s| s.to_string());
                     let posture = node.attribute("posture").map(|s| s.to_string());
+                    let generic_family =
+                        node.attribute("genericFamily").map(|s| s.to_string());
                     let key = font_variant_key(&name, weight.as_deref(), posture.as_deref());
                     if !name.is_empty() && seen.insert(key.to_lowercase()) {
                         entries.push(TemplateFontEntry {
                             typeface: name,
                             weight,
                             posture,
+                            generic_family,
                         });
                     }
                 }
@@ -678,6 +682,7 @@ fn resolve_template_fonts(template_xml: &str, pdf_bytes: &[u8]) -> HashMap<Strin
             entry.weight.as_deref(),
             entry.posture.as_deref(),
             None,
+            entry.generic_family.as_deref(),
         );
         let key = font_variant_key(
             &entry.typeface,

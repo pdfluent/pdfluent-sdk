@@ -361,10 +361,18 @@ fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
         .and_then(|f| attr(f, "size"))
         .and_then(parse_font_size)
         .unwrap_or(FontMetrics::default().size);
-    let typeface = font_elem
-        .and_then(|f| attr(f, "typeface"))
-        .map(FontFamily::from_typeface)
-        .unwrap_or_default();
+    // XFA Spec 3.3 §17 (p716) — genericFamily: fallback classification hint.
+    // If present, use it to classify the font family instead of guessing from
+    // the typeface name. This matches Adobe's §28.2 step 4 behavior.
+    let generic_family_str = font_elem.and_then(|f| attr(f, "genericFamily"));
+    let typeface = if let Some(gf) = generic_family_str {
+        FontFamily::from_generic_family(gf)
+    } else {
+        font_elem
+            .and_then(|f| attr(f, "typeface"))
+            .map(FontFamily::from_typeface)
+            .unwrap_or_default()
+    };
     // XFA Spec 3.3 §2.4 (p44, p59-60) — hAlign values:
     //   left, center, right, justify, justifyAll, radix
     let text_align = find_first_child_by_name(elem, "para")
@@ -672,6 +680,10 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     if let Some(font) = find_first_child_by_name(elem, "font") {
         if let Some(typeface) = attr(font, "typeface") {
             style.font_family = Some(typeface.to_string());
+        }
+        // XFA Spec 3.3 §17 (p716) — genericFamily attribute.
+        if let Some(gf) = attr(font, "genericFamily") {
+            style.generic_family = Some(gf.to_string());
         }
         if let Some(size_str) = attr(font, "size") {
             if let Some(m) = Measurement::parse(size_str) {

@@ -155,6 +155,35 @@ pub fn font_variant_key(typeface: &str, weight: Option<&str>, posture: Option<&s
     format!("{}{}{}", typeface, w, p)
 }
 
+/// XFA Spec 3.3 §17 (p716) — genericFamily attribute on the font element.
+///
+/// Used as a fallback when the requested typeface cannot be found.
+/// XFA Spec 3.3 §28.2 (p1246) — Font mapping step 4: genericFamily mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericFamily {
+    Serif,
+    SansSerif,
+    Monospaced,
+    Decorative,
+    Fantasy,
+    Cursive,
+}
+
+impl GenericFamily {
+    /// Parse the XFA genericFamily attribute value.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "serif" => Some(Self::Serif),
+            "sansSerif" => Some(Self::SansSerif),
+            "monospaced" => Some(Self::Monospaced),
+            "decorative" => Some(Self::Decorative),
+            "fantasy" => Some(Self::Fantasy),
+            "cursive" => Some(Self::Cursive),
+            _ => None,
+        }
+    }
+}
+
 /// XFA font specification from the template.
 #[derive(Debug, Clone)]
 pub struct XfaFontSpec {
@@ -162,6 +191,8 @@ pub struct XfaFontSpec {
     pub weight: FontWeight,
     pub posture: FontPosture,
     pub size_pt: f64,
+    /// XFA Spec 3.3 §17 (p716) — genericFamily fallback hint.
+    pub generic_family: Option<GenericFamily>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -183,6 +214,7 @@ impl XfaFontSpec {
         weight: Option<&str>,
         posture: Option<&str>,
         size: Option<&str>,
+        generic_family: Option<&str>,
     ) -> Self {
         Self {
             typeface: typeface.to_string(),
@@ -198,6 +230,7 @@ impl XfaFontSpec {
                 .and_then(|s| s.strip_suffix("pt").or(Some(s)))
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(10.0),
+            generic_family: generic_family.and_then(GenericFamily::parse),
         }
     }
 }
@@ -330,6 +363,47 @@ fn family_fallback_chain(family: FontFamily) -> &'static [&'static str] {
     }
 }
 
+// XFA Spec 3.3 §28.2 (p1246) — Font mapping step 4: genericFamily mapping.
+// Maps genericFamily values to concrete font fallback chains.
+fn generic_family_fallback_chain(gf: GenericFamily) -> &'static [&'static str] {
+    match gf {
+        GenericFamily::Serif | GenericFamily::Decorative => &[
+            "liberationserif",
+            "tinos",
+            "dejavuserif",
+            "freeserif",
+            "times new roman",
+            "times",
+        ],
+        GenericFamily::SansSerif | GenericFamily::Fantasy => &[
+            "liberationsans",
+            "arimo",
+            "dejavusans",
+            "freesans",
+            "helvetica",
+            "arial",
+        ],
+        GenericFamily::Monospaced => &[
+            "liberationmono",
+            "cousine",
+            "dejavusansmono",
+            "freemono",
+            "courier new",
+            "courier",
+        ],
+        GenericFamily::Cursive => {
+            // Cursive maps to best available serif-italic; fall back to serif fonts.
+            &[
+                "liberationserif",
+                "tinos",
+                "dejavuserif",
+                "freeserif",
+                "times new roman",
+            ]
+        }
+    }
+}
+
 impl XfaFontResolver {
     /// Create a new resolver with embedded fonts extracted from the PDF.
     pub fn new(embedded_fonts: Vec<(String, Vec<u8>)>) -> Self {
@@ -353,6 +427,10 @@ impl XfaFontResolver {
 
     /// Resolve a font specification to a usable font.
     ///
+    /// XFA Spec 3.3 §28.2 (p1246) — Font mapping: Adobe uses a 5-step algorithm:
+    /// 1) direct match, 2) equate, 3) locale, 4) genericFamily, 5) default.
+    /// We implement steps 1, 4, 5 (equate and locale are config-dependent).
+    ///
     /// When weight is Bold and/or posture is Italic, variant-specific font
     /// names are tried first (e.g. "Arial-Bold", "ArialBold", "Arial Bold")
     /// in both embedded and system font lookups. This ensures that bold/italic
@@ -368,7 +446,7 @@ impl XfaFontResolver {
         // Build variant suffixes based on weight/posture.
         let variant_names = build_variant_names(&spec.typeface, spec.weight, spec.posture);
 
-        // Try variant-specific names first (bold/italic variants).
+        // Step 1: Try variant-specific names first (bold/italic variants).
         let font = variant_names
             .iter()
             .find_map(|vn| {
@@ -386,7 +464,10 @@ impl XfaFontResolver {
             .or_else(|| self.try_system(&normalized))
             .or_else(|| self.try_base_name(&spec.typeface))
             .or_else(|| self.try_aliases(&spec.typeface))
+            // Step 4: genericFamily fallback (XFA §28.2 step 4).
+            .or_else(|| self.try_generic_family_fallback(spec.generic_family))
             .or_else(|| self.try_family_fallback(&spec.typeface))
+            // Step 5: system default.
             .or_else(|| self.try_fallbacks())
             .ok_or_else(|| {
                 XfaError::FontError(format!("cannot resolve font: {}", spec.typeface))
@@ -437,6 +518,18 @@ impl XfaFontResolver {
                         return Some(font);
                     }
                 }
+            }
+        }
+        None
+    }
+
+    /// XFA Spec 3.3 §28.2 step 4 — genericFamily fallback.
+    fn try_generic_family_fallback(&self, gf: Option<GenericFamily>) -> Option<ResolvedFont> {
+        let gf = gf?;
+        let chain = generic_family_fallback_chain(gf);
+        for candidate in chain {
+            if let Some(font) = self.try_system(candidate) {
+                return Some(font);
             }
         }
         None
@@ -663,25 +756,42 @@ mod tests {
 
     #[test]
     fn font_spec_parsing() {
-        let spec = XfaFontSpec::from_xfa_attrs("Helvetica", Some("bold"), None, Some("12pt"));
+        let spec =
+            XfaFontSpec::from_xfa_attrs("Helvetica", Some("bold"), None, Some("12pt"), None);
         assert_eq!(spec.typeface, "Helvetica");
         assert_eq!(spec.weight, FontWeight::Bold);
         assert_eq!(spec.posture, FontPosture::Normal);
         assert!((spec.size_pt - 12.0).abs() < 0.001);
+        assert_eq!(spec.generic_family, None);
     }
 
     #[test]
     fn font_spec_defaults() {
-        let spec = XfaFontSpec::from_xfa_attrs("Arial", None, None, None);
+        let spec = XfaFontSpec::from_xfa_attrs("Arial", None, None, None, None);
         assert_eq!(spec.weight, FontWeight::Normal);
         assert_eq!(spec.posture, FontPosture::Normal);
         assert!((spec.size_pt - 10.0).abs() < 0.001);
     }
 
     #[test]
+    fn font_spec_generic_family() {
+        let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("serif"));
+        assert_eq!(spec.generic_family, Some(GenericFamily::Serif));
+
+        let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("sansSerif"));
+        assert_eq!(spec.generic_family, Some(GenericFamily::SansSerif));
+
+        let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("monospaced"));
+        assert_eq!(spec.generic_family, Some(GenericFamily::Monospaced));
+
+        let spec = XfaFontSpec::from_xfa_attrs("FancyFont", None, None, None, Some("bogus"));
+        assert_eq!(spec.generic_family, None);
+    }
+
+    #[test]
     fn resolver_empty() {
         let mut resolver = XfaFontResolver::new(vec![]);
-        let spec = XfaFontSpec::from_xfa_attrs("NonExistentFont12345", None, None, None);
+        let spec = XfaFontSpec::from_xfa_attrs("NonExistentFont12345", None, None, None, None);
         let _ = resolver.resolve(&spec);
     }
 
@@ -695,7 +805,7 @@ mod tests {
     fn cid_font_info_with_system_font() {
         // Try to resolve a system font and verify cid_font_info works
         let mut resolver = XfaFontResolver::new(vec![]);
-        let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, None);
+        let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, None, None);
         if let Ok(font) = resolver.resolve(&spec) {
             let info = font.cid_font_info();
             assert!(
@@ -852,8 +962,8 @@ mod tests {
     #[test]
     fn resolve_uses_bold_variant_cache_key() {
         let mut resolver = XfaFontResolver::new(vec![]);
-        let spec_normal = XfaFontSpec::from_xfa_attrs("Arial", None, None, None);
-        let spec_bold = XfaFontSpec::from_xfa_attrs("Arial", Some("bold"), None, None);
+        let spec_normal = XfaFontSpec::from_xfa_attrs("Arial", None, None, None, None);
+        let spec_bold = XfaFontSpec::from_xfa_attrs("Arial", Some("bold"), None, None, None);
         // Both should resolve (or fail) independently — they use different cache keys.
         let _ = resolver.resolve(&spec_normal);
         let _ = resolver.resolve(&spec_bold);

@@ -462,6 +462,9 @@ pub struct FormNodeStyle {
     pub border_style: Option<String>,
     /// Per-edge visibility: [top, right, bottom, left]. All true when absent.
     pub border_edges: [bool; 4],
+    /// XFA Spec 3.3 §17 (p716) — genericFamily fallback hint.
+    /// Values: serif, sansSerif, monospaced, decorative, fantasy, cursive.
+    pub generic_family: Option<String>,
     /// Font horizontal scale factor (XFA `<font fontHorizontalScale>`).
     /// 1.0 = 100% (default), 0.96 = 96%, etc.
     pub font_horizontal_scale: Option<f64>,
@@ -500,6 +503,7 @@ impl Default for FormNodeStyle {
             border_radius_pt: None,
             border_style: None,
             border_edges: [true, true, true, true],
+            generic_family: None,
             font_horizontal_scale: None,
             letter_spacing_pt: None,
             caption_text: None,
