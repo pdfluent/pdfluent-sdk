@@ -12,6 +12,67 @@ use xfa_layout_engine::form::{
 
 const MAX_SCRIPT_PASSES: usize = 3;
 
+/// Snapshot of field values and presence states, used for rollback.
+struct FormSnapshot {
+    field_values: Vec<(usize, String)>,
+    presences: Vec<(usize, Presence)>,
+    populated_count: usize,
+}
+
+fn snapshot_form(form: &FormTree) -> FormSnapshot {
+    let mut field_values = Vec::new();
+    let mut presences = Vec::new();
+    let mut populated_count = 0usize;
+    for (idx, node) in form.nodes.iter().enumerate() {
+        if let FormNodeType::Field { value } = &node.node_type {
+            field_values.push((idx, value.clone()));
+            if !value.trim().is_empty() {
+                populated_count += 1;
+            }
+        }
+        presences.push((idx, form.metadata[idx].presence));
+    }
+    FormSnapshot {
+        field_values,
+        presences,
+        populated_count,
+    }
+}
+
+fn restore_snapshot(form: &mut FormTree, snapshot: &FormSnapshot) {
+    for (idx, value) in &snapshot.field_values {
+        if let FormNodeType::Field { value: fv } = &mut form.nodes[*idx].node_type {
+            *fv = value.clone();
+        }
+    }
+    for (idx, presence) in &snapshot.presences {
+        form.metadata[*idx].presence = *presence;
+    }
+}
+
+fn should_rollback(form: &FormTree, snapshot: &FormSnapshot, errors: usize, successes: usize) -> bool {
+    if errors > 0 && errors > successes {
+        return true;
+    }
+    if snapshot.populated_count >= 2 {
+        let mut now_empty = 0usize;
+        for (idx, old_value) in &snapshot.field_values {
+            if old_value.trim().is_empty() {
+                continue;
+            }
+            if let FormNodeType::Field { value } = &form.nodes[*idx].node_type {
+                if value.trim().is_empty() {
+                    now_empty += 1;
+                }
+            }
+        }
+        if now_empty * 2 > snapshot.populated_count {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize {
     let parents = build_parent_map(form, root_id);
     let scripts: Vec<(FormNodeId, Vec<EventScript>)> = form
@@ -25,13 +86,17 @@ pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize 
         })
         .collect();
 
-    run_script_phase(
+    let snapshot = snapshot_form(form);
+    let mut stats = ScriptStats::default();
+
+    let changes = run_script_phase(
         form,
         root_id,
         &parents,
         &scripts,
         ScriptPhase::Initialize,
         1,
+        &mut stats,
     ) + run_script_phase(
         form,
         root_id,
@@ -39,7 +104,15 @@ pub fn apply_dynamic_scripts(form: &mut FormTree, root_id: FormNodeId) -> usize 
         &scripts,
         ScriptPhase::Calculate,
         MAX_SCRIPT_PASSES,
-    )
+        &mut stats,
+    );
+
+    if should_rollback(form, &snapshot, stats.errors, stats.successes) {
+        restore_snapshot(form, &snapshot);
+        return 0;
+    }
+
+    changes
 }
 
 fn has_hidden_ancestor(
@@ -63,6 +136,17 @@ enum ScriptPhase {
     Calculate,
 }
 
+#[derive(Default)]
+struct ScriptStats {
+    errors: usize,
+    successes: usize,
+}
+
+struct ScriptResult {
+    changes: usize,
+    error: bool,
+}
+
 fn run_script_phase(
     form: &mut FormTree,
     root_id: FormNodeId,
@@ -70,6 +154,7 @@ fn run_script_phase(
     scripts: &[(FormNodeId, Vec<EventScript>)],
     phase: ScriptPhase,
     max_passes: usize,
+    stats: &mut ScriptStats,
 ) -> usize {
     let mut total_changes = 0;
 
@@ -85,8 +170,14 @@ fn run_script_phase(
                 .iter()
                 .filter(|script| should_run_script(script, phase))
             {
-                pass_changes +=
+                let result =
                     execute_event_script(form, root_id, parents, *node_id, script, phase);
+                if result.error {
+                    stats.errors += 1;
+                } else {
+                    stats.successes += 1;
+                }
+                pass_changes += result.changes;
             }
         }
 
@@ -113,7 +204,7 @@ fn execute_event_script(
     current_id: FormNodeId,
     script: &EventScript,
     phase: ScriptPhase,
-) -> usize {
+) -> ScriptResult {
     match script.language {
         ScriptLanguage::FormCalc => {
             execute_formcalc_script(form, root_id, parents, current_id, script, phase)
@@ -131,18 +222,18 @@ fn execute_formcalc_script(
     current_id: FormNodeId,
     script: &EventScript,
     phase: ScriptPhase,
-) -> usize {
+) -> ScriptResult {
     let Ok(tokens) = tokenize(&script.script) else {
-        return 0;
+        return ScriptResult { changes: 0, error: true };
     };
     let Ok(ast) = parser::parse(tokens) else {
-        return 0;
+        return ScriptResult { changes: 0, error: true };
     };
 
     let mut interpreter = Interpreter::new();
     let mut resolver = FormTreeSomResolver::new(form, root_id, parents, current_id);
     let Ok(result) = interpreter.exec_with_resolver(&ast, &mut resolver) else {
-        return resolver.changes;
+        return ScriptResult { changes: resolver.changes, error: true };
     };
 
     if matches!(phase, ScriptPhase::Calculate) {
@@ -154,7 +245,7 @@ fn execute_formcalc_script(
         );
     }
 
-    resolver.changes
+    ScriptResult { changes: resolver.changes, error: false }
 }
 
 fn execute_javascript_script(
@@ -163,10 +254,16 @@ fn execute_javascript_script(
     parents: &HashMap<FormNodeId, FormNodeId>,
     current_id: FormNodeId,
     script: &str,
-) -> usize {
+) -> ScriptResult {
     let lines = preprocess_script(script);
     let mut idx = 0;
-    execute_javascript_block(form, root_id, parents, current_id, &lines, &mut idx, false)
+    let changes =
+        execute_javascript_block(form, root_id, parents, current_id, &lines, &mut idx, false);
+    let has_statements = lines.iter().any(|l| !l.trim().is_empty());
+    ScriptResult {
+        changes,
+        error: has_statements && changes == 0,
+    }
 }
 
 fn execute_javascript_block(
@@ -1561,5 +1658,124 @@ Details.presence = "visible"
         apply_dynamic_scripts(&mut tree, root);
 
         assert_eq!(tree.meta(details).presence, Presence::Hidden);
+    }
+
+    #[test]
+    fn rollback_when_scripts_mostly_error() {
+        // Set up a form with fields that have values.  Attach scripts that
+        // will fail to parse so that errors > successes.  After
+        // apply_dynamic_scripts the field values must be unchanged.
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let field_a = add_node(
+            &mut tree,
+            "FieldA",
+            FormNodeType::Field {
+                value: "hello".to_string(),
+            },
+        );
+        let field_b = add_node(
+            &mut tree,
+            "FieldB",
+            FormNodeType::Field {
+                value: "world".to_string(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![field_a, field_b];
+
+        // Two scripts that fail parsing (invalid FormCalc), zero successes.
+        tree.meta_mut(field_a).event_scripts =
+            vec![formcalc_script("@@INVALID@@", "initialize")];
+        tree.meta_mut(field_b).event_scripts =
+            vec![formcalc_script("@@ALSO_BROKEN@@", "initialize")];
+
+        apply_dynamic_scripts(&mut tree, root);
+
+        // Fields should retain their original values (rollback).
+        match &tree.get(field_a).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "hello"),
+            _ => panic!("expected field"),
+        }
+        match &tree.get(field_b).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "world"),
+            _ => panic!("expected field"),
+        }
+    }
+
+    #[test]
+    fn rollback_when_populated_fields_go_empty() {
+        // Calculate scripts returning Null clear field values. When >50%
+        // of populated fields go empty, the rollback heuristic fires.
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let field_a = add_node(
+            &mut tree,
+            "FieldA",
+            FormNodeType::Field {
+                value: "keep".to_string(),
+            },
+        );
+        let field_b = add_node(
+            &mut tree,
+            "FieldB",
+            FormNodeType::Field {
+                value: "also_keep".to_string(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![field_a, field_b];
+
+        // Calculate scripts whose return value (Null) is written to the field,
+        // blanking it.  The expression `Null()` is not a real FormCalc builtin,
+        // but `0` would set the field to "0" (not empty).  Instead we use the
+        // snapshot/rollback logic directly.
+        // We test the heuristic by manually setting up the condition.
+        let snapshot = super::snapshot_form(&tree);
+
+        // Simulate scripts clearing both fields.
+        if let FormNodeType::Field { value } = &mut tree.get_mut(field_a).node_type {
+            *value = String::new();
+        }
+        if let FormNodeType::Field { value } = &mut tree.get_mut(field_b).node_type {
+            *value = String::new();
+        }
+
+        assert!(super::should_rollback(&tree, &snapshot, 0, 2));
+
+        super::restore_snapshot(&mut tree, &snapshot);
+
+        match &tree.get(field_a).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "keep"),
+            _ => panic!("expected field"),
+        }
+        match &tree.get(field_b).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "also_keep"),
+            _ => panic!("expected field"),
+        }
+    }
+
+    #[test]
+    fn no_rollback_when_scripts_succeed() {
+        // A single working script with no errors → no rollback, change persists.
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let total = add_node(
+            &mut tree,
+            "Total",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![total];
+        tree.meta_mut(total).event_scripts = vec![formcalc_script("40 + 2", "calculate")];
+
+        apply_dynamic_scripts(&mut tree, root);
+
+        match &tree.get(total).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "42"),
+            _ => panic!("expected field"),
+        }
     }
 }
