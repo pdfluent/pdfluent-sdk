@@ -372,7 +372,13 @@ fn xfa_flatten_inner(
         // No XFA overlay — the XFA engine would re-render full page content
         // (headers, text, images), causing double-drawing.
     } else {
-        for (i, overlay) in overlays.iter().enumerate() {
+        // Cap overlay count to the original page count: the XFA layout may
+        // produce more pages than the original PDF (template-defined page
+        // subforms with breakBefore, multiple positioned subforms, etc.).
+        // The original page count is authoritative — extra layout pages are
+        // empty template chrome that the form designer did not pre-render.
+        let effective_n = n_layout.min(n_existing);
+        for (i, overlay) in overlays[..effective_n].iter().enumerate() {
             if i < n_existing {
                 write_page_content(
                     &mut doc,
