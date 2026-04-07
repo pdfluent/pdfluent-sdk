@@ -23,7 +23,8 @@ use roxmltree::Node;
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
 use xfa_layout_engine::form::{
     ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId, FormNodeMeta,
-    FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, ScriptLanguage,
+    FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, RichTextSpan,
+    ScriptLanguage,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
 use xfa_layout_engine::types::{
