@@ -470,6 +470,9 @@ pub struct FormNodeStyle {
     pub text_color: Option<(u8, u8, u8)>,
     pub bg_color: Option<(u8, u8, u8)>,
     pub border_color: Option<(u8, u8, u8)>,
+    /// Per-edge border colors (top, right, bottom, left) in RGB 0-255.
+    /// When set, overrides `border_color` for individual edges.
+    pub border_colors: Option<[(u8, u8, u8); 4]>,
     pub border_width_pt: Option<f64>,
     /// Paragraph space above in points (XFA `<para spaceAbove>`).
     pub space_above_pt: Option<f64>,
@@ -518,6 +521,9 @@ pub struct FormNodeStyle {
     pub caption_placement: Option<String>,
     /// Caption reserve width/height in points.
     pub caption_reserve: Option<f64>,
+    /// CheckButton mark style (XFA `<checkButton mark="...">`).
+    /// Values: "check", "circle", "cross", "diamond", "square", "star".
+    pub check_button_mark: Option<String>,
     /// Rich text spans parsed from `<exData contentType="text/html">` XHTML.
     pub rich_text_spans: Option<Vec<RichTextSpan>>,
 }
@@ -532,6 +538,7 @@ impl Default for FormNodeStyle {
             text_color: None,
             bg_color: None,
             border_color: None,
+            border_colors: None,
             border_width_pt: None,
             space_above_pt: None,
             space_below_pt: None,
@@ -554,6 +561,7 @@ impl Default for FormNodeStyle {
             caption_text: None,
             caption_placement: None,
             caption_reserve: None,
+            check_button_mark: None,
             rich_text_spans: None,
         }
     }

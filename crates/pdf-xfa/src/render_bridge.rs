@@ -41,6 +41,8 @@ pub struct XfaRenderConfig {
     pub font_map: HashMap<String, String>,
     /// Resolved font metrics per typeface.
     pub font_metrics_data: HashMap<String, FontMetricsData>,
+    /// CheckButton mark style (check, circle, cross, diamond, square, star).
+    pub check_button_mark: Option<String>,
 }
 
 /// Resolved font metrics for a typeface, used for accurate text measurement.
@@ -88,6 +90,7 @@ impl Default for XfaRenderConfig {
             text_padding: 1.0,
             font_map: HashMap::new(),
             font_metrics_data: HashMap::new(),
+            check_button_mark: None,
         }
     }
 }
@@ -233,13 +236,18 @@ fn render_nodes(
                         ops,
                         format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bwid, bc[0], bc[1], bc[2]),
                     );
+                    let per_edge = node.style.border_colors.map(|cs| {
+                        cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+                    });
                     apply_border_dash(ops, border_style);
                     let edges = node.style.border_edges;
-                    if edges[0] && edges[1] && edges[2] && edges[3] {
+                    if per_edge.is_some() {
+                        emit_individual_edges(ops, bx, by, bw, bh, &edges, per_edge.as_ref());
+                    } else if edges[0] && edges[1] && edges[2] && edges[3] {
                         emit_rect_path(ops, bx, by, bw, bh, border_radius);
                         ops.extend_from_slice(b"S\n");
                     } else {
-                        emit_individual_edges(ops, bx, by, bw, bh, &edges);
+                        emit_individual_edges(ops, bx, by, bw, bh, &edges, None);
                     }
                     reset_border_dash(ops, border_style);
                 }
@@ -494,27 +502,59 @@ fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64
     }
 }
 
-/// Draw individual border edges. `edges` = [top, right, bottom, left].
-fn emit_individual_edges(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, edges: &[bool; 4]) {
+/// Draw individual border edges with optional per-edge colors.
+fn emit_individual_edges(
+    ops: &mut Vec<u8>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    edges: &[bool; 4],
+    colors: Option<&[[f64; 3]; 4]>,
+) {
     if edges[0] {
+        if let Some(c) = colors.map(|c| &c[0]) {
+            write_ops(
+                ops,
+                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+            );
+        }
         write_ops(
             ops,
             format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y + h, x + w, y + h),
         );
     }
     if edges[1] {
+        if let Some(c) = colors.map(|c| &c[1]) {
+            write_ops(
+                ops,
+                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+            );
+        }
         write_ops(
             ops,
             format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x + w, y, x + w, y + h),
         );
     }
     if edges[2] {
+        if let Some(c) = colors.map(|c| &c[2]) {
+            write_ops(
+                ops,
+                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+            );
+        }
         write_ops(
             ops,
             format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y, x + w, y),
         );
     }
     if edges[3] {
+        if let Some(c) = colors.map(|c| &c[3]) {
+            write_ops(
+                ops,
+                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+            );
+        }
         write_ops(
             ops,
             format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y, x, y + h),
@@ -812,13 +852,18 @@ fn render_field(
                 config.border_color[2],
             ),
         );
+        let per_edge = node_style
+            .border_colors
+            .map(|cs| cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]));
         apply_border_dash(ops, border_style);
         let edges = node_style.border_edges;
-        if edges[0] && edges[1] && edges[2] && edges[3] {
+        if per_edge.is_some() {
+            emit_individual_edges(ops, x, pdf_y, w, h, &edges, per_edge.as_ref());
+        } else if edges[0] && edges[1] && edges[2] && edges[3] {
             emit_rect_path(ops, x, pdf_y, w, h, border_radius);
             ops.extend_from_slice(b"S\n");
         } else {
-            emit_individual_edges(ops, x, pdf_y, w, h, &edges);
+            emit_individual_edges(ops, x, pdf_y, w, h, &edges, None);
         }
         reset_border_dash(ops, border_style);
     }
