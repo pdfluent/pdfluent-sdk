@@ -163,14 +163,32 @@ pub fn call_som_builtin(
     args: &[Value],
 ) -> Result<Option<Value>> {
     match name.to_ascii_lowercase().as_str() {
-        "get" => Ok(Some(som_get(resolver, args)?)),
-        "set" => Ok(Some(som_set(resolver, args)?)),
-        "exists" => Ok(Some(som_exists(resolver, args)?)),
-        "nodes" => Ok(Some(som_nodes(resolver, args)?)),
-        "addnode" => Ok(Some(som_add_node(resolver, args)?)),
-        "removenode" => Ok(Some(som_remove_node(resolver, args)?)),
+        // XFA Spec 3.3 Chapter 25 also defines URL Get/Post/Put built-ins.
+        // Only intercept the overlapping names when the first argument looks
+        // like a SOM path, otherwise let the generic built-in layer handle it.
+        "get" if first_arg_looks_like_som_path(args) => Ok(Some(som_get(resolver, args)?)),
+        "set" if first_arg_looks_like_som_path(args) => Ok(Some(som_set(resolver, args)?)),
+        "exists" if first_arg_looks_like_som_path(args) => Ok(Some(som_exists(resolver, args)?)),
+        "nodes" if first_arg_looks_like_som_path(args) => Ok(Some(som_nodes(resolver, args)?)),
+        "addnode" if first_arg_looks_like_som_path(args) => Ok(Some(som_add_node(resolver, args)?)),
+        "removenode" if first_arg_looks_like_som_path(args) => {
+            Ok(Some(som_remove_node(resolver, args)?))
+        }
         _ => Ok(None),
     }
+}
+
+fn first_arg_looks_like_som_path(args: &[Value]) -> bool {
+    let Some(first) = args.first() else {
+        return false;
+    };
+    let text = first.to_string_val();
+    !text.contains("://")
+        && (text.starts_with('$')
+            || text.starts_with('!')
+            || text == "this"
+            || text.contains('.')
+            || text.contains('['))
 }
 
 fn som_get(resolver: &mut dyn SomResolver, args: &[Value]) -> Result<Value> {

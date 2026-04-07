@@ -1,6 +1,6 @@
 //! FormCalc lexer — tokenizes FormCalc source into tokens.
 //!
-//! Implements XFA 3.3 §25.3 (Lexical Grammar).
+//! Implements the currently supported subset of XFA 3.3 §25.1 (Lexical Grammar).
 
 use crate::error::{FormCalcError, Result};
 
@@ -99,14 +99,27 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
 
         match ch {
             // Whitespace (not newlines)
-            ' ' | '\t' | '\r' => {
+            ' ' | '\t' | '\u{000B}' | '\u{000C}' => {
                 chars.next();
                 col += 1;
             }
 
-            // Newlines — significant as statement terminators
+            // XFA Spec 3.3 §25.1 "Line Terminators" (p1055) treats CR and LF
+            // as statement separators.
             '\n' => {
                 chars.next();
+                tokens.push(Token {
+                    kind: TokenKind::Newline,
+                    span,
+                });
+                line += 1;
+                col = 1;
+            }
+            '\r' => {
+                chars.next();
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
                 tokens.push(Token {
                     kind: TokenKind::Newline,
                     span,
@@ -121,7 +134,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
                 col += 1;
                 // Line comment: skip to end of line
                 while let Some(&c) = chars.peek() {
-                    if c == '\n' {
+                    if c == '\n' || c == '\r' {
                         break;
                     }
                     chars.next();
@@ -132,7 +145,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
             '/' if chars.clone().nth(1) == Some('/') => {
                 // Line comment //
                 while let Some(&c) = chars.peek() {
-                    if c == '\n' {
+                    if c == '\n' || c == '\r' {
                         break;
                     }
                     chars.next();
@@ -157,6 +170,34 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
                             } else {
                                 break;
                             }
+                        }
+                        Some('\\') => {
+                            col += 1;
+                            let Some(kind) = chars.next() else {
+                                return Err(FormCalcError::LexerError {
+                                    line: span.line,
+                                    col: span.col,
+                                    message: "unterminated unicode escape in string literal"
+                                        .to_string(),
+                                });
+                            };
+                            col += 1;
+                            let digits = match kind {
+                                'u' => 4,
+                                'U' => 8,
+                                _ => {
+                                    return Err(FormCalcError::LexerError {
+                                        line: span.line,
+                                        col: span.col,
+                                        message: format!(
+                                            "unsupported escape sequence '\\{kind}' in string literal"
+                                        ),
+                                    })
+                                }
+                            };
+                            s.push(read_unicode_escape(
+                                &mut chars, digits, span, &mut line, &mut col,
+                            )?);
                         }
                         Some('\n') => {
                             s.push('\n');
@@ -230,10 +271,13 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
             }
 
             // Identifiers and keywords
-            'a'..='z' | 'A'..='Z' | '_' => {
+            'a'..='z' | 'A'..='Z' | '_' | '$' | '!' => {
                 let mut ident = String::new();
+                ident.push(ch);
+                chars.next();
+                col += 1;
                 while let Some(&c) = chars.peek() {
-                    if c.is_alphanumeric() || c == '_' {
+                    if c.is_alphanumeric() || c == '_' || c == '$' {
                         ident.push(c);
                         chars.next();
                         col += 1;
@@ -473,41 +517,6 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
                     span,
                 });
             }
-            '!' => {
-                chars.next();
-                col += 1;
-                if chars.peek() == Some(&'=') {
-                    chars.next();
-                    col += 1;
-                    tokens.push(Token {
-                        kind: TokenKind::Ne,
-                        span,
-                    });
-                } else {
-                    tokens.push(Token {
-                        kind: TokenKind::Not,
-                        span,
-                    });
-                }
-            }
-            '$' => {
-                chars.next();
-                col += 1;
-                let mut ident = String::from("$");
-                while let Some(&c) = chars.peek() {
-                    if c.is_alphanumeric() || c == '_' {
-                        ident.push(c);
-                        chars.next();
-                        col += 1;
-                    } else {
-                        break;
-                    }
-                }
-                tokens.push(Token {
-                    kind: TokenKind::Ident(ident),
-                    span,
-                });
-            }
             _ => {
                 return Err(FormCalcError::LexerError {
                     line,
@@ -524,6 +533,54 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
     });
 
     Ok(tokens)
+}
+
+fn read_unicode_escape<I>(
+    chars: &mut std::iter::Peekable<I>,
+    digits: usize,
+    span: Span,
+    line: &mut usize,
+    col: &mut usize,
+) -> Result<char>
+where
+    I: Iterator<Item = char>,
+{
+    let mut hex = String::with_capacity(digits);
+    for _ in 0..digits {
+        let Some(ch) = chars.next() else {
+            return Err(FormCalcError::LexerError {
+                line: span.line,
+                col: span.col,
+                message: "unterminated unicode escape in string literal".to_string(),
+            });
+        };
+        if ch == '\n' {
+            *line += 1;
+            *col = 1;
+        } else {
+            *col += 1;
+        }
+        if !ch.is_ascii_hexdigit() {
+            return Err(FormCalcError::LexerError {
+                line: span.line,
+                col: span.col,
+                message: format!("invalid unicode escape digit '{ch}'"),
+            });
+        }
+        hex.push(ch);
+    }
+
+    let codepoint = u32::from_str_radix(&hex, 16).map_err(|_| FormCalcError::LexerError {
+        line: span.line,
+        col: span.col,
+        message: format!("invalid unicode escape '\\u{hex}'"),
+    })?;
+
+    char::from_u32(codepoint).ok_or(FormCalcError::LexerError {
+        line: span.line,
+        col: span.col,
+        message: format!("invalid unicode codepoint U+{hex}"),
+    })
 }
 
 #[cfg(test)]

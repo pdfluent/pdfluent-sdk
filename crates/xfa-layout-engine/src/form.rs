@@ -166,6 +166,13 @@ impl EventScript {
 }
 
 /// Content for draw nodes (static graphic elements).
+///
+/// XFA Spec 3.3 §2.1 (p24) — Draw element: fixed content (boilerplate).
+/// Includes text, lines, rectangles, arcs. Images are handled separately
+/// via `FormNodeType::Image`.
+///
+/// TODO(§2.3): `circle` draw content not implemented (spec allows via arc with
+///   startAngle=0, sweepAngle=360).
 #[derive(Debug, Clone)]
 pub enum DrawContent {
     Text(String),
@@ -298,13 +305,16 @@ impl Default for ContentArea {
 // Metadata, style, and kind types
 // ---------------------------------------------------------------------------
 
-/// XFA `presence` attribute values (XFA 3.3 S3.2.8).
+/// XFA `presence` attribute values (XFA 3.3 §2.6 p67-68).
 ///
 /// Controls visibility and layout space allocation:
-/// - `Visible` -- normal rendering (default).
-/// - `Hidden` -- not rendered, but reserves layout space.
-/// - `Invisible` -- not rendered, no layout space.
-/// - `Inactive` -- completely ignored (no space, no processing).
+/// - `Visible` -- all phases: binding, automation, layout, rendering, interaction.
+/// - `Hidden` -- binding + automation only; no layout space, no rendering.
+/// - `Invisible` -- binding + automation + layout; takes up space but not visible.
+/// - `Inactive` -- binding only; completely absent from form.
+///
+/// Note: spec defines `hidden` as "effectively absent" (no space) and `invisible`
+/// as "takes space but not visible". Our `is_layout_hidden` implementation reflects this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Presence {
     #[default]
@@ -321,8 +331,13 @@ impl Presence {
     }
 
     /// True when the element should not occupy layout space.
+    ///
+    /// XFA Spec 3.3 §2.6 (p68):
+    /// - `hidden`: no layout space (effectively absent)
+    /// - `inactive`: no layout space (completely absent)
+    /// - `invisible`: DOES occupy layout space (just not visible)
     pub fn is_layout_hidden(self) -> bool {
-        matches!(self, Presence::Invisible | Presence::Inactive)
+        matches!(self, Presence::Hidden | Presence::Inactive)
     }
 }
 

@@ -1,5 +1,14 @@
 //! XFA flattening: parse XFA template, run layout, write PDF content streams.
 //!
+//! XFA Spec 3.3 §1.7 (p28-30) — Static vs Dynamic Forms:
+//!   Static (XFAF): boilerplate in PDF, fields/subforms in XFA. Fixed layout.
+//!   Dynamic (full XFA): all content in XFA. Layout computed at runtime.
+//!   `baseProfile="interactiveForms"` indicates static (XFAF) forms.
+//!
+//! XFA Spec 3.3 §2.9 (p72) — PDF-XFA Connection:
+//!   NeedsRendering flag: dynamic=true, XFAF=false.
+//!   XFA packets stored in AcroForm/XFA entry in catalog.
+//!
 //! `flatten_xfa_to_pdf` is the single entry point. It:
 //! 1. Extracts the XFA packets from the PDF (via `extract::extract_xfa`).
 //! 2. Parses the `<template>` packet into a `FormTree`.
@@ -289,10 +298,18 @@ fn xfa_flatten_inner(
     let n_layout = overlays.len();
     let n_existing = existing_page_ids.len();
 
-    // Detect static/hybrid XFA forms: baseProfile="interactiveForms" means the
-    // visual layout lives in the PDF content streams, not in XFA <draw> elements.
-    // For these forms we must preserve the original page content and overlay the
-    // XFA-rendered field values on top instead of replacing everything.
+    // XFA Spec 3.3 §9.1 — Static vs Dynamic Forms: a form is static (XFAF)
+    // when it uses only the restricted XFAF grammar subset (§7.6).  In
+    // practice, Adobe identifies static forms by `baseProfile="interactiveForms"`
+    // on the <template> element.  A dynamic form uses the full XFA grammar
+    // and re-lays out content based on data/scripts.
+    //
+    // §7.6 enumerates grammar excluded from XFAF: area, occur (non-default),
+    // multiple pageAreas, scripts that modify instance count, etc.
+    //
+    // Our detection uses baseProfile — this matches Adobe's behavior.  A more
+    // rigorous check would inspect the template grammar for XFAF-excluded
+    // elements, but baseProfile is the standard signal in real-world PDFs.
     let is_static_form = template_xml.contains("baseProfile=\"interactiveForms\"");
     let preserve_static = is_static_form && pages_have_static_content(&doc);
 

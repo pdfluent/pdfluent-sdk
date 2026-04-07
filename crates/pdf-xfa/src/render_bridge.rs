@@ -3,8 +3,12 @@
 //! Converts LayoutDom (from xfa-layout-engine) into PDF content stream
 //! operators that can be overlaid on existing PDF pages.
 //!
-//! Coordinate mapping: XFA uses top-left origin (y grows downward),
-//! PDF uses bottom-left origin (y grows upward).
+//! XFA Spec 3.3 §2.6 (p55-56) — Transformations: XFA uses top-left origin
+//! (y grows downward), PDF uses bottom-left origin (y grows upward).
+//! The `CoordinateMapper` handles this transformation.
+//!
+//! XFA Spec 3.3 §2.7 — Z-Order: objects are rendered in document order.
+//! Later objects appear on top of earlier objects (painter's algorithm).
 
 use crate::error::Result;
 use crate::font_bridge::font_variant_key;

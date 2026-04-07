@@ -16,6 +16,8 @@ pub enum Expr {
 
     /// Unary negation: -expr
     Negate(Box<Expr>),
+    /// Unary plus: +expr
+    Positive(Box<Expr>),
     /// Logical not: not expr
     Not(Box<Expr>),
 

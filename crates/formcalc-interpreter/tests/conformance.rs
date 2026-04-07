@@ -114,14 +114,14 @@ fn spec_logical_complex() {
 
 #[test]
 fn spec_string_concat() {
-    assert_eq!(run_str(r#""hello" & " " & "world""#), "hello world");
-    assert_eq!(run_str(r#""abc" & "def""#), "abcdef");
+    assert_eq!(run_str(r#"Concat("hello", " ", "world")"#), "hello world");
+    assert_eq!(run_str(r#"Concat("abc", "def")"#), "abcdef");
 }
 
 #[test]
 fn spec_string_concat_coercion() {
     // Numbers get coerced to strings when concatenated
-    assert_eq!(run_str(r#""value: " & 42"#), "value: 42");
+    assert_eq!(run_str(r#"Concat("value: ", 42)"#), "value: 42");
 }
 
 // ============================================================
@@ -522,9 +522,11 @@ fn spec_builtin_upper() {
 #[test]
 fn spec_builtin_uuid() {
     let uuid = run_str("Uuid()");
-    // UUID format: 8-4-4-4-12
-    assert_eq!(uuid.len(), 36);
-    assert_eq!(uuid.chars().filter(|&c| c == '-').count(), 4);
+    assert_eq!(uuid.len(), 32);
+    assert_eq!(uuid.chars().filter(|c| c.is_ascii_hexdigit()).count(), 32);
+    let dashed = run_str("Uuid(1)");
+    assert_eq!(dashed.len(), 36);
+    assert_eq!(dashed.chars().filter(|&c| c == '-').count(), 4);
 }
 
 // ============================================================
@@ -619,18 +621,18 @@ fn spec_builtin_date_roundtrip() {
 #[test]
 fn spec_builtin_time() {
     let t = run_f64("Time()");
-    assert!(t >= 0.0);
-    assert!(t < 86400000.0); // less than 24h in ms
+    assert!(t >= 1.0);
+    assert!(t <= 86400000.0); // 1-based millisecond epoch
 }
 
 #[test]
 fn spec_builtin_time2num() {
-    assert_eq!(run_f64(r#"Time2Num("13:30:00", "HH:MM:SS")"#), 48600000.0);
+    assert_eq!(run_f64(r#"Time2Num("13:30:00", "HH:MM:SS")"#), 48600001.0);
 }
 
 #[test]
 fn spec_builtin_num2time() {
-    let time_str = run_str(r#"Num2Time(48600000, "HH:MM:SS")"#);
+    let time_str = run_str(r#"Num2Time(48600001, "HH:MM:SS")"#);
     assert_eq!(time_str, "13:30:00");
 }
 
@@ -703,7 +705,7 @@ fn spec_coercion_number_to_string() {
 #[test]
 fn spec_coercion_null_behavior() {
     assert_eq!(run_f64("Null() + 5"), 5.0); // null coerces to 0
-    assert_eq!(run_str(r#"Null() & "hello""#), "hello"); // null coerces to ""
+    assert_eq!(run_str(r#"Concat(Null(), "hello")"#), "hello"); // null coerces to ""
 }
 
 // ============================================================
@@ -744,9 +746,9 @@ fn spec_complex_string_builder() {
         var result = ""
         for i = 1 upto 5 do
             if Len(result) > 0 then
-                result = result & ", "
+                result = Concat(result, ", ")
             endif
-            result = result & i
+            result = Concat(result, i)
         endfor
         result
     "#;

@@ -2,6 +2,30 @@
 //!
 //! Implements XFA 3.3 §4 (Box Model) and §8 (Layout for Growable Objects).
 //! Supports positioned layout and flowed layout (tb, lr-tb, rl-tb).
+//!
+//! # XFA Spec 3.3 Chapter 8 — Layout for Growable Objects
+//!
+//! This module implements the core layout algorithm described in §8.6 (p288):
+//! a content-driven single traversal of the Form DOM, adding layout nodes
+//! to a Layout DOM as content is placed into containers. When a container
+//! fills up, the engine traverses to a new container (next contentArea,
+//! next pageArea, or a new page).
+//!
+//! ## Spec coverage status (reviewed 2026-04-07):
+//!
+//! - §8.1 Text Placement in Growable Containers: ✅ basic, ⚠️ anchorType growth direction
+//! - §8.2 Flowing Layout (TB, LR-TB, RL-TB):    ✅ implemented
+//! - §8.3 hAlign in various layouts:              ⚠️ hAlign on child in TB parent NOT applied
+//! - §8.4 Growable + Flowed interaction:          ✅ resize then reflow
+//! - §8.5 Layout DOM structure:                   ✅ pages > nodes hierarchy
+//! - §8.6 Layout Algorithm:                       ✅ content-driven traversal
+//! - §8.7 Content Splitting:                      ⚠️ container-level only, no text-line split
+//! - §8.8 Pagination Strategies:                  ⚠️ orderedOccurrence only
+//! - §8.9 Adhesion (keep):                        ✅ keep-chain look-ahead
+//! - §8.10 Leaders/Trailers:                      ⚠️ basic leader/trailer, no overflow/bookend
+//! - §8.11 Tables:                                ✅ columnWidths, colSpan, row equalization
+//! - Appendix A: Coordinate algorithms:           ⚠️ no anchorType, always TopLeft
+//! - Appendix B: Layout Objects:                  ⚠️ missing area, exclGroup, subformSet
 
 use crate::error::Result;
 use crate::form::{
@@ -41,6 +65,10 @@ pub struct LayoutDom {
 /// Absolute maximum number of pages to prevent pagination explosion.
 /// Used as a hard upper bound; the dynamic limit from
 /// `estimate_page_limit` is preferred. (#729, #764)
+///
+/// XFA Spec 3.3 §9.3 "Layout for Dynamic Forms" (p357): the layout
+/// processor repeats page templates as needed for overflow content.
+/// The spec sets no explicit limit; this is our safety cap.
 const MAX_PAGES: usize = 500;
 
 /// A single page in the layout output.
@@ -121,9 +149,17 @@ impl<'a> LayoutEngine<'a> {
 
     /// Perform layout on the entire form tree starting from the root node.
     ///
+    /// XFA Spec 3.3 §8.6 — The Layout Algorithm (p288): content-driven single
+    /// traversal of the Form DOM, placing nodes into the Layout DOM. When a
+    /// container fills, traverse to the next container (§8.7 splitting, §8.8
+    /// pagination).
+    ///
     /// Supports multi-page pagination: when content overflows a page's content
     /// area, remaining nodes are placed on subsequent pages. The last page
     /// template is repeated as needed for overflow content.
+    ///
+    /// TODO §8.8: simplexPaginated/duplexPaginated, pagePosition/oddOrEven/
+    /// blankOrNotBlank qualifications, termination processing (last/only page).
     pub fn layout(&self, root: FormNodeId) -> Result<LayoutDom> {
         let root_node = self.form.get(root);
 
@@ -374,8 +410,13 @@ impl<'a> LayoutEngine<'a> {
         }
     }
 
-    /// Whether `current_id` has a keep-with-next constraint relative to
-    /// `next_id`, or `next_id` has keep-with-previous.
+    /// XFA Spec 3.3 §8.9 — Adhesion (p311-314): whether `current_id` has a
+    /// keep-with-next constraint relative to `next_id`, or `next_id` has
+    /// keep-with-previous. Per spec, two adjacent objects adhere if the first
+    /// declares next=contentArea OR the second declares previous=contentArea.
+    /// Adhesion is restricted to siblings in the Form DOM (§8.9 p314).
+    ///
+    /// TODO §8.9: keep.pageArea level (must be on same page, not just same CA).
     #[allow(dead_code)]
     fn keep_links_content(&self, current_id: FormNodeId, next_id: FormNodeId) -> bool {
         let cur_meta = self.form.meta(current_id);
@@ -622,7 +663,10 @@ impl<'a> LayoutEngine<'a> {
             nodes: Vec::new(),
         };
 
-        // Compute leader/trailer heights and place them first
+        // XFA Spec 3.3 §8.10 — Leaders and Trailers (p314-326): our implementation
+        // supports basic per-contentArea leader/trailer placement.
+        // TODO §8.10: break leaders/trailers, bookend leaders/trailers,
+        // overflow leaders/trailers with occurrence limits and inheritance.
         let mut leader_height = 0.0;
         let mut trailer_height = 0.0;
 
@@ -832,14 +876,16 @@ impl<'a> LayoutEngine<'a> {
         Ok((page, remaining, consumed_break_only, break_target))
     }
 
-    /// Check if a node can be split across pages.
+    /// XFA Spec 3.3 §8.7 — Content Splitting (p290): determines whether a node
+    /// can be split across pages. Per Appendix B (p1520), subforms are splittable
+    /// "in margins and where consensus exists among contained objects".
     ///
-    /// Flowed layout subforms (tb, lr-tb, rl-tb, table) with children can be
-    /// split.  Positioned subforms can also be split when they have no explicit
-    /// height -- their children are sorted by y-coordinate and placed on
-    /// successive pages based on where they fall relative to the page boundary.
-    /// This matches Adobe's behaviour for forms where positioned content
-    /// overflows the page content area (#736).
+    /// Split restrictions (§8.7 p291): barcode, geometric figure, image = no split.
+    /// Text = split between lines only. Widget = no split.
+    /// keep.intact controls: none (free), contentArea (within CA), pageArea (within page).
+    ///
+    /// TODO §8.7: text-level splitting (between lines), orphan/widow controls,
+    /// split consensus algorithm (p294), per-type default intact values.
     fn can_split(&self, id: FormNodeId) -> bool {
         let node = self.form.get(id);
         if node.children.is_empty() {
@@ -888,12 +934,16 @@ impl<'a> LayoutEngine<'a> {
             .any(|&cid| self.form.meta(cid).page_break_before)
     }
 
-    /// Split a tb-layout node: place children that fit in `remaining_height`,
-    /// return a partial layout node and the remaining child nodes.
+    /// XFA Spec 3.3 §8.7 — Content Splitting (p290-294): split a tb-layout node
+    /// by placing children that fit in `remaining_height`, returning the rest.
     ///
-    /// Respects keep constraints: if a child has `keep_next_content_area`,
-    /// the split will not occur between that child and its successor.
-    /// Also respects `page_break_before` on children as mandatory split points.
+    /// Per §8.7 p294 "split consensus": the split location should be the lowest
+    /// point acceptable to all contained objects. Our implementation splits at
+    /// child boundaries (not within text lines).
+    ///
+    /// Respects keep constraints (§8.9 Adhesion): if a child has
+    /// `keep_next_content_area`, the split will not occur between that child
+    /// and its successor. Also respects `page_break_before` as mandatory splits.
     fn split_tb_node(
         &self,
         id: FormNodeId,
@@ -1251,6 +1301,10 @@ impl<'a> LayoutEngine<'a> {
     ///
     /// Nodes with `presence="hidden"` (not `"invisible"`) are skipped entirely
     /// because they consume no layout space (XFA 3.3 §3.2.8).
+    // XFA Spec 3.3 §7.4 / §9.2 — Repeating Elements using Occurrence Limits:
+    // At layout time, the occur.count() (= initial for empty merge, or
+    // data-driven count) determines how many copies appear.  Blank repeating
+    // subforms are capped at occur.min to avoid empty rows (#701).
     fn expand_occur(&self, children: &[FormNodeId]) -> Vec<FormNodeId> {
         let mut expanded = Vec::new();
         for &child_id in children {
@@ -1287,7 +1341,9 @@ impl<'a> LayoutEngine<'a> {
         }
     }
 
-    /// Positioned layout: each child uses its own x,y from the box model.
+    /// XFA Spec 3.3 §8.2 — Positioned Layout: each child uses its own x,y
+    /// coordinates. pageArea and contentArea always use positioned layout.
+    /// Subforms default to positioned when no `layout` attribute is present.
     fn layout_positioned(&self, children: &[FormNodeId]) -> Result<Vec<LayoutNode>> {
         let mut nodes = Vec::new();
         for &child_id in children {
@@ -1304,7 +1360,12 @@ impl<'a> LayoutEngine<'a> {
         Ok(nodes)
     }
 
-    /// Top-to-bottom flow layout.
+    /// XFA Spec 3.3 §8.2 — Top-to-Bottom Layout (p280): place first child at
+    /// top-left, next immediately below the nominal extent of the previous,
+    /// aligned with the left edge. If it doesn't fit, attempt splitting (§8.7).
+    ///
+    /// TODO §8.3 (p282): child hAlign should offset x within parent width.
+    /// Currently always places children at x=0 (left-aligned).
     fn layout_tb(&self, children: &[FormNodeId], available: Size) -> Result<Vec<LayoutNode>> {
         let mut nodes = Vec::new();
         let mut y_cursor = 0.0;
@@ -1327,7 +1388,10 @@ impl<'a> LayoutEngine<'a> {
         Ok(nodes)
     }
 
-    /// Left-to-right, top-to-bottom wrapping layout.
+    /// XFA Spec 3.3 §8.2 — Left-to-Right Top-to-Bottom Tiled Layout (p281):
+    /// place first child at top-left, next to the right of the previous. If it
+    /// doesn't fit horizontally, wrap to a new row below aligned with the left
+    /// edge. Default for subforms with layout="lr-tb" and for text in draws/fields.
     fn layout_lr_tb(&self, children: &[FormNodeId], available: Size) -> Result<Vec<LayoutNode>> {
         let mut nodes = Vec::new();
         let mut x_cursor = 0.0;
@@ -1354,7 +1418,9 @@ impl<'a> LayoutEngine<'a> {
         Ok(nodes)
     }
 
-    /// Right-to-left, top-to-bottom wrapping layout.
+    /// XFA Spec 3.3 §8.2 — Right-to-Left Top-to-Bottom Tiled Layout (p282):
+    /// same as LR-TB but objects placed right-to-left. Default for subforms
+    /// with layout="rl-tb" and for text in RTL locales.
     fn layout_rl_tb(&self, children: &[FormNodeId], available: Size) -> Result<Vec<LayoutNode>> {
         let mut nodes = Vec::new();
         let mut x_cursor = available.width;
@@ -1400,8 +1466,12 @@ impl<'a> LayoutEngine<'a> {
         self.layout_table_rows(children, available, &col_widths)
     }
 
-    /// Layout table rows: stack rows vertically, distributing cells across
-    /// resolved column widths with row height equalization.
+    /// XFA Spec 3.3 §8.11 — Tables (p327-332): stack rows vertically,
+    /// distributing cells across resolved column widths. Per spec: first lay
+    /// out cells with natural sizes, then expand cells to column width, then
+    /// expand cells vertically to row height (tallest cell).
+    ///
+    /// TODO §8.11: rl-row (right-to-left row), non-row direct children in table.
     fn layout_table_rows(
         &self,
         children: &[FormNodeId],

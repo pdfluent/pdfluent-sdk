@@ -198,7 +198,20 @@ impl Interpreter {
 
             Expr::Negate(inner) => {
                 let val = self.eval(inner)?;
-                Ok(Signal::Value(Value::Number(-val.to_number())))
+                if val.is_null() {
+                    Ok(Signal::Value(Value::Null))
+                } else {
+                    Ok(Signal::Value(Value::Number(-val.to_number())))
+                }
+            }
+
+            Expr::Positive(inner) => {
+                let val = self.eval(inner)?;
+                if val.is_null() {
+                    Ok(Signal::Value(Value::Null))
+                } else {
+                    Ok(Signal::Value(Value::Number(val.to_number())))
+                }
             }
 
             Expr::Not(inner) => {
@@ -229,9 +242,9 @@ impl Interpreter {
                 let val = self.eval(value)?;
                 match target.as_ref() {
                     Expr::Ident(name) => {
-                        if self.env.get(name).is_some() {
-                            self.env.set(name, val.clone());
-                        } else if !self.assign_som_value(name, val.clone())? {
+                        if self.env.get(name).is_some()
+                            || !self.assign_som_value(name, val.clone())?
+                        {
                             self.env.set(name, val.clone());
                         }
                         Ok(Signal::Value(val))
@@ -252,6 +265,19 @@ impl Interpreter {
             }
 
             Expr::FuncCall { name, args } => {
+                if name.eq_ignore_ascii_case("Exists")
+                    && args.len() == 1
+                    && expr_to_accessor_path(&args[0]).is_some()
+                {
+                    return Ok(Signal::Value(self.eval_exists_arg(&args[0])?));
+                }
+                if name.eq_ignore_ascii_case("HasValue")
+                    && args.len() == 1
+                    && expr_to_accessor_path(&args[0]).is_some()
+                {
+                    return Ok(Signal::Value(self.eval_has_value_arg(&args[0])?));
+                }
+
                 let mut arg_vals = Vec::with_capacity(args.len());
                 for arg in args {
                     arg_vals.push(self.eval(arg)?);
@@ -313,11 +339,11 @@ impl Interpreter {
                 if let Some(body) = else_body {
                     return self.exec_block(body);
                 }
-                Ok(Signal::Value(Value::Null))
+                Ok(Signal::Value(Value::Number(0.0)))
             }
 
             Expr::While { condition, body } => {
-                let mut result = Value::Null;
+                let mut result = Value::Number(0.0);
                 let mut iterations: u64 = 0;
                 loop {
                     if iterations >= MAX_LOOP_ITERATIONS {
@@ -357,7 +383,7 @@ impl Interpreter {
                     .unwrap_or(1.0);
 
                 let mut i = start_val;
-                let mut result = Value::Null;
+                let mut result = Value::Number(0.0);
                 let mut iterations: u64 = 0;
 
                 self.env.push_scope();
@@ -398,17 +424,31 @@ impl Interpreter {
             }
 
             Expr::Foreach { var, list, body } => {
-                let list_val = self.eval(list)?;
-                let items: Vec<String> = list_val
-                    .to_string_val()
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect();
-                let mut result = Value::Null;
+                // XFA Spec 3.3 §25.1 "ForeachExpression" (p1073) iterates over
+                // an argument list. Keep the legacy comma-split fallback for
+                // existing callers until full SOM accessor sets are implemented.
+                let items = match list.as_ref() {
+                    Expr::FuncCall { name, args } if name == "__foreach_list" => {
+                        let mut items = Vec::with_capacity(args.len());
+                        for arg in args {
+                            items.push(self.eval(arg)?);
+                        }
+                        items
+                    }
+                    _ => {
+                        let list_val = self.eval(list)?;
+                        list_val
+                            .to_string_val()
+                            .split(',')
+                            .map(|s| Value::String(s.trim().to_string()))
+                            .collect()
+                    }
+                };
+                let mut result = Value::Number(0.0);
 
                 self.env.push_scope();
                 for item in &items {
-                    self.env.declare(var, Value::String(item.clone()));
+                    self.env.declare(var, item.clone());
                     match self.exec_block(body)? {
                         Signal::Value(v) => result = v,
                         Signal::Return(v) => {
@@ -482,6 +522,37 @@ impl Interpreter {
         };
         resolver.assign_path(path, value)
     }
+
+    fn eval_exists_arg(&mut self, expr: &Expr) -> Result<Value> {
+        let Some(path) = expr_to_accessor_path(expr) else {
+            return Ok(Value::Number(0.0));
+        };
+
+        if self.env.get(&path).is_some() {
+            return Ok(Value::Number(0.0));
+        }
+
+        let exists = if let Some(resolver) = self.resolver_mut() {
+            resolver.exists_path(&path)?
+        } else {
+            false
+        };
+        Ok(Value::Number(if exists { 1.0 } else { 0.0 }))
+    }
+
+    fn eval_has_value_arg(&mut self, expr: &Expr) -> Result<Value> {
+        if let Some(path) = expr_to_accessor_path(expr) {
+            if self.env.get(&path).is_none() {
+                if let Some(resolver) = self.resolver_mut() {
+                    let value = resolver.resolve_path(&path)?.unwrap_or(Value::Null);
+                    return Ok(Value::Number(if value.is_blankish() { 0.0 } else { 1.0 }));
+                }
+            }
+        }
+
+        let value = self.eval(expr)?;
+        Ok(Value::Number(if value.is_blankish() { 0.0 } else { 1.0 }))
+    }
 }
 
 fn flatten_som_path(object: &Expr, member: &str) -> String {
@@ -502,12 +573,45 @@ fn collect_path_parts(expr: &Expr, parts: &mut Vec<String>) {
     }
 }
 
+fn expr_to_accessor_path(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident(name) => Some(name.clone()),
+        Expr::MemberAccess { object, member } => Some(format!(
+            "{}.{}",
+            expr_to_accessor_path(object)?,
+            member
+        )),
+        _ => None,
+    }
+}
+
 fn eval_binop(op: BinOp, left: &Value, right: &Value) -> Result<Value> {
     match op {
-        BinOp::Add => Ok(Value::Number(left.to_number() + right.to_number())),
-        BinOp::Sub => Ok(Value::Number(left.to_number() - right.to_number())),
-        BinOp::Mul => Ok(Value::Number(left.to_number() * right.to_number())),
+        BinOp::Add => {
+            if left.is_null() && right.is_null() {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::Number(left.to_number() + right.to_number()))
+            }
+        }
+        BinOp::Sub => {
+            if left.is_null() && right.is_null() {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::Number(left.to_number() - right.to_number()))
+            }
+        }
+        BinOp::Mul => {
+            if left.is_null() && right.is_null() {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::Number(left.to_number() * right.to_number()))
+            }
+        }
         BinOp::Div => {
+            if left.is_null() && right.is_null() {
+                return Ok(Value::Null);
+            }
             let r = right.to_number();
             if r == 0.0 {
                 Err(FormCalcError::DivisionByZero)
@@ -515,22 +619,112 @@ fn eval_binop(op: BinOp, left: &Value, right: &Value) -> Result<Value> {
                 Ok(Value::Number(left.to_number() / r))
             }
         }
-        BinOp::Eq => Ok(Value::Number(if left == right { 1.0 } else { 0.0 })),
-        BinOp::Ne => Ok(Value::Number(if left != right { 1.0 } else { 0.0 })),
-        BinOp::Lt => Ok(Value::Number(if left < right { 1.0 } else { 0.0 })),
-        BinOp::Le => Ok(Value::Number(if left <= right { 1.0 } else { 0.0 })),
-        BinOp::Gt => Ok(Value::Number(if left > right { 1.0 } else { 0.0 })),
-        BinOp::Ge => Ok(Value::Number(if left >= right { 1.0 } else { 0.0 })),
-        BinOp::And => Ok(Value::Number(if left.to_bool() && right.to_bool() {
+        BinOp::Eq => Ok(Value::Number(if both_string(left, right) {
+            if matches!((left, right), (Value::String(a), Value::String(b)) if a == b) {
+                1.0
+            } else {
+                0.0
+            }
+        } else if left.is_null() || right.is_null() {
+            if left.is_null() && right.is_null() {
+                1.0
+            } else {
+                0.0
+            }
+        } else if left.to_number() == right.to_number() {
             1.0
         } else {
             0.0
         })),
-        BinOp::Or => Ok(Value::Number(if left.to_bool() || right.to_bool() {
+        BinOp::Ne => Ok(Value::Number(if both_string(left, right) {
+            if matches!((left, right), (Value::String(a), Value::String(b)) if a != b) {
+                1.0
+            } else {
+                0.0
+            }
+        } else if left.is_null() || right.is_null() {
+            if left.is_null() && right.is_null() {
+                0.0
+            } else {
+                1.0
+            }
+        } else if left.to_number() != right.to_number() {
             1.0
         } else {
             0.0
         })),
+        BinOp::Lt => Ok(Value::Number(if compare_relational(op, left, right) {
+            1.0
+        } else {
+            0.0
+        })),
+        BinOp::Le => Ok(Value::Number(if compare_relational(op, left, right) {
+            1.0
+        } else {
+            0.0
+        })),
+        BinOp::Gt => Ok(Value::Number(if compare_relational(op, left, right) {
+            1.0
+        } else {
+            0.0
+        })),
+        BinOp::Ge => Ok(Value::Number(if compare_relational(op, left, right) {
+            1.0
+        } else {
+            0.0
+        })),
+        BinOp::And => {
+            if left.is_null() && right.is_null() {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::Number(if left.to_bool() && right.to_bool() {
+                    1.0
+                } else {
+                    0.0
+                }))
+            }
+        }
+        BinOp::Or => {
+            if left.is_null() && right.is_null() {
+                Ok(Value::Null)
+            } else {
+                Ok(Value::Number(if left.to_bool() || right.to_bool() {
+                    1.0
+                } else {
+                    0.0
+                }))
+            }
+        }
+    }
+}
+
+fn both_string(left: &Value, right: &Value) -> bool {
+    matches!((left, right), (Value::String(_), Value::String(_)))
+}
+
+fn compare_relational(op: BinOp, left: &Value, right: &Value) -> bool {
+    if left.is_null() || right.is_null() {
+        return matches!(op, BinOp::Le | BinOp::Ge) && left.is_null() && right.is_null();
+    }
+
+    if let (Value::String(lhs), Value::String(rhs)) = (left, right) {
+        return match op {
+            BinOp::Lt => lhs < rhs,
+            BinOp::Le => lhs <= rhs,
+            BinOp::Gt => lhs > rhs,
+            BinOp::Ge => lhs >= rhs,
+            _ => false,
+        };
+    }
+
+    let lhs = left.to_number();
+    let rhs = right.to_number();
+    match op {
+        BinOp::Lt => lhs < rhs,
+        BinOp::Le => lhs <= rhs,
+        BinOp::Gt => lhs > rhs,
+        BinOp::Ge => lhs >= rhs,
+        _ => false,
     }
 }
 
@@ -556,9 +750,9 @@ mod tests {
     }
 
     #[test]
-    fn string_concat() {
+    fn concat_builtin() {
         assert_eq!(
-            run(r#""hello" & " " & "world""#),
+            run(r#"Concat("hello", " ", "world")"#),
             Value::String("hello world".to_string())
         );
     }

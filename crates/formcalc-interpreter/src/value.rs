@@ -38,12 +38,26 @@ impl Value {
         }
     }
 
-    /// Coerce to boolean. 0, empty string, and null are false.
+    /// XFA Spec 3.3 §25.1 "Boolean operations on non-Boolean operands" (p1061)
+    /// coerces strings numerically first; non-numeric strings become false.
     pub fn to_bool(&self) -> bool {
         match self {
             Value::Number(n) => *n != 0.0,
-            Value::String(s) => !s.is_empty(),
+            Value::String(s) => s
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .is_some_and(|n| n != 0.0),
             Value::Null => false,
+        }
+    }
+
+    /// True when the value is null, empty, or only whitespace.
+    pub fn is_blankish(&self) -> bool {
+        match self {
+            Value::Null => true,
+            Value::String(s) => s.trim().is_empty(),
+            Value::Number(_) => false,
         }
     }
 
@@ -111,7 +125,8 @@ mod tests {
         assert!(!Value::Number(0.0).to_bool());
         assert!(Value::Number(1.0).to_bool());
         assert!(!Value::String("".to_string()).to_bool());
-        assert!(Value::String("x".to_string()).to_bool());
+        assert!(!Value::String("x".to_string()).to_bool());
+        assert!(Value::String("2".to_string()).to_bool());
         assert!(!Value::Null.to_bool());
     }
 
