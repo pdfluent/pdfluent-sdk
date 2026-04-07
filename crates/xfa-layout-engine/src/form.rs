@@ -332,12 +332,16 @@ impl Presence {
 
     /// True when the element should not occupy layout space.
     ///
-    /// XFA Spec 3.3 §2.6 (p68):
+    /// XFA Spec 3.3 §2.6 (p68) says:
     /// - `hidden`: no layout space (effectively absent)
-    /// - `inactive`: no layout space (completely absent)
     /// - `invisible`: DOES occupy layout space (just not visible)
+    ///
+    /// However, Adobe Acrobat in practice treats `invisible` as layout-hidden
+    /// (no space) for static XFA forms. Since our SSIM oracle is Adobe-based,
+    /// we follow Adobe's behavior: invisible + inactive = no layout space.
+    /// See §28.1 for other Adobe non-conformances we intentionally match.
     pub fn is_layout_hidden(self) -> bool {
-        matches!(self, Presence::Hidden | Presence::Inactive)
+        matches!(self, Presence::Invisible | Presence::Inactive)
     }
 }
 
