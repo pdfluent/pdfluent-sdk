@@ -1,15 +1,15 @@
 //! FormCalc parser — recursive descent parser producing an AST.
 //!
-//! Implements XFA 3.3 §25.4 (Syntactic Grammar).
+//! Implements the currently supported subset of XFA 3.3 §25.1 (Syntactic Grammar).
 //! Operator precedence (lowest to highest):
 //! 1. Assignment (=)
 //! 2. Logical OR (or, |)
-//! 3. Logical AND (and, &)  — note: & is also string concat
+//! 3. Logical AND (and, &)
 //! 4. Equality (==, <>, eq, ne)
 //! 5. Relational (<, <=, >, >=, lt, le, gt, ge)
 //! 6. Additive (+, -)
 //! 7. Multiplicative (*, /)
-//! 8. Unary (-, not)
+//! 8. Unary (+, -, not)
 //! 9. Primary (literals, idents, function calls, parenthesized exprs)
 
 use crate::ast::{BinOp, Expr};
@@ -166,7 +166,15 @@ impl Parser {
     fn parse_if(&mut self) -> Result<Expr> {
         self.expect(&TokenKind::If)?;
         self.skip_newlines();
-        let condition = self.parse_or()?;
+        let condition = if self.peek() == &TokenKind::LParen {
+            self.advance();
+            let condition = self.parse_or()?;
+            self.skip_newlines();
+            self.expect(&TokenKind::RParen)?;
+            condition
+        } else {
+            self.parse_or()?
+        };
         self.skip_newlines();
         self.expect(&TokenKind::Then)?;
         let then_body = self.parse_body(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::EndIf])?;
@@ -175,7 +183,15 @@ impl Parser {
         while self.peek() == &TokenKind::ElseIf {
             self.advance();
             self.skip_newlines();
-            let cond = self.parse_or()?;
+            let cond = if self.peek() == &TokenKind::LParen {
+                self.advance();
+                let cond = self.parse_or()?;
+                self.skip_newlines();
+                self.expect(&TokenKind::RParen)?;
+                cond
+            } else {
+                self.parse_or()?
+            };
             self.skip_newlines();
             self.expect(&TokenKind::Then)?;
             let body = self.parse_body(&[TokenKind::ElseIf, TokenKind::Else, TokenKind::EndIf])?;
@@ -208,7 +224,15 @@ impl Parser {
     fn parse_while(&mut self) -> Result<Expr> {
         self.expect(&TokenKind::While)?;
         self.skip_newlines();
-        let condition = self.parse_or()?;
+        let condition = if self.peek() == &TokenKind::LParen {
+            self.advance();
+            let condition = self.parse_or()?;
+            self.skip_newlines();
+            self.expect(&TokenKind::RParen)?;
+            condition
+        } else {
+            self.parse_or()?
+        };
         self.skip_newlines();
         self.expect(&TokenKind::Do)?;
         let body = self.parse_body(&[TokenKind::EndWhile])?;
@@ -222,6 +246,10 @@ impl Parser {
     fn parse_for(&mut self) -> Result<Expr> {
         self.expect(&TokenKind::For)?;
         self.skip_newlines();
+        if self.peek() == &TokenKind::Var {
+            self.advance();
+            self.skip_newlines();
+        }
         let var = match self.peek().clone() {
             TokenKind::Ident(name) => {
                 self.advance();
@@ -281,7 +309,27 @@ impl Parser {
             _ => return Err(self.error("expected variable name in foreach")),
         };
         self.expect(&TokenKind::In)?;
-        let list = self.parse_or()?;
+        let list = if self.peek() == &TokenKind::LParen {
+            self.advance();
+            let mut args = Vec::new();
+            if self.peek() != &TokenKind::RParen {
+                loop {
+                    self.skip_newlines();
+                    args.push(self.parse_or()?);
+                    if self.peek() != &TokenKind::Comma {
+                        break;
+                    }
+                    self.advance();
+                }
+            }
+            self.expect(&TokenKind::RParen)?;
+            Expr::FuncCall {
+                name: "__foreach_list".to_string(),
+                args,
+            }
+        } else {
+            self.parse_or()?
+        };
         self.skip_newlines();
         self.expect(&TokenKind::Do)?;
         let body = self.parse_body(&[TokenKind::EndFor])?;
@@ -321,6 +369,9 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RParen)?;
+        if self.peek() == &TokenKind::Do {
+            self.advance();
+        }
         let body = self.parse_body(&[TokenKind::EndFunc])?;
         self.expect(&TokenKind::EndFunc)?;
 
@@ -384,27 +435,16 @@ impl Parser {
     }
 
     fn parse_and(&mut self) -> Result<Expr> {
-        let mut left = self.parse_concat()?;
-        while self.peek() == &TokenKind::And {
+        let mut left = self.parse_equality()?;
+        while matches!(self.peek(), TokenKind::And | TokenKind::Amp) {
             self.advance();
             self.skip_newlines();
-            let right = self.parse_concat()?;
+            let right = self.parse_equality()?;
             left = Expr::BinaryOp {
                 op: BinOp::And,
                 left: Box::new(left),
                 right: Box::new(right),
             };
-        }
-        Ok(left)
-    }
-
-    fn parse_concat(&mut self) -> Result<Expr> {
-        let mut left = self.parse_equality()?;
-        while self.peek() == &TokenKind::Amp {
-            self.advance();
-            self.skip_newlines();
-            let right = self.parse_equality()?;
-            left = Expr::Concat(Box::new(left), Box::new(right));
         }
         Ok(left)
     }
@@ -493,6 +533,11 @@ impl Parser {
 
     fn parse_unary(&mut self) -> Result<Expr> {
         match self.peek() {
+            TokenKind::Plus => {
+                self.advance();
+                let expr = self.parse_unary()?;
+                Ok(Expr::Positive(Box::new(expr)))
+            }
             TokenKind::Minus => {
                 self.advance();
                 let expr = self.parse_unary()?;
@@ -743,9 +788,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_string_concat() {
-        let expr = parse_one(r#""hello" & " " & "world""#);
-        assert!(matches!(expr, Expr::Concat(_, _)));
+    fn parse_amp_as_logical_and() {
+        let expr = parse_one("1 & 0");
+        assert!(matches!(
+            expr,
+            Expr::BinaryOp {
+                op: BinOp::And,
+                ..
+            }
+        ));
     }
 
     #[test]

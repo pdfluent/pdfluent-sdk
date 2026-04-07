@@ -3,11 +3,15 @@
 //! Reads the `<template>` packet from an XFA XDP document and builds a
 //! `FormTree` suitable for `LayoutEngine::layout()`.
 //!
-//! Supported elements: subform, field, draw, pageSet, pageArea,
-//! contentArea, medium, exclGroup, caption, value, ui.
+//! XFA Spec 3.3 §2.1 — Form Structural Building Blocks:
+//!   Container elements: subform, field, draw, exclGroup, area
+//!   Page-level:         pageSet, pageArea, contentArea, medium
+//!   Metadata:           caption, value, ui, font, border, margin, para
 //!
-//! Dimension strings ("0.5in", "72pt", "10mm") are converted to PDF
-//! points via `Measurement::parse`.
+//! XFA Spec 3.3 §2.2 — Basic Composition:
+//!   Measurements use absolute units (in, cm, mm, pt) with inches as default.
+//!   Dimension strings ("0.5in", "72pt", "10mm") are converted to PDF
+//!   points via `Measurement::parse`.
 
 use roxmltree::Node;
 
@@ -83,10 +87,13 @@ fn parse_node(
             let ti = add_children(tree, &mut n, elem)?;
             (n, ti)
         }
-        "subform" | "exclGroup" => {
+        // XFA Spec 3.3 §2.1 — Five building blocks: subform, field, draw, exclGroup, area.
+        // `area` is a fixed-size container identical to subform but does not grow;
+        // if capacity is exceeded a new area is created. We parse it like a subform.
+        "subform" | "exclGroup" | "area" => {
             let mut n = parse_subform_node(tree, elem, is_root)?;
             let ti = add_children(tree, &mut n, elem)?;
-            // Per XFA 3.3: checkButton inside exclGroup renders as radio button (circle).
+            // Per XFA 3.3 §2.1: checkButton inside exclGroup renders as radio button (circle).
             if tag == "exclGroup" {
                 for &child_id in &n.children {
                     let child_meta = tree.meta_mut(child_id);
@@ -336,6 +343,18 @@ fn parse_letter_spacing(s: &str, font_size_pt: f64) -> Option<f64> {
 
 /// Parse font size and text alignment from `<font size="…">` and `<para hAlign="…">` child
 /// elements (XFA 3.3 §7.1). Returns `FontMetrics::default()` when no matching elements found.
+///
+/// XFA Spec 3.3 §2.6 (p57-58) — Font properties: typeface (default Courier for
+/// data-entry), size (default 10pt), posture (normal/italic), weight (bold/normal),
+/// baselineShift, fontHorizontalScale, fontVerticalScale, kerningMode, letterSpacing,
+/// lineThrough/lineThroughPeriod, overline/overlinePeriod, underline/underlinePeriod.
+///
+/// TODO(§2.6): baselineShift, kerningMode, lineThrough, underline not parsed.
+/// TODO(§2.4 p59): hAlign="radix" and hAlign="justifyAll" not handled.
+///
+/// XFA Spec 3.3 §28.1 — Adobe Non-conformance: Adobe ignores the "overline"
+/// attribute on the font element (p1227) and the "lineThroughPeriod" attribute
+/// (p1228). We intentionally skip these to match Adobe's behavior for SSIM.
 fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
     let font_elem = find_first_child_by_name(elem, "font");
     let size = font_elem
@@ -346,12 +365,15 @@ fn parse_font_metrics(elem: Node<'_, '_>) -> FontMetrics {
         .and_then(|f| attr(f, "typeface"))
         .map(FontFamily::from_typeface)
         .unwrap_or_default();
+    // XFA Spec 3.3 §2.4 (p44, p59-60) — hAlign values:
+    //   left, center, right, justify, justifyAll, radix
     let text_align = find_first_child_by_name(elem, "para")
         .and_then(|p| attr(p, "hAlign"))
         .map(|a| match a {
             "center" => TextAlign::Center,
             "right" => TextAlign::Right,
-            "justify" => TextAlign::Justify,
+            "justify" | "justifyAll" => TextAlign::Justify,
+            // TODO(§2.4): "radix" alignment needs radixOffset support
             _ => TextAlign::Left,
         })
         .unwrap_or_default();
@@ -433,7 +455,11 @@ fn parse_page_area(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> 
 fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     let tag = elem.tag_name().name();
 
-    // (a) Presence attribute (XFA 3.3 S3.2.8).
+    // (a) Presence attribute (XFA 3.3 §2.6 p67-68):
+    //     visible  — normal rendering (default)
+    //     invisible — takes space but not visible
+    //     hidden   — no space, no visible rendering
+    //     inactive — completely ignored (no binding, no space)
     let presence = match attr(elem, "presence") {
         Some("hidden") => Presence::Hidden,
         Some("invisible") => Presence::Invisible,
@@ -638,6 +664,11 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     }
 
     // Parse <font typeface="..." size="..." weight="..."> for font properties.
+    // XFA Spec 3.3 §28.1 — Adobe Non-conformance:
+    //   - font-weight: numeric values (100-900) ignored, only "bold"/"normal" (p1229)
+    //   - font-stretch: not implemented in rich text (p1228)
+    //   - font-family: only first name used in rich text (p1228)
+    // We follow Adobe's behavior for all three.
     if let Some(font) = find_first_child_by_name(elem, "font") {
         if let Some(typeface) = attr(font, "typeface") {
             style.font_family = Some(typeface.to_string());
@@ -683,7 +714,13 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         }
     }
 
-    // Parse <para> for paragraph attributes (XFA 3.3 §D.7).
+    // XFA Spec 3.3 §17 "para" (p803) — Paragraph-level formatting attributes:
+    // hAlign: left/center/right/justify (handled in parse_font_metrics)
+    // vAlign: top/middle/bottom for vertical alignment within container
+    // spaceAbove, spaceBelow: paragraph spacing in points
+    // marginLeft, marginRight: paragraph indentation
+    // Note: hAlign/vAlign on container elements are deprecated since XFA 2.4
+    // and ignored by Adobe; we correctly read these only from <para>.
     if let Some(para) = find_first_child_by_name(elem, "para") {
         if let Some(v) = attr(para, "spaceAbove").and_then(Measurement::parse) {
             style.space_above_pt = Some(v.to_points());
@@ -778,6 +815,11 @@ fn parse_font_color_attr(s: &str) -> Option<(u8, u8, u8)> {
 }
 
 /// Detect field UI type from `<ui>` child element.
+///
+/// XFA Spec 3.3 §2.1 (p35) — User Interface: each container may have a `<ui>`
+/// subelement specifying the widget type. If absent, defaults based on content type.
+/// Supported: textEdit, checkButton, button, choiceList, dateTimeEdit,
+///            numericEdit, passwordEdit, imageEdit, signature, barcode.
 fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
     let Some(ui) = find_first_child_by_name(elem, "ui") else {
         return FieldKind::Text;
@@ -794,6 +836,7 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
                 };
             }
             "choiceList" => return FieldKind::Dropdown,
+            "button" => return FieldKind::Button,
             "dateTimeEdit" => return FieldKind::DateTimePicker,
             "numericEdit" => return FieldKind::NumericEdit,
             "passwordEdit" => return FieldKind::PasswordEdit,
@@ -952,7 +995,10 @@ fn detect_script_language(content_type: Option<&str>) -> ScriptLanguage {
     }
 }
 
-/// Parse `<keep>` child element attributes.
+// XFA Spec 3.3 §17 "keep" (p776-777) — Controls whether content Area breaks are allowed:
+// next: keep next content area together
+// previous: keep previous content area together
+// intact: keep content area intact (no breaks within)
 fn parse_keep(elem: Node<'_, '_>) -> (bool, bool, bool) {
     if let Some(keep) = find_first_child_by_name(elem, "keep") {
         let next = attr(keep, "next") == Some("contentArea");
@@ -964,7 +1010,9 @@ fn parse_keep(elem: Node<'_, '_>) -> (bool, bool, bool) {
     }
 }
 
-/// Parse `<overflow>` child element leader/trailer.
+// XFA Spec 3.3 §17 "overflow" (p804-805) — Overflow leader/trailer for pagination:
+// leader: reference to element to render before overflow content
+// trailer: reference to element to render after overflow content
 fn parse_overflow(elem: Node<'_, '_>) -> (Option<String>, Option<String>) {
     if let Some(overflow) = find_first_child_by_name(elem, "overflow") {
         let leader = attr(overflow, "leader").map(|s| s.to_string());
@@ -1374,7 +1422,8 @@ fn add_children(
     for child in elem.children().filter(|n| n.is_element()) {
         let tag = child.tag_name().name();
         match tag {
-            "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" => {
+            // XFA Spec 3.3 §2.1 — Container elements that produce form nodes.
+            "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" | "area" => {
                 let (child_id, (trailing_break, trailing_target)) = parse_node(tree, child, false)?;
                 if pending_break {
                     let meta = tree.meta_mut(child_id);
@@ -1411,6 +1460,9 @@ fn add_children(
                 }
             }
             // Ignore XML elements that are layout metadata, not form nodes.
+            // XFA Spec 3.3 §28.1 (p1229) — Adobe Non-conformance: stipple rate only
+            // supports 25, 50, 75; others→100. Blends with WHITE, not bg color.
+            // Currently not rendered; matches Adobe's limited implementation.
             "caption" | "value" | "ui" | "font" | "border" | "margin" | "para" | "format"
             | "items" | "medium" | "contentArea" | "desc" | "occur" | "event" | "bind"
             | "calculate" | "validate" | "assist" | "toolTip" | "fill" | "edge" | "corner"
@@ -1447,6 +1499,10 @@ fn blank_node(tag: &str) -> FormNode {
 }
 
 /// Parse the `layout` attribute into a `LayoutStrategy`.
+///
+/// XFA Spec 3.3 §2.6 — Layout Strategies: positioned (fixed x,y) and
+/// flowing (tb, lr-tb, rl-tb, table, row). `pageArea` uses positioned only.
+/// Default for subforms without an explicit layout attribute is "position".
 fn parse_layout_attr(elem: Node<'_, '_>) -> LayoutStrategy {
     match attr(elem, "layout").unwrap_or("") {
         "tb" => LayoutStrategy::TopToBottom,
@@ -1461,6 +1517,14 @@ fn parse_layout_attr(elem: Node<'_, '_>) -> LayoutStrategy {
 }
 
 /// Parse dimensional attributes (w, h, x, y) into a `BoxModel`.
+///
+/// XFA Spec 3.3 §2.6 — Box Model (p49): nominal extent is w × h.
+/// Margins lie inside the nominal extent. Borders lie inside margins.
+/// Caption may occupy part of the nominal content region.
+/// Constraints: minW/minH/maxW/maxH (§2.6 p53).
+///
+/// TODO(§2.6): anchorType not parsed — affects positioned layout anchor point.
+/// TODO(§2.6): rotate not parsed — counter-clockwise rotation in degrees (multiples of 90).
 fn parse_box_model(elem: Node<'_, '_>) -> BoxModel {
     let w = attr(elem, "w").and_then(parse_dim);
     let h = attr(elem, "h").and_then(parse_dim);
@@ -1512,7 +1576,10 @@ fn parse_dim(s: &str) -> Option<f64> {
     Measurement::parse(s).map(|m| m.to_points())
 }
 
-/// Parse the `occur` child element.
+// XFA Spec 3.3 §17 "occur" (p800-802) — Specifies min/max/initial occurrences:
+// min: minimum instances (default 1)
+// max: maximum instances (-1 means unlimited)
+// initial: number of instances at initialization
 fn parse_occur(elem: Node<'_, '_>) -> Occur {
     if let Some(occur) = find_first_child_by_name(elem, "occur") {
         let min: u32 = attr(occur, "min").and_then(|s| s.parse().ok()).unwrap_or(1);
@@ -1656,6 +1723,9 @@ fn extract_value_text(elem: Node<'_, '_>) -> Option<String> {
     None
 }
 
+/// XFA Spec 3.3 §2.1 (p24) — Draw element: container for fixed content (boilerplate).
+/// Contains text, lines, rectangles, arcs, or images that remain unchanged.
+/// Also handles `<value><image>` for embedded image data (§2.3 p41-42).
 fn extract_draw_content(elem: Node<'_, '_>) -> Option<DrawContent> {
     let value = find_first_child_by_name(elem, "value")?;
 
@@ -1781,9 +1851,10 @@ fn extract_exdata_font_size(elem: Node<'_, '_>) -> Option<f64> {
 
 /// Parse caption from `<caption placement="..." reserve="...">` element.
 ///
-/// Reads placement (left/right/top/bottom/inline) and reserve width
-/// from the XFA caption element attributes. Falls back to left placement
-/// and auto-sized reserve when attributes are absent.
+/// XFA Spec 3.3 §2.6 (p51) — Captions: reserve is a height for top/bottom
+/// placement and a width for left/right placement. When reserve is absent
+/// or zero, the layout processor calculates the minimum size.
+/// Note: Acrobat only renders captions on button and barcode fields (§2.1 p32 Note).
 fn parse_caption(elem: Node<'_, '_>) -> Option<Caption> {
     let cap_elem = find_first_child_by_name(elem, "caption")?;
     // Skip captions with presence="hidden"/"invisible"/"inactive".

@@ -3,6 +3,20 @@
 //! Implements the Form DOM from XFA 3.3 §3 and §5.
 //! The Form DOM is a hierarchical tree of merged nodes, where repeating
 //! subforms have been expanded based on data instances.
+//!
+//! Data binding follows XFA Spec 3.3 §4.4 p176-214 ("Merging Data with a
+//! Template"). Currently implements `consumeData` merge mode only.
+//!
+//! ## Spec gaps (see individual TODOs):
+//! - §4.4 p176: only `consumeData` mode; `matchTemplate` not implemented
+//! - §4.4.3 p185: scope matching (ancestor/sibling) not implemented
+//! - §4.4.3 p176: `bind match="global"` not implemented
+//! - §4.4 p193: transparent nodes (nameless subforms) not fully transparent
+//! - §4.4 p197: attribute matching step skipped
+//! - §4.4 p198: re-normalization not implemented
+//! - §4.2 p143: localization/canonicalization not implemented
+//! - §4.4 p195: exclusion group short/long format not implemented
+//! - §4.4 p199: setProperty/bindItems not implemented
 
 use crate::error::{Result, XfaError};
 use roxmltree::Node;
@@ -32,6 +46,12 @@ impl<'a> FormMerger<'a> {
     }
 
     /// Merge the template XML into a FormTree.
+    ///
+    /// XFA Spec 3.3 §4.4 p176 — "consumeData" merge mode: walk the template
+    /// tree top-down, binding each node against the data DOM.
+    ///
+    /// TODO: XFA Spec 3.3 §4.4 p176 — `matchTemplate` merge mode not implemented.
+    /// In matchTemplate, the data drives the merge instead of the template.
     pub fn merge(mut self, template_xml: &str) -> Result<(FormTree, FormNodeId)> {
         let doc = roxmltree::Document::parse(template_xml)
             .map_err(|e| XfaError::ParseFailed(format!("template XML parse error: {e}")))?;
@@ -78,7 +98,9 @@ impl<'a> FormMerger<'a> {
 
                 let occur = parse_occur(elem);
 
-                // Repeating subform expansion
+                // XFA Spec 3.3 §4.4 p186 — Repeating subform expansion:
+                // when occur.max > 1 (or unbounded), create one form subform
+                // instance per matching data record.
                 if occur.is_repeating() && !name.is_empty() {
                     // Use bind ref data name if present (e.g.
                     // <bind match="dataRef" ref="$.listInitiales[*]"> →
@@ -94,18 +116,30 @@ impl<'a> FormMerger<'a> {
                     );
                 }
 
-                // Normal subform
+                // XFA Spec 3.3 §4.4.3 p180-185 — Data binding for subforms:
+                // Step 1: "direct match" — find a data node with matching name
+                // among the current context's children.
+                //
+                // TODO: XFA Spec 3.3 §4.4.3 p185 — scope matching not implemented.
+                // After direct match fails, spec requires ancestor match (walk up
+                // the data tree) and then sibling match before giving up.
+                //
+                // TODO: XFA Spec 3.3 §4.4 p193 — transparent nodes: nameless subforms
+                // should be "transparent" to data binding, i.e. their children bind
+                // against the parent's data context rather than requiring a named
+                // data group. Currently we pass data_context through but don't
+                // implement the full transparent semantics from the spec.
                 let mut child_context = data_context;
                 if !name.is_empty() {
                     if let Some(ctx) = data_context {
+                        // Direct match: search current context children (§4.4.3 p180)
                         let matches = self.data_dom.children_by_name(ctx, &name);
                         if let Some(&first) = matches.first() {
                             child_context = Some(first);
                         }
                     } else if let Some(root) = self.data_dom.root() {
-                        // XFA §4.7.2: the root subform binds to the data root
-                        // element if their names match. Check root name first
-                        // before searching among its children.
+                        // XFA Spec 3.3 §4.7.2 — the root subform binds to the
+                        // data root element if their names match.
                         if self.data_dom.get(root).is_some_and(|n| n.name() == name) {
                             child_context = Some(root);
                         } else {
@@ -167,6 +201,16 @@ impl<'a> FormMerger<'a> {
         Ok((id, trailing_info))
     }
 
+    // XFA Spec 3.3 §9.2 "Variable Number of Subforms" (p336):
+    // The data binding process creates min copies, then adds more copies
+    // for each additional data match up to max.  When max=-1 there is no
+    // upper limit.  This implements the greedy matching algorithm from §9.2
+    // p346: the binder keeps adding copies until data is exhausted or max
+    // is reached.
+    /// XFA Spec 3.3 §4.4 p186-192 — Repeating subforms: when `<occur>` allows
+    /// multiple instances (max > 1 or max = -1), the number of form subform
+    /// instances is driven by matching data records. Each data record creates
+    /// one subform instance, clamped to [occur.min, occur.max].
     fn expand_repeating_subform(
         &mut self,
         element: Node<'_, '_>,
@@ -242,6 +286,15 @@ impl<'a> FormMerger<'a> {
 
     /// Search descendants of a data node for a DataValue with the given name.
     /// Returns the first matching value (breadth-first).
+    ///
+    /// XFA Spec 3.3 §4.4.3 p185 — this is a simplified "global" search used
+    /// as a fallback. The spec defines a more precise scope-matching algorithm
+    /// (ancestor match, then sibling match) before resorting to global search.
+    ///
+    /// TODO: XFA Spec 3.3 §4.4.3 p176 — `bind match="global"` should search
+    /// the entire data DOM for a matching node. Currently this only searches
+    /// descendants of the root, which approximates global but differs in
+    /// edge cases when the field is nested.
     fn find_value_in_descendants(&self, node: DataNodeId, name: &str) -> Option<String> {
         for &child in self.data_dom.children(node) {
             if let Some(cn) = self.data_dom.get(child) {
@@ -261,6 +314,8 @@ impl<'a> FormMerger<'a> {
         None
     }
 
+    /// XFA Spec 3.3 §4.4.3 p180 — Field data binding: fields are leaf nodes
+    /// that bind to DataValue nodes in the data DOM.
     fn parse_field(
         &mut self,
         elem: Node<'_, '_>,
@@ -271,8 +326,17 @@ impl<'a> FormMerger<'a> {
 
         let mut value = extract_value_text(elem).unwrap_or_default();
 
-        // Data binding: try current context first, then walk up to root
-        // (XFA §4.7.2 global data binding fallback).
+        // XFA Spec 3.3 §4.4.3 p180-185 — Field binding:
+        // 1. Direct match: search current context children by name (§4.4.3 p180)
+        // 2. Fallback: global descendant search from data root
+        //
+        // TODO: XFA Spec 3.3 §4.4.3 p185 — the spec requires scope matching
+        // (ancestor match → sibling match) between direct match and global
+        // fallback. We skip directly to global search.
+        //
+        // TODO: XFA Spec 3.3 §4.4 p197 — attribute matching: after element
+        // matching, the spec matches unbound data attributes to fields. We
+        // only match elements, never attributes.
         if !name.is_empty() {
             if let Some(ctx) = data_context {
                 let matches = self.data_dom.children_by_name(ctx, &name);
@@ -283,9 +347,7 @@ impl<'a> FormMerger<'a> {
                         }
                     }
                 } else if let Some(root) = self.data_dom.root() {
-                    // Fallback: search descendants of data root for a matching
-                    // value node. This handles data saved in a flat structure
-                    // while the template uses nested subforms.
+                    // Fallback: global search of data root descendants (§4.4.3 p185)
                     if let Some(val) = self.find_value_in_descendants(root, &name) {
                         value = val;
                     }
@@ -320,6 +382,9 @@ impl<'a> FormMerger<'a> {
         })
     }
 
+    /// XFA Spec 3.3 §4.4 p180 — Draw elements are static content that do
+    /// not participate in data binding (they have no `<bind>` element).
+    /// The `_data_context` parameter is unused.
     fn parse_draw(
         &mut self,
         elem: Node<'_, '_>,
@@ -413,6 +478,21 @@ impl<'a> FormMerger<'a> {
         Ok(node)
     }
 
+    /// Recursively process child elements of a template node.
+    ///
+    /// XFA Spec 3.3 §4.4 p180 — the merge walks template children in document
+    /// order, binding each to the current data context.
+    ///
+    /// TODO: XFA Spec 3.3 §4.4 p198 — re-normalization step: after all template
+    /// children are bound, excess/unmatched data nodes should create new form
+    /// nodes. Not implemented.
+    ///
+    /// TODO: XFA Spec 3.3 §4.4 p199 — setProperty and bindItems: after binding,
+    /// `<setProperty>` and `<bindItems>` on `<bind>` should be evaluated to
+    /// dynamically set properties or populate choice lists from data. Not implemented.
+    ///
+    /// TODO: XFA Spec 3.3 §4.2 p143-170 — localization: data values should be
+    /// canonicalized using picture clauses before comparison/binding. Not implemented.
     fn add_children(
         &mut self,
         node: &mut FormNode,
@@ -591,15 +671,25 @@ fn parse_letter_spacing(s: &str, font_size_pt: f64) -> Option<f64> {
     Measurement::parse(s).map(|m| m.to_points())
 }
 
+// XFA Spec 3.3 §9.2 "The Occur Element" (p339):
+// - min: defaults to 1 — minimum copies during non-empty merge
+// - max: defaults to min (NOT to 1); -1 means unlimited
+// - initial: defaults to min — copies during empty merge
+//
+// §9.2 p357: if max is not supplied, max defaults to min.
+// §9.2 p357: if initial is not supplied, initial defaults to min.
+//
+// Our implementation correctly handles these defaults and the -1 sentinel.
 fn parse_occur(elem: Node<'_, '_>) -> Occur {
     if let Some(occur) = find_first_child_by_name(elem, "occur") {
         let min: u32 = attr(occur, "min").and_then(|s| s.parse().ok()).unwrap_or(1);
+        // XFA Spec 3.3 §9.2 p357: "if the max attribute is not supplied then
+        // the max property defaults to the value of min."
         let max: Option<u32> = attr(occur, "max")
             .map(|s| if s == "-1" { None } else { s.parse().ok() })
-            .unwrap_or(Some(1));
-        // XFA 3.3 §3.2.5: when initial is absent, default to at least 1 —
-        // the subform exists in the template and should render once unless
-        // explicitly suppressed by initial="0".
+            .unwrap_or(Some(min));
+        // XFA Spec 3.3 §9.2 p357: "if the initial attribute is not supplied
+        // then the initial property defaults to the value of min."
         let initial: u32 = attr(occur, "initial")
             .and_then(|s| s.parse().ok())
             .unwrap_or(min);
@@ -773,6 +863,7 @@ fn extract_exdata_font_size(elem: Node<'_, '_>) -> Option<f64> {
 
 /// Extract the dominant `font-weight` from `<exData contentType="text/html">` styles.
 /// Returns `Some("bold")` when the first styled `<p>` or `<span>` has `font-weight:bold`.
+/// XFA Spec 3.3 §27.4: font-weight supports normal, bold, and numeric values 100-900.
 fn extract_exdata_font_weight(elem: Node<'_, '_>) -> Option<String> {
     let value = find_first_child_by_name(elem, "value")?;
     let ex = find_first_child_by_name(value, "exData")?;
@@ -788,13 +879,115 @@ fn extract_exdata_font_weight(elem: Node<'_, '_>) -> Option<String> {
                 .or_else(|| part.strip_prefix("font-weight :"))
             {
                 let val = val.trim();
-                if val == "bold" {
+                if val == "bold" || val == "700" || val == "800" || val == "900" {
                     return Some("bold".to_string());
+                }
+                if val == "normal" || val == "400" || val == "500" || val == "600" {
+                    return Some("normal".to_string());
                 }
             }
         }
     }
     None
+}
+
+/// Extract `font-style` from `<exData contentType="text/html">` CSS styles.
+/// XFA Spec 3.3 §27.4: font-style supports normal, italic, oblique.
+fn extract_exdata_font_style(elem: Node<'_, '_>) -> Option<String> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let ex = find_first_child_by_name(value, "exData")?;
+    for desc in ex.descendants() {
+        if !desc.is_element() {
+            continue;
+        }
+        let style = desc.attribute("style")?;
+        for part in style.split(';') {
+            let part = part.trim();
+            if let Some(val) = part
+                .strip_prefix("font-style:")
+                .or_else(|| part.strip_prefix("font-style :"))
+            {
+                let val = val.trim();
+                if val == "italic" || val == "oblique" {
+                    return Some("italic".to_string());
+                }
+                if val == "normal" {
+                    return Some("normal".to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract `color` from `<exData contentType="text/html">` CSS styles.
+/// XFA Spec 3.3 §27.4: color supports #RGB, #RRGGBB, and rgb(r,g,b) formats.
+/// Returns RGB tuple (0-255).
+fn extract_exdata_color(elem: Node<'_, '_>) -> Option<(u8, u8, u8)> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let ex = find_first_child_by_name(value, "exData")?;
+    for desc in ex.descendants() {
+        if !desc.is_element() {
+            continue;
+        }
+        let style = desc.attribute("style")?;
+        for part in style.split(';') {
+            let part = part.trim();
+            if let Some(val) = part
+                .strip_prefix("color:")
+                .or_else(|| part.strip_prefix("color :"))
+            {
+                let val = val.trim();
+                if let Some(rgb) = parse_css_color(val) {
+                    return Some(rgb);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse CSS color value: #RGB, #RRGGBB, rgb(r,g,b), or r,g,b.
+fn parse_css_color(s: &str) -> Option<(u8, u8, u8)> {
+    let s = s.trim();
+    if let Some(hex) = s.strip_prefix('#') {
+        match hex.len() {
+            3 => {
+                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
+                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
+                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
+                Some((r, g, b))
+            }
+            6 => {
+                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+                Some((r, g, b))
+            }
+            _ => None,
+        }
+    } else if let Some(rgb_part) = s.strip_prefix("rgb(") {
+        if let Some(inner) = rgb_part.strip_suffix(')') {
+            let parts: Vec<&str> = inner.split(',').collect();
+            if parts.len() >= 3 {
+                let r: f64 = parts[0].trim().parse().ok()?;
+                let g: f64 = parts[1].trim().parse().ok()?;
+                let b: f64 = parts[2].trim().parse().ok()?;
+                return Some((r as u8, g as u8, b as u8));
+            }
+        }
+        None
+    } else {
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() >= 3 {
+            let r = parts[0].trim().parse::<u8>().ok()?;
+            let g = parts[1].trim().parse::<u8>().ok()?;
+            let b = parts[2].trim().parse::<u8>().ok()?;
+            Some((r, g, b))
+        } else {
+            None
+        }
+    }
 }
 
 fn parse_caption(elem: Node<'_, '_>) -> Option<Caption> {
@@ -1332,6 +1525,16 @@ fn parse_font_color_attr(s: &str) -> Option<(u8, u8, u8)> {
 
 /// Extract the data field name from a bind ref like `$.listInitiales[*]`.
 /// Returns `Some("listInitiales")` for that example, or None if no bind/ref.
+///
+/// XFA Spec 3.3 §4.4 p199-201 — explicit data references via
+/// `<bind match="dataRef" ref="SOM.expression">`. The ref is a SOM
+/// expression that resolves to a data node. We extract the last segment
+/// name for use as the data matching key.
+///
+/// TODO: XFA Spec 3.3 §4.4 p199 — full SOM expression evaluation not
+/// implemented. Only simple `$.name` and `$.name[*]` patterns are supported.
+/// Multi-segment paths like `$record.group.field` are partially supported
+/// (we take the last segment).
 fn parse_bind_data_name(elem: Node<'_, '_>) -> Option<String> {
     let bind = find_first_child_by_name(elem, "bind")?;
     let ref_val = attr(bind, "ref")?;
@@ -1346,6 +1549,14 @@ fn parse_bind_data_name(elem: Node<'_, '_>) -> Option<String> {
     }
 }
 
+/// XFA Spec 3.3 §4.4.3 p176 — `<bind>` element controls data binding:
+/// - `match="once"` (default): bind to first matching data node
+/// - `match="none"`: skip data binding entirely
+/// - `match="dataRef"`: use explicit SOM ref to locate data
+/// - `match="global"`: search entire data DOM
+///
+/// TODO: XFA Spec 3.3 §4.4.3 p176 — `match="global"` not implemented.
+/// Currently treated the same as `match="once"`.
 fn parse_bind(elem: Node<'_, '_>) -> (Option<String>, bool) {
     let Some(bind) = find_first_child_by_name(elem, "bind") else {
         return (None, false);

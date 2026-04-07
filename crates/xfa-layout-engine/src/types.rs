@@ -78,6 +78,11 @@ impl Insets {
 }
 
 /// A measurement with a unit, parsed from XFA attributes.
+///
+/// XFA Spec 3.3 §2.2 (p36-38) — Measurements:
+///   Absolute: in (inches, default), cm, mm, pt (1/72 inch).
+///   Relative (XFA 2.8+): em (em width in current font), % (percentage of space width).
+///   Note: bare numbers default to inches for dimensions but points for font sizes.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Measurement {
     pub value: f64,
@@ -86,6 +91,10 @@ pub struct Measurement {
 
 impl Measurement {
     /// Convert this measurement to points (the internal unit).
+    ///
+    /// Note: `Em` and `Percent` are relative units that depend on the current
+    /// font context. Here we use a default 12pt font for em and approximate
+    /// percentage as a fraction of the default space width (~3pt at 12pt).
     pub fn to_points(&self) -> f64 {
         match self.unit {
             MeasurementUnit::Points => self.value,
@@ -93,6 +102,9 @@ impl Measurement {
             MeasurementUnit::Centimeters => self.value * 72.0 / 2.54,
             MeasurementUnit::Millimeters => self.value * 72.0 / 25.4,
             MeasurementUnit::Em => self.value * 12.0, // default 12pt font
+            // XFA §2.2: % = percentage of space (U+0020) width in current font.
+            // Approximate: space width ≈ 25% of em → 3pt at 12pt default.
+            MeasurementUnit::Percent => self.value / 100.0 * 3.0,
         }
     }
 
@@ -114,6 +126,7 @@ impl Measurement {
             "cm" => MeasurementUnit::Centimeters,
             "mm" => MeasurementUnit::Millimeters,
             "em" => MeasurementUnit::Em,
+            "%" => MeasurementUnit::Percent,
             _ => return None,
         };
         Some(Measurement { value, unit })
@@ -130,6 +143,9 @@ impl Default for Measurement {
 }
 
 /// Units for measurements in XFA.
+///
+/// XFA Spec 3.3 §2.2 (p37) — Absolute: in, cm, mm, pt.
+/// Relative (XFA 2.8+): em, % (percentage of space width in current font).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasurementUnit {
     Inches,
@@ -137,6 +153,8 @@ pub enum MeasurementUnit {
     Millimeters,
     Points,
     Em,
+    /// Percentage of the width of a space (U+0020) in the current font.
+    Percent,
 }
 
 /// Horizontal text alignment (XFA `<para hAlign>`).
@@ -154,6 +172,11 @@ pub enum TextAlign {
 }
 
 /// Layout strategy for a container.
+///
+/// XFA Spec 3.3 §2.6 (p43) — Two layout strategies:
+///   Positioned: objects at fixed x,y coordinates (default for most containers).
+///   Flowing: objects placed sequentially — tb, lr-tb, rl-tb, table, row.
+///   pageArea always uses positioned layout only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LayoutStrategy {
     /// Fixed x,y coordinates (default for subforms).
@@ -192,6 +215,22 @@ pub enum CaptionPlacement {
 }
 
 /// The XFA Box Model for a form element.
+///
+/// XFA Spec 3.3 §2.6 (p49-50) — Nominal extent is w × h.
+/// Inside: margins → border inset → caption region → content region.
+/// The Nominal Content Region is the area after margins are applied.
+///
+/// §8 Growability (p275-276): a container is growable if it omits h and/or w:
+/// - h=✓ w=✓ → fixed, not growable (minH/maxH/minW/maxW ignored)
+/// - h=✓ w=∅ → growable along X only (minH/maxH ignored)
+/// - h=∅ w=✓ → growable along Y only (minW/maxW ignored)
+/// - h=∅ w=∅ → growable along both axes
+/// Default: minH=0, minW=0, maxH=infinity, maxW=infinity.
+///
+/// See spec figure "Relationship between nominal extent and borders,
+/// margins, captions, and content" (p50).
+///
+/// TODO(§2.6): border inset not modeled separately — currently merged with margins.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BoxModel {
     /// Nominal width (None = growable).

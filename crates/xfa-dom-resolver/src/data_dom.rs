@@ -10,7 +10,10 @@ use crate::error::{Result, XfaDomError};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DataNodeId(pub(crate) usize);
 
-/// How null data values are serialized on output (XFA 3.3 §4).
+/// How null data values are serialized on output.
+///
+/// XFA Spec 3.3 §4.1 p139 — null values may be represented as absent,
+/// empty elements, or with `xsi:nil="true"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NullType {
     /// Null values are not written to output XML.
@@ -22,6 +25,9 @@ pub enum NullType {
 }
 
 /// Whether a DataValue contains actual data or metadata.
+///
+/// XFA Spec 3.3 §4.1 p127 — XML attributes map to `MetaData`;
+/// text content of leaf elements maps to `Data`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataContains {
     Data,
@@ -102,9 +108,15 @@ impl DataDom {
 
     /// Parse XML data into a Data DOM.
     ///
-    /// Per XFA 3.3 §4: Elements containing only character data become DataValue nodes.
-    /// Elements containing child elements become DataGroup nodes.
-    /// Attributes become DataValue children of their element's DataGroup.
+    /// XFA Spec 3.3 §4.1 p122-142 — Loading data into the Data DOM:
+    /// - Elements containing only character data become DataValue nodes (§4.1 p126).
+    /// - Elements containing child elements become DataGroup nodes (§4.1 p126).
+    /// - Attributes become DataValue children with `contains=metaData` (§4.1 p127).
+    /// - Namespace-qualified elements from excluded namespaces are skipped (§4.1 p134).
+    ///
+    /// TODO: XFA Spec 3.3 §4.1 p134 — namespace exclusion rules not implemented.
+    /// Elements in namespaces listed in the `<data>` element's `excludeNS` attribute
+    /// should be excluded from loading.
     pub fn from_xml(xml: &str) -> Result<Self> {
         let doc = roxmltree::Document::parse(xml)?;
         let mut dom = Self::new();
@@ -126,10 +138,12 @@ impl DataDom {
         let name = node.tag_name().name().to_string();
         let namespace = node.tag_name().namespace().map(|s| s.to_string());
 
+        // XFA Spec 3.3 §4.1 p126 — classification rule: if an element has
+        // element children it becomes a DataGroup; otherwise a DataValue.
         let has_element_children = node.children().any(|c| c.is_element());
 
         if has_element_children {
-            // DataGroup node
+            // DataGroup node (§4.1 p126: "contains child elements")
             let id = self.alloc(DataNode::DataGroup {
                 name,
                 namespace,
@@ -151,11 +165,13 @@ impl DataDom {
                 {
                     continue;
                 }
+                // XFA Spec 3.3 §4.1 p127/142 — XML attributes become DataValue
+                // nodes with contains=metaData (not data).
                 let attr_id = self.alloc(DataNode::DataValue {
                     name: attr.name().to_string(),
                     namespace: attr.namespace().map(|s| s.to_string()),
                     value: attr.value().to_string(),
-                    contains: DataContains::Data,
+                    contains: DataContains::MetaData,
                     content_type: None,
                     is_null: false,
                     null_type: NullType::Exclude,
@@ -172,9 +188,10 @@ impl DataDom {
 
             id
         } else {
-            // DataValue node (leaf element)
+            // DataValue node (leaf element) — §4.1 p126: "contains only character data"
             let text = node.text().map(|s| s.to_string()).unwrap_or_default();
 
+            // XFA Spec 3.3 §4.1 p139 — xsi:nil="true" marks the value as null.
             let is_null = node.attribute(("http://www.w3.org/2001/XMLSchema-instance", "nil"))
                 == Some("true");
 
@@ -198,7 +215,9 @@ impl DataDom {
     /// Skip `<xfa:datasets>` and `<xfa:data>` wrappers so that the
     /// form data elements are direct children of root.
     ///
-    /// Some XFA producers double-wrap data: `<datasets><data><data>...`
+    /// XFA Spec 3.3 §4.1 p122 — the datasets packet structure is
+    /// `<xfa:datasets><xfa:data>…</xfa:data></xfa:datasets>`.
+    /// Some XFA producers double-wrap data: `<datasets><data><data>…`
     /// This loop peels through all wrapper levels until it reaches actual
     /// form data.
     fn unwrap_datasets_root(&self, id: DataNodeId) -> DataNodeId {
@@ -422,6 +441,13 @@ impl DataDom {
     // ── Serialisation ────────────────────────────────────────
 
     /// Serialize the DOM back to XML.
+    ///
+    /// XFA Spec 3.3 §4.3 p171-175 — Saving data: the Data DOM is serialized
+    /// back to XML. DataValue nodes with `is_null` use `xsi:nil="true"`.
+    ///
+    /// TODO: XFA Spec 3.3 §4.3 p171 — canonicalization via picture clauses
+    /// during save is not implemented. Values are written as-is without
+    /// locale-specific formatting.
     pub fn to_xml(&self) -> String {
         let mut out = String::new();
         if let Some(root) = self.root {

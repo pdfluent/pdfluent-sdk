@@ -1,10 +1,12 @@
 //! FormCalc built-in functions.
 //!
-//! Implements the standard function library from XFA 3.3 §25.
+//! Implements the currently supported subset of the XFA 3.3 §25 built-in library.
 //! Functions are case-insensitive (caller normalizes via lookup).
 
 use crate::error::{FormCalcError, Result};
 use crate::value::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Try to call a built-in function by name.
 ///
@@ -29,22 +31,30 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Result<Option<Value>> {
         // --- String ---
         "at" => ok_some(builtin_at(args)?),
         "concat" => ok_some(builtin_concat(args)?),
+        "decode" => ok_some(builtin_decode(args)?),
+        "encode" => ok_some(builtin_encode(args)?),
+        "format" => ok_some(builtin_format(args)?),
         "left" => ok_some(builtin_left(args)?),
         "len" => ok_some(builtin_len(args)?),
         "lower" => ok_some(builtin_lower(args)?),
         "ltrim" => ok_some(builtin_ltrim(args)?),
+        "parse" => ok_some(builtin_parse(args)?),
         "replace" => ok_some(builtin_replace(args)?),
         "right" => ok_some(builtin_right(args)?),
         "rtrim" => ok_some(builtin_rtrim(args)?),
         "space" => ok_some(builtin_space(args)?),
+        "str" => ok_some(builtin_str(args)?),
         "stuff" => ok_some(builtin_stuff(args)?),
         "substr" => ok_some(builtin_substr(args)?),
+        "unittype" => ok_some(builtin_unit_type(args)?),
+        "unitvalue" => ok_some(builtin_unit_value(args)?),
         "upper" => ok_some(builtin_upper(args)?),
         "uuid" => ok_some(builtin_uuid(args)?),
         "wordnum" => ok_some(builtin_wordnum(args)?),
 
         // --- Logical ---
         "choose" => ok_some(builtin_choose(args)?),
+        "exists" => ok_some(builtin_exists(args)?),
         "if" => ok_some(builtin_if(args)?),
         "oneof" => ok_some(builtin_oneof(args)?),
         "within" => ok_some(builtin_within(args)?),
@@ -52,12 +62,18 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Result<Option<Value>> {
         // --- Date/Time ---
         "date" => ok_some(builtin_date(args)?),
         "date2num" => ok_some(builtin_date2num(args)?),
+        "datefmt" => ok_some(builtin_datefmt(args)?),
         "dategmt" => ok_some(builtin_date(args)?), // alias
-        "isodatetime" => ok_some(builtin_isodate(args)?),
+        "isodate2num" => ok_some(builtin_isodate2num(args)?),
+        "isotime2num" => ok_some(builtin_isotime2num(args)?),
+        "localdatefmt" => ok_some(builtin_localdatefmt(args)?),
+        "localtimefmt" => ok_some(builtin_localtimefmt(args)?),
         "num2date" => ok_some(builtin_num2date(args)?),
+        "num2gmtime" => ok_some(builtin_num2gmtime(args)?),
         "time" => ok_some(builtin_time(args)?),
         "time2num" => ok_some(builtin_time2num(args)?),
         "timegmt" => ok_some(builtin_time(args)?), // alias
+        "timefmt" => ok_some(builtin_timefmt(args)?),
         "num2time" => ok_some(builtin_num2time(args)?),
 
         // --- Financial ---
@@ -73,8 +89,13 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Result<Option<Value>> {
         "term" => ok_some(builtin_term(args)?),
 
         // --- Misc ---
+        "eval" => ok_some(builtin_eval(args)?),
         "hasvalue" => ok_some(builtin_hasvalue(args)?),
         "null" => ok_some(Value::Null),
+        "ref" => ok_some(builtin_ref(args)?),
+        "get" => ok_some(builtin_get(args)?),
+        "post" => ok_some(builtin_post(args)?),
+        "put" => ok_some(builtin_put(args)?),
 
         _ => Ok(None),
     }
@@ -106,40 +127,107 @@ fn arity_min(name: &str, args: &[Value], min: usize) -> Result<()> {
     Ok(())
 }
 
+fn arity_range(name: &str, args: &[Value], min: usize, max: usize) -> Result<()> {
+    if args.len() < min || args.len() > max {
+        return Err(FormCalcError::ArityError {
+            name: name.to_string(),
+            expected: format!("{min} to {max}"),
+            got: args.len(),
+        });
+    }
+    Ok(())
+}
+
+fn any_null(args: &[Value]) -> bool {
+    args.iter().any(Value::is_null)
+}
+
+fn all_null(args: &[Value]) -> bool {
+    args.iter().all(Value::is_null)
+}
+
+fn todo_builtin(name: &str, section: &str, page: u16, signature: &str) -> Result<Value> {
+    Err(FormCalcError::RuntimeError(format!(
+        "XFA Spec 3.3 {section} (p{page}) TODO: {name}{signature} is not fully implemented"
+    )))
+}
+
+fn clamp_string_start(s: &str, one_based_start: i64) -> usize {
+    if s.is_empty() || one_based_start <= 1 {
+        0
+    } else {
+        let len = s.chars().count();
+        usize::min((one_based_start - 1) as usize, len.saturating_sub(1))
+    }
+}
+
+fn parse_style_arg(arg: Option<&Value>) -> i32 {
+    arg.map_or(0, |value| value.to_number() as i32)
+}
+
 // ============================================================
 // Arithmetic
 // ============================================================
 
+// XFA Spec 3.3 §25.3 "Abs" (p1081) — Abs(n1)
+// Returns the absolute value or null when n1 is null.
 fn builtin_abs(args: &[Value]) -> Result<Value> {
     arity("Abs", args, 1)?;
-    Ok(Value::Number(args[0].to_number().abs()))
+    if args[0].is_null() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::Number(args[0].to_number().abs()))
+    }
 }
 
+// XFA Spec 3.3 §25.3 "Avg" (p1082) — Avg(n1 [, n2...])
+// Averages only non-null values and returns null when all arguments are null.
 fn builtin_avg(args: &[Value]) -> Result<Value> {
     arity_min("Avg", args, 1)?;
-    let sum: f64 = args.iter().map(|a| a.to_number()).sum();
-    Ok(Value::Number(sum / args.len() as f64))
+    let values: Vec<f64> = args
+        .iter()
+        .filter(|arg| !arg.is_null())
+        .map(Value::to_number)
+        .collect();
+    if values.is_empty() {
+        Ok(Value::Null)
+    } else {
+        let sum: f64 = values.iter().sum();
+        Ok(Value::Number(sum / values.len() as f64))
+    }
 }
 
 fn builtin_ceil(args: &[Value]) -> Result<Value> {
     arity("Ceil", args, 1)?;
-    Ok(Value::Number(args[0].to_number().ceil()))
+    if args[0].is_null() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::Number(args[0].to_number().ceil()))
+    }
 }
 
 fn builtin_count(args: &[Value]) -> Result<Value> {
-    Ok(Value::Number(args.len() as f64))
+    Ok(Value::Number(
+        args.iter().filter(|arg| !arg.is_null()).count() as f64,
+    ))
 }
 
 fn builtin_floor(args: &[Value]) -> Result<Value> {
     arity("Floor", args, 1)?;
-    Ok(Value::Number(args[0].to_number().floor()))
+    if args[0].is_null() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::Number(args[0].to_number().floor()))
+    }
 }
 
 fn builtin_max(args: &[Value]) -> Result<Value> {
     arity_min("Max", args, 1)?;
-    let mut max = args[0].to_number();
-    for arg in &args[1..] {
-        let n = arg.to_number();
+    let mut values = args.iter().filter(|arg| !arg.is_null()).map(Value::to_number);
+    let Some(mut max) = values.next() else {
+        return Ok(Value::Null);
+    };
+    for n in values {
         if n > max {
             max = n;
         }
@@ -149,9 +237,11 @@ fn builtin_max(args: &[Value]) -> Result<Value> {
 
 fn builtin_min(args: &[Value]) -> Result<Value> {
     arity_min("Min", args, 1)?;
-    let mut min = args[0].to_number();
-    for arg in &args[1..] {
-        let n = arg.to_number();
+    let mut values = args.iter().filter(|arg| !arg.is_null()).map(Value::to_number);
+    let Some(mut min) = values.next() else {
+        return Ok(Value::Null);
+    };
+    for n in values {
         if n < min {
             min = n;
         }
@@ -161,6 +251,9 @@ fn builtin_min(args: &[Value]) -> Result<Value> {
 
 fn builtin_mod(args: &[Value]) -> Result<Value> {
     arity("Mod", args, 2)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let divisor = args[1].to_number();
     if divisor == 0.0 {
         return Err(FormCalcError::DivisionByZero);
@@ -169,27 +262,35 @@ fn builtin_mod(args: &[Value]) -> Result<Value> {
 }
 
 fn builtin_round(args: &[Value]) -> Result<Value> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(FormCalcError::ArityError {
-            name: "Round".to_string(),
-            expected: "1 or 2".to_string(),
-            got: args.len(),
-        });
+    arity_range("Round", args, 1, 2)?;
+    if any_null(args) {
+        return Ok(Value::Null);
     }
     let n = args[0].to_number();
-    let decimals = if args.len() == 2 {
-        args[1].to_number() as i32
-    } else {
-        0
-    };
+    let decimals = args
+        .get(1)
+        .map_or(0, |value| value.to_number() as i32)
+        .clamp(0, 12);
     let factor = 10_f64.powi(decimals);
     Ok(Value::Number((n * factor).round() / factor))
 }
 
 fn builtin_sum(args: &[Value]) -> Result<Value> {
     arity_min("Sum", args, 1)?;
-    let sum: f64 = args.iter().map(|a| a.to_number()).sum();
-    Ok(Value::Number(sum))
+    let mut seen = false;
+    let sum: f64 = args
+        .iter()
+        .filter(|arg| !arg.is_null())
+        .map(|arg| {
+            seen = true;
+            arg.to_number()
+        })
+        .sum();
+    if seen {
+        Ok(Value::Number(sum))
+    } else {
+        Ok(Value::Null)
+    }
 }
 
 // ============================================================
@@ -198,15 +299,28 @@ fn builtin_sum(args: &[Value]) -> Result<Value> {
 
 fn builtin_at(args: &[Value]) -> Result<Value> {
     arity("At", args, 2)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let haystack = args[0].to_string_val();
     let needle = args[1].to_string_val();
+    if needle.is_empty() {
+        return Ok(Value::Number(1.0));
+    }
     match haystack.find(&needle) {
         Some(pos) => Ok(Value::Number((pos + 1) as f64)), // 1-based
         None => Ok(Value::Number(0.0)),
     }
 }
 
+// XFA Spec 3.3 §25.7 "Concat" (p1122) — Concat(s1, s2, ...)
+// Returns the concatenation of all arguments converted to strings.
+// Takes 1 or more string parameters. Null arguments are treated as "".
 fn builtin_concat(args: &[Value]) -> Result<Value> {
+    arity_min("Concat", args, 1)?;
+    if all_null(args) {
+        return Ok(Value::Null);
+    }
     let mut result = String::new();
     for arg in args {
         result.push_str(&arg.to_string_val());
@@ -214,67 +328,158 @@ fn builtin_concat(args: &[Value]) -> Result<Value> {
     Ok(Value::String(result))
 }
 
+fn builtin_decode(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Decode", "§25.7", 1123, "(s1 [, s2])")
+}
+
+fn builtin_encode(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Encode", "§25.7", 1124, "(s1 [, s2])")
+}
+
+fn builtin_format(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Format", "§25.7", 1125, "(s1, s2[, s3...])")
+}
+
 fn builtin_left(args: &[Value]) -> Result<Value> {
     arity("Left", args, 2)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let s = args[0].to_string_val();
-    let n = args[1].to_number() as usize;
-    let result: String = s.chars().take(n).collect();
-    Ok(Value::String(result))
+    let n = args[1].to_number() as i64;
+    if n <= 0 {
+        Ok(Value::String(String::new()))
+    } else {
+        let result: String = s.chars().take(n as usize).collect();
+        Ok(Value::String(result))
+    }
 }
 
 fn builtin_len(args: &[Value]) -> Result<Value> {
     arity("Len", args, 1)?;
-    Ok(Value::Number(args[0].to_string_val().len() as f64))
+    if args[0].is_null() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::Number(args[0].to_string_val().chars().count() as f64))
+    }
 }
 
 fn builtin_lower(args: &[Value]) -> Result<Value> {
-    arity("Lower", args, 1)?;
-    Ok(Value::String(args[0].to_string_val().to_lowercase()))
+    arity_range("Lower", args, 1, 2)?;
+    if args[0].is_null() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::String(args[0].to_string_val().to_lowercase()))
+    }
 }
 
 fn builtin_ltrim(args: &[Value]) -> Result<Value> {
     arity("Ltrim", args, 1)?;
-    Ok(Value::String(
-        args[0].to_string_val().trim_start().to_string(),
-    ))
+    if args[0].is_null() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::String(
+            args[0].to_string_val().trim_start().to_string(),
+        ))
+    }
+}
+
+fn builtin_parse(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Parse", "§25.7", 1131, "(s1, s2)")
 }
 
 fn builtin_replace(args: &[Value]) -> Result<Value> {
-    arity("Replace", args, 3)?;
+    arity_range("Replace", args, 2, 3)?;
+    if args[0].is_null() || args[1].is_null() {
+        return Ok(Value::Null);
+    }
     let s = args[0].to_string_val();
     let from = args[1].to_string_val();
-    let to = args[2].to_string_val();
+    let to = args.get(2).map_or_else(String::new, Value::to_string_val);
     Ok(Value::String(s.replace(&from, &to)))
 }
 
 fn builtin_right(args: &[Value]) -> Result<Value> {
     arity("Right", args, 2)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let s = args[0].to_string_val();
-    let n = args[1].to_number() as usize;
+    let n = args[1].to_number() as i64;
+    if n <= 0 {
+        return Ok(Value::String(String::new()));
+    }
     let chars: Vec<char> = s.chars().collect();
-    let start = chars.len().saturating_sub(n);
+    let start = chars.len().saturating_sub(n as usize);
     Ok(Value::String(chars[start..].iter().collect()))
 }
 
 fn builtin_rtrim(args: &[Value]) -> Result<Value> {
     arity("Rtrim", args, 1)?;
-    Ok(Value::String(
-        args[0].to_string_val().trim_end().to_string(),
-    ))
+    if args[0].is_null() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::String(
+            args[0].to_string_val().trim_end().to_string(),
+        ))
+    }
 }
 
 fn builtin_space(args: &[Value]) -> Result<Value> {
     arity("Space", args, 1)?;
-    let n = args[0].to_number() as usize;
+    if args[0].is_null() {
+        return Ok(Value::Null);
+    }
+    let n = (args[0].to_number() as i64).max(0) as usize;
     Ok(Value::String(" ".repeat(n)))
 }
 
+// XFA Spec 3.3 §25.7 "Str" (p1136) — Str(n1 [, n2 [, n3]])
+// Formats a number into a fixed-width ASCII string using '.' as radix.
+fn builtin_str(args: &[Value]) -> Result<Value> {
+    arity_range("Str", args, 1, 3)?;
+    if args[0].is_null() {
+        return Ok(Value::Null);
+    }
+
+    let value = args[0].to_number();
+    let width = args
+        .get(1)
+        .map_or(10usize, |arg| usize::try_from((arg.to_number() as i64).max(0)).unwrap_or(0));
+    let precision = args
+        .get(2)
+        .map_or(0, |arg| (arg.to_number() as i32).max(0))
+        .min(12);
+    let factor = 10_f64.powi(precision);
+    let rounded = (value * factor).round() / factor;
+    let rendered = if precision == 0 {
+        format!("{rounded:.0}")
+    } else {
+        format!("{rounded:.prec$}", prec = precision as usize)
+    };
+
+    if rendered.len() > width {
+        Ok(Value::String("*".repeat(width)))
+    } else if width > rendered.len() {
+        Ok(Value::String(format!(
+            "{}{}",
+            " ".repeat(width - rendered.len()),
+            rendered
+        )))
+    } else {
+        Ok(Value::String(rendered))
+    }
+}
+
 fn builtin_stuff(args: &[Value]) -> Result<Value> {
-    arity("Stuff", args, 4)?;
+    arity_range("Stuff", args, 3, 4)?;
+    if args[0].is_null() || args[1].is_null() || args[2].is_null() {
+        return Ok(Value::Null);
+    }
     let s = args[0].to_string_val();
-    let start = (args[1].to_number() as usize).saturating_sub(1); // 1-based to 0-based
-    let delete_len = args[2].to_number() as usize;
-    let insert = args[3].to_string_val();
+    let start = clamp_string_start(&s, args[1].to_number() as i64);
+    let delete_len = (args[2].to_number() as i64).max(0) as usize;
+    let insert = args.get(3).map_or_else(String::new, Value::to_string_val);
 
     let chars: Vec<char> = s.chars().collect();
     let end = (start + delete_len).min(chars.len());
@@ -286,44 +491,78 @@ fn builtin_stuff(args: &[Value]) -> Result<Value> {
 
 fn builtin_substr(args: &[Value]) -> Result<Value> {
     arity("Substr", args, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let s = args[0].to_string_val();
-    let start = (args[1].to_number() as usize).saturating_sub(1); // 1-based to 0-based
-    let len = args[2].to_number() as usize;
+    let start = clamp_string_start(&s, args[1].to_number() as i64);
+    let len = (args[2].to_number() as i64).max(0) as usize;
     let result: String = s.chars().skip(start).take(len).collect();
     Ok(Value::String(result))
 }
 
 fn builtin_upper(args: &[Value]) -> Result<Value> {
-    arity("Upper", args, 1)?;
-    Ok(Value::String(args[0].to_string_val().to_uppercase()))
+    arity_range("Upper", args, 1, 2)?;
+    if args[0].is_null() {
+        Ok(Value::Null)
+    } else {
+        Ok(Value::String(args[0].to_string_val().to_uppercase()))
+    }
 }
 
 fn builtin_uuid(args: &[Value]) -> Result<Value> {
-    // Simple UUID v4-like generation without external crate
-    if !args.is_empty() {
-        return Err(FormCalcError::ArityError {
-            name: "Uuid".to_string(),
-            expected: "0".to_string(),
-            got: args.len(),
-        });
+    arity_range("Uuid", args, 0, 1)?;
+    let format_style = args.first().map_or(0, |value| value.to_number() as i32);
+    let ticks = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| FormCalcError::RuntimeError(format!("system clock error: {e}")))?
+        .as_nanos();
+    let counter = UUID_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
+    let raw = ticks ^ (counter << 64) ^ 0xa3ac_0000_3dde_f352_96c4_00a0_c9c8_6dd5_u128;
+    let hex = format!("{raw:032x}");
+    if format_style == 1 {
+        Ok(Value::String(format!(
+            "{}-{}-{}-{}-{}",
+            &hex[0..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..32]
+        )))
+    } else {
+        Ok(Value::String(hex))
     }
-    // Return a placeholder — real UUID requires randomness
-    Ok(Value::String(
-        "00000000-0000-4000-8000-000000000000".to_string(),
-    ))
 }
 
 fn builtin_wordnum(args: &[Value]) -> Result<Value> {
-    // Simplified: convert number to English words for integers
-    if args.is_empty() || args.len() > 2 {
-        return Err(FormCalcError::ArityError {
-            name: "WordNum".to_string(),
-            expected: "1 or 2".to_string(),
-            got: args.len(),
-        });
+    arity_range("WordNum", args, 1, 3)?;
+    if args[0].is_null() {
+        return Ok(Value::Null);
     }
-    let n = args[0].to_number() as i64;
-    Ok(Value::String(number_to_words(n)))
+    let value = match &args[0] {
+        Value::Number(n) => *n,
+        Value::String(s) => match s.trim().parse::<f64>() {
+            Ok(n) => n,
+            Err(_) => return Ok(Value::String("*".to_string())),
+        },
+        Value::Null => return Ok(Value::Null),
+    };
+    let option = args.get(1).map_or(0, |value| value.to_number() as i32);
+    let whole = value.trunc();
+    if !(0.0..=922_337_203_685_477_550.0).contains(&whole) {
+        return Ok(Value::String("*".to_string()));
+    }
+
+    let whole_words = number_to_words(whole as i64);
+    let rendered = match option {
+        1 => format!("{whole_words} Dollars"),
+        2 => {
+            let cents = ((value.fract().abs() * 100.0).round() as i64).clamp(0, 99);
+            format!("{whole_words} Dollars And {} Cents", number_to_words(cents))
+        }
+        _ => whole_words,
+    };
+    Ok(Value::String(rendered))
 }
 
 // ============================================================
@@ -332,11 +571,19 @@ fn builtin_wordnum(args: &[Value]) -> Result<Value> {
 
 fn builtin_choose(args: &[Value]) -> Result<Value> {
     arity_min("Choose", args, 2)?;
-    let idx = args[0].to_number() as usize;
-    if idx == 0 || idx >= args.len() {
+    if args[0].is_null() {
         return Ok(Value::Null);
     }
-    Ok(args[idx].clone())
+    let idx = args[0].to_number() as isize;
+    if idx < 1 || idx as usize >= args.len() {
+        return Ok(Value::String(String::new()));
+    }
+    Ok(args[idx as usize].clone())
+}
+
+fn builtin_exists(args: &[Value]) -> Result<Value> {
+    arity("Exists", args, 1)?;
+    Ok(Value::Number(0.0))
 }
 
 fn builtin_if(args: &[Value]) -> Result<Value> {
@@ -361,14 +608,26 @@ fn builtin_oneof(args: &[Value]) -> Result<Value> {
 
 fn builtin_within(args: &[Value]) -> Result<Value> {
     arity("Within", args, 3)?;
-    let val = args[0].to_number();
-    let low = args[1].to_number();
-    let high = args[2].to_number();
-    Ok(Value::Number(if val >= low && val <= high {
-        1.0
+    if args[0].is_null() {
+        return Ok(Value::Null);
+    }
+
+    let is_numeric = matches!(&args[0], Value::Number(_))
+        || matches!(&args[0], Value::String(s) if s.trim().parse::<f64>().is_ok());
+
+    let result = if is_numeric {
+        let val = args[0].to_number();
+        let low = args[1].to_number();
+        let high = args[2].to_number();
+        val >= low && val <= high
     } else {
-        0.0
-    }))
+        let val = args[0].to_string_val();
+        let low = args[1].to_string_val();
+        let high = args[2].to_string_val();
+        val >= low && val <= high
+    };
+
+    Ok(Value::Number(if result { 1.0 } else { 0.0 }))
 }
 
 // ============================================================
@@ -410,62 +669,95 @@ fn builtin_date(args: &[Value]) -> Result<Value> {
             got: args.len(),
         });
     }
-    // Return current date as days since 1900-01-01
-    // Use a fixed date for determinism in tests; real impl would use system time
-    // 2026-03-04 = 46,081 days since 1900-01-01
-    Ok(Value::Number(date_to_days(2026, 3, 4) as f64))
+    // XFA Spec 3.3 §25.4 "Date" (p1091) uses the current system date.
+    // This implementation uses the current UTC date; prevailing-locale date
+    // selection remains a TODO tracked in spec_review_cx_formcalc.md.
+    let unix_days = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| FormCalcError::RuntimeError(format!("system clock error: {e}")))?
+        .as_secs()
+        / 86_400;
+    let days = date_to_days(1970, 1, 1) + unix_days as i64;
+    Ok(Value::Number(days as f64))
 }
 
 fn builtin_date2num(args: &[Value]) -> Result<Value> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(FormCalcError::ArityError {
-            name: "Date2Num".to_string(),
-            expected: "1 or 2".to_string(),
-            got: args.len(),
-        });
+    arity_range("Date2Num", args, 1, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
     }
     let date_str = args[0].to_string_val();
     let format = if args.len() > 1 {
         args[1].to_string_val()
     } else {
-        "YYYY-MM-DD".to_string()
+        builtin_datefmt(&[])?.to_string_val()
     };
 
-    // Simple parser for common formats
-    let days = parse_date_string(&date_str, &format)
-        .ok_or_else(|| FormCalcError::RuntimeError(format!("cannot parse date: '{date_str}'")))?;
+    let days = parse_date_string(&date_str, &format).unwrap_or(0);
     Ok(Value::Number(days as f64))
 }
 
+fn builtin_datefmt(args: &[Value]) -> Result<Value> {
+    arity_range("DateFmt", args, 0, 2)?;
+    let style = parse_style_arg(args.first());
+    let format = match style {
+        1 => "M/D/YY",
+        2 | 0 => "MMM D, YYYY",
+        3 => "MMMM D, YYYY",
+        4 => "EEEE, MMMM D, YYYY",
+        _ => "MMM D, YYYY",
+    };
+    Ok(Value::String(format.to_string()))
+}
+
 fn builtin_num2date(args: &[Value]) -> Result<Value> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(FormCalcError::ArityError {
-            name: "Num2Date".to_string(),
-            expected: "1 or 2".to_string(),
-            got: args.len(),
-        });
+    arity_range("Num2Date", args, 1, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
     }
     let days = args[0].to_number() as i64;
     let format = if args.len() > 1 {
         args[1].to_string_val()
     } else {
-        "YYYY-MM-DD".to_string()
+        builtin_datefmt(&[])?.to_string_val()
     };
 
+    if days < 1 {
+        return Ok(Value::String(String::new()));
+    }
     let (y, m, d) = days_to_date(days);
     let result = format_date(y, m, d, &format);
     Ok(Value::String(result))
 }
 
-fn builtin_isodate(args: &[Value]) -> Result<Value> {
-    if !args.is_empty() {
-        return Err(FormCalcError::ArityError {
-            name: "IsoDateTime".to_string(),
-            expected: "0".to_string(),
-            got: args.len(),
-        });
+fn builtin_isodate2num(args: &[Value]) -> Result<Value> {
+    arity("IsoDate2Num", args, 1)?;
+    if args[0].is_null() {
+        return Ok(Value::Null);
     }
-    Ok(Value::String("2026-03-04T00:00:00".to_string()))
+    Ok(Value::Number(
+        parse_iso_date_string(&args[0].to_string_val()).unwrap_or(0) as f64,
+    ))
+}
+
+fn builtin_isotime2num(args: &[Value]) -> Result<Value> {
+    arity("IsoTime2Num", args, 1)?;
+    if args[0].is_null() {
+        return Ok(Value::Null);
+    }
+    Ok(Value::Number(
+        parse_time_string(&args[0].to_string_val())
+            .map(|ms| ms + 1)
+            .unwrap_or(0) as f64,
+    ))
+}
+
+fn builtin_localdatefmt(args: &[Value]) -> Result<Value> {
+    builtin_datefmt(args)
+}
+
+fn builtin_localtimefmt(args: &[Value]) -> Result<Value> {
+    builtin_timefmt(args)
 }
 
 fn builtin_time(args: &[Value]) -> Result<Value> {
@@ -476,57 +768,90 @@ fn builtin_time(args: &[Value]) -> Result<Value> {
             got: args.len(),
         });
     }
-    // Milliseconds since midnight; return fixed value for determinism
-    Ok(Value::Number(43200000.0)) // 12:00:00
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| FormCalcError::RuntimeError(format!("system clock error: {e}")))?
+        .as_millis();
+    Ok(Value::Number((millis % 86_400_000) as f64 + 1.0))
 }
 
 fn builtin_time2num(args: &[Value]) -> Result<Value> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(FormCalcError::ArityError {
-            name: "Time2Num".to_string(),
-            expected: "1 or 2".to_string(),
-            got: args.len(),
-        });
+    arity_range("Time2Num", args, 1, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
     }
     let time_str = args[0].to_string_val();
-    let ms = parse_time_string(&time_str)
-        .ok_or_else(|| FormCalcError::RuntimeError(format!("cannot parse time: '{time_str}'")))?;
+    let ms = parse_time_string(&time_str).map(|ms| ms + 1).unwrap_or(0);
     Ok(Value::Number(ms as f64))
 }
 
+fn builtin_timefmt(args: &[Value]) -> Result<Value> {
+    arity_range("TimeFmt", args, 0, 2)?;
+    let style = parse_style_arg(args.first());
+    let format = match style {
+        1 => "h:MM A",
+        2 => "HH:MM:SS",
+        3 => "HH:MM:SS Z",
+        4 => "H.MM' Uhr 'Z",
+        _ => "h:MM:SS A",
+    };
+    Ok(Value::String(format.to_string()))
+}
+
+fn builtin_num2gmtime(args: &[Value]) -> Result<Value> {
+    builtin_num2time(args)
+}
+
 fn builtin_num2time(args: &[Value]) -> Result<Value> {
-    if args.is_empty() || args.len() > 2 {
-        return Err(FormCalcError::ArityError {
-            name: "Num2Time".to_string(),
-            expected: "1 or 2".to_string(),
-            got: args.len(),
-        });
+    arity_range("Num2Time", args, 1, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
     }
-    let ms = args[0].to_number() as u64;
-    let secs = (ms / 1000) % 86400;
+    let ms = args[0].to_number() as i64;
+    if ms < 1 {
+        return Ok(Value::String(String::new()));
+    }
+    let secs = ((ms as u64 - 1) / 1000) % 86_400;
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     let s = secs % 60;
-    Ok(Value::String(format!("{h:02}:{m:02}:{s:02}")))
+    let format = args
+        .get(1)
+        .map_or_else(|| builtin_timefmt(&[]).map(|v| v.to_string_val()), |v| {
+            Ok(v.to_string_val())
+        })?;
+    let result = format_time_string(h, m, s, &format);
+    Ok(Value::String(result))
 }
 
-fn parse_date_string(s: &str, _format: &str) -> Option<i64> {
-    // Parse YYYY-MM-DD or MM/DD/YYYY
-    let parts: Vec<&str> = s.split(['-', '/']).collect();
-    if parts.len() != 3 {
+fn parse_date_string(s: &str, format: &str) -> Option<i64> {
+    let text = s.trim();
+    if text.is_empty() {
         return None;
     }
-    let (year, month, day) = if parts[0].len() == 4 {
-        // YYYY-MM-DD
+    if format.contains("MMM") {
+        return parse_named_month_date(text);
+    }
+
+    let parts: Vec<&str> = text.split(['-', '/', '.']).collect();
+    if parts.len() != 3 {
+        return parse_iso_date_string(text);
+    }
+    let (year, month, day) = if format.starts_with('Y') || parts[0].len() == 4 {
         (
             parts[0].parse::<i32>().ok()?,
             parts[1].parse::<u32>().ok()?,
             parts[2].parse::<u32>().ok()?,
         )
-    } else {
-        // MM/DD/YYYY
+    } else if format.starts_with('D') {
         (
-            parts[2].parse::<i32>().ok()?,
+            normalize_year(parts[2].parse::<i32>().ok()?),
+            parts[1].parse::<u32>().ok()?,
+            parts[0].parse::<u32>().ok()?,
+        )
+    } else {
+        (
+            normalize_year(parts[2].parse::<i32>().ok()?),
             parts[0].parse::<u32>().ok()?,
             parts[1].parse::<u32>().ok()?,
         )
@@ -535,25 +860,267 @@ fn parse_date_string(s: &str, _format: &str) -> Option<i64> {
 }
 
 fn format_date(y: i32, m: u32, d: u32, format: &str) -> String {
+    let month_short = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let month_long = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    let weekday = weekday_name(date_to_days(y, m, d));
+
     format
+        .replace("EEEE", weekday)
+        .replace("MMMM", month_long[(m.saturating_sub(1)) as usize])
+        .replace("MMM", month_short[(m.saturating_sub(1)) as usize])
         .replace("YYYY", &format!("{y:04}"))
+        .replace("YY", &format!("{:02}", y.rem_euclid(100)))
         .replace("MM", &format!("{m:02}"))
+        .replace("M", &m.to_string())
         .replace("DD", &format!("{d:02}"))
+        .replace("D", &d.to_string())
 }
 
 fn parse_time_string(s: &str) -> Option<u64> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() < 2 {
+    let mut text = s.trim();
+    if let Some((_, rhs)) = text.rsplit_once('T') {
+        text = rhs;
+    }
+
+    let mut tz_offset_minutes = 0i32;
+    let mut upper = text.to_ascii_uppercase();
+    if let Some(stripped) = upper.strip_suffix('Z') {
+        upper = stripped.trim_end().to_string();
+    } else if let Some((time, tz)) = upper.split_once(" GMT") {
+        let time = time.trim().to_string();
+        let tz = tz.trim().to_string();
+        upper = time;
+        tz_offset_minutes = parse_timezone_offset(&tz).unwrap_or(0);
+    } else if let Some((time, offset)) = split_trailing_offset(&upper) {
+        let time = time.to_string();
+        let offset = offset.to_string();
+        upper = time;
+        tz_offset_minutes = parse_timezone_offset(&offset).unwrap_or(0);
+    }
+
+    let mut meridiem = None;
+    if let Some(stripped) = upper.strip_suffix(" AM") {
+        upper = stripped.trim_end().to_string();
+        meridiem = Some("AM");
+    } else if let Some(stripped) = upper.strip_suffix(" PM") {
+        upper = stripped.trim_end().to_string();
+        meridiem = Some("PM");
+    }
+
+    let (mut hour, minute, second, millis) = if upper.contains(':') {
+        let mut parts = upper.split(':');
+        let hour = parts.next()?.parse::<u64>().ok()?;
+        let minute = parts.next().unwrap_or("0").parse::<u64>().ok()?;
+        let second_part = parts.next().unwrap_or("0");
+        let (second, millis) = parse_second_fraction(second_part)?;
+        (hour, minute, second, millis)
+    } else {
+        parse_compact_time(&upper)?
+    };
+
+    if meridiem == Some("AM") && hour == 12 {
+        hour = 0;
+    } else if meridiem == Some("PM") && hour < 12 {
+        hour += 12;
+    }
+
+    if hour > 23 || minute > 59 || second > 59 {
         return None;
     }
-    let h: u64 = parts[0].parse().ok()?;
-    let m: u64 = parts[1].parse().ok()?;
-    let s: u64 = if parts.len() > 2 {
-        parts[2].parse().ok()?
+
+    let local_ms = ((hour * 3600 + minute * 60 + second) * 1000) + millis;
+    Some(((local_ms as i64) - (tz_offset_minutes as i64 * 60_000)).rem_euclid(86_400_000) as u64)
+}
+
+fn parse_iso_date_string(s: &str) -> Option<i64> {
+    let text = s.trim();
+    let date = text.split_once('T').map_or(text, |(date, _)| date);
+    let digits: String = date.chars().filter(|c| c.is_ascii_digit()).collect();
+    match digits.len() {
+        4 => Some(date_to_days(digits.parse().ok()?, 1, 1)),
+        6 => Some(date_to_days(
+            digits[..4].parse().ok()?,
+            digits[4..6].parse().ok()?,
+            1,
+        )),
+        8 => Some(date_to_days(
+            digits[..4].parse().ok()?,
+            digits[4..6].parse().ok()?,
+            digits[6..8].parse().ok()?,
+        )),
+        _ => None,
+    }
+}
+
+fn parse_named_month_date(s: &str) -> Option<i64> {
+    let cleaned = s.replace(',', " ");
+    let parts: Vec<&str> = cleaned.split_whitespace().collect();
+    if parts.len() < 3 {
+        return None;
+    }
+
+    if let Some(month) = lookup_month(parts[0]) {
+        return Some(date_to_days(
+            normalize_year(parts[2].parse().ok()?),
+            month,
+            parts[1].parse().ok()?,
+        ));
+    }
+    if let Some(month) = lookup_month(parts[1]) {
+        return Some(date_to_days(
+            normalize_year(parts[2].parse().ok()?),
+            month,
+            parts[0].parse().ok()?,
+        ));
+    }
+    None
+}
+
+fn lookup_month(name: &str) -> Option<u32> {
+    match name.to_ascii_lowercase().as_str() {
+        "jan" | "january" => Some(1),
+        "feb" | "february" => Some(2),
+        "mar" | "march" => Some(3),
+        "apr" | "april" => Some(4),
+        "may" => Some(5),
+        "jun" | "june" => Some(6),
+        "jul" | "july" => Some(7),
+        "aug" | "august" => Some(8),
+        "sep" | "sept" | "september" => Some(9),
+        "oct" | "october" => Some(10),
+        "nov" | "november" => Some(11),
+        "dec" | "december" => Some(12),
+        _ => None,
+    }
+}
+
+fn normalize_year(year: i32) -> i32 {
+    if (0..100).contains(&year) {
+        1900 + year
     } else {
+        year
+    }
+}
+
+fn weekday_name(days_since_epoch_1900: i64) -> &'static str {
+    let weekdays = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ];
+    let idx = (days_since_epoch_1900 - 1).rem_euclid(7) as usize;
+    weekdays[idx]
+}
+
+fn parse_second_fraction(text: &str) -> Option<(u64, u64)> {
+    if let Some((sec, frac)) = text.split_once('.') {
+        let second = sec.parse::<u64>().ok()?;
+        let millis = format!("{frac:0<3}").chars().take(3).collect::<String>();
+        Some((second, millis.parse::<u64>().ok()?))
+    } else {
+        Some((text.parse::<u64>().ok()?, 0))
+    }
+}
+
+fn parse_compact_time(text: &str) -> Option<(u64, u64, u64, u64)> {
+    let digits: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+    let (whole, frac) = digits.split_once('.').unwrap_or((&digits, ""));
+    let millis = if frac.is_empty() {
         0
+    } else {
+        format!("{frac:0<3}").chars().take(3).collect::<String>().parse().ok()?
     };
-    Some((h * 3600 + m * 60 + s) * 1000)
+
+    match whole.len() {
+        2 => Some((whole.parse().ok()?, 0, 0, millis)),
+        4 => Some((
+            whole[..2].parse().ok()?,
+            whole[2..4].parse().ok()?,
+            0,
+            millis,
+        )),
+        6 => Some((
+            whole[..2].parse().ok()?,
+            whole[2..4].parse().ok()?,
+            whole[4..6].parse().ok()?,
+            millis,
+        )),
+        _ => None,
+    }
+}
+
+fn parse_timezone_offset(offset: &str) -> Option<i32> {
+    let offset = offset.trim();
+    if offset.is_empty() {
+        return Some(0);
+    }
+    let sign = match offset.chars().next()? {
+        '+' => 1,
+        '-' => -1,
+        _ => return None,
+    };
+    let digits: String = offset[1..].chars().filter(|c| c.is_ascii_digit()).collect();
+    let (hours, minutes) = match digits.len() {
+        2 => (digits[..2].parse::<i32>().ok()?, 0),
+        4 => (
+            digits[..2].parse::<i32>().ok()?,
+            digits[2..4].parse::<i32>().ok()?,
+        ),
+        _ => return None,
+    };
+    Some(sign * (hours * 60 + minutes))
+}
+
+fn split_trailing_offset(text: &str) -> Option<(&str, &str)> {
+    for (idx, ch) in text.char_indices().rev() {
+        if ch == '+' || ch == '-' {
+            return Some((&text[..idx], &text[idx..]));
+        }
+        if !ch.is_ascii_digit() && ch != ':' && ch != '.' {
+            break;
+        }
+    }
+    None
+}
+
+fn format_time_string(h: u64, m: u64, s: u64, format: &str) -> String {
+    if format.contains('A') {
+        let meridiem = if h < 12 { "AM" } else { "PM" };
+        let display_h = match h % 12 {
+            0 => 12,
+            value => value,
+        };
+        if format.contains('Z') {
+            format!("{display_h}:{m:02}:{s:02} {meridiem} GMT")
+        } else if format.contains("SS") {
+            format!("{display_h}:{m:02}:{s:02} {meridiem}")
+        } else {
+            format!("{display_h}:{m:02} {meridiem}")
+        }
+    } else if format.contains('Z') {
+        format!("{h:02}:{m:02}:{s:02} GMT")
+    } else {
+        format!("{h:02}:{m:02}:{s:02}")
+    }
 }
 
 // ============================================================
@@ -562,9 +1129,17 @@ fn parse_time_string(s: &str) -> Option<u64> {
 
 fn builtin_apr(args: &[Value]) -> Result<Value> {
     arity("Apr", args, 3)?;
-    let pmt = args[0].to_number();
-    let pv = args[1].to_number();
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
+    let pv = args[0].to_number();
+    let pmt = args[1].to_number();
     let nper = args[2].to_number();
+    if pv <= 0.0 || pmt <= 0.0 || nper <= 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "Apr requires positive principal, payment, and period count".to_string(),
+        ));
+    }
     // Newton's method to find rate where PV = PMT * (1-(1+r)^-n) / r
     let mut rate: f64 = 0.1;
     for _ in 0..100 {
@@ -586,11 +1161,16 @@ fn builtin_apr(args: &[Value]) -> Result<Value> {
 
 fn builtin_cterm(args: &[Value]) -> Result<Value> {
     arity("CTerm", args, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let rate = args[0].to_number();
     let fv = args[1].to_number();
     let pv = args[2].to_number();
     if rate <= 0.0 || pv <= 0.0 || fv <= 0.0 {
-        return Ok(Value::Number(0.0));
+        return Err(FormCalcError::RuntimeError(
+            "CTerm requires positive rate, future value, and present value".to_string(),
+        ));
     }
     // n = ln(FV/PV) / ln(1+rate)
     Ok(Value::Number((fv / pv).ln() / (1.0 + rate).ln()))
@@ -598,9 +1178,17 @@ fn builtin_cterm(args: &[Value]) -> Result<Value> {
 
 fn builtin_fv(args: &[Value]) -> Result<Value> {
     arity("FV", args, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let pmt = args[0].to_number();
     let rate = args[1].to_number();
     let nper = args[2].to_number();
+    if pmt <= 0.0 || nper <= 0.0 || rate < 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "FV requires positive payment and periods, and a non-negative rate".to_string(),
+        ));
+    }
     if rate == 0.0 {
         return Ok(Value::Number(pmt * nper));
     }
@@ -610,27 +1198,51 @@ fn builtin_fv(args: &[Value]) -> Result<Value> {
 
 fn builtin_ipmt(args: &[Value]) -> Result<Value> {
     arity("IPmt", args, 5)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let pv = args[0].to_number();
-    let rate = args[1].to_number();
+    let rate = args[1].to_number() / 12.0;
     let pmt = args[2].to_number();
     let first_period = args[3].to_number() as usize;
-    let last_period = args[4].to_number() as usize;
+    let month_count = args[4].to_number() as usize;
+    if pv <= 0.0 || rate <= 0.0 || pmt <= 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "IPmt requires positive principal, annual rate, and payment".to_string(),
+        ));
+    }
+    if first_period == 0 || month_count == 0 {
+        return Err(FormCalcError::RuntimeError(
+            "IPmt requires positive month indexes".to_string(),
+        ));
+    }
+    if pmt <= pv * rate {
+        return Ok(Value::Number(0.0));
+    }
 
     let mut balance = pv;
     let mut total_interest = 0.0;
-    for period in 1..=last_period {
+    for period in 1..(first_period + month_count) {
         let interest = balance * rate;
         if period >= first_period {
             total_interest += interest;
         }
-        balance = balance + interest - pmt;
+        balance += interest - pmt;
     }
     Ok(Value::Number(total_interest))
 }
 
 fn builtin_npv(args: &[Value]) -> Result<Value> {
     arity_min("NPV", args, 2)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let rate = args[0].to_number();
+    if rate <= 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "NPV requires a positive discount rate".to_string(),
+        ));
+    }
     let mut npv = 0.0;
     for (i, arg) in args[1..].iter().enumerate() {
         npv += arg.to_number() / (1.0 + rate).powf(i as f64 + 1.0);
@@ -640,9 +1252,17 @@ fn builtin_npv(args: &[Value]) -> Result<Value> {
 
 fn builtin_pmt(args: &[Value]) -> Result<Value> {
     arity("Pmt", args, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let pv = args[0].to_number();
     let rate = args[1].to_number();
     let nper = args[2].to_number();
+    if pv <= 0.0 || rate <= 0.0 || nper <= 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "Pmt requires positive principal, rate, and periods".to_string(),
+        ));
+    }
     if rate == 0.0 {
         return Ok(Value::Number(pv / nper));
     }
@@ -652,17 +1272,35 @@ fn builtin_pmt(args: &[Value]) -> Result<Value> {
 
 fn builtin_ppmt(args: &[Value]) -> Result<Value> {
     arity("PPmt", args, 5)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let pv = args[0].to_number();
-    let rate = args[1].to_number();
+    let rate = args[1].to_number() / 12.0;
     let pmt = args[2].to_number();
     let first_period = args[3].to_number() as usize;
-    let last_period = args[4].to_number() as usize;
+    let month_count = args[4].to_number() as usize;
+    if pv <= 0.0 || rate <= 0.0 || pmt <= 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "PPmt requires positive principal, annual rate, and payment".to_string(),
+        ));
+    }
+    if first_period == 0 || month_count == 0 {
+        return Err(FormCalcError::RuntimeError(
+            "PPmt requires positive month indexes".to_string(),
+        ));
+    }
 
     let mut balance = pv;
     let mut total_principal = 0.0;
-    for period in 1..=last_period {
+    for period in 1..(first_period + month_count) {
         let interest = balance * rate;
         let principal = pmt - interest;
+        if principal <= 0.0 {
+            return Err(FormCalcError::RuntimeError(
+                "PPmt payment must exceed the monthly interest load".to_string(),
+            ));
+        }
         if period >= first_period {
             total_principal += principal;
         }
@@ -673,9 +1311,17 @@ fn builtin_ppmt(args: &[Value]) -> Result<Value> {
 
 fn builtin_pv(args: &[Value]) -> Result<Value> {
     arity("PV", args, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let pmt = args[0].to_number();
     let rate = args[1].to_number();
     let nper = args[2].to_number();
+    if pmt <= 0.0 || rate <= 0.0 || nper <= 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "PV requires positive payment, rate, and periods".to_string(),
+        ));
+    }
     if rate == 0.0 {
         return Ok(Value::Number(pmt * nper));
     }
@@ -685,11 +1331,16 @@ fn builtin_pv(args: &[Value]) -> Result<Value> {
 
 fn builtin_rate(args: &[Value]) -> Result<Value> {
     arity("Rate", args, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let fv = args[0].to_number();
     let pv = args[1].to_number();
     let nper = args[2].to_number();
-    if nper == 0.0 || pv == 0.0 {
-        return Ok(Value::Number(0.0));
+    if fv <= 0.0 || pv <= 0.0 || nper <= 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "Rate requires positive future value, present value, and periods".to_string(),
+        ));
     }
     // rate = (FV/PV)^(1/n) - 1
     Ok(Value::Number((fv / pv).powf(1.0 / nper) - 1.0))
@@ -697,11 +1348,16 @@ fn builtin_rate(args: &[Value]) -> Result<Value> {
 
 fn builtin_term(args: &[Value]) -> Result<Value> {
     arity("Term", args, 3)?;
+    if any_null(args) {
+        return Ok(Value::Null);
+    }
     let pmt = args[0].to_number();
     let rate = args[1].to_number();
     let fv = args[2].to_number();
-    if rate <= 0.0 || pmt <= 0.0 {
-        return Ok(Value::Number(0.0));
+    if rate <= 0.0 || pmt <= 0.0 || fv <= 0.0 {
+        return Err(FormCalcError::RuntimeError(
+            "Term requires positive payment, rate, and future value".to_string(),
+        ));
     }
     // n = ln(1 + FV*r/PMT) / ln(1+r)
     Ok(Value::Number(
@@ -715,17 +1371,92 @@ fn builtin_term(args: &[Value]) -> Result<Value> {
 
 fn builtin_hasvalue(args: &[Value]) -> Result<Value> {
     arity("HasValue", args, 1)?;
-    let has = match &args[0] {
-        Value::Null => false,
-        Value::String(s) => !s.is_empty(),
-        Value::Number(_) => true,
-    };
-    Ok(Value::Number(if has { 1.0 } else { 0.0 }))
+    Ok(Value::Number(if args[0].is_blankish() { 0.0 } else { 1.0 }))
+}
+
+fn builtin_eval(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Eval", "§25.9", 1147, "(...)")
+}
+
+fn builtin_ref(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Ref", "§25.9", 1147, "(v1)")
+}
+
+fn builtin_get(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Get", "§25.8", 1143, "(s1)")
+}
+
+fn builtin_post(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Post", "§25.8", 1144, "(s1, s2[, s3[, s4[, s5]]])")
+}
+
+fn builtin_put(_args: &[Value]) -> Result<Value> {
+    todo_builtin("Put", "§25.8", 1146, "(s1, s2[, s3])")
 }
 
 // ============================================================
 // Helpers
 // ============================================================
+
+fn builtin_unit_value(args: &[Value]) -> Result<Value> {
+    arity_range("UnitValue", args, 1, 2)?;
+    if args[0].is_null() || args.get(1).is_some_and(Value::is_null) {
+        return Ok(Value::Null);
+    }
+
+    let (value, source_unit) = parse_unit_span(&args[0].to_string_val()).unwrap_or((0.0, "pt"));
+    let target_unit = args.get(1).map_or(source_unit, |value| {
+        normalize_unit_name(&value.to_string_val()).unwrap_or(source_unit)
+    });
+    let points = value * unit_to_points(source_unit);
+    Ok(Value::Number(points / unit_to_points(target_unit)))
+}
+
+fn builtin_unit_type(args: &[Value]) -> Result<Value> {
+    arity("UnitType", args, 1)?;
+    if args[0].is_null() {
+        return Ok(Value::Null);
+    }
+    Ok(Value::String(
+        parse_unit_span(&args[0].to_string_val())
+            .map(|(_, unit)| unit.to_string())
+            .unwrap_or_default(),
+    ))
+}
+
+static UUID_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn parse_unit_span(text: &str) -> Option<(f64, &'static str)> {
+    let trimmed = text.trim();
+    let split_at = trimmed
+        .find(|c: char| !(c.is_ascii_digit() || matches!(c, '+' | '-' | '.')))
+        .unwrap_or(trimmed.len());
+    let value = trimmed[..split_at].trim().parse::<f64>().ok()?;
+    let unit = normalize_unit_name(trimmed[split_at..].trim())?;
+    Some((value, unit))
+}
+
+fn normalize_unit_name(unit: &str) -> Option<&'static str> {
+    match unit.to_ascii_lowercase().as_str() {
+        "in" | "inch" | "inches" => Some("in"),
+        "mm" | "millimeter" | "millimeters" => Some("mm"),
+        "cm" | "centimeter" | "centimeters" => Some("cm"),
+        "pt" | "point" | "points" => Some("pt"),
+        "mp" | "millipoint" | "millipoints" => Some("mp"),
+        _ => None,
+    }
+}
+
+fn unit_to_points(unit: &str) -> f64 {
+    match unit {
+        "in" => 72.0,
+        "mm" => 72.0 / 25.4,
+        "cm" => 72.0 / 2.54,
+        "pt" => 1.0,
+        "mp" => 1.0 / 1000.0,
+        _ => 1.0,
+    }
+}
 
 fn number_to_words(n: i64) -> String {
     if n == 0 {
@@ -887,13 +1618,22 @@ mod tests {
 
     #[test]
     fn test_date2num_and_num2date() {
-        let days = call_builtin("Date2Num", &[Value::String("2026-03-04".to_string())])
-            .unwrap()
-            .unwrap();
+        let days = call_builtin(
+            "Date2Num",
+            &[
+                Value::String("2026-03-04".to_string()),
+                Value::String("YYYY-MM-DD".to_string()),
+            ],
+        )
+        .unwrap()
+        .unwrap();
         // Round-trip
-        let date = call_builtin("Num2Date", std::slice::from_ref(&days))
-            .unwrap()
-            .unwrap();
+        let date = call_builtin(
+            "Num2Date",
+            &[days.clone(), Value::String("YYYY-MM-DD".to_string())],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(date, Value::String("2026-03-04".to_string()));
     }
 
@@ -902,18 +1642,29 @@ mod tests {
         let ms = call_builtin("Time2Num", &[Value::String("14:30:00".to_string())])
             .unwrap()
             .unwrap();
-        assert_eq!(ms, Value::Number(52200000.0)); // 14*3600000 + 30*60000
+        assert_eq!(ms, Value::Number(52200001.0)); // 1-based epoch
 
-        let time = call_builtin("Num2Time", &[ms]).unwrap().unwrap();
+        let time = call_builtin(
+            "Num2Time",
+            &[ms, Value::String("HH:MM:SS".to_string())],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(time, Value::String("14:30:00".to_string()));
     }
 
     #[test]
     fn test_date_epoch() {
         // 1900-01-01 should be day 1
-        let d = call_builtin("Date2Num", &[Value::String("1900-01-01".to_string())])
-            .unwrap()
-            .unwrap();
+        let d = call_builtin(
+            "Date2Num",
+            &[
+                Value::String("1900-01-01".to_string()),
+                Value::String("YYYY-MM-DD".to_string()),
+            ],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(d, Value::Number(1.0));
     }
 

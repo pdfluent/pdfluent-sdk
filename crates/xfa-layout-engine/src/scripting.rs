@@ -1,8 +1,13 @@
 //! Scripting integration — run FormCalc calculate/validate scripts on form fields.
 //!
-//! Implements the XFA §14.3.2 event model for calculate and validate events.
+//! Implements XFA Spec 3.3 §14.3.2 event model for calculate and validate events.
 //! Before layout, the engine executes calculate scripts on fields to compute
 //! derived values, then optionally runs validate scripts to check constraints.
+//!
+//! NOTE: This module handles simple calculate/validate scripts with a flat
+//! interpreter.  The more advanced dynamic scripting (initialize events,
+//! SOM-based field resolution, presence toggling) lives in
+//! `pdf-xfa/src/dynamic.rs` which uses the full FormTree SOM resolver.
 
 use crate::form::{FormNodeId, FormNodeType, FormTree};
 

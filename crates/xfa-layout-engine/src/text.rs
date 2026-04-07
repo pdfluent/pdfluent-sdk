@@ -2,6 +2,13 @@
 //!
 //! Provides text measurement for layout using per-character width tables
 //! derived from Adobe Font Metrics (AFM) for standard PDF fonts.
+//!
+//! XFA Spec 3.3 §8.1 — Text Placement in Growable Containers (p277-279):
+//! - Growable width: text records interpreted as lines, width = longest line.
+//! - Growable height: container increases height to accommodate text.
+//! - Text split between lines only (§8.7 p291), NOT within a line.
+//! - Orphan/widow controls may restrict split points (TODO: not implemented).
+//! - Text within rotated containers cannot be split (TODO: not checked).
 
 use crate::types::{Size, TextAlign};
 
@@ -88,6 +95,11 @@ impl FontMetrics {
     }
 
     /// Uses resolved ascender/descender when available, else `size * 1.2`.
+    ///
+    /// XFA Spec 3.3 §28.1 (p1228) — Adobe Non-conformance: Font metrics.
+    /// Adobe's AXTE text engine ignores font-supplied line gap and uses 20% of
+    /// font height. Our approach matches: (asc−desc)/upem gives the em-square
+    /// height (no line gap added), and the fallback is size × 1.2 (20% extra).
     pub fn line_height_pt(&self) -> f64 {
         if let (Some(asc), Some(desc), Some(upem)) = (
             self.resolved_ascender,
