@@ -53,7 +53,8 @@ fn merge_node(data: &FormData, tree: &mut FormTree, node_id: FormNodeId, parent_
         FormNodeType::Draw(..) => {
             if let Some(value) = data.fields.get(&path) {
                 let string_value = field_value_to_string(value);
-                tree.get_mut(node_id).node_type = FormNodeType::Draw(DrawContent::Text(string_value));
+                tree.get_mut(node_id).node_type =
+                    FormNodeType::Draw(DrawContent::Text(string_value));
             }
         }
         FormNodeType::Image { .. } => {
@@ -137,7 +138,8 @@ fn merge_instance(
             FormNodeType::Draw(..) => {
                 if let Some(value) = instance_data.get(&child_name) {
                     let string_value = field_value_to_string(value);
-                    tree.get_mut(child_id).node_type = FormNodeType::Draw(DrawContent::Text(string_value));
+                    tree.get_mut(child_id).node_type =
+                        FormNodeType::Draw(DrawContent::Text(string_value));
                 }
             }
             FormNodeType::Subform => {

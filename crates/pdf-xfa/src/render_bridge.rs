@@ -246,9 +246,7 @@ fn render_nodes(
                 FieldKind::Checkbox => {
                     render_checkbox(abs_x, pdf_y, w, h, value, &node_config, ops)
                 }
-                FieldKind::Radio => {
-                    render_radio(abs_x, pdf_y, w, h, value, &node_config, ops)
-                }
+                FieldKind::Radio => render_radio(abs_x, pdf_y, w, h, value, &node_config, ops),
                 FieldKind::Dropdown => render_dropdown(
                     abs_x,
                     pdf_y,
@@ -944,10 +942,7 @@ fn render_radio(
         ops,
         format_args!(
             "q\n{:.2} w\n{:.3} {:.3} {:.3} RG\n",
-            bw,
-            config.border_color[0],
-            config.border_color[1],
-            config.border_color[2],
+            bw, config.border_color[0], config.border_color[1], config.border_color[2],
         ),
     );
     write_ops(
@@ -959,11 +954,32 @@ fn render_radio(
              {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
              {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
              S\n",
-            cx + r, cy,
-            cx + r, cy + ky, cx + kx, cy + r, cx, cy + r,
-            cx - kx, cy + r, cx - r, cy + ky, cx - r, cy,
-            cx - r, cy - ky, cx - kx, cy - r, cx, cy - r,
-            cx + kx, cy - r, cx + r, cy - ky, cx + r, cy,
+            cx + r,
+            cy,
+            cx + r,
+            cy + ky,
+            cx + kx,
+            cy + r,
+            cx,
+            cy + r,
+            cx - kx,
+            cy + r,
+            cx - r,
+            cy + ky,
+            cx - r,
+            cy,
+            cx - r,
+            cy - ky,
+            cx - kx,
+            cy - r,
+            cx,
+            cy - r,
+            cx + kx,
+            cy - r,
+            cx + r,
+            cy - ky,
+            cx + r,
+            cy,
         ),
     );
 
@@ -986,12 +1002,35 @@ fn render_radio(
                  {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
                  {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
                  f\n",
-                config.text_color[0], config.text_color[1], config.text_color[2],
-                cx + ir, cy,
-                cx + ir, cy + iky, cx + ikx, cy + ir, cx, cy + ir,
-                cx - ikx, cy + ir, cx - ir, cy + iky, cx - ir, cy,
-                cx - ir, cy - iky, cx - ikx, cy - ir, cx, cy - ir,
-                cx + ikx, cy - ir, cx + ir, cy - iky, cx + ir, cy,
+                config.text_color[0],
+                config.text_color[1],
+                config.text_color[2],
+                cx + ir,
+                cy,
+                cx + ir,
+                cy + iky,
+                cx + ikx,
+                cy + ir,
+                cx,
+                cy + ir,
+                cx - ikx,
+                cy + ir,
+                cx - ir,
+                cy + iky,
+                cx - ir,
+                cy,
+                cx - ir,
+                cy - iky,
+                cx - ikx,
+                cy - ir,
+                cx,
+                cy - ir,
+                cx + ikx,
+                cy - ir,
+                cx + ir,
+                cy - iky,
+                cx + ir,
+                cy,
             ),
         );
     }
