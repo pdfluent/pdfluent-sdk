@@ -741,6 +741,16 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 _ => VerticalAlign::Top,
             });
         }
+        // XFA Spec 3.3 §8.3 (p282-284) — hAlign positions child within parent
+        // layout container. Stored separately from FontMetrics.text_align which
+        // controls text rendering alignment within the element itself.
+        if let Some(ha) = attr(para, "hAlign") {
+            style.h_align = Some(match ha {
+                "center" => TextAlign::Center,
+                "right" => TextAlign::Right,
+                _ => TextAlign::Left,
+            });
+        }
     }
 
     // Parse <border><corner> for border radius and <border><edge> for border style.
