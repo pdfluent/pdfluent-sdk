@@ -4,9 +4,29 @@
 //! Supports positioned layout and flowed layout (tb, lr-tb, rl-tb).
 
 use crate::error::Result;
-use crate::form::{ContentArea, DrawContent, FormNode, FormNodeId, FormNodeType, FormTree};
+use crate::form::{
+    ContentArea, DrawContent, FieldKind, FormNode, FormNodeId, FormNodeMeta, FormNodeType, FormTree,
+};
 use crate::text::{self, FontFamily};
 use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
+
+/// Resolve the display value for a choice list field.
+///
+/// If the field has save-items and the current value matches one of them,
+/// return the corresponding display-item. Otherwise return the value as-is.
+fn resolve_display_value<'a>(value: &'a str, meta: &'a FormNodeMeta) -> &'a str {
+    if meta.field_kind != FieldKind::Dropdown || value.is_empty() {
+        return value;
+    }
+    if !meta.save_items.is_empty() {
+        if let Some(idx) = meta.save_items.iter().position(|s| s == value) {
+            if let Some(display) = meta.display_items.get(idx) {
+                return display.as_str();
+            }
+        }
+    }
+    value
+}
 
 /// A unique identifier for a layout node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -215,8 +235,7 @@ impl<'a> LayoutEngine<'a> {
                     if pages.len() >= MAX_PAGES {
                         eprintln!(
                             "WARNING: Max page limit ({}) reached, truncating layout overflow for {}",
-                            MAX_PAGES,
-                            root_node.name
+                            MAX_PAGES, root_node.name
                         );
                         break;
                     }
@@ -980,12 +999,15 @@ impl<'a> LayoutEngine<'a> {
         }
 
         let content = match &node.node_type {
-            FormNodeType::Field { value } => LayoutContent::Field {
-                value: value.clone(),
-                field_kind: self.form.meta(id).field_kind,
-                font_size: node.font.size,
-                font_family: node.font.typeface,
-            },
+            FormNodeType::Field { value } => {
+                let meta = self.form.meta(id);
+                LayoutContent::Field {
+                    value: resolve_display_value(value, meta).to_string(),
+                    field_kind: meta.field_kind,
+                    font_size: node.font.size,
+                    font_family: node.font.typeface,
+                }
+            }
             FormNodeType::Draw(DrawContent::Text(content)) => LayoutContent::Text(content.clone()),
             FormNodeType::Draw(dc) => LayoutContent::Draw(dc.clone()),
             _ => LayoutContent::None,
@@ -1075,13 +1097,8 @@ impl<'a> LayoutEngine<'a> {
 
             if child_bottom <= remaining_height + 1.0 {
                 // Child fits on this page -- place at shifted position.
-                let child_node = self.layout_single_node(
-                    child_id,
-                    child,
-                    child.box_model.x,
-                    shifted_y,
-                    None,
-                )?;
+                let child_node =
+                    self.layout_single_node(child_id, child, child.box_model.x, shifted_y, None)?;
                 max_placed_bottom = max_placed_bottom.max(child_bottom);
                 placed_children.push(child_node);
             } else {
@@ -1091,12 +1108,15 @@ impl<'a> LayoutEngine<'a> {
         }
 
         let content = match &node.node_type {
-            FormNodeType::Field { value } => LayoutContent::Field {
-                value: value.clone(),
-                field_kind: self.form.meta(id).field_kind,
-                font_size: node.font.size,
-                font_family: node.font.typeface,
-            },
+            FormNodeType::Field { value } => {
+                let meta = self.form.meta(id);
+                LayoutContent::Field {
+                    value: resolve_display_value(value, meta).to_string(),
+                    field_kind: meta.field_kind,
+                    font_size: node.font.size,
+                    font_family: node.font.typeface,
+                }
+            }
             FormNodeType::Draw(DrawContent::Text(content)) => LayoutContent::Text(content.clone()),
             FormNodeType::Draw(dc) => LayoutContent::Draw(dc.clone()),
             _ => LayoutContent::None,
@@ -1518,9 +1538,9 @@ impl<'a> LayoutEngine<'a> {
         extent: Size,
         children_override: Option<&[FormNodeId]>,
     ) -> Result<LayoutNode> {
-        // Non-visible nodes (hidden/invisible/inactive) reserve space but
-        // produce no visual content or children.
-        if self.form.meta(id).presence.is_not_visible() {
+        // Invisible/Inactive nodes produce no visual content or children.
+        // Hidden nodes reserve space but produce no visual content.
+        if self.form.meta(id).presence.is_layout_hidden() {
             return Ok(LayoutNode {
                 form_node: id,
                 rect: Rect::new(x, y, extent.width, extent.height),
@@ -1533,11 +1553,13 @@ impl<'a> LayoutEngine<'a> {
 
         let content = match &node.node_type {
             FormNodeType::Field { value } => {
-                if !value.is_empty() && node.children.is_empty() {
+                let meta = self.form.meta(id);
+                let display_val = resolve_display_value(value, meta);
+                if !display_val.is_empty() && node.children.is_empty() {
                     let insets_w =
                         node.box_model.margins.horizontal() + node.box_model.border_width * 2.0;
                     let max_w = (extent.width - insets_w).max(0.0);
-                    let wrapped = text::wrap_text(value, max_w, &node.font);
+                    let wrapped = text::wrap_text(display_val, max_w, &node.font);
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
                         font_size: node.font.size,
@@ -1546,8 +1568,8 @@ impl<'a> LayoutEngine<'a> {
                     }
                 } else {
                     LayoutContent::Field {
-                        value: value.clone(),
-                        field_kind: self.form.meta(id).field_kind,
+                        value: display_val.to_string(),
+                        field_kind: meta.field_kind,
                         font_size: node.font.size,
                         font_family: node.font.typeface,
                     }
@@ -1595,70 +1617,12 @@ impl<'a> LayoutEngine<'a> {
             self.layout_children(node_children, child_available, node.layout)?
         };
 
-        // Emit a child layout node for the field caption, if present.
-        let mut all_children = children;
-        if let Some(ref cap) = node.box_model.caption {
-            if !cap.text.is_empty() {
-                let bw = node.box_model.border_width;
-                let margins = &node.box_model.margins;
-                let reserve = cap.reserve.unwrap_or(0.0);
-                use crate::types::CaptionPlacement;
-                let (cx, cy, cw, ch) = match cap.placement {
-                    CaptionPlacement::Left => (
-                        margins.left + bw,
-                        margins.top + bw,
-                        reserve,
-                        extent.height - margins.vertical() - bw * 2.0,
-                    ),
-                    CaptionPlacement::Right => (
-                        extent.width - margins.right - bw - reserve,
-                        margins.top + bw,
-                        reserve,
-                        extent.height - margins.vertical() - bw * 2.0,
-                    ),
-                    CaptionPlacement::Top => (
-                        margins.left + bw,
-                        margins.top + bw,
-                        extent.width - margins.horizontal() - bw * 2.0,
-                        reserve,
-                    ),
-                    CaptionPlacement::Bottom => (
-                        margins.left + bw,
-                        extent.height - margins.bottom - bw - reserve,
-                        extent.width - margins.horizontal() - bw * 2.0,
-                        reserve,
-                    ),
-                    CaptionPlacement::Inline => (margins.left + bw, margins.top + bw, 0.0, 0.0),
-                };
-                if cw > 0.0 && ch > 0.0 {
-                    let cap_content = {
-                        let wrapped = text::wrap_text(&cap.text, cw.max(0.0), &node.font);
-                        LayoutContent::WrappedText {
-                            lines: wrapped.lines,
-                            font_size: node.font.size,
-                            text_align: node.font.text_align,
-                            font_family: node.font.typeface,
-                        }
-                    };
-                    let cap_node = LayoutNode {
-                        form_node: id,
-                        rect: Rect::new(cx, cy, cw, ch),
-                        name: format!("{}_caption", node.name),
-                        content: cap_content,
-                        children: Vec::new(),
-                        style: Default::default(),
-                    };
-                    all_children.insert(0, cap_node);
-                }
-            }
-        }
-
         Ok(LayoutNode {
             form_node: id,
             rect: Rect::new(x, y, extent.width, extent.height),
             name: node.name.clone(),
             content,
-            children: all_children,
+            children,
             style: self.form.meta(id).style.clone(),
         })
     }
@@ -4834,5 +4798,45 @@ mod tests {
 
         // Should have 3 pages (4 rows, 4 rows, 2 rows)
         assert_eq!(result.pages.len(), 3);
+    }
+
+    #[test]
+    fn resolve_display_value_maps_save_to_display() {
+        let mut meta = FormNodeMeta::default();
+        meta.field_kind = FieldKind::Dropdown;
+        meta.display_items = vec![
+            "United States".to_string(),
+            "United Kingdom".to_string(),
+            "Canada".to_string(),
+        ];
+        meta.save_items = vec!["US".to_string(), "UK".to_string(), "CA".to_string()];
+
+        // Save value "UK" should resolve to "United Kingdom"
+        assert_eq!(resolve_display_value("UK", &meta), "United Kingdom");
+        // Save value "CA" should resolve to "Canada"
+        assert_eq!(resolve_display_value("CA", &meta), "Canada");
+        // Unknown value stays as-is
+        assert_eq!(resolve_display_value("DE", &meta), "DE");
+        // Empty value stays empty
+        assert_eq!(resolve_display_value("", &meta), "");
+    }
+
+    #[test]
+    fn resolve_display_value_no_save_items_passthrough() {
+        let mut meta = FormNodeMeta::default();
+        meta.field_kind = FieldKind::Dropdown;
+        meta.display_items = vec!["Red".to_string(), "Green".to_string()];
+        // No save_items — value passes through unchanged
+        assert_eq!(resolve_display_value("Red", &meta), "Red");
+    }
+
+    #[test]
+    fn resolve_display_value_non_dropdown_passthrough() {
+        let mut meta = FormNodeMeta::default();
+        meta.field_kind = FieldKind::Text;
+        meta.save_items = vec!["US".to_string()];
+        meta.display_items = vec!["United States".to_string()];
+        // Non-dropdown field: no resolution
+        assert_eq!(resolve_display_value("US", &meta), "US");
     }
 }

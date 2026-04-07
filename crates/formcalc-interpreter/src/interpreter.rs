@@ -126,9 +126,8 @@ impl Interpreter {
     ) -> Result<Value> {
         #[allow(clippy::unnecessary_cast)]
         {
-            self.som_resolver = Some(
-                resolver as *mut dyn SomResolver as *mut (dyn SomResolver + 'static),
-            );
+            self.som_resolver =
+                Some(resolver as *mut dyn SomResolver as *mut (dyn SomResolver + 'static));
         }
         let result = self.exec(exprs);
         self.som_resolver = None;

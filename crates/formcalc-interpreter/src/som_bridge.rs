@@ -109,13 +109,12 @@ impl SomResolver for DomContext<'_> {
     }
 
     fn add_node(&mut self, parent_path: &str, name: &str, value: Value) -> Result<bool> {
-        let parents = som::resolve_data_path(self.dom, parent_path, self.current_node).map_err(
-            |e| {
+        let parents =
+            som::resolve_data_path(self.dom, parent_path, self.current_node).map_err(|e| {
                 FormCalcError::RuntimeError(format!(
                     "SOM resolution failed for '{parent_path}': {e}"
                 ))
-            },
-        )?;
+            })?;
 
         let Some(parent) = parents.first().copied() else {
             return Ok(false);
@@ -137,9 +136,9 @@ impl SomResolver for DomContext<'_> {
             return Ok(false);
         };
 
-        self.dom
-            .detach(first)
-            .map_err(|e| FormCalcError::RuntimeError(format!("RemoveNode failed for '{path}': {e}")))?;
+        self.dom.detach(first).map_err(|e| {
+            FormCalcError::RuntimeError(format!("RemoveNode failed for '{path}': {e}"))
+        })?;
 
         Ok(true)
     }
