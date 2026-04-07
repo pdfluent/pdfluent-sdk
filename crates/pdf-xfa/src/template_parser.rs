@@ -746,6 +746,13 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         if let Some(v) = attr(para, "marginRight").and_then(Measurement::parse) {
             style.margin_right_pt = Some(v.to_points());
         }
+        // XFA Spec 3.3 §17 "para" (p803) — lineHeight / textIndent.
+        if let Some(v) = attr(para, "lineHeight").and_then(Measurement::parse) {
+            style.line_height_pt = Some(v.to_points());
+        }
+        if let Some(v) = attr(para, "textIndent").and_then(Measurement::parse) {
+            style.text_indent_pt = Some(v.to_points());
+        }
         if let Some(va) = attr(para, "vAlign") {
             style.v_align = Some(match va {
                 "middle" => VerticalAlign::Middle,

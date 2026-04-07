@@ -190,11 +190,37 @@ impl<'a> FormMerger<'a> {
         };
 
         let mut meta = parse_node_meta(elem);
-        // For draw elements with exData HTML: extract font-weight from HTML
-        // styles when the XFA <font> element doesn't specify weight.
-        if tag == "draw" && meta.style.font_weight.is_none() {
-            if let Some(weight) = extract_exdata_font_weight(elem) {
-                meta.style.font_weight = Some(weight);
+        let is_draw_or_field = tag == "draw" || tag == "field";
+        if is_draw_or_field {
+            if meta.style.font_weight.is_none() {
+                if let Some(weight) = extract_exdata_font_weight(elem) {
+                    meta.style.font_weight = Some(weight);
+                }
+            }
+            if meta.style.font_style.is_none() {
+                if let Some(style) = extract_exdata_font_style(elem) {
+                    meta.style.font_style = Some(style);
+                }
+            }
+            if meta.style.font_family.is_none() {
+                if let Some(family) = extract_exdata_font_family(elem) {
+                    meta.style.font_family = Some(family);
+                }
+            }
+            if meta.style.text_color.is_none() {
+                if let Some(color) = extract_exdata_color(elem) {
+                    meta.style.text_color = Some(color);
+                }
+            }
+            if meta.style.space_above_pt.is_none() || meta.style.space_below_pt.is_none() {
+                if let Some((above, below)) = extract_exdata_margins(elem) {
+                    if meta.style.space_above_pt.is_none() {
+                        meta.style.space_above_pt = Some(above);
+                    }
+                    if meta.style.space_below_pt.is_none() {
+                        meta.style.space_below_pt = Some(below);
+                    }
+                }
             }
         }
         let id = self.form_tree.add_node_with_meta(node, meta);
@@ -366,6 +392,9 @@ impl<'a> FormMerger<'a> {
         if let Some(html_size) = extract_exdata_font_size(elem) {
             font.size = html_size;
         }
+        if let Some(css_align) = extract_exdata_text_align(elem) {
+            font.text_align = css_align;
+        }
 
         Ok(FormNode {
             name,
@@ -397,6 +426,9 @@ impl<'a> FormMerger<'a> {
         let mut font = parse_font_metrics(elem);
         if let Some(html_size) = extract_exdata_font_size(elem) {
             font.size = html_size;
+        }
+        if let Some(css_align) = extract_exdata_text_align(elem) {
+            font.text_align = css_align;
         }
 
         Ok(FormNode {
@@ -987,6 +1019,125 @@ fn parse_css_color(s: &str) -> Option<(u8, u8, u8)> {
         } else {
             None
         }
+    }
+}
+
+/// Extract the first `font-family` name from `<exData contentType="text/html">` CSS.
+/// XFA Spec 3.3 §27.5 (p1198) — Character Formatting: font-family specifies
+/// the typeface. §28.1 (p1228): Adobe uses only the first family name.
+fn extract_exdata_font_family(elem: Node<'_, '_>) -> Option<String> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let ex = find_first_child_by_name(value, "exData")?;
+    for desc in ex.descendants() {
+        if !desc.is_element() {
+            continue;
+        }
+        let style = desc.attribute("style")?;
+        for part in style.split(';') {
+            let part = part.trim();
+            if let Some(val) = part
+                .strip_prefix("font-family:")
+                .or_else(|| part.strip_prefix("font-family :"))
+            {
+                let val = val.trim();
+                let first_family = val
+                    .split(',')
+                    .next()
+                    .map(|s| s.trim().trim_matches(['"', '\'']))
+                    .filter(|s| !s.is_empty())?;
+                return Some(first_family.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Extract `text-align` from `<exData contentType="text/html">` CSS styles.
+/// XFA Spec 3.3 §27.4 (p1190-1197): text-align supports left, center, right,
+/// justify. Maps to XFA `<para hAlign>`.
+fn extract_exdata_text_align(elem: Node<'_, '_>) -> Option<TextAlign> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let ex = find_first_child_by_name(value, "exData")?;
+    for desc in ex.descendants() {
+        if !desc.is_element() {
+            continue;
+        }
+        let style = desc.attribute("style")?;
+        for part in style.split(';') {
+            let part = part.trim();
+            if let Some(val) = part
+                .strip_prefix("text-align:")
+                .or_else(|| part.strip_prefix("text-align :"))
+            {
+                let val = val.trim();
+                return Some(match val {
+                    "center" => TextAlign::Center,
+                    "right" => TextAlign::Right,
+                    "justify" => TextAlign::Justify,
+                    _ => TextAlign::Left,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Extract `margin-top` and `margin-bottom` from `<exData contentType="text/html">` CSS.
+/// XFA Spec 3.3 §27.4 (p1190-1197): margin-top maps to XFA `<para spaceAbove>`,
+/// margin-bottom maps to `<para spaceBelow>`. Returns (space_above_pt, space_below_pt).
+fn extract_exdata_margins(elem: Node<'_, '_>) -> Option<(f64, f64)> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let ex = find_first_child_by_name(value, "exData")?;
+    let mut space_above: Option<f64> = None;
+    let mut space_below: Option<f64> = None;
+    for desc in ex.descendants() {
+        if !desc.is_element() {
+            continue;
+        }
+        let style = match desc.attribute("style") {
+            Some(s) => s,
+            None => continue,
+        };
+        for part in style.split(';') {
+            let part = part.trim();
+            if space_above.is_none() {
+                if let Some(val) = part
+                    .strip_prefix("margin-top:")
+                    .or_else(|| part.strip_prefix("margin-top :"))
+                {
+                    let val = val.trim();
+                    if let Some(m) = Measurement::parse(val) {
+                        let pt = m.to_points();
+                        if pt >= 0.0 {
+                            space_above = Some(pt);
+                        }
+                    }
+                }
+            }
+            if space_below.is_none() {
+                if let Some(val) = part
+                    .strip_prefix("margin-bottom:")
+                    .or_else(|| part.strip_prefix("margin-bottom :"))
+                {
+                    let val = val.trim();
+                    if let Some(m) = Measurement::parse(val) {
+                        let pt = m.to_points();
+                        if pt >= 0.0 {
+                            space_below = Some(pt);
+                        }
+                    }
+                }
+            }
+        }
+        if space_above.is_some() && space_below.is_some() {
+            break;
+        }
+    }
+    match (space_above, space_below) {
+        (Some(above), Some(below)) => Some((above, below)),
+        (Some(above), None) => Some((above, 0.0)),
+        (None, Some(below)) => Some((0.0, below)),
+        (None, None) => None,
     }
 }
 

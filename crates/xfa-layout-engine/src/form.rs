@@ -444,6 +444,12 @@ pub struct FormNodeStyle {
     pub margin_left_pt: Option<f64>,
     /// Paragraph right margin in points (XFA `<para marginRight>`).
     pub margin_right_pt: Option<f64>,
+    /// XFA Spec 3.3 §17 "para" (p803) — lineHeight: baseline-to-baseline
+    /// distance in points. When `None`, use font metrics.
+    pub line_height_pt: Option<f64>,
+    /// XFA Spec 3.3 §17 "para" (p803) — textIndent: indentation of the first
+    /// line of each paragraph in points.
+    pub text_indent_pt: Option<f64>,
     /// Margin top inset in points (XFA `<margin topInset>`).
     pub inset_top_pt: Option<f64>,
     /// Margin bottom inset in points (XFA `<margin bottomInset>`).
@@ -494,6 +500,8 @@ impl Default for FormNodeStyle {
             space_below_pt: None,
             margin_left_pt: None,
             margin_right_pt: None,
+            line_height_pt: None,
+            text_indent_pt: None,
             inset_top_pt: None,
             inset_bottom_pt: None,
             inset_left_pt: None,

@@ -110,6 +110,8 @@ pub enum LayoutContent {
     /// Pre-wrapped text lines for rendering.
     WrappedText {
         lines: Vec<String>,
+        /// Per-line flag: `true` when the line is the first line of a paragraph.
+        first_line_of_para: Vec<bool>,
         font_size: f64,
         /// Horizontal text alignment (from XFA `<para hAlign>`).
         text_align: TextAlign,
@@ -1742,9 +1744,10 @@ impl<'a> LayoutEngine<'a> {
                     let insets_w =
                         node.box_model.margins.horizontal() + node.box_model.border_width * 2.0;
                     let max_w = (extent.width - insets_w).max(0.0);
-                    let wrapped = text::wrap_text(display_val, max_w, &node.font);
+                    let wrapped = text::wrap_text(display_val, max_w, &node.font, 0.0, None);
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
+                        first_line_of_para: wrapped.first_line_of_para,
                         font_size: node.font.size,
                         text_align: node.font.text_align,
                         font_family: node.font.typeface,
@@ -1763,9 +1766,10 @@ impl<'a> LayoutEngine<'a> {
                     let insets_w =
                         node.box_model.margins.horizontal() + node.box_model.border_width * 2.0;
                     let max_w = (extent.width - insets_w).max(0.0);
-                    let wrapped = text::wrap_text(content, max_w, &node.font);
+                    let wrapped = text::wrap_text(content, max_w, &node.font, 0.0, None);
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
+                        first_line_of_para: wrapped.first_line_of_para,
                         font_size: node.font.size,
                         text_align: node.font.text_align,
                         font_family: node.font.typeface,
@@ -1940,10 +1944,10 @@ impl<'a> LayoutEngine<'a> {
                     // If width is growable, measure without wrapping
                     let text_size = if let Some(w) = bm.width {
                         let max_text_width = (w - insets_w).max(0.0);
-                        text::wrap_text(txt, max_text_width, &node.font).size
+                        text::wrap_text(txt, max_text_width, &node.font, 0.0, None).size
                     } else if let Some(avail) = available {
                         let max_text_width = (avail.width - insets_w).max(0.0);
-                        text::wrap_text(txt, max_text_width, &node.font).size
+                        text::wrap_text(txt, max_text_width, &node.font, 0.0, None).size
                     } else {
                         text::measure_text(txt, &node.font)
                     };
