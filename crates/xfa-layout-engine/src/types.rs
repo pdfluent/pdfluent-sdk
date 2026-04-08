@@ -4,7 +4,7 @@
 
 /// Shared default horizontal text padding, applied per side when paragraph
 /// margins are not explicitly set.
-pub const DEFAULT_TEXT_PADDING: f64 = 1.0;
+pub const DEFAULT_TEXT_PADDING: f64 = 0.0;
 
 /// A 2D point in layout coordinates (points, 1pt = 1/72 inch).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

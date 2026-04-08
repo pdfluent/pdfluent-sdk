@@ -981,10 +981,10 @@ mod tests {
             .find(|c| matches!(c, XfaPaintCommand::DrawText { .. }));
         assert!(text_cmd.is_some());
         if let Some(XfaPaintCommand::DrawText { x, .. }) = text_cmd {
-            // x should be 60 + text_padding (default 1.0)
+            // x should be 60 (no default padding per XFA spec)
             assert!(
-                (*x - 61.0).abs() < 0.1,
-                "child x should be parent(50) + child(10) + padding(1) = 61, got {}",
+                (*x - 60.0).abs() < 0.1,
+                "child x should be parent(50) + child(10) = 60, got {}",
                 x
             );
         }
