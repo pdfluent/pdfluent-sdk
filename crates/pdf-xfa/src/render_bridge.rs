@@ -277,6 +277,14 @@ fn render_nodes(
             }
         }
 
+        // XFA §8 — Clip content to the node's declared bounds so that
+        // text in fixed-height fields cannot overflow into adjacent nodes.
+        ops.extend_from_slice(b"q\n");
+        write_ops(
+            ops,
+            format_args!("{:.2} {:.2} {:.2} {:.2} re W n\n", abs_x, pdf_y, w, h),
+        );
+
         let is_bold = node.style.font_weight.as_deref() == Some("bold");
 
         // Render caption for any node that has caption_text in its style.
@@ -491,6 +499,9 @@ fn render_nodes(
             }
             LayoutContent::None => {}
         }
+
+        // Restore graphics state (removes per-node clip rect).
+        ops.extend_from_slice(b"Q\n");
 
         if !node.children.is_empty() {
             // Children are laid out relative to the content area (after insets),
@@ -970,8 +981,8 @@ fn render_field(
         };
         // Insets already applied by render_nodes — x, w, h are the value
         // area inside margin insets.  Only para marginLeft/Right apply here.
-        let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
-        let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
+        let pad_left = node_style.margin_left_pt.unwrap_or(0.0);
+        let pad_right = node_style.margin_right_pt.unwrap_or(0.0);
         let space_above = node_style.space_above_pt.unwrap_or(0.0);
         let content_w = (w - pad_left - pad_right).max(0.0);
         let metrics = build_font_metrics(fs, font_family, node_style, config);
@@ -1720,8 +1731,8 @@ fn render_multiline(
     }
     // Insets already applied by render_nodes — x, container_width, and
     // abs_y_xfa are the value area inside margin insets.
-    let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
-    let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
+    let pad_left = node_style.margin_left_pt.unwrap_or(0.0);
+    let pad_right = node_style.margin_right_pt.unwrap_or(0.0);
     let space_above = node_style.space_above_pt.unwrap_or(0.0);
     let text_indent = node_style.text_indent_pt.unwrap_or(0.0);
     let font_metrics = build_font_metrics(font_size, font_family, node_style, config);
@@ -1818,8 +1829,8 @@ fn render_rich_multiline(
     }
     // Insets already applied by render_nodes — x, container_width, and
     // abs_y_xfa are the value area inside margin insets.
-    let pad_left = node_style.margin_left_pt.unwrap_or(config.text_padding);
-    let pad_right = node_style.margin_right_pt.unwrap_or(config.text_padding);
+    let pad_left = node_style.margin_left_pt.unwrap_or(0.0);
+    let pad_right = node_style.margin_right_pt.unwrap_or(0.0);
     let space_above = node_style.space_above_pt.unwrap_or(0.0);
     let text_indent = node_style.text_indent_pt.unwrap_or(0.0);
     let font_metrics = build_font_metrics(font_size, font_family, node_style, config);
@@ -2601,9 +2612,9 @@ mod tests {
         };
         let s = overlay_str(&make_page(vec![parent]));
         // Child field at (0,0) rendered within parent at (100,200) with leftInset=10.
-        // Text x = parent_x + inset_left + pad_left = 100 + 10 + 1 = 111
+        // Text x = parent_x + inset_left = 100 + 10 = 110 (no default padding per XFA spec)
         assert!(
-            s.contains("111.00"),
+            s.contains("110.00"),
             "child x should include parent left inset offset: {s}"
         );
     }
@@ -2630,9 +2641,9 @@ mod tests {
             },
         };
         let s = overlay_str(&make_page(vec![node]));
-        // Text x = field_x + inset_left + pad_left = 10 + 8 + 1 = 19
+        // Text x = field_x + inset_left = 10 + 8 = 18 (no default padding per XFA spec)
         assert!(
-            s.contains("19.00"),
+            s.contains("18.00"),
             "text x should include field left inset: {s}"
         );
     }
