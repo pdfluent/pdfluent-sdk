@@ -238,7 +238,7 @@ impl<'a> LayoutEngine<'a> {
             // incorrect and causes over-pagination (e.g. 2-page output for
             // a 1-page form whose template defines two positioned subforms
             // overlaid on the same pageArea).
-            let all_content_positioned = content_queued.len() > 1
+            let multi_positioned = content_queued.len() > 1
                 && content_queued
                     .iter()
                     .all(|qn| {
@@ -247,6 +247,37 @@ impl<'a> LayoutEngine<'a> {
                             && matches!(node.node_type, FormNodeType::Subform)
                             && !qn.break_before
                     });
+
+            // #794 — Single positioned subform delegation: when there is
+            // exactly 1 content node that is a Positioned subform whose
+            // children are ALL Positioned AND fit within the page, the
+            // parent TopToBottom flow would compute the child's full
+            // envelope height and overflow to extra pages.  Delegate to
+            // positioned layout instead.  If the content overflows the
+            // page, let it paginate normally (#736).
+            let single_positioned_delegate = content_queued.len() == 1 && {
+                let qn = &content_queued[0];
+                let node = self.form.get(qn.id);
+                if node.layout == LayoutStrategy::Positioned
+                    && matches!(node.node_type, FormNodeType::Subform)
+                    && !qn.break_before
+                    && !node.children.is_empty()
+                    && node.children.iter().all(|&cid| {
+                        let child = self.form.get(cid);
+                        child.layout == LayoutStrategy::Positioned
+                    })
+                {
+                    // Check that the positioned content fits on one page.
+                    let pa = &page_areas[0];
+                    let ca = primary_content_area(pa);
+                    let child_extent = self.compute_extent(qn.id);
+                    child_extent.height <= ca.height
+                } else {
+                    false
+                }
+            };
+
+            let all_content_positioned = multi_positioned || single_positioned_delegate;
 
             if all_content_positioned {
                 let pa = &page_areas[0];
@@ -4268,6 +4299,126 @@ mod tests {
             10,
             "All 10 fields should be placed across pages"
         );
+    }
+
+    #[test]
+    fn single_positioned_child_no_overpagination() {
+        // #794: A TopToBottom root with a single Positioned child whose
+        // children are all Positioned and fit on one page should produce
+        // exactly 1 page, not 2+.
+        let mut tree = FormTree::new();
+
+        // 5 positioned fields that fit within a 792pt page
+        let mut fields = Vec::new();
+        for i in 0..5 {
+            let f = tree.add_node(FormNode {
+                name: format!("F{i}"),
+                node_type: FormNodeType::Field {
+                    value: format!("Value{i}"),
+                },
+                box_model: BoxModel {
+                    width: Some(200.0),
+                    height: Some(30.0),
+                    x: 36.0,
+                    y: 36.0 + i as f64 * 40.0,
+                    max_width: f64::MAX,
+                    max_height: f64::MAX,
+                    ..Default::default()
+                },
+                layout: LayoutStrategy::Positioned,
+                children: vec![],
+                occur: Occur::once(),
+                font: FontMetrics::default(),
+                calculate: None,
+                validate: None,
+                column_widths: vec![],
+                col_span: 1,
+            });
+            fields.push(f);
+        }
+
+        // Positioned subform containing all fields — fits on one page
+        let positioned = tree.add_node(FormNode {
+            name: "PageSubform".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(612.0),
+                height: Some(792.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: fields,
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 612.0,
+                    height: 792.0,
+                    leader: None,
+                    trailer: None,
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(612.0),
+                height: Some(792.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![page_area, positioned],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(
+            result.pages.len(),
+            1,
+            "Single positioned child fitting on one page should produce 1 page, got {}",
+            result.pages.len()
+        );
+
+        // All 5 fields should be on the single page
+        let leaf_count = count_leaf_nodes(&result.pages[0]);
+        assert_eq!(leaf_count, 5, "All 5 fields should be placed on page 1");
     }
 
     #[test]
