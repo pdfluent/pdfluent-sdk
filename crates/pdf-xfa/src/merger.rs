@@ -1685,6 +1685,7 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
     };
     for child in ui.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
+            "button" => return FieldKind::Button,
             "checkButton" => return FieldKind::Checkbox,
             "choiceList" => return FieldKind::Dropdown,
             "dateTimeEdit" => return FieldKind::DateTimePicker,

@@ -284,7 +284,16 @@ fn render_nodes(
             .map_or(false, |w| w == "bold");
 
         // Render caption for any node that has caption_text in its style.
-        if node.style.caption_text.is_some() {
+        // For Button fields, skip the external caption — the caption text is
+        // used as the button label rendered inside the button body instead.
+        let is_button = matches!(
+            &node.content,
+            LayoutContent::Field {
+                field_kind: FieldKind::Button,
+                ..
+            }
+        );
+        if node.style.caption_text.is_some() && !is_button {
             let (cap_fs, cap_ff) = match &node.content {
                 LayoutContent::Field {
                     font_size,
@@ -339,18 +348,32 @@ fn render_nodes(
                     &node_config,
                     ops,
                 ),
-                FieldKind::Button => render_button(
-                    val_x,
-                    val_pdf_y,
-                    val_w,
-                    val_h,
-                    value,
-                    *font_size,
-                    *font_family,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
+                FieldKind::Button => {
+                    // XFA buttons use their <caption> as the button label.
+                    // When the field value is empty (typical for buttons), fall
+                    // back to the caption text so the label renders centered
+                    // inside the button body.
+                    let label = if value.is_empty() {
+                        node.style
+                            .caption_text
+                            .as_deref()
+                            .unwrap_or("")
+                    } else {
+                        value
+                    };
+                    render_button(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        label,
+                        *font_size,
+                        *font_family,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    )
+                }
                 FieldKind::Signature => render_signature(
                     val_x,
                     val_pdf_y,
