@@ -661,6 +661,39 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 edge_visible(&edges[3]),
             ],
         };
+        let default_thickness = style.border_width_pt.unwrap_or(0.5);
+        let edge_thickness = |edge: roxmltree::Node<'_, '_>| -> f64 {
+            attr(edge, "thickness")
+                .and_then(Measurement::parse)
+                .map(|m| m.to_points())
+                .unwrap_or(default_thickness)
+        };
+        let per_edge_widths = match edges.len() {
+            0 | 1 => None,
+            2 => Some([
+                edge_thickness(edges[0]),
+                edge_thickness(edges[1]),
+                edge_thickness(edges[0]),
+                edge_thickness(edges[1]),
+            ]),
+            3 => Some([
+                edge_thickness(edges[0]),
+                edge_thickness(edges[1]),
+                edge_thickness(edges[2]),
+                edge_thickness(edges[1]),
+            ]),
+            _ => Some([
+                edge_thickness(edges[0]),
+                edge_thickness(edges[1]),
+                edge_thickness(edges[2]),
+                edge_thickness(edges[3]),
+            ]),
+        };
+        if let Some(widths) = per_edge_widths {
+            if !(widths[0] == widths[1] && widths[1] == widths[2] && widths[2] == widths[3]) {
+                style.border_widths = Some(widths);
+            }
+        }
         // Also parse <border><fill><color .../> for border background (field bg).
         // Skip when fill has presence="hidden"/"invisible"/"inactive".
         if style.bg_color.is_none() {
@@ -2637,5 +2670,36 @@ mod tests {
         let meta = tree.meta(id);
         assert_eq!(meta.field_kind, FieldKind::Checkbox);
         assert_eq!(meta.style.check_button_mark.as_deref(), Some("circle"));
+    }
+
+    #[test]
+    fn border_widths_parsed_from_per_edge_template_border() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="root" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="8in" h="10in"/>
+      </pageArea>
+    </pageSet>
+    <field name="amount" w="2in" h="0.3in">
+      <ui><textEdit/></ui>
+      <value><text>42</text></value>
+      <border>
+        <edge thickness="1pt"/>
+        <edge thickness="2pt"/>
+        <edge thickness="3pt"/>
+        <edge thickness="4pt"/>
+      </border>
+    </field>
+  </subform>
+</template>"#;
+
+        let (tree, root_id) = parse_template(xml, None).unwrap();
+        let id = find_node_id_by_name(&tree, root_id, "amount").unwrap();
+        let style = &tree.meta(id).style;
+
+        assert_eq!(style.border_width_pt, Some(1.0));
+        assert_eq!(style.border_widths, Some([1.0, 2.0, 3.0, 4.0]));
     }
 }
