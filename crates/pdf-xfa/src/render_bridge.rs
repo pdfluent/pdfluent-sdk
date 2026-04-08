@@ -365,7 +365,16 @@ fn render_nodes(
             },
             LayoutContent::Text(text) => {
                 let inner_pdf_y = mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h);
-                render_text(abs_x + inset_l, inner_pdf_y, inner_w, inner_h, text, &node.style, &node_config, ops)
+                render_text(
+                    abs_x + inset_l,
+                    inner_pdf_y,
+                    inner_w,
+                    inner_h,
+                    text,
+                    &node.style,
+                    &node_config,
+                    ops,
+                )
             }
             LayoutContent::WrappedText {
                 lines,
@@ -940,12 +949,7 @@ fn render_field(
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
-                format_args!(
-                    "{:.2} {:.2} Td\n{} Tj\n",
-                    x + pad_left,
-                    text_y,
-                    encoded
-                ),
+                format_args!("{:.2} {:.2} Td\n{} Tj\n", x + pad_left, text_y, encoded),
             );
             reset_text_style_ops(node_style, ops);
             reset_synthetic_bold_ops(node_style, font_ref, ops);
@@ -1580,12 +1584,7 @@ fn render_text(
     emit_synthetic_bold_ops(node_style, font_ref, fs, &tc, ops);
     write_ops(
         ops,
-        format_args!(
-            "{:.2} {:.2} Td\n{} Tj\n",
-            x + p,
-            text_y,
-            encoded
-        ),
+        format_args!("{:.2} {:.2} Td\n{} Tj\n", x + p, text_y, encoded),
     );
     reset_synthetic_bold_ops(node_style, font_ref, ops);
     ops.extend_from_slice(b"ET\n");
@@ -1699,11 +1698,12 @@ fn render_multiline(
     let total_text_h = lines.len() as f64 * line_height;
     let first_line_y_xfa = match node_style.v_align {
         Some(VerticalAlign::Middle) => {
-            abs_y_xfa + space_above + (container_height - space_above - total_text_h) / 2.0 + ascender_pt
+            abs_y_xfa
+                + space_above
+                + (container_height - space_above - total_text_h) / 2.0
+                + ascender_pt
         }
-        Some(VerticalAlign::Bottom) => {
-            abs_y_xfa + container_height - total_text_h + ascender_pt
-        }
+        Some(VerticalAlign::Bottom) => abs_y_xfa + container_height - total_text_h + ascender_pt,
         _ => abs_y_xfa + space_above + ascender_pt,
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(first_line_y_xfa, 0.0);
@@ -1717,9 +1717,7 @@ fn render_multiline(
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => {
-                x + pad_left
-                    + indent_offset
-                    + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
+                x + pad_left + indent_offset + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
             }
             TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
             _ => x + pad_left + indent_offset,
@@ -1786,9 +1784,7 @@ fn render_rich_multiline(
         Some(VerticalAlign::Middle) => {
             abs_y_xfa + space_above + (container_height - space_above - total_text_h) / 2.0 + asc_pt
         }
-        Some(VerticalAlign::Bottom) => {
-            abs_y_xfa + container_height - total_text_h + asc_pt
-        }
+        Some(VerticalAlign::Bottom) => abs_y_xfa + container_height - total_text_h + asc_pt,
         _ => abs_y_xfa + space_above + asc_pt,
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(first_line_y_xfa, 0.0);
@@ -1823,9 +1819,7 @@ fn render_rich_multiline(
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => {
-                x + pad_left
-                    + indent_offset
-                    + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
+                x + pad_left + indent_offset + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
             }
             TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
             _ => x + pad_left + indent_offset,
@@ -1965,18 +1959,20 @@ fn map_spans_to_lines(spans: &[RichTextSpan], lines: &[String]) -> Vec<Vec<LineS
             let line_rest = &line[line_pos..];
 
             let common = line_rest
-                .bytes()
-                .zip(span_rest.bytes())
+                .chars()
+                .zip(span_rest.chars())
                 .take_while(|(a, b)| a == b)
                 .count();
 
             if common > 0 {
+                let common_str: String = line_rest.chars().take(common).collect();
+                let common_byte_len = common_str.len();
                 segs.push(LineSpanSegment {
-                    text: line_rest[..common].to_string(),
+                    text: common_str,
                     span_idx,
                 });
-                line_pos += common;
-                span_off += common;
+                line_pos += common_byte_len;
+                span_off += common_byte_len;
                 if span_off >= span.text.len() {
                     span_idx += 1;
                     span_off = 0;
