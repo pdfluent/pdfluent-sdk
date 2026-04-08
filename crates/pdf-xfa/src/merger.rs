@@ -1764,6 +1764,22 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 if !(top == bottom && bottom == left && left == right) {
                     style.border_colors = Some([top, right, bottom, left]);
                 }
+
+                let default_thickness = style.border_width_pt.unwrap_or(0.5);
+                let edge_thickness = |idx: usize| -> f64 {
+                    let e = edge_elems.get(idx).copied().unwrap_or(edge_elems[0]);
+                    attr(e, "thickness")
+                        .and_then(|t| Measurement::parse(t))
+                        .map(|m: Measurement| m.to_points())
+                        .unwrap_or(default_thickness)
+                };
+                let top_t = edge_thickness(0);
+                let bottom_t = edge_thickness(1);
+                let left_t = edge_thickness(2);
+                let right_t = edge_thickness(3);
+                if !(top_t == bottom_t && bottom_t == left_t && left_t == right_t) {
+                    style.border_widths = Some([top_t, right_t, bottom_t, left_t]);
+                }
             }
         }
         if style.bg_color.is_none() {

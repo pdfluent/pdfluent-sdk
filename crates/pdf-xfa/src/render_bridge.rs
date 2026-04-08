@@ -251,15 +251,26 @@ fn render_nodes(
                     let per_edge = node.style.border_colors.map(|cs| {
                         cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
                     });
+                    let per_edge_widths = node.style.border_widths.as_ref();
                     apply_border_dash(ops, border_style);
                     let edges = node.style.border_edges;
-                    if per_edge.is_some() {
-                        emit_individual_edges(ops, bx, by, bw, bh, &edges, per_edge.as_ref());
+                    if per_edge.is_some() || per_edge_widths.is_some() {
+                        emit_individual_edges(
+                            ops,
+                            bx,
+                            by,
+                            bw,
+                            bh,
+                            &edges,
+                            per_edge.as_ref(),
+                            per_edge_widths,
+                            bwid,
+                        );
                     } else if edges[0] && edges[1] && edges[2] && edges[3] {
                         emit_rect_path(ops, bx, by, bw, bh, border_radius);
                         ops.extend_from_slice(b"S\n");
                     } else {
-                        emit_individual_edges(ops, bx, by, bw, bh, &edges, None);
+                        emit_individual_edges(ops, bx, by, bw, bh, &edges, None, None, bwid);
                     }
                     reset_border_dash(ops, border_style);
                 }
@@ -544,7 +555,7 @@ fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64
     }
 }
 
-/// Draw individual border edges with optional per-edge colors.
+/// Draw individual border edges with optional per-edge colors and widths.
 fn emit_individual_edges(
     ops: &mut Vec<u8>,
     x: f64,
@@ -553,13 +564,18 @@ fn emit_individual_edges(
     h: f64,
     edges: &[bool; 4],
     colors: Option<&[[f64; 3]; 4]>,
+    widths: Option<&[f64; 4]>,
+    default_width: f64,
 ) {
     if edges[0] {
+        let ww = widths.map(|w| w[0]).unwrap_or(default_width);
         if let Some(c) = colors.map(|c| &c[0]) {
             write_ops(
                 ops,
-                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+                format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", ww, c[0], c[1], c[2]),
             );
+        } else {
+            write_ops(ops, format_args!("{:.2} w\n", ww));
         }
         write_ops(
             ops,
@@ -567,11 +583,14 @@ fn emit_individual_edges(
         );
     }
     if edges[1] {
+        let ww = widths.map(|w| w[1]).unwrap_or(default_width);
         if let Some(c) = colors.map(|c| &c[1]) {
             write_ops(
                 ops,
-                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+                format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", ww, c[0], c[1], c[2]),
             );
+        } else {
+            write_ops(ops, format_args!("{:.2} w\n", ww));
         }
         write_ops(
             ops,
@@ -579,11 +598,14 @@ fn emit_individual_edges(
         );
     }
     if edges[2] {
+        let ww = widths.map(|w| w[2]).unwrap_or(default_width);
         if let Some(c) = colors.map(|c| &c[2]) {
             write_ops(
                 ops,
-                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+                format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", ww, c[0], c[1], c[2]),
             );
+        } else {
+            write_ops(ops, format_args!("{:.2} w\n", ww));
         }
         write_ops(
             ops,
@@ -591,11 +613,14 @@ fn emit_individual_edges(
         );
     }
     if edges[3] {
+        let ww = widths.map(|w| w[3]).unwrap_or(default_width);
         if let Some(c) = colors.map(|c| &c[3]) {
             write_ops(
                 ops,
-                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+                format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", ww, c[0], c[1], c[2]),
             );
+        } else {
+            write_ops(ops, format_args!("{:.2} w\n", ww));
         }
         write_ops(
             ops,
@@ -897,15 +922,26 @@ fn render_field(
         let per_edge = node_style
             .border_colors
             .map(|cs| cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]));
+        let per_edge_widths = node_style.border_widths.as_ref();
         apply_border_dash(ops, border_style);
         let edges = node_style.border_edges;
-        if per_edge.is_some() {
-            emit_individual_edges(ops, x, pdf_y, w, h, &edges, per_edge.as_ref());
+        if per_edge.is_some() || per_edge_widths.is_some() {
+            emit_individual_edges(
+                ops,
+                x,
+                pdf_y,
+                w,
+                h,
+                &edges,
+                per_edge.as_ref(),
+                per_edge_widths,
+                config.border_width,
+            );
         } else if edges[0] && edges[1] && edges[2] && edges[3] {
             emit_rect_path(ops, x, pdf_y, w, h, border_radius);
             ops.extend_from_slice(b"S\n");
         } else {
-            emit_individual_edges(ops, x, pdf_y, w, h, &edges, None);
+            emit_individual_edges(ops, x, pdf_y, w, h, &edges, None, None, config.border_width);
         }
         reset_border_dash(ops, border_style);
     }
