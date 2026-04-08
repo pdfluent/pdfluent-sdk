@@ -2489,6 +2489,29 @@ mod tests {
         }
     }
 
+    fn make_styled_button(
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        value: &str,
+        style: FormNodeStyle,
+    ) -> LayoutNode {
+        LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(x, y, w, h),
+            name: "button".to_string(),
+            content: LayoutContent::Field {
+                value: value.to_string(),
+                field_kind: FieldKind::Button,
+                font_size: 10.0,
+                font_family: FontFamily::Serif,
+            },
+            children: vec![],
+            style,
+        }
+    }
+
     #[test]
     fn coordinate_mapping() {
         let mapper = CoordinateMapper::new(792.0, 612.0);
@@ -2563,6 +2586,22 @@ mod tests {
         let s = styled_overlay_str(make_styled_field(10.0, 10.0, 100.0, 20.0, "Hi", style));
         assert!(s.contains(" c\n"), "expected Bezier");
         assert!(s.contains("h\n"), "expected close-path");
+    }
+
+    #[test]
+    fn button_default_border_radius_is_zero() {
+        let s = styled_overlay_str(make_styled_button(
+            10.0,
+            10.0,
+            100.0,
+            20.0,
+            "Click",
+            FormNodeStyle::default(),
+        ));
+        assert!(
+            !s.contains(" c\n"),
+            "default button border radius should stay square: {s}"
+        );
     }
 
     #[test]
@@ -2739,6 +2778,68 @@ mod tests {
         assert!(
             s.contains("18.00"),
             "text x should include field left inset: {s}"
+        );
+    }
+
+    #[test]
+    fn checkbox_border_width_respects_style() {
+        let s = styled_overlay_str(make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "0",
+            FormNodeStyle {
+                border_width_pt: Some(0.25),
+                ..Default::default()
+            },
+        ));
+        assert!(
+            s.contains("\n0.25 w\n"),
+            "checkbox should use styled border width: {s}"
+        );
+        assert!(
+            !s.contains("\n0.50 w\n"),
+            "checkbox should not fall back to default 0.5pt border width: {s}"
+        );
+        assert!(
+            !s.contains("\n1.00 w\n"),
+            "checkbox should not clamp to 1pt border width: {s}"
+        );
+    }
+
+    #[test]
+    fn container_children_y_offset_excludes_inset() {
+        let child = LayoutNode {
+            form_node: FormNodeId(1),
+            rect: Rect::new(0.0, 0.0, 50.0, 20.0),
+            name: "child-box".to_string(),
+            content: LayoutContent::None,
+            children: vec![],
+            style: FormNodeStyle {
+                border_width_pt: Some(1.0),
+                ..Default::default()
+            },
+        };
+        let parent = LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(100.0, 200.0, 200.0, 100.0),
+            name: "parent".to_string(),
+            content: LayoutContent::None,
+            children: vec![child],
+            style: FormNodeStyle {
+                inset_top_pt: Some(10.0),
+                ..Default::default()
+            },
+        };
+        let s = overlay_str(&make_page(vec![parent]));
+        assert!(
+            s.contains("100.00 572.00 50.00 20.00 re"),
+            "child y should stay anchored to parent y without inset_top offset: {s}"
+        );
+        assert!(
+            !s.contains("100.00 562.00 50.00 20.00 re"),
+            "child y should not be shifted down by parent inset_top: {s}"
         );
     }
 
