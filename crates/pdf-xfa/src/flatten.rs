@@ -366,8 +366,19 @@ fn xfa_flatten_inner(
     // The 1000-byte threshold separates minimal XFA templates (title/header
     // only, ~200-500 bytes) from full page re-renders (5000+ bytes).
     let overlay_is_substantial = overlays.iter().any(|o| o.content_stream.len() > 1000);
-    let preserve_static =
-        is_static_form || n_layout < n_existing || has_static_content && overlay_is_substantial;
+    // WHY: In GATE #22, 40+ static XFAF PDFs have a single authoritative PDF
+    // page, but our XFA layout path over-paginates them into 2-140+ synthetic
+    // pages (for example adde1473, 2e226a4e, b844b38a, bf08b73b, 01de9ce4).
+    // WHAT: When a static form starts from a 1-page PDF but XFA layout spills
+    // onto multiple pages, treat the original PDF page as authoritative and do
+    // not synthesize overflow pages from the XFA layout.
+    // WHEN: Only for static forms (`baseProfile="interactiveForms"`) where the
+    // original PDF has exactly 1 page and the XFA layout produces more than 1.
+    let static_single_page_overpagination = is_static_form && n_existing == 1 && n_layout > 1;
+    let preserve_static = is_static_form
+        || static_single_page_overpagination
+        || n_layout < n_existing
+        || has_static_content && overlay_is_substantial;
 
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
@@ -379,7 +390,12 @@ fn xfa_flatten_inner(
             // preserved pages. The XFA template only defines fields, not full
             // page layouts, so overlaying adds field values without
             // double-rendering.
-            for (i, overlay) in overlays.iter().enumerate() {
+            let static_overlay_count = if static_single_page_overpagination {
+                n_existing
+            } else {
+                n_layout
+            };
+            for (i, overlay) in overlays.iter().take(static_overlay_count).enumerate() {
                 if i < n_existing {
                     overlay_page_content(
                         &mut doc,
@@ -1927,6 +1943,41 @@ mod tests {
 </template>
 </xdp:xdp>"#;
 
+    fn overflowing_paginate_xdp(base_profile: Option<&str>) -> String {
+        let mut fields = String::new();
+        for i in 0..40 {
+            fields.push_str(&format!(
+                r#"
+      <field name="line{i}" w="7.0in" h="0.3in">
+        <ui><textEdit/></ui>
+        <value><text>Line {i}</text></value>
+      </field>"#
+            ));
+        }
+
+        let base_profile_attr = base_profile
+            .map(|value| format!(r#" baseProfile="{value}""#))
+            .unwrap_or_default();
+
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/">
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"{base_profile_attr}>
+  <subform name="form1" layout="paginate">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea x="0.5in" y="0.5in" w="7.5in" h="10in"/>
+        <medium stock="default" short="8.5in" long="11in"/>
+      </pageArea>
+    </pageSet>
+    <subform name="section" layout="tb" w="7.5in">{fields}
+    </subform>
+  </subform>
+</template>
+</xdp:xdp>"#
+        )
+    }
+
     #[test]
     fn flatten_simple_form_produces_non_empty_content() {
         let pdf_bytes = build_xfa_pdf(SIMPLE_XDP);
@@ -2018,6 +2069,37 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn static_single_page_pdf_does_not_append_xfa_overflow_pages() {
+        let xdp = overflowing_paginate_xdp(Some("interactiveForms"));
+        let pdf_bytes = build_xfa_pdf(&xdp);
+        let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+
+        let doc = Document::load_mem(&result).expect("load flattened PDF");
+        let pages: Vec<ObjectId> = doc.page_iter().collect();
+
+        assert_eq!(
+            pages.len(),
+            1,
+            "static 1-page PDFs should preserve the original page when XFA layout over-paginates"
+        );
+    }
+
+    #[test]
+    fn dynamic_single_page_pdf_still_uses_xfa_pagination() {
+        let xdp = overflowing_paginate_xdp(None);
+        let pdf_bytes = build_xfa_pdf(&xdp);
+        let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
+
+        let doc = Document::load_mem(&result).expect("load flattened PDF");
+        let pages: Vec<ObjectId> = doc.page_iter().collect();
+
+        assert!(
+            pages.len() > 1,
+            "dynamic forms should still add overflow pages from the XFA layout"
+        );
     }
 
     #[test]
