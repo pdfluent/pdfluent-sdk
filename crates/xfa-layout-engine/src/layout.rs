@@ -172,6 +172,14 @@ impl<'a> LayoutEngine<'a> {
         let root_node = self.form.get(root);
 
         let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
+        eprintln!("DEBUG layout: root={} page_areas={} content_nodes={}", root_node.name, page_areas.len(), raw_content_nodes.len());
+        for (i, pa) in page_areas.iter().enumerate() {
+            eprintln!("  pageArea[{}]: {}x{}", i, pa.page_width, pa.page_height);
+        }
+        for (i, &cn) in raw_content_nodes.iter().enumerate() {
+            let n = self.form.get(cn);
+            eprintln!("  content[{}]: {:?} name={} layout={:?} bm={}x{}", i, cn, n.name, n.layout, n.box_model.width.unwrap_or(-1.0), n.box_model.height.unwrap_or(-1.0));
+        }
         // Build queued nodes with break_before flags and occur expansion.
         let content_queued = self.queue_content(&raw_content_nodes);
 
@@ -286,6 +294,7 @@ impl<'a> LayoutEngine<'a> {
             };
 
             let all_content_positioned = multi_positioned || single_positioned_delegate;
+            eprintln!("DEBUG layout: multi_positioned={} single_positioned_delegate={} all_content_positioned={}", multi_positioned, single_positioned_delegate, all_content_positioned);
 
             if all_content_positioned {
                 let pa = &page_areas[0];
