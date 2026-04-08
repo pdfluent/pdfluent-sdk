@@ -2,6 +2,10 @@
 //!
 //! Implements XFA 3.3 §4 (Box Model) types.
 
+/// Shared default horizontal text padding, applied per side when paragraph
+/// margins are not explicitly set.
+pub const DEFAULT_TEXT_PADDING: f64 = 1.0;
+
 /// A 2D point in layout coordinates (points, 1pt = 1/72 inch).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Point {
