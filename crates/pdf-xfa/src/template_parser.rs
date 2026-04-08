@@ -573,6 +573,8 @@ fn parse_bind(elem: Node<'_, '_>) -> (Option<String>, bool) {
 fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     let mut style = FormNodeStyle::default();
 
+    style.check_button_mark = parse_check_button_mark(elem);
+
     // Parse <fill><color value="r,g,b"/> for background color.
     // Skip when presence="hidden"/"invisible"/"inactive".
     if let Some(fill) = find_first_child_by_name(elem, "fill") {
@@ -800,6 +802,18 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     }
 
     style
+}
+
+fn parse_check_button_mark(elem: Node<'_, '_>) -> Option<String> {
+    let ui = find_first_child_by_name(elem, "ui")?;
+    let check_button = ui
+        .children()
+        .find(|n| n.is_element() && n.tag_name().name() == "checkButton")?;
+    let mark = attr(check_button, "mark")?.to_ascii_lowercase();
+    match mark.as_str() {
+        "check" | "circle" | "cross" | "diamond" | "square" | "star" => Some(mark),
+        _ => None,
+    }
 }
 
 /// Parse XFA `<color value="r,g,b"/>` into (u8, u8, u8).
@@ -2599,5 +2613,29 @@ mod tests {
         let meta_s = tree.meta(single);
         assert_eq!(meta_s.display_items, vec!["Red", "Green", "Blue"]);
         assert!(meta_s.save_items.is_empty());
+    }
+
+    #[test]
+    fn check_button_mark_parsed_into_style() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="root" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="8in" h="10in"/>
+      </pageArea>
+    </pageSet>
+    <field name="agree" w="0.3in" h="0.3in">
+      <ui><checkButton mark="circle"/></ui>
+      <value><text>1</text></value>
+    </field>
+  </subform>
+</template>"#;
+
+        let (tree, root_id) = parse_template(xml, None).unwrap();
+        let id = find_node_id_by_name(&tree, root_id, "agree").unwrap();
+        let meta = tree.meta(id);
+        assert_eq!(meta.field_kind, FieldKind::Checkbox);
+        assert_eq!(meta.style.check_button_mark.as_deref(), Some("circle"));
     }
 }

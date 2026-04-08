@@ -1698,6 +1698,7 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
 
 fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     let mut style = FormNodeStyle::default();
+    style.check_button_mark = parse_check_button_mark(elem);
     if let Some(fill) = find_first_child_by_name(elem, "fill") {
         if !is_hidden(fill) {
             if let Some(color) = find_first_child_by_name(fill, "color") {
@@ -1912,6 +1913,18 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     }
 
     style
+}
+
+fn parse_check_button_mark(elem: Node<'_, '_>) -> Option<String> {
+    let ui = find_first_child_by_name(elem, "ui")?;
+    let check_button = ui
+        .children()
+        .find(|n| n.is_element() && n.tag_name().name() == "checkButton")?;
+    let mark = attr(check_button, "mark")?.to_ascii_lowercase();
+    match mark.as_str() {
+        "check" | "circle" | "cross" | "diamond" | "square" | "star" => Some(mark),
+        _ => None,
+    }
 }
 
 fn parse_xfa_color(color_node: Node<'_, '_>) -> Option<(u8, u8, u8)> {
@@ -2210,5 +2223,48 @@ mod tests {
             }
             _ => panic!("title should be a field"),
         }
+    }
+
+    #[test]
+    fn check_button_mark_parsed_into_style() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="agree" w="20pt" h="20pt">
+      <ui><checkButton mark="circle"/></ui>
+      <value><text>1</text></value>
+    </field>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form>
+      <agree>1</agree>
+    </form>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let agree_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "agree")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("agree field must exist");
+        let meta = tree.meta(agree_id);
+        assert_eq!(meta.field_kind, FieldKind::Checkbox);
+        assert_eq!(meta.style.check_button_mark.as_deref(), Some("circle"));
     }
 }
