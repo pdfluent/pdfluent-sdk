@@ -830,7 +830,8 @@ impl<'a> LayoutEngine<'a> {
 
             let child = self.form.get(child_id);
             let child_size = if let Some(ref override_lines) = qn.text_lines_override {
-                let lh = child.font.line_height_pt();
+                let style_lh = self.form.meta(child_id).style.line_height_pt;
+                let lh = style_lh.unwrap_or_else(|| child.font.line_height_pt());
                 let w = self.compute_extent(child_id).width;
                 Size { width: w, height: override_lines.len() as f64 * lh }
             } else {
@@ -878,7 +879,7 @@ impl<'a> LayoutEngine<'a> {
                             + child.box_model.border_width * 2.0
                             + para_margins;
                         let max_w = (child_size.width - insets_w).max(1.0);
-                        text::wrap_text(txt, max_w, &child.font, 0.0, None).lines
+                        text::wrap_text(txt, max_w, &child.font, child_style.text_indent_pt.unwrap_or(0.0), child_style.line_height_pt).lines
                     };
                     let (partial, rest_nodes) = self.split_text_node(
                         child_id, y_cursor, remaining_height, &lines,
@@ -1081,7 +1082,7 @@ impl<'a> LayoutEngine<'a> {
                 let line_count = text::wrap_text(
                     t,
                     (node.box_model.content_width() - para_margins).max(1.0),
-                    &node.font, 0.0, None,
+                    &node.font, style.text_indent_pt.unwrap_or(0.0), style.line_height_pt,
                 )
                 .lines
                 .len();
@@ -1091,7 +1092,7 @@ impl<'a> LayoutEngine<'a> {
                 let line_count = text::wrap_text(
                     value,
                     (node.box_model.content_width() - para_margins).max(1.0),
-                    &node.font, 0.0, None,
+                    &node.font, style.text_indent_pt.unwrap_or(0.0), style.line_height_pt,
                 )
                 .lines
                 .len();
@@ -1113,7 +1114,8 @@ impl<'a> LayoutEngine<'a> {
         lines: &[String],
     ) -> Result<(LayoutNode, Vec<QueuedNode>)> {
         let node = self.form.get(id);
-        let lh = node.font.line_height_pt();
+        let style_lh = self.form.meta(id).style.line_height_pt;
+        let lh = style_lh.unwrap_or_else(|| node.font.line_height_pt());
         let split_points = text::text_split_points(lines.len(), lh);
 
         let mut split_at = 0;
@@ -1278,7 +1280,7 @@ impl<'a> LayoutEngine<'a> {
                         cnode.box_model.margins.horizontal() + cnode.box_model.border_width * 2.0
                         + cpara;
                     let max_w = (self.compute_extent(child_id).width - insets_w).max(1.0);
-                    let wrapped = text::wrap_text(txt, max_w, &cnode.font, 0.0, None);
+                    let wrapped = text::wrap_text(txt, max_w, &cnode.font, cstyle.text_indent_pt.unwrap_or(0.0), cstyle.line_height_pt);
                     let (partial_child, child_rest) = self.split_text_node(
                         child_id,
                         child_y,
@@ -2098,7 +2100,7 @@ impl<'a> LayoutEngine<'a> {
                         node.box_model.margins.horizontal() + node.box_model.border_width * 2.0
                         + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
-                    let wrapped = text::wrap_text(display_val, max_w, &node.font, 0.0, None);
+                    let wrapped = text::wrap_text(display_val, max_w, &node.font, node_style.text_indent_pt.unwrap_or(0.0), node_style.line_height_pt);
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
                         first_line_of_para: wrapped.first_line_of_para,
@@ -2121,7 +2123,7 @@ impl<'a> LayoutEngine<'a> {
                         node.box_model.margins.horizontal() + node.box_model.border_width * 2.0
                         + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
-                    let wrapped = text::wrap_text(content, max_w, &node.font, 0.0, None);
+                    let wrapped = text::wrap_text(content, max_w, &node.font, node_style.text_indent_pt.unwrap_or(0.0), node_style.line_height_pt);
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
                         first_line_of_para: wrapped.first_line_of_para,
@@ -2306,10 +2308,10 @@ impl<'a> LayoutEngine<'a> {
                     // If width is growable, measure without wrapping
                     let text_size = if let Some(w) = bm.width {
                         let max_text_width = (w - insets_w).max(0.0);
-                        text::wrap_text(txt, max_text_width, &node.font, 0.0, None).size
+                        text::wrap_text(txt, max_text_width, &node.font, ext_style.text_indent_pt.unwrap_or(0.0), ext_style.line_height_pt).size
                     } else if let Some(avail) = available {
                         let max_text_width = (avail.width - insets_w).max(0.0);
-                        text::wrap_text(txt, max_text_width, &node.font, 0.0, None).size
+                        text::wrap_text(txt, max_text_width, &node.font, ext_style.text_indent_pt.unwrap_or(0.0), ext_style.line_height_pt).size
                     } else {
                         text::measure_text(txt, &node.font)
                     };
