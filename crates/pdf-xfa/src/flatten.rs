@@ -369,18 +369,12 @@ fn xfa_flatten_inner(
     let overlay_is_substantial = overlays.iter().any(|o| o.content_stream.len() > 1000);
     // GATE #22 over-pagination: ~50 PDFs where the original has 1 page but
     // our XFA layout produces 2-140 pages. These are forms whose content is
-    // already rendered on the single PDF page (via widget annotations or
-    // pre-rendered content streams). Re-layouting the XFA template produces
-    // extra pages because positioned subforms get stacked in TB flow.
-    //
-    // Corpus evidence: across 505 golden-set PDFs, ZERO legitimate multi-page
-    // forms start from a 1-page original — when oracle_pages > 1 the original
-    // PDF always has matching page count. So when n_existing == 1 and our
-    // layout produces more, it is always over-pagination.
-    //
-    // This applies to both static (baseProfile="interactiveForms") and dynamic
-    // forms without baseProfile (e.g., 17b7c724, b844b38a, 2e226a4e).
-    let single_page_overpagination = n_existing == 1 && n_layout > 1;
+    // Clamp 1-page over-pagination only for static XFAF forms. Dynamic forms
+    // often start from a 1-page placeholder PDF and legitimately flow onto
+    // additional pages once XFA data is laid out. Clamping all 1-page inputs
+    // to the original page count causes under-pagination on dynamic forms such
+    // as Travel Expense Report / Checklist where Adobe renders 2-3 pages.
+    let single_page_overpagination = is_static_form && n_existing == 1 && n_layout > 1;
     let preserve_static = is_static_form
         || single_page_overpagination
         || n_layout < n_existing
@@ -2188,11 +2182,11 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_single_page_pdf_also_clamps_to_one_page() {
-        // GATE #22 evidence: across 505 golden-set PDFs, zero legitimate
-        // multi-page forms start from a 1-page original. When n_existing == 1
-        // and our layout produces more, it is always over-pagination —
-        // regardless of whether the form is static or dynamic.
+    fn dynamic_single_page_pdf_can_expand_beyond_original_page_count() {
+        // Dynamic XFA forms may ship with a single placeholder PDF page while
+        // Adobe lays out multiple pages from the XFA data/template at runtime.
+        // Flattening must therefore preserve the layout engine's page count
+        // instead of clamping to the original PDF page count.
         let xdp = overflowing_paginate_xdp(None);
         let pdf_bytes = build_xfa_pdf(&xdp);
         let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
@@ -2202,8 +2196,8 @@ mod tests {
 
         assert_eq!(
             pages.len(),
-            1,
-            "dynamic 1-page PDFs should preserve original page when XFA layout over-paginates"
+            2,
+            "dynamic 1-page PDFs should be allowed to grow when XFA layout paginates"
         );
     }
 
