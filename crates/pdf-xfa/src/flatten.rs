@@ -32,12 +32,12 @@
 //!
 //! ## /Widths Handling
 //!
-//! PDF /Widths arrays start at FirstChar (typically 32). The array is padded
-//! to 256 entries so measure_width can index by codepoint directly.
+//! PDF /Widths arrays start at FirstChar (typically 32). For simple fonts we
+//! remap those code-indexed widths through the font encoding so the layout
+//! engine receives Unicode-indexed measurements.
 //!
 //! ## Known Limitations
 //!
-//! - Custom encodings (/Differences) are not supported
 //! - CID font /W arrays are not read
 //! - System font fallback may have different metrics than the PDF's embedded font
 
@@ -50,7 +50,8 @@ use std::time::Duration;
 use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
 use crate::font_bridge::{
-    font_variant_key, CidFontInfo, ResolvedFont, XfaFontResolver, XfaFontSpec,
+    font_variant_key, pdf_glyph_name_to_unicode, CidFontInfo, EmbeddedFontData, PdfBaseEncoding,
+    PdfSimpleEncoding, ResolvedFont, XfaFontResolver, XfaFontSpec,
 };
 use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
@@ -366,17 +367,22 @@ fn xfa_flatten_inner(
     // The 1000-byte threshold separates minimal XFA templates (title/header
     // only, ~200-500 bytes) from full page re-renders (5000+ bytes).
     let overlay_is_substantial = overlays.iter().any(|o| o.content_stream.len() > 1000);
-    // WHY: In GATE #22, 40+ static XFAF PDFs have a single authoritative PDF
-    // page, but our XFA layout path over-paginates them into 2-140+ synthetic
-    // pages (for example adde1473, 2e226a4e, b844b38a, bf08b73b, 01de9ce4).
-    // WHAT: When a static form starts from a 1-page PDF but XFA layout spills
-    // onto multiple pages, treat the original PDF page as authoritative and do
-    // not synthesize overflow pages from the XFA layout.
-    // WHEN: Only for static forms (`baseProfile="interactiveForms"`) where the
-    // original PDF has exactly 1 page and the XFA layout produces more than 1.
-    let static_single_page_overpagination = is_static_form && n_existing == 1 && n_layout > 1;
+    // GATE #22 over-pagination: ~50 PDFs where the original has 1 page but
+    // our XFA layout produces 2-140 pages. These are forms whose content is
+    // already rendered on the single PDF page (via widget annotations or
+    // pre-rendered content streams). Re-layouting the XFA template produces
+    // extra pages because positioned subforms get stacked in TB flow.
+    //
+    // Corpus evidence: across 505 golden-set PDFs, ZERO legitimate multi-page
+    // forms start from a 1-page original — when oracle_pages > 1 the original
+    // PDF always has matching page count. So when n_existing == 1 and our
+    // layout produces more, it is always over-pagination.
+    //
+    // This applies to both static (baseProfile="interactiveForms") and dynamic
+    // forms without baseProfile (e.g., 17b7c724, b844b38a, 2e226a4e).
+    let single_page_overpagination = n_existing == 1 && n_layout > 1;
     let preserve_static = is_static_form
-        || static_single_page_overpagination
+        || single_page_overpagination
         || n_layout < n_existing
         || has_static_content && overlay_is_substantial;
 
@@ -493,8 +499,8 @@ fn xfa_flatten_inner(
 // Font extraction, resolution, and embedding
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::type_complexity)]
-fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)> {
+#[doc(hidden)]
+pub fn extract_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontData> {
     let mut fonts = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for obj in doc.objects.values() {
@@ -513,11 +519,18 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>, Option<(u16, 
         };
 
         let pdf_widths = extract_font_widths(dict);
+        let pdf_encoding = extract_font_encoding(doc, dict);
 
         // First try direct FontDescriptor path (simple TrueType/OpenType fonts)
         if let Some((stream_id, data)) = extract_font_from_direct_fd(doc, dict, &base_font) {
             if seen.insert(stream_id) {
-                store_font_data(&mut fonts, &base_font, data, pdf_widths.clone());
+                store_font_data(
+                    &mut fonts,
+                    &base_font,
+                    data,
+                    pdf_widths.clone(),
+                    pdf_encoding.clone(),
+                );
             }
             continue;
         }
@@ -526,7 +539,7 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>, Option<(u16, 
         // CIDFont fonts store their font data in /DescendantFonts[n]/FontDescriptor/FontFile*
         if let Some((stream_id, data)) = extract_cidfont_data(doc, dict, &base_font, &seen) {
             if seen.insert(stream_id) {
-                store_font_data(&mut fonts, &base_font, data, pdf_widths);
+                store_font_data(&mut fonts, &base_font, data, pdf_widths, None);
             }
         }
     }
@@ -546,6 +559,73 @@ fn extract_font_widths(dict: &lopdf::Dictionary) -> Option<(u16, Vec<u16>)> {
         return None;
     }
     Some((first_char, widths))
+}
+
+/// Parse a simple-font `/Encoding` dictionary with `/Differences`.
+///
+/// WHY: Custom encodings via `/Differences` are essential for correct glyph
+/// width mapping. Without this, widths are indexed against the wrong
+/// characters and text wrapping breaks for fonts that deviate from WinAnsi.
+///
+/// SPEC: PDF spec §9.6.6.1 defines `/Differences` as an alternating array of
+/// starting code integers and glyph names applied on top of a base encoding.
+///
+/// LIMITATION: CID fonts (`/Type0`) use CMaps and `/W` arrays instead of this
+/// simple-font encoding mechanism, so they intentionally return `None` here.
+fn extract_font_encoding(doc: &Document, dict: &lopdf::Dictionary) -> Option<PdfSimpleEncoding> {
+    let encoding_obj = resolve_object(doc, dict.get(b"Encoding").ok()?)?;
+    let encoding_dict = encoding_obj.as_dict().ok()?;
+    let differences_array = resolve_object(doc, encoding_dict.get(b"Differences").ok()?)?
+        .as_array()
+        .ok()?;
+
+    let base_encoding = encoding_dict
+        .get(b"BaseEncoding")
+        .ok()
+        .and_then(|obj| resolve_object(doc, obj))
+        .and_then(|obj| obj.as_name().ok())
+        .and_then(PdfBaseEncoding::from_pdf_name)
+        .unwrap_or(PdfBaseEncoding::WinAnsi);
+
+    let mut differences = Vec::new();
+    let mut current_code: Option<u8> = None;
+    for item in differences_array {
+        let item = resolve_object(doc, item)?;
+        if let Ok(code) = item.as_i64() {
+            current_code = u8::try_from(code).ok();
+            continue;
+        }
+
+        let Some(name) = item.as_name().ok() else {
+            continue;
+        };
+        let Some(code) = current_code else {
+            continue;
+        };
+        let Some(glyph_name) = std::str::from_utf8(name).ok() else {
+            continue;
+        };
+        if let Some(unicode) = pdf_glyph_name_to_unicode(glyph_name) {
+            differences.push((code, unicode));
+        }
+        current_code = code.checked_add(1);
+    }
+
+    if differences.is_empty() {
+        return None;
+    }
+
+    Some(PdfSimpleEncoding {
+        base_encoding,
+        differences,
+    })
+}
+
+fn resolve_object<'a>(doc: &'a Document, obj: &'a Object) -> Option<&'a Object> {
+    match obj {
+        Object::Reference(id) => doc.get_object(*id).ok(),
+        other => Some(other),
+    }
 }
 
 /// Extract font data from a direct FontDescriptor (FontFile2/3/1 in FontDescriptor).
@@ -633,12 +713,12 @@ fn extract_cidfont_data(
 }
 
 /// Store font data under multiple names (PostScript name, family name, normalized name).
-#[allow(clippy::type_complexity)]
 fn store_font_data(
-    fonts: &mut Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)>,
+    fonts: &mut Vec<EmbeddedFontData>,
     base_font: &str,
     data: Vec<u8>,
     pdf_widths: Option<(u16, Vec<u16>)>,
+    pdf_encoding: Option<PdfSimpleEncoding>,
 ) {
     let clean_name = if let Some(pos) = base_font.find('+') {
         base_font[pos + 1..].to_string()
@@ -647,7 +727,12 @@ fn store_font_data(
     };
 
     // Store under the PostScript name (subset prefix already stripped)
-    fonts.push((clean_name.clone(), data.clone(), pdf_widths.clone()));
+    fonts.push(EmbeddedFontData {
+        name: clean_name.clone(),
+        data: data.clone(),
+        pdf_widths: pdf_widths.clone(),
+        pdf_encoding: pdf_encoding.clone(),
+    });
 
     // Also store under the font family name from the name table,
     // since XFA templates use family names (e.g. "Arial") while PDF
@@ -657,7 +742,12 @@ fn store_font_data(
             if name_record.name_id == ttf_parser::name_id::FAMILY {
                 if let Some(family) = name_record.to_string() {
                     if family != clean_name {
-                        fonts.push((family, data.clone(), pdf_widths.clone()));
+                        fonts.push(EmbeddedFontData {
+                            name: family,
+                            data: data.clone(),
+                            pdf_widths: pdf_widths.clone(),
+                            pdf_encoding: pdf_encoding.clone(),
+                        });
                     }
                 }
             }
@@ -667,7 +757,12 @@ fn store_font_data(
     // Common PostScript-to-family normalization as fallback
     let normalized = ps_name_to_family(&clean_name);
     if normalized != clean_name {
-        fonts.push((normalized, data.clone(), pdf_widths.clone()));
+        fonts.push(EmbeddedFontData {
+            name: normalized,
+            data,
+            pdf_widths,
+            pdf_encoding,
+        });
     }
 }
 

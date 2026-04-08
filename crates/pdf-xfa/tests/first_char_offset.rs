@@ -13,6 +13,7 @@ fn make_font_with_first_char_32() -> ResolvedFont {
         ascender: 800,
         descender: -200,
         pdf_widths: Some((32, widths)),
+        pdf_encoding: None,
     }
 }
 

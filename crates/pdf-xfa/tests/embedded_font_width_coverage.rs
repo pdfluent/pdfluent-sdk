@@ -1,5 +1,5 @@
 use lopdf::{Dictionary, Document, ObjectId};
-use pdf_xfa::font_bridge::{XfaFontResolver, XfaFontSpec};
+use pdf_xfa::font_bridge::{EmbeddedFontData, XfaFontResolver, XfaFontSpec};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -177,9 +177,14 @@ fn corpus_font_width_report(pdf_name: &str) -> CorpusFontWidthReport {
         Document::load_mem(&pdf_bytes).unwrap_or_else(|e| panic!("failed to load {}: {e}", pdf_path.display()));
     let extracted_fonts = extract_unique_embedded_fonts(&doc);
 
-    let embedded_fonts_for_resolver: Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)> = extracted_fonts
+    let embedded_fonts_for_resolver: Vec<EmbeddedFontData> = extracted_fonts
         .iter()
-        .map(|font| (font.name.clone(), font.data.clone(), font.pdf_widths.clone()))
+        .map(|font| EmbeddedFontData {
+            name: font.name.clone(),
+            data: font.data.clone(),
+            pdf_widths: font.pdf_widths.clone(),
+            pdf_encoding: None,
+        })
         .collect();
     let mut resolver = XfaFontResolver::new(embedded_fonts_for_resolver);
 
