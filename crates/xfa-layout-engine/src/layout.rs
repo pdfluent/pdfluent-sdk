@@ -871,8 +871,12 @@ impl<'a> LayoutEngine<'a> {
                             FormNodeType::Field { value } => value.as_str(),
                             _ => "",
                         };
+                        let child_style = &self.form.meta(child_id).style;
+                        let para_margins = child_style.margin_left_pt.unwrap_or(0.0)
+                            + child_style.margin_right_pt.unwrap_or(0.0);
                         let insets_w = child.box_model.margins.horizontal()
-                            + child.box_model.border_width * 2.0;
+                            + child.box_model.border_width * 2.0
+                            + para_margins;
                         let max_w = (child_size.width - insets_w).max(1.0);
                         text::wrap_text(txt, max_w, &child.font, 0.0, None).lines
                     };
@@ -1069,11 +1073,14 @@ impl<'a> LayoutEngine<'a> {
         if self.form.meta(id).keep_intact_content_area {
             return false;
         }
+        let style = &self.form.meta(id).style;
+        let para_margins = style.margin_left_pt.unwrap_or(0.0)
+            + style.margin_right_pt.unwrap_or(0.0);
         match &node.node_type {
             FormNodeType::Draw(DrawContent::Text(t)) => {
                 let line_count = text::wrap_text(
                     t,
-                    node.box_model.content_width().max(1.0),
+                    (node.box_model.content_width() - para_margins).max(1.0),
                     &node.font, 0.0, None,
                 )
                 .lines
@@ -1083,7 +1090,7 @@ impl<'a> LayoutEngine<'a> {
             FormNodeType::Field { value } if !value.is_empty() => {
                 let line_count = text::wrap_text(
                     value,
-                    node.box_model.content_width().max(1.0),
+                    (node.box_model.content_width() - para_margins).max(1.0),
                     &node.font, 0.0, None,
                 )
                 .lines
@@ -1264,8 +1271,12 @@ impl<'a> LayoutEngine<'a> {
                         FormNodeType::Field { value } => value.as_str(),
                         _ => "",
                     };
+                    let cstyle = &self.form.meta(child_id).style;
+                    let cpara = cstyle.margin_left_pt.unwrap_or(0.0)
+                        + cstyle.margin_right_pt.unwrap_or(0.0);
                     let insets_w =
-                        cnode.box_model.margins.horizontal() + cnode.box_model.border_width * 2.0;
+                        cnode.box_model.margins.horizontal() + cnode.box_model.border_width * 2.0
+                        + cpara;
                     let max_w = (self.compute_extent(child_id).width - insets_w).max(1.0);
                     let wrapped = text::wrap_text(txt, max_w, &cnode.font, 0.0, None);
                     let (partial_child, child_rest) = self.split_text_node(
@@ -2074,13 +2085,18 @@ impl<'a> LayoutEngine<'a> {
             });
         }
 
+        let node_style = &self.form.meta(id).style;
+        let para_margins = node_style.margin_left_pt.unwrap_or(0.0)
+            + node_style.margin_right_pt.unwrap_or(0.0);
+
         let content = match &node.node_type {
             FormNodeType::Field { value } => {
                 let meta = self.form.meta(id);
                 let display_val = resolve_display_value(value, meta);
                 if !display_val.is_empty() && node.children.is_empty() {
                     let insets_w =
-                        node.box_model.margins.horizontal() + node.box_model.border_width * 2.0;
+                        node.box_model.margins.horizontal() + node.box_model.border_width * 2.0
+                        + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
                     let wrapped = text::wrap_text(display_val, max_w, &node.font, 0.0, None);
                     LayoutContent::WrappedText {
@@ -2102,7 +2118,8 @@ impl<'a> LayoutEngine<'a> {
             FormNodeType::Draw(DrawContent::Text(content)) => {
                 if !content.is_empty() && node.children.is_empty() {
                     let insets_w =
-                        node.box_model.margins.horizontal() + node.box_model.border_width * 2.0;
+                        node.box_model.margins.horizontal() + node.box_model.border_width * 2.0
+                        + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
                     let wrapped = text::wrap_text(content, max_w, &node.font, 0.0, None);
                     LayoutContent::WrappedText {
@@ -2281,7 +2298,10 @@ impl<'a> LayoutEngine<'a> {
 
             if let Some(txt) = text_content {
                 if !txt.is_empty() {
-                    let insets_w = bm.margins.horizontal() + bm.border_width * 2.0;
+                    let ext_style = &self.form.meta(id).style;
+                    let ext_para = ext_style.margin_left_pt.unwrap_or(0.0)
+                        + ext_style.margin_right_pt.unwrap_or(0.0);
+                    let insets_w = bm.margins.horizontal() + bm.border_width * 2.0 + ext_para;
                     // If width is fixed, wrap text within that width minus insets
                     // If width is growable, measure without wrapping
                     let text_size = if let Some(w) = bm.width {
