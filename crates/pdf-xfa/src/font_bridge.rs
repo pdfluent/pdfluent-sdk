@@ -269,6 +269,7 @@ impl XfaFontSpec {
 /// Resolves XFA font specifications to actual font data.
 pub struct XfaFontResolver {
     embedded: HashMap<String, ResolvedFont>,
+    embedded_pdf_widths: HashMap<String, (u16, Vec<u16>)>,
     system_fonts: HashMap<String, PathBuf>,
     cache: HashMap<String, ResolvedFont>,
 }
@@ -468,7 +469,11 @@ impl XfaFontResolver {
     #[allow(clippy::type_complexity)]
     pub fn new(embedded_fonts: Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)>) -> Self {
         let mut embedded = HashMap::new();
+        let mut embedded_pdf_widths = HashMap::new();
         for (name, data, pdf_widths) in embedded_fonts {
+            if let Some(ref widths) = pdf_widths {
+                remember_pdf_widths(&mut embedded_pdf_widths, &name, widths);
+            }
             if let Some(font) = parse_font_data_with_widths(&name, &data, pdf_widths) {
                 let normalized = normalize_font_name(&name);
                 embedded.insert(name.to_lowercase(), font.clone());
@@ -480,6 +485,7 @@ impl XfaFontResolver {
         let system_fonts = scan_system_fonts();
         Self {
             embedded,
+            embedded_pdf_widths,
             system_fonts,
             cache: HashMap::new(),
         }
@@ -533,6 +539,7 @@ impl XfaFontResolver {
             .ok_or_else(|| {
                 XfaError::FontError(format!("cannot resolve font: {}", spec.typeface))
             })?;
+        let font = self.attach_pdf_widths(font, spec, &variant_names);
         self.cache.insert(cache_key, font.clone());
         Ok(font)
     }
@@ -650,6 +657,64 @@ impl XfaFontResolver {
         }
         None
     }
+
+    fn attach_pdf_widths(
+        &self,
+        mut font: ResolvedFont,
+        spec: &XfaFontSpec,
+        variant_names: &[String],
+    ) -> ResolvedFont {
+        if font.pdf_widths.is_some() {
+            return font;
+        }
+
+        for name in variant_names
+            .iter()
+            .map(String::as_str)
+            .chain([spec.typeface.as_str(), font.name.as_str()])
+        {
+            if let Some(widths) = lookup_pdf_widths(&self.embedded_pdf_widths, name) {
+                font.pdf_widths = Some(widths);
+                break;
+            }
+        }
+
+        font
+    }
+}
+
+fn remember_pdf_widths(
+    widths_map: &mut HashMap<String, (u16, Vec<u16>)>,
+    name: &str,
+    widths: &(u16, Vec<u16>),
+) {
+    let lower = name.to_lowercase();
+    widths_map.insert(lower.clone(), widths.clone());
+
+    let normalized = normalize_font_name(name);
+    if normalized != lower {
+        widths_map.insert(normalized, widths.clone());
+    }
+
+    let no_spaces = lower.replace(' ', "");
+    if no_spaces != lower {
+        widths_map.insert(no_spaces, widths.clone());
+    }
+}
+
+fn lookup_pdf_widths(
+    widths_map: &HashMap<String, (u16, Vec<u16>)>,
+    name: &str,
+) -> Option<(u16, Vec<u16>)> {
+    let lower = name.to_lowercase();
+    widths_map
+        .get(&lower)
+        .cloned()
+        .or_else(|| widths_map.get(&normalize_font_name(name)).cloned())
+        .or_else(|| {
+            let no_spaces = lower.replace(' ', "");
+            widths_map.get(&no_spaces).cloned()
+        })
 }
 
 /// Build variant-specific font names for bold/italic lookup.
@@ -1069,5 +1134,20 @@ mod tests {
         // Both should resolve (or fail) independently — they use different cache keys.
         let _ = resolver.resolve(&spec_normal);
         let _ = resolver.resolve(&spec_bold);
+    }
+
+    #[test]
+    fn resolver_preserves_pdf_widths_when_embedded_font_data_is_unparseable() {
+        let embedded = vec![(
+            "Helvetica".to_string(),
+            vec![0_u8, 1, 2, 3],
+            Some((32, vec![278, 333, 444])),
+        )];
+        let mut resolver = XfaFontResolver::new(embedded);
+        let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, None, None);
+        let resolved = resolver
+            .resolve(&spec)
+            .expect("resolver should fall back to a system font");
+        assert_eq!(resolved.pdf_widths, Some((32, vec![278, 333, 444])));
     }
 }

@@ -8,6 +8,8 @@ struct EmbeddedFontRecord {
     name: String,
     data: Vec<u8>,
     pdf_widths: Option<(u16, Vec<u16>)>,
+    stream_subtype: Option<String>,
+    parseable_by_ttf_parser: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,7 +52,7 @@ fn extract_font_widths(dict: &Dictionary) -> Option<(u16, Vec<u16>)> {
 fn extract_font_from_direct_fd(
     doc: &Document,
     font_dict: &Dictionary,
-) -> Option<(ObjectId, Vec<u8>)> {
+) -> Option<(ObjectId, Vec<u8>, Option<String>)> {
     let fd_id = font_dict.get(b"FontDescriptor").ok()?.as_reference().ok()?;
     let fd = doc.get_dictionary(fd_id).ok()?;
     let font_stream_id = fd
@@ -70,14 +72,20 @@ fn extract_font_from_direct_fd(
     if data.is_empty() {
         return None;
     }
-    Some((font_stream_id, data))
+    let stream_subtype = stream
+        .dict
+        .get(b"Subtype")
+        .ok()
+        .and_then(|o| o.as_name().ok())
+        .map(|name| String::from_utf8_lossy(name).to_string());
+    Some((font_stream_id, data, stream_subtype))
 }
 
 fn extract_cidfont_data(
     doc: &Document,
     font_dict: &Dictionary,
     seen: &HashSet<ObjectId>,
-) -> Option<(ObjectId, Vec<u8>)> {
+) -> Option<(ObjectId, Vec<u8>, Option<String>)> {
     let descendants = font_dict.get(b"DescendantFonts").ok()?.as_array().ok()?;
     for desc_ref in descendants {
         let desc_id = desc_ref.as_reference().ok()?;
@@ -102,7 +110,13 @@ fn extract_cidfont_data(
             .get_plain_content()
             .unwrap_or_else(|_| stream.content.clone());
         if !data.is_empty() {
-            return Some((font_stream_id, data));
+            let stream_subtype = stream
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|o| o.as_name().ok())
+                .map(|name| String::from_utf8_lossy(name).to_string());
+            return Some((font_stream_id, data, stream_subtype));
         }
     }
     None
@@ -127,23 +141,27 @@ fn extract_unique_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontRecord> {
         };
         let pdf_widths = extract_font_widths(dict);
 
-        if let Some((stream_id, data)) = extract_font_from_direct_fd(doc, dict) {
+        if let Some((stream_id, data, stream_subtype)) = extract_font_from_direct_fd(doc, dict) {
             if seen.insert(stream_id) {
                 fonts.push(EmbeddedFontRecord {
                     name: strip_subset_prefix(&base_font),
+                    parseable_by_ttf_parser: ttf_parser::Face::parse(&data, 0).is_ok(),
                     data,
                     pdf_widths,
+                    stream_subtype,
                 });
             }
             continue;
         }
 
-        if let Some((stream_id, data)) = extract_cidfont_data(doc, dict, &seen) {
+        if let Some((stream_id, data, stream_subtype)) = extract_cidfont_data(doc, dict, &seen) {
             if seen.insert(stream_id) {
                 fonts.push(EmbeddedFontRecord {
                     name: strip_subset_prefix(&base_font),
+                    parseable_by_ttf_parser: ttf_parser::Face::parse(&data, 0).is_ok(),
                     data,
                     pdf_widths,
+                    stream_subtype,
                 });
             }
         }
@@ -197,8 +215,14 @@ fn corpus_font_width_report(pdf_name: &str) -> CorpusFontWidthReport {
         if extracted_has_widths != resolved_has_widths {
             report.propagation_mismatches += 1;
             eprintln!(
-                "{}: width propagation mismatch for {} (extracted={}, resolved={})",
-                pdf_name, font.name, extracted_has_widths, resolved_has_widths
+                "{}: width propagation mismatch for {} (extracted={}, resolved={}, parseable={}, stream_subtype={:?}, resolved_name={})",
+                pdf_name,
+                font.name,
+                extracted_has_widths,
+                resolved_has_widths,
+                font.parseable_by_ttf_parser,
+                font.stream_subtype,
+                resolved.name
             );
         }
     }
@@ -249,4 +273,12 @@ fn corpus_embedded_fonts_pdf_width_coverage() {
     assert!(total_fonts > 0, "expected embedded fonts in corpus PDFs");
     assert!(total_extracted_with_widths <= total_fonts);
     assert!(total_resolved_with_widths <= total_fonts);
+    assert_eq!(
+        total_resolved_with_widths, total_extracted_with_widths,
+        "all extracted PDF widths should propagate to the resolved fonts"
+    );
+    assert_eq!(
+        total_mismatches, 0,
+        "resolved fonts should preserve PDF widths even when embedded font bytes are unparseable"
+    );
 }
