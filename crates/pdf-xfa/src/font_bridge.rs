@@ -14,18 +14,86 @@
 //!
 //! ## /Widths Handling
 //!
-//! PDF /Widths arrays start at FirstChar (typically 32). The array is padded
-//! to 256 entries so measure_width can index by codepoint directly.
+//! PDF /Widths arrays start at FirstChar (typically 32). For simple fonts we
+//! project those code-indexed widths onto Unicode scalar values so the layout
+//! engine can measure wrapped XFA text using the same character semantics as
+//! the PDF font encoding.
 //!
 //! ## Known Limitations
 //!
-//! - Custom encodings (/Differences) are not supported
 //! - CID font /W arrays are not read
 //! - System font fallback may have different metrics than the PDF's embedded font
 
 use crate::error::{Result, XfaError};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+/// Embedded font record extracted from the source PDF.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddedFontData {
+    pub name: String,
+    pub data: Vec<u8>,
+    pub pdf_widths: Option<(u16, Vec<u16>)>,
+    pub pdf_encoding: Option<PdfSimpleEncoding>,
+}
+
+/// Base encodings for simple PDF fonts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PdfBaseEncoding {
+    WinAnsi,
+    Standard,
+    MacRoman,
+}
+
+impl PdfBaseEncoding {
+    pub fn from_pdf_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"WinAnsiEncoding" => Some(Self::WinAnsi),
+            b"StandardEncoding" => Some(Self::Standard),
+            b"MacRomanEncoding" => Some(Self::MacRoman),
+            _ => None,
+        }
+    }
+
+    fn code_to_unicode_table(self) -> &'static [Option<u16>; 256] {
+        match self {
+            Self::WinAnsi => &base_encoding_tables().win_ansi,
+            Self::Standard => &base_encoding_tables().standard,
+            Self::MacRoman => &base_encoding_tables().mac_roman,
+        }
+    }
+}
+
+/// Simple-font encoding overrides parsed from a PDF `/Encoding` dictionary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PdfSimpleEncoding {
+    pub base_encoding: PdfBaseEncoding,
+    pub differences: Vec<(u8, u16)>,
+}
+
+impl PdfSimpleEncoding {
+    pub fn code_to_unicode_table(&self) -> Vec<Option<u16>> {
+        let mut table = self.base_encoding.code_to_unicode_table().to_vec();
+        for (code, unicode) in &self.differences {
+            table[*code as usize] = Some(*unicode);
+        }
+        table
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PdfWidthData {
+    widths: (u16, Vec<u16>),
+    encoding: Option<PdfSimpleEncoding>,
+}
+
+#[derive(Debug)]
+struct PdfBaseEncodingTables {
+    win_ansi: [Option<u16>; 256],
+    standard: [Option<u16>; 256],
+    mac_roman: [Option<u16>; 256],
+}
 
 /// A resolved font ready for use in PDF rendering.
 #[derive(Debug, Clone)]
@@ -44,17 +112,19 @@ pub struct ResolvedFont {
     pub descender: i16,
     /// PDF /Widths array for glyph metrics: (first_char_code, widths).
     pub pdf_widths: Option<(u16, Vec<u16>)>,
+    /// Optional `/Encoding` differences for the PDF width table.
+    pub pdf_encoding: Option<PdfSimpleEncoding>,
 }
 
 impl ResolvedFont {
     /// Measure the approximate width of a string in points at the given font size.
     pub fn measure_string(&self, text: &str, font_size: f64) -> f64 {
-        if let Some((first_char, ref widths)) = self.pdf_widths {
+        if let Some(widths) = self.pdf_unicode_widths() {
             let mut total = 0.0;
             for ch in text.chars() {
-                let code = ch as u16;
-                if code >= first_char && ((code - first_char) as usize) < widths.len() {
-                    total += widths[(code - first_char) as usize] as f64;
+                let code = ch as usize;
+                if code < widths.len() && widths[code] != 0 {
+                    total += widths[code] as f64;
                 } else {
                     total += self.measure_char_fallback(ch);
                 }
@@ -122,22 +192,20 @@ impl ResolvedFont {
         }
     }
 
-    /// Generate PDF glyph widths array for embedding (WinAnsiEncoding, 256 entries).
+    /// Generate a Unicode-indexed width table from PDF `/Widths`.
     ///
-    /// Always returns `(0, widths_256)` where `widths_256` is indexed by codepoint
-    /// directly (0..255). When `pdf_widths` carries a non-zero `first_char`, the
-    /// vector is padded with zeros so callers can index with raw codepoints without
-    /// tracking FirstChar separately (PDF spec §9.6.2, Table 111).
+    /// WHY: Custom encodings via `/Differences` are essential for correct glyph
+    /// width mapping. Without this, widths are indexed by the wrong characters
+    /// for fonts that deviate from WinAnsi.
+    ///
+    /// SPEC: PDF spec §9.6.6.1 defines `/Differences` as a code-to-glyph-name
+    /// override table layered on top of a base encoding.
+    ///
+    /// LIMITATION: CID fonts (`/Type0`) use `/W` arrays and CMaps rather than
+    /// simple-font `/Widths`; that path is not handled here.
     pub fn pdf_glyph_widths(&self) -> (u16, Vec<u16>) {
-        if let Some((first_char, ref widths)) = self.pdf_widths {
-            let mut full = vec![0u16; 256];
-            for (i, &w) in widths.iter().enumerate() {
-                let idx = first_char as usize + i;
-                if idx < 256 {
-                    full[idx] = w;
-                }
-            }
-            return (0, full);
+        if let Some(widths) = self.pdf_unicode_widths() {
+            return (0, widths);
         }
         if let Ok(face) = ttf_parser::Face::parse(&self.data, self.face_index) {
             let upem = face.units_per_em() as f64;
@@ -155,6 +223,15 @@ impl ResolvedFont {
         } else {
             (0, vec![500; 256])
         }
+    }
+
+    fn pdf_unicode_widths(&self) -> Option<Vec<u16>> {
+        let (first_char, widths) = self.pdf_widths.as_ref()?;
+        Some(unicode_widths_from_pdf_widths(
+            *first_char,
+            widths,
+            self.pdf_encoding.as_ref(),
+        ))
     }
 
     /// Generate CID font data for Identity-H encoding.
@@ -299,7 +376,7 @@ impl XfaFontSpec {
 /// Resolves XFA font specifications to actual font data.
 pub struct XfaFontResolver {
     embedded: HashMap<String, ResolvedFont>,
-    embedded_pdf_widths: HashMap<String, (u16, Vec<u16>)>,
+    embedded_pdf_widths: HashMap<String, PdfWidthData>,
     system_fonts: HashMap<String, PathBuf>,
     cache: HashMap<String, ResolvedFont>,
 }
@@ -496,15 +573,22 @@ fn generic_family_fallback_chain(gf: GenericFamily) -> &'static [&'static str] {
 
 impl XfaFontResolver {
     /// Create a new resolver with embedded fonts extracted from the PDF.
-    #[allow(clippy::type_complexity)]
-    pub fn new(embedded_fonts: Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)>) -> Self {
+    pub fn new(embedded_fonts: Vec<EmbeddedFontData>) -> Self {
         let mut embedded = HashMap::new();
         let mut embedded_pdf_widths = HashMap::new();
-        for (name, data, pdf_widths) in embedded_fonts {
+        for font_data in embedded_fonts {
+            let EmbeddedFontData {
+                name,
+                data,
+                pdf_widths,
+                pdf_encoding,
+            } = font_data;
             if let Some(ref widths) = pdf_widths {
-                remember_pdf_widths(&mut embedded_pdf_widths, &name, widths);
+                remember_pdf_widths(&mut embedded_pdf_widths, &name, widths, pdf_encoding.clone());
             }
-            if let Some(font) = parse_font_data_with_widths(&name, &data, pdf_widths) {
+            if let Some(font) =
+                parse_font_data_with_widths(&name, &data, pdf_widths, pdf_encoding)
+            {
                 let normalized = normalize_font_name(&name);
                 embedded.insert(name.to_lowercase(), font.clone());
                 if normalized != name.to_lowercase() {
@@ -703,8 +787,9 @@ impl XfaFontResolver {
             .map(String::as_str)
             .chain([spec.typeface.as_str(), font.name.as_str()])
         {
-            if let Some(widths) = lookup_pdf_widths(&self.embedded_pdf_widths, name) {
-                font.pdf_widths = Some(widths);
+            if let Some(width_data) = lookup_pdf_widths(&self.embedded_pdf_widths, name) {
+                font.pdf_widths = Some(width_data.widths);
+                font.pdf_encoding = width_data.encoding;
                 break;
             }
         }
@@ -714,28 +799,33 @@ impl XfaFontResolver {
 }
 
 fn remember_pdf_widths(
-    widths_map: &mut HashMap<String, (u16, Vec<u16>)>,
+    widths_map: &mut HashMap<String, PdfWidthData>,
     name: &str,
     widths: &(u16, Vec<u16>),
+    encoding: Option<PdfSimpleEncoding>,
 ) {
+    let record = PdfWidthData {
+        widths: widths.clone(),
+        encoding,
+    };
     let lower = name.to_lowercase();
-    widths_map.insert(lower.clone(), widths.clone());
+    widths_map.insert(lower.clone(), record.clone());
 
     let normalized = normalize_font_name(name);
     if normalized != lower {
-        widths_map.insert(normalized, widths.clone());
+        widths_map.insert(normalized, record.clone());
     }
 
     let no_spaces = lower.replace(' ', "");
     if no_spaces != lower {
-        widths_map.insert(no_spaces, widths.clone());
+        widths_map.insert(no_spaces, record);
     }
 }
 
 fn lookup_pdf_widths(
-    widths_map: &HashMap<String, (u16, Vec<u16>)>,
+    widths_map: &HashMap<String, PdfWidthData>,
     name: &str,
-) -> Option<(u16, Vec<u16>)> {
+) -> Option<PdfWidthData> {
     let lower = name.to_lowercase();
     widths_map
         .get(&lower)
@@ -790,6 +880,7 @@ fn _parse_font_data(name: &str, data: &[u8]) -> Option<ResolvedFont> {
         ascender: face.ascender(),
         descender: face.descender(),
         pdf_widths: None,
+        pdf_encoding: None,
     })
 }
 
@@ -797,6 +888,7 @@ fn parse_font_data_with_widths(
     name: &str,
     data: &[u8],
     pdf_widths: Option<(u16, Vec<u16>)>,
+    pdf_encoding: Option<PdfSimpleEncoding>,
 ) -> Option<ResolvedFont> {
     let face = ttf_parser::Face::parse(data, 0).ok()?;
     Some(ResolvedFont {
@@ -807,6 +899,7 @@ fn parse_font_data_with_widths(
         ascender: face.ascender(),
         descender: face.descender(),
         pdf_widths,
+        pdf_encoding,
     })
 }
 
@@ -833,11 +926,139 @@ fn load_system_font(path: &PathBuf, name: &str) -> Option<ResolvedFont> {
                     ascender: face.ascender(),
                     descender: face.descender(),
                     pdf_widths: None,
+                    pdf_encoding: None,
                 });
             }
         }
     }
     None
+}
+
+fn unicode_widths_from_pdf_widths(
+    first_char: u16,
+    widths: &[u16],
+    encoding: Option<&PdfSimpleEncoding>,
+) -> Vec<u16> {
+    let code_to_unicode = encoding
+        .map(PdfSimpleEncoding::code_to_unicode_table)
+        .unwrap_or_else(|| PdfBaseEncoding::WinAnsi.code_to_unicode_table().to_vec());
+
+    let mut max_codepoint = 255usize;
+    for (offset, _) in widths.iter().enumerate() {
+        let code = first_char as usize + offset;
+        if code >= 256 {
+            break;
+        }
+        if let Some(unicode) = code_to_unicode[code] {
+            max_codepoint = max_codepoint.max(unicode as usize);
+        }
+    }
+
+    let mut projected = vec![0u16; max_codepoint + 1];
+    for (offset, &width) in widths.iter().enumerate() {
+        let code = first_char as usize + offset;
+        if code >= 256 {
+            break;
+        }
+        if let Some(unicode) = code_to_unicode[code] {
+            projected[unicode as usize] = width;
+        }
+    }
+    projected
+}
+
+pub(crate) fn pdf_glyph_name_to_unicode(name: &str) -> Option<u16> {
+    if let Some(base) = name.split('.').next() {
+        if base != name {
+            return pdf_glyph_name_to_unicode(base);
+        }
+    }
+
+    if let Some(cp) = glyph_name_map().get(name) {
+        return Some(*cp);
+    }
+
+    if let Some(hex) = name.strip_prefix("uni") {
+        if hex.len() == 4 && hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return u16::from_str_radix(hex, 16).ok();
+        }
+    }
+
+    if let Some(hex) = name.strip_prefix('u') {
+        if (4..=6).contains(&hex.len()) && hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            let codepoint = u32::from_str_radix(hex, 16).ok()?;
+            return u16::try_from(codepoint).ok();
+        }
+    }
+
+    None
+}
+
+fn glyph_name_map() -> &'static HashMap<&'static str, u16> {
+    static MAP: OnceLock<HashMap<&'static str, u16>> = OnceLock::new();
+    MAP.get_or_init(|| {
+        let mut map = HashMap::new();
+        for line in include_str!("../../lopdf/src/encodings/glyphnames.rs").lines() {
+            let line = line.trim();
+            let Some(rest) = line.strip_prefix("pub const ") else {
+                continue;
+            };
+            let Some((name, hex)) = rest.split_once(": u16 = 0x") else {
+                continue;
+            };
+            let Some(hex) = hex.strip_suffix(';') else {
+                continue;
+            };
+            if let Ok(codepoint) = u16::from_str_radix(hex, 16) {
+                map.insert(name, codepoint);
+            }
+        }
+        map
+    })
+}
+
+fn base_encoding_tables() -> &'static PdfBaseEncodingTables {
+    static TABLES: OnceLock<PdfBaseEncodingTables> = OnceLock::new();
+    TABLES.get_or_init(|| PdfBaseEncodingTables {
+        win_ansi: parse_base_encoding_table("WIN_ANSI_ENCODING"),
+        standard: parse_base_encoding_table("STANDARD_ENCODING"),
+        mac_roman: parse_base_encoding_table("MAC_ROMAN_ENCODING"),
+    })
+}
+
+fn parse_base_encoding_table(const_name: &str) -> [Option<u16>; 256] {
+    let src = include_str!("../../lopdf/src/encodings/mappings.rs");
+    let marker = format!("pub const {const_name}: CodedCharacterSet = [");
+    let start = src
+        .find(&marker)
+        .unwrap_or_else(|| panic!("missing {const_name} in lopdf mappings"));
+    let body = &src[start + marker.len()..];
+    let end = body
+        .find("];")
+        .unwrap_or_else(|| panic!("unterminated {const_name} in lopdf mappings"));
+
+    let mut entries = Vec::with_capacity(256);
+    for line in body[..end].lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == "None," {
+            entries.push(None);
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix("Some(Glyph::")
+            .and_then(|rest| rest.strip_suffix("),"))
+        {
+            entries.push(pdf_glyph_name_to_unicode(name));
+        }
+    }
+
+    let entry_count = entries.len();
+    entries
+        .try_into()
+        .unwrap_or_else(|_| panic!("expected 256 entries in {const_name}, got {entry_count}"))
 }
 
 fn scan_system_fonts() -> HashMap<String, PathBuf> {
@@ -1168,16 +1389,27 @@ mod tests {
 
     #[test]
     fn resolver_preserves_pdf_widths_when_embedded_font_data_is_unparseable() {
-        let embedded = vec![(
-            "Helvetica".to_string(),
-            vec![0_u8, 1, 2, 3],
-            Some((32, vec![278, 333, 444])),
-        )];
+        let embedded = vec![EmbeddedFontData {
+            name: "Helvetica".to_string(),
+            data: vec![0_u8, 1, 2, 3],
+            pdf_widths: Some((32, vec![278, 333, 444])),
+            pdf_encoding: Some(PdfSimpleEncoding {
+                base_encoding: PdfBaseEncoding::WinAnsi,
+                differences: vec![(32, 0x0020)],
+            }),
+        }];
         let mut resolver = XfaFontResolver::new(embedded);
         let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, None, None);
         let resolved = resolver
             .resolve(&spec)
             .expect("resolver should fall back to a system font");
         assert_eq!(resolved.pdf_widths, Some((32, vec![278, 333, 444])));
+        assert_eq!(
+            resolved.pdf_encoding,
+            Some(PdfSimpleEncoding {
+                base_encoding: PdfBaseEncoding::WinAnsi,
+                differences: vec![(32, 0x0020)],
+            })
+        );
     }
 }

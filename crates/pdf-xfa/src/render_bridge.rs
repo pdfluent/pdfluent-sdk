@@ -48,7 +48,7 @@ pub struct XfaRenderConfig {
 /// Resolved font metrics for a typeface, used for accurate text measurement.
 #[derive(Debug, Clone)]
 pub struct FontMetricsData {
-    /// PDF glyph widths (indices 0..255).
+    /// Unicode-indexed widths derived from PDF `/Widths` or font data.
     pub widths: Vec<u16>,
     /// Units per em of the font.
     pub upem: u16,
