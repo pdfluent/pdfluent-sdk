@@ -313,8 +313,8 @@ fn render_nodes(
             render_caption(
                 abs_x + inset_l,
                 mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h),
-                inner_w,
-                inner_h,
+                val_w,
+                val_h,
                 cap_fs,
                 cap_ff,
                 &node.style,
