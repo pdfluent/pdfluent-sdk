@@ -171,10 +171,10 @@ fn extract_unique_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontRecord> {
 
 fn corpus_font_width_report(pdf_name: &str) -> CorpusFontWidthReport {
     let pdf_path = corpus_pdf_path(pdf_name);
-    let pdf_bytes =
-        std::fs::read(&pdf_path).unwrap_or_else(|e| panic!("failed to read {}: {e}", pdf_path.display()));
-    let doc =
-        Document::load_mem(&pdf_bytes).unwrap_or_else(|e| panic!("failed to load {}: {e}", pdf_path.display()));
+    let pdf_bytes = std::fs::read(&pdf_path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", pdf_path.display()));
+    let doc = Document::load_mem(&pdf_bytes)
+        .unwrap_or_else(|e| panic!("failed to load {}: {e}", pdf_path.display()));
     let extracted_fonts = extract_unique_embedded_fonts(&doc);
 
     let embedded_fonts_for_resolver: Vec<EmbeddedFontData> = extracted_fonts
@@ -252,7 +252,10 @@ fn corpus_embedded_fonts_pdf_width_coverage() {
         ("sf15.pdf", corpus_font_width_report("sf15.pdf")),
     ];
 
-    let total_fonts: usize = reports.iter().map(|(_, report)| report.unique_embedded_fonts).sum();
+    let total_fonts: usize = reports
+        .iter()
+        .map(|(_, report)| report.unique_embedded_fonts)
+        .sum();
     let total_extracted_with_widths: usize = reports
         .iter()
         .map(|(_, report)| report.extracted_with_pdf_widths)

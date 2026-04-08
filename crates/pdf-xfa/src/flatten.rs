@@ -36,9 +36,18 @@
 //! remap those code-indexed widths through the font encoding so the layout
 //! engine receives Unicode-indexed measurements.
 //!
+//! ## CID Font /W Arrays (PDF spec §9.7.4.3)
+//!
+//! CID fonts (Type0/composite) use `/W` arrays in the CIDFont descendant
+//! dictionary instead of simple `/Widths`. Two element types:
+//!   - `cid_start [w1 w2 ...]` — consecutive CIDs starting at cid_start
+//!   - `cid_first cid_last width` — range of CIDs with same width
+//!
+//! `/DW` (default width, defaults to 1000) covers CIDs not in `/W`.
+//!
 //! ## Known Limitations
 //!
-//! - CID font /W arrays are not read
+//! - CID-to-Unicode mapping (ToUnicode CMap) is not yet parsed
 //! - System font fallback may have different metrics than the PDF's embedded font
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFormat};
@@ -367,8 +376,6 @@ fn xfa_flatten_inner(
     // The 1000-byte threshold separates minimal XFA templates (title/header
     // only, ~200-500 bytes) from full page re-renders (5000+ bytes).
     let overlay_is_substantial = overlays.iter().any(|o| o.content_stream.len() > 1000);
-    // GATE #22 over-pagination: ~50 PDFs where the original has 1 page but
-    // our XFA layout produces 2-140 pages. These are forms whose content is
     // Clamp 1-page over-pagination only for static XFAF forms. Dynamic forms
     // often start from a 1-page placeholder PDF and legitimately flow onto
     // additional pages once XFA data is laid out. Clamping all 1-page inputs
@@ -536,9 +543,11 @@ pub fn extract_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontData> {
 
         // For CIDFont Type0: also check DescendantFonts path
         // CIDFont fonts store their font data in /DescendantFonts[n]/FontDescriptor/FontFile*
+        // CID fonts use /W arrays (PDF spec §9.7.4.3) instead of simple /Widths.
         if let Some((stream_id, data)) = extract_cidfont_data(doc, dict, &base_font, &seen) {
             if seen.insert(stream_id) {
-                store_font_data(&mut fonts, &base_font, data, pdf_widths, None);
+                let cid_widths = extract_cid_font_widths(doc, dict);
+                store_font_data(&mut fonts, &base_font, data, cid_widths, None);
             }
         }
     }
@@ -558,6 +567,108 @@ fn extract_font_widths(dict: &lopdf::Dictionary) -> Option<(u16, Vec<u16>)> {
         return None;
     }
     Some((first_char, widths))
+}
+
+/// Extract CID font widths from a Type0 (composite) font's `/W` array.
+///
+/// CID fonts (PDF spec §9.7.4.3, Table 114) use a different width format than
+/// simple fonts. Instead of `/FirstChar` + `/Widths`, they use a `/W` array in
+/// the CIDFont descendant dictionary with two element types:
+///
+///   `cid_start [w1 w2 w3 ...]`   — consecutive CIDs starting at cid_start
+///   `cid_first cid_last width`   — range of CIDs all sharing the same width
+///
+/// `/DW` (default width, defaults to 1000) applies to CIDs not listed in `/W`.
+///
+/// The result is converted to the same `(first_char, widths)` representation
+/// used by simple fonts, where `widths[cid - first_char]` gives the width.
+///
+/// LIMITATION: CID-to-Unicode mapping via ToUnicode CMap is not parsed here;
+/// the widths are indexed by raw CID values.
+fn extract_cid_font_widths(
+    doc: &Document,
+    type0_dict: &lopdf::Dictionary,
+) -> Option<(u16, Vec<u16>)> {
+    let descendants = type0_dict.get(b"DescendantFonts").ok()?.as_array().ok()?;
+    let desc_ref = descendants.first()?;
+    let cid_dict = match desc_ref {
+        Object::Reference(id) => doc.get_dictionary(*id).ok()?,
+        Object::Dictionary(d) => d,
+        _ => return None,
+    };
+
+    let default_width = cid_dict
+        .get(b"DW")
+        .ok()
+        .and_then(|o| o.as_i64().ok())
+        .unwrap_or(1000) as u16;
+
+    let w_array = cid_dict.get(b"W").ok()?;
+    let w_array = match resolve_object(doc, w_array) {
+        Some(obj) => obj.as_array().ok()?,
+        None => return None,
+    };
+
+    if w_array.is_empty() {
+        return None;
+    }
+
+    // First pass: collect all (cid, width) pairs to find bounds.
+    let mut entries: Vec<(u16, u16)> = Vec::new();
+    let mut i = 0;
+    while i < w_array.len() {
+        let cid_start = match w_array[i].as_i64() {
+            Ok(v) => v as u16,
+            Err(_) => {
+                i += 1;
+                continue;
+            }
+        };
+        i += 1;
+        if i >= w_array.len() {
+            break;
+        }
+
+        // Next element: array → consecutive widths, integer → range end
+        if let Ok(widths_arr) = w_array[i].as_array() {
+            // Format: cid_start [w1 w2 w3 ...]
+            for (j, w_obj) in widths_arr.iter().enumerate() {
+                if let Ok(w) = w_obj.as_i64() {
+                    entries.push((cid_start + j as u16, w as u16));
+                }
+            }
+            i += 1;
+        } else if let Ok(cid_last) = w_array[i].as_i64() {
+            // Format: cid_first cid_last width
+            i += 1;
+            if i >= w_array.len() {
+                break;
+            }
+            if let Ok(width) = w_array[i].as_i64() {
+                let cid_last = cid_last as u16;
+                for cid in cid_start..=cid_last {
+                    entries.push((cid, width as u16));
+                }
+            }
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    let min_cid = entries.iter().map(|(c, _)| *c).min().unwrap();
+    let max_cid = entries.iter().map(|(c, _)| *c).max().unwrap();
+    let len = (max_cid - min_cid + 1) as usize;
+    let mut widths = vec![default_width; len];
+    for (cid, w) in &entries {
+        widths[(*cid - min_cid) as usize] = *w;
+    }
+
+    Some((min_cid, widths))
 }
 
 /// Parse a simple-font `/Encoding` dictionary with `/Differences`.
@@ -2569,5 +2680,173 @@ ET
             result.is_ok(),
             "owner-only encrypted PDF should be handled, got: {result:?}"
         );
+    }
+
+    /// Build a minimal PDF with a Type0 (CID) font that has a /W array.
+    fn build_pdf_with_cid_font(w_array: Vec<Object>, dw: Option<i64>) -> Document {
+        let mut doc = Document::with_version("1.4");
+
+        // Minimal CIDFont descendant dictionary with /W
+        let mut cid_dict = dictionary! {
+            "Type"    => Object::Name(b"Font".to_vec()),
+            "Subtype" => Object::Name(b"CIDFontType2".to_vec()),
+            "BaseFont" => Object::Name(b"TestFont".to_vec()),
+            "W"       => Object::Array(w_array)
+        };
+        if let Some(dw_val) = dw {
+            cid_dict.set("DW", Object::Integer(dw_val));
+        }
+        let cid_id = doc.add_object(Object::Dictionary(cid_dict));
+
+        // Type0 composite font pointing to the CIDFont
+        let type0_dict = dictionary! {
+            "Type"            => Object::Name(b"Font".to_vec()),
+            "Subtype"         => Object::Name(b"Type0".to_vec()),
+            "BaseFont"        => Object::Name(b"TestFont".to_vec()),
+            "DescendantFonts" => Object::Array(vec![Object::Reference(cid_id)])
+        };
+        doc.add_object(Object::Dictionary(type0_dict));
+        doc
+    }
+
+    /// Test CID /W array parsing: consecutive widths format.
+    /// /W [120 [500 600 700]] → CID 120=500, CID 121=600, CID 122=700
+    #[test]
+    fn cid_w_array_consecutive() {
+        let w = vec![
+            Object::Integer(120),
+            Object::Array(vec![
+                Object::Integer(500),
+                Object::Integer(600),
+                Object::Integer(700),
+            ]),
+        ];
+        let doc = build_pdf_with_cid_font(w, None);
+        let fonts = extract_embedded_fonts(&doc);
+
+        // No font stream embedded, so extract_embedded_fonts won't find data.
+        // Test the parser directly via the Type0 dict.
+        for obj in doc.objects.values() {
+            let dict = match obj.as_dict() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let subtype = dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok());
+            if subtype == Some(b"Type0".as_slice()) {
+                let result = extract_cid_font_widths(&doc, dict);
+                let (first, widths) = result.expect("should parse /W array");
+                assert_eq!(first, 120);
+                assert_eq!(widths.len(), 3);
+                assert_eq!(widths[0], 500); // CID 120
+                assert_eq!(widths[1], 600); // CID 121
+                assert_eq!(widths[2], 700); // CID 122
+                return;
+            }
+        }
+        panic!("Type0 font not found in test document");
+    }
+
+    /// Test CID /W array parsing: range format.
+    /// /W [200 300 250] → CIDs 200-300 all have width 250
+    #[test]
+    fn cid_w_array_range() {
+        let w = vec![
+            Object::Integer(200),
+            Object::Integer(300),
+            Object::Integer(250),
+        ];
+        let doc = build_pdf_with_cid_font(w, None);
+
+        for obj in doc.objects.values() {
+            let dict = match obj.as_dict() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let subtype = dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok());
+            if subtype == Some(b"Type0".as_slice()) {
+                let (first, widths) =
+                    extract_cid_font_widths(&doc, dict).expect("should parse /W range");
+                assert_eq!(first, 200);
+                assert_eq!(widths.len(), 101); // 200..=300
+                assert!(widths.iter().all(|&w| w == 250));
+                return;
+            }
+        }
+        panic!("Type0 font not found");
+    }
+
+    /// Test CID /W array parsing: mixed consecutive + range formats.
+    /// /W [120 [500 600 700] 200 300 250]
+    /// CID 120=500, 121=600, 122=700, CIDs 200-300=250
+    /// Default width (/DW) fills gaps (CIDs 123-199).
+    #[test]
+    fn cid_w_array_mixed() {
+        let w = vec![
+            Object::Integer(120),
+            Object::Array(vec![
+                Object::Integer(500),
+                Object::Integer(600),
+                Object::Integer(700),
+            ]),
+            Object::Integer(200),
+            Object::Integer(300),
+            Object::Integer(250),
+        ];
+        let doc = build_pdf_with_cid_font(w, Some(1000));
+
+        for obj in doc.objects.values() {
+            let dict = match obj.as_dict() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let subtype = dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok());
+            if subtype == Some(b"Type0".as_slice()) {
+                let (first, widths) =
+                    extract_cid_font_widths(&doc, dict).expect("should parse mixed /W");
+                assert_eq!(first, 120);
+                assert_eq!(widths.len(), 181); // 120..=300
+                                               // Consecutive part
+                assert_eq!(widths[0], 500); // CID 120
+                assert_eq!(widths[1], 600); // CID 121
+                assert_eq!(widths[2], 700); // CID 122
+                                            // Gap filled with /DW=1000
+                assert_eq!(widths[3], 1000); // CID 123
+                assert_eq!(widths[79], 1000); // CID 199
+                                              // Range part
+                assert_eq!(widths[80], 250); // CID 200
+                assert_eq!(widths[180], 250); // CID 300
+                return;
+            }
+        }
+        panic!("Type0 font not found");
+    }
+
+    /// Test that /DW defaults to 1000 when not specified.
+    #[test]
+    fn cid_w_array_default_width() {
+        let w = vec![
+            Object::Integer(10),
+            Object::Array(vec![Object::Integer(400)]),
+            Object::Integer(20),
+            Object::Array(vec![Object::Integer(600)]),
+        ];
+        let doc = build_pdf_with_cid_font(w, None); // no /DW → defaults to 1000
+
+        for obj in doc.objects.values() {
+            let dict = match obj.as_dict() {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let subtype = dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok());
+            if subtype == Some(b"Type0".as_slice()) {
+                let (first, widths) = extract_cid_font_widths(&doc, dict).expect("should parse /W");
+                assert_eq!(first, 10);
+                assert_eq!(widths[0], 400); // CID 10
+                assert_eq!(widths[5], 1000); // CID 15 — default
+                assert_eq!(widths[10], 600); // CID 20
+                return;
+            }
+        }
+        panic!("Type0 font not found");
     }
 }
