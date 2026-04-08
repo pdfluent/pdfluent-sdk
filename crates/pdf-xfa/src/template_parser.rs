@@ -865,7 +865,8 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
         return FieldKind::Text;
     };
     for child in ui.children().filter(|n| n.is_element()) {
-        match child.tag_name().name() {
+        let tag = child.tag_name().name();
+        match tag {
             "checkButton" => {
                 // XFA 3.3 §7.2.7: shape="round" → radio button (circle).
                 let shape = attr(child, "shape").unwrap_or("square");
