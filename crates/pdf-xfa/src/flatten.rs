@@ -37,7 +37,7 @@ use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
 use crate::render_bridge::{generate_all_overlays, FontMetricsData, PageOverlay, XfaRenderConfig};
 use xfa_dom_resolver::data_dom::DataDom;
-use xfa_layout_engine::layout::LayoutEngine;
+use xfa_layout_engine::layout::{LayoutContent, LayoutEngine, LayoutNode};
 
 fn create_minimal_pdf_document() -> Document {
     let mut doc = Document::new();
@@ -103,6 +103,24 @@ fn try_decrypt_pdf(pdf_bytes: &[u8]) -> DecryptResult {
     }
 
     DecryptResult::NotEncrypted
+}
+
+/// Returns `true` if the layout nodes contain at least one `Field` node
+/// (regardless of whether its value is empty or populated).
+fn page_has_fields(nodes: &[LayoutNode]) -> bool {
+    nodes.iter().any(|n| {
+        matches!(&n.content, LayoutContent::Field { .. }) || page_has_fields(&n.children)
+    })
+}
+
+/// Returns `true` if the layout nodes contain at least one `Field` with a
+/// non-empty value (i.e. data-bound content, not just static draw elements).
+/// Used for XFA §4.3 empty page subform suppression.
+fn page_has_field_data(nodes: &[LayoutNode]) -> bool {
+    nodes.iter().any(|n| {
+        matches!(&n.content, LayoutContent::Field { value, .. } if !value.is_empty())
+            || page_has_field_data(&n.children)
+    })
 }
 
 /// Flatten all XFA content in `pdf_bytes` to static PDF content streams.
@@ -254,12 +272,44 @@ fn xfa_flatten_inner(
     inject_resolved_metrics(&mut tree, &resolved_fonts);
 
     let engine = LayoutEngine::new(&tree);
-    let layout = engine
+    let mut layout = engine
         .layout(root_id)
         .map_err(|e| XfaError::LayoutFailed(format!("{e:?}")))?;
 
     if layout.pages.is_empty() {
         return Err(XfaError::LayoutFailed("layout produced 0 pages".into()));
+    }
+
+    // XFA Spec §4.3: suppress page subforms whose data is empty or absent.
+    // A page with fields but no populated values is considered "data-empty"
+    // and should be suppressed.  Pages without fields (static-only pages with
+    // draws/images) are always kept.  At least one page is retained.
+    if layout.pages.len() > 1 {
+        let keep: Vec<bool> = layout
+            .pages
+            .iter()
+            .map(|p| {
+                if page_has_fields(&p.nodes) {
+                    // Page has data-binding fields — keep only if any field is populated.
+                    page_has_field_data(&p.nodes)
+                } else {
+                    // Page has no fields (static draws/images only) — always keep.
+                    true
+                }
+            })
+            .collect();
+        // Only filter if at least one page would be kept; otherwise keep the first.
+        if keep.iter().any(|&k| k) {
+            let mut idx = 0;
+            layout.pages.retain(|_| {
+                let k = keep[idx];
+                idx += 1;
+                k
+            });
+        } else {
+            // All pages are data-empty — keep only the first.
+            layout.pages.truncate(1);
+        }
     }
 
     let mut doc = match Document::load_mem(pdf_bytes) {
@@ -347,18 +397,9 @@ fn xfa_flatten_inner(
     let overlay_is_substantial = overlays
         .iter()
         .any(|o| o.content_stream.len() > 1000);
-    // When the layout produces significantly fewer pages than the original
-    // (less than half), the layout engine likely failed to capture all
-    // content — fall back to preserving original pages.  When the layout
-    // is close (≥50%), trust it and delete excess pages (they are typically
-    // blank padding or Adobe pre-rendered placeholders).
-    let layout_incomplete =
-        n_layout < n_existing && (n_layout as f64) < (n_existing as f64) * 0.5;
     let preserve_static = is_static_form
         || (has_static_content && n_layout >= n_existing && overlay_is_substantial)
-        || layout_incomplete;
-
-    eprintln!("[flatten-debug] n_layout={n_layout} n_existing={n_existing} is_static={is_static_form} has_static={has_static_content} overlay_substantial={overlay_is_substantial} layout_incomplete={layout_incomplete} preserve_static={preserve_static}");
+        || (n_layout < n_existing);
 
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
