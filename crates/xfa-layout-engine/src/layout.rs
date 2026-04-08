@@ -236,10 +236,9 @@ impl<'a> LayoutEngine<'a> {
             // positioned layout (absolute x/y coordinates), they share a
             // single page.  Flowing them top-to-bottom across pages is
             // incorrect and causes over-pagination (e.g. 2-page output for
-            // a 1-page form whose template defines positioned subforms
-            // overlaid on the same pageArea — including the common case of
-            // a single positioned subform containing all fields).
-            let all_content_positioned = !content_queued.is_empty()
+            // a 1-page form whose template defines two positioned subforms
+            // overlaid on the same pageArea).
+            let all_content_positioned = content_queued.len() > 1
                 && content_queued
                     .iter()
                     .all(|qn| {
