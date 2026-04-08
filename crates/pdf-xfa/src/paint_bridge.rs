@@ -149,6 +149,10 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
         cfg.text_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
     }
 
+    if let Some(mark) = &style.check_button_mark {
+        cfg.check_button_mark = Some(mark.clone());
+    }
+
     cfg
 }
 

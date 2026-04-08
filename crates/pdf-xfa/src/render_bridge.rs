@@ -146,6 +146,10 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
         cfg.text_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
     }
 
+    if let Some(mark) = &style.check_button_mark {
+        cfg.check_button_mark = Some(mark.clone());
+    }
+
     cfg
 }
 
@@ -2442,6 +2446,29 @@ mod tests {
         }
     }
 
+    fn make_styled_checkbox(
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        value: &str,
+        style: FormNodeStyle,
+    ) -> LayoutNode {
+        LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(x, y, w, h),
+            name: "checkbox".to_string(),
+            content: LayoutContent::Field {
+                value: value.to_string(),
+                field_kind: FieldKind::Checkbox,
+                font_size: 10.0,
+                font_family: FontFamily::Serif,
+            },
+            children: vec![],
+            style,
+        }
+    }
+
     #[test]
     fn coordinate_mapping() {
         let mapper = CoordinateMapper::new(792.0, 612.0);
@@ -2645,6 +2672,38 @@ mod tests {
         assert!(
             s.contains("18.00"),
             "text x should include field left inset: {s}"
+        );
+    }
+
+    #[test]
+    fn checkbox_mark_style_controls_rendered_symbol() {
+        let default_overlay = styled_overlay_str(make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "1",
+            FormNodeStyle::default(),
+        ));
+        let circle_overlay = styled_overlay_str(make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "1",
+            FormNodeStyle {
+                check_button_mark: Some("circle".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        assert!(
+            !default_overlay.contains(" c\n"),
+            "default checkbox mark should not emit Bezier circle commands: {default_overlay}"
+        );
+        assert!(
+            circle_overlay.contains(" c\n"),
+            "circle checkbox mark should emit Bezier circle commands: {circle_overlay}"
         );
     }
 }
