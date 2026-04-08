@@ -242,7 +242,13 @@ impl<'a> LayoutEngine<'a> {
             // incorrect and causes over-pagination (e.g. 2-page output for
             // a 1-page form whose template defines two positioned subforms
             // overlaid on the same pageArea).
-            let multi_positioned = content_queued.len() > 1
+            //
+            // Guard: only apply the overlay heuristic when the template
+            // defines a single page area.  Multiple page areas signal that
+            // each positioned content subform maps to its own page — cramming
+            // them onto one page causes under-pagination (#GATE-22).
+            let multi_positioned = page_areas.len() <= 1
+                && content_queued.len() > 1
                 && content_queued.iter().all(|qn| {
                     let node = self.form.get(qn.id);
                     node.layout == LayoutStrategy::Positioned
@@ -882,8 +888,11 @@ impl<'a> LayoutEngine<'a> {
                             + child_style
                                 .margin_right_pt
                                 .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
+                        let child_border_w = child_style
+                            .border_width_pt
+                            .unwrap_or(child.box_model.border_width);
                         let insets_w = child.box_model.margins.horizontal()
-                            + child.box_model.border_width * 2.0
+                            + child_border_w * 2.0
                             + para_margins;
                         let max_w = (child_size.width - insets_w).max(1.0);
                         text::wrap_text(
@@ -1308,9 +1317,10 @@ impl<'a> LayoutEngine<'a> {
                         + cstyle
                             .margin_right_pt
                             .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
-                    let insets_w = cnode.box_model.margins.horizontal()
-                        + cnode.box_model.border_width * 2.0
-                        + cpara;
+                    let cborder_w = cstyle
+                        .border_width_pt
+                        .unwrap_or(cnode.box_model.border_width);
+                    let insets_w = cnode.box_model.margins.horizontal() + cborder_w * 2.0 + cpara;
                     let max_w = (self.compute_extent(child_id).width - insets_w).max(1.0);
                     let wrapped = text::wrap_text(
                         txt,
@@ -2134,9 +2144,11 @@ impl<'a> LayoutEngine<'a> {
                 let meta = self.form.meta(id);
                 let display_val = resolve_display_value(value, meta);
                 if !display_val.is_empty() && node.children.is_empty() {
-                    let insets_w = node.box_model.margins.horizontal()
-                        + node.box_model.border_width * 2.0
-                        + para_margins;
+                    let border_w = node_style
+                        .border_width_pt
+                        .unwrap_or(node.box_model.border_width);
+                    let insets_w =
+                        node.box_model.margins.horizontal() + border_w * 2.0 + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
                     let wrapped = text::wrap_text(
                         display_val,
@@ -2165,9 +2177,11 @@ impl<'a> LayoutEngine<'a> {
             }
             FormNodeType::Draw(DrawContent::Text(content)) => {
                 if !content.is_empty() && node.children.is_empty() {
-                    let insets_w = node.box_model.margins.horizontal()
-                        + node.box_model.border_width * 2.0
-                        + para_margins;
+                    let border_w = node_style
+                        .border_width_pt
+                        .unwrap_or(node.box_model.border_width);
+                    let insets_w =
+                        node.box_model.margins.horizontal() + border_w * 2.0 + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
                     let wrapped = text::wrap_text(
                         content,
@@ -2263,6 +2277,7 @@ impl<'a> LayoutEngine<'a> {
     ) -> Size {
         let node = self.form.get(id);
         let bm = &node.box_model;
+        let ext_style = &self.form.meta(id).style;
 
         // If explicit size is set, use it — except for TB subforms with
         // children, where we must compute the actual content height so that
@@ -2361,7 +2376,8 @@ impl<'a> LayoutEngine<'a> {
                         + ext_style
                             .margin_right_pt
                             .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
-                    let insets_w = bm.margins.horizontal() + bm.border_width * 2.0 + ext_para;
+                    let border_w = ext_style.border_width_pt.unwrap_or(bm.border_width);
+                    let insets_w = bm.margins.horizontal() + border_w * 2.0 + ext_para;
                     let space_above = ext_style.space_above_pt.unwrap_or(0.0);
                     let space_below = ext_style.space_below_pt.unwrap_or(0.0);
                     // If width is fixed, wrap text within that width minus insets
@@ -2400,7 +2416,8 @@ impl<'a> LayoutEngine<'a> {
         // When available space is given, growable dims expand to fill it
         if let Some(avail) = available {
             if bm.width.is_none() {
-                let insets_w = bm.margins.horizontal() + bm.border_width * 2.0;
+                let border_w = ext_style.border_width_pt.unwrap_or(bm.border_width);
+                let insets_w = bm.margins.horizontal() + border_w * 2.0;
                 content_size.width = content_size.width.max(avail.width - insets_w);
             }
         }
@@ -2413,8 +2430,8 @@ impl<'a> LayoutEngine<'a> {
         // pagination.  max_height constraints on growable subforms are NOT
         // overridden — only explicit height declarations (#768).
         if is_tb_with_children && bm.height.is_some() {
-            let mut unclamped_h =
-                content_size.height + bm.margins.vertical() + bm.border_width * 2.0;
+            let border_w = ext_style.border_width_pt.unwrap_or(bm.border_width);
+            let mut unclamped_h = content_size.height + bm.margins.vertical() + border_w * 2.0;
             if let Some(ref cap) = bm.caption {
                 if matches!(
                     cap.placement,
