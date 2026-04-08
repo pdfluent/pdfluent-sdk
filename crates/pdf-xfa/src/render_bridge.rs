@@ -1209,7 +1209,7 @@ fn render_checkbox(
     if value.is_empty() {
         return;
     }
-    let bw = config.border_width.max(0.5);
+    let bw = config.border_width;
     write_ops(
         ops,
         format_args!(
@@ -1249,7 +1249,7 @@ fn render_radio(
     if value.is_empty() {
         return;
     }
-    let bw = config.border_width.max(0.5);
+    let bw = config.border_width;
     let cx = x + w / 2.0;
     let cy = pdf_y + h / 2.0;
     let r = w.min(h) / 2.0;
@@ -1465,8 +1465,8 @@ fn render_button(
     if value.is_empty() {
         return;
     }
-    let border_radius = node_style.border_radius_pt.unwrap_or(1.0);
-    let bw = config.border_width.max(1.0);
+    let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
+    let bw = config.border_width.max(0.0);
 
     let light_shade = [
         (config.border_color[0] + 0.3).min(1.0),
@@ -1585,7 +1585,7 @@ fn render_signature(
     write_ops(ops, format_args!("[] 0 d\n"));
 
     if !value.is_empty() {
-        let fs = config.default_font_size * 0.8;
+        let fs = font_size;
         let text_x = x + config.text_padding;
         let v_offset = pdf_y + h / 2.0 - fs / 2.0;
         write_ops(

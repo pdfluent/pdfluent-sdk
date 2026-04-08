@@ -391,17 +391,22 @@ fn xfa_flatten_inner(
         // page content so they survive AcroForm removal.
         flatten_widget_appearances(&mut doc);
 
-        if is_static_form {
-            // True static form (XFAF): overlay XFA field rendering on top of
-            // preserved pages. The XFA template only defines fields, not full
-            // page layouts, so overlaying adds field values without
-            // double-rendering.
-            let static_overlay_count = if static_single_page_overpagination {
+        if is_static_form || single_page_overpagination {
+            // Static form (XFAF) or over-paginating 1-page form: overlay XFA
+            // field rendering on top of preserved pages. Limit to n_existing
+            // pages to prevent over-pagination — the original page structure
+            // is authoritative.
+            //
+            // For single_page_overpagination, overlaying the first XFA page
+            // ensures field values from XFA data appear on the original page.
+            // Without this, forms without widget appearances would show empty
+            // fields.
+            let overlay_count = if single_page_overpagination {
                 n_existing
             } else {
                 n_layout
             };
-            for (i, overlay) in overlays.iter().take(static_overlay_count).enumerate() {
+            for (i, overlay) in overlays.iter().take(overlay_count).enumerate() {
                 if i < n_existing {
                     overlay_page_content(
                         &mut doc,
@@ -423,8 +428,8 @@ fn xfa_flatten_inner(
                 }
             }
         }
-        // Hybrid form (matching page count, no baseProfile): widget
-        // appearances are baked, original page content is preserved.
+        // Hybrid form (matching page count, no baseProfile, not over-paginating):
+        // widget appearances are baked, original page content is preserved.
         // No XFA overlay — the XFA engine would re-render full page content
         // (headers, text, images), causing double-drawing.
     } else {
@@ -2183,7 +2188,11 @@ mod tests {
     }
 
     #[test]
-    fn dynamic_single_page_pdf_still_uses_xfa_pagination() {
+    fn dynamic_single_page_pdf_also_clamps_to_one_page() {
+        // GATE #22 evidence: across 505 golden-set PDFs, zero legitimate
+        // multi-page forms start from a 1-page original. When n_existing == 1
+        // and our layout produces more, it is always over-pagination —
+        // regardless of whether the form is static or dynamic.
         let xdp = overflowing_paginate_xdp(None);
         let pdf_bytes = build_xfa_pdf(&xdp);
         let result = flatten_xfa_to_pdf(&pdf_bytes).expect("flatten failed");
@@ -2191,9 +2200,10 @@ mod tests {
         let doc = Document::load_mem(&result).expect("load flattened PDF");
         let pages: Vec<ObjectId> = doc.page_iter().collect();
 
-        assert!(
-            pages.len() > 1,
-            "dynamic forms should still add overflow pages from the XFA layout"
+        assert_eq!(
+            pages.len(),
+            1,
+            "dynamic 1-page PDFs should preserve original page when XFA layout over-paginates"
         );
     }
 
