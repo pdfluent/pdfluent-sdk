@@ -114,3 +114,28 @@ fn border_width_reduces_available_width_for_wrapping() {
     assert_eq!(lines_with_border[0], "AAAAAA AAAAAA");
     assert_eq!(lines_with_border[1], "AA");
 }
+
+#[test]
+fn two_point_border_shrinks_content_width_by_four_points() {
+    let no_border = BoxModel {
+        width: Some(100.0),
+        max_width: f64::MAX,
+        max_height: f64::MAX,
+        ..Default::default()
+    };
+    let two_point_border = BoxModel {
+        width: Some(100.0),
+        border_width: 2.0,
+        max_width: f64::MAX,
+        max_height: f64::MAX,
+        ..Default::default()
+    };
+
+    assert_eq!(no_border.content_width(), 100.0);
+    assert_eq!(two_point_border.content_width(), 96.0);
+    assert_eq!(
+        no_border.content_width() - two_point_border.content_width(),
+        4.0,
+        "2pt border on both sides should shrink the content area by exactly 4pt"
+    );
+}
