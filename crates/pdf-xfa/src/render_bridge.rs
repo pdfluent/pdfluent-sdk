@@ -77,6 +77,13 @@ pub struct PageOverlay {
     pub images: Vec<ImageInfo>,
 }
 
+// XFA Template defines white as the default color for an explicit solid
+// <Fill>, but Acrobat/pdfRest still paint editable widgets with a light-gray
+// UI background when the template omits a field fill. Limit this compatibility
+// default to edit-style field widgets only. (#GATE-25)
+const ADOBE_DEFAULT_EDIT_FIELD_BACKGROUND: [f64; 3] =
+    [242.0 / 255.0, 242.0 / 255.0, 242.0 / 255.0];
+
 impl Default for XfaRenderConfig {
     fn default() -> Self {
         Self {
@@ -126,9 +133,7 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
     let mut cfg = config.clone();
 
     if let Some((r, g, b)) = style.bg_color {
-        if !(r >= 250 && g >= 250 && b >= 250) {
-            cfg.background_color = Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]);
-        }
+        cfg.background_color = Some([r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]);
     }
 
     cfg.draw_borders = false;
@@ -154,6 +159,22 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
     }
 
     cfg
+}
+
+fn default_edit_field_background(
+    field_kind: FieldKind,
+    config: &XfaRenderConfig,
+) -> Option<[f64; 3]> {
+    config.background_color.or_else(|| {
+        matches!(
+            field_kind,
+            FieldKind::Text
+                | FieldKind::NumericEdit
+                | FieldKind::PasswordEdit
+                | FieldKind::DateTimePicker
+        )
+        .then_some(ADOBE_DEFAULT_EDIT_FIELD_BACKGROUND)
+    })
 }
 
 fn effective_border_width(style: &FormNodeStyle) -> Option<f64> {
@@ -409,6 +430,7 @@ fn render_nodes(
                     val_pdf_y,
                     val_w,
                     val_h,
+                    *field_kind,
                     value,
                     *font_size,
                     *font_family,
@@ -940,6 +962,7 @@ fn render_field(
     pdf_y: f64,
     w: f64,
     h: f64,
+    field_kind: FieldKind,
     value: &str,
     font_size: f64,
     font_family: FontFamily,
@@ -950,7 +973,7 @@ fn render_field(
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
     let border_style = node_style.border_style.as_deref();
 
-    if let Some(bg) = &config.background_color {
+    if let Some(bg) = default_edit_field_background(field_kind, config) {
         write_ops(
             ops,
             format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
@@ -2466,6 +2489,30 @@ mod tests {
         }
     }
 
+    fn make_styled_field_kind(
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        value: &str,
+        field_kind: FieldKind,
+        style: FormNodeStyle,
+    ) -> LayoutNode {
+        LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(x, y, w, h),
+            name: "styled-kind".to_string(),
+            content: LayoutContent::Field {
+                value: value.to_string(),
+                field_kind,
+                font_size: 10.0,
+                font_family: FontFamily::Serif,
+            },
+            children: vec![],
+            style,
+        }
+    }
+
     fn make_styled_checkbox(
         x: f64,
         y: f64,
@@ -2683,6 +2730,77 @@ mod tests {
         };
         let s = styled_overlay_str(make_styled_field(0.0, 0.0, 200.0, 40.0, "Mid", style));
         assert!(s.contains("(Mid) Tj"));
+    }
+
+    #[test]
+    fn text_field_default_background_is_light_gray() {
+        let s = styled_overlay_str(make_styled_field(
+            10.0,
+            10.0,
+            100.0,
+            20.0,
+            "Hi",
+            FormNodeStyle::default(),
+        ));
+        assert!(
+            s.contains("0.949 0.949 0.949 rg"),
+            "default editable field background should be Adobe light gray: {s}"
+        );
+    }
+
+    #[test]
+    fn numeric_field_default_background_is_light_gray() {
+        let s = styled_overlay_str(make_styled_field_kind(
+            10.0,
+            10.0,
+            100.0,
+            20.0,
+            "42",
+            FieldKind::NumericEdit,
+            FormNodeStyle::default(),
+        ));
+        assert!(
+            s.contains("0.949 0.949 0.949 rg"),
+            "numeric edit fields should use the same default gray background: {s}"
+        );
+    }
+
+    #[test]
+    fn explicit_white_field_background_is_preserved() {
+        let s = styled_overlay_str(make_styled_field(
+            10.0,
+            10.0,
+            100.0,
+            20.0,
+            "Hi",
+            FormNodeStyle {
+                bg_color: Some((255, 255, 255)),
+                ..Default::default()
+            },
+        ));
+        assert!(
+            s.contains("1.000 1.000 1.000 rg"),
+            "explicit white field fills should stay white: {s}"
+        );
+    }
+
+    #[test]
+    fn checkbox_does_not_use_edit_field_default_background() {
+        let s = styled_overlay_str(make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "0",
+            FormNodeStyle {
+                border_width_pt: Some(0.25),
+                ..Default::default()
+            },
+        ));
+        assert!(
+            !s.contains("0.949 0.949 0.949 rg"),
+            "non-edit widgets should not inherit the text field gray fill: {s}"
+        );
     }
 
     #[test]
