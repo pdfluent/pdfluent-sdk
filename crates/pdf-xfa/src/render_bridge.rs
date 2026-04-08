@@ -132,13 +132,16 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
     }
 
     cfg.draw_borders = false;
-    if let Some(bw) = style.border_width_pt {
-        if bw > 0.0 {
-            cfg.border_width = bw;
-            cfg.draw_borders = true;
-            if let Some((r, g, b)) = style.border_color {
-                cfg.border_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
-            }
+    // Some XFA templates only expose a usable border width via per-edge data
+    // (for example when the first edge is hidden and later edges remain
+    // visible). Treat those widths as sufficient to enable border rendering;
+    // otherwise visible right/left/bottom borders disappear because
+    // border_width_pt stays unset.
+    if let Some(bw) = effective_border_width(style) {
+        cfg.border_width = bw;
+        cfg.draw_borders = true;
+        if let Some((r, g, b)) = style.border_color {
+            cfg.border_color = [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0];
         }
     }
 
@@ -151,6 +154,24 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
     }
 
     cfg
+}
+
+fn effective_border_width(style: &FormNodeStyle) -> Option<f64> {
+    if let Some(bw) = style.border_width_pt.filter(|bw| *bw > 0.0) {
+        return Some(bw);
+    }
+
+    style
+        .border_widths
+        .as_ref()
+        .map(|widths| {
+            widths
+                .iter()
+                .zip(style.border_edges.iter())
+                .filter_map(|(width, visible)| (*visible && *width > 0.0).then_some(*width))
+                .fold(0.0, f64::max)
+        })
+        .filter(|bw| *bw > 0.0)
 }
 
 /// Generate a PDF content stream overlay for a single page.
@@ -240,44 +261,38 @@ fn render_nodes(
                 emit_rect_path(ops, bx, by, bw, bh, border_radius);
                 ops.extend_from_slice(b"f\n");
             }
-            if let Some(bwid) = node.style.border_width_pt {
-                if bwid > 0.0 && bw > 0.0 && bh > 0.0 {
-                    let bc = node
-                        .style
-                        .border_color
-                        .map_or([0.0, 0.0, 0.0], |(r, g, b)| {
-                            [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]
-                        });
-                    write_ops(
+            if node_config.draw_borders && node_config.border_width > 0.0 && bw > 0.0 && bh > 0.0 {
+                let bwid = node_config.border_width;
+                let bc = node_config.border_color;
+                write_ops(
+                    ops,
+                    format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bwid, bc[0], bc[1], bc[2]),
+                );
+                let per_edge = node.style.border_colors.map(|cs| {
+                    cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+                });
+                let per_edge_widths = node.style.border_widths.as_ref();
+                apply_border_dash(ops, border_style);
+                let edges = node.style.border_edges;
+                if per_edge.is_some() || per_edge_widths.is_some() {
+                    emit_individual_edges(
                         ops,
-                        format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bwid, bc[0], bc[1], bc[2]),
+                        bx,
+                        by,
+                        bw,
+                        bh,
+                        &edges,
+                        per_edge.as_ref(),
+                        per_edge_widths,
+                        bwid,
                     );
-                    let per_edge = node.style.border_colors.map(|cs| {
-                        cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
-                    });
-                    let per_edge_widths = node.style.border_widths.as_ref();
-                    apply_border_dash(ops, border_style);
-                    let edges = node.style.border_edges;
-                    if per_edge.is_some() || per_edge_widths.is_some() {
-                        emit_individual_edges(
-                            ops,
-                            bx,
-                            by,
-                            bw,
-                            bh,
-                            &edges,
-                            per_edge.as_ref(),
-                            per_edge_widths,
-                            bwid,
-                        );
-                    } else if edges[0] && edges[1] && edges[2] && edges[3] {
-                        emit_rect_path(ops, bx, by, bw, bh, border_radius);
-                        ops.extend_from_slice(b"S\n");
-                    } else {
-                        emit_individual_edges(ops, bx, by, bw, bh, &edges, None, None, bwid);
-                    }
-                    reset_border_dash(ops, border_style);
+                } else if edges[0] && edges[1] && edges[2] && edges[3] {
+                    emit_rect_path(ops, bx, by, bw, bh, border_radius);
+                    ops.extend_from_slice(b"S\n");
+                } else {
+                    emit_individual_edges(ops, bx, by, bw, bh, &edges, None, None, bwid);
                 }
+                reset_border_dash(ops, border_style);
             }
         }
 
@@ -1585,8 +1600,9 @@ fn render_signature(
     write_ops(ops, format_args!("[] 0 d\n"));
 
     if !value.is_empty() {
-        let fs = font_size;
-        let text_x = x + config.text_padding;
+        let fs = node_style.font_size.unwrap_or(config.default_font_size);
+        // XFA spec: margin_left_pt determines left padding for text, not config.text_padding
+        let text_x = x + node_style.margin_left_pt.unwrap_or(0.0);
         let v_offset = pdf_y + h / 2.0 - fs / 2.0;
         write_ops(
             ops,
@@ -1619,7 +1635,8 @@ fn render_text(
         return;
     }
     let fs = node_style.font_size.unwrap_or(config.default_font_size);
-    let p = config.text_padding;
+    // XFA spec: margin_left_pt determines left padding for text, not config.text_padding
+    let p = node_style.margin_left_pt.unwrap_or(0.0);
     let font_family = match node_style.font_family.as_deref() {
         Some(f) if f.contains("Courier") || f.contains("Mono") => FontFamily::Monospace,
         Some(f)
@@ -2555,6 +2572,53 @@ mod tests {
         let s = styled_overlay_str(make_styled_field(10.0, 10.0, 100.0, 20.0, "Hi", style));
         assert!(s.contains("[3 2] 0 d"), "expected dash");
         assert!(s.contains("[] 0 d"), "expected reset");
+    }
+
+    #[test]
+    fn field_per_edge_widths_render_without_uniform_border_width() {
+        let style = FormNodeStyle {
+            border_widths: Some([1.0, 2.0, 1.0, 3.0]),
+            border_edges: [false, true, false, true],
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_field(10.0, 10.0, 100.0, 20.0, "", style));
+        assert!(s.contains("2.00 w"), "right edge width should be used: {s}");
+        assert!(s.contains("3.00 w"), "left edge width should be used: {s}");
+        assert!(
+            s.contains("110.00 762.00 m 110.00 782.00 l S"),
+            "right edge should render even without border_width_pt: {s}"
+        );
+        assert!(
+            s.contains("10.00 762.00 m 10.00 782.00 l S"),
+            "left edge should render even without border_width_pt: {s}"
+        );
+    }
+
+    #[test]
+    fn container_per_edge_widths_render_without_uniform_border_width() {
+        let node = LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(10.0, 10.0, 100.0, 20.0),
+            name: "box".to_string(),
+            content: LayoutContent::None,
+            children: vec![],
+            style: FormNodeStyle {
+                border_widths: Some([1.0, 2.0, 1.0, 3.0]),
+                border_edges: [false, true, false, true],
+                ..Default::default()
+            },
+        };
+        let s = styled_overlay_str(node);
+        assert!(s.contains("2.00 w"), "right edge width should be used: {s}");
+        assert!(s.contains("3.00 w"), "left edge width should be used: {s}");
+        assert!(
+            s.contains("110.00 762.00 m 110.00 782.00 l S"),
+            "right edge should render for non-field nodes: {s}"
+        );
+        assert!(
+            s.contains("10.00 762.00 m 10.00 782.00 l S"),
+            "left edge should render for non-field nodes: {s}"
+        );
     }
 
     #[test]
