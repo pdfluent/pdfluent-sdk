@@ -1,26 +1,45 @@
-//! XFA flattening: parse XFA template, run layout, write PDF content streams.
+//! # XFA Flattening Pipeline
 //!
-//! XFA Spec 3.3 §1.7 (p28-30) — Static vs Dynamic Forms:
-//!   Static (XFAF): boilerplate in PDF, fields/subforms in XFA. Fixed layout.
-//!   Dynamic (full XFA): all content in XFA. Layout computed at runtime.
-//!   `baseProfile="interactiveForms"` indicates static (XFAF) forms.
+//! This module parses XFA template, runs layout, and writes PDF content streams.
+//!
+//! ## Pipeline Stages
+//!
+//! 1. **Extract** — `extract_embedded_fonts()` reads font programs and /Widths
+//!    arrays from PDF font dictionaries
+//! 2. **Store** — `store_font_data()` saves font bytes + widths keyed by name
+//! 3. **Resolve** — `XfaFontResolver::resolve()` matches XFA font names to
+//!    stored fonts, with fallbacks (alias, family, system)
+//! 4. **Inject** — `inject_resolved_metrics()` pushes resolved widths into
+//!    FontMetrics for the layout engine
+//! 5. **Layout** — `LayoutEngine::layout()` computes page positions using
+//!    resolved font metrics for accurate text measurement
+//! 6. **Render** — `generate_page_overlay()` in render_bridge converts LayoutDom
+//!    to PDF content stream operators
+//! 7. **Embed** — `embed_resolved_fonts()` writes font data into the PDF
+//!    and creates /Font resources
+//! 8. **Write** — The content streams are written back to PDF pages
+//!
+//! ## Static vs Dynamic Forms
+//!
+//! XFA Spec 3.3 §1.7 (p28-30):
+//! - **Static (XFAF)**: boilerplate in PDF, fields/subforms in XFA. Fixed layout.
+//! - **Dynamic (full XFA)**: all content in XFA. Layout computed at runtime.
+//! - `baseProfile="interactiveForms"` indicates static (XFAF) forms.
 //!
 //! XFA Spec 3.3 §2.9 (p72) — PDF-XFA Connection:
-//!   NeedsRendering flag: dynamic=true, XFAF=false.
-//!   XFA packets stored in AcroForm/XFA entry in catalog.
+//! - NeedsRendering flag: dynamic=true, XFAF=false.
+//! - XFA packets stored in AcroForm/XFA entry in catalog.
 //!
-//! `flatten_xfa_to_pdf` is the single entry point. It:
-//! 1. Extracts the XFA packets from the PDF (via `extract::extract_xfa`).
-//! 2. Parses the `<template>` packet into a `FormTree`.
-//! 3. Runs `LayoutEngine::layout()` to produce a `LayoutDom`.
-//! 4. Converts each layout page into PDF content stream bytes.
-//! 5. Writes the streams back into the PDF pages (replacing empty streams),
-//!    adding Helvetica as a /Font resource, and expanding the page tree to
-//!    match the layout page count.
-//! 6. Removes the /AcroForm entry from the catalog.
+//! ## /Widths Handling
 //!
-//! The result is a static PDF with no XFA dependency: it can be rendered
-//! by any standard PDF viewer.
+//! PDF /Widths arrays start at FirstChar (typically 32). The array is padded
+//! to 256 entries so measure_width can index by codepoint directly.
+//!
+//! ## Known Limitations
+//!
+//! - Custom encodings (/Differences) are not supported
+//! - CID font /W arrays are not read
+//! - System font fallback may have different metrics than the PDF's embedded font
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFormat};
 use std::collections::HashMap;
