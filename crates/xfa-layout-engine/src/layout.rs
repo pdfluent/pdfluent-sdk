@@ -117,6 +117,10 @@ pub enum LayoutContent {
         text_align: TextAlign,
         /// Font family for selecting the correct PDF font resource.
         font_family: FontFamily,
+        /// Additional space above the first line of text (from XFA `<para spaceAbove>`).
+        space_above_pt: Option<f64>,
+        /// Additional space below the last line of text (from XFA `<para spaceBelow>`).
+        space_below_pt: Option<f64>,
     },
     /// A static image.
     Image {
@@ -239,14 +243,12 @@ impl<'a> LayoutEngine<'a> {
             // a 1-page form whose template defines two positioned subforms
             // overlaid on the same pageArea).
             let multi_positioned = content_queued.len() > 1
-                && content_queued
-                    .iter()
-                    .all(|qn| {
-                        let node = self.form.get(qn.id);
-                        node.layout == LayoutStrategy::Positioned
-                            && matches!(node.node_type, FormNodeType::Subform)
-                            && !qn.break_before
-                    });
+                && content_queued.iter().all(|qn| {
+                    let node = self.form.get(qn.id);
+                    node.layout == LayoutStrategy::Positioned
+                        && matches!(node.node_type, FormNodeType::Subform)
+                        && !qn.break_before
+                });
 
             // #794 — Single positioned subform delegation: when there is
             // exactly 1 content node that is a Positioned subform whose
@@ -282,8 +284,7 @@ impl<'a> LayoutEngine<'a> {
             if all_content_positioned {
                 let pa = &page_areas[0];
                 let ca = primary_content_area(pa);
-                let ids: Vec<FormNodeId> =
-                    content_queued.iter().map(|qn| qn.id).collect();
+                let ids: Vec<FormNodeId> = content_queued.iter().map(|qn| qn.id).collect();
                 let mut page = self.layout_content_on_page(
                     ca,
                     pa.page_width,
@@ -833,7 +834,10 @@ impl<'a> LayoutEngine<'a> {
                 let style_lh = self.form.meta(child_id).style.line_height_pt;
                 let lh = style_lh.unwrap_or_else(|| child.font.line_height_pt());
                 let w = self.compute_extent(child_id).width;
-                Size { width: w, height: override_lines.len() as f64 * lh }
+                Size {
+                    width: w,
+                    height: override_lines.len() as f64 * lh,
+                }
             } else {
                 self.compute_extent_with_available_and_override(
                     child_id,
@@ -861,8 +865,7 @@ impl<'a> LayoutEngine<'a> {
 
                 // §8.7 Text leaf splitting at page boundary.
                 if remaining_height > 0.0
-                    && (qn.text_lines_override.is_some()
-                        || self.is_splittable_text_leaf(child_id))
+                    && (qn.text_lines_override.is_some() || self.is_splittable_text_leaf(child_id))
                 {
                     let lines = if let Some(ref ol) = qn.text_lines_override {
                         ol.clone()
@@ -879,14 +882,18 @@ impl<'a> LayoutEngine<'a> {
                             + child.box_model.border_width * 2.0
                             + para_margins;
                         let max_w = (child_size.width - insets_w).max(1.0);
-                        text::wrap_text(txt, max_w, &child.font, child_style.text_indent_pt.unwrap_or(0.0), child_style.line_height_pt).lines
+                        text::wrap_text(
+                            txt,
+                            max_w,
+                            &child.font,
+                            child_style.text_indent_pt.unwrap_or(0.0),
+                            child_style.line_height_pt,
+                        )
+                        .lines
                     };
-                    let (partial, rest_nodes) = self.split_text_node(
-                        child_id, y_cursor, remaining_height, &lines,
-                    )?;
-                    if partial.rect.height > 0.0
-                        && partial.rect.height <= remaining_height + 1.0
-                    {
+                    let (partial, rest_nodes) =
+                        self.split_text_node(child_id, y_cursor, remaining_height, &lines)?;
+                    if partial.rect.height > 0.0 && partial.rect.height <= remaining_height + 1.0 {
                         let mut offset_node = partial;
                         offset_node.rect.x += content_area.x;
                         offset_node.rect.y += content_area.y;
@@ -980,6 +987,7 @@ impl<'a> LayoutEngine<'a> {
             // XFA Spec 3.3 §8.3 — hAlign positions child within content area
             let x = self.child_h_align_offset(child_id, child_size.width, available.width);
             let node = if let Some(ref override_lines) = qn.text_lines_override {
+                let child_style = &self.form.meta(child_id).style;
                 LayoutNode {
                     form_node: child_id,
                     rect: Rect::new(x, y_cursor, child_size.width, child_size.height),
@@ -990,6 +998,8 @@ impl<'a> LayoutEngine<'a> {
                         font_size: child.font.size,
                         text_align: child.font.text_align,
                         font_family: child.font.typeface,
+                        space_above_pt: child_style.space_above_pt,
+                        space_below_pt: child_style.space_below_pt,
                     },
                     children: Vec::new(),
                     style: self.form.meta(child_id).style.clone(),
@@ -1075,14 +1085,16 @@ impl<'a> LayoutEngine<'a> {
             return false;
         }
         let style = &self.form.meta(id).style;
-        let para_margins = style.margin_left_pt.unwrap_or(1.0)
-            + style.margin_right_pt.unwrap_or(1.0);
+        let para_margins =
+            style.margin_left_pt.unwrap_or(1.0) + style.margin_right_pt.unwrap_or(1.0);
         match &node.node_type {
             FormNodeType::Draw(DrawContent::Text(t)) => {
                 let line_count = text::wrap_text(
                     t,
                     (node.box_model.content_width() - para_margins).max(1.0),
-                    &node.font, style.text_indent_pt.unwrap_or(0.0), style.line_height_pt,
+                    &node.font,
+                    style.text_indent_pt.unwrap_or(0.0),
+                    style.line_height_pt,
                 )
                 .lines
                 .len();
@@ -1092,7 +1104,9 @@ impl<'a> LayoutEngine<'a> {
                 let line_count = text::wrap_text(
                     value,
                     (node.box_model.content_width() - para_margins).max(1.0),
-                    &node.font, style.text_indent_pt.unwrap_or(0.0), style.line_height_pt,
+                    &node.font,
+                    style.text_indent_pt.unwrap_or(0.0),
+                    style.line_height_pt,
                 )
                 .lines
                 .len();
@@ -1129,6 +1143,7 @@ impl<'a> LayoutEngine<'a> {
 
         if split_at == 0 {
             let full_height = lines.len() as f64 * lh;
+            let split_style = &self.form.meta(id).style;
             let full_node = LayoutNode {
                 form_node: id,
                 rect: Rect::new(0.0, y_offset, self.compute_extent(id).width, full_height),
@@ -1139,6 +1154,8 @@ impl<'a> LayoutEngine<'a> {
                     font_size: node.font.size,
                     text_align: node.font.text_align,
                     font_family: node.font.typeface,
+                    space_above_pt: split_style.space_above_pt,
+                    space_below_pt: split_style.space_below_pt,
                 },
                 children: Vec::new(),
                 style: self.form.meta(id).style.clone(),
@@ -1150,6 +1167,7 @@ impl<'a> LayoutEngine<'a> {
         let bottom_lines: Vec<String> = lines[split_at..].to_vec();
         let partial_height = split_at as f64 * lh;
         let node_width = self.compute_extent(id).width;
+        let split_style = &self.form.meta(id).style;
 
         let partial_node = LayoutNode {
             form_node: id,
@@ -1161,6 +1179,8 @@ impl<'a> LayoutEngine<'a> {
                 font_size: node.font.size,
                 text_align: node.font.text_align,
                 font_family: node.font.typeface,
+                space_above_pt: split_style.space_above_pt,
+                space_below_pt: split_style.space_below_pt,
             },
             children: Vec::new(),
             style: self.form.meta(id).style.clone(),
@@ -1276,17 +1296,19 @@ impl<'a> LayoutEngine<'a> {
                     let cstyle = &self.form.meta(child_id).style;
                     let cpara = cstyle.margin_left_pt.unwrap_or(1.0)
                         + cstyle.margin_right_pt.unwrap_or(1.0);
-                    let insets_w =
-                        cnode.box_model.margins.horizontal() + cnode.box_model.border_width * 2.0
+                    let insets_w = cnode.box_model.margins.horizontal()
+                        + cnode.box_model.border_width * 2.0
                         + cpara;
                     let max_w = (self.compute_extent(child_id).width - insets_w).max(1.0);
-                    let wrapped = text::wrap_text(txt, max_w, &cnode.font, cstyle.text_indent_pt.unwrap_or(0.0), cstyle.line_height_pt);
-                    let (partial_child, child_rest) = self.split_text_node(
-                        child_id,
-                        child_y,
-                        child_remaining,
-                        &wrapped.lines,
-                    )?;
+                    let wrapped = text::wrap_text(
+                        txt,
+                        max_w,
+                        &cnode.font,
+                        cstyle.text_indent_pt.unwrap_or(0.0),
+                        cstyle.line_height_pt,
+                    );
+                    let (partial_child, child_rest) =
+                        self.split_text_node(child_id, child_y, child_remaining, &wrapped.lines)?;
 
                     if partial_child.rect.height > 0.0
                         && partial_child.rect.height <= child_remaining + 0.5
@@ -2088,25 +2110,33 @@ impl<'a> LayoutEngine<'a> {
         }
 
         let node_style = &self.form.meta(id).style;
-        let para_margins = node_style.margin_left_pt.unwrap_or(1.0)
-            + node_style.margin_right_pt.unwrap_or(1.0);
+        let para_margins =
+            node_style.margin_left_pt.unwrap_or(1.0) + node_style.margin_right_pt.unwrap_or(1.0);
 
         let content = match &node.node_type {
             FormNodeType::Field { value } => {
                 let meta = self.form.meta(id);
                 let display_val = resolve_display_value(value, meta);
                 if !display_val.is_empty() && node.children.is_empty() {
-                    let insets_w =
-                        node.box_model.margins.horizontal() + node.box_model.border_width * 2.0
+                    let insets_w = node.box_model.margins.horizontal()
+                        + node.box_model.border_width * 2.0
                         + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
-                    let wrapped = text::wrap_text(display_val, max_w, &node.font, node_style.text_indent_pt.unwrap_or(0.0), node_style.line_height_pt);
+                    let wrapped = text::wrap_text(
+                        display_val,
+                        max_w,
+                        &node.font,
+                        node_style.text_indent_pt.unwrap_or(0.0),
+                        node_style.line_height_pt,
+                    );
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
                         first_line_of_para: wrapped.first_line_of_para,
                         font_size: node.font.size,
                         text_align: node.font.text_align,
                         font_family: node.font.typeface,
+                        space_above_pt: node_style.space_above_pt,
+                        space_below_pt: node_style.space_below_pt,
                     }
                 } else {
                     LayoutContent::Field {
@@ -2119,17 +2149,25 @@ impl<'a> LayoutEngine<'a> {
             }
             FormNodeType::Draw(DrawContent::Text(content)) => {
                 if !content.is_empty() && node.children.is_empty() {
-                    let insets_w =
-                        node.box_model.margins.horizontal() + node.box_model.border_width * 2.0
+                    let insets_w = node.box_model.margins.horizontal()
+                        + node.box_model.border_width * 2.0
                         + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
-                    let wrapped = text::wrap_text(content, max_w, &node.font, node_style.text_indent_pt.unwrap_or(0.0), node_style.line_height_pt);
+                    let wrapped = text::wrap_text(
+                        content,
+                        max_w,
+                        &node.font,
+                        node_style.text_indent_pt.unwrap_or(0.0),
+                        node_style.line_height_pt,
+                    );
                     LayoutContent::WrappedText {
                         lines: wrapped.lines,
                         first_line_of_para: wrapped.first_line_of_para,
                         font_size: node.font.size,
                         text_align: node.font.text_align,
                         font_family: node.font.typeface,
+                        space_above_pt: node_style.space_above_pt,
+                        space_below_pt: node_style.space_below_pt,
                     }
                 } else {
                     LayoutContent::Text(content.clone())
@@ -2304,19 +2342,37 @@ impl<'a> LayoutEngine<'a> {
                     let ext_para = ext_style.margin_left_pt.unwrap_or(1.0)
                         + ext_style.margin_right_pt.unwrap_or(1.0);
                     let insets_w = bm.margins.horizontal() + bm.border_width * 2.0 + ext_para;
+                    let space_above = ext_style.space_above_pt.unwrap_or(0.0);
+                    let space_below = ext_style.space_below_pt.unwrap_or(0.0);
                     // If width is fixed, wrap text within that width minus insets
                     // If width is growable, measure without wrapping
                     let text_size = if let Some(w) = bm.width {
                         let max_text_width = (w - insets_w).max(0.0);
-                        text::wrap_text(txt, max_text_width, &node.font, ext_style.text_indent_pt.unwrap_or(0.0), ext_style.line_height_pt).size
+                        text::wrap_text(
+                            txt,
+                            max_text_width,
+                            &node.font,
+                            ext_style.text_indent_pt.unwrap_or(0.0),
+                            ext_style.line_height_pt,
+                        )
+                        .size
                     } else if let Some(avail) = available {
                         let max_text_width = (avail.width - insets_w).max(0.0);
-                        text::wrap_text(txt, max_text_width, &node.font, ext_style.text_indent_pt.unwrap_or(0.0), ext_style.line_height_pt).size
+                        text::wrap_text(
+                            txt,
+                            max_text_width,
+                            &node.font,
+                            ext_style.text_indent_pt.unwrap_or(0.0),
+                            ext_style.line_height_pt,
+                        )
+                        .size
                     } else {
                         text::measure_text(txt, &node.font)
                     };
                     content_size.width = content_size.width.max(text_size.width);
-                    content_size.height = content_size.height.max(text_size.height);
+                    content_size.height = content_size
+                        .height
+                        .max(text_size.height + space_above + space_below);
                 }
             }
         }
@@ -5738,14 +5794,36 @@ mod halign_tests {
     // anchorType tests (XFA 3.3 §2.6 + App A p1510)
     // -------------------------------------------------------------------
 
-    fn make_positioned_field(tree: &mut FormTree, name: &str, x: f64, y: f64, w: f64, h: f64) -> FormNodeId {
+    fn make_positioned_field(
+        tree: &mut FormTree,
+        name: &str,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    ) -> FormNodeId {
         tree.add_node(FormNode {
             name: name.to_string(),
-            node_type: FormNodeType::Field { value: name.to_string() },
-            box_model: BoxModel { width: Some(w), height: Some(h), x, y, max_width: f64::MAX, max_height: f64::MAX, ..Default::default() },
+            node_type: FormNodeType::Field {
+                value: name.to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(w),
+                height: Some(h),
+                x,
+                y,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
             layout: LayoutStrategy::Positioned,
-            children: vec![], occur: Occur::once(), font: FontMetrics::default(),
-            calculate: None, validate: None, column_widths: vec![], col_span: 1,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
         })
     }
 
@@ -5753,19 +5831,82 @@ mod halign_tests {
         let mut tree = FormTree::new();
         let field = make_positioned_field(&mut tree, "F", x, y, w, h);
         tree.meta_mut(field).anchor_type = anchor;
-        let root = make_subform(&mut tree, "Root", LayoutStrategy::Positioned, Some(612.0), Some(792.0), vec![field]);
+        let root = make_subform(
+            &mut tree,
+            "Root",
+            LayoutStrategy::Positioned,
+            Some(612.0),
+            Some(792.0),
+            vec![field],
+        );
         let engine = LayoutEngine::new(&tree);
         let result = engine.layout(root).unwrap();
         result.pages[0].nodes[0].rect
     }
 
-    #[test] fn anchor_top_left_no_adjustment() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::TopLeft, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 100.0); assert_eq!(r.y, 200.0); assert_eq!(r.width, 80.0); assert_eq!(r.height, 40.0); }
-    #[test] fn anchor_top_center() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::TopCenter, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 60.0); assert_eq!(r.y, 200.0); }
-    #[test] fn anchor_top_right() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::TopRight, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 20.0); assert_eq!(r.y, 200.0); }
-    #[test] fn anchor_middle_left() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::MiddleLeft, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 100.0); assert_eq!(r.y, 180.0); }
-    #[test] fn anchor_middle_center() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::MiddleCenter, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 60.0); assert_eq!(r.y, 180.0); }
-    #[test] fn anchor_middle_right() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::MiddleRight, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 20.0); assert_eq!(r.y, 180.0); }
-    #[test] fn anchor_bottom_left() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::BottomLeft, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 100.0); assert_eq!(r.y, 160.0); }
-    #[test] fn anchor_bottom_center() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::BottomCenter, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 60.0); assert_eq!(r.y, 160.0); }
-    #[test] fn anchor_bottom_right() { use crate::form::AnchorType; let r = layout_with_anchor(AnchorType::BottomRight, 100.0, 200.0, 80.0, 40.0); assert_eq!(r.x, 20.0); assert_eq!(r.y, 160.0); }
+    #[test]
+    fn anchor_top_left_no_adjustment() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::TopLeft, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 100.0);
+        assert_eq!(r.y, 200.0);
+        assert_eq!(r.width, 80.0);
+        assert_eq!(r.height, 40.0);
+    }
+    #[test]
+    fn anchor_top_center() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::TopCenter, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 60.0);
+        assert_eq!(r.y, 200.0);
+    }
+    #[test]
+    fn anchor_top_right() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::TopRight, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 20.0);
+        assert_eq!(r.y, 200.0);
+    }
+    #[test]
+    fn anchor_middle_left() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::MiddleLeft, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 100.0);
+        assert_eq!(r.y, 180.0);
+    }
+    #[test]
+    fn anchor_middle_center() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::MiddleCenter, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 60.0);
+        assert_eq!(r.y, 180.0);
+    }
+    #[test]
+    fn anchor_middle_right() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::MiddleRight, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 20.0);
+        assert_eq!(r.y, 180.0);
+    }
+    #[test]
+    fn anchor_bottom_left() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::BottomLeft, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 100.0);
+        assert_eq!(r.y, 160.0);
+    }
+    #[test]
+    fn anchor_bottom_center() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::BottomCenter, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 60.0);
+        assert_eq!(r.y, 160.0);
+    }
+    #[test]
+    fn anchor_bottom_right() {
+        use crate::form::AnchorType;
+        let r = layout_with_anchor(AnchorType::BottomRight, 100.0, 200.0, 80.0, 40.0);
+        assert_eq!(r.x, 20.0);
+        assert_eq!(r.y, 160.0);
+    }
 }
