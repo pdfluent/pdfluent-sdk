@@ -21,7 +21,7 @@
 //!
 //! ## Known Limitations
 //!
-//! - CID font /W arrays are not read
+//! - CID-to-Unicode mapping (ToUnicode CMap) is not yet parsed
 //! - System font fallback may have different metrics than the PDF's embedded font
 
 use crate::error::{Result, XfaError};
@@ -584,10 +584,14 @@ impl XfaFontResolver {
                 pdf_encoding,
             } = font_data;
             if let Some(ref widths) = pdf_widths {
-                remember_pdf_widths(&mut embedded_pdf_widths, &name, widths, pdf_encoding.clone());
+                remember_pdf_widths(
+                    &mut embedded_pdf_widths,
+                    &name,
+                    widths,
+                    pdf_encoding.clone(),
+                );
             }
-            if let Some(font) =
-                parse_font_data_with_widths(&name, &data, pdf_widths, pdf_encoding)
+            if let Some(font) = parse_font_data_with_widths(&name, &data, pdf_widths, pdf_encoding)
             {
                 let normalized = normalize_font_name(&name);
                 embedded.insert(name.to_lowercase(), font.clone());
