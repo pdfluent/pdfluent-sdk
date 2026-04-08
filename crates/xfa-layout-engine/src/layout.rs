@@ -172,14 +172,6 @@ impl<'a> LayoutEngine<'a> {
         let root_node = self.form.get(root);
 
         let (page_areas, raw_content_nodes) = self.extract_page_structure(root_node)?;
-        eprintln!("DEBUG layout: root={} page_areas={} content_nodes={}", root_node.name, page_areas.len(), raw_content_nodes.len());
-        for (i, pa) in page_areas.iter().enumerate() {
-            eprintln!("  pageArea[{}]: {}x{}", i, pa.page_width, pa.page_height);
-        }
-        for (i, &cn) in raw_content_nodes.iter().enumerate() {
-            let n = self.form.get(cn);
-            eprintln!("  content[{}]: {:?} name={} layout={:?} bm={}x{}", i, cn, n.name, n.layout, n.box_model.width.unwrap_or(-1.0), n.box_model.height.unwrap_or(-1.0));
-        }
         // Build queued nodes with break_before flags and occur expansion.
         let content_queued = self.queue_content(&raw_content_nodes);
 
@@ -251,18 +243,26 @@ impl<'a> LayoutEngine<'a> {
             // a 1-page form whose template defines two positioned subforms
             // overlaid on the same pageArea).
             //
-            // Guard: only apply the overlay heuristic when the template
-            // defines a single page area.  Multiple page areas signal that
-            // each positioned content subform maps to its own page — cramming
+            // Guard: overlay heuristic only applies when every positioned
+            // content subform is *small* relative to the page (height ≤ 50%
+            // of the content area).  Page-sized subforms represent separate
+            // pages and must flow through the normal pagination path — cramming
             // them onto one page causes under-pagination (#GATE-22).
-            let multi_positioned = page_areas.len() <= 1
-                && content_queued.len() > 1
+            let multi_positioned = content_queued.len() > 1
                 && content_queued.iter().all(|qn| {
                     let node = self.form.get(qn.id);
                     node.layout == LayoutStrategy::Positioned
                         && matches!(node.node_type, FormNodeType::Subform)
                         && !qn.break_before
-                });
+                })
+                && {
+                    let pa = &page_areas[0];
+                    let ca = primary_content_area(pa);
+                    let half_page = ca.height * 0.5;
+                    content_queued.iter().all(|qn| {
+                        self.compute_extent(qn.id).height <= half_page
+                    })
+                };
 
             // #794 — Single positioned subform delegation: when there is
             // exactly 1 content node that is a Positioned subform whose
@@ -294,7 +294,6 @@ impl<'a> LayoutEngine<'a> {
             };
 
             let all_content_positioned = multi_positioned || single_positioned_delegate;
-            eprintln!("DEBUG layout: multi_positioned={} single_positioned_delegate={} all_content_positioned={}", multi_positioned, single_positioned_delegate, all_content_positioned);
 
             if all_content_positioned {
                 let pa = &page_areas[0];
