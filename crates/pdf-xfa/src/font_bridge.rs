@@ -1,9 +1,27 @@
-//! XFA font resolver: maps XFA font specifications to system/embedded fonts.
+//! # Font Resolution Pipeline
 //!
-//! Resolves fonts from XFA template declarations using:
-//! 1. Fonts embedded in the source PDF (via extract_embedded_fonts)
-//! 2. System fonts found on disk
-//! 3. Common fallback fonts (Helvetica, DejaVu Sans, Liberation Sans)
+//! This module resolves fonts for XFA rendering. The pipeline:
+//!
+//! 1. **Extract** — `extract_embedded_fonts()` in flatten.rs reads font
+//!    programs and /Widths arrays from PDF font dictionaries
+//! 2. **Store** — `store_font_data()` saves font bytes + widths keyed by name
+//! 3. **Resolve** — `XfaFontResolver::resolve()` matches XFA font names to
+//!    stored fonts, with fallbacks (alias, family, system)
+//! 4. **Inject** — `inject_resolved_metrics()` pushes resolved widths into
+//!    FontMetrics for the layout engine
+//! 5. **Measure** — `FontMetrics::measure_width()` uses the widths for text
+//!    wrapping calculations
+//!
+//! ## /Widths Handling
+//!
+//! PDF /Widths arrays start at FirstChar (typically 32). The array is padded
+//! to 256 entries so measure_width can index by codepoint directly.
+//!
+//! ## Known Limitations
+//!
+//! - Custom encodings (/Differences) are not supported
+//! - CID font /W arrays are not read
+//! - System font fallback may have different metrics than the PDF's embedded font
 
 use crate::error::{Result, XfaError};
 use std::collections::HashMap;
@@ -105,9 +123,21 @@ impl ResolvedFont {
     }
 
     /// Generate PDF glyph widths array for embedding (WinAnsiEncoding, 256 entries).
+    ///
+    /// Always returns `(0, widths_256)` where `widths_256` is indexed by codepoint
+    /// directly (0..255). When `pdf_widths` carries a non-zero `first_char`, the
+    /// vector is padded with zeros so callers can index with raw codepoints without
+    /// tracking FirstChar separately (PDF spec §9.6.2, Table 111).
     pub fn pdf_glyph_widths(&self) -> (u16, Vec<u16>) {
-        if let Some(widths) = &self.pdf_widths {
-            return widths.clone();
+        if let Some((first_char, ref widths)) = self.pdf_widths {
+            let mut full = vec![0u16; 256];
+            for (i, &w) in widths.iter().enumerate() {
+                let idx = first_char as usize + i;
+                if idx < 256 {
+                    full[idx] = w;
+                }
+            }
+            return (0, full);
         }
         if let Ok(face) = ttf_parser::Face::parse(&self.data, self.face_index) {
             let upem = face.units_per_em() as f64;
