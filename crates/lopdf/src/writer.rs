@@ -52,7 +52,7 @@ impl Document {
         };
 
         let mut xref = Xref::new(self.max_id + 1, self.reference_table.cross_reference_type);
-        write!(target, "%PDF-{}\n", self.version)?;
+        writeln!(target, "%PDF-{}", self.version)?;
 
         Writer::write_binary_mark(&mut target, &self.binary_mark)?;
 
@@ -118,7 +118,7 @@ impl Document {
         }
 
         let mut xref = Xref::new(self.max_id + 1, self.reference_table.cross_reference_type);
-        write!(target, "%PDF-{}\n", self.version)?;
+        writeln!(target, "%PDF-{}", self.version)?;
         Writer::write_binary_mark(&mut target, &self.binary_mark)?;
 
         // Organize objects into streams
@@ -326,10 +326,10 @@ impl IncrementalDocument {
         if let Some(last_byte) = prev_document_bytes.last() {
             if *last_byte != b'\n' {
                 // Add a newline if it was not already present
-                write!(target, "\n")?;
+                writeln!(target)?;
             }
         }
-        write!(target, "%PDF-{}\n", self.new_document.version)?;
+        writeln!(target, "%PDF-{}", self.new_document.version)?;
 
         Writer::write_binary_mark(&mut target, &self.new_document.binary_mark)?;
 

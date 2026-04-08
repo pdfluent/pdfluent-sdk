@@ -1,6 +1,4 @@
-use xfa_layout_engine::form::{
-    DrawContent, FormNode, FormNodeId, FormNodeType, FormTree, Occur,
-};
+use xfa_layout_engine::form::{DrawContent, FormNode, FormNodeId, FormNodeType, FormTree, Occur};
 use xfa_layout_engine::layout::{LayoutContent, LayoutEngine, LayoutNode};
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};
@@ -27,7 +25,12 @@ fn make_draw_text(tree: &mut FormTree, name: &str, value: &str, width: f64) -> F
     })
 }
 
-fn make_root(tree: &mut FormTree, width: f64, height: f64, children: Vec<FormNodeId>) -> FormNodeId {
+fn make_root(
+    tree: &mut FormTree,
+    width: f64,
+    height: f64,
+    children: Vec<FormNodeId>,
+) -> FormNodeId {
     tree.add_node(FormNode {
         name: "Root".to_string(),
         node_type: FormNodeType::Root,

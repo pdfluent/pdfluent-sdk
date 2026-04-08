@@ -327,7 +327,7 @@ fn parse_percentage(s: &str) -> Option<f64> {
 /// - `"-0.018em"` → converted to points using the given font size
 /// - `"0.5pt"` → points directly
 /// - `"1mm"` → converted to points via Measurement
-/// Returns `None` if the string cannot be parsed.
+///   Returns `None` if the string cannot be parsed.
 fn parse_letter_spacing(s: &str, font_size_pt: f64) -> Option<f64> {
     let s = s.trim();
     if s == "0" {
@@ -904,10 +904,8 @@ fn detect_page_break_before(elem: Node<'_, '_>) -> (bool, Option<String>) {
         if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
             break;
         }
-        if tag == "breakBefore" {
-            if attr(child, "targetType") == Some("pageArea") {
-                return (true, attr(child, "target").map(|s| s.to_string()));
-            }
+        if tag == "breakBefore" && attr(child, "targetType") == Some("pageArea") {
+            return (true, attr(child, "target").map(|s| s.to_string()));
         }
         if tag == "break" && attr(child, "before") == Some("pageArea") {
             return (true, attr(child, "target").map(|s| s.to_string()));
@@ -932,10 +930,8 @@ fn detect_page_break_after(elem: Node<'_, '_>) -> (bool, Option<String>) {
     // Check elements after the last content node.
     for child in children.iter().skip(last_content_idx) {
         let tag = child.tag_name().name();
-        if tag == "breakAfter" {
-            if attr(*child, "targetType") == Some("pageArea") {
-                return (true, attr(*child, "target").map(|s| s.to_string()));
-            }
+        if tag == "breakAfter" && attr(*child, "targetType") == Some("pageArea") {
+            return (true, attr(*child, "target").map(|s| s.to_string()));
         }
         if tag == "break" && attr(*child, "after") == Some("pageArea") {
             return (true, attr(*child, "target").map(|s| s.to_string()));
@@ -1280,8 +1276,7 @@ fn clone_subtree(tree: &mut FormTree, source_id: FormNodeId) -> FormNodeId {
 
     let mut new_node = source;
     new_node.children = new_children;
-    let new_id = tree.add_node_with_meta(new_node, source_meta);
-    new_id
+    tree.add_node_with_meta(new_node, source_meta)
 }
 
 /// Look up a text value for a named element in the data node.
@@ -1732,7 +1727,7 @@ fn extract_value_image(elem: Node<'_, '_>) -> Option<(Vec<u8>, String)> {
         .unwrap_or("image/png")
         .to_string();
     let data = image.text().unwrap_or_default();
-    let decoded = base64_decode(&data);
+    let decoded = base64_decode(data);
 
     // BMP is not supported by PDF — convert to PNG.
     // Detect by magic bytes (0x42 0x4D = "BM") or declared content type.

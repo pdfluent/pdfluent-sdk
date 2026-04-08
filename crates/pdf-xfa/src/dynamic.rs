@@ -57,7 +57,12 @@ fn restore_snapshot(form: &mut FormTree, snapshot: &FormSnapshot) {
     }
 }
 
-fn should_rollback(form: &FormTree, snapshot: &FormSnapshot, errors: usize, successes: usize) -> bool {
+fn should_rollback(
+    form: &FormTree,
+    snapshot: &FormSnapshot,
+    errors: usize,
+    successes: usize,
+) -> bool {
     if errors > 0 && errors > successes {
         return true;
     }
@@ -188,8 +193,7 @@ fn run_script_phase(
                 .iter()
                 .filter(|script| should_run_script(script, phase))
             {
-                let result =
-                    execute_event_script(form, root_id, parents, *node_id, script, phase);
+                let result = execute_event_script(form, root_id, parents, *node_id, script, phase);
                 if result.error {
                     stats.errors += 1;
                 } else {
@@ -242,16 +246,25 @@ fn execute_formcalc_script(
     phase: ScriptPhase,
 ) -> ScriptResult {
     let Ok(tokens) = tokenize(&script.script) else {
-        return ScriptResult { changes: 0, error: true };
+        return ScriptResult {
+            changes: 0,
+            error: true,
+        };
     };
     let Ok(ast) = parser::parse(tokens) else {
-        return ScriptResult { changes: 0, error: true };
+        return ScriptResult {
+            changes: 0,
+            error: true,
+        };
     };
 
     let mut interpreter = Interpreter::new();
     let mut resolver = FormTreeSomResolver::new(form, root_id, parents, current_id);
     let Ok(result) = interpreter.exec_with_resolver(&ast, &mut resolver) else {
-        return ScriptResult { changes: resolver.changes, error: true };
+        return ScriptResult {
+            changes: resolver.changes,
+            error: true,
+        };
     };
 
     if matches!(phase, ScriptPhase::Calculate) {
@@ -263,7 +276,10 @@ fn execute_formcalc_script(
         );
     }
 
-    ScriptResult { changes: resolver.changes, error: false }
+    ScriptResult {
+        changes: resolver.changes,
+        error: false,
+    }
 }
 
 fn execute_javascript_script(
@@ -1703,8 +1719,7 @@ Details.presence = "visible"
         tree.get_mut(root).children = vec![field_a, field_b];
 
         // Two scripts that fail parsing (invalid FormCalc), zero successes.
-        tree.meta_mut(field_a).event_scripts =
-            vec![formcalc_script("@@INVALID@@", "initialize")];
+        tree.meta_mut(field_a).event_scripts = vec![formcalc_script("@@INVALID@@", "initialize")];
         tree.meta_mut(field_b).event_scripts =
             vec![formcalc_script("@@ALSO_BROKEN@@", "initialize")];
 

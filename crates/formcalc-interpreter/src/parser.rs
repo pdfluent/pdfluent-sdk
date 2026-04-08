@@ -624,16 +624,13 @@ impl Parser {
                 // `.member` or `.#member`
                 TokenKind::Dot => {
                     // Check if next token is an identifier or Hash
-                    let next_kind = self
-                        .tokens
-                        .get(self.pos + 1)
-                        .map(|t| t.kind.clone());
+                    let next_kind = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
                     match next_kind {
                         Some(TokenKind::Ident(_)) => {
                             self.advance(); // consume dot
                             if let TokenKind::Ident(member) = self.peek().clone() {
                                 self.advance(); // consume member
-                                // Method call: obj.member(args)
+                                                // Method call: obj.member(args)
                                 if self.peek() == &TokenKind::LParen {
                                     self.advance(); // consume (
                                     let mut args = Vec::new();
@@ -679,10 +676,7 @@ impl Parser {
                 }
                 // `..member` — recursive descent
                 TokenKind::DotDot => {
-                    let next_kind = self
-                        .tokens
-                        .get(self.pos + 1)
-                        .map(|t| t.kind.clone());
+                    let next_kind = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
                     if let Some(TokenKind::Ident(member)) = next_kind {
                         self.advance(); // consume ..
                         self.advance(); // consume member
@@ -879,13 +873,7 @@ mod tests {
     #[test]
     fn parse_amp_as_logical_and() {
         let expr = parse_one("1 & 0");
-        assert!(matches!(
-            expr,
-            Expr::BinaryOp {
-                op: BinOp::And,
-                ..
-            }
-        ));
+        assert!(matches!(expr, Expr::BinaryOp { op: BinOp::And, .. }));
     }
 
     #[test]

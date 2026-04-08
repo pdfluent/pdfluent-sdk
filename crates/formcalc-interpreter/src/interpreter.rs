@@ -207,8 +207,7 @@ impl Interpreter {
             }
 
             Expr::RecursiveDescent { object, member } => {
-                let base = expr_to_accessor_path(object)
-                    .unwrap_or_else(|| "<expr>".to_string());
+                let base = expr_to_accessor_path(object).unwrap_or_else(|| "<expr>".to_string());
                 let path = format!("{}..{}", base, member);
                 let val = if self.som_resolver.is_some() {
                     self.resolve_som_value(&path).unwrap_or(Value::Null)
@@ -634,11 +633,9 @@ fn flatten_index_path(object: &Expr, index: &AccessIndex) -> String {
 fn expr_to_accessor_path(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Ident(name) => Some(name.clone()),
-        Expr::MemberAccess { object, member } => Some(format!(
-            "{}.{}",
-            expr_to_accessor_path(object)?,
-            member
-        )),
+        Expr::MemberAccess { object, member } => {
+            Some(format!("{}.{}", expr_to_accessor_path(object)?, member))
+        }
         Expr::IndexAccess { object, index } => {
             let base = expr_to_accessor_path(object)?;
             Some(match index {

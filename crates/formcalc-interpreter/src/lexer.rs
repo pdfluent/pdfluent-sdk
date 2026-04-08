@@ -190,8 +190,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>> {
                                         line: span.line,
                                         col: span.col,
                                         message: format!(
-                                            "unsupported escape sequence '\\{kind}' in string literal"
-                                        ),
+                                        "unsupported escape sequence '\\{kind}' in string literal"
+                                    ),
                                     })
                                 }
                             };

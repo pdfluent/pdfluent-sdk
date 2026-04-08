@@ -223,7 +223,10 @@ fn builtin_floor(args: &[Value]) -> Result<Value> {
 
 fn builtin_max(args: &[Value]) -> Result<Value> {
     arity_min("Max", args, 1)?;
-    let mut values = args.iter().filter(|arg| !arg.is_null()).map(Value::to_number);
+    let mut values = args
+        .iter()
+        .filter(|arg| !arg.is_null())
+        .map(Value::to_number);
     let Some(mut max) = values.next() else {
         return Ok(Value::Null);
     };
@@ -237,7 +240,10 @@ fn builtin_max(args: &[Value]) -> Result<Value> {
 
 fn builtin_min(args: &[Value]) -> Result<Value> {
     arity_min("Min", args, 1)?;
-    let mut values = args.iter().filter(|arg| !arg.is_null()).map(Value::to_number);
+    let mut values = args
+        .iter()
+        .filter(|arg| !arg.is_null())
+        .map(Value::to_number);
     let Some(mut min) = values.next() else {
         return Ok(Value::Null);
     };
@@ -387,10 +393,7 @@ fn decode_url(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                &s[i + 1..i + 3],
-                16,
-            ) {
+            if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
                 result.push(byte);
                 i += 3;
                 continue;
@@ -537,7 +540,11 @@ fn format_num(pattern: &str, value: &str) -> String {
         (pattern, None)
     };
 
-    let dec_digits = dec_pat.map_or(0, |p| p.chars().filter(|&c| c == '9' || c == 'z' || c == 'Z').count());
+    let dec_digits = dec_pat.map_or(0, |p| {
+        p.chars()
+            .filter(|&c| c == '9' || c == 'z' || c == 'Z')
+            .count()
+    });
     let rounded = if dec_digits > 0 {
         let factor = 10f64.powi(dec_digits as i32);
         (abs_num * factor).round() / factor
@@ -549,7 +556,10 @@ fn format_num(pattern: &str, value: &str) -> String {
     let dec_part = ((rounded.fract() * 10f64.powi(dec_digits as i32)).round()) as u64;
 
     let int_str = int_part.to_string();
-    let int_pat_clean: String = int_pat.chars().filter(|&c| c == '9' || c == 'z' || c == 'Z').collect();
+    let int_pat_clean: String = int_pat
+        .chars()
+        .filter(|&c| c == '9' || c == 'z' || c == 'Z')
+        .collect();
     let int_width = int_pat_clean.len().max(int_str.len());
 
     // Build integer portion
@@ -564,7 +574,8 @@ fn format_num(pattern: &str, value: &str) -> String {
 
     for (i, &pc) in padded_chars.iter().enumerate() {
         let pat_idx = i.saturating_sub(offset);
-        let is_z = pat_idx < pat_chars.len() && (pat_chars[pat_idx] == 'z' || pat_chars[pat_idx] == 'Z');
+        let is_z =
+            pat_idx < pat_chars.len() && (pat_chars[pat_idx] == 'z' || pat_chars[pat_idx] == 'Z');
 
         if leading && pc == '0' && suppress_zeros && is_z {
             int_result.push(' ');
@@ -791,9 +802,9 @@ fn builtin_str(args: &[Value]) -> Result<Value> {
     }
 
     let value = args[0].to_number();
-    let width = args
-        .get(1)
-        .map_or(10usize, |arg| usize::try_from((arg.to_number() as i64).max(0)).unwrap_or(0));
+    let width = args.get(1).map_or(10usize, |arg| {
+        usize::try_from((arg.to_number() as i64).max(0)).unwrap_or(0)
+    });
     let precision = args
         .get(2)
         .map_or(0, |arg| (arg.to_number() as i32).max(0))
@@ -1163,11 +1174,10 @@ fn builtin_num2time(args: &[Value]) -> Result<Value> {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     let s = secs % 60;
-    let format = args
-        .get(1)
-        .map_or_else(|| builtin_timefmt(&[]).map(|v| v.to_string_val()), |v| {
-            Ok(v.to_string_val())
-        })?;
+    let format = args.get(1).map_or_else(
+        || builtin_timefmt(&[]).map(|v| v.to_string_val()),
+        |v| Ok(v.to_string_val()),
+    )?;
     let result = format_time_string(h, m, s, &format);
     Ok(Value::String(result))
 }
@@ -1390,12 +1400,20 @@ fn parse_second_fraction(text: &str) -> Option<(u64, u64)> {
 }
 
 fn parse_compact_time(text: &str) -> Option<(u64, u64, u64, u64)> {
-    let digits: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '.').collect();
+    let digits: String = text
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
     let (whole, frac) = digits.split_once('.').unwrap_or((&digits, ""));
     let millis = if frac.is_empty() {
         0
     } else {
-        format!("{frac:0<3}").chars().take(3).collect::<String>().parse().ok()?
+        format!("{frac:0<3}")
+            .chars()
+            .take(3)
+            .collect::<String>()
+            .parse()
+            .ok()?
     };
 
     match whole.len() {
@@ -1992,12 +2010,9 @@ mod tests {
             .unwrap();
         assert_eq!(ms, Value::Number(52200001.0)); // 1-based epoch
 
-        let time = call_builtin(
-            "Num2Time",
-            &[ms, Value::String("HH:MM:SS".to_string())],
-        )
-        .unwrap()
-        .unwrap();
+        let time = call_builtin("Num2Time", &[ms, Value::String("HH:MM:SS".to_string())])
+            .unwrap()
+            .unwrap();
         assert_eq!(time, Value::String("14:30:00".to_string()));
     }
 

@@ -87,13 +87,8 @@ fn test_base_name_stripping_italic() {
 #[test]
 fn test_base_name_stripping_bolditalic() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec = XfaFontSpec::from_xfa_attrs(
-        "Arial-BoldItalic",
-        Some("bold"),
-        Some("italic"),
-        None,
-        None,
-    );
+    let spec =
+        XfaFontSpec::from_xfa_attrs("Arial-BoldItalic", Some("bold"), Some("italic"), None, None);
     let result = resolver.resolve(&spec);
     assert!(
         result.is_ok(),
@@ -167,8 +162,7 @@ fn test_generic_family_parsing() {
 #[test]
 fn test_generic_family_serif_fallback() {
     let mut resolver = XfaFontResolver::new(vec![]);
-    let spec =
-        XfaFontSpec::from_xfa_attrs("UnknownSerifFont999", None, None, None, Some("serif"));
+    let spec = XfaFontSpec::from_xfa_attrs("UnknownSerifFont999", None, None, None, Some("serif"));
     let result = resolver.resolve(&spec);
     assert!(
         result.is_ok(),
