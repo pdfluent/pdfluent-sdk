@@ -475,6 +475,9 @@ pub struct FormNodeStyle {
     /// When set, overrides `border_color` for individual edges.
     pub border_colors: Option<[(u8, u8, u8); 4]>,
     pub border_width_pt: Option<f64>,
+    /// Per-edge border widths (top, right, bottom, left) in points.
+    /// When set, overrides `border_width_pt` for individual edges.
+    pub border_widths: Option<[f64; 4]>,
     /// Paragraph space above in points (XFA `<para spaceAbove>`).
     pub space_above_pt: Option<f64>,
     /// Paragraph space below in points (XFA `<para spaceBelow>`).
@@ -545,6 +548,7 @@ impl Default for FormNodeStyle {
             border_color: None,
             border_colors: None,
             border_width_pt: None,
+            border_widths: None,
             space_above_pt: None,
             space_below_pt: None,
             margin_left_pt: None,
