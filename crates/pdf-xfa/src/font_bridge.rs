@@ -24,11 +24,25 @@ pub struct ResolvedFont {
     pub ascender: i16,
     /// Descender in font units (negative).
     pub descender: i16,
+    /// PDF /Widths array for glyph metrics: (first_char_code, widths).
+    pub pdf_widths: Option<(u16, Vec<u16>)>,
 }
 
 impl ResolvedFont {
     /// Measure the approximate width of a string in points at the given font size.
     pub fn measure_string(&self, text: &str, font_size: f64) -> f64 {
+        if let Some((first_char, ref widths)) = self.pdf_widths {
+            let mut total = 0.0;
+            for ch in text.chars() {
+                let code = ch as u16;
+                if code >= first_char && ((code - first_char) as usize) < widths.len() {
+                    total += widths[(code - first_char) as usize] as f64;
+                } else {
+                    total += self.measure_char_fallback(ch);
+                }
+            }
+            return total * font_size / 1000.0;
+        }
         if let Ok(face) = ttf_parser::Face::parse(&self.data, self.face_index) {
             let upem = face.units_per_em() as f64;
             let scale = font_size / upem;
@@ -43,6 +57,20 @@ impl ResolvedFont {
             width
         } else {
             text.len() as f64 * font_size * 0.5
+        }
+    }
+
+    fn measure_char_fallback(&self, ch: char) -> f64 {
+        if let Ok(face) = ttf_parser::Face::parse(&self.data, self.face_index) {
+            if let Some(gid) = face.glyph_index(ch) {
+                let upem = face.units_per_em() as f64;
+                let scale = 1.0 / upem;
+                face.glyph_hor_advance(gid).unwrap_or(0) as f64 * scale * 1000.0
+            } else {
+                500.0
+            }
+        } else {
+            500.0
         }
     }
 
@@ -78,6 +106,9 @@ impl ResolvedFont {
 
     /// Generate PDF glyph widths array for embedding (WinAnsiEncoding, 256 entries).
     pub fn pdf_glyph_widths(&self) -> (u16, Vec<u16>) {
+        if let Some(widths) = &self.pdf_widths {
+            return widths.clone();
+        }
         if let Ok(face) = ttf_parser::Face::parse(&self.data, self.face_index) {
             let upem = face.units_per_em() as f64;
             let scale = 1000.0 / upem;
@@ -434,10 +465,10 @@ fn generic_family_fallback_chain(gf: GenericFamily) -> &'static [&'static str] {
 
 impl XfaFontResolver {
     /// Create a new resolver with embedded fonts extracted from the PDF.
-    pub fn new(embedded_fonts: Vec<(String, Vec<u8>)>) -> Self {
+    pub fn new(embedded_fonts: Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)>) -> Self {
         let mut embedded = HashMap::new();
-        for (name, data) in embedded_fonts {
-            if let Some(font) = parse_font_data(&name, &data) {
+        for (name, data, pdf_widths) in embedded_fonts {
+            if let Some(font) = parse_font_data_with_widths(&name, &data, pdf_widths) {
                 let normalized = normalize_font_name(&name);
                 embedded.insert(name.to_lowercase(), font.clone());
                 if normalized != name.to_lowercase() {
@@ -662,6 +693,24 @@ fn parse_font_data(name: &str, data: &[u8]) -> Option<ResolvedFont> {
         units_per_em: face.units_per_em(),
         ascender: face.ascender(),
         descender: face.descender(),
+        pdf_widths: None,
+    })
+}
+
+fn parse_font_data_with_widths(
+    name: &str,
+    data: &[u8],
+    pdf_widths: Option<(u16, Vec<u16>)>,
+) -> Option<ResolvedFont> {
+    let face = ttf_parser::Face::parse(data, 0).ok()?;
+    Some(ResolvedFont {
+        name: name.to_string(),
+        data: data.to_vec(),
+        face_index: 0,
+        units_per_em: face.units_per_em(),
+        ascender: face.ascender(),
+        descender: face.descender(),
+        pdf_widths,
     })
 }
 
@@ -687,6 +736,7 @@ fn load_system_font(path: &PathBuf, name: &str) -> Option<ResolvedFont> {
                     units_per_em: face.units_per_em(),
                     ascender: face.ascender(),
                     descender: face.descender(),
+                    pdf_widths: None,
                 });
             }
         }

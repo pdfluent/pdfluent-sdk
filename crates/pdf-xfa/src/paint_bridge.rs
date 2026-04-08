@@ -851,6 +851,8 @@ mod tests {
                     font_size: 10.0,
                     text_align: xfa_layout_engine::types::TextAlign::Left,
                     font_family: xfa_layout_engine::text::FontFamily::SansSerif,
+                    space_above_pt: None,
+                    space_below_pt: None,
                 },
                 children: vec![],
                 style: Default::default(),

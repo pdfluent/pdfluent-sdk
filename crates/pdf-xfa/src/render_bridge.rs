@@ -354,10 +354,7 @@ fn render_nodes(
                     // back to the caption text so the label renders centered
                     // inside the button body.
                     let label = if value.is_empty() {
-                        node.style
-                            .caption_text
-                            .as_deref()
-                            .unwrap_or("")
+                        node.style.caption_text.as_deref().unwrap_or("")
                     } else {
                         value
                     };
@@ -416,6 +413,7 @@ fn render_nodes(
                 font_size,
                 text_align,
                 font_family,
+                ..
             } => {
                 // Only use the rich-text renderer when there are multiple
                 // spans with distinct formatting. Single-span rich text
