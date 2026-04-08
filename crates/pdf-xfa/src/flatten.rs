@@ -347,9 +347,18 @@ fn xfa_flatten_inner(
     let overlay_is_substantial = overlays
         .iter()
         .any(|o| o.content_stream.len() > 1000);
+    // When the layout produces significantly fewer pages than the original
+    // (less than half), the layout engine likely failed to capture all
+    // content — fall back to preserving original pages.  When the layout
+    // is close (≥50%), trust it and delete excess pages (they are typically
+    // blank padding or Adobe pre-rendered placeholders).
+    let layout_incomplete =
+        n_layout < n_existing && (n_layout as f64) < (n_existing as f64) * 0.5;
     let preserve_static = is_static_form
         || (has_static_content && n_layout >= n_existing && overlay_is_substantial)
-        || (n_layout < n_existing);
+        || layout_incomplete;
+
+    eprintln!("[flatten-debug] n_layout={n_layout} n_existing={n_existing} is_static={is_static_form} has_static={has_static_content} overlay_substantial={overlay_is_substantial} layout_incomplete={layout_incomplete} preserve_static={preserve_static}");
 
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
