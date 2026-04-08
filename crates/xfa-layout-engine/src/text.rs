@@ -1,14 +1,30 @@
-//! Text placement — font metrics, text wrapping, and dimension calculation.
+//! # Text Measurement and Wrapping
 //!
-//! Provides text measurement for layout using per-character width tables
-//! derived from Adobe Font Metrics (AFM) for standard PDF fonts.
+//! Provides text wrapping for the XFA layout engine.
+//! Key functions:
+//! - `wrap_text()` — wraps text to fit within a maximum width
+//! - `measure_text()` — measures text dimensions without wrapping
+//!
+//! ## Font Metrics
+//!
+//! Text measurement uses `FontMetrics.resolved_widths` when available
+//! (populated from PDF /Widths arrays). Falls back to glyph advances
+//! from the font file via ttf_parser.
+//!
+//! ## Coordinate System
+//!
+//! All measurements are in PDF points (1pt = 1/72 inch).
 //!
 //! XFA Spec 3.3 §8.1 — Text Placement in Growable Containers (p277-279):
 //! - Growable width: text records interpreted as lines, width = longest line.
 //! - Growable height: container increases height to accommodate text.
 //! - Text split between lines only (§8.7 p291), NOT within a line.
-//! - Orphan/widow controls may restrict split points (TODO: not implemented).
-//! - Text within rotated containers cannot be split (TODO: not checked).
+//! - Orphan/widow controls may restrict split points.
+//!   Not implemented yet because the layout engine does not currently track
+//!   widow/orphan state across container and page splits.
+//! - Text within rotated containers cannot be split.
+//!   Not checked yet because rotation metadata is not propagated into this
+//!   measurement layer.
 
 use crate::types::{Size, TextAlign};
 
@@ -83,8 +99,11 @@ impl FontFamily {
 impl Default for FontMetrics {
     fn default() -> Self {
         Self {
+            // Match the engine-wide default body text size used by existing XFA forms.
             size: 10.0,
+            // Adobe/XFA uses a 1.2x fallback line-height when font metrics are absent.
             line_height: 1.2,
+            // Coarse fallback used only when neither resolved widths nor AFM tables apply.
             avg_char_width: 0.50,
             text_align: TextAlign::Left,
             typeface: FontFamily::SansSerif,
@@ -123,14 +142,28 @@ impl FontMetrics {
         self.size * self.line_height
     }
 
-    /// Uses resolved_widths when available, else AFM tables.
+    /// Measure the width of `text` in points.
     ///
-    /// Resolved widths are in per-1000 units (from `pdf_glyph_widths()`), indexed
-    /// by Unicode codepoint 0-255.  We iterate over **characters** (not bytes) so
-    /// that multi-byte UTF-8 sequences count as one glyph, and divide by 1000
-    /// (matching the per-1000 convention) rather than by the font's raw upem.
+    /// When `resolved_widths` is present, widths are interpreted as per-1000
+    /// text-space units indexed directly by character code in the 0..255 range.
+    /// Upstream code must therefore apply any PDF `/FirstChar` offset as padding
+    /// before storing widths here, so that code 65 (`'A'`) is read from
+    /// `resolved_widths[65]`.
+    ///
+    /// Characters outside the available resolved-width table fall back to the
+    /// width of ASCII space. This keeps wrapping stable for partially populated
+    /// tables and avoids treating unknown characters as zero-width.
+    ///
+    /// When `resolved_widths` is absent, measurement falls back to AFM tables for
+    /// the generic serif/sans/monospace families. Non-ASCII characters in that
+    /// path use the width of `'n'` as a conservative average for one visible glyph.
+    ///
+    /// The function iterates over Unicode scalar values rather than UTF-8 bytes,
+    /// so multibyte characters contribute a single glyph width.
     pub fn measure_width(&self, text: &str) -> f64 {
         if let (Some(ref widths), Some(_upem)) = (&self.resolved_widths, self.resolved_upem) {
+            // Use space as the fallback width because it is usually present in
+            // PDF width tables and is safer for wrapping than a zero-width default.
             let space_w = widths.get(b' ' as usize).copied().unwrap_or(0) as f64;
             let mut w = 0.0;
             for ch in text.chars() {
@@ -149,6 +182,8 @@ impl FontMetrics {
             FontFamily::SansSerif => &HELVETICA_WIDTHS,
             FontFamily::Monospace => &COURIER_WIDTHS,
         };
+        // The AFM fallback uses 'n' as the representative width for unsupported
+        // characters because it is a common mid-width Latin glyph.
         let default_w = table[b'n' as usize] as f64;
         let mut width = 0.0;
         for ch in text.chars() {
@@ -239,8 +274,30 @@ pub struct TextLayout {
 
 /// Wrap text to fit within a given width, and compute the resulting size.
 ///
-/// Uses a simple word-wrapping algorithm: breaks at whitespace boundaries.
-/// Returns the lines and the total bounding box.
+/// Parameters:
+/// - `text`: the source text. Explicit `\n` characters always start a new paragraph.
+/// - `max_width`: maximum available width in points for non-indented lines.
+/// - `font`: font metrics used to measure words and spaces.
+/// - `text_indent`: first-line indent in points, subtracted from the first line of
+///   each paragraph only.
+/// - `line_height_override`: optional baseline-to-baseline distance in points.
+///   When `None`, `font.line_height_pt()` is used.
+///
+/// Returns:
+/// - `TextLayout.lines`: wrapped lines in visual order.
+/// - `TextLayout.first_line_of_para`: flags indicating whether each output line is
+///   the first line of a paragraph.
+/// - `TextLayout.size`: width of the longest emitted line and total block height.
+///
+/// Edge cases:
+/// - Empty input returns no lines and a zero-size block.
+/// - Empty paragraphs caused by consecutive `\n` are preserved as blank lines.
+/// - Whitespace inside a paragraph is normalized by `split_whitespace()`, so runs
+///   of spaces do not survive wrapping.
+/// - Words are never split internally; a word wider than `max_width` is placed on
+///   its own line and may overflow horizontally.
+/// - If `text_indent >= max_width`, the first line's available width clamps to `0`
+///   so the paragraph still wraps deterministically.
 pub fn wrap_text(
     text: &str,
     max_width: f64,
@@ -297,7 +354,9 @@ pub fn wrap_text(
 
             if current_width + space_width + word_width > effective_max && !current_line.is_empty()
             {
-                // Wrap to new line
+                // Wrap only at whitespace boundaries. The engine deliberately does
+                // not hyphenate or split within a word because XFA pagination
+                // rules operate on whole rendered lines.
                 max_line_width = max_line_width.max(current_width);
                 lines.push(current_line);
                 first_line_of_para.push(is_first_line);
@@ -334,7 +393,10 @@ pub fn wrap_text(
     }
 }
 
-/// Compute the bounding box of text without wrapping (single-line or multi-line via \n).
+/// Compute the bounding box of text without wrapping.
+///
+/// Each `\n` starts a new measured line, but lines are never reflowed to fit a width.
+/// Width is the maximum measured line width; height is `line_count * line_height_pt()`.
 pub fn measure_text(text: &str, font: &FontMetrics) -> Size {
     if text.is_empty() {
         return Size {
