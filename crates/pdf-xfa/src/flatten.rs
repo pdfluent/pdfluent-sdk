@@ -138,7 +138,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     };
 
     let template_xml = match packets.template() {
-        Some(t) => strip_undefined_xml_entities(&t),
+        Some(t) => strip_undefined_xml_entities(t),
         None => {
             // XFA present but template packet missing/unparseable (truncated XML).
             // Strip AcroForm + NeedsRendering so renderers use static content.
@@ -163,7 +163,7 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     const FLATTEN_TIMEOUT: Duration = Duration::from_secs(30);
     let pdf_bytes_ref = pdf_bytes.to_vec();
     let template_xml_owned = template_xml.clone();
-    let datasets_xml_owned = packets.datasets().map(|s| strip_undefined_xml_entities(&s));
+    let datasets_xml_owned = packets.datasets().map(strip_undefined_xml_entities);
 
     let handle = thread::spawn(move || {
         xfa_flatten_inner(
@@ -273,9 +273,11 @@ fn xfa_flatten_inner(
     let (font_map, embedded_font_objects, metrics_data) =
         embed_resolved_fonts(&mut doc, &resolved_fonts);
 
-    let mut config = XfaRenderConfig::default();
-    config.font_map = font_map;
-    config.font_metrics_data = metrics_data;
+    let config = XfaRenderConfig {
+        font_map,
+        font_metrics_data: metrics_data,
+        ..Default::default()
+    };
 
     let overlays = generate_all_overlays(&layout, &config)
         .map_err(|e| XfaError::LayoutFailed(format!("overlay generation: {e:?}")))?;
@@ -345,9 +347,8 @@ fn xfa_flatten_inner(
     // The 1000-byte threshold separates minimal XFA templates (title/header
     // only, ~200-500 bytes) from full page re-renders (5000+ bytes).
     let overlay_is_substantial = overlays.iter().any(|o| o.content_stream.len() > 1000);
-    let preserve_static = is_static_form
-        || (has_static_content && n_layout >= n_existing && overlay_is_substantial)
-        || (n_layout < n_existing);
+    let preserve_static =
+        is_static_form || n_layout < n_existing || has_static_content && overlay_is_substantial;
 
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
@@ -457,10 +458,11 @@ fn xfa_flatten_inner(
 // Font extraction, resolution, and embedding
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::type_complexity)]
 fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)> {
     let mut fonts = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for (_id, obj) in &doc.objects {
+    for obj in doc.objects.values() {
         let dict = match obj.as_dict() {
             Ok(d) => d,
             Err(_) => continue,
@@ -475,10 +477,10 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>, Option<(u16, 
             None => continue,
         };
 
-        let pdf_widths = extract_font_widths(&dict);
+        let pdf_widths = extract_font_widths(dict);
 
         // First try direct FontDescriptor path (simple TrueType/OpenType fonts)
-        if let Some((stream_id, data)) = extract_font_from_direct_fd(doc, &dict, &base_font) {
+        if let Some((stream_id, data)) = extract_font_from_direct_fd(doc, dict, &base_font) {
             if seen.insert(stream_id) {
                 store_font_data(&mut fonts, &base_font, data, pdf_widths.clone());
             }
@@ -487,7 +489,7 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>, Option<(u16, 
 
         // For CIDFont Type0: also check DescendantFonts path
         // CIDFont fonts store their font data in /DescendantFonts[n]/FontDescriptor/FontFile*
-        if let Some((stream_id, data)) = extract_cidfont_data(doc, &dict, &base_font, &seen) {
+        if let Some((stream_id, data)) = extract_cidfont_data(doc, dict, &base_font, &seen) {
             if seen.insert(stream_id) {
                 store_font_data(&mut fonts, &base_font, data, pdf_widths);
             }
@@ -596,6 +598,7 @@ fn extract_cidfont_data(
 }
 
 /// Store font data under multiple names (PostScript name, family name, normalized name).
+#[allow(clippy::type_complexity)]
 fn store_font_data(
     fonts: &mut Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)>,
     base_font: &str,
@@ -802,9 +805,9 @@ fn generate_tounicode_cmap(gid_to_unicode: &[(u16, char)]) -> Vec<u8> {
     cmap.push_str("<0000> <FFFF>\n");
     cmap.push_str("endcodespacerange\n");
     for chunk in gid_to_unicode.chunks(100) {
-        let _ = write!(cmap, "{} beginbfchar\n", chunk.len());
+        let _ = writeln!(cmap, "{} beginbfchar", chunk.len());
         for &(gid, ch) in chunk {
-            let _ = write!(cmap, "<{:04X}> <{:04X}>\n", gid, ch as u32);
+            let _ = writeln!(cmap, "<{:04X}> <{:04X}>", gid, ch as u32);
         }
         cmap.push_str("endbfchar\n");
     }
@@ -899,6 +902,7 @@ fn inject_resolved_metrics(
 ///
 /// Called AFTER layout. Returns the font_map (typeface -> PDF resource name),
 /// the font objects for page resources, and the metrics data for render_bridge.
+#[allow(clippy::type_complexity)]
 fn embed_resolved_fonts(
     doc: &mut Document,
     resolved: &HashMap<String, ResolvedFont>,
@@ -1298,7 +1302,7 @@ fn resolve_appearance_state(
     None
 }
 
-fn selected_widget_state<'a>(annot_dict: &'a Dictionary) -> Option<&'a [u8]> {
+fn selected_widget_state(annot_dict: &Dictionary) -> Option<&[u8]> {
     annot_dict
         .get(b"AS")
         .ok()

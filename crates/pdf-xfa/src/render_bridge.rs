@@ -277,11 +277,7 @@ fn render_nodes(
             }
         }
 
-        let is_bold = node
-            .style
-            .font_weight
-            .as_deref()
-            .map_or(false, |w| w == "bold");
+        let is_bold = node.style.font_weight.as_deref() == Some("bold");
 
         // Render caption for any node that has caption_text in its style.
         // For Button fields, skip the external caption — the caption text is
@@ -420,7 +416,7 @@ fn render_nodes(
                 // (or spans with no style overrides) renders better via
                 // the standard multiline path which has more mature
                 // positioning logic.
-                let use_rich = node.style.rich_text_spans.as_ref().map_or(false, |spans| {
+                let use_rich = node.style.rich_text_spans.as_ref().is_some_and(|spans| {
                     spans.len() > 1
                         || spans.iter().any(|s| {
                             s.font_size.is_some()
@@ -577,6 +573,7 @@ fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64
 }
 
 /// Draw individual border edges with optional per-edge colors and widths.
+#[allow(clippy::too_many_arguments)]
 fn emit_individual_edges(
     ops: &mut Vec<u8>,
     x: f64,
@@ -712,10 +709,7 @@ fn emit_text_style_ops(node_style: &FormNodeStyle, ops: &mut Vec<u8>) {
 
 /// Returns true if this node requests bold weight.
 fn is_bold_style(node_style: &FormNodeStyle) -> bool {
-    node_style
-        .font_weight
-        .as_deref()
-        .map_or(false, |w| w == "bold")
+    node_style.font_weight.as_deref() == Some("bold")
 }
 
 /// Returns true if the font reference indicates a bold variant.
@@ -837,6 +831,7 @@ fn caption_value_offset(style: &FormNodeStyle, w: f64, h: f64) -> (f64, f64, f64
 /// This renders `<caption>` text at the placement offset (left/right/top/bottom)
 /// relative to the field box. Called before the field-specific renderer so that
 /// captions appear for Dropdown, Checkbox, Radio, Button, Signature, and Text.
+#[allow(clippy::too_many_arguments)]
 fn render_caption(
     x: f64,
     pdf_y: f64,
@@ -906,6 +901,7 @@ fn render_caption(
     ops.extend_from_slice(b"ET\n");
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_field(
     x: f64,
     pdf_y: f64,
@@ -1061,6 +1057,7 @@ fn render_field(
 /// Draw a check mark symbol inside a checkbox/radio bounding box.
 ///
 /// Supported marks (XFA §8.2): check, circle, cross, diamond, square, star.
+#[allow(clippy::too_many_arguments)]
 fn draw_check_mark(
     mark: &str,
     x: f64,
@@ -1345,6 +1342,7 @@ fn render_radio(
     write_ops(ops, format_args!("Q\n"));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_dropdown(
     x: f64,
     pdf_y: f64,
@@ -1435,6 +1433,7 @@ fn render_dropdown(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_button(
     x: f64,
     pdf_y: f64,
@@ -1529,6 +1528,7 @@ fn render_button(
     write_ops(ops, format_args!("Q\n"));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_signature(
     x: f64,
     pdf_y: f64,
@@ -1589,6 +1589,7 @@ fn render_signature(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_text(
     x: f64,
     pdf_y: f64,
@@ -1925,7 +1926,7 @@ fn render_rich_multiline(
                     );
                     cur_tc = span_tc;
                 }
-                let is_span_bold = span.font_weight.as_deref().map_or(false, |w| w == "bold");
+                let is_span_bold = span.font_weight.as_deref() == Some("bold");
                 if is_span_bold && !font_ref_is_bold(span_font_ref) {
                     let stroke_w = span_fs * 0.03;
                     write_ops(
@@ -1991,10 +1992,7 @@ fn map_spans_to_lines(spans: &[RichTextSpan], lines: &[String]) -> Vec<Vec<LineS
 
     for line in lines {
         while span_idx < spans.len() {
-            if spans[span_idx].text == "\n" {
-                span_idx += 1;
-                span_off = 0;
-            } else if span_off >= spans[span_idx].text.len() {
+            if spans[span_idx].text == "\n" || span_off >= spans[span_idx].text.len() {
                 span_idx += 1;
                 span_off = 0;
             } else {
@@ -2174,6 +2172,7 @@ fn lookup_font_metrics<'a>(
         .filter(|m| m.font_data.is_some())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_draw(
     draw_content: &DrawContent,
     abs_x: f64,

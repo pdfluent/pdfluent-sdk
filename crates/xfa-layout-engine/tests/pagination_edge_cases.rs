@@ -1,6 +1,4 @@
-use xfa_layout_engine::form::{
-    DrawContent, FormNode, FormNodeId, FormNodeType, FormTree, Occur,
-};
+use xfa_layout_engine::form::{DrawContent, FormNode, FormNodeId, FormNodeType, FormTree, Occur};
 use xfa_layout_engine::layout::{LayoutContent, LayoutEngine, LayoutNode};
 use xfa_layout_engine::text::FontMetrics;
 use xfa_layout_engine::types::{BoxModel, LayoutStrategy};

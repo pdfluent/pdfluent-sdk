@@ -63,10 +63,11 @@ fn scan_for_datasets(pdf: &Pdf, min_len: usize) -> Option<String> {
     for obj in pdf.objects() {
         if let Object::Stream(s) = obj {
             if let Some(d) = decode_stream(&s) {
-                if d.len() > min_len && d.contains("<xfa:datasets") {
-                    if best.as_ref().is_none_or(|b| d.len() > b.len()) {
-                        best = Some(d);
-                    }
+                if d.len() > min_len
+                    && d.contains("<xfa:datasets")
+                    && best.as_ref().is_none_or(|b| d.len() > b.len())
+                {
+                    best = Some(d);
                 }
             }
         }

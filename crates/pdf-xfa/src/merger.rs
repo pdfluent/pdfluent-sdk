@@ -1489,10 +1489,8 @@ fn detect_page_break_before(elem: Node<'_, '_>) -> (bool, Option<String>) {
         if matches!(tag, "subform" | "field" | "draw" | "exclGroup") {
             break;
         }
-        if tag == "breakBefore" {
-            if attr(child, "targetType") == Some("pageArea") {
-                return (true, attr(child, "target").map(|s| s.to_string()));
-            }
+        if tag == "breakBefore" && attr(child, "targetType") == Some("pageArea") {
+            return (true, attr(child, "target").map(|s| s.to_string()));
         }
         if tag == "break" && attr(child, "before") == Some("pageArea") {
             return (true, attr(child, "target").map(|s| s.to_string()));
@@ -1513,10 +1511,8 @@ fn detect_page_break_after(elem: Node<'_, '_>) -> (bool, Option<String>) {
 
     for child in children.iter().skip(last_content_idx) {
         let tag = child.tag_name().name();
-        if tag == "breakAfter" {
-            if attr(*child, "targetType") == Some("pageArea") {
-                return (true, attr(*child, "target").map(|s| s.to_string()));
-            }
+        if tag == "breakAfter" && attr(*child, "targetType") == Some("pageArea") {
+            return (true, attr(*child, "target").map(|s| s.to_string()));
         }
         if tag == "break" && attr(*child, "after") == Some("pageArea") {
             return (true, attr(*child, "target").map(|s| s.to_string()));
@@ -1770,7 +1766,7 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                 let edge_thickness = |idx: usize| -> f64 {
                     let e = edge_elems.get(idx).copied().unwrap_or(edge_elems[0]);
                     attr(e, "thickness")
-                        .and_then(|t| Measurement::parse(t))
+                        .and_then(Measurement::parse)
                         .map(|m: Measurement| m.to_points())
                         .unwrap_or(default_thickness)
                 };

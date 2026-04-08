@@ -365,9 +365,7 @@ pub fn text_split_points(line_count: usize, line_height: f64) -> Vec<f64> {
     if line_count <= 1 {
         return Vec::new();
     }
-    (1..line_count)
-        .map(|i| i as f64 * line_height)
-        .collect()
+    (1..line_count).map(|i| i as f64 * line_height).collect()
 }
 
 #[cfg(test)]

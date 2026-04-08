@@ -465,6 +465,7 @@ fn generic_family_fallback_chain(gf: GenericFamily) -> &'static [&'static str] {
 
 impl XfaFontResolver {
     /// Create a new resolver with embedded fonts extracted from the PDF.
+    #[allow(clippy::type_complexity)]
     pub fn new(embedded_fonts: Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)>) -> Self {
         let mut embedded = HashMap::new();
         for (name, data, pdf_widths) in embedded_fonts {
@@ -488,7 +489,7 @@ impl XfaFontResolver {
     ///
     /// XFA Spec 3.3 §28.2 (p1246) — Font mapping: Adobe uses a 5-step algorithm:
     /// 1) direct match, 2) equate, 3) locale, 4) genericFamily, 5) default.
-    /// We implement steps 1, 4, 5 (equate and locale are config-dependent).
+    ///    We implement steps 1, 4, 5 (equate and locale are config-dependent).
     ///
     /// When weight is Bold and/or posture is Italic, variant-specific font
     /// names are tried first (e.g. "Arial-Bold", "ArialBold", "Arial Bold")
@@ -684,7 +685,7 @@ fn build_variant_names(typeface: &str, weight: FontWeight, posture: FontPosture)
     names
 }
 
-fn parse_font_data(name: &str, data: &[u8]) -> Option<ResolvedFont> {
+fn _parse_font_data(name: &str, data: &[u8]) -> Option<ResolvedFont> {
     let face = ttf_parser::Face::parse(data, 0).ok()?;
     Some(ResolvedFont {
         name: name.to_string(),

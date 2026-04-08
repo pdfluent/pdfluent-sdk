@@ -135,7 +135,7 @@ pub fn embed_image(
     mime_type: &str,
 ) -> Result<ImageXObjectResult, String> {
     let format = detect_image_format(data)
-        .or_else(|| match mime_type {
+        .or(match mime_type {
             "image/jpeg" | "image/jpg" => Some(ImageFormat::Jpeg),
             "image/png" => Some(ImageFormat::Png),
             _ => None,

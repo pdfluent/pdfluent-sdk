@@ -43,11 +43,7 @@ impl Value {
     pub fn to_bool(&self) -> bool {
         match self {
             Value::Number(n) => *n != 0.0,
-            Value::String(s) => s
-                .trim()
-                .parse::<f64>()
-                .ok()
-                .is_some_and(|n| n != 0.0),
+            Value::String(s) => s.trim().parse::<f64>().ok().is_some_and(|n| n != 0.0),
             Value::Null => false,
         }
     }

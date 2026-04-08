@@ -229,7 +229,7 @@ pub enum CaptionPlacement {
 /// - h=✓ w=∅ → growable along X only (minH/maxH ignored)
 /// - h=∅ w=✓ → growable along Y only (minW/maxW ignored)
 /// - h=∅ w=∅ → growable along both axes
-/// Default: minH=0, minW=0, maxH=infinity, maxW=infinity.
+///   Default: minH=0, minW=0, maxH=infinity, maxW=infinity.
 ///
 /// See spec figure "Relationship between nominal extent and borders,
 /// margins, captions, and content" (p50).

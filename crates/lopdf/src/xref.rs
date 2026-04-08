@@ -162,7 +162,7 @@ impl XrefSection {
     pub fn write_xref_section(&self, file: &mut dyn Write) -> Result<()> {
         if !self.is_empty() {
             // Write section range
-            write!(file, "{} {}\n", self.starting_id, self.entries.len())?;
+            writeln!(file, "{} {}", self.starting_id, self.entries.len())?;
             // Write entries
             for entry in &self.entries {
                 entry.write_xref_entry(file)?;

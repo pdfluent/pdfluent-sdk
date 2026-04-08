@@ -27,7 +27,12 @@ fn make_text_field(tree: &mut FormTree, name: &str, value: &str, w: f64, h: f64)
     })
 }
 
-fn make_root(tree: &mut FormTree, width: f64, height: f64, children: Vec<FormNodeId>) -> FormNodeId {
+fn make_root(
+    tree: &mut FormTree,
+    width: f64,
+    height: f64,
+    children: Vec<FormNodeId>,
+) -> FormNodeId {
     tree.add_node(FormNode {
         name: "Root".to_string(),
         node_type: FormNodeType::Root,
@@ -61,7 +66,11 @@ fn find_named_node<'a>(nodes: &'a [LayoutNode], name: &str) -> Option<&'a Layout
     None
 }
 
-fn lines_for_field(value: &str, margin_left: Option<f64>, margin_right: Option<f64>) -> Vec<String> {
+fn lines_for_field(
+    value: &str,
+    margin_left: Option<f64>,
+    margin_right: Option<f64>,
+) -> Vec<String> {
     let mut tree = FormTree::new();
     let field = make_text_field(&mut tree, "wrapped_field", value, 200.0, 60.0);
     let style = &mut tree.meta_mut(field).style;
