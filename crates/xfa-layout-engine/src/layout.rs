@@ -876,8 +876,12 @@ impl<'a> LayoutEngine<'a> {
                             _ => "",
                         };
                         let child_style = &self.form.meta(child_id).style;
-                        let para_margins = child_style.margin_left_pt.unwrap_or(1.0)
-                            + child_style.margin_right_pt.unwrap_or(1.0);
+                        let para_margins = child_style
+                            .margin_left_pt
+                            .unwrap_or(crate::types::DEFAULT_TEXT_PADDING)
+                            + child_style
+                                .margin_right_pt
+                                .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
                         let insets_w = child.box_model.margins.horizontal()
                             + child.box_model.border_width * 2.0
                             + para_margins;
@@ -1085,8 +1089,12 @@ impl<'a> LayoutEngine<'a> {
             return false;
         }
         let style = &self.form.meta(id).style;
-        let para_margins =
-            style.margin_left_pt.unwrap_or(1.0) + style.margin_right_pt.unwrap_or(1.0);
+        let para_margins = style
+            .margin_left_pt
+            .unwrap_or(crate::types::DEFAULT_TEXT_PADDING)
+            + style
+                .margin_right_pt
+                .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
         match &node.node_type {
             FormNodeType::Draw(DrawContent::Text(t)) => {
                 let line_count = text::wrap_text(
@@ -1294,8 +1302,12 @@ impl<'a> LayoutEngine<'a> {
                         _ => "",
                     };
                     let cstyle = &self.form.meta(child_id).style;
-                    let cpara = cstyle.margin_left_pt.unwrap_or(1.0)
-                        + cstyle.margin_right_pt.unwrap_or(1.0);
+                    let cpara = cstyle
+                        .margin_left_pt
+                        .unwrap_or(crate::types::DEFAULT_TEXT_PADDING)
+                        + cstyle
+                            .margin_right_pt
+                            .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
                     let insets_w = cnode.box_model.margins.horizontal()
                         + cnode.box_model.border_width * 2.0
                         + cpara;
@@ -2110,8 +2122,12 @@ impl<'a> LayoutEngine<'a> {
         }
 
         let node_style = &self.form.meta(id).style;
-        let para_margins =
-            node_style.margin_left_pt.unwrap_or(1.0) + node_style.margin_right_pt.unwrap_or(1.0);
+        let para_margins = node_style
+            .margin_left_pt
+            .unwrap_or(crate::types::DEFAULT_TEXT_PADDING)
+            + node_style
+                .margin_right_pt
+                .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
 
         let content = match &node.node_type {
             FormNodeType::Field { value } => {
@@ -2339,8 +2355,12 @@ impl<'a> LayoutEngine<'a> {
             if let Some(txt) = text_content {
                 if !txt.is_empty() {
                     let ext_style = &self.form.meta(id).style;
-                    let ext_para = ext_style.margin_left_pt.unwrap_or(1.0)
-                        + ext_style.margin_right_pt.unwrap_or(1.0);
+                    let ext_para = ext_style
+                        .margin_left_pt
+                        .unwrap_or(crate::types::DEFAULT_TEXT_PADDING)
+                        + ext_style
+                            .margin_right_pt
+                            .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
                     let insets_w = bm.margins.horizontal() + bm.border_width * 2.0 + ext_para;
                     let space_above = ext_style.space_above_pt.unwrap_or(0.0);
                     let space_below = ext_style.space_below_pt.unwrap_or(0.0);

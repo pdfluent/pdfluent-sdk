@@ -87,7 +87,7 @@ impl Default for XfaRenderConfig {
             border_color: [0.0, 0.0, 0.0],
             text_color: [0.0, 0.0, 0.0],
             background_color: None,
-            text_padding: 1.0,
+            text_padding: xfa_layout_engine::types::DEFAULT_TEXT_PADDING,
             font_map: HashMap::new(),
             font_metrics_data: HashMap::new(),
             check_button_mark: None,
