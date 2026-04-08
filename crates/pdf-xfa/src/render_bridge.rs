@@ -251,15 +251,26 @@ fn render_nodes(
                     let per_edge = node.style.border_colors.map(|cs| {
                         cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
                     });
+                    let per_edge_widths = node.style.border_widths.as_ref();
                     apply_border_dash(ops, border_style);
                     let edges = node.style.border_edges;
-                    if per_edge.is_some() {
-                        emit_individual_edges(ops, bx, by, bw, bh, &edges, per_edge.as_ref());
+                    if per_edge.is_some() || per_edge_widths.is_some() {
+                        emit_individual_edges(
+                            ops,
+                            bx,
+                            by,
+                            bw,
+                            bh,
+                            &edges,
+                            per_edge.as_ref(),
+                            per_edge_widths,
+                            bwid,
+                        );
                     } else if edges[0] && edges[1] && edges[2] && edges[3] {
                         emit_rect_path(ops, bx, by, bw, bh, border_radius);
                         ops.extend_from_slice(b"S\n");
                     } else {
-                        emit_individual_edges(ops, bx, by, bw, bh, &edges, None);
+                        emit_individual_edges(ops, bx, by, bw, bh, &edges, None, None, bwid);
                     }
                     reset_border_dash(ops, border_style);
                 }
@@ -365,7 +376,16 @@ fn render_nodes(
             },
             LayoutContent::Text(text) => {
                 let inner_pdf_y = mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h);
-                render_text(abs_x + inset_l, inner_pdf_y, inner_w, inner_h, text, &node.style, &node_config, ops)
+                render_text(
+                    abs_x + inset_l,
+                    inner_pdf_y,
+                    inner_w,
+                    inner_h,
+                    text,
+                    &node.style,
+                    &node_config,
+                    ops,
+                )
             }
             LayoutContent::WrappedText {
                 lines,
@@ -535,7 +555,7 @@ fn emit_rect_path(ops: &mut Vec<u8>, x: f64, y: f64, w: f64, h: f64, radius: f64
     }
 }
 
-/// Draw individual border edges with optional per-edge colors.
+/// Draw individual border edges with optional per-edge colors and widths.
 fn emit_individual_edges(
     ops: &mut Vec<u8>,
     x: f64,
@@ -544,13 +564,18 @@ fn emit_individual_edges(
     h: f64,
     edges: &[bool; 4],
     colors: Option<&[[f64; 3]; 4]>,
+    widths: Option<&[f64; 4]>,
+    default_width: f64,
 ) {
     if edges[0] {
+        let ww = widths.map(|w| w[0]).unwrap_or(default_width);
         if let Some(c) = colors.map(|c| &c[0]) {
             write_ops(
                 ops,
-                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+                format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", ww, c[0], c[1], c[2]),
             );
+        } else {
+            write_ops(ops, format_args!("{:.2} w\n", ww));
         }
         write_ops(
             ops,
@@ -558,11 +583,14 @@ fn emit_individual_edges(
         );
     }
     if edges[1] {
+        let ww = widths.map(|w| w[1]).unwrap_or(default_width);
         if let Some(c) = colors.map(|c| &c[1]) {
             write_ops(
                 ops,
-                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+                format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", ww, c[0], c[1], c[2]),
             );
+        } else {
+            write_ops(ops, format_args!("{:.2} w\n", ww));
         }
         write_ops(
             ops,
@@ -570,11 +598,14 @@ fn emit_individual_edges(
         );
     }
     if edges[2] {
+        let ww = widths.map(|w| w[2]).unwrap_or(default_width);
         if let Some(c) = colors.map(|c| &c[2]) {
             write_ops(
                 ops,
-                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+                format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", ww, c[0], c[1], c[2]),
             );
+        } else {
+            write_ops(ops, format_args!("{:.2} w\n", ww));
         }
         write_ops(
             ops,
@@ -582,11 +613,14 @@ fn emit_individual_edges(
         );
     }
     if edges[3] {
+        let ww = widths.map(|w| w[3]).unwrap_or(default_width);
         if let Some(c) = colors.map(|c| &c[3]) {
             write_ops(
                 ops,
-                format_args!("{:.3} {:.3} {:.3} RG\n", c[0], c[1], c[2]),
+                format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", ww, c[0], c[1], c[2]),
             );
+        } else {
+            write_ops(ops, format_args!("{:.2} w\n", ww));
         }
         write_ops(
             ops,
@@ -888,15 +922,26 @@ fn render_field(
         let per_edge = node_style
             .border_colors
             .map(|cs| cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]));
+        let per_edge_widths = node_style.border_widths.as_ref();
         apply_border_dash(ops, border_style);
         let edges = node_style.border_edges;
-        if per_edge.is_some() {
-            emit_individual_edges(ops, x, pdf_y, w, h, &edges, per_edge.as_ref());
+        if per_edge.is_some() || per_edge_widths.is_some() {
+            emit_individual_edges(
+                ops,
+                x,
+                pdf_y,
+                w,
+                h,
+                &edges,
+                per_edge.as_ref(),
+                per_edge_widths,
+                config.border_width,
+            );
         } else if edges[0] && edges[1] && edges[2] && edges[3] {
             emit_rect_path(ops, x, pdf_y, w, h, border_radius);
             ops.extend_from_slice(b"S\n");
         } else {
-            emit_individual_edges(ops, x, pdf_y, w, h, &edges, None);
+            emit_individual_edges(ops, x, pdf_y, w, h, &edges, None, None, config.border_width);
         }
         reset_border_dash(ops, border_style);
     }
@@ -940,12 +985,7 @@ fn render_field(
             emit_text_style_ops(node_style, ops);
             write_ops(
                 ops,
-                format_args!(
-                    "{:.2} {:.2} Td\n{} Tj\n",
-                    x + pad_left,
-                    text_y,
-                    encoded
-                ),
+                format_args!("{:.2} {:.2} Td\n{} Tj\n", x + pad_left, text_y, encoded),
             );
             reset_text_style_ops(node_style, ops);
             reset_synthetic_bold_ops(node_style, font_ref, ops);
@@ -1580,12 +1620,7 @@ fn render_text(
     emit_synthetic_bold_ops(node_style, font_ref, fs, &tc, ops);
     write_ops(
         ops,
-        format_args!(
-            "{:.2} {:.2} Td\n{} Tj\n",
-            x + p,
-            text_y,
-            encoded
-        ),
+        format_args!("{:.2} {:.2} Td\n{} Tj\n", x + p, text_y, encoded),
     );
     reset_synthetic_bold_ops(node_style, font_ref, ops);
     ops.extend_from_slice(b"ET\n");
@@ -1699,11 +1734,12 @@ fn render_multiline(
     let total_text_h = lines.len() as f64 * line_height;
     let first_line_y_xfa = match node_style.v_align {
         Some(VerticalAlign::Middle) => {
-            abs_y_xfa + space_above + (container_height - space_above - total_text_h) / 2.0 + ascender_pt
+            abs_y_xfa
+                + space_above
+                + (container_height - space_above - total_text_h) / 2.0
+                + ascender_pt
         }
-        Some(VerticalAlign::Bottom) => {
-            abs_y_xfa + container_height - total_text_h + ascender_pt
-        }
+        Some(VerticalAlign::Bottom) => abs_y_xfa + container_height - total_text_h + ascender_pt,
         _ => abs_y_xfa + space_above + ascender_pt,
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(first_line_y_xfa, 0.0);
@@ -1717,9 +1753,7 @@ fn render_multiline(
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => {
-                x + pad_left
-                    + indent_offset
-                    + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
+                x + pad_left + indent_offset + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
             }
             TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
             _ => x + pad_left + indent_offset,
@@ -1786,9 +1820,7 @@ fn render_rich_multiline(
         Some(VerticalAlign::Middle) => {
             abs_y_xfa + space_above + (container_height - space_above - total_text_h) / 2.0 + asc_pt
         }
-        Some(VerticalAlign::Bottom) => {
-            abs_y_xfa + container_height - total_text_h + asc_pt
-        }
+        Some(VerticalAlign::Bottom) => abs_y_xfa + container_height - total_text_h + asc_pt,
         _ => abs_y_xfa + space_above + asc_pt,
     };
     let first_line_pdf_y = mapper.xfa_to_pdf_y(first_line_y_xfa, 0.0);
@@ -1823,9 +1855,7 @@ fn render_rich_multiline(
         let line_w = font_metrics.measure_width(line);
         let text_x = match text_align {
             TextAlign::Center => {
-                x + pad_left
-                    + indent_offset
-                    + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
+                x + pad_left + indent_offset + ((content_w - indent_offset - line_w) / 2.0).max(0.0)
             }
             TextAlign::Right => x + pad_left + (content_w - line_w).max(0.0),
             _ => x + pad_left + indent_offset,
