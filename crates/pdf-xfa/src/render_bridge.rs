@@ -525,8 +525,11 @@ fn render_nodes(
         if !node.children.is_empty() {
             // Children are laid out relative to the content area (after insets),
             // so offset by the parent's margin insets (XFA <margin leftInset/topInset>).
+            // NOTE: inset_* is NOT added here because the layout engine already
+            // positions children at box_model.y which is relative to the content
+            // area (inside margins). Adding inset_top_pt would double-offset.
             let child_origin_x = abs_x + node.style.inset_left_pt.unwrap_or(0.0);
-            let child_origin_y = abs_y + node.style.inset_top_pt.unwrap_or(0.0);
+            let child_origin_y = abs_y;
             render_nodes(
                 &node.children,
                 child_origin_x,
