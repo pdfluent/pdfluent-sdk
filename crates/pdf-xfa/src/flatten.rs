@@ -344,9 +344,7 @@ fn xfa_flatten_inner(
     //
     // The 1000-byte threshold separates minimal XFA templates (title/header
     // only, ~200-500 bytes) from full page re-renders (5000+ bytes).
-    let overlay_is_substantial = overlays
-        .iter()
-        .any(|o| o.content_stream.len() > 1000);
+    let overlay_is_substantial = overlays.iter().any(|o| o.content_stream.len() > 1000);
     let preserve_static = is_static_form
         || (has_static_content && n_layout >= n_existing && overlay_is_substantial)
         || (n_layout < n_existing);
@@ -459,7 +457,7 @@ fn xfa_flatten_inner(
 // Font extraction, resolution, and embedding
 // ---------------------------------------------------------------------------
 
-fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>)> {
+fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)> {
     let mut fonts = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for (_id, obj) in &doc.objects {
@@ -477,10 +475,12 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>)> {
             None => continue,
         };
 
+        let pdf_widths = extract_font_widths(&dict);
+
         // First try direct FontDescriptor path (simple TrueType/OpenType fonts)
         if let Some((stream_id, data)) = extract_font_from_direct_fd(doc, &dict, &base_font) {
             if seen.insert(stream_id) {
-                store_font_data(&mut fonts, &base_font, data);
+                store_font_data(&mut fonts, &base_font, data, pdf_widths.clone());
             }
             continue;
         }
@@ -489,11 +489,26 @@ fn extract_embedded_fonts(doc: &Document) -> Vec<(String, Vec<u8>)> {
         // CIDFont fonts store their font data in /DescendantFonts[n]/FontDescriptor/FontFile*
         if let Some((stream_id, data)) = extract_cidfont_data(doc, &dict, &base_font, &seen) {
             if seen.insert(stream_id) {
-                store_font_data(&mut fonts, &base_font, data);
+                store_font_data(&mut fonts, &base_font, data, pdf_widths);
             }
         }
     }
     fonts
+}
+
+/// Extract /FirstChar, /LastChar, and /Widths from a font dictionary.
+fn extract_font_widths(dict: &lopdf::Dictionary) -> Option<(u16, Vec<u16>)> {
+    let first_char = dict.get(b"FirstChar").ok()?.as_i64().ok()? as u16;
+    let _last_char = dict.get(b"LastChar").ok()?.as_i64().ok()? as u16;
+    let widths_array = dict.get(b"Widths").ok()?.as_array().ok()?;
+    let widths: Vec<u16> = widths_array
+        .iter()
+        .filter_map(|w| w.as_i64().ok().map(|v| v as u16))
+        .collect();
+    if widths.is_empty() {
+        return None;
+    }
+    Some((first_char, widths))
 }
 
 /// Extract font data from a direct FontDescriptor (FontFile2/3/1 in FontDescriptor).
@@ -581,7 +596,12 @@ fn extract_cidfont_data(
 }
 
 /// Store font data under multiple names (PostScript name, family name, normalized name).
-fn store_font_data(fonts: &mut Vec<(String, Vec<u8>)>, base_font: &str, data: Vec<u8>) {
+fn store_font_data(
+    fonts: &mut Vec<(String, Vec<u8>, Option<(u16, Vec<u16>)>)>,
+    base_font: &str,
+    data: Vec<u8>,
+    pdf_widths: Option<(u16, Vec<u16>)>,
+) {
     let clean_name = if let Some(pos) = base_font.find('+') {
         base_font[pos + 1..].to_string()
     } else {
@@ -589,7 +609,7 @@ fn store_font_data(fonts: &mut Vec<(String, Vec<u8>)>, base_font: &str, data: Ve
     };
 
     // Store under the PostScript name (subset prefix already stripped)
-    fonts.push((clean_name.clone(), data.clone()));
+    fonts.push((clean_name.clone(), data.clone(), pdf_widths.clone()));
 
     // Also store under the font family name from the name table,
     // since XFA templates use family names (e.g. "Arial") while PDF
@@ -599,7 +619,7 @@ fn store_font_data(fonts: &mut Vec<(String, Vec<u8>)>, base_font: &str, data: Ve
             if name_record.name_id == ttf_parser::name_id::FAMILY {
                 if let Some(family) = name_record.to_string() {
                     if family != clean_name {
-                        fonts.push((family, data.clone()));
+                        fonts.push((family, data.clone(), pdf_widths.clone()));
                     }
                 }
             }
@@ -609,7 +629,7 @@ fn store_font_data(fonts: &mut Vec<(String, Vec<u8>)>, base_font: &str, data: Ve
     // Common PostScript-to-family normalization as fallback
     let normalized = ps_name_to_family(&clean_name);
     if normalized != clean_name {
-        fonts.push((normalized, data.clone()));
+        fonts.push((normalized, data.clone(), pdf_widths.clone()));
     }
 }
 
