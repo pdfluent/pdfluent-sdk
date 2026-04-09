@@ -1877,20 +1877,7 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     style.check_button_neutral_value = check_neutral_value;
     if let Some(fill) = find_first_child_by_name(elem, "fill") {
         if !is_hidden(fill) {
-            if let Some(color) = find_first_child_by_name(fill, "color") {
-                if let Some(rgb) = parse_xfa_color(color) {
-                    style.bg_color = Some(rgb);
-                }
-            }
-            if style.bg_color.is_none() {
-                if let Some(solid) = find_first_child_by_name(fill, "solid") {
-                    if let Some(color) = find_first_child_by_name(solid, "color") {
-                        if let Some(rgb) = parse_xfa_color(color) {
-                            style.bg_color = Some(rgb);
-                        }
-                    }
-                }
-            }
+            style.bg_color = parse_fill_color(fill);
         }
     }
     // Borders can live directly on the element OR inside <ui><textEdit|…><border>.
@@ -1959,11 +1946,11 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         if style.bg_color.is_none() {
             if let Some(fill) = find_first_child_by_name(border, "fill") {
                 if !is_hidden(fill) {
-                    if let Some(color) = find_first_child_by_name(fill, "color") {
-                        if let Some(rgb) = parse_xfa_color(color) {
-                            style.bg_color = Some(rgb);
-                        }
-                    }
+                    // fixes #809: XFA 3.3 §7.6.3 allows widget fills to be
+                    // expressed as either <fill><color> or <fill><solid><color>.
+                    // Supporting both keeps explicit field backgrounds aligned
+                    // with Adobe/pdfRest output instead of leaving them white.
+                    style.bg_color = parse_fill_color(fill);
                 }
             }
         }
@@ -2089,6 +2076,16 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     }
 
     style
+}
+
+fn parse_fill_color(fill_node: Node<'_, '_>) -> Option<(u8, u8, u8)> {
+    find_first_child_by_name(fill_node, "color")
+        .and_then(parse_xfa_color)
+        .or_else(|| {
+            find_first_child_by_name(fill_node, "solid")
+                .and_then(|solid| find_first_child_by_name(solid, "color"))
+                .and_then(parse_xfa_color)
+        })
 }
 
 fn parse_check_button_mark(elem: Node<'_, '_>) -> Option<String> {
@@ -2533,6 +2530,53 @@ mod tests {
             FormNodeType::Field { value } => assert_eq!(value, "Yes"),
             _ => panic!("agree should be a field"),
         }
+    }
+
+    #[test]
+    fn border_fill_solid_color_populates_background_color() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="name" w="200pt" h="20pt">
+      <ui><textEdit/></ui>
+      <border>
+        <fill>
+          <solid>
+            <color value="240,240,240"/>
+          </solid>
+        </fill>
+      </border>
+    </field>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form>
+      <name>Jane Doe</name>
+    </form>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let name_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "name")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("name field must exist");
+        assert_eq!(tree.meta(name_id).style.bg_color, Some((240, 240, 240)));
     }
 
     #[test]
