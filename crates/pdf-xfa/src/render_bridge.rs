@@ -1361,10 +1361,23 @@ fn render_checkbox(
     ops: &mut Vec<u8>,
 ) {
     let bw = config.border_width;
+    // fixes #809: XFA `<border><fill>` backgrounds apply to check buttons too.
+    // Adobe/pdfRest paints the widget fill before the border/mark; without
+    // this, explicit white/light fills on checkboxes stay transparent.
+    write_ops(
+        ops,
+        format_args!("q\n"),
+    );
+    if let Some(bg) = &config.background_color {
+        write_ops(
+            ops,
+            format_args!("{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n", bg[0], bg[1], bg[2], x, pdf_y, w, h),
+        );
+    }
     write_ops(
         ops,
         format_args!(
-            "q\n{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
+            "{:.2} w\n{:.3} {:.3} {:.3} RG\n{:.2} {:.2} {:.2} {:.2} re\nS\n",
             bw,
             config.border_color[0],
             config.border_color[1],
@@ -1407,10 +1420,61 @@ fn render_radio(
     let k = 0.5523; // kappa ≈ 4*(√2-1)/3
     let kx = r * k;
     let ky = r * k;
+    // fixes #809: radios can also carry an explicit widget fill. Paint the
+    // background circle before stroking the border and asserted inner mark.
     write_ops(
         ops,
         format_args!(
-            "q\n{:.2} w\n{:.3} {:.3} {:.3} RG\n",
+            "q\n",
+        ),
+    );
+    if let Some(bg) = &config.background_color {
+        write_ops(
+            ops,
+            format_args!(
+                "{:.3} {:.3} {:.3} rg\n\
+                 {:.2} {:.2} m\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                 f\n",
+                bg[0],
+                bg[1],
+                bg[2],
+                cx + r,
+                cy,
+                cx + r,
+                cy + ky,
+                cx + kx,
+                cy + r,
+                cx,
+                cy + r,
+                cx - kx,
+                cy + r,
+                cx - r,
+                cy + ky,
+                cx - r,
+                cy,
+                cx - r,
+                cy - ky,
+                cx - kx,
+                cy - r,
+                cx,
+                cy - r,
+                cx + kx,
+                cy - r,
+                cx + r,
+                cy - ky,
+                cx + r,
+                cy,
+            ),
+        );
+    }
+    write_ops(
+        ops,
+        format_args!(
+            "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
             bw, config.border_color[0], config.border_color[1], config.border_color[2],
         ),
     );
@@ -3035,6 +3099,54 @@ mod tests {
         assert!(
             !s.contains("0.949 0.949 0.949 rg"),
             "non-edit widgets should not inherit the text field gray fill: {s}"
+        );
+    }
+
+    #[test]
+    fn checkbox_explicit_background_fill_is_rendered() {
+        let s = styled_overlay_str(make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "0",
+            FormNodeStyle {
+                bg_color: Some((255, 255, 255)),
+                ..Default::default()
+            },
+        ));
+        assert!(
+            s.contains("1.000 1.000 1.000 rg"),
+            "checkbox fill color should be emitted when bg_color is present: {s}"
+        );
+        assert!(
+            s.contains("20.00 20.00 re\nf"),
+            "checkbox background should be painted as a filled rectangle before the border: {s}"
+        );
+    }
+
+    #[test]
+    fn radio_explicit_background_fill_is_rendered() {
+        let s = styled_overlay_str(make_styled_radio(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "N",
+            FormNodeStyle {
+                bg_color: Some((255, 255, 255)),
+                check_button_on_value: Some("Y".to_string()),
+                check_button_off_value: Some("N".to_string()),
+                ..Default::default()
+            },
+        ));
+        assert!(
+            s.contains("1.000 1.000 1.000 rg"),
+            "radio fill color should be emitted when bg_color is present: {s}"
+        );
+        assert!(
+            s.contains(" c\n") && s.contains("\nf\n"),
+            "radio background should be painted as a filled circle path before the border: {s}"
         );
     }
 
