@@ -532,6 +532,13 @@ pub struct FormNodeStyle {
     /// CheckButton mark style (XFA `<checkButton mark="...">`).
     /// Values: "check", "circle", "cross", "diamond", "square", "star".
     pub check_button_mark: Option<String>,
+    /// CheckButton on-value (first `<items>` entry, XFA 3.3 §17.8).
+    pub check_button_on_value: Option<String>,
+    /// CheckButton off-value (second `<items>` entry). When omitted, the
+    /// spec default is the null string.
+    pub check_button_off_value: Option<String>,
+    /// CheckButton neutral-value (third `<items>` entry, checkbox only).
+    pub check_button_neutral_value: Option<String>,
     /// Rich text spans parsed from `<exData contentType="text/html">` XHTML.
     pub rich_text_spans: Option<Vec<RichTextSpan>>,
     /// Font underline (XFA `<font underline="1">`).
@@ -575,6 +582,9 @@ impl Default for FormNodeStyle {
             caption_placement: None,
             caption_reserve: None,
             check_button_mark: None,
+            check_button_on_value: None,
+            check_button_off_value: None,
+            check_button_neutral_value: None,
             rich_text_spans: None,
             underline: false,
             line_through: false,
