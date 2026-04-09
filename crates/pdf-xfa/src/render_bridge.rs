@@ -1752,9 +1752,19 @@ fn render_text(
     let line_h = metrics.line_height_pt();
     let idh_metrics = lookup_font_metrics(node_style, config);
     let encoded = pdf_encode_text(text, idh_metrics);
+    let desc_pt =
+        if let (Some(desc), Some(upem)) = (metrics.resolved_descender, metrics.resolved_upem) {
+            if upem > 0 {
+                desc as f64 / upem as f64 * fs
+            } else {
+                fs * 0.2
+            }
+        } else {
+            fs * 0.2
+        };
     let text_y = match node_style.v_align {
         Some(VerticalAlign::Middle) => pdf_y + (h - line_h) / 2.0,
-        Some(VerticalAlign::Bottom) => pdf_y + p,
+        Some(VerticalAlign::Bottom) => pdf_y + desc_pt,
         _ => pdf_y + h - p - asc_pt,
     };
     write_ops(
@@ -1775,16 +1785,6 @@ fn render_text(
     let text_y = pdf_y + p;
     let line_thickness = (fs * 0.05).max(0.5);
     if node_style.underline {
-        let desc_pt =
-            if let (Some(desc), Some(upem)) = (metrics.resolved_descender, metrics.resolved_upem) {
-                if upem > 0 {
-                    desc as f64 / upem as f64 * fs
-                } else {
-                    fs * 0.2
-                }
-            } else {
-                fs * 0.2
-            };
         let underline_y = text_y - desc_pt;
         let text_w = metrics.measure_width(text);
         write_ops(
