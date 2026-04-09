@@ -468,7 +468,41 @@ impl<'a> FormMerger<'a> {
     ) -> Result<FormNode> {
         let name = attr(elem, "name").unwrap_or("").to_string();
         let bm = parse_box_model(elem);
-        let content = extract_value_text(elem).unwrap_or_default();
+
+        if let Some(draw_content) = extract_draw_content(elem) {
+            return Ok(FormNode {
+                name,
+                node_type: FormNodeType::Draw(draw_content),
+                box_model: bm,
+                layout: LayoutStrategy::Positioned,
+                children: Vec::new(),
+                occur: Occur::once(),
+                font: FontMetrics::default(),
+                calculate: None,
+                validate: None,
+                column_widths: Vec::new(),
+                col_span: 1,
+            });
+        }
+
+        if let Some((image_data, mime_type)) = extract_value_image(elem) {
+            return Ok(FormNode {
+                name,
+                node_type: FormNodeType::Image {
+                    data: image_data,
+                    mime_type,
+                },
+                box_model: bm,
+                layout: LayoutStrategy::Positioned,
+                children: Vec::new(),
+                occur: Occur::once(),
+                font: FontMetrics::default(),
+                calculate: None,
+                validate: None,
+                column_widths: Vec::new(),
+                col_span: 1,
+            });
+        }
 
         let mut font = parse_font_metrics(elem);
         if let Some(html_size) = extract_exdata_font_size(elem) {
@@ -477,6 +511,8 @@ impl<'a> FormMerger<'a> {
         if let Some(css_align) = extract_exdata_text_align(elem) {
             font.text_align = css_align;
         }
+
+        let content = extract_value_text(elem).unwrap_or_default();
 
         Ok(FormNode {
             name,
@@ -1454,6 +1490,86 @@ fn is_hidden(elem: Node<'_, '_>) -> bool {
         attr(elem, "presence"),
         Some("hidden") | Some("invisible") | Some("inactive")
     )
+}
+
+fn extract_value_image(elem: Node<'_, '_>) -> Option<(Vec<u8>, String)> {
+    let value = find_first_child_by_name(elem, "value")?;
+    let image = find_first_child_by_name(value, "image")?;
+    let content_type = attr(image, "contentType")
+        .unwrap_or("image/png")
+        .to_string();
+    let data = image.text().unwrap_or_default();
+    let decoded = base64_decode(data);
+
+    if decoded.starts_with(b"BM") || content_type == "image/bmp" {
+        if let Some(png_data) = bmp_to_png(&decoded) {
+            return Some((png_data, "image/png".to_string()));
+        }
+        log::warn!("BMP to PNG conversion failed; skipping image");
+        return None;
+    }
+
+    Some((decoded, content_type))
+}
+
+fn extract_draw_content(elem: Node<'_, '_>) -> Option<DrawContent> {
+    let value = find_first_child_by_name(elem, "value")?;
+
+    if let Some(line) = find_first_child_by_name(value, "line") {
+        let x1 = attr_as_f64(line, "x1").unwrap_or(0.0);
+        let y1 = attr_as_f64(line, "y1").unwrap_or(0.0);
+        let x2 = attr_as_f64(line, "x2").unwrap_or(0.0);
+        let y2 = attr_as_f64(line, "y2").unwrap_or(0.0);
+        return Some(DrawContent::Line { x1, y1, x2, y2 });
+    }
+
+    if let Some(rect) = find_first_child_by_name(value, "rectangle") {
+        let x = attr_as_f64(rect, "x").unwrap_or(0.0);
+        let y = attr_as_f64(rect, "y").unwrap_or(0.0);
+        let w = attr_as_f64(rect, "w").unwrap_or(attr_as_f64(rect, "width").unwrap_or(0.0));
+        let h = attr_as_f64(rect, "h").unwrap_or(attr_as_f64(rect, "height").unwrap_or(0.0));
+        let radius =
+            attr_as_f64(rect, "r").unwrap_or(attr_as_f64(rect, "cornerRadius").unwrap_or(0.0));
+        return Some(DrawContent::Rectangle { x, y, w, h, radius });
+    }
+
+    if let Some(arc) = find_first_child_by_name(value, "arc") {
+        let x = attr_as_f64(arc, "x").unwrap_or(0.0);
+        let y = attr_as_f64(arc, "y").unwrap_or(0.0);
+        let w = attr_as_f64(arc, "w").unwrap_or(attr_as_f64(arc, "width").unwrap_or(0.0));
+        let h = attr_as_f64(arc, "h").unwrap_or(attr_as_f64(arc, "height").unwrap_or(0.0));
+        let start_angle = attr_as_f64(arc, "startAngle").unwrap_or(0.0);
+        let sweep_angle = attr_as_f64(arc, "sweepAngle").unwrap_or(0.0);
+        return Some(DrawContent::Arc {
+            x,
+            y,
+            w,
+            h,
+            start_angle,
+            sweep_angle,
+        });
+    }
+
+    None
+}
+
+fn base64_decode(input: &str) -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(input.trim())
+        .unwrap_or_default()
+}
+
+fn bmp_to_png(bmp_data: &[u8]) -> Option<Vec<u8>> {
+    let img = image::load_from_memory_with_format(bmp_data, image::ImageFormat::Bmp).ok()?;
+    let mut buf = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+        .ok()?;
+    Some(buf)
+}
+
+fn attr_as_f64(elem: Node<'_, '_>, name: &str) -> Option<f64> {
+    attr(elem, name)?.parse().ok()
 }
 
 fn parse_col_span(elem: Node<'_, '_>) -> i32 {
@@ -2452,6 +2568,95 @@ mod tests {
                 );
             }
             _ => panic!("exclGroup children must be fields"),
+        }
+    }
+
+    #[test]
+    fn draw_with_image_creates_image_node() {
+        // Base64-encoded 1x1 red PNG
+        let image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+        let template = format!(
+            r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <draw name="logo" x="0pt" y="0pt" w="100pt" h="100pt">
+      <value>
+        <image contentType="image/png">{}</image>
+      </value>
+    </draw>
+  </subform>
+</template>"#,
+            image_b64
+        );
+
+        let data_dom = DataDom::new();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(&template).unwrap();
+
+        let logo_node = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "logo")
+            .expect("logo draw must exist");
+
+        match &logo_node.node_type {
+            FormNodeType::Image { data, mime_type } => {
+                assert_eq!(mime_type, "image/png");
+                assert!(!data.is_empty(), "image data should not be empty");
+                // Verify it's valid PNG by checking magic bytes
+                assert!(
+                    data.starts_with(&[0x89, 0x50, 0x4E, 0x47]),
+                    "decoded data should be PNG"
+                );
+            }
+            _ => panic!(
+                "draw with image should create Image node, got {:?}",
+                logo_node.node_type
+            ),
+        }
+    }
+
+    #[test]
+    fn draw_with_rectangle_creates_draw_node() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <draw name="box" x="0pt" y="0pt" w="100pt" h="100pt">
+      <value>
+        <rectangle/>
+      </value>
+    </draw>
+  </subform>
+</template>"#;
+
+        let data_dom = DataDom::new();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let box_node = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "box")
+            .expect("box draw must exist");
+
+        match &box_node.node_type {
+            FormNodeType::Draw(DrawContent::Rectangle { .. }) => {}
+            other => panic!(
+                "draw with rectangle should create Rectangle draw, got {:?}",
+                other
+            ),
         }
     }
 }
