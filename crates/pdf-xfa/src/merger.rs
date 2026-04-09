@@ -2110,14 +2110,18 @@ fn parse_check_button_values(
         Some(ui) => ui,
         None => return (None, None, None),
     };
-    if ui
-        .children()
-        .all(|n| !n.is_element() || n.tag_name().name() != "checkButton")
-    {
-        return (None, None, None);
-    }
+    let check_button = match find_first_child_by_name(ui, "checkButton") {
+        Some(check_button) => check_button,
+        None => return (None, None, None),
+    };
 
-    let Some(items) = find_first_child_by_name(elem, "items") else {
+    // XFA Spec 3.3 §7.2.21 allows `<items>` to be authored either directly on
+    // the field or nested inside `<ui><checkButton>`. Adobe honors both forms;
+    // if we only look on the field, asserted values like "Yes"/"No" collapse
+    // back to the hardcoded 1/0 fallback and the checkbox renders unchecked.
+    let items = find_first_child_by_name(elem, "items")
+        .or_else(|| find_first_child_by_name(check_button, "items"));
+    let Some(items) = items else {
         return (None, None, None);
     };
 
@@ -2477,6 +2481,58 @@ mod tests {
         assert_eq!(meta.style.check_button_on_value.as_deref(), Some("1"));
         assert_eq!(meta.style.check_button_off_value.as_deref(), Some("0"));
         assert_eq!(meta.style.check_button_neutral_value.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn nested_check_button_items_are_used_for_checkbox_values() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="agree" w="20pt" h="20pt">
+      <ui>
+        <checkButton>
+          <items><text>Yes</text><text>No</text></items>
+        </checkButton>
+      </ui>
+      <value><text>Yes</text></value>
+    </field>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form>
+      <agree>Yes</agree>
+    </form>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let agree_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "agree")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("agree field must exist");
+        let meta = tree.meta(agree_id);
+        assert_eq!(meta.field_kind, FieldKind::Checkbox);
+        assert_eq!(meta.style.check_button_on_value.as_deref(), Some("Yes"));
+        assert_eq!(meta.style.check_button_off_value.as_deref(), Some("No"));
+        match &tree.get(agree_id).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "Yes"),
+            _ => panic!("agree should be a field"),
+        }
     }
 
     #[test]
