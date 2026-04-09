@@ -624,10 +624,13 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             }
             let stroke = attr(*edge, "stroke").unwrap_or("solid");
             if stroke != "none" {
+                // fix(#808): XFA default edge thickness is 1pt (matches BoxModel::border_width
+                // default and Adobe's behavior). Previously defaulted to 0.5pt, causing borders
+                // to appear ~1px thinner at 150 DPI rendering.
                 let thickness = attr(*edge, "thickness")
                     .and_then(Measurement::parse)
                     .map(|m| m.to_points())
-                    .unwrap_or(0.5);
+                    .unwrap_or(1.0);
                 if thickness > 0.0 {
                     style.border_width_pt = Some(thickness);
                 }
