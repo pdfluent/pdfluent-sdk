@@ -79,6 +79,7 @@ fn pdf_glyph_widths_projects_differences_to_unicode_slots() {
             base_encoding: PdfBaseEncoding::WinAnsi,
             differences: vec![(24, 0x02D8), (25, 0x02C7), (26, 0x02C6)],
         }),
+        pdf_source_font: None,
     };
 
     let (_first_char, widths) = font.pdf_glyph_widths();

@@ -60,7 +60,7 @@ use crate::error::{Result, XfaError};
 use crate::extract::extract_xfa_from_bytes;
 use crate::font_bridge::{
     font_variant_key, pdf_glyph_name_to_unicode, CidFontInfo, EmbeddedFontData, PdfBaseEncoding,
-    PdfSimpleEncoding, ResolvedFont, XfaFontResolver, XfaFontSpec,
+    PdfSimpleEncoding, PdfSourceFont, ResolvedFont, XfaFontResolver, XfaFontSpec,
 };
 use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
@@ -512,7 +512,7 @@ fn xfa_flatten_inner(
 pub fn extract_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontData> {
     let mut fonts = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for obj in doc.objects.values() {
+    for (&font_object_id, obj) in &doc.objects {
         let dict = match obj.as_dict() {
             Ok(d) => d,
             Err(_) => continue,
@@ -529,6 +529,8 @@ pub fn extract_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontData> {
 
         let pdf_widths = extract_font_widths(dict);
         let pdf_encoding = extract_font_encoding(doc, dict);
+        let pdf_source_font =
+            extract_simple_pdf_source_font(doc, font_object_id, dict, pdf_widths.as_ref());
 
         // First try direct FontDescriptor path (simple TrueType/OpenType fonts)
         if let Some((stream_id, data)) = extract_font_from_direct_fd(doc, dict, &base_font) {
@@ -539,6 +541,7 @@ pub fn extract_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontData> {
                     data,
                     pdf_widths.clone(),
                     pdf_encoding.clone(),
+                    pdf_source_font,
                 );
             }
             continue;
@@ -550,8 +553,25 @@ pub fn extract_embedded_fonts(doc: &Document) -> Vec<EmbeddedFontData> {
         if let Some((stream_id, data)) = extract_cidfont_data(doc, dict, &base_font, &seen) {
             if seen.insert(stream_id) {
                 let cid_widths = extract_cid_font_widths(doc, dict);
-                store_font_data(&mut fonts, &base_font, data, cid_widths, None);
+                store_font_data(&mut fonts, &base_font, data, cid_widths, None, None);
             }
+            continue;
+        }
+
+        if let Some(source_font) = pdf_source_font {
+            // fix(#811): if the source PDF already exposes a reusable simple
+            // font object with /Widths, keep that object alive through the XFA
+            // pipeline. PDF 1.7 §5.5 defines those widths as the authoritative
+            // simple-font metrics, and XFA 3.3 §11.7.1 relies on those metrics
+            // for field fitting.
+            store_font_data(
+                &mut fonts,
+                &base_font,
+                Vec::new(),
+                pdf_widths.clone(),
+                pdf_encoding.clone(),
+                Some(source_font),
+            );
         }
     }
     fonts
@@ -734,6 +754,57 @@ fn extract_font_encoding(doc: &Document, dict: &lopdf::Dictionary) -> Option<Pdf
     })
 }
 
+fn extract_simple_pdf_source_font(
+    doc: &Document,
+    font_object_id: ObjectId,
+    dict: &lopdf::Dictionary,
+    pdf_widths: Option<&(u16, Vec<u16>)>,
+) -> Option<PdfSourceFont> {
+    pdf_widths?;
+
+    let subtype = dict.get(b"Subtype").ok().and_then(|obj| obj.as_name().ok());
+    if subtype == Some(b"Type0".as_slice()) {
+        return None;
+    }
+
+    // fix(#811): only reuse simple fonts whose emitted PDF text can stay on
+    // the current WinAnsi path in render_bridge. Fonts with custom encodings
+    // need a dedicated byte encoder first; otherwise we would preserve widths
+    // but emit the wrong character codes.
+    //
+    // PDF 1.7 §5.5 defines simple-font widths in the font's encoding space.
+    // LIMITATION: CID/Type0 fonts use /W arrays and CMaps instead; they are
+    // intentionally excluded here.
+    let encoding_obj = dict.get(b"Encoding").ok().and_then(|obj| resolve_object(doc, obj));
+    match encoding_obj {
+        Some(obj) if obj.as_name().ok() == Some(b"WinAnsiEncoding".as_slice()) => {}
+        Some(obj) => {
+            let base = obj
+                .as_dict()
+                .ok()
+                .and_then(|enc| enc.get(b"BaseEncoding").ok())
+                .and_then(|base| resolve_object(doc, base))
+                .and_then(|base| base.as_name().ok());
+            if base != Some(b"WinAnsiEncoding".as_slice()) {
+                return None;
+            }
+            if obj
+                .as_dict()
+                .ok()
+                .and_then(|enc| enc.get(b"Differences").ok())
+                .is_some()
+            {
+                return None;
+            }
+        }
+        None => return None,
+    }
+
+    Some(PdfSourceFont {
+        object_id: font_object_id,
+    })
+}
+
 fn resolve_object<'a>(doc: &'a Document, obj: &'a Object) -> Option<&'a Object> {
     match obj {
         Object::Reference(id) => doc.get_object(*id).ok(),
@@ -832,6 +903,7 @@ fn store_font_data(
     data: Vec<u8>,
     pdf_widths: Option<(u16, Vec<u16>)>,
     pdf_encoding: Option<PdfSimpleEncoding>,
+    pdf_source_font: Option<PdfSourceFont>,
 ) {
     let clean_name = if let Some(pos) = base_font.find('+') {
         base_font[pos + 1..].to_string()
@@ -845,6 +917,7 @@ fn store_font_data(
         data: data.clone(),
         pdf_widths: pdf_widths.clone(),
         pdf_encoding: pdf_encoding.clone(),
+        pdf_source_font,
     });
 
     // Also store under the font family name from the name table,
@@ -860,6 +933,7 @@ fn store_font_data(
                             data: data.clone(),
                             pdf_widths: pdf_widths.clone(),
                             pdf_encoding: pdf_encoding.clone(),
+                            pdf_source_font,
                         });
                     }
                 }
@@ -875,6 +949,7 @@ fn store_font_data(
             data,
             pdf_widths,
             pdf_encoding,
+            pdf_source_font,
         });
     }
 }
@@ -1159,7 +1234,15 @@ fn embed_resolved_fonts(
     let mut metrics_data = HashMap::new();
     for (idx, (name, font)) in resolved.iter().enumerate() {
         let resource_name = format!("XFA_F{}", idx);
-        let obj_id = embed_font_in_pdf(doc, font);
+        // fix(#811): once a simple source font survives resolution, keep using
+        // the original PDF object instead of emitting a synthetic Type0/system
+        // fallback. That keeps field-fit behaviour aligned with the source PDF
+        // and Acrobat's interpretation of the same /Widths table.
+        let (obj_id, render_font_data) = if let Some(source_font) = font.pdf_source_font {
+            (source_font.object_id, None)
+        } else {
+            (embed_font_in_pdf(doc, font), Some(font.data.clone()))
+        };
         font_map.insert(name.clone(), format!("/{}", resource_name));
         font_objects.push((resource_name, obj_id));
         let (_first_char, widths) = font.pdf_glyph_widths();
@@ -1170,7 +1253,7 @@ fn embed_resolved_fonts(
                 upem: font.units_per_em,
                 ascender: font.ascender,
                 descender: font.descender,
-                font_data: Some(font.data.clone()),
+                font_data: render_font_data,
                 face_index: font.face_index,
             },
         );
@@ -2867,5 +2950,76 @@ ET
             }
         }
         panic!("Type0 font not found");
+    }
+
+    #[test]
+    fn extract_embedded_fonts_keeps_simple_pdf_fonts_without_fontfile() {
+        let mut doc = Document::new();
+        let font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Font".to_vec()),
+            "Subtype" => Object::Name(b"Type1".to_vec()),
+            "BaseFont" => Object::Name(b"MyriadPro-Regular".to_vec()),
+            "FirstChar" => Object::Integer(32),
+            "LastChar" => Object::Integer(34),
+            "Widths" => Object::Array(vec![
+                Object::Integer(278),
+                Object::Integer(333),
+                Object::Integer(612),
+            ]),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+        }));
+
+        let fonts = extract_embedded_fonts(&doc);
+        let font = fonts
+            .iter()
+            .find(|font| font.name == "MyriadPro-Regular")
+            .expect("expected reusable simple font");
+
+        assert!(font.data.is_empty(), "no FontFile* should keep data empty");
+        assert_eq!(font.pdf_widths, Some((32, vec![278, 333, 612])));
+        assert_eq!(
+            font.pdf_source_font,
+            Some(PdfSourceFont { object_id: font_id })
+        );
+    }
+
+    #[test]
+    fn embed_resolved_fonts_reuses_existing_pdf_font_object() {
+        let mut doc = Document::new();
+        let source_font_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Font".to_vec()),
+            "Subtype" => Object::Name(b"Type1".to_vec()),
+            "BaseFont" => Object::Name(b"MyriadPro-Regular".to_vec()),
+            "Encoding" => Object::Name(b"WinAnsiEncoding".to_vec()),
+        }));
+        let before = doc.objects.len();
+
+        let mut resolved = HashMap::new();
+        resolved.insert(
+            "Myriad Pro_Normal_Normal".to_string(),
+            ResolvedFont {
+                name: "Myriad Pro".to_string(),
+                data: Vec::new(),
+                face_index: 0,
+                units_per_em: 1000,
+                ascender: 800,
+                descender: -200,
+                pdf_widths: Some((32, vec![278, 333, 612])),
+                pdf_encoding: None,
+                pdf_source_font: Some(PdfSourceFont {
+                    object_id: source_font_id,
+                }),
+            },
+        );
+
+        let (_font_map, font_objects, metrics_data) = embed_resolved_fonts(&mut doc, &resolved);
+
+        assert_eq!(doc.objects.len(), before, "should not embed a new font object");
+        assert_eq!(font_objects.len(), 1);
+        assert_eq!(font_objects[0].1, source_font_id);
+        assert!(
+            metrics_data["Myriad Pro_Normal_Normal"].font_data.is_none(),
+            "reused simple fonts must keep WinAnsi text encoding"
+        );
     }
 }
