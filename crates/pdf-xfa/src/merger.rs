@@ -812,8 +812,11 @@ fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
     let mut areas = Vec::new();
     for child in page_area.children().filter(|n| n.is_element()) {
         if child.tag_name().name() == "contentArea" {
-            let x = attr(child, "x").and_then(parse_dim).unwrap_or(36.0);
-            let y = attr(child, "y").and_then(parse_dim).unwrap_or(36.0);
+            // XFA 3.3 §8.3.1 — contentArea x/y default to "0in" (0pt).
+            // Previously defaulted to 36pt (0.5in margin), which shifted
+            // all content down/right for templates omitting x/y. Fixes #797.
+            let x = attr(child, "x").and_then(parse_dim).unwrap_or(0.0);
+            let y = attr(child, "y").and_then(parse_dim).unwrap_or(0.0);
             let w = attr(child, "w").and_then(parse_dim).unwrap_or(540.0);
             let h = attr(child, "h").and_then(parse_dim).unwrap_or(720.0);
             areas.push(ContentArea {
