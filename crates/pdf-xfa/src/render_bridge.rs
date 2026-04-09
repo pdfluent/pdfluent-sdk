@@ -375,12 +375,26 @@ fn render_nodes(
                 font_size,
                 font_family,
             } => match field_kind {
-                FieldKind::Checkbox => {
-                    render_checkbox(val_x, val_pdf_y, val_w, val_h, value, &node_config, ops)
-                }
-                FieldKind::Radio => {
-                    render_radio(val_x, val_pdf_y, val_w, val_h, value, &node_config, ops)
-                }
+                FieldKind::Checkbox => render_checkbox(
+                    val_x,
+                    val_pdf_y,
+                    val_w,
+                    val_h,
+                    value,
+                    &node.style,
+                    &node_config,
+                    ops,
+                ),
+                FieldKind::Radio => render_radio(
+                    val_x,
+                    val_pdf_y,
+                    val_w,
+                    val_h,
+                    value,
+                    &node.style,
+                    &node_config,
+                    ops,
+                ),
                 FieldKind::Dropdown => render_dropdown(
                     val_x,
                     val_pdf_y,
@@ -1309,12 +1323,10 @@ fn render_checkbox(
     w: f64,
     h: f64,
     value: &str,
+    node_style: &FormNodeStyle,
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
-    if value.is_empty() {
-        return;
-    }
     let bw = config.border_width;
     write_ops(
         ops,
@@ -1330,12 +1342,12 @@ fn render_checkbox(
             h
         ),
     );
-    let checked = !value.is_empty()
-        && !value.eq_ignore_ascii_case("0")
-        && !value.eq_ignore_ascii_case("off")
-        && !value.eq_ignore_ascii_case("false");
+    let checked = is_check_button_checked(value, FieldKind::Checkbox, node_style);
     if checked {
-        let mark = config.check_button_mark.as_deref().unwrap_or("cross");
+        let mark = config
+            .check_button_mark
+            .as_deref()
+            .unwrap_or(default_check_button_mark(FieldKind::Checkbox));
         let m = w.min(h) * 0.15;
         let color = config.text_color;
         draw_check_mark(mark, x, pdf_y, w, h, m, color, ops);
@@ -1349,12 +1361,10 @@ fn render_radio(
     w: f64,
     h: f64,
     value: &str,
+    node_style: &FormNodeStyle,
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
-    if value.is_empty() {
-        return;
-    }
     let bw = config.border_width;
     let cx = x + w / 2.0;
     let cy = pdf_y + h / 2.0;
@@ -1409,58 +1419,97 @@ fn render_radio(
         ),
     );
 
-    let checked = !value.is_empty()
-        && !value.eq_ignore_ascii_case("0")
-        && !value.eq_ignore_ascii_case("off")
-        && !value.eq_ignore_ascii_case("false");
+    let checked = is_check_button_checked(value, FieldKind::Radio, node_style);
     if checked {
-        // Draw filled inner circle (bullet).
-        let ir = r * 0.4;
-        let ikx = ir * k;
-        let iky = ir * k;
-        write_ops(
-            ops,
-            format_args!(
-                "{:.3} {:.3} {:.3} rg\n\
-                 {:.2} {:.2} m\n\
-                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
-                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
-                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
-                 {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
-                 f\n",
-                config.text_color[0],
-                config.text_color[1],
-                config.text_color[2],
-                cx + ir,
-                cy,
-                cx + ir,
-                cy + iky,
-                cx + ikx,
-                cy + ir,
-                cx,
-                cy + ir,
-                cx - ikx,
-                cy + ir,
-                cx - ir,
-                cy + iky,
-                cx - ir,
-                cy,
-                cx - ir,
-                cy - iky,
-                cx - ikx,
-                cy - ir,
-                cx,
-                cy - ir,
-                cx + ikx,
-                cy - ir,
-                cx + ir,
-                cy - iky,
-                cx + ir,
-                cy,
-            ),
-        );
+        let mark = config
+            .check_button_mark
+            .as_deref()
+            .unwrap_or(default_check_button_mark(FieldKind::Radio));
+        if mark == "circle" {
+            // fixes #798: Acrobat uses a filled inner circle for asserted
+            // round radios unless the template overrides `mark`.
+            let ir = r * 0.4;
+            let ikx = ir * k;
+            let iky = ir * k;
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.3} {:.3} {:.3} rg\n\
+                     {:.2} {:.2} m\n\
+                     {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                     {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                     {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                     {:.2} {:.2} {:.2} {:.2} {:.2} {:.2} c\n\
+                     f\n",
+                    config.text_color[0],
+                    config.text_color[1],
+                    config.text_color[2],
+                    cx + ir,
+                    cy,
+                    cx + ir,
+                    cy + iky,
+                    cx + ikx,
+                    cy + ir,
+                    cx,
+                    cy + ir,
+                    cx - ikx,
+                    cy + ir,
+                    cx - ir,
+                    cy + iky,
+                    cx - ir,
+                    cy,
+                    cx - ir,
+                    cy - iky,
+                    cx - ikx,
+                    cy - ir,
+                    cx,
+                    cy - ir,
+                    cx + ikx,
+                    cy - ir,
+                    cx + ir,
+                    cy - iky,
+                    cx + ir,
+                    cy,
+                ),
+            );
+        } else {
+            let m = w.min(h) * 0.15;
+            draw_check_mark(mark, x, pdf_y, w, h, m, config.text_color, ops);
+        }
     }
     write_ops(ops, format_args!("Q\n"));
+}
+
+fn default_check_button_mark(field_kind: FieldKind) -> &'static str {
+    match field_kind {
+        FieldKind::Radio => "circle",
+        _ => "cross",
+    }
+}
+
+fn is_check_button_checked(value: &str, field_kind: FieldKind, node_style: &FormNodeStyle) -> bool {
+    // fixes #798: XFA 3.3 §11.2.1 / §17.8 says checkButton state is driven by
+    // the template's `<items>` list, not by hardcoded 1/0-only semantics.
+    let on_value = node_style.check_button_on_value.as_deref().unwrap_or("1");
+    let off_value = node_style.check_button_off_value.as_deref().unwrap_or("");
+    let neutral_value = node_style
+        .check_button_neutral_value
+        .as_deref()
+        .unwrap_or("");
+    if value == on_value {
+        return true;
+    }
+    if value == off_value {
+        return false;
+    }
+    if field_kind == FieldKind::Checkbox && value == neutral_value {
+        return false;
+    }
+
+    !value.is_empty()
+        && !value.eq_ignore_ascii_case("0")
+        && !value.eq_ignore_ascii_case("off")
+        && !value.eq_ignore_ascii_case("false")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2603,6 +2652,29 @@ mod tests {
         }
     }
 
+    fn make_styled_radio(
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        value: &str,
+        style: FormNodeStyle,
+    ) -> LayoutNode {
+        LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(x, y, w, h),
+            name: "radio".to_string(),
+            content: LayoutContent::Field {
+                value: value.to_string(),
+                field_kind: FieldKind::Radio,
+                font_size: 10.0,
+                font_family: FontFamily::Serif,
+            },
+            children: vec![],
+            style,
+        }
+    }
+
     fn make_styled_button(
         x: f64,
         y: f64,
@@ -3057,6 +3129,98 @@ mod tests {
         assert!(
             circle_overlay.contains(" c\n"),
             "circle checkbox mark should emit Bezier circle commands: {circle_overlay}"
+        );
+    }
+
+    #[test]
+    fn unchecked_checkbox_with_empty_value_still_draws_outline() {
+        let overlay = styled_overlay_str(make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "",
+            FormNodeStyle::default(),
+        ));
+
+        assert!(
+            overlay.contains("10.00 762.00 20.00 20.00 re"),
+            "unchecked checkbox should still render its outline: {overlay}"
+        );
+    }
+
+    #[test]
+    fn checkbox_checked_state_uses_template_item_values() {
+        let checked_overlay = styled_overlay_str(make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "Yes",
+            FormNodeStyle {
+                check_button_on_value: Some("Yes".to_string()),
+                check_button_off_value: Some("No".to_string()),
+                ..Default::default()
+            },
+        ));
+        let unchecked_overlay = styled_overlay_str(make_styled_checkbox(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "No",
+            FormNodeStyle {
+                check_button_on_value: Some("Yes".to_string()),
+                check_button_off_value: Some("No".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        assert!(
+            checked_overlay.matches(" l\nS\n").count() >= 2,
+            "asserted template on-value should render the check/cross mark: {checked_overlay}"
+        );
+        assert!(
+            unchecked_overlay.matches(" l\nS\n").count() < 3,
+            "template off-value should not render the asserted mark: {unchecked_overlay}"
+        );
+    }
+
+    #[test]
+    fn radio_explicit_mark_overrides_default_circle() {
+        let default_overlay = styled_overlay_str(make_styled_radio(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "Y",
+            FormNodeStyle {
+                check_button_on_value: Some("Y".to_string()),
+                check_button_off_value: Some("N".to_string()),
+                ..Default::default()
+            },
+        ));
+        let cross_overlay = styled_overlay_str(make_styled_radio(
+            10.0,
+            10.0,
+            20.0,
+            20.0,
+            "Y",
+            FormNodeStyle {
+                check_button_mark: Some("cross".to_string()),
+                check_button_on_value: Some("Y".to_string()),
+                check_button_off_value: Some("N".to_string()),
+                ..Default::default()
+            },
+        ));
+
+        assert!(
+            default_overlay.matches(" c\n").count() >= 8,
+            "default radio should render outer circle plus filled inner circle: {default_overlay}"
+        );
+        assert!(
+            cross_overlay.matches(" l\nS\n").count() >= 2,
+            "explicit radio mark should render the requested symbol: {cross_overlay}"
         );
     }
 }

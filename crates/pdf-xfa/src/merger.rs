@@ -173,10 +173,7 @@ impl<'a> FormMerger<'a> {
                 // IS matched, set initial=1 so the subform appears.  This
                 // matches Adobe's behavior for wizard-style forms where page
                 // subforms use `<occur min="0"/>` and JS shows/hides them.
-                let occur = if occur.min == 0
-                    && !name.is_empty()
-                    && !data_matched
-                {
+                let occur = if occur.min == 0 && !name.is_empty() && !data_matched {
                     // No data → 0 instances (layout will skip it)
                     Occur::repeating(0, Some(0), 0)
                 } else if occur.min == 0 && data_matched {
@@ -212,6 +209,14 @@ impl<'a> FormMerger<'a> {
                 (n, ti)
             }
         };
+
+        if tag == "exclGroup" {
+            // fixes #798: flatten.rs uses FormMerger, not template_parser, so
+            // exclusion-group selection must be resolved here. XFA 3.3 §4.4.5
+            // / §11.2 says assigning a value to an exclGroup selects the child
+            // whose asserted value matches the group's bound value.
+            self.apply_exclusive_choice_value(elem, data_context, &node.children);
+        }
 
         let mut meta = parse_node_meta(elem);
         let is_draw_or_field = tag == "draw" || tag == "field";
@@ -367,6 +372,55 @@ impl<'a> FormMerger<'a> {
         None
     }
 
+    fn lookup_value_by_name(&self, name: &str, data_context: Option<DataNodeId>) -> Option<String> {
+        if name.is_empty() {
+            return None;
+        }
+
+        if let Some(ctx) = data_context {
+            let matches = self.data_dom.children_by_name(ctx, name);
+            if let Some(&val_id) = matches.first() {
+                if let Some(dv) = self.data_dom.get(val_id) {
+                    if dv.is_value() {
+                        return Some(self.data_dom.value(val_id).unwrap_or_default().to_string());
+                    }
+                }
+            }
+        }
+
+        self.data_dom
+            .root()
+            .and_then(|root| self.find_value_in_descendants(root, name))
+    }
+
+    fn apply_exclusive_choice_value(
+        &mut self,
+        elem: Node<'_, '_>,
+        data_context: Option<DataNodeId>,
+        child_ids: &[FormNodeId],
+    ) {
+        let Some(group_name) = attr(elem, "name") else {
+            return;
+        };
+        let Some(group_value) = self.lookup_value_by_name(group_name, data_context) else {
+            return;
+        };
+
+        for &child_id in child_ids {
+            let item_value = self.form_tree.meta(child_id).item_value.clone();
+            if let FormNodeType::Field { value } = &mut self.form_tree.get_mut(child_id).node_type {
+                // fixes #798: only the matching radio/check child should stay
+                // asserted. The others render as off/null so Acrobat-style
+                // radio groups do not show multiple active choices.
+                *value = if item_value.as_deref() == Some(group_value.as_str()) {
+                    group_value.clone()
+                } else {
+                    String::new()
+                };
+            }
+        }
+    }
+
     /// XFA Spec 3.3 §4.4.3 p180 — Field data binding: fields are leaf nodes
     /// that bind to DataValue nodes in the data DOM.
     fn parse_field(
@@ -390,22 +444,8 @@ impl<'a> FormMerger<'a> {
         // TODO: XFA Spec 3.3 §4.4 p197 — attribute matching: after element
         // matching, the spec matches unbound data attributes to fields. We
         // only match elements, never attributes.
-        if !name.is_empty() {
-            if let Some(ctx) = data_context {
-                let matches = self.data_dom.children_by_name(ctx, &name);
-                if let Some(&val_id) = matches.first() {
-                    if let Some(dv) = self.data_dom.get(val_id) {
-                        if dv.is_value() {
-                            value = self.data_dom.value(val_id).unwrap_or_default().to_string();
-                        }
-                    }
-                } else if let Some(root) = self.data_dom.root() {
-                    // Fallback: global search of data root descendants (§4.4.3 p185)
-                    if let Some(val) = self.find_value_in_descendants(root, &name) {
-                        value = val;
-                    }
-                }
-            }
+        if let Some(bound_value) = self.lookup_value_by_name(&name, data_context) {
+            value = bound_value;
         }
 
         let mut bm_with_caption = bm.clone();
@@ -1708,7 +1748,17 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
     for child in ui.children().filter(|n| n.is_element()) {
         match child.tag_name().name() {
             "button" => return FieldKind::Button,
-            "checkButton" => return FieldKind::Checkbox,
+            "checkButton" => {
+                // fixes #798: XFA 3.3 §11.2 / §17.8 uses round checkButtons
+                // for exclusion-group radio widgets. Treating every
+                // checkButton as a checkbox loses the correct renderer.
+                let shape = attr(child, "shape").unwrap_or("square");
+                return if shape == "round" {
+                    FieldKind::Radio
+                } else {
+                    FieldKind::Checkbox
+                };
+            }
             "choiceList" => return FieldKind::Dropdown,
             "dateTimeEdit" => return FieldKind::DateTimePicker,
             "numericEdit" => return FieldKind::NumericEdit,
@@ -1725,6 +1775,10 @@ fn detect_field_kind(elem: Node<'_, '_>) -> FieldKind {
 fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
     let mut style = FormNodeStyle::default();
     style.check_button_mark = parse_check_button_mark(elem);
+    let (check_on_value, check_off_value, check_neutral_value) = parse_check_button_values(elem);
+    style.check_button_on_value = check_on_value;
+    style.check_button_off_value = check_off_value;
+    style.check_button_neutral_value = check_neutral_value;
     if let Some(fill) = find_first_child_by_name(elem, "fill") {
         if !is_hidden(fill) {
             if let Some(color) = find_first_child_by_name(fill, "color") {
@@ -1951,6 +2005,37 @@ fn parse_check_button_mark(elem: Node<'_, '_>) -> Option<String> {
         "check" | "circle" | "cross" | "diamond" | "square" | "star" => Some(mark),
         _ => None,
     }
+}
+
+fn parse_check_button_values(
+    elem: Node<'_, '_>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let ui = match find_first_child_by_name(elem, "ui") {
+        Some(ui) => ui,
+        None => return (None, None, None),
+    };
+    if ui
+        .children()
+        .all(|n| !n.is_element() || n.tag_name().name() != "checkButton")
+    {
+        return (None, None, None);
+    }
+
+    let Some(items) = find_first_child_by_name(elem, "items") else {
+        return (None, None, None);
+    };
+
+    let values: Vec<String> = items
+        .children()
+        .filter(|n| n.is_element())
+        .map(|child| child.text().unwrap_or("").trim().to_string())
+        .collect();
+
+    (
+        values.first().cloned(),
+        values.get(1).cloned(),
+        values.get(2).cloned(),
+    )
 }
 
 fn parse_xfa_color(color_node: Node<'_, '_>) -> Option<(u8, u8, u8)> {
@@ -2265,6 +2350,7 @@ mod tests {
     <field name="agree" w="20pt" h="20pt">
       <ui><checkButton mark="circle"/></ui>
       <value><text>1</text></value>
+      <items><text>1</text><text>0</text><text>2</text></items>
     </field>
   </subform>
 </template>"#;
@@ -2292,5 +2378,100 @@ mod tests {
         let meta = tree.meta(agree_id);
         assert_eq!(meta.field_kind, FieldKind::Checkbox);
         assert_eq!(meta.style.check_button_mark.as_deref(), Some("circle"));
+        assert_eq!(meta.style.check_button_on_value.as_deref(), Some("1"));
+        assert_eq!(meta.style.check_button_off_value.as_deref(), Some("0"));
+        assert_eq!(meta.style.check_button_neutral_value.as_deref(), Some("2"));
+    }
+
+    #[test]
+    fn round_check_button_parsed_as_radio() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="choice" w="20pt" h="20pt">
+      <ui><checkButton shape="round"/></ui>
+      <items><text>Y</text><text>N</text></items>
+    </field>
+  </subform>
+</template>"#;
+
+        let data_dom = DataDom::new();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let choice_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "choice")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("choice field must exist");
+        assert_eq!(tree.meta(choice_id).field_kind, FieldKind::Radio);
+    }
+
+    #[test]
+    fn excl_group_value_selects_matching_child() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <exclGroup name="choice">
+      <field name="yes" w="20pt" h="20pt">
+        <ui><checkButton shape="round"/></ui>
+        <items><text>Y</text><text>N</text></items>
+      </field>
+      <field name="no" w="20pt" h="20pt">
+        <ui><checkButton shape="round"/></ui>
+        <items><text>N</text><text>Y</text></items>
+      </field>
+    </exclGroup>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form>
+      <choice>Y</choice>
+    </form>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let yes_node = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "yes")
+            .expect("yes field must exist");
+        let no_node = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "no")
+            .expect("no field must exist");
+
+        match (&yes_node.node_type, &no_node.node_type) {
+            (FormNodeType::Field { value: yes }, FormNodeType::Field { value: no }) => {
+                assert_eq!(yes, "Y");
+                assert!(
+                    no.is_empty(),
+                    "non-selected exclGroup child should be cleared"
+                );
+            }
+            _ => panic!("exclGroup children must be fields"),
+        }
     }
 }
