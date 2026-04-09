@@ -25,9 +25,16 @@
 //! - System font fallback may have different metrics than the PDF's embedded font
 
 use crate::error::{Result, XfaError};
+use lopdf::ObjectId;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+
+/// Reference to a reusable simple-font object already present in the source PDF.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PdfSourceFont {
+    pub object_id: ObjectId,
+}
 
 /// Embedded font record extracted from the source PDF.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +43,8 @@ pub struct EmbeddedFontData {
     pub data: Vec<u8>,
     pub pdf_widths: Option<(u16, Vec<u16>)>,
     pub pdf_encoding: Option<PdfSimpleEncoding>,
+    /// Existing simple-font object that can be reused during flattening.
+    pub pdf_source_font: Option<PdfSourceFont>,
 }
 
 /// Base encodings for simple PDF fonts.
@@ -86,6 +95,7 @@ impl PdfSimpleEncoding {
 struct PdfWidthData {
     widths: (u16, Vec<u16>),
     encoding: Option<PdfSimpleEncoding>,
+    source_font: Option<PdfSourceFont>,
 }
 
 #[derive(Debug)]
@@ -114,6 +124,8 @@ pub struct ResolvedFont {
     pub pdf_widths: Option<(u16, Vec<u16>)>,
     /// Optional `/Encoding` differences for the PDF width table.
     pub pdf_encoding: Option<PdfSimpleEncoding>,
+    /// Existing simple-font object reused to preserve the PDF's original metrics.
+    pub pdf_source_font: Option<PdfSourceFont>,
 }
 
 impl ResolvedFont {
@@ -582,6 +594,7 @@ impl XfaFontResolver {
                 data,
                 pdf_widths,
                 pdf_encoding,
+                pdf_source_font,
             } = font_data;
             if let Some(ref widths) = pdf_widths {
                 remember_pdf_widths(
@@ -589,9 +602,17 @@ impl XfaFontResolver {
                     &name,
                     widths,
                     pdf_encoding.clone(),
+                    pdf_source_font,
                 );
             }
-            if let Some(font) = parse_font_data_with_widths(&name, &data, pdf_widths, pdf_encoding)
+            if let Some(font) = parse_font_data_with_widths(
+                &name,
+                &data,
+                pdf_widths.clone(),
+                pdf_encoding.clone(),
+                pdf_source_font,
+            )
+            .or_else(|| build_pdf_only_font(&name, pdf_widths, pdf_encoding, pdf_source_font))
             {
                 let normalized = normalize_font_name(&name);
                 embedded.insert(name.to_lowercase(), font.clone());
@@ -782,7 +803,7 @@ impl XfaFontResolver {
         spec: &XfaFontSpec,
         variant_names: &[String],
     ) -> ResolvedFont {
-        if font.pdf_widths.is_some() {
+        if font.pdf_widths.is_some() && font.pdf_source_font.is_some() {
             return font;
         }
 
@@ -792,8 +813,15 @@ impl XfaFontResolver {
             .chain([spec.typeface.as_str(), font.name.as_str()])
         {
             if let Some(width_data) = lookup_pdf_widths(&self.embedded_pdf_widths, name) {
-                font.pdf_widths = Some(width_data.widths);
-                font.pdf_encoding = width_data.encoding;
+                if font.pdf_widths.is_none() {
+                    font.pdf_widths = Some(width_data.widths);
+                }
+                if font.pdf_encoding.is_none() {
+                    font.pdf_encoding = width_data.encoding;
+                }
+                if font.pdf_source_font.is_none() {
+                    font.pdf_source_font = width_data.source_font;
+                }
                 break;
             }
         }
@@ -807,10 +835,12 @@ fn remember_pdf_widths(
     name: &str,
     widths: &(u16, Vec<u16>),
     encoding: Option<PdfSimpleEncoding>,
+    source_font: Option<PdfSourceFont>,
 ) {
     let record = PdfWidthData {
         widths: widths.clone(),
         encoding,
+        source_font,
     };
     let lower = name.to_lowercase();
     widths_map.insert(lower.clone(), record.clone());
@@ -885,6 +915,7 @@ fn _parse_font_data(name: &str, data: &[u8]) -> Option<ResolvedFont> {
         descender: face.descender(),
         pdf_widths: None,
         pdf_encoding: None,
+        pdf_source_font: None,
     })
 }
 
@@ -893,6 +924,7 @@ fn parse_font_data_with_widths(
     data: &[u8],
     pdf_widths: Option<(u16, Vec<u16>)>,
     pdf_encoding: Option<PdfSimpleEncoding>,
+    pdf_source_font: Option<PdfSourceFont>,
 ) -> Option<ResolvedFont> {
     let face = ttf_parser::Face::parse(data, 0).ok()?;
     Some(ResolvedFont {
@@ -904,6 +936,34 @@ fn parse_font_data_with_widths(
         descender: face.descender(),
         pdf_widths,
         pdf_encoding,
+        pdf_source_font,
+    })
+}
+
+fn build_pdf_only_font(
+    name: &str,
+    pdf_widths: Option<(u16, Vec<u16>)>,
+    pdf_encoding: Option<PdfSimpleEncoding>,
+    pdf_source_font: Option<PdfSourceFont>,
+) -> Option<ResolvedFont> {
+    let pdf_widths = pdf_widths?;
+    let pdf_source_font = pdf_source_font?;
+    Some(ResolvedFont {
+        name: name.to_string(),
+        data: Vec::new(),
+        face_index: 0,
+        // fix(#811): XFA 3.3 §11.7.1 expects field fitting to follow the
+        // actual font metrics seen by the target renderer. When the PDF already
+        // carries a simple font object with authoritative /Widths, reuse that
+        // object instead of synthesizing a system fallback with drifted widths.
+        // These defaults only cover vertical metrics when no parseable font
+        // program exists; horizontal measurement comes from the PDF /Widths.
+        units_per_em: 1000,
+        ascender: 800,
+        descender: -200,
+        pdf_widths: Some(pdf_widths),
+        pdf_encoding,
+        pdf_source_font: Some(pdf_source_font),
     })
 }
 
@@ -931,6 +991,7 @@ fn load_system_font(path: &PathBuf, name: &str) -> Option<ResolvedFont> {
                     descender: face.descender(),
                     pdf_widths: None,
                     pdf_encoding: None,
+                    pdf_source_font: None,
                 });
             }
         }
@@ -1401,6 +1462,7 @@ mod tests {
                 base_encoding: PdfBaseEncoding::WinAnsi,
                 differences: vec![(32, 0x0020)],
             }),
+            pdf_source_font: None,
         }];
         let mut resolver = XfaFontResolver::new(embedded);
         let spec = XfaFontSpec::from_xfa_attrs("Helvetica", None, None, None, None);
@@ -1414,6 +1476,32 @@ mod tests {
                 base_encoding: PdfBaseEncoding::WinAnsi,
                 differences: vec![(32, 0x0020)],
             })
+        );
+    }
+
+    #[test]
+    fn resolver_prefers_reusable_pdf_font_over_system_fallback() {
+        let embedded = vec![EmbeddedFontData {
+            name: "Myriad Pro".to_string(),
+            data: Vec::new(),
+            pdf_widths: Some((32, vec![278, 333, 612])),
+            pdf_encoding: None,
+            pdf_source_font: Some(PdfSourceFont { object_id: (42, 0) }),
+        }];
+        let mut resolver = XfaFontResolver::new(embedded);
+        let spec = XfaFontSpec::from_xfa_attrs("Myriad Pro", None, None, None, None);
+        let resolved = resolver
+            .resolve(&spec)
+            .expect("resolver should reuse the original PDF font object");
+
+        assert_eq!(resolved.pdf_widths, Some((32, vec![278, 333, 612])));
+        assert_eq!(
+            resolved.pdf_source_font,
+            Some(PdfSourceFont { object_id: (42, 0) })
+        );
+        assert!(
+            resolved.data.is_empty(),
+            "reused PDF fonts should not require a synthetic embedded program"
         );
     }
 }

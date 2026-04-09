@@ -184,6 +184,7 @@ fn corpus_font_width_report(pdf_name: &str) -> CorpusFontWidthReport {
             data: font.data.clone(),
             pdf_widths: font.pdf_widths.clone(),
             pdf_encoding: None,
+            pdf_source_font: None,
         })
         .collect();
     let mut resolver = XfaFontResolver::new(embedded_fonts_for_resolver);
