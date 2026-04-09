@@ -332,15 +332,19 @@ impl Presence {
 
     /// True when the element should not occupy layout space.
     ///
-    /// XFA Spec 3.3 §2.6 (p68) says:
-    /// - `hidden`: no layout space (effectively absent)
-    /// - `invisible`: DOES occupy layout space (just not visible)
+    /// XFA Spec 3.3 §2.6 (p68):
+    /// - `hidden`:   no layout space, no rendering (effectively absent)
+    /// - `invisible`: no layout space in Adobe (spec says "takes space",
+    ///                but empirical testing shows Adobe skips it)
+    /// - `inactive`:  completely absent (no binding, no space)
     ///
-    /// Adobe Acrobat treats `invisible` as layout-hidden (no space)
-    /// for XFA forms. Validated by GATE testing: invisible + inactive
-    /// = no layout space. `hidden` reserves space in Adobe.
+    /// `Hidden` was previously excluded from this predicate based on an
+    /// incorrect assumption that Adobe reserves space for hidden elements.
+    /// GATE #27 testing proved this wrong: hidden subforms with `<break>`
+    /// elements caused 2-23x overpagination in forms with many
+    /// `presence="hidden"` subforms (fixes #806).
     pub fn is_layout_hidden(self) -> bool {
-        matches!(self, Presence::Invisible | Presence::Inactive)
+        matches!(self, Presence::Hidden | Presence::Invisible | Presence::Inactive)
     }
 }
 
