@@ -716,6 +716,60 @@ fn reset_border_dash(ops: &mut Vec<u8>, style: Option<&str>) {
     }
 }
 
+/// Emit a 3D "lowered" or "raised" border (XFA edge stroke attribute).
+///
+/// "lowered" — top/left edges are dark (shadow), bottom/right are light (highlight).
+/// "raised"  — top/left edges are light, bottom/right are dark.
+fn emit_3d_border(
+    ops: &mut Vec<u8>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    line_w: f64,
+    style: Option<&str>,
+) {
+    let dark = [0.502, 0.502, 0.502]; // mid-gray shadow
+    let light = [0.831, 0.831, 0.831]; // light-gray highlight
+    let (tl, br) = match style {
+        Some("lowered") => (dark, light),
+        _ => (light, dark), // raised
+    };
+    write_ops(ops, format_args!("{:.2} w\n", line_w));
+    // Top edge (tl color)
+    write_ops(
+        ops,
+        format_args!(
+            "{:.3} {:.3} {:.3} RG\n{:.2} {:.2} m {:.2} {:.2} l S\n",
+            tl[0], tl[1], tl[2], x, y + h, x + w, y + h,
+        ),
+    );
+    // Left edge (tl color)
+    write_ops(
+        ops,
+        format_args!(
+            "{:.2} {:.2} m {:.2} {:.2} l S\n",
+            x, y + h, x, y,
+        ),
+    );
+    // Bottom edge (br color)
+    write_ops(
+        ops,
+        format_args!(
+            "{:.3} {:.3} {:.3} RG\n{:.2} {:.2} m {:.2} {:.2} l S\n",
+            br[0], br[1], br[2], x, y, x + w, y,
+        ),
+    );
+    // Right edge (br color)
+    write_ops(
+        ops,
+        format_args!(
+            "{:.2} {:.2} m {:.2} {:.2} l S\n",
+            x + w, y, x + w, y + h,
+        ),
+    );
+}
+
 /// Select the PDF font resource reference for a node.
 ///
 /// Uses the embedded font from `font_map` when the typeface is resolved,
@@ -982,41 +1036,49 @@ fn render_field(
         ops.extend_from_slice(b"f\n");
     }
     if config.draw_borders && config.border_width > 0.0 {
-        write_ops(
-            ops,
-            format_args!(
-                "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
-                config.border_width,
-                config.border_color[0],
-                config.border_color[1],
-                config.border_color[2],
-            ),
-        );
-        let per_edge = node_style
-            .border_colors
-            .map(|cs| cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]));
-        let per_edge_widths = node_style.border_widths.as_ref();
-        apply_border_dash(ops, border_style);
-        let edges = node_style.border_edges;
-        if per_edge.is_some() || per_edge_widths.is_some() {
-            emit_individual_edges(
-                ops,
-                x,
-                pdf_y,
-                w,
-                h,
-                &edges,
-                per_edge.as_ref(),
-                per_edge_widths,
-                config.border_width,
-            );
-        } else if edges[0] && edges[1] && edges[2] && edges[3] {
-            emit_rect_path(ops, x, pdf_y, w, h, border_radius);
-            ops.extend_from_slice(b"S\n");
+        if matches!(border_style, Some("lowered") | Some("raised")) {
+            emit_3d_border(ops, x, pdf_y, w, h, config.border_width, border_style);
         } else {
-            emit_individual_edges(ops, x, pdf_y, w, h, &edges, None, None, config.border_width);
+            write_ops(
+                ops,
+                format_args!(
+                    "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
+                    config.border_width,
+                    config.border_color[0],
+                    config.border_color[1],
+                    config.border_color[2],
+                ),
+            );
+            let per_edge = node_style
+                .border_colors
+                .map(|cs| {
+                    cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+                });
+            let per_edge_widths = node_style.border_widths.as_ref();
+            apply_border_dash(ops, border_style);
+            let edges = node_style.border_edges;
+            if per_edge.is_some() || per_edge_widths.is_some() {
+                emit_individual_edges(
+                    ops,
+                    x,
+                    pdf_y,
+                    w,
+                    h,
+                    &edges,
+                    per_edge.as_ref(),
+                    per_edge_widths,
+                    config.border_width,
+                );
+            } else if edges[0] && edges[1] && edges[2] && edges[3] {
+                emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+                ops.extend_from_slice(b"S\n");
+            } else {
+                emit_individual_edges(
+                    ops, x, pdf_y, w, h, &edges, None, None, config.border_width,
+                );
+            }
+            reset_border_dash(ops, border_style);
         }
-        reset_border_dash(ops, border_style);
     }
     if !value.is_empty() {
         let fs = if font_size > 0.0 {
@@ -1509,22 +1571,31 @@ fn render_button(
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
     let bw = config.border_width.max(0.0);
 
-    let light_shade = [
-        (config.border_color[0] + 0.3).min(1.0),
-        (config.border_color[1] + 0.3).min(1.0),
-        (config.border_color[2] + 0.3).min(1.0),
-    ];
-    let dark_shade = [
-        (config.border_color[0] - 0.3).max(0.0),
-        (config.border_color[1] - 0.3).max(0.0),
-        (config.border_color[2] - 0.3).max(0.0),
-    ];
+    // Use the node's bg_color (from <border><fill><color>) when available;
+    // otherwise fall back to computed shading from the config border color.
+    let fill_color = if let Some((r, g, b)) = node_style.bg_color {
+        [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]
+    } else {
+        [
+            (config.border_color[0] + 0.3).min(1.0),
+            (config.border_color[1] + 0.3).min(1.0),
+            (config.border_color[2] + 0.3).min(1.0),
+        ]
+    };
+    let border_color = node_style
+        .border_color
+        .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+        .unwrap_or([
+            (fill_color[0] * 0.6),
+            (fill_color[1] * 0.6),
+            (fill_color[2] * 0.6),
+        ]);
 
     write_ops(
         ops,
         format_args!(
             "q\n{:.3} {:.3} {:.3} rg\n",
-            light_shade[0], light_shade[1], light_shade[2]
+            fill_color[0], fill_color[1], fill_color[2]
         ),
     );
     emit_rect_path(ops, x, pdf_y, w, h, border_radius);
@@ -1534,21 +1605,10 @@ fn render_button(
         ops,
         format_args!(
             "{:.3} {:.3} {:.3} RG\n{:.2} w\n",
-            dark_shade[0], dark_shade[1], dark_shade[2], bw
+            border_color[0], border_color[1], border_color[2], bw
         ),
     );
     emit_rect_path(ops, x, pdf_y, w, h, border_radius);
-    ops.extend_from_slice(b"S\n");
-
-    write_ops(ops, format_args!("{:.2} w\n", bw / 2.0));
-    write_ops(
-        ops,
-        format_args!(
-            "{:.3} {:.3} {:.3} RG\n",
-            light_shade[0], light_shade[1], light_shade[2]
-        ),
-    );
-    emit_rect_path(ops, x + 0.5, pdf_y + 0.5, w - 1.0, h - 1.0, border_radius);
     ops.extend_from_slice(b"S\n");
 
     if !value.is_empty() {
@@ -1564,14 +1624,18 @@ fn render_button(
         let text_x = x + (w - text_w) / 2.0;
         let v_offset = pdf_y + h / 2.0 - fs / 2.0;
         let encoded = pdf_encode_text(value, idh_metrics);
+        let tc = node_style
+            .text_color
+            .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+            .unwrap_or(config.text_color);
         write_ops(
             ops,
             format_args!(
                 "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
-                config.text_color[0], config.text_color[1], config.text_color[2], font_ref, fs,
+                tc[0], tc[1], tc[2], font_ref, fs,
             ),
         );
-        emit_synthetic_bold_ops(node_style, font_ref, fs, &config.text_color, ops);
+        emit_synthetic_bold_ops(node_style, font_ref, fs, &tc, ops);
         emit_text_style_ops(node_style, ops);
         write_ops(
             ops,
