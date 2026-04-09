@@ -1311,33 +1311,103 @@ fn is_corrupt_xfa_template(pdf_size: usize, template_xml: &str) -> bool {
 ///
 /// `roxmltree` only supports the five predefined XML entities (lt, gt, amp,
 /// quot, apos). Some XFA PDFs contain custom entity references like `&xxe;`
-/// (likely injected by iText or similar tools) that cause parse failures.
-/// This function removes them so the XML can be parsed.
+/// that cause parse failures, so we drop only those references.
+///
+/// fixes #812: Adobe-generated XFA packets also contain raw `&` inside
+/// processing instructions such as `<?renderCache.subset ... "#$%&'()+"?>`
+/// and `<?renderCache.textRun ... "A. Adjustment & Location" ...?>`.
+/// Those packets are valid XML because PI payload is opaque text. The old
+/// implementation deleted everything between `&` and the next `;`, which
+/// corrupted valid templates before merge and forced the flattener down the
+/// 1-page static fallback path.
+///
+/// XFA Spec 3.3 §8.6 / §8.8 rely on the template reaching the merge/layout
+/// pipeline intact. CID `/W` handling is unrelated and remains out of scope.
 fn strip_undefined_xml_entities(xml: &str) -> String {
     let predefined = ["lt", "gt", "amp", "quot", "apos"];
     let mut result = String::with_capacity(xml.len());
-    let mut rest = xml;
-    while let Some(amp_pos) = rest.find('&') {
-        result.push_str(&rest[..amp_pos]);
-        let after_amp = &rest[amp_pos + 1..];
-        if let Some(semi_pos) = after_amp.find(';') {
-            let entity_name = &after_amp[..semi_pos];
-            // Keep numeric character references (&#123; or &#x1F;)
+    let bytes = xml.as_bytes();
+    let mut pos = 0;
+
+    while let Some(rel_amp_pos) = xml[pos..].find('&') {
+        let amp_pos = pos + rel_amp_pos;
+        result.push_str(&xml[pos..amp_pos]);
+
+        if let Some((entity_name, next_pos)) = parse_xml_entity_reference(xml, amp_pos) {
+            // Keep numeric character references (&#123; or &#x1F;) and the
+            // predefined XML entities. Drop only true named entity references
+            // that roxmltree cannot resolve.
             if entity_name.starts_with('#') || predefined.contains(&entity_name) {
-                result.push('&');
-                result.push_str(entity_name);
-                result.push(';');
+                result.push_str(&xml[amp_pos..next_pos]);
             }
-            // else: drop the undefined entity reference entirely
-            rest = &after_amp[semi_pos + 1..];
+            pos = next_pos;
         } else {
-            // No closing semicolon — keep the ampersand as-is
+            // Not an XML entity reference; preserve the raw ampersand.
             result.push('&');
-            rest = after_amp;
+            pos = amp_pos + 1;
         }
     }
-    result.push_str(rest);
+
+    if pos < bytes.len() {
+        result.push_str(&xml[pos..]);
+    }
     result
+}
+
+fn parse_xml_entity_reference(xml: &str, amp_pos: usize) -> Option<(&str, usize)> {
+    let bytes = xml.as_bytes();
+    let start = amp_pos + 1;
+    let first = *bytes.get(start)?;
+
+    // Numeric character references: &#123; or &#x1F;
+    if first == b'#' {
+        let mut idx = start + 1;
+        if matches!(bytes.get(idx), Some(b'x' | b'X')) {
+            idx += 1;
+            let hex_start = idx;
+            while matches!(bytes.get(idx), Some(b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) {
+                idx += 1;
+            }
+            if idx == hex_start || !matches!(bytes.get(idx), Some(b';')) {
+                return None;
+            }
+        } else {
+            let digits_start = idx;
+            while matches!(bytes.get(idx), Some(b'0'..=b'9')) {
+                idx += 1;
+            }
+            if idx == digits_start || !matches!(bytes.get(idx), Some(b';')) {
+                return None;
+            }
+        }
+        return Some((&xml[start..idx], idx + 1));
+    }
+
+    // Named references: &name; where `name` follows XML Name syntax enough to
+    // distinguish it from raw PI/script/text ampersands.
+    if !is_xml_name_start(first) {
+        return None;
+    }
+
+    let mut idx = start + 1;
+    while let Some(&b) = bytes.get(idx) {
+        if b == b';' {
+            return Some((&xml[start..idx], idx + 1));
+        }
+        if !is_xml_name_char(b) {
+            return None;
+        }
+        idx += 1;
+    }
+    None
+}
+
+fn is_xml_name_start(byte: u8) -> bool {
+    matches!(byte, b':' | b'_' | b'A'..=b'Z' | b'a'..=b'z')
+}
+
+fn is_xml_name_char(byte: u8) -> bool {
+    is_xml_name_start(byte) || matches!(byte, b'-' | b'.' | b'0'..=b'9')
 }
 
 // ---------------------------------------------------------------------------
@@ -3022,4 +3092,33 @@ ET
             "reused simple fonts must keep WinAnsi text encoding"
         );
     }
+
+    #[test]
+    fn strip_undefined_entities_preserves_raw_ampersands_in_processing_instructions() {
+        let xml = r##"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><?renderCache.textRun 24 A. Adjustment & Location 0 1417 14917 0 0 0 "Myriad Pro" 0 0 18000 ISO-8859-1?><?renderCache.subset "Arial" 0 0 ISO-8859-1 "#$%&'()+,-./" ?><subform name="form1"><field name="A"/></subform></template>"##;
+
+        let stripped = strip_undefined_xml_entities(xml);
+
+        assert_eq!(
+            stripped, xml,
+            "raw ampersands inside processing instructions are valid and must survive sanitization"
+        );
+        roxmltree::Document::parse(&stripped).expect("processing instructions must remain parseable");
+    }
+
+    #[test]
+    fn strip_undefined_entities_drops_only_true_named_entity_references() {
+        let xml = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="form1"><draw name="D"><value><text>alpha &bogus; beta &#169; &amp; gamma</text></value></draw></subform></template>"#;
+
+        let stripped = strip_undefined_xml_entities(xml);
+
+        assert!(
+            !stripped.contains("&bogus;"),
+            "unknown named entities should still be removed for roxmltree compatibility"
+        );
+        assert!(stripped.contains("&#169;"));
+        assert!(stripped.contains("&amp;"));
+        roxmltree::Document::parse(&stripped).expect("sanitized XML should parse");
+    }
+
 }
