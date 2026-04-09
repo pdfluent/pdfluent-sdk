@@ -338,7 +338,8 @@ fn render_nodes(
                 ..
             }
         );
-        if node.style.caption_text.is_some() && !is_button {
+        let is_field = matches!(&node.content, LayoutContent::Field { .. });
+        if node.style.caption_text.is_some() && !is_button && !is_field {
             let (cap_fs, cap_ff) = match &node.content {
                 LayoutContent::Field {
                     font_size,
@@ -358,8 +359,8 @@ fn render_nodes(
             render_caption(
                 abs_x + inset_l,
                 mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h),
-                val_w,
-                val_h,
+                inner_w,
+                inner_h,
                 cap_fs,
                 cap_ff,
                 &node.style,
@@ -374,86 +375,106 @@ fn render_nodes(
                 field_kind,
                 font_size,
                 font_family,
-            } => match field_kind {
-                FieldKind::Checkbox => render_checkbox(
-                    val_x,
-                    val_pdf_y,
-                    val_w,
-                    val_h,
-                    value,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
-                FieldKind::Radio => render_radio(
-                    val_x,
-                    val_pdf_y,
-                    val_w,
-                    val_h,
-                    value,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
-                FieldKind::Dropdown => render_dropdown(
-                    val_x,
-                    val_pdf_y,
-                    val_w,
-                    val_h,
-                    value,
-                    *font_size,
-                    *font_family,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
-                FieldKind::Button => {
-                    // XFA buttons use their <caption> as the button label.
-                    // When the field value is empty (typical for buttons), fall
-                    // back to the caption text so the label renders centered
-                    // inside the button body.
-                    let label = if value.is_empty() {
-                        node.style.caption_text.as_deref().unwrap_or("")
-                    } else {
-                        value
-                    };
-                    render_button(
+            } => {
+                match field_kind {
+                    FieldKind::Checkbox => render_checkbox(
                         val_x,
                         val_pdf_y,
                         val_w,
                         val_h,
-                        label,
+                        value,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    ),
+                    FieldKind::Radio => render_radio(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        value,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    ),
+                    FieldKind::Dropdown => render_dropdown(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        value,
                         *font_size,
                         *font_family,
                         &node.style,
                         &node_config,
                         ops,
-                    )
+                    ),
+                    FieldKind::Button => {
+                        // XFA buttons use their <caption> as the button label.
+                        // When the field value is empty (typical for buttons), fall
+                        // back to the caption text so the label renders centered
+                        // inside the button body.
+                        let label = if value.is_empty() {
+                            node.style.caption_text.as_deref().unwrap_or("")
+                        } else {
+                            value
+                        };
+                        render_button(
+                            val_x,
+                            val_pdf_y,
+                            val_w,
+                            val_h,
+                            label,
+                            *font_size,
+                            *font_family,
+                            &node.style,
+                            &node_config,
+                            ops,
+                        )
+                    }
+                    FieldKind::Signature => render_signature(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        value,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    ),
+                    _ => render_field(
+                        val_x,
+                        val_pdf_y,
+                        val_w,
+                        val_h,
+                        *field_kind,
+                        value,
+                        *font_size,
+                        *font_family,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    ),
                 }
-                FieldKind::Signature => render_signature(
-                    val_x,
-                    val_pdf_y,
-                    val_w,
-                    val_h,
-                    value,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
-                _ => render_field(
-                    val_x,
-                    val_pdf_y,
-                    val_w,
-                    val_h,
-                    *field_kind,
-                    value,
-                    *font_size,
-                    *font_family,
-                    &node.style,
-                    &node_config,
-                    ops,
-                ),
-            },
+
+                if node.style.caption_text.is_some() && !is_button {
+                    // XFA 3.3 §7.4 defines caption reserve/placement inside
+                    // the full field allocation rectangle. Render the caption
+                    // after the field body so the value area's fill/border
+                    // cannot obscure top captions on shell PDFs (#818).
+                    render_caption(
+                        abs_x + inset_l,
+                        mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h),
+                        inner_w,
+                        inner_h,
+                        *font_size,
+                        *font_family,
+                        &node.style,
+                        &node_config,
+                        ops,
+                    );
+                }
+            }
             LayoutContent::Text(text) => {
                 let inner_pdf_y = mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h);
                 render_text(
@@ -959,8 +980,11 @@ fn caption_value_offset(style: &FormNodeStyle, w: f64, h: f64) -> (f64, f64, f64
 /// Render field caption text (shared across all field types).
 ///
 /// This renders `<caption>` text at the placement offset (left/right/top/bottom)
-/// relative to the field box. Called before the field-specific renderer so that
-/// captions appear for Dropdown, Checkbox, Radio, Button, Signature, and Text.
+/// relative to the node's full inner rectangle.
+///
+/// Field captions are emitted after the field body so the editable value-area
+/// fill and border cannot paint over them. XFA 3.3 §7.4 treats caption reserve
+/// as a separate region inside the field allocation rectangle. (#818)
 #[allow(clippy::too_many_arguments)]
 fn render_caption(
     x: f64,
@@ -2856,6 +2880,52 @@ mod tests {
         };
         let s = styled_overlay_str(make_styled_field(10.0, 10.0, 200.0, 30.0, "Test", style));
         assert!(s.contains("15.00"), "expected margin_left offset 10+5=15");
+    }
+
+    #[test]
+    fn top_caption_renders_after_field_fill() {
+        let style = FormNodeStyle {
+            caption_text: Some("PROJECT INFORMATION/NAME".to_string()),
+            caption_placement: Some("top".to_string()),
+            caption_reserve: Some(12.0),
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_field(10.0, 100.0, 200.0, 30.0, "", style));
+        let fill_idx = s
+            .find("0.949 0.949 0.949 rg")
+            .expect("editable field fill should be present");
+        let caption_idx = s
+            .find("(PROJECT INFORMATION/NAME) Tj")
+            .expect("caption text should render");
+        assert!(
+            caption_idx > fill_idx,
+            "caption should render after the field fill so it stays visible: {s}"
+        );
+    }
+
+    #[test]
+    fn top_caption_uses_full_inner_rect_height() {
+        let style = FormNodeStyle {
+            caption_text: Some("TOP CAPTION".to_string()),
+            caption_placement: Some("top".to_string()),
+            caption_reserve: Some(12.0),
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_field(10.0, 100.0, 200.0, 30.0, "", style.clone()));
+        let config = XfaRenderConfig::default();
+        let metrics = build_font_metrics(10.0, FontFamily::Serif, &style, &config);
+        let asc_pt = ascender_pt(&metrics, 10.0);
+        let mapper = CoordinateMapper::new(792.0, 612.0);
+        let inner_pdf_y = mapper.xfa_to_pdf_y(100.0, 30.0);
+        let expected = format!(
+            "{:.2} {:.2} Td\n(TOP CAPTION) Tj",
+            10.0,
+            inner_pdf_y + 30.0 - asc_pt
+        );
+        assert!(
+            s.contains(&expected),
+            "top caption should be positioned against the full inner rect, not the value area: {s}"
+        );
     }
 
     #[test]
