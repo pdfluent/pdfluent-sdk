@@ -339,7 +339,12 @@ fn render_nodes(
             }
         );
         let is_field = matches!(&node.content, LayoutContent::Field { .. });
-        if node.style.caption_text.is_some() && !is_button && !is_field {
+        let field_caption_needs_post_body_render = is_field
+            && matches!(node.style.caption_placement.as_deref(), Some("top"));
+        if node.style.caption_text.is_some()
+            && !is_button
+            && (!is_field || !field_caption_needs_post_body_render)
+        {
             let (cap_fs, cap_ff) = match &node.content {
                 LayoutContent::Field {
                     font_size,
@@ -457,11 +462,15 @@ fn render_nodes(
                     ),
                 }
 
-                if node.style.caption_text.is_some() && !is_button {
-                    // XFA 3.3 §7.4 defines caption reserve/placement inside
-                    // the full field allocation rectangle. Render the caption
-                    // after the field body so the value area's fill/border
-                    // cannot obscure top captions on shell PDFs (#818).
+                if node.style.caption_text.is_some()
+                    && !is_button
+                    && field_caption_needs_post_body_render
+                {
+                    // fixes #818: only top-placed field captions need the
+                    // post-body path. Left/right/bottom captions relied on the
+                    // legacy pre-body ordering, and moving all field captions
+                    // after the body made caption-only empty text fields show
+                    // labels that Adobe/pdfRest keep visually blank (#3f563698).
                     render_caption(
                         abs_x + inset_l,
                         mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h),
@@ -2900,6 +2909,26 @@ mod tests {
         assert!(
             caption_idx > fill_idx,
             "caption should render after the field fill so it stays visible: {s}"
+        );
+    }
+
+    #[test]
+    fn left_caption_stays_in_pre_body_render_path() {
+        let style = FormNodeStyle {
+            caption_text: Some("Field 1".to_string()),
+            caption_placement: Some("left".to_string()),
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_field(10.0, 100.0, 200.0, 30.0, "", style));
+        let caption_idx = s
+            .find("(Field 1) Tj")
+            .expect("caption text should render");
+        let fill_idx = s
+            .find("0.949 0.949 0.949 rg")
+            .expect("editable field fill should be present");
+        assert!(
+            caption_idx < fill_idx,
+            "left captions should keep the legacy pre-body ordering: {s}"
         );
     }
 
