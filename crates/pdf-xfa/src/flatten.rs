@@ -1790,28 +1790,51 @@ fn append_to_page_content(doc: &mut Document, page_id: ObjectId, data: &[u8]) {
         .ok()
         .and_then(|page_dict| page_dict.get(b"Contents").ok().cloned());
 
+    // Some PDFs store page /Contents as an indirect array of streams. Appending
+    // by wrapping that array reference in another array creates nested content
+    // arrays (`[ 1510 0 R 1574 0 R ]` where `1510 0 R` is itself an array),
+    // which Poppler treats as "Weird page contents" and can blank the page.
+    // Flatten the existing /Contents tree first so preserve-static/widget bake
+    // paths remain valid on Adobe-generated forms like 697eeb9f.
     let new_contents = match contents {
-        Some(Object::Reference(existing_id)) => Object::Array(vec![
-            Object::Reference(existing_id),
-            Object::Reference(new_stream_id),
-        ]),
-        Some(Object::Array(mut arr)) => {
-            arr.push(Object::Reference(new_stream_id));
-            Object::Array(arr)
+        Some(existing) => {
+            let mut flattened = Vec::new();
+            flatten_page_contents_entries(doc, existing, &mut flattened);
+            flattened.push(Object::Reference(new_stream_id));
+            if flattened.len() == 1 {
+                flattened.pop().unwrap()
+            } else {
+                Object::Array(flattened)
+            }
         }
-        Some(Object::Stream(stream)) => {
-            let existing_id = doc.add_object(Object::Stream(stream));
-            Object::Array(vec![
-                Object::Reference(existing_id),
-                Object::Reference(new_stream_id),
-            ])
-        }
-        Some(other) => Object::Array(vec![other, Object::Reference(new_stream_id)]),
         None => Object::Reference(new_stream_id),
     };
 
     if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
         page_dict.set("Contents", new_contents);
+    }
+}
+
+fn flatten_page_contents_entries(doc: &mut Document, object: Object, out: &mut Vec<Object>) {
+    match object {
+        Object::Reference(id) => match doc.get_object(id).cloned() {
+            Ok(Object::Array(items)) => {
+                for item in items {
+                    flatten_page_contents_entries(doc, item, out);
+                }
+            }
+            _ => out.push(Object::Reference(id)),
+        },
+        Object::Array(items) => {
+            for item in items {
+                flatten_page_contents_entries(doc, item, out);
+            }
+        }
+        Object::Stream(stream) => {
+            let stream_id = doc.add_object(Object::Stream(stream));
+            out.push(Object::Reference(stream_id));
+        }
+        other => out.push(other),
     }
 }
 
@@ -2297,6 +2320,57 @@ mod tests {
             .as_dict()
             .expect("xobject dict")
             .clone()
+    }
+
+    #[test]
+    fn append_to_page_content_flattens_indirect_contents_arrays() {
+        let mut doc = Document::with_version("1.4");
+        let pages_id = doc.new_object_id();
+        let first_stream_id = doc.add_object(Stream::new(dictionary! {}, b"q\n".to_vec()));
+        let second_stream_id = doc.add_object(Stream::new(dictionary! {}, b"Q\n".to_vec()));
+        let contents_array_id = doc.add_object(Object::Array(vec![
+            Object::Reference(first_stream_id),
+            Object::Reference(second_stream_id),
+        ]));
+        let page_id = doc.add_object(Object::Dictionary(dictionary! {
+            "Type" => Object::Name(b"Page".to_vec()),
+            "Parent" => Object::Reference(pages_id),
+            "MediaBox" => Object::Array(vec![
+                Object::Integer(0), Object::Integer(0),
+                Object::Integer(612), Object::Integer(792),
+            ]),
+            "Contents" => Object::Reference(contents_array_id),
+        }));
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => Object::Name(b"Pages".to_vec()),
+                "Kids" => Object::Array(vec![Object::Reference(page_id)]),
+                "Count" => Object::Integer(1),
+            }),
+        );
+
+        append_to_page_content(&mut doc, page_id, b"BT\nET\n");
+
+        let page_dict = doc.get_dictionary(page_id).expect("page dict");
+        let contents = page_dict.get(b"Contents").expect("contents");
+        let items = contents.as_array().expect("flattened contents array");
+
+        assert_eq!(items.len(), 3, "existing streams + appended stream");
+        assert!(
+            items.iter().all(|obj| obj.as_reference().is_ok()),
+            "contents array must stay flat and reference only streams"
+        );
+        for object in items {
+            let stream_id = object.as_reference().expect("stream ref");
+            assert!(
+                doc.get_object(stream_id)
+                    .expect("stream object")
+                    .as_stream()
+                    .is_ok(),
+                "nested arrays must not survive in page contents"
+            );
+        }
     }
 
     const SIMPLE_XDP: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
