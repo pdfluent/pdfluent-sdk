@@ -81,8 +81,7 @@ pub struct PageOverlay {
 // <Fill>, but Acrobat/pdfRest still paint editable widgets with a light-gray
 // UI background when the template omits a field fill. Limit this compatibility
 // default to edit-style field widgets only. (#GATE-25)
-const ADOBE_DEFAULT_EDIT_FIELD_BACKGROUND: [f64; 3] =
-    [242.0 / 255.0, 242.0 / 255.0, 242.0 / 255.0];
+const ADOBE_DEFAULT_EDIT_FIELD_BACKGROUND: [f64; 3] = [242.0 / 255.0, 242.0 / 255.0, 242.0 / 255.0];
 
 impl Default for XfaRenderConfig {
     fn default() -> Self {
@@ -90,7 +89,9 @@ impl Default for XfaRenderConfig {
             default_font: "Helvetica".to_string(),
             default_font_size: 10.0,
             draw_borders: true,
-            border_width: 0.5,
+            border_width: 1.0, // fix(#808): XFA default border thickness is 1pt, not 0.5pt.
+            // BoxModel::border_width also defaults to 1.0pt (types.rs:368), so rendering
+            // must match this to avoid 1px visual difference at 150 DPI (0.5pt vs 1pt ≈ 1px).
             border_color: [0.0, 0.0, 0.0],
             text_color: [0.0, 0.0, 0.0],
             background_color: None,
@@ -741,32 +742,38 @@ fn emit_3d_border(
         ops,
         format_args!(
             "{:.3} {:.3} {:.3} RG\n{:.2} {:.2} m {:.2} {:.2} l S\n",
-            tl[0], tl[1], tl[2], x, y + h, x + w, y + h,
+            tl[0],
+            tl[1],
+            tl[2],
+            x,
+            y + h,
+            x + w,
+            y + h,
         ),
     );
     // Left edge (tl color)
     write_ops(
         ops,
-        format_args!(
-            "{:.2} {:.2} m {:.2} {:.2} l S\n",
-            x, y + h, x, y,
-        ),
+        format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x, y + h, x, y,),
     );
     // Bottom edge (br color)
     write_ops(
         ops,
         format_args!(
             "{:.3} {:.3} {:.3} RG\n{:.2} {:.2} m {:.2} {:.2} l S\n",
-            br[0], br[1], br[2], x, y, x + w, y,
+            br[0],
+            br[1],
+            br[2],
+            x,
+            y,
+            x + w,
+            y,
         ),
     );
     // Right edge (br color)
     write_ops(
         ops,
-        format_args!(
-            "{:.2} {:.2} m {:.2} {:.2} l S\n",
-            x + w, y, x + w, y + h,
-        ),
+        format_args!("{:.2} {:.2} m {:.2} {:.2} l S\n", x + w, y, x + w, y + h,),
     );
 }
 
@@ -1049,11 +1056,9 @@ fn render_field(
                     config.border_color[2],
                 ),
             );
-            let per_edge = node_style
-                .border_colors
-                .map(|cs| {
-                    cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
-                });
+            let per_edge = node_style.border_colors.map(|cs| {
+                cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+            });
             let per_edge_widths = node_style.border_widths.as_ref();
             apply_border_dash(ops, border_style);
             let edges = node_style.border_edges;
@@ -1073,9 +1078,7 @@ fn render_field(
                 emit_rect_path(ops, x, pdf_y, w, h, border_radius);
                 ops.extend_from_slice(b"S\n");
             } else {
-                emit_individual_edges(
-                    ops, x, pdf_y, w, h, &edges, None, None, config.border_width,
-                );
+                emit_individual_edges(ops, x, pdf_y, w, h, &edges, None, None, config.border_width);
             }
             reset_border_dash(ops, border_style);
         }
