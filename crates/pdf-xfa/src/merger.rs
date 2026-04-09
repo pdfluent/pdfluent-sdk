@@ -131,22 +131,26 @@ impl<'a> FormMerger<'a> {
                 // data group. Currently we pass data_context through but don't
                 // implement the full transparent semantics from the spec.
                 let mut child_context = data_context;
+                let mut data_matched = false;
                 if !name.is_empty() {
                     if let Some(ctx) = data_context {
                         // Direct match: search current context children (§4.4.3 p180)
                         let matches = self.data_dom.children_by_name(ctx, &name);
                         if let Some(&first) = matches.first() {
                             child_context = Some(first);
+                            data_matched = true;
                         }
                     } else if let Some(root) = self.data_dom.root() {
                         // XFA Spec 3.3 §4.7.2 — the root subform binds to the
                         // data root element if their names match.
                         if self.data_dom.get(root).is_some_and(|n| n.name() == name) {
                             child_context = Some(root);
+                            data_matched = true;
                         } else {
                             let matches = self.data_dom.children_by_name(root, &name);
                             if let Some(&first) = matches.first() {
                                 child_context = Some(first);
+                                data_matched = true;
                             } else {
                                 // Fallback: use the first child group as the
                                 // context (common pattern: template root="form1"
@@ -162,6 +166,25 @@ impl<'a> FormMerger<'a> {
                         }
                     }
                 }
+
+                // XFA Spec 3.3 §9.2 — Optional subforms (occur min="0"):
+                // when the subform has no matching data node in the datasets,
+                // keep initial=0 so layout's expand_occur skips it.  When data
+                // IS matched, set initial=1 so the subform appears.  This
+                // matches Adobe's behavior for wizard-style forms where page
+                // subforms use `<occur min="0"/>` and JS shows/hides them.
+                let occur = if occur.min == 0
+                    && !name.is_empty()
+                    && !data_matched
+                {
+                    // No data → 0 instances (layout will skip it)
+                    Occur::repeating(0, Some(0), 0)
+                } else if occur.min == 0 && data_matched {
+                    // Data exists → ensure at least 1 instance
+                    Occur::repeating(0, occur.max.map(|m| m.max(1)), 1)
+                } else {
+                    occur
+                };
 
                 let mut n = FormNode {
                     name,

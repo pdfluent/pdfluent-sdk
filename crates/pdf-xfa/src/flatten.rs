@@ -443,12 +443,15 @@ fn xfa_flatten_inner(
         // pages. Capping to n_existing destroyed multi-page content.
         for (i, overlay) in overlays.iter().enumerate() {
             if i < n_existing {
+                let lp = &layout.pages[i];
                 write_page_content(
                     &mut doc,
                     existing_page_ids[i],
                     overlay,
                     &font_ids,
                     &embedded_font_objects,
+                    Some(lp.width),
+                    Some(lp.height),
                 )?;
             } else {
                 let lp = &layout.pages[i];
@@ -1715,6 +1718,8 @@ fn write_page_content(
     overlay: &PageOverlay,
     font_ids: &[ObjectId; 3],
     embedded_fonts: &[(String, ObjectId)],
+    page_width: Option<f64>,
+    page_height: Option<f64>,
 ) -> Result<()> {
     let mut resources = make_resources_dict(font_ids, embedded_fonts);
 
@@ -1742,6 +1747,20 @@ fn write_page_content(
     if let Ok(Object::Dictionary(ref mut page_dict)) = doc.get_object_mut(page_id) {
         page_dict.set("Contents", Object::Reference(stream_id));
         page_dict.set("Resources", Object::Dictionary(resources));
+        // Update MediaBox to match the XFA layout page dimensions.
+        // Dynamic XFA forms often have a placeholder page with different
+        // dimensions than the template's pageArea (e.g. letter vs A4).
+        if let (Some(w), Some(h)) = (page_width, page_height) {
+            page_dict.set(
+                "MediaBox",
+                Object::Array(vec![
+                    Object::Real(0.0),
+                    Object::Real(0.0),
+                    Object::Real(w as f32),
+                    Object::Real(h as f32),
+                ]),
+            );
+        }
     }
     Ok(())
 }
