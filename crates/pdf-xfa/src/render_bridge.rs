@@ -1506,10 +1506,7 @@ fn is_check_button_checked(value: &str, field_kind: FieldKind, node_style: &Form
         return false;
     }
 
-    !value.is_empty()
-        && !value.eq_ignore_ascii_case("0")
-        && !value.eq_ignore_ascii_case("off")
-        && !value.eq_ignore_ascii_case("false")
+    false
 }
 
 #[allow(clippy::too_many_arguments)]
