@@ -626,7 +626,9 @@ impl<'a> FormMerger<'a> {
                     }
                 }
                 "break" => {
-                    if attr(child, "before") == Some("pageArea") {
+                    if attr(child, "before") == Some("pageArea")
+                        && attr(child, "targetType") == Some("pageArea")
+                    {
                         pending_break = true;
                         pending_break_target = attr(child, "target").map(|s| s.to_string());
                     }
@@ -1644,7 +1646,10 @@ fn detect_page_break_before(elem: Node<'_, '_>) -> (bool, Option<String>) {
         if tag == "breakBefore" && attr(child, "targetType") == Some("pageArea") {
             return (true, attr(child, "target").map(|s| s.to_string()));
         }
-        if tag == "break" && attr(child, "before") == Some("pageArea") {
+        if tag == "break"
+            && attr(child, "before") == Some("pageArea")
+            && attr(child, "targetType") == Some("pageArea")
+        {
             return (true, attr(child, "target").map(|s| s.to_string()));
         }
     }
@@ -1666,7 +1671,10 @@ fn detect_page_break_after(elem: Node<'_, '_>) -> (bool, Option<String>) {
         if tag == "breakAfter" && attr(*child, "targetType") == Some("pageArea") {
             return (true, attr(*child, "target").map(|s| s.to_string()));
         }
-        if tag == "break" && attr(*child, "after") == Some("pageArea") {
+        if tag == "break"
+            && attr(*child, "after") == Some("pageArea")
+            && attr(*child, "targetType") == Some("pageArea")
+        {
             return (true, attr(*child, "target").map(|s| s.to_string()));
         }
     }
