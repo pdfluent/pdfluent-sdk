@@ -1868,7 +1868,14 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
             .filter(|n| n.is_element() && n.tag_name().name() == "edge")
             .collect();
         if !edge_elems.is_empty() {
-            let first = edge_elems[0];
+            let first_visible = edge_elems
+                .iter()
+                .find(|e| {
+                    !is_hidden(**e) && attr(**e, "stroke").unwrap_or("solid") != "none"
+                })
+                .or_else(|| edge_elems.first())
+                .copied();
+            let first = first_visible.unwrap_or(edge_elems[0]);
             if let Some(color) = find_first_child_by_name(first, "color") {
                 if let Some(rgb) = parse_xfa_color(color) {
                     style.border_color = Some(rgb);
@@ -1884,36 +1891,103 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                     style.border_width_pt = Some(thickness);
                 }
             }
+
+            // Keep edge ordering consistent with render_bridge expectations:
+            // [top, right, bottom, left]. The previous mapping treated 4-edge
+            // borders as [top, bottom, left, right], which swapped bottom-only
+            // underlines into left vertical lines.
+            let edge_visible = |e: &roxmltree::Node<'_, '_>| -> bool {
+                !is_hidden(*e) && attr(*e, "stroke").unwrap_or("solid") != "none"
+            };
+            style.border_edges = match edge_elems.len() {
+                0 => [true, true, true, true],
+                1 => {
+                    let v = edge_visible(&edge_elems[0]);
+                    [v, v, v, v]
+                }
+                2 => {
+                    let even = edge_visible(&edge_elems[0]);
+                    let odd = edge_visible(&edge_elems[1]);
+                    [even, odd, even, odd]
+                }
+                3 => {
+                    let top = edge_visible(&edge_elems[0]);
+                    let rl = edge_visible(&edge_elems[1]);
+                    let bot = edge_visible(&edge_elems[2]);
+                    [top, rl, bot, rl]
+                }
+                _ => [
+                    edge_visible(&edge_elems[0]),
+                    edge_visible(&edge_elems[1]),
+                    edge_visible(&edge_elems[2]),
+                    edge_visible(&edge_elems[3]),
+                ],
+            };
+
             if edge_elems.len() > 1 {
                 let default_rgb = style.border_color.unwrap_or((0, 0, 0));
-                let edge_color = |idx: usize| -> (u8, u8, u8) {
-                    let e = edge_elems.get(idx).copied().unwrap_or(edge_elems[0]);
-                    find_first_child_by_name(e, "color")
-                        .and_then(|c| parse_xfa_color(c))
+                let edge_color = |edge: roxmltree::Node<'_, '_>| -> (u8, u8, u8) {
+                    find_first_child_by_name(edge, "color")
+                        .and_then(parse_xfa_color)
                         .unwrap_or(default_rgb)
                 };
-                let top = edge_color(0);
-                let bottom = edge_color(1);
-                let left = edge_color(2);
-                let right = edge_color(3);
+                let per_edge_colors = match edge_elems.len() {
+                    2 => Some([
+                        edge_color(edge_elems[0]),
+                        edge_color(edge_elems[1]),
+                        edge_color(edge_elems[0]),
+                        edge_color(edge_elems[1]),
+                    ]),
+                    3 => Some([
+                        edge_color(edge_elems[0]),
+                        edge_color(edge_elems[1]),
+                        edge_color(edge_elems[2]),
+                        edge_color(edge_elems[1]),
+                    ]),
+                    _ => Some([
+                        edge_color(edge_elems[0]),
+                        edge_color(edge_elems[1]),
+                        edge_color(edge_elems[2]),
+                        edge_color(edge_elems[3]),
+                    ]),
+                };
+                if let Some([top, right, bottom, left]) = per_edge_colors {
                 if !(top == bottom && bottom == left && left == right) {
                     style.border_colors = Some([top, right, bottom, left]);
                 }
+                }
 
                 let default_thickness = style.border_width_pt.unwrap_or(0.5);
-                let edge_thickness = |idx: usize| -> f64 {
-                    let e = edge_elems.get(idx).copied().unwrap_or(edge_elems[0]);
-                    attr(e, "thickness")
+                let edge_thickness = |edge: roxmltree::Node<'_, '_>| -> f64 {
+                    attr(edge, "thickness")
                         .and_then(Measurement::parse)
                         .map(|m: Measurement| m.to_points())
                         .unwrap_or(default_thickness)
                 };
-                let top_t = edge_thickness(0);
-                let bottom_t = edge_thickness(1);
-                let left_t = edge_thickness(2);
-                let right_t = edge_thickness(3);
+                let per_edge_widths = match edge_elems.len() {
+                    2 => Some([
+                        edge_thickness(edge_elems[0]),
+                        edge_thickness(edge_elems[1]),
+                        edge_thickness(edge_elems[0]),
+                        edge_thickness(edge_elems[1]),
+                    ]),
+                    3 => Some([
+                        edge_thickness(edge_elems[0]),
+                        edge_thickness(edge_elems[1]),
+                        edge_thickness(edge_elems[2]),
+                        edge_thickness(edge_elems[1]),
+                    ]),
+                    _ => Some([
+                        edge_thickness(edge_elems[0]),
+                        edge_thickness(edge_elems[1]),
+                        edge_thickness(edge_elems[2]),
+                        edge_thickness(edge_elems[3]),
+                    ]),
+                };
+                if let Some([top_t, right_t, bottom_t, left_t]) = per_edge_widths {
                 if !(top_t == bottom_t && bottom_t == left_t && left_t == right_t) {
                     style.border_widths = Some([top_t, right_t, bottom_t, left_t]);
+                }
                 }
             }
         }
@@ -2025,11 +2099,6 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                     style.border_style = Some(stroke.to_string());
                 }
             }
-            let vis = |idx: usize| -> bool {
-                let e = edge_elems2.get(idx).copied().unwrap_or(edge_elems2[0]);
-                attr(e, "presence").unwrap_or("visible") == "visible"
-            };
-            style.border_edges = [vis(0), vis(3), vis(1), vis(2)];
         }
     }
 
@@ -2733,6 +2802,48 @@ mod tests {
             .map(|(i, _)| FormNodeId(i))
             .expect("name field must exist");
         assert_eq!(tree.meta(name_id).style.bg_color, Some((240, 240, 240)));
+    }
+
+    #[test]
+    fn border_edge_order_keeps_bottom_only_underline() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="underlined" w="200pt" h="20pt">
+      <ui><textEdit/></ui>
+      <border>
+        <edge stroke="none" thickness="1pt"/>
+        <edge stroke="none" thickness="2pt"/>
+        <edge stroke="solid" thickness="3pt"/>
+        <edge stroke="none" thickness="4pt"/>
+      </border>
+    </field>
+  </subform>
+</template>"#;
+
+        let data_dom = DataDom::new();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let underlined_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "underlined")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("underlined field must exist");
+        let style = &tree.meta(underlined_id).style;
+
+        // Edges are interpreted in XFA order top/right/bottom/left.
+        assert_eq!(style.border_edges, [false, false, true, false]);
+        assert_eq!(style.border_widths, Some([1.0, 2.0, 3.0, 4.0]));
+        assert_eq!(style.border_width_pt, Some(3.0));
     }
 
     #[test]
