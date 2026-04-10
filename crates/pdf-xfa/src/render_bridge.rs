@@ -77,12 +77,6 @@ pub struct PageOverlay {
     pub images: Vec<ImageInfo>,
 }
 
-// XFA Template defines white as the default color for an explicit solid
-// <Fill>, but Acrobat/pdfRest still paint editable widgets with a light-gray
-// UI background when the template omits a field fill. Limit this compatibility
-// default to edit-style field widgets only. (#GATE-25)
-const ADOBE_DEFAULT_EDIT_FIELD_BACKGROUND: [f64; 3] = [242.0 / 255.0, 242.0 / 255.0, 242.0 / 255.0];
-
 impl Default for XfaRenderConfig {
     fn default() -> Self {
         Self {
@@ -160,22 +154,6 @@ fn apply_node_style(config: &XfaRenderConfig, style: &FormNodeStyle) -> XfaRende
     }
 
     cfg
-}
-
-fn default_edit_field_background(
-    field_kind: FieldKind,
-    config: &XfaRenderConfig,
-) -> Option<[f64; 3]> {
-    config.background_color.or_else(|| {
-        matches!(
-            field_kind,
-            FieldKind::Text
-                | FieldKind::NumericEdit
-                | FieldKind::PasswordEdit
-                | FieldKind::DateTimePicker
-        )
-        .then_some(ADOBE_DEFAULT_EDIT_FIELD_BACKGROUND)
-    })
 }
 
 fn effective_border_width(style: &FormNodeStyle) -> Option<f64> {
@@ -452,7 +430,6 @@ fn render_nodes(
                         val_pdf_y,
                         val_w,
                         val_h,
-                        *field_kind,
                         value,
                         *font_size,
                         *font_family,
@@ -1070,7 +1047,6 @@ fn render_field(
     pdf_y: f64,
     w: f64,
     h: f64,
-    field_kind: FieldKind,
     value: &str,
     font_size: f64,
     font_family: FontFamily,
@@ -1081,7 +1057,10 @@ fn render_field(
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
     let border_style = node_style.border_style.as_deref();
 
-    if let Some(bg) = default_edit_field_background(field_kind, config) {
+    // fix(#809): flattening should only paint explicit template fills.
+    // The light-gray interactive widget default is a viewer affordance, not a
+    // flatten artifact in Adobe/pdfRest output.
+    if let Some(bg) = config.background_color {
         write_ops(
             ops,
             format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
@@ -2961,12 +2940,13 @@ mod tests {
             caption_text: Some("PROJECT INFORMATION/NAME".to_string()),
             caption_placement: Some("top".to_string()),
             caption_reserve: Some(12.0),
+            bg_color: Some((12, 34, 56)),
             ..Default::default()
         };
         let s = styled_overlay_str(make_styled_field(10.0, 100.0, 200.0, 30.0, "", style));
         let fill_idx = s
-            .find("0.949 0.949 0.949 rg")
-            .expect("editable field fill should be present");
+            .find("0.047 0.133 0.220 rg")
+            .expect("explicit field fill should be present");
         let caption_idx = s
             .find("(PROJECT INFORMATION/NAME) Tj")
             .expect("caption text should render");
@@ -2981,6 +2961,7 @@ mod tests {
         let style = FormNodeStyle {
             caption_text: Some("Field 1".to_string()),
             caption_placement: Some("left".to_string()),
+            bg_color: Some((12, 34, 56)),
             ..Default::default()
         };
         let s = styled_overlay_str(make_styled_field(10.0, 100.0, 200.0, 30.0, "", style));
@@ -2988,8 +2969,8 @@ mod tests {
             .find("(Field 1) Tj")
             .expect("caption text should render");
         let fill_idx = s
-            .find("0.949 0.949 0.949 rg")
-            .expect("editable field fill should be present");
+            .find("0.047 0.133 0.220 rg")
+            .expect("explicit field fill should be present");
         assert!(
             caption_idx < fill_idx,
             "left captions should keep the legacy pre-body ordering: {s}"
@@ -3032,7 +3013,7 @@ mod tests {
     }
 
     #[test]
-    fn text_field_default_background_is_light_gray() {
+    fn text_field_without_explicit_fill_has_no_default_background() {
         let s = styled_overlay_str(make_styled_field(
             10.0,
             10.0,
@@ -3042,13 +3023,13 @@ mod tests {
             FormNodeStyle::default(),
         ));
         assert!(
-            s.contains("0.949 0.949 0.949 rg"),
-            "default editable field background should be Adobe light gray: {s}"
+            !s.contains("0.949 0.949 0.949 rg"),
+            "flatten output should not synthesize an interactive default field fill: {s}"
         );
     }
 
     #[test]
-    fn numeric_field_default_background_is_light_gray() {
+    fn numeric_field_without_explicit_fill_has_no_default_background() {
         let s = styled_overlay_str(make_styled_field_kind(
             10.0,
             10.0,
@@ -3059,8 +3040,8 @@ mod tests {
             FormNodeStyle::default(),
         ));
         assert!(
-            s.contains("0.949 0.949 0.949 rg"),
-            "numeric edit fields should use the same default gray background: {s}"
+            !s.contains("0.949 0.949 0.949 rg"),
+            "numeric fields should also require explicit template fill to paint a background: {s}"
         );
     }
 
