@@ -92,92 +92,9 @@ impl<'a> FormMerger<'a> {
             "subform" | "exclGroup" => {
                 let name = attr(elem, "name").unwrap_or("").to_string();
                 let layout = parse_layout_attr(elem);
-                let mut bm = parse_box_model(elem);
-                if layout == LayoutStrategy::TopToBottom && bm.width.is_none() && is_root {
-                    bm.width = Some(612.0);
-                }
-
+                let bm = parse_box_model(elem);
                 let occur = parse_occur(elem);
-
-                // XFA Spec 3.3 §4.4 p186 — Repeating subform expansion:
-                // when occur.max > 1 (or unbounded), create one form subform
-                // instance per matching data record.
-                if occur.is_repeating() && !name.is_empty() {
-                    // Use bind ref data name if present (e.g.
-                    // <bind match="dataRef" ref="$.listInitiales[*]"> →
-                    // data name "listInitiales"), otherwise fall back to
-                    // the subform name.
-                    let data_name = parse_bind_data_name(elem).unwrap_or_else(|| name.clone());
-                    return self.expand_repeating_subform(
-                        elem,
-                        &name,
-                        &data_name,
-                        occur,
-                        data_context,
-                    );
-                }
-
-                // XFA Spec 3.3 §4.4.3 p180-185 — Data binding for subforms:
-                // Step 1: "direct match" — find a data node with matching name
-                // among the current context's children.
-                //
-                // TODO: XFA Spec 3.3 §4.4.3 p185 — scope matching not implemented.
-                // After direct match fails, spec requires ancestor match (walk up
-                // the data tree) and then sibling match before giving up.
-                //
-                // TODO: XFA Spec 3.3 §4.4 p193 — transparent nodes: nameless subforms
-                // should be "transparent" to data binding, i.e. their children bind
-                // against the parent's data context rather than requiring a named
-                // data group. Currently we pass data_context through but don't
-                // implement the full transparent semantics from the spec.
-                let mut child_context = data_context;
-                if !name.is_empty() {
-                    if let Some(ctx) = data_context {
-                        // Direct match: search current context children (§4.4.3 p180)
-                        let matches = self.data_dom.children_by_name(ctx, &name);
-                        if let Some(&first) = matches.first() {
-                            child_context = Some(first);
-                        }
-                    } else if let Some(root) = self.data_dom.root() {
-                        // XFA Spec 3.3 §4.7.2 — the root subform binds to the
-                        // data root element if their names match.
-                        if self.data_dom.get(root).is_some_and(|n| n.name() == name) {
-                            child_context = Some(root);
-                        } else {
-                            let matches = self.data_dom.children_by_name(root, &name);
-                            if let Some(&first) = matches.first() {
-                                child_context = Some(first);
-                            } else {
-                                // Fallback: use the first child group as the
-                                // context (common pattern: template root="form1"
-                                // but data root child="DOCUMENT" or "MCD").
-                                let children = self.data_dom.children(root);
-                                if let Some(&first_child) = children.first() {
-                                    if self.data_dom.get(first_child).is_some_and(|n| n.is_group())
-                                    {
-                                        child_context = Some(first_child);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                let mut n = FormNode {
-                    name,
-                    node_type: FormNodeType::Subform,
-                    box_model: bm,
-                    layout,
-                    children: Vec::new(),
-                    occur,
-                    font: FontMetrics::default(),
-                    calculate: None,
-                    validate: None,
-                    column_widths: Vec::new(),
-                    col_span: 1,
-                };
-                let ti = self.add_children(&mut n, elem, child_context)?;
-                (n, ti)
+                self.build_subform_instance(elem, data_context, is_root, occur, name, layout, bm)?
             }
             "field" => (self.parse_field(elem, data_context)?, (false, None)),
             "draw" => (self.parse_draw(elem, data_context)?, (false, None)),
@@ -239,87 +156,132 @@ impl<'a> FormMerger<'a> {
         Ok((id, trailing_info))
     }
 
-    // XFA Spec 3.3 §9.2 "Variable Number of Subforms" (p336):
-    // The data binding process creates min copies, then adds more copies
-    // for each additional data match up to max.  When max=-1 there is no
-    // upper limit.  This implements the greedy matching algorithm from §9.2
-    // p346: the binder keeps adding copies until data is exhausted or max
-    // is reached.
-    /// XFA Spec 3.3 §4.4 p186-192 — Repeating subforms: when `<occur>` allows
-    /// multiple instances (max > 1 or max = -1), the number of form subform
-    /// instances is driven by matching data records. Each data record creates
-    /// one subform instance, clamped to [occur.min, occur.max].
-    fn expand_repeating_subform(
+    fn build_subform_instance(
         &mut self,
-        element: Node<'_, '_>,
-        name: &str,
-        data_name: &str,
-        occur: Occur,
+        elem: Node<'_, '_>,
         data_context: Option<DataNodeId>,
-    ) -> Result<(FormNodeId, (bool, Option<String>))> {
-        let data_instances = if let Some(ctx) = data_context {
-            self.data_dom.children_by_name(ctx, data_name)
-        } else if let Some(root) = self.data_dom.root() {
-            self.data_dom.children_by_name(root, data_name)
-        } else {
-            Vec::new()
-        };
-
-        let count = (data_instances.len() as u32).max(occur.min);
-        let count = if let Some(max) = occur.max {
-            count.min(max)
-        } else {
-            count
-        };
-
-        let mut instances = Vec::new();
-        let layout = parse_layout_attr(element);
-        let bm = parse_box_model(element);
-
-        for i in 0..count {
-            let instance_data_ctx = data_instances.get(i as usize).copied();
-
-            let mut inst_node = FormNode {
-                name: name.to_string(),
-                node_type: FormNodeType::Subform,
-                box_model: bm.clone(),
-                layout,
-                children: Vec::new(),
-                occur: Occur::once(),
-                font: FontMetrics::default(),
-                calculate: None,
-                validate: None,
-                column_widths: Vec::new(),
-                col_span: 1,
-            };
-
-            self.add_children(&mut inst_node, element, instance_data_ctx)?;
-
-            let meta = parse_node_meta(element);
-            let inst_id = self.form_tree.add_node_with_meta(inst_node, meta);
-            instances.push(inst_id);
+        is_root: bool,
+        occur: Occur,
+        name: String,
+        layout: LayoutStrategy,
+        mut bm: BoxModel,
+    ) -> Result<(FormNode, (bool, Option<String>))> {
+        if layout == LayoutStrategy::TopToBottom && bm.width.is_none() && is_root {
+            bm.width = Some(612.0);
         }
 
-        let container = FormNode {
-            name: format!("{}_container", name),
+        // XFA Spec 3.3 §4.4.3 p180-185 — Data binding for subforms:
+        // Step 1: "direct match" — find a data node with matching name
+        // among the current context's children.
+        //
+        // TODO: XFA Spec 3.3 §4.4.3 p185 — scope matching not implemented.
+        // After direct match fails, spec requires ancestor match (walk up
+        // the data tree) and then sibling match before giving up.
+        //
+        // TODO: XFA Spec 3.3 §4.4 p193 — transparent nodes: nameless subforms
+        // should be "transparent" to data binding, i.e. their children bind
+        // against the parent's data context rather than requiring a named
+        // data group. Currently we pass data_context through but don't
+        // implement the full transparent semantics from the spec.
+        let mut child_context = data_context;
+        if !name.is_empty() {
+            if let Some(ctx) = data_context {
+                let matches = self.data_dom.children_by_name(ctx, &name);
+                if let Some(&first) = matches.first() {
+                    child_context = Some(first);
+                }
+            } else if let Some(root) = self.data_dom.root() {
+                if self.data_dom.get(root).is_some_and(|n| n.name() == name) {
+                    child_context = Some(root);
+                } else {
+                    let matches = self.data_dom.children_by_name(root, &name);
+                    if let Some(&first) = matches.first() {
+                        child_context = Some(first);
+                    } else {
+                        let children = self.data_dom.children(root);
+                        if let Some(&first_child) = children.first() {
+                            if self.data_dom.get(first_child).is_some_and(|n| n.is_group()) {
+                                child_context = Some(first_child);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut n = FormNode {
+            name,
             node_type: FormNodeType::Subform,
-            box_model: BoxModel {
-                max_width: f64::MAX,
-                max_height: f64::MAX,
-                ..Default::default()
-            },
-            layout: LayoutStrategy::TopToBottom,
-            children: instances,
-            occur: Occur::once(),
+            box_model: bm,
+            layout,
+            children: Vec::new(),
+            occur,
             font: FontMetrics::default(),
             calculate: None,
             validate: None,
             column_widths: Vec::new(),
             col_span: 1,
         };
+        let ti = self.add_children(&mut n, elem, child_context)?;
+        Ok((n, ti))
+    }
 
-        let container_id = self.form_tree.add_node(container);
-        Ok((container_id, (false, None)))
+    // XFA Spec 3.3 §9.2 "Variable Number of Subforms" (p336):
+    // The data binding process creates min copies, then adds more copies
+    // for each additional data match up to max. When max=-1 the template
+    // is unbounded, but merger-time expansion must still stop at the
+    // number of matching data records so we do not synthesize extra
+    // siblings and over-paginate repeating content.
+    /// XFA Spec 3.3 §4.4 p186-192 — Repeating subforms: when `<occur>` allows
+    /// multiple instances (max > 1 or max = -1), the number of form subform
+    /// instances is driven by matching data records. Each data record creates
+    /// one subform instance, clamped to [occur.min, occur.max].
+    fn expand_repeating_subform_instances(
+        &mut self,
+        element: Node<'_, '_>,
+        data_context: Option<DataNodeId>,
+        is_root: bool,
+    ) -> Result<Vec<(FormNodeId, (bool, Option<String>))>> {
+        let name = attr(element, "name").unwrap_or("").to_string();
+        let occur = parse_occur(element);
+        let data_name = parse_bind_data_name(element).unwrap_or_else(|| name.clone());
+        let data_instances = if let Some(ctx) = data_context {
+            self.data_dom.children_by_name(ctx, &data_name)
+        } else if let Some(root) = self.data_dom.root() {
+            self.data_dom.children_by_name(root, &data_name)
+        } else {
+            Vec::new()
+        };
+
+        let data_count = data_instances.len() as u32;
+        let min = occur.min;
+        let max = occur.max.unwrap_or(data_count).max(min);
+        let count = data_count.clamp(min, max);
+
+        let layout = parse_layout_attr(element);
+        let bm = parse_box_model(element);
+        let mut instances = Vec::with_capacity(count as usize);
+
+        for i in 0..count {
+            let instance_data_ctx = data_instances.get(i as usize).copied();
+            let (inst_node, trailing) = self.build_subform_instance(
+                element,
+                instance_data_ctx,
+                is_root,
+                Occur::once(),
+                name.clone(),
+                layout,
+                bm.clone(),
+            )?;
+            if element.tag_name().name() == "exclGroup" {
+                self.apply_exclusive_choice_value(element, instance_data_ctx, &inst_node.children);
+            }
+            let meta = parse_node_meta(element);
+            let inst_id = self.form_tree.add_node_with_meta(inst_node, meta);
+            instances.push((inst_id, trailing));
+        }
+
+        Ok(instances)
     }
 
     /// Search descendants of a data node for a DataValue with the given name.
@@ -622,24 +584,36 @@ impl<'a> FormMerger<'a> {
             let tag = child.tag_name().name();
             match tag {
                 "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" => {
-                    let (child_id, (trailing_break, trailing_target)) =
-                        self.parse_node(child, data_context, false)?;
-                    if pending_break {
-                        let meta = self.form_tree.meta_mut(child_id);
-                        meta.page_break_before = true;
-                        if meta.break_target.is_none() {
-                            meta.break_target = pending_break_target.take();
+                    let child_entries = if matches!(tag, "subform" | "exclGroup") {
+                        let name = attr(child, "name").unwrap_or("");
+                        let occur = parse_occur(child);
+                        if occur.is_repeating() && !name.is_empty() {
+                            self.expand_repeating_subform_instances(child, data_context, false)?
+                        } else {
+                            vec![self.parse_node(child, data_context, false)?]
                         }
-                        pending_break = false;
-                    }
-                    if pending_ca_break {
-                        self.form_tree.meta_mut(child_id).content_area_break = true;
-                        pending_ca_break = false;
-                    }
-                    node.children.push(child_id);
-                    if trailing_break {
-                        pending_break = true;
-                        pending_break_target = trailing_target;
+                    } else {
+                        vec![self.parse_node(child, data_context, false)?]
+                    };
+
+                    for (child_id, (trailing_break, trailing_target)) in child_entries {
+                        if pending_break {
+                            let meta = self.form_tree.meta_mut(child_id);
+                            meta.page_break_before = true;
+                            if meta.break_target.is_none() {
+                                meta.break_target = pending_break_target.take();
+                            }
+                            pending_break = false;
+                        }
+                        if pending_ca_break {
+                            self.form_tree.meta_mut(child_id).content_area_break = true;
+                            pending_ca_break = false;
+                        }
+                        node.children.push(child_id);
+                        if trailing_break {
+                            pending_break = true;
+                            pending_break_target = trailing_target;
+                        }
                     }
                 }
                 "breakBefore" => {
@@ -2281,10 +2255,12 @@ mod tests {
             .find(|(_, n)| n.name == "Orders")
             .map(|(i, _)| FormNodeId(i))
             .unwrap();
-        let container_id = tree.get(orders_id).children[0];
-        let container = tree.get(container_id);
-        assert_eq!(container.name, "Order_container");
-        assert_eq!(container.children.len(), 3);
+        let orders = tree.get(orders_id);
+        assert_eq!(orders.children.len(), 3);
+        assert!(orders
+            .children
+            .iter()
+            .all(|&id| tree.get(id).name == "Order" && tree.get(id).occur.count() == 1));
     }
 
     /// Double-wrapped <xfa:data> must be unwrapped for data binding to work.
@@ -2325,16 +2301,16 @@ mod tests {
         let merger = FormMerger::new(&data_dom);
         let (tree, _root_id) = merger.merge(template).unwrap();
 
-        let container_id = tree
+        let core_orders_id = tree
             .nodes
             .iter()
             .enumerate()
-            .find(|(_, n)| n.name == "Order_container")
+            .find(|(_, n)| n.name == "CoreOrders")
             .map(|(i, _)| FormNodeId(i))
             .unwrap();
-        let container = tree.get(container_id);
+        let core_orders = tree.get(core_orders_id);
         assert_eq!(
-            container.children.len(),
+            core_orders.children.len(),
             3,
             "Expected 3 Order instances from double-wrapped data"
         );
@@ -2377,16 +2353,196 @@ mod tests {
         let merger = FormMerger::new(&data_dom);
         let (tree, _root_id) = merger.merge(template).unwrap();
 
-        let container = tree
+        let list_items = tree
             .nodes
             .iter()
-            .find(|n| n.name == "ItemGroup_container")
-            .expect("ItemGroup_container must exist");
+            .find(|n| n.name == "ListItems")
+            .expect("ListItems must exist");
         assert_eq!(
-            container.children.len(),
+            list_items.children.len(),
             2,
             "Expected 2 instances from bind ref $.itemGroup[*]"
         );
+    }
+
+    #[test]
+    fn repeating_table_rows_expand_as_sibling_rows() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <subform name="Table1" layout="table" columnWidths="100pt 100pt 100pt">
+      <subform name="HeaderRow" layout="row">
+        <draw name="H1" w="100pt" h="20pt"/>
+        <draw name="H2" w="100pt" h="20pt"/>
+        <draw name="H3" w="100pt" h="20pt"/>
+      </subform>
+      <subform name="Row1" layout="row">
+        <occur min="0" max="-1"/>
+        <field name="Cell1" w="100pt" h="20pt"/>
+        <field name="Cell2" w="100pt" h="20pt"/>
+        <field name="Cell3" w="100pt" h="20pt"/>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <Table1>
+        <Row1><Cell1>A1</Cell1><Cell2>B1</Cell2><Cell3>C1</Cell3></Row1>
+        <Row1><Cell1>A2</Cell1><Cell2>B2</Cell2><Cell3>C2</Cell3></Row1>
+        <Row1><Cell1>A3</Cell1><Cell2>B3</Cell2><Cell3>C3</Cell3></Row1>
+        <Row1><Cell1>A4</Cell1><Cell2>B4</Cell2><Cell3>C4</Cell3></Row1>
+      </Table1>
+    </form1>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let table_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "Table1")
+            .map(|(i, _)| FormNodeId(i))
+            .unwrap();
+        let table = tree.get(table_id);
+        assert_eq!(table.children.len(), 5, "header + 4 repeated data rows");
+        assert_eq!(tree.get(table.children[0]).name, "HeaderRow");
+        assert!(table.children[1..]
+            .iter()
+            .all(|&id| tree.get(id).name == "Row1" && tree.get(id).children.len() == 3));
+    }
+
+    #[test]
+    fn repeating_subform_clamps_to_occur_max() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <subform name="Orders" layout="tb">
+      <subform name="Order" layout="position" w="200pt" h="20pt">
+        <occur min="0" max="2"/>
+        <field name="Item" w="100pt" h="20pt"/>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <Order><Item>A</Item></Order>
+      <Order><Item>B</Item></Order>
+      <Order><Item>C</Item></Order>
+      <Order><Item>D</Item></Order>
+      <Order><Item>E</Item></Order>
+    </form1>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let orders_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "Orders")
+            .map(|(i, _)| FormNodeId(i))
+            .unwrap();
+        assert_eq!(tree.get(orders_id).children.len(), 2);
+    }
+
+    #[test]
+    fn repeating_subform_unbounded_uses_data_count() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <subform name="Orders" layout="tb">
+      <subform name="Order" layout="position" w="200pt" h="20pt">
+        <occur min="0" max="-1"/>
+        <field name="Item" w="100pt" h="20pt"/>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1>
+      <Order><Item>A</Item></Order>
+      <Order><Item>B</Item></Order>
+      <Order><Item>C</Item></Order>
+    </form1>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let orders_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "Orders")
+            .map(|(i, _)| FormNodeId(i))
+            .unwrap();
+        assert_eq!(tree.get(orders_id).children.len(), 3);
+    }
+
+    #[test]
+    fn repeating_subform_respects_occur_min() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <subform name="Orders" layout="tb">
+      <subform name="Order" layout="position" w="200pt" h="20pt">
+        <occur min="2" max="-1"/>
+        <field name="Item" w="100pt" h="20pt"/>
+      </subform>
+    </subform>
+  </subform>
+</template>"#;
+
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data>
+    <form1/>
+  </xfa:data>
+</xfa:datasets>"#;
+
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let orders_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "Orders")
+            .map(|(i, _)| FormNodeId(i))
+            .unwrap();
+        let orders = tree.get(orders_id);
+        assert_eq!(orders.children.len(), 2);
+        assert!(orders
+            .children
+            .iter()
+            .all(|&id| tree.get(id).name == "Order"));
     }
 
     /// Root subform binds to data root when names match (XFA §4.7.2).
