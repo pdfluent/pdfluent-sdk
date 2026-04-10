@@ -317,8 +317,8 @@ fn render_nodes(
             }
         );
         let is_field = matches!(&node.content, LayoutContent::Field { .. });
-        let field_caption_needs_post_body_render = is_field
-            && matches!(node.style.caption_placement.as_deref(), Some("top"));
+        let field_caption_needs_post_body_render =
+            is_field && matches!(node.style.caption_placement.as_deref(), Some("top"));
         if node.style.caption_text.is_some()
             && !is_button
             && (!is_field || !field_caption_needs_post_body_render)
@@ -1340,17 +1340,22 @@ fn render_checkbox(
     ops: &mut Vec<u8>,
 ) {
     let bw = config.border_width;
-    // fixes #809: XFA `<border><fill>` backgrounds apply to check buttons too.
-    // Adobe/pdfRest paints the widget fill before the border/mark; without
-    // this, explicit white/light fills on checkboxes stay transparent.
-    write_ops(
-        ops,
-        format_args!("q\n"),
-    );
-    if let Some(bg) = &config.background_color {
+    // Only explicit template fill (<fill>/<border><fill>) should paint widget
+    // background for check/radio controls. Do not inherit global/default field
+    // background config here; that caused checkbox/radio regressions (#fill).
+    write_ops(ops, format_args!("q\n"));
+    if let Some((r_u8, g_u8, b_u8)) = node_style.bg_color {
+        let bg = [
+            r_u8 as f64 / 255.0,
+            g_u8 as f64 / 255.0,
+            b_u8 as f64 / 255.0,
+        ];
         write_ops(
             ops,
-            format_args!("{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n", bg[0], bg[1], bg[2], x, pdf_y, w, h),
+            format_args!(
+                "{:.3} {:.3} {:.3} rg\n{:.2} {:.2} {:.2} {:.2} re\nf\n",
+                bg[0], bg[1], bg[2], x, pdf_y, w, h
+            ),
         );
     }
     write_ops(
@@ -1399,15 +1404,15 @@ fn render_radio(
     let k = 0.5523; // kappa ≈ 4*(√2-1)/3
     let kx = r * k;
     let ky = r * k;
-    // fixes #809: radios can also carry an explicit widget fill. Paint the
-    // background circle before stroking the border and asserted inner mark.
-    write_ops(
-        ops,
-        format_args!(
-            "q\n",
-        ),
-    );
-    if let Some(bg) = &config.background_color {
+    // Only explicit template fill should paint radio background. Do not use
+    // inherited/global background config for radio controls.
+    write_ops(ops, format_args!("q\n",));
+    if let Some((r_u8, g_u8, b_u8)) = node_style.bg_color {
+        let bg = [
+            r_u8 as f64 / 255.0,
+            g_u8 as f64 / 255.0,
+            b_u8 as f64 / 255.0,
+        ];
         write_ops(
             ops,
             format_args!(
@@ -2835,6 +2840,11 @@ mod tests {
         String::from_utf8_lossy(&o.content_stream).into_owned()
     }
 
+    fn styled_overlay_str_with_config(node: LayoutNode, config: XfaRenderConfig) -> String {
+        let o = generate_page_overlay(&make_page(vec![node]), &config).unwrap();
+        String::from_utf8_lossy(&o.content_stream).into_owned()
+    }
+
     #[test]
     fn rounded_border_emits_bezier() {
         let style = FormNodeStyle {
@@ -2965,9 +2975,7 @@ mod tests {
             ..Default::default()
         };
         let s = styled_overlay_str(make_styled_field(10.0, 100.0, 200.0, 30.0, "", style));
-        let caption_idx = s
-            .find("(Field 1) Tj")
-            .expect("caption text should render");
+        let caption_idx = s.find("(Field 1) Tj").expect("caption text should render");
         let fill_idx = s
             .find("0.047 0.133 0.220 rg")
             .expect("explicit field fill should be present");
@@ -2985,7 +2993,14 @@ mod tests {
             caption_reserve: Some(12.0),
             ..Default::default()
         };
-        let s = styled_overlay_str(make_styled_field(10.0, 100.0, 200.0, 30.0, "", style.clone()));
+        let s = styled_overlay_str(make_styled_field(
+            10.0,
+            100.0,
+            200.0,
+            30.0,
+            "",
+            style.clone(),
+        ));
         let config = XfaRenderConfig::default();
         let metrics = build_font_metrics(10.0, FontFamily::Serif, &style, &config);
         let asc_pt = ascender_pt(&metrics, 10.0);
@@ -3128,6 +3143,45 @@ mod tests {
         assert!(
             s.contains(" c\n") && s.contains("\nf\n"),
             "radio background should be painted as a filled circle path before the border: {s}"
+        );
+    }
+
+    #[test]
+    fn checkbox_ignores_global_background_without_explicit_fill() {
+        let mut config = XfaRenderConfig::default();
+        config.background_color = Some([0.949, 0.949, 0.949]);
+        let s = styled_overlay_str_with_config(
+            make_styled_checkbox(10.0, 10.0, 20.0, 20.0, "0", FormNodeStyle::default()),
+            config,
+        );
+        assert!(
+            !s.contains("0.949 0.949 0.949 rg"),
+            "checkbox should only fill from explicit style.bg_color: {s}"
+        );
+    }
+
+    #[test]
+    fn radio_ignores_global_background_without_explicit_fill() {
+        let mut config = XfaRenderConfig::default();
+        config.background_color = Some([0.949, 0.949, 0.949]);
+        let s = styled_overlay_str_with_config(
+            make_styled_radio(
+                10.0,
+                10.0,
+                20.0,
+                20.0,
+                "N",
+                FormNodeStyle {
+                    check_button_on_value: Some("Y".to_string()),
+                    check_button_off_value: Some("N".to_string()),
+                    ..Default::default()
+                },
+            ),
+            config,
+        );
+        assert!(
+            !s.contains("0.949 0.949 0.949 rg"),
+            "radio should only fill from explicit style.bg_color: {s}"
         );
     }
 
