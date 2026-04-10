@@ -384,9 +384,7 @@ fn xfa_flatten_inner(
     // additional pages once XFA data is laid out. Clamping all 1-page inputs
     // to the original page count causes under-pagination on dynamic forms such
     // as Travel Expense Report / Checklist where Adobe renders 2-3 pages.
-    let single_page_overpagination = is_static_form && n_existing == 1 && n_layout > 1;
     let preserve_static = is_static_form
-        || single_page_overpagination
         || n_layout < n_existing
         || has_static_content && overlay_is_substantial;
 
@@ -395,47 +393,10 @@ fn xfa_flatten_inner(
         // page content so they survive AcroForm removal.
         flatten_widget_appearances(&mut doc);
 
-        if is_static_form || single_page_overpagination {
-            // Static form (XFAF) or over-paginating 1-page form: overlay XFA
-            // field rendering on top of preserved pages. Limit to n_existing
-            // pages to prevent over-pagination — the original page structure
-            // is authoritative.
-            //
-            // For single_page_overpagination, overlaying the first XFA page
-            // ensures field values from XFA data appear on the original page.
-            // Without this, forms without widget appearances would show empty
-            // fields.
-            let overlay_count = if single_page_overpagination {
-                n_existing
-            } else {
-                n_layout
-            };
-            for (i, overlay) in overlays.iter().take(overlay_count).enumerate() {
-                if i < n_existing {
-                    overlay_page_content(
-                        &mut doc,
-                        existing_page_ids[i],
-                        overlay,
-                        &font_ids,
-                        &embedded_font_objects,
-                    )?;
-                } else {
-                    let lp = &layout.pages[i];
-                    add_new_page(
-                        &mut doc,
-                        lp.width,
-                        lp.height,
-                        overlay,
-                        &font_ids,
-                        &embedded_font_objects,
-                    )?;
-                }
-            }
-        }
-        // Hybrid form (matching page count, no baseProfile, not over-paginating):
-        // widget appearances are baked, original page content is preserved.
-        // No XFA overlay — the XFA engine would re-render full page content
-        // (headers, text, images), causing double-drawing.
+        // No XFA overlay for preserved pages.  Widget AP baking is
+        // sufficient — overlaying XFA content on top of baked widget
+        // appearances causes ghost/double text because widget APs may
+        // contain rotation matrices that produce differently-positioned text.
     } else {
         // Dynamic form: the layout engine determines page count.
         // Write each layout page to the output: overwrite existing pages
@@ -486,12 +447,18 @@ fn xfa_flatten_inner(
         doc.delete_pages(&excess);
     }
 
-    if !is_static_form {
-        // Strip widget annotations from pages.
-        // - Dynamic forms: pages were overwritten by XFA layout.
-        // - Hybrid forms: widgets were baked by flatten_widget_appearances.
-        // True static (baseProfile) forms keep annotations — they may contain
-        // non-widget annotations that are part of the form design.
+    if is_static_form {
+        // Static forms: strip Widget annotations but keep non-Widget (links,
+        // stamps, etc.).  flatten_widget_appearances already baked widgets
+        // with AP into the page content and removed them from Annots, but
+        // widgets without AP may remain.  Remove those too so PDF viewers
+        // don't render interactive fields over the baked content.
+        for &page_id in &existing_page_ids {
+            strip_widget_annotations(&mut doc, page_id);
+        }
+    } else {
+        // Dynamic/hybrid forms: strip ALL annotations — pages were
+        // overwritten by XFA layout or widget baking covered field values.
         for &page_id in existing_page_ids.iter().take(n_layout.min(n_existing)) {
             if let Ok(Object::Dictionary(ref mut dict)) = doc.get_object_mut(page_id) {
                 dict.remove(b"Annots");
@@ -1761,6 +1728,28 @@ fn flatten_widget_appearances(doc: &mut Document) -> usize {
     }
 
     flattened
+}
+
+/// Remove Widget annotations from a page, keeping non-Widget annotations.
+fn strip_widget_annotations(doc: &mut Document, page_id: ObjectId) {
+    let annots = page_annotations(doc, page_id);
+    if annots.is_empty() {
+        return;
+    }
+    let mut retained = Vec::new();
+    for annot in &annots {
+        let is_widget = annot
+            .as_reference()
+            .ok()
+            .and_then(|id| doc.get_dictionary(id).ok())
+            .and_then(|d| d.get(b"Subtype").ok())
+            .and_then(|obj| obj.as_name().ok())
+            == Some(&b"Widget"[..]);
+        if !is_widget {
+            retained.push(annot.clone());
+        }
+    }
+    set_page_annotations(doc, page_id, retained);
 }
 
 fn page_annotations(doc: &Document, page_id: ObjectId) -> Vec<Object> {
