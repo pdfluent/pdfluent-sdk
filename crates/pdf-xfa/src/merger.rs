@@ -22,8 +22,8 @@ use crate::error::{Result, XfaError};
 use roxmltree::Node;
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
 use xfa_layout_engine::form::{
-    ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId, FormNodeMeta,
-    FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, RichTextSpan,
+    AnchorType, ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId,
+    FormNodeMeta, FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, RichTextSpan,
     ScriptLanguage,
 };
 use xfa_layout_engine::text::{FontFamily, FontMetrics};
@@ -687,6 +687,20 @@ fn parse_layout_attr(elem: Node<'_, '_>) -> LayoutStrategy {
         "paginate" => LayoutStrategy::TopToBottom,
         "position" => LayoutStrategy::Positioned,
         _ => LayoutStrategy::Positioned,
+    }
+}
+
+fn parse_anchor_type(elem: Node<'_, '_>) -> AnchorType {
+    match attr(elem, "anchorType").unwrap_or("") {
+        "topCenter" => AnchorType::TopCenter,
+        "topRight" => AnchorType::TopRight,
+        "middleLeft" => AnchorType::MiddleLeft,
+        "middleCenter" => AnchorType::MiddleCenter,
+        "middleRight" => AnchorType::MiddleRight,
+        "bottomLeft" => AnchorType::BottomLeft,
+        "bottomCenter" => AnchorType::BottomCenter,
+        "bottomRight" => AnchorType::BottomRight,
+        _ => AnchorType::TopLeft,
     }
 }
 
@@ -1593,6 +1607,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
     let field_kind = detect_field_kind(elem);
     let style = parse_node_style(elem);
     let (data_bind_ref, data_bind_none) = parse_bind(elem);
+    let anchor_type = parse_anchor_type(elem);
 
     FormNodeMeta {
         xfa_id,
@@ -1615,6 +1630,7 @@ fn parse_node_meta(elem: Node<'_, '_>) -> FormNodeMeta {
         style,
         display_items,
         save_items,
+        anchor_type,
         ..Default::default()
     }
 }
@@ -3025,5 +3041,35 @@ mod tests {
                 other
             ),
         }
+    }
+
+    #[test]
+    fn field_anchor_type_is_preserved_in_merged_meta() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="centeredBox" layout="position" anchorType="middleCenter" w="20pt" h="10pt" x="100pt" y="50pt"/>
+  </subform>
+</template>"#;
+
+        let data_dom = DataDom::new();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let centered_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "centeredBox")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("centeredBox field must exist");
+
+        assert_eq!(tree.meta(centered_id).anchor_type, AnchorType::MiddleCenter);
     }
 }
