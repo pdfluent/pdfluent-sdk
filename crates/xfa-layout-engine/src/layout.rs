@@ -1804,6 +1804,104 @@ impl<'a> LayoutEngine<'a> {
         for &child_id in children {
             let child = self.form.get(child_id);
             let child_size = self.compute_extent_with_available(child_id, Some(available));
+            let child_bottom = y_cursor + child_size.height;
+
+            if child_bottom > available.height {
+                let remaining_height = (available.height - y_cursor).max(0.0);
+
+                // Use the same overflow semantics as layout_content_fitting():
+                // split text leaves at line boundaries, split splittable TB
+                // containers at child boundaries, then stop placing further
+                // children in this container pass.
+                if remaining_height > 0.0 && self.is_splittable_text_leaf(child_id) {
+                    let txt = match &child.node_type {
+                        FormNodeType::Draw(DrawContent::Text(t)) => t.as_str(),
+                        FormNodeType::Field { value } => value.as_str(),
+                        _ => "",
+                    };
+                    let child_style = &self.form.meta(child_id).style;
+                    let para_margins = child_style
+                        .margin_left_pt
+                        .unwrap_or(crate::types::DEFAULT_TEXT_PADDING)
+                        + child_style
+                            .margin_right_pt
+                            .unwrap_or(crate::types::DEFAULT_TEXT_PADDING);
+                    let child_border_w = child_style
+                        .border_width_pt
+                        .unwrap_or(child.box_model.border_width);
+                    let insets_w = child.box_model.margins.horizontal()
+                        + child_border_w * 2.0
+                        + para_margins;
+                    let max_w = (child_size.width - insets_w).max(1.0);
+                    let wrapped = text::wrap_text(
+                        txt,
+                        max_w,
+                        &child.font,
+                        child_style.text_indent_pt.unwrap_or(0.0),
+                        child_style.line_height_pt,
+                    );
+                    let (partial, _) =
+                        self.split_text_node(child_id, y_cursor, remaining_height, &wrapped.lines)?;
+
+                    if partial.rect.height > 0.0 && partial.rect.height <= remaining_height + 1.0 {
+                        let x =
+                            self.child_h_align_offset(child_id, partial.rect.width, available.width);
+                        let mut partial = partial;
+                        partial.rect.x = x;
+                        nodes.push(partial);
+                    } else if nodes.is_empty() {
+                        // Keep progress when the first child is oversized.
+                        let x =
+                            self.child_h_align_offset(child_id, child_size.width, available.width);
+                        let node = self.layout_single_node_with_extent(
+                            child_id,
+                            child,
+                            x,
+                            y_cursor,
+                            child_size,
+                            None,
+                        )?;
+                        nodes.push(node);
+                    }
+                } else if remaining_height > 0.0 && self.can_split(child_id) {
+                    let (partial, _) =
+                        self.split_tb_node(child_id, y_cursor, remaining_height, available, None)?;
+                    if partial.rect.height > 0.0 && partial.rect.height <= remaining_height + 1.0 {
+                        let x =
+                            self.child_h_align_offset(child_id, partial.rect.width, available.width);
+                        let mut partial = partial;
+                        partial.rect.x = x;
+                        nodes.push(partial);
+                    } else if nodes.is_empty() {
+                        // Keep progress when the first child is oversized.
+                        let x =
+                            self.child_h_align_offset(child_id, child_size.width, available.width);
+                        let node = self.layout_single_node_with_extent(
+                            child_id,
+                            child,
+                            x,
+                            y_cursor,
+                            child_size,
+                            None,
+                        )?;
+                        nodes.push(node);
+                    }
+                } else if nodes.is_empty() {
+                    // Keep progress when the first child is oversized.
+                    let x = self.child_h_align_offset(child_id, child_size.width, available.width);
+                    let node = self.layout_single_node_with_extent(
+                        child_id,
+                        child,
+                        x,
+                        y_cursor,
+                        child_size,
+                        None,
+                    )?;
+                    nodes.push(node);
+                }
+
+                break;
+            }
 
             let x = self.child_h_align_offset(child_id, child_size.width, available.width);
 
@@ -1811,11 +1909,7 @@ impl<'a> LayoutEngine<'a> {
                 .layout_single_node_with_extent(child_id, child, x, y_cursor, child_size, None)?;
             nodes.push(node);
 
-            y_cursor += child_size.height;
-
-            if y_cursor > available.height {
-                // pagination will handle splitting
-            }
+            y_cursor = child_bottom;
         }
         Ok(nodes)
     }
@@ -4225,6 +4319,39 @@ mod tests {
         assert_eq!(result.pages.len(), 2);
         assert_eq!(result.pages[0].nodes[0].name, "Header");
         assert_eq!(result.pages[1].nodes[0].name, "PositionedBlock");
+    }
+
+    #[test]
+    fn layout_tb_splits_on_overflow() {
+        let mut tree = FormTree::new();
+        let mut children = Vec::new();
+        for i in 0..10 {
+            children.push(make_field(&mut tree, &format!("F{i}"), 200.0, 100.0));
+        }
+        let parent = make_subform(
+            &mut tree,
+            "Parent",
+            LayoutStrategy::TopToBottom,
+            Some(200.0),
+            None,
+            children,
+        );
+
+        let engine = LayoutEngine::new(&tree);
+        let parent_children = tree.get(parent).children.clone();
+        let nodes = engine
+            .layout_tb(
+                &parent_children,
+                Size {
+                    width: 200.0,
+                    height: 300.0,
+                },
+            )
+            .unwrap();
+
+        // Only three 100pt children fit in a 300pt TB container.
+        assert_eq!(nodes.len(), 3);
+        assert!(nodes.iter().all(|n| n.rect.y + n.rect.height <= 301.0));
     }
 
     #[test]
