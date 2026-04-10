@@ -569,10 +569,11 @@ fn render_nodes(
         if !node.children.is_empty() {
             // Children are laid out relative to the content area (after insets),
             // so offset by the parent's margin insets (XFA <margin leftInset/topInset>).
-            // Apply both left and top insets symmetrically when entering the
-            // child coordinate space.
+            // NOTE: inset_* is NOT added here because the layout engine already
+            // positions children at box_model.y which is relative to the content
+            // area (inside margins). Adding inset_top_pt would double-offset.
             let child_origin_x = abs_x + node.style.inset_left_pt.unwrap_or(0.0);
-            let child_origin_y = abs_y + node.style.inset_top_pt.unwrap_or(0.0);
+            let child_origin_y = abs_y;
             render_nodes(
                 &node.children,
                 child_origin_x,
@@ -3308,7 +3309,7 @@ mod tests {
     }
 
     #[test]
-    fn container_children_y_offset_includes_inset() {
+    fn container_children_y_offset_excludes_inset() {
         let child = LayoutNode {
             form_node: FormNodeId(1),
             rect: Rect::new(0.0, 0.0, 50.0, 20.0),
@@ -3333,12 +3334,12 @@ mod tests {
         };
         let s = overlay_str(&make_page(vec![parent]));
         assert!(
-            s.contains("100.00 562.00 50.00 20.00 re"),
-            "child y should include parent inset_top offset: {s}"
+            s.contains("100.00 572.00 50.00 20.00 re"),
+            "child y should stay anchored to parent y without inset_top offset: {s}"
         );
         assert!(
-            !s.contains("100.00 572.00 50.00 20.00 re"),
-            "child y should no longer ignore parent inset_top offset: {s}"
+            !s.contains("100.00 562.00 50.00 20.00 re"),
+            "child y should not be shifted down by parent inset_top: {s}"
         );
     }
 
