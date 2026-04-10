@@ -89,7 +89,7 @@ impl<'a> FormMerger<'a> {
                 let ti = self.add_children(&mut n, elem, data_context)?;
                 (n, ti)
             }
-            "subform" | "exclGroup" => {
+            "subform" | "exclGroup" | "area" => {
                 let name = attr(elem, "name").unwrap_or("").to_string();
                 let layout = parse_layout_attr(elem);
                 let bm = parse_box_model(elem);
@@ -583,8 +583,8 @@ impl<'a> FormMerger<'a> {
         for child in elem.children().filter(|n| n.is_element()) {
             let tag = child.tag_name().name();
             match tag {
-                "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" => {
-                    let child_entries = if matches!(tag, "subform" | "exclGroup") {
+                "subform" | "field" | "draw" | "pageSet" | "pageArea" | "exclGroup" | "area" => {
+                    let child_entries = if matches!(tag, "subform" | "exclGroup" | "area") {
                         let name = attr(child, "name").unwrap_or("");
                         let occur = parse_occur(child);
                         if occur.is_repeating() && !name.is_empty() {
