@@ -60,6 +60,12 @@ pub struct FontMetricsData {
     pub font_data: Option<Vec<u8>>,
     /// Font face index within a collection.
     pub face_index: u32,
+    /// Optional Unicode->code map for simple PDF fonts with custom encodings.
+    ///
+    /// When Identity-H glyph encoding is unavailable (`font_data == None`),
+    /// this map lets us emit bytes in the source font's actual encoding space
+    /// instead of assuming WinAnsi for every simple font.
+    pub simple_unicode_to_code: Option<HashMap<u16, u8>>,
 }
 
 /// Image data collected during rendering for XObject embedding.
@@ -2356,25 +2362,55 @@ fn wrap_text(text: &str, max_width: f64, metrics: &FontMetrics) -> Vec<String> {
     lines
 }
 
-fn pdf_escape(s: &str) -> String {
-    let mut r = String::with_capacity(s.len());
+fn push_pdf_string_byte(out: &mut String, b: u8) {
+    match b {
+        b'(' => out.push_str("\\("),
+        b')' => out.push_str("\\)"),
+        b'\\' => out.push_str("\\\\"),
+        0x20..=0x7E => out.push(b as char),
+        _ => {
+            use std::fmt::Write;
+            let _ = write!(out, "\\{:03o}", b);
+        }
+    }
+}
+
+fn pdf_escape_with_simple_encoding(s: &str, unicode_to_code: Option<&HashMap<u16, u8>>) -> String {
+    let mut out = String::with_capacity(s.len());
     for c in s.chars() {
+        if let Some(map) = unicode_to_code {
+            let mapped = u16::try_from(c as u32)
+                .ok()
+                .and_then(|cp| map.get(&cp).copied())
+                // Keep WinAnsi fallback for punctuation/shared code points.
+                .or_else(|| unicode_to_winansi(c));
+            if let Some(b) = mapped {
+                push_pdf_string_byte(&mut out, b);
+            } else {
+                out.push('?');
+            }
+            continue;
+        }
+
         match c {
-            '(' => r.push_str("\\("),
-            ')' => r.push_str("\\)"),
-            '\\' => r.push_str("\\\\"),
-            '\x20'..='\x7e' => r.push(c),
+            '(' => out.push_str("\\("),
+            ')' => out.push_str("\\)"),
+            '\\' => out.push_str("\\\\"),
+            '\x20'..='\x7e' => out.push(c),
             _ => {
                 if let Some(b) = unicode_to_winansi(c) {
-                    use std::fmt::Write;
-                    let _ = write!(r, "\\{:03o}", b);
+                    push_pdf_string_byte(&mut out, b);
                 } else {
-                    r.push('?');
+                    out.push('?');
                 }
             }
         }
     }
-    r
+    out
+}
+
+fn pdf_escape(s: &str) -> String {
+    pdf_escape_with_simple_encoding(s, None)
 }
 
 /// Encode text for a PDF content stream, choosing Identity-H (hex glyph IDs)
@@ -2395,13 +2431,18 @@ fn pdf_encode_text(s: &str, metrics: Option<&FontMetricsData>) -> String {
             }
         }
     }
-    format!("({})", pdf_escape(s))
+    let simple_map = metrics.and_then(|m| m.simple_unicode_to_code.as_ref());
+    format!("({})", pdf_escape_with_simple_encoding(s, simple_map))
 }
 
 /// Look up font metrics for a typeface from the render config.
 ///
 /// Tries the variant key (with weight/posture) first, then falls back to
 /// the plain typeface name.
+///
+/// NOTE: We intentionally return simple-font metrics even when `font_data` is
+/// `None`. In that case `pdf_encode_text()` uses simple-font byte encoding
+/// fallback (e.g. `/Differences`) rather than Identity-H glyph IDs.
 fn lookup_font_metrics<'a>(
     node_style: &FormNodeStyle,
     config: &'a XfaRenderConfig,
@@ -2420,7 +2461,6 @@ fn lookup_font_metrics<'a>(
                 .get(&vkey)
                 .or_else(|| config.font_metrics_data.get(tf))
         })
-        .filter(|m| m.font_data.is_some())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2587,7 +2627,7 @@ fn render_draw(
     }
 }
 
-fn unicode_to_winansi(c: char) -> Option<u8> {
+pub(crate) fn unicode_to_winansi(c: char) -> Option<u8> {
     let cp = c as u32;
     if (0xA0..=0xFF).contains(&cp) {
         return Some(cp as u8);
@@ -3207,10 +3247,29 @@ mod tests {
             descender: -200,
             font_data: None,
             face_index: 0,
+            simple_unicode_to_code: None,
         };
         // Without font_data, should fall back to WinAnsi
         let encoded = pdf_encode_text("AB", Some(&metrics));
         assert_eq!(encoded, "(AB)");
+    }
+
+    #[test]
+    fn pdf_encode_text_simple_encoding_fallback() {
+        // Simulate a simple-font custom encoding that maps U+0163 (ţ) to byte 0x80.
+        let mut custom_map = HashMap::new();
+        custom_map.insert(0x0163, 0x80);
+        let metrics = FontMetricsData {
+            widths: vec![500; 256],
+            upem: 1000,
+            ascender: 800,
+            descender: -200,
+            font_data: None,
+            face_index: 0,
+            simple_unicode_to_code: Some(custom_map),
+        };
+        let encoded = pdf_encode_text("ţ", Some(&metrics));
+        assert_eq!(encoded, "(\\200)");
     }
 
     #[test]

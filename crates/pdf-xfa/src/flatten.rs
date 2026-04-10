@@ -51,7 +51,7 @@
 //! - System font fallback may have different metrics than the PDF's embedded font
 
 use lopdf::{dictionary, Dictionary, Document, Object, ObjectId, Stream, StringFormat};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as FmtWrite;
 use std::thread;
 use std::time::Duration;
@@ -64,9 +64,12 @@ use crate::font_bridge::{
 };
 use crate::image_bridge::embed_image;
 use crate::merger::FormMerger;
-use crate::render_bridge::{generate_all_overlays, FontMetricsData, PageOverlay, XfaRenderConfig};
+use crate::render_bridge::{
+    generate_all_overlays, unicode_to_winansi, FontMetricsData, PageOverlay, XfaRenderConfig,
+};
 use xfa_dom_resolver::data_dom::DataDom;
-use xfa_layout_engine::layout::LayoutEngine;
+use xfa_layout_engine::form::{DrawContent, FormNodeStyle};
+use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutEngine, LayoutNode};
 
 fn create_minimal_pdf_document() -> Document {
     let mut doc = Document::new();
@@ -300,7 +303,7 @@ fn xfa_flatten_inner(
     };
 
     let (font_map, embedded_font_objects, metrics_data) =
-        embed_resolved_fonts(&mut doc, &resolved_fonts);
+        embed_resolved_fonts(&mut doc, &resolved_fonts, &layout);
 
     let config = XfaRenderConfig {
         font_map,
@@ -1220,10 +1223,143 @@ fn inject_resolved_metrics(
 ///
 /// Called AFTER layout. Returns the font_map (typeface -> PDF resource name),
 /// the font objects for page resources, and the metrics data for render_bridge.
+fn simple_encoding_unicode_to_code_map(encoding: &PdfSimpleEncoding) -> HashMap<u16, u8> {
+    let mut map = HashMap::new();
+    for (code, unicode) in encoding.code_to_unicode_table().into_iter().enumerate() {
+        if let Some(cp) = unicode {
+            map.entry(cp).or_insert(code as u8);
+        }
+    }
+    map
+}
+
+fn add_text_chars_for_font(
+    chars_by_font: &mut HashMap<String, HashSet<char>>,
+    font_family: Option<&str>,
+    font_weight: Option<&str>,
+    font_style: Option<&str>,
+    text: &str,
+) {
+    let Some(family) = font_family else {
+        return;
+    };
+    if text.is_empty() {
+        return;
+    }
+    let chars: Vec<char> = text.chars().filter(|c| !c.is_control()).collect();
+    if chars.is_empty() {
+        return;
+    }
+
+    let variant = font_variant_key(family, font_weight, font_style);
+    chars_by_font
+        .entry(variant)
+        .or_default()
+        .extend(chars.iter().copied());
+    chars_by_font
+        .entry(family.to_string())
+        .or_default()
+        .extend(chars);
+}
+
+fn add_text_chars_for_style(
+    chars_by_font: &mut HashMap<String, HashSet<char>>,
+    style: &FormNodeStyle,
+    text: &str,
+) {
+    add_text_chars_for_font(
+        chars_by_font,
+        style.font_family.as_deref(),
+        style.font_weight.as_deref(),
+        style.font_style.as_deref(),
+        text,
+    );
+}
+
+fn collect_used_chars_from_layout_node(
+    node: &LayoutNode,
+    chars_by_font: &mut HashMap<String, HashSet<char>>,
+) {
+    match &node.content {
+        LayoutContent::Text(t) => add_text_chars_for_style(chars_by_font, &node.style, t),
+        LayoutContent::Field { value, .. } => {
+            add_text_chars_for_style(chars_by_font, &node.style, value)
+        }
+        LayoutContent::WrappedText { lines, .. } => {
+            for line in lines {
+                add_text_chars_for_style(chars_by_font, &node.style, line);
+            }
+        }
+        LayoutContent::Draw(DrawContent::Text(t)) => {
+            add_text_chars_for_style(chars_by_font, &node.style, t)
+        }
+        _ => {}
+    }
+
+    if let Some(caption) = &node.style.caption_text {
+        add_text_chars_for_style(chars_by_font, &node.style, caption);
+    }
+
+    if let Some(spans) = &node.style.rich_text_spans {
+        for span in spans {
+            add_text_chars_for_font(
+                chars_by_font,
+                span.font_family
+                    .as_deref()
+                    .or(node.style.font_family.as_deref()),
+                span.font_weight
+                    .as_deref()
+                    .or(node.style.font_weight.as_deref()),
+                span.font_style.as_deref().or(node.style.font_style.as_deref()),
+                &span.text,
+            );
+        }
+    }
+
+    for child in &node.children {
+        collect_used_chars_from_layout_node(child, chars_by_font);
+    }
+}
+
+fn collect_used_chars_by_font(layout: &LayoutDom) -> HashMap<String, HashSet<char>> {
+    let mut chars_by_font = HashMap::new();
+    for page in &layout.pages {
+        for node in &page.nodes {
+            collect_used_chars_from_layout_node(node, &mut chars_by_font);
+        }
+    }
+    chars_by_font
+}
+
+fn simple_font_can_encode_char(font: &ResolvedFont, ch: char) -> bool {
+    if ch.is_ascii() {
+        return true;
+    }
+    if let Some(encoding) = &font.pdf_encoding {
+        let Ok(cp) = u16::try_from(ch as u32) else {
+            return false;
+        };
+        return encoding
+            .code_to_unicode_table()
+            .into_iter()
+            .flatten()
+            .any(|u| u == cp);
+    }
+    unicode_to_winansi(ch).is_some()
+}
+
+fn variant_key_base_name(key: &str) -> Option<&str> {
+    key.strip_suffix("_Bold_Italic")
+        .or_else(|| key.strip_suffix("_Bold_Normal"))
+        .or_else(|| key.strip_suffix("_Normal_Italic"))
+        .or_else(|| key.strip_suffix("_Normal_Normal"))
+}
+
 #[allow(clippy::type_complexity)]
 fn embed_resolved_fonts(
     doc: &mut Document,
     resolved: &HashMap<String, ResolvedFont>,
+    layout: &LayoutDom,
 ) -> (
     HashMap<String, String>,
     Vec<(String, ObjectId)>,
@@ -1232,14 +1368,34 @@ fn embed_resolved_fonts(
     let mut font_map = HashMap::new();
     let mut font_objects = Vec::new();
     let mut metrics_data = HashMap::new();
+    let used_chars_by_font = collect_used_chars_by_font(layout);
     for (idx, (name, font)) in resolved.iter().enumerate() {
         let resource_name = format!("XFA_F{}", idx);
         // fix(#811): once a simple source font survives resolution, keep using
         // the original PDF object instead of emitting a synthetic Type0/system
         // fallback. That keeps field-fit behaviour aligned with the source PDF
         // and Acrobat's interpretation of the same /Widths table.
+        //
+        // WHY: custom encodings and non-ASCII content can require Unicode
+        // shaping through Identity-H. If a simple source font cannot encode
+        // the actual text in layout output, reusing it would produce '?'
+        // substitutions in content streams.
+        //
+        // LIMITATION: CID source fonts (/Type0 with /W arrays) use a different
+        // mechanism and are not covered by this simple-font encodeability gate.
+        let used_chars = used_chars_by_font
+            .get(name)
+            .or_else(|| used_chars_by_font.get(&font.name))
+            .or_else(|| variant_key_base_name(name).and_then(|base| used_chars_by_font.get(base)));
+        let source_can_encode_all_text = used_chars.is_none_or(|chars| {
+            chars.iter().all(|ch| simple_font_can_encode_char(font, *ch))
+        });
         let (obj_id, render_font_data) = if let Some(source_font) = font.pdf_source_font {
-            (source_font.object_id, None)
+            if source_can_encode_all_text || font.data.is_empty() {
+                (source_font.object_id, None)
+            } else {
+                (embed_font_in_pdf(doc, font), Some(font.data.clone()))
+            }
         } else {
             (embed_font_in_pdf(doc, font), Some(font.data.clone()))
         };
@@ -1255,6 +1411,10 @@ fn embed_resolved_fonts(
                 descender: font.descender,
                 font_data: render_font_data,
                 face_index: font.face_index,
+                simple_unicode_to_code: font
+                    .pdf_encoding
+                    .as_ref()
+                    .map(simple_encoding_unicode_to_code_map),
             },
         );
     }
@@ -3156,7 +3316,9 @@ ET
             },
         );
 
-        let (_font_map, font_objects, metrics_data) = embed_resolved_fonts(&mut doc, &resolved);
+        let empty_layout = LayoutDom { pages: vec![] };
+        let (_font_map, font_objects, metrics_data) =
+            embed_resolved_fonts(&mut doc, &resolved, &empty_layout);
 
         assert_eq!(doc.objects.len(), before, "should not embed a new font object");
         assert_eq!(font_objects.len(), 1);
