@@ -143,6 +143,11 @@ struct QueuedNode {
     children_override: Option<Vec<FormNodeId>>,
     /// Remaining text lines for a text leaf split across pages (§8.7).
     text_lines_override: Option<Vec<String>>,
+    /// Per-child overrides propagated from nested splits.  When this node is
+    /// processed, children whose ID appears here use the associated list as
+    /// their own `children_override`, preventing duplication of already-placed
+    /// content.
+    nested_child_overrides: Option<Vec<(FormNodeId, Vec<FormNodeId>)>>,
 }
 
 /// The layout engine.
@@ -477,6 +482,7 @@ impl<'a> LayoutEngine<'a> {
                     break_target: meta.break_target.clone(),
                     children_override: None,
                     text_lines_override: None,
+                    nested_child_overrides: None,
                 }
             })
             .collect()
@@ -932,6 +938,7 @@ impl<'a> LayoutEngine<'a> {
                         remaining_height,
                         available,
                         qn.children_override.as_deref(),
+                        qn.nested_child_overrides.as_deref(),
                     )?;
 
                     let partial_fits = partial.rect.height <= remaining_height + 1.0;
@@ -981,6 +988,7 @@ impl<'a> LayoutEngine<'a> {
                     content_height,
                     available,
                     qn.children_override.as_deref(),
+                    qn.nested_child_overrides.as_deref(),
                 )?;
                 let remaining_on_page = content_bottom - y_cursor;
                 if !partial.children.is_empty() && partial.rect.height <= remaining_on_page {
@@ -1221,6 +1229,7 @@ impl<'a> LayoutEngine<'a> {
                 break_target: None,
                 children_override: None,
                 text_lines_override: Some(bottom_lines),
+                nested_child_overrides: None,
             }]
         };
 
@@ -1263,6 +1272,7 @@ impl<'a> LayoutEngine<'a> {
         remaining_height: f64,
         _available: Size,
         children_override: Option<&[FormNodeId]>,
+        nested_overrides: Option<&[(FormNodeId, Vec<FormNodeId>)]>,
     ) -> Result<(LayoutNode, Vec<QueuedNode>)> {
         let node = self.form.get(id);
 
@@ -1291,7 +1301,12 @@ impl<'a> LayoutEngine<'a> {
 
         for (i, &child_id) in expanded_children.iter().enumerate() {
             let child = self.form.get(child_id);
-            let child_size = self.compute_extent(child_id);
+            // Look up per-child override from a previous nested split so
+            // that partially-split children use their reduced children list.
+            let child_co = nested_overrides
+                .and_then(|no| no.iter().find(|(nid, _)| *nid == child_id))
+                .map(|(_, co)| co.as_slice());
+            let child_size = self.compute_extent_with_override(child_id, child_co);
             let child_meta = self.form.meta(child_id);
 
             // If this child has keep_intact and doesn't fit, split BEFORE it
@@ -1355,6 +1370,7 @@ impl<'a> LayoutEngine<'a> {
                             break_target: None,
                             children_override: None,
                             text_lines_override: None,
+                            nested_child_overrides: None,
                         }));
                         split_rest_override = Some(rest);
                         break;
@@ -1380,7 +1396,8 @@ impl<'a> LayoutEngine<'a> {
                         child_y,
                         child_remaining,
                         child_available,
-                        None,
+                        child_co,
+                        nested_overrides,
                     )?;
 
                     let partial_fits = partial_child.rect.height <= child_remaining + 1.0;
@@ -1399,13 +1416,36 @@ impl<'a> LayoutEngine<'a> {
                         // remaining children.  Without this, the override is
                         // discarded and the full subform is re-split every page,
                         // causing an infinite pagination loop (#737).
-                        let child_override = if child_rest.len() == 1
+                        //
+                        // For other cases (multiple QueuedNodes, or a single
+                        // node for a different child), collect IDs as before
+                        // but also preserve any children_override from each
+                        // node as nested_child_overrides.  This prevents
+                        // duplication when a deeply nested child was partially
+                        // split — without this, its override is lost and the
+                        // child re-renders all content on the next page.
+                        let (child_override, child_nested) = if child_rest.len() == 1
                             && child_rest[0].id == child_id
                             && child_rest[0].children_override.is_some()
                         {
-                            child_rest[0].children_override.clone()
+                            let qn = child_rest.into_iter().next().unwrap();
+                            (qn.children_override, qn.nested_child_overrides)
                         } else {
-                            Some(child_rest.into_iter().map(|qn| qn.id).collect())
+                            let mut ids = Vec::new();
+                            let mut nested = Vec::new();
+                            for qn in child_rest {
+                                ids.push(qn.id);
+                                if let Some(co) = qn.children_override {
+                                    nested.push((qn.id, co));
+                                }
+                                if let Some(nco) = qn.nested_child_overrides {
+                                    nested.extend(nco);
+                                }
+                            }
+                            (
+                                Some(ids),
+                                if nested.is_empty() { None } else { Some(nested) },
+                            )
                         };
 
                         let mut rest = vec![QueuedNode {
@@ -1415,6 +1455,7 @@ impl<'a> LayoutEngine<'a> {
                             break_target: None,
                             children_override: child_override,
                             text_lines_override: None,
+                            nested_child_overrides: child_nested,
                         }];
                         rest.extend(expanded_children[i + 1..].iter().map(|&cid| QueuedNode {
                             id: cid,
@@ -1423,6 +1464,7 @@ impl<'a> LayoutEngine<'a> {
                             break_target: None,
                             children_override: None,
                             text_lines_override: None,
+                            nested_child_overrides: None,
                         }));
                         split_rest_override = Some(rest);
                         break;
@@ -1444,7 +1486,7 @@ impl<'a> LayoutEngine<'a> {
                 break;
             }
 
-            let child_node = self.layout_single_node(child_id, child, 0.0, child_y, None)?;
+            let child_node = self.layout_single_node(child_id, child, 0.0, child_y, child_co)?;
             placed_children.push(child_node);
             child_y += child_size.height;
             split_idx = i + 1;
@@ -1507,6 +1549,7 @@ impl<'a> LayoutEngine<'a> {
                     break_target: None,
                     children_override: None,
                     text_lines_override: None,
+                    nested_child_overrides: None,
                 })
                 .collect()
         });
@@ -1649,6 +1692,7 @@ impl<'a> LayoutEngine<'a> {
                 break_target: None,
                 children_override: Some(rest_children),
                 text_lines_override: None,
+                nested_child_overrides: None,
             }]
         };
 
@@ -1865,7 +1909,7 @@ impl<'a> LayoutEngine<'a> {
                     }
                 } else if remaining_height > 0.0 && self.can_split(child_id) {
                     let (partial, _) =
-                        self.split_tb_node(child_id, y_cursor, remaining_height, available, None)?;
+                        self.split_tb_node(child_id, y_cursor, remaining_height, available, None, None)?;
                     if partial.rect.height > 0.0 && partial.rect.height <= remaining_height + 1.0 {
                         let x =
                             self.child_h_align_offset(child_id, partial.rect.width, available.width);
