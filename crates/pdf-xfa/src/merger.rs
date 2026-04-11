@@ -912,7 +912,11 @@ fn read_medium(page_area: Node<'_, '_>) -> (f64, f64) {
     }
 }
 
-fn read_content_areas(page_area: Node<'_, '_>, page_width: f64, page_height: f64) -> Vec<ContentArea> {
+fn read_content_areas(
+    page_area: Node<'_, '_>,
+    page_width: f64,
+    page_height: f64,
+) -> Vec<ContentArea> {
     let mut areas = Vec::new();
     for child in page_area.children().filter(|n| n.is_element()) {
         if child.tag_name().name() == "contentArea" {
@@ -921,8 +925,12 @@ fn read_content_areas(page_area: Node<'_, '_>, page_width: f64, page_height: f64
             // all content down/right for templates omitting x/y. Fixes #797.
             let x = attr(child, "x").and_then(parse_dim).unwrap_or(0.0);
             let y = attr(child, "y").and_then(parse_dim).unwrap_or(0.0);
-            let w = attr(child, "w").and_then(parse_dim).unwrap_or(540.0);
-            let h = attr(child, "h").and_then(parse_dim).unwrap_or(720.0);
+            // w/h default to full page dimensions when omitted, matching the
+            // behavior of the empty (no contentArea) fallback. Previously used
+            // hardcoded 540×720 (US Letter body), which was inconsistent with
+            // the no-contentArea path and had no spec basis.
+            let w = attr(child, "w").and_then(parse_dim).unwrap_or(page_width);
+            let h = attr(child, "h").and_then(parse_dim).unwrap_or(page_height);
             areas.push(ContentArea {
                 name: attr(child, "name").unwrap_or("").to_string(),
                 x,
@@ -1963,9 +1971,7 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         if !edge_elems.is_empty() {
             let first_visible = edge_elems
                 .iter()
-                .find(|e| {
-                    !is_hidden(**e) && attr(**e, "stroke").unwrap_or("solid") != "none"
-                })
+                .find(|e| !is_hidden(**e) && attr(**e, "stroke").unwrap_or("solid") != "none")
                 .or_else(|| edge_elems.first())
                 .copied();
             let first = first_visible.unwrap_or(edge_elems[0]);
@@ -2045,9 +2051,9 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                     ]),
                 };
                 if let Some([top, right, bottom, left]) = per_edge_colors {
-                if !(top == bottom && bottom == left && left == right) {
-                    style.border_colors = Some([top, right, bottom, left]);
-                }
+                    if !(top == bottom && bottom == left && left == right) {
+                        style.border_colors = Some([top, right, bottom, left]);
+                    }
                 }
 
                 let default_thickness = style.border_width_pt.unwrap_or(0.5);
@@ -2078,9 +2084,9 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
                     ]),
                 };
                 if let Some([top_t, right_t, bottom_t, left_t]) = per_edge_widths {
-                if !(top_t == bottom_t && bottom_t == left_t && left_t == right_t) {
-                    style.border_widths = Some([top_t, right_t, bottom_t, left_t]);
-                }
+                    if !(top_t == bottom_t && bottom_t == left_t && left_t == right_t) {
+                        style.border_widths = Some([top_t, right_t, bottom_t, left_t]);
+                    }
                 }
             }
         }
