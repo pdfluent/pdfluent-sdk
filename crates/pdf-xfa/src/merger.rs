@@ -21,6 +21,7 @@
 use crate::error::{Result, XfaError};
 use roxmltree::Node;
 use xfa_dom_resolver::data_dom::{DataDom, DataNodeId};
+use xfa_dom_resolver::som::resolve_data_path;
 use xfa_layout_engine::form::{
     AnchorType, ContentArea, DrawContent, EventScript, FieldKind, FormNode, FormNodeId,
     FormNodeMeta, FormNodeStyle, FormNodeType, FormTree, GroupKind, Occur, Presence, RichTextSpan,
@@ -136,6 +137,9 @@ impl<'a> FormMerger<'a> {
         }
 
         let mut meta = parse_node_meta(elem);
+        if !meta.event_scripts.is_empty() {
+            eprintln!("[DEBUG] parse_node_meta: tag={} name={} event_scripts={:?}", tag, node.name, meta.event_scripts);
+        }
         meta.style.inset_top_pt = Some(node.box_model.margins.top);
         meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
         meta.style.inset_left_pt = Some(node.box_model.margins.left);
@@ -268,13 +272,42 @@ impl<'a> FormMerger<'a> {
     ) -> Result<Vec<(FormNodeId, (bool, Option<String>))>> {
         let name = attr(element, "name").unwrap_or("").to_string();
         let occur = parse_occur(element);
-        let data_name = parse_bind_data_name(element).unwrap_or_else(|| name.clone());
-        let data_instances = if let Some(ctx) = data_context {
-            self.data_dom.children_by_name(ctx, &data_name)
-        } else if let Some(root) = self.data_dom.root() {
-            self.data_dom.children_by_name(root, &data_name)
+
+        // Get raw bind ref for multi-segment SOM path resolution.
+        // parse_bind_data_name() only takes the last segment, which fails for
+        // multi-segment refs like "$.group.field[*]" (XFA §4.4 p199).
+        let bind_ref = find_first_child_by_name(element, "bind")
+            .and_then(|b| attr(b, "ref"))
+            .map(|s| s.to_string());
+
+        let data_instances = if let Some(ref raw_ref) = bind_ref {
+            // Normalize $record → $ for SOM parser compatibility
+            let normalized = if let Some(rest) = raw_ref.strip_prefix("$record") {
+                format!("${}", rest)
+            } else {
+                raw_ref.clone()
+            };
+            // Ensure [*] on last segment: repeating subforms need ALL matches
+            let with_wildcard = if normalized.ends_with("[*]") {
+                normalized
+            } else {
+                format!("{}[*]", normalized)
+            };
+            // Full SOM resolution; fall back to root when no data_context
+            resolve_data_path(&self.data_dom, &with_wildcard, data_context)
+                .or_else(|_| {
+                    resolve_data_path(&self.data_dom, &with_wildcard, self.data_dom.root())
+                })
+                .unwrap_or_default()
         } else {
-            Vec::new()
+            // No bind ref: look up by element name
+            if let Some(ctx) = data_context {
+                self.data_dom.children_by_name(ctx, &name)
+            } else if let Some(root) = self.data_dom.root() {
+                self.data_dom.children_by_name(root, &name)
+            } else {
+                Vec::new()
+            }
         };
 
         let data_count = data_instances.len() as u32;
@@ -282,7 +315,6 @@ impl<'a> FormMerger<'a> {
         let max = occur.max.unwrap_or(data_count).max(min);
         let count = data_count.clamp(min, max);
 
-        let tag = element.tag_name().name();
         let layout = area_layout(element);
         let bm = parse_box_model(element);
         let mut instances = Vec::with_capacity(count as usize);
@@ -2294,6 +2326,7 @@ fn parse_font_color_attr(s: &str) -> Option<(u8, u8, u8)> {
 /// implemented. Only simple `$.name` and `$.name[*]` patterns are supported.
 /// Multi-segment paths like `$record.group.field` are partially supported
 /// (we take the last segment).
+#[allow(dead_code)]
 fn parse_bind_data_name(elem: Node<'_, '_>) -> Option<String> {
     let bind = find_first_child_by_name(elem, "bind")?;
     let ref_val = attr(bind, "ref")?;
