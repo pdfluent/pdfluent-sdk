@@ -221,9 +221,16 @@ impl Document {
                 ObjectStream::new(&mut stream).map_err(|_| Error::ObjStmDecompress {
                     container_id: container_id.0,
                 })?;
-            // Only insert if not already present (matches load_objects_raw behaviour).
+            // Only insert objects whose xref entry assigns them to this container.
+            // This prevents stale copies from older ObjStm containers (incremental
+            // saves) from winning non-deterministically.
             for (id, object) in obj_stream.objects {
-                self.objects.entry(id).or_insert(object);
+                if self
+                    .reference_table
+                    .compressed_object_belongs_to(id, container_id)
+                {
+                    self.objects.entry(id).or_insert(object);
+                }
             }
             // The container is no longer needed; drop it to free memory.
             self.objects.remove(&container_id);

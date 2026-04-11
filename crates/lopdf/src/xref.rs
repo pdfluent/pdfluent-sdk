@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::{Result, Write};
 
+use crate::ObjectId;
+
 #[derive(Debug, Clone)]
 pub struct Xref {
     /// Type of Cross-Reference used in the last incremental version.
@@ -71,6 +73,18 @@ impl Xref {
             Some(&id) => id,
             None => 0,
         }
+    }
+
+    pub(crate) fn compressed_object_belongs_to(
+        &self,
+        object_id: ObjectId,
+        container_id: ObjectId,
+    ) -> bool {
+        matches!(
+            self.get(object_id.0),
+            Some(XrefEntry::Compressed { container, .. })
+                if *container == container_id.0 && object_id.1 == 0
+        )
     }
 }
 
