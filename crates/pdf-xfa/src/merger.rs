@@ -38,6 +38,26 @@ pub struct FormMerger<'a> {
     form_tree: FormTree,
 }
 
+fn area_layout(elem: Node<'_, '_>) -> LayoutStrategy {
+    if elem.tag_name().name() == "area" && attr(elem, "layout").is_none() {
+        let has_positioned_child = elem.children().filter(|n| n.is_element()).any(|child| {
+            attr(child, "x")
+                .and_then(parse_dim)
+                .is_some_and(|v| v > 0.0)
+                || attr(child, "y")
+                    .and_then(parse_dim)
+                    .is_some_and(|v| v > 0.0)
+        });
+        if has_positioned_child {
+            LayoutStrategy::Positioned
+        } else {
+            LayoutStrategy::TopToBottom
+        }
+    } else {
+        parse_layout_attr(elem)
+    }
+}
+
 impl<'a> FormMerger<'a> {
     pub fn new(data_dom: &'a DataDom) -> Self {
         Self {
@@ -91,11 +111,7 @@ impl<'a> FormMerger<'a> {
             }
             "subform" | "exclGroup" | "area" => {
                 let name = attr(elem, "name").unwrap_or("").to_string();
-                let layout = if tag == "area" && attr(elem, "layout").is_none() {
-                    LayoutStrategy::TopToBottom
-                } else {
-                    parse_layout_attr(elem)
-                };
+                let layout = area_layout(elem);
                 let bm = parse_box_model(elem);
                 let occur = parse_occur(elem);
                 self.build_subform_instance(elem, data_context, is_root, occur, name, layout, bm)?
@@ -267,11 +283,7 @@ impl<'a> FormMerger<'a> {
         let count = data_count.clamp(min, max);
 
         let tag = element.tag_name().name();
-        let layout = if tag == "area" && attr(element, "layout").is_none() {
-            LayoutStrategy::TopToBottom
-        } else {
-            parse_layout_attr(element)
-        };
+        let layout = area_layout(element);
         let bm = parse_box_model(element);
         let mut instances = Vec::with_capacity(count as usize);
 
@@ -3096,5 +3108,37 @@ mod tests {
             .expect("centeredBox field must exist");
 
         assert_eq!(tree.meta(centered_id).anchor_type, AnchorType::MiddleCenter);
+    }
+
+    #[test]
+    fn area_without_layout_uses_positioned_when_children_have_coordinates() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form1" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <area name="Nagl">
+      <draw name="headerLine" x="10pt" y="12pt" w="100pt" h="1pt">
+        <value><rectangle/></value>
+      </draw>
+    </area>
+  </subform>
+</template>"#;
+
+        let data_dom = DataDom::new();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let nagl = tree
+            .nodes
+            .iter()
+            .find(|n| n.name == "Nagl")
+            .expect("Nagl area must exist");
+
+        assert_eq!(nagl.layout, LayoutStrategy::Positioned);
     }
 }
