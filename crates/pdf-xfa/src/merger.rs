@@ -120,6 +120,10 @@ impl<'a> FormMerger<'a> {
         }
 
         let mut meta = parse_node_meta(elem);
+        meta.style.inset_top_pt = Some(node.box_model.margins.top);
+        meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
+        meta.style.inset_left_pt = Some(node.box_model.margins.left);
+        meta.style.inset_right_pt = Some(node.box_model.margins.right);
         let is_draw_or_field = tag == "draw" || tag == "field";
         if is_draw_or_field {
             if meta.style.font_weight.is_none() {
@@ -285,7 +289,11 @@ impl<'a> FormMerger<'a> {
             if element.tag_name().name() == "exclGroup" {
                 self.apply_exclusive_choice_value(element, instance_data_ctx, &inst_node.children);
             }
-            let meta = parse_node_meta(element);
+            let mut meta = parse_node_meta(element);
+            meta.style.inset_top_pt = Some(inst_node.box_model.margins.top);
+            meta.style.inset_bottom_pt = Some(inst_node.box_model.margins.bottom);
+            meta.style.inset_left_pt = Some(inst_node.box_model.margins.left);
+            meta.style.inset_right_pt = Some(inst_node.box_model.margins.right);
             let inst_id = self.form_tree.add_node_with_meta(inst_node, meta);
             instances.push((inst_id, trailing));
         }
@@ -539,7 +547,7 @@ impl<'a> FormMerger<'a> {
     ) -> Result<FormNode> {
         let name = attr(elem, "name").unwrap_or("").to_string();
         let (page_w, page_h) = read_medium(elem);
-        let content_areas = read_content_areas(elem);
+        let content_areas = read_content_areas(elem, page_w, page_h);
 
         let bm = BoxModel {
             width: Some(page_w),
@@ -863,7 +871,7 @@ fn read_medium(page_area: Node<'_, '_>) -> (f64, f64) {
     }
 }
 
-fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
+fn read_content_areas(page_area: Node<'_, '_>, page_width: f64, page_height: f64) -> Vec<ContentArea> {
     let mut areas = Vec::new();
     for child in page_area.children().filter(|n| n.is_element()) {
         if child.tag_name().name() == "contentArea" {
@@ -888,10 +896,10 @@ fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
     if areas.is_empty() {
         areas.push(ContentArea {
             name: String::new(),
-            x: 36.0,
-            y: 36.0,
-            width: 540.0,
-            height: 720.0,
+            x: 0.0,
+            y: 0.0,
+            width: page_width,
+            height: page_height,
             leader: None,
             trailer: None,
         });
