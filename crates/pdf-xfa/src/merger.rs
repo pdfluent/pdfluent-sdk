@@ -137,10 +137,6 @@ impl<'a> FormMerger<'a> {
         }
 
         let mut meta = parse_node_meta(elem);
-        meta.style.inset_top_pt = Some(node.box_model.margins.top);
-        meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
-        meta.style.inset_left_pt = Some(node.box_model.margins.left);
-        meta.style.inset_right_pt = Some(node.box_model.margins.right);
         let is_draw_or_field = tag == "draw" || tag == "field";
         if is_draw_or_field {
             if meta.style.font_weight.is_none() {
@@ -338,11 +334,7 @@ impl<'a> FormMerger<'a> {
             if element.tag_name().name() == "exclGroup" {
                 self.apply_exclusive_choice_value(element, instance_data_ctx, &inst_node.children);
             }
-            let mut meta = parse_node_meta(element);
-            meta.style.inset_top_pt = Some(inst_node.box_model.margins.top);
-            meta.style.inset_bottom_pt = Some(inst_node.box_model.margins.bottom);
-            meta.style.inset_left_pt = Some(inst_node.box_model.margins.left);
-            meta.style.inset_right_pt = Some(inst_node.box_model.margins.right);
+            let meta = parse_node_meta(element);
             let inst_id = self.form_tree.add_node_with_meta(inst_node, meta);
             instances.push((inst_id, trailing));
         }
@@ -2913,6 +2905,97 @@ mod tests {
             .map(|(i, _)| FormNodeId(i))
             .expect("name field must exist");
         assert_eq!(tree.meta(name_id).style.bg_color, Some((240, 240, 240)));
+    }
+
+    #[test]
+    fn rich_text_exdata_captions_are_collapsed_to_plain_text() {
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="patient_name" w="200pt" h="20pt">
+      <ui><textEdit/></ui>
+      <caption placement="top" reserve="0.230972in">
+        <value>
+          <exData contentType="text/html" maxLength="0">
+            <body xmlns="http://www.w3.org/1999/xhtml"
+                  xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"
+                  xfa:APIVersion="1.4.4136.0">
+              <p>NAME<span style="xfa-spacerun:yes"> </span><span style="font-style:italic">(Last, First, Middle Initial)</span></p>
+            </body>
+          </exData>
+        </value>
+      </caption>
+    </field>
+    <field name="telephone" w="200pt" h="20pt">
+      <ui><textEdit/></ui>
+      <caption placement="top" reserve="0.230972in">
+        <value>
+          <exData contentType="text/html" maxLength="0">
+            <body xmlns="http://www.w3.org/1999/xhtml"
+                  xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"
+                  xfa:APIVersion="1.4.4136.0">
+              <p>TELEPHONE<span style="font-style:italic"> (Include area code)</span></p>
+            </body>
+          </exData>
+        </value>
+      </caption>
+    </field>
+  </subform>
+</template>"#;
+
+        let data_dom = DataDom::new();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+
+        let patient_name_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "patient_name")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("patient_name field must exist");
+        let patient_name = tree.meta(patient_name_id);
+        assert_eq!(
+            patient_name.style.caption_text.as_deref(),
+            Some("NAME (Last, First, Middle Initial)")
+        );
+        assert_eq!(patient_name.style.caption_placement.as_deref(), Some("top"));
+        assert_eq!(
+            tree.get(patient_name_id)
+                .box_model
+                .caption
+                .as_ref()
+                .map(|caption| caption.text.as_str()),
+            Some("NAME (Last, First, Middle Initial)")
+        );
+
+        let telephone_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "telephone")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("telephone field must exist");
+        let telephone = tree.meta(telephone_id);
+        assert_eq!(
+            telephone.style.caption_text.as_deref(),
+            Some("TELEPHONE (Include area code)")
+        );
+        assert_eq!(telephone.style.caption_placement.as_deref(), Some("top"));
+        assert_eq!(
+            tree.get(telephone_id)
+                .box_model
+                .caption
+                .as_ref()
+                .map(|caption| caption.text.as_str()),
+            Some("TELEPHONE (Include area code)")
+        );
     }
 
     #[test]
