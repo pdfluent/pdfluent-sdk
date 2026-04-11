@@ -395,6 +395,8 @@ fn render_nodes(
                         &node.style,
                         &node_config,
                         ops,
+                        &node.display_items,
+                        &node.save_items,
                     ),
                     FieldKind::Button => {
                         // XFA buttons use their <caption> as the button label.
@@ -1674,9 +1676,19 @@ fn render_dropdown(
     node_style: &FormNodeStyle,
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
+    display_items: &[String],
+    save_items: &[String],
 ) {
+    // XFA 3.3 §7.7: choiceList display value resolution.
+    // If the field value matches a save item, use the corresponding display item.
+    let display_value = if let Some(idx) = save_items.iter().position(|s| s == value) {
+        display_items.get(idx).map(|s| s.as_str()).unwrap_or(value)
+    } else {
+        value
+    };
+
     // Adobe behavior: empty dropdowns are invisible
-    if value.is_empty() {
+    if display_value.is_empty() {
         return;
     }
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
@@ -1707,7 +1719,7 @@ fn render_dropdown(
 
     let arrow_w = h.min(12.0);
 
-    if !value.is_empty() {
+    if !display_value.is_empty() {
         let fs = if font_size > 0.0 {
             font_size
         } else {
@@ -1718,7 +1730,7 @@ fn render_dropdown(
         let idh_metrics = lookup_font_metrics(node_style, config);
 
         let v_offset = pdf_y + h / 2.0 - fs / 2.0;
-        let encoded = pdf_encode_text(value, idh_metrics);
+        let encoded = pdf_encode_text(display_value, idh_metrics);
         write_ops(
             ops,
             format_args!(
@@ -2760,6 +2772,8 @@ mod tests {
             },
             children: vec![],
             style: Default::default(),
+            display_items: vec![],
+            save_items: vec![],
         }
     }
 
@@ -2783,6 +2797,8 @@ mod tests {
             },
             children: vec![],
             style,
+            display_items: vec![],
+            save_items: vec![],
         }
     }
 
@@ -2807,6 +2823,8 @@ mod tests {
             },
             children: vec![],
             style,
+            display_items: vec![],
+            save_items: vec![],
         }
     }
 
@@ -2830,6 +2848,8 @@ mod tests {
             },
             children: vec![],
             style,
+            display_items: vec![],
+            save_items: vec![],
         }
     }
 
@@ -2853,6 +2873,8 @@ mod tests {
             },
             children: vec![],
             style,
+            display_items: vec![],
+            save_items: vec![],
         }
     }
 
@@ -2876,6 +2898,8 @@ mod tests {
             },
             children: vec![],
             style,
+            display_items: vec![],
+            save_items: vec![],
         }
     }
 
@@ -2910,6 +2934,29 @@ mod tests {
             10.0, 10.0, 100.0, 20.0, "",
         )]));
         assert!(!s.contains("BT"));
+    }
+
+    #[test]
+    fn dropdown_renders_display_item_for_matching_save_value() {
+        let node = LayoutNode {
+            form_node: FormNodeId(0),
+            rect: Rect::new(10.0, 10.0, 100.0, 20.0),
+            name: "choice".to_string(),
+            content: LayoutContent::Field {
+                value: "CA".to_string(),
+                field_kind: FieldKind::Dropdown,
+                font_size: 10.0,
+                font_family: FontFamily::Serif,
+            },
+            children: vec![],
+            style: Default::default(),
+            display_items: vec!["California".to_string(), "Nevada".to_string()],
+            save_items: vec!["CA".to_string(), "NV".to_string()],
+        };
+
+        let s = overlay_str(&make_page(vec![node]));
+        assert!(s.contains("(California) Tj"), "dropdown should render display item: {s}");
+        assert!(!s.contains("(CA) Tj"), "dropdown should not render raw save value: {s}");
     }
 
     #[test]
@@ -3021,6 +3068,8 @@ mod tests {
                 border_edges: [false, true, false, true],
                 ..Default::default()
             },
+            display_items: vec![],
+            save_items: vec![],
         };
         let s = styled_overlay_str(node);
         assert!(s.contains("2.00 w"), "right edge width should be used: {s}");
@@ -3431,6 +3480,8 @@ mod tests {
             },
             children: vec![],
             style: Default::default(),
+            display_items: vec![],
+            save_items: vec![],
         };
         let parent = LayoutNode {
             form_node: FormNodeId(0),
@@ -3443,6 +3494,8 @@ mod tests {
                 inset_top_pt: Some(5.0),
                 ..Default::default()
             },
+            display_items: vec![],
+            save_items: vec![],
         };
         let s = overlay_str(&make_page(vec![parent]));
         // Child field at (0,0) rendered within parent at (100,200) with leftInset=10.
@@ -3473,6 +3526,8 @@ mod tests {
                 inset_right_pt: Some(8.0),
                 ..Default::default()
             },
+            display_items: vec![],
+            save_items: vec![],
         };
         let s = overlay_str(&make_page(vec![node]));
         // Text x = field_x + inset_left = 10 + 8 = 18 (no default padding per XFA spec)
@@ -3521,6 +3576,8 @@ mod tests {
                 border_width_pt: Some(1.0),
                 ..Default::default()
             },
+            display_items: vec![],
+            save_items: vec![],
         };
         let parent = LayoutNode {
             form_node: FormNodeId(0),
@@ -3532,6 +3589,8 @@ mod tests {
                 inset_top_pt: Some(10.0),
                 ..Default::default()
             },
+            display_items: vec![],
+            save_items: vec![],
         };
         let s = overlay_str(&make_page(vec![parent]));
         assert!(
