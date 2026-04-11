@@ -91,7 +91,11 @@ impl<'a> FormMerger<'a> {
             }
             "subform" | "exclGroup" | "area" => {
                 let name = attr(elem, "name").unwrap_or("").to_string();
-                let layout = parse_layout_attr(elem);
+                let layout = if tag == "area" && attr(elem, "layout").is_none() {
+                    LayoutStrategy::TopToBottom
+                } else {
+                    parse_layout_attr(elem)
+                };
                 let bm = parse_box_model(elem);
                 let occur = parse_occur(elem);
                 self.build_subform_instance(elem, data_context, is_root, occur, name, layout, bm)?
@@ -258,7 +262,12 @@ impl<'a> FormMerger<'a> {
         let max = occur.max.unwrap_or(data_count).max(min);
         let count = data_count.clamp(min, max);
 
-        let layout = parse_layout_attr(element);
+        let tag = element.tag_name().name();
+        let layout = if tag == "area" && attr(element, "layout").is_none() {
+            LayoutStrategy::TopToBottom
+        } else {
+            parse_layout_attr(element)
+        };
         let bm = parse_box_model(element);
         let mut instances = Vec::with_capacity(count as usize);
 
