@@ -1120,24 +1120,35 @@ fn extract_exdata_color(elem: Node<'_, '_>) -> Option<(u8, u8, u8)> {
 }
 
 /// Parse CSS color value: #RGB, #RRGGBB, rgb(r,g,b), or r,g,b.
+fn parse_ascii_hex_color(hex: &str) -> Option<(u8, u8, u8)> {
+    fn hex_nibble(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    match hex.as_bytes() {
+        [r, g, b] => Some((
+            hex_nibble(*r)? * 17,
+            hex_nibble(*g)? * 17,
+            hex_nibble(*b)? * 17,
+        )),
+        [r1, r2, g1, g2, b1, b2] => Some((
+            (hex_nibble(*r1)? << 4) | hex_nibble(*r2)?,
+            (hex_nibble(*g1)? << 4) | hex_nibble(*g2)?,
+            (hex_nibble(*b1)? << 4) | hex_nibble(*b2)?,
+        )),
+        _ => None,
+    }
+}
+
 fn parse_css_color(s: &str) -> Option<(u8, u8, u8)> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix('#') {
-        match hex.len() {
-            3 => {
-                let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
-                let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
-                let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
-                Some((r, g, b))
-            }
-            6 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                Some((r, g, b))
-            }
-            _ => None,
-        }
+        parse_ascii_hex_color(hex)
     } else if let Some(rgb_part) = s.strip_prefix("rgb(") {
         if let Some(inner) = rgb_part.strip_suffix(')') {
             let parts: Vec<&str> = inner.split(',').collect();
@@ -2282,21 +2293,7 @@ fn parse_xfa_color(color_node: Node<'_, '_>) -> Option<(u8, u8, u8)> {
 fn parse_font_color_attr(s: &str) -> Option<(u8, u8, u8)> {
     let s = s.trim();
     if let Some(hex) = s.strip_prefix('#') {
-        match hex.len() {
-            6 => {
-                let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-                let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-                let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-                Some((r, g, b))
-            }
-            3 => {
-                let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
-                let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
-                let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
-                Some((r * 17, g * 17, b * 17))
-            }
-            _ => None,
-        }
+        parse_ascii_hex_color(hex)
     } else {
         // Try "r,g,b" decimal format
         let parts: Vec<&str> = s.split(',').collect();
@@ -2363,6 +2360,22 @@ fn parse_bind(elem: Node<'_, '_>) -> (Option<String>, bool) {
 mod tests {
     use super::*;
     use xfa_dom_resolver::data_dom::DataDom;
+
+    #[test]
+    fn parse_css_color_rejects_non_ascii_hex_without_panicking() {
+        assert_eq!(parse_css_color("#€"), None);
+        assert_eq!(parse_css_color("#€abc"), None);
+        assert_eq!(parse_css_color("#0f8"), Some((0x00, 0xff, 0x88)));
+        assert_eq!(parse_css_color("#00ff88"), Some((0x00, 0xff, 0x88)));
+    }
+
+    #[test]
+    fn parse_font_color_attr_rejects_non_ascii_hex_without_panicking() {
+        assert_eq!(parse_font_color_attr("#€"), None);
+        assert_eq!(parse_font_color_attr("#€abc"), None);
+        assert_eq!(parse_font_color_attr("#0f8"), Some((0x00, 0xff, 0x88)));
+        assert_eq!(parse_font_color_attr("#00ff88"), Some((0x00, 0xff, 0x88)));
+    }
 
     #[test]
     fn repeating_subform_expands_from_data() {
