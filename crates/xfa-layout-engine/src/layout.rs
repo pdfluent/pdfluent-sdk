@@ -109,6 +109,10 @@ pub struct LayoutNode {
     pub children: Vec<LayoutNode>,
     /// Per-node visual style (colors, borders) from the XFA template.
     pub style: crate::form::FormNodeStyle,
+    /// Display items for choice list fields (XFA 3.3 §7.7).
+    pub display_items: Vec<String>,
+    /// Save items for choice list fields (XFA 3.3 §7.7).
+    pub save_items: Vec<String>,
 }
 
 /// Content type for layout leaf nodes.
@@ -1047,6 +1051,8 @@ impl<'a> LayoutEngine<'a> {
                     },
                     children: Vec::new(),
                     style: self.form.meta(child_id).style.clone(),
+                    display_items: self.form.meta(child_id).display_items.clone(),
+                    save_items: self.form.meta(child_id).save_items.clone(),
                 }
             } else {
                 self.layout_single_node_with_extent(
@@ -1207,6 +1213,8 @@ impl<'a> LayoutEngine<'a> {
                 },
                 children: Vec::new(),
                 style: self.form.meta(id).style.clone(),
+                    display_items: self.form.meta(id).display_items.clone(),
+                    save_items: self.form.meta(id).save_items.clone(),
             };
             return Ok((full_node, Vec::new()));
         }
@@ -1232,6 +1240,8 @@ impl<'a> LayoutEngine<'a> {
             },
             children: Vec::new(),
             style: self.form.meta(id).style.clone(),
+                    display_items: self.form.meta(id).display_items.clone(),
+                    save_items: self.form.meta(id).save_items.clone(),
         };
 
         let rest = if bottom_lines.is_empty() {
@@ -1552,6 +1562,8 @@ impl<'a> LayoutEngine<'a> {
             content,
             children: placed_children,
             style: self.form.meta(id).style.clone(),
+                    display_items: self.form.meta(id).display_items.clone(),
+                    save_items: self.form.meta(id).save_items.clone(),
         };
 
         let rest = split_rest_override.unwrap_or_else(|| {
@@ -1690,6 +1702,8 @@ impl<'a> LayoutEngine<'a> {
             content,
             children: placed_children,
             style: self.form.meta(id).style.clone(),
+                    display_items: self.form.meta(id).display_items.clone(),
+                    save_items: self.form.meta(id).save_items.clone(),
         };
 
         // Remaining children are wrapped in a QueuedNode for the same
@@ -2159,6 +2173,8 @@ impl<'a> LayoutEngine<'a> {
                 content: LayoutContent::None,
                 children: cells,
                 style: self.form.meta(row_id).style.clone(),
+                    display_items: self.form.meta(row_id).display_items.clone(),
+                    save_items: self.form.meta(row_id).save_items.clone(),
             };
             nodes.push(row_layout);
 
@@ -2282,6 +2298,7 @@ impl<'a> LayoutEngine<'a> {
         // Invisible/Inactive nodes produce no visual content or children.
         // Hidden nodes reserve space but produce no visual content.
         if self.form.meta(id).presence.is_layout_hidden() {
+            let hidden_meta = self.form.meta(id);
             return Ok(LayoutNode {
                 form_node: id,
                 rect: Rect::new(x, y, extent.width, extent.height),
@@ -2289,6 +2306,8 @@ impl<'a> LayoutEngine<'a> {
                 content: LayoutContent::None,
                 children: Vec::new(),
                 style: Default::default(),
+                display_items: hidden_meta.display_items.clone(),
+                save_items: hidden_meta.save_items.clone(),
             });
         }
 
@@ -2401,6 +2420,8 @@ impl<'a> LayoutEngine<'a> {
             content,
             children,
             style: self.form.meta(id).style.clone(),
+                    display_items: self.form.meta(id).display_items.clone(),
+                    save_items: self.form.meta(id).save_items.clone(),
         })
     }
 
