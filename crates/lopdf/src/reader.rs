@@ -1078,20 +1078,25 @@ impl Reader<'_> {
                             // problem: the decompressed bytes (stream.content) are freed
                             // when `object` is dropped at the end of this arm.
                             if let Ok(obj_stream) = ObjectStream::new(stream) {
+                                let container_id = object_id;
+                                let owned_objects = obj_stream.objects.into_iter().filter(
+                                    |(nested_object_id, _)| {
+                                        self.document.reference_table.compressed_object_belongs_to(
+                                            *nested_object_id,
+                                            container_id,
+                                        )
+                                    },
+                                );
                                 let mut object_streams = object_streams.lock().unwrap();
-                                // TODO: Is insert and replace intended behavior?
-                                // See https://github.com/J-F-Liu/lopdf/issues/160 for more info
                                 if let Some(filter_func) = filter_func {
-                                    let objects: BTreeMap<(u32, u16), Object> = obj_stream
-                                        .objects
-                                        .into_iter()
+                                    let objects: BTreeMap<(u32, u16), Object> = owned_objects
                                         .filter_map(|(object_id, mut object)| {
                                             filter_func(object_id, &mut object)
                                         })
                                         .collect();
                                     object_streams.extend(objects);
                                 } else {
-                                    object_streams.extend(obj_stream.objects);
+                                    object_streams.extend(owned_objects);
                                 }
                             }
                             // Return None: container is dropped here, freeing its bytes.
@@ -1677,6 +1682,48 @@ fn load_mem_with_options_lazy_objstm_no_objects_lost() {
     assert!(
         lazy_doc.pending_obj_streams.is_empty(),
         "pending_obj_streams must be empty after resolve"
+    );
+}
+
+#[cfg(all(test, not(feature = "async")))]
+#[test]
+fn resolve_pending_object_streams_skips_objects_reassigned_to_newer_container() {
+    let mut doc = Document::new();
+    doc.reference_table
+        .insert(7, XrefEntry::Compressed { container: 20, index: 0 });
+
+    let mut old_stream = ObjectStream::builder().compression_level(0).build();
+    old_stream
+        .add_object((7, 0), Object::Integer(1))
+        .expect("old ObjStm should accept object");
+    doc.objects
+        .insert((10, 0), Object::Stream(old_stream.to_stream_object().unwrap()));
+
+    let mut new_stream = ObjectStream::builder().compression_level(0).build();
+    new_stream
+        .add_object((7, 0), Object::Integer(2))
+        .expect("new ObjStm should accept object");
+    doc.objects
+        .insert((20, 0), Object::Stream(new_stream.to_stream_object().unwrap()));
+
+    doc.pending_obj_streams = vec![(10, 0), (20, 0)];
+    doc.resolve_pending_object_streams()
+        .expect("lazy ObjStm resolution should succeed");
+
+    let resolved = doc
+        .get_object((7, 0))
+        .expect("object should resolve from the current ObjStm");
+    assert_eq!(
+        resolved.as_i64().expect("resolved object should stay an integer"),
+        2
+    );
+    assert!(
+        !doc.objects.contains_key(&(10, 0)),
+        "old ObjStm container should be dropped after resolution"
+    );
+    assert!(
+        !doc.objects.contains_key(&(20, 0)),
+        "new ObjStm container should be dropped after resolution"
     );
 }
 
