@@ -34,22 +34,37 @@ use crate::form::{
 use crate::text::{self, FontFamily};
 use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
 
-/// Resolve the display value for a choice list field.
+/// Resolve the display value for a field.
 ///
-/// If the field has save-items and the current value matches one of them,
-/// return the corresponding display-item. Otherwise return the value as-is.
-fn resolve_display_value<'a>(value: &'a str, meta: &'a FormNodeMeta) -> &'a str {
-    if meta.field_kind != FieldKind::Dropdown || value.is_empty() {
-        return value;
+/// - **Dropdown**: if the field has save-items and the current value matches
+///   one of them, return the corresponding display-item.
+/// - **NumericEdit**: strip unnecessary trailing zeros from float strings
+///   (e.g. "1.00000000" → "1", "3.50" → "3.5").
+/// - Otherwise return the value as-is.
+fn resolve_display_value<'a>(value: &'a str, meta: &'a FormNodeMeta) -> std::borrow::Cow<'a, str> {
+    if value.is_empty() {
+        return std::borrow::Cow::Borrowed(value);
     }
-    if !meta.save_items.is_empty() {
-        if let Some(idx) = meta.save_items.iter().position(|s| s == value) {
-            if let Some(display) = meta.display_items.get(idx) {
-                return display.as_str();
+    // Dropdown: resolve save-item → display-item.
+    if meta.field_kind == FieldKind::Dropdown {
+        if !meta.save_items.is_empty() {
+            if let Some(idx) = meta.save_items.iter().position(|s| s == value) {
+                if let Some(display) = meta.display_items.get(idx) {
+                    return std::borrow::Cow::Borrowed(display.as_str());
+                }
             }
         }
+        return std::borrow::Cow::Borrowed(value);
     }
-    value
+    // NumericEdit: format raw float values by stripping trailing zeros.
+    if meta.field_kind == FieldKind::NumericEdit {
+        if let Ok(num) = value.parse::<f64>() {
+            // Format with enough precision, then strip trailing zeros.
+            let formatted = format!("{}", num);
+            return std::borrow::Cow::Owned(formatted);
+        }
+    }
+    std::borrow::Cow::Borrowed(value)
 }
 
 /// A unique identifier for a layout node.
@@ -2297,7 +2312,7 @@ impl<'a> LayoutEngine<'a> {
                         node.box_model.margins.horizontal() + border_w * 2.0 + para_margins;
                     let max_w = (extent.width - insets_w).max(0.0);
                     let wrapped = text::wrap_text(
-                        display_val,
+                        &display_val,
                         max_w,
                         &node.font,
                         node_style.text_indent_pt.unwrap_or(0.0),
@@ -5815,6 +5830,21 @@ mod tests {
         meta.display_items = vec!["United States".to_string()];
         // Non-dropdown field: no resolution
         assert_eq!(resolve_display_value("US", &meta), "US");
+    }
+
+    #[test]
+    fn resolve_display_value_numeric_edit_strips_trailing_zeros() {
+        let mut meta = FormNodeMeta::default();
+        meta.field_kind = FieldKind::NumericEdit;
+
+        assert_eq!(resolve_display_value("1.00000000", &meta), "1");
+        assert_eq!(resolve_display_value("3.50", &meta), "3.5");
+        assert_eq!(resolve_display_value("100.00", &meta), "100");
+        assert_eq!(resolve_display_value("0.12345", &meta), "0.12345");
+        assert_eq!(resolve_display_value("42", &meta), "42");
+        // Non-numeric value passes through
+        assert_eq!(resolve_display_value("abc", &meta), "abc");
+        assert_eq!(resolve_display_value("", &meta), "");
     }
 }
 
