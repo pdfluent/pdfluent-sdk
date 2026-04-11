@@ -419,6 +419,21 @@ fn render_nodes(
                             ops,
                         )
                     }
+                    FieldKind::PasswordEdit => {
+                        let masked_value: String = value.chars().map(|_| '•').collect();
+                        render_field(
+                            val_x,
+                            val_pdf_y,
+                            val_w,
+                            val_h,
+                            &masked_value,
+                            *font_size,
+                            *font_family,
+                            &node.style,
+                            &node_config,
+                            ops,
+                        )
+                    }
                     FieldKind::Signature => render_signature(
                         val_x,
                         val_pdf_y,
@@ -3203,6 +3218,27 @@ mod tests {
         assert!(
             !s.contains("0.949 0.949 0.949 rg"),
             "numeric fields should also require explicit template fill to paint a background: {s}"
+        );
+    }
+
+    #[test]
+    fn password_field_masks_plaintext_value() {
+        let s = styled_overlay_str(make_styled_field_kind(
+            10.0,
+            10.0,
+            100.0,
+            20.0,
+            "secret",
+            FieldKind::PasswordEdit,
+            FormNodeStyle::default(),
+        ));
+        assert!(
+            !s.contains("(secret) Tj"),
+            "password fields must not emit plaintext into the content stream: {s}"
+        );
+        assert!(
+            s.contains("(\\225\\225\\225\\225\\225\\225) Tj"),
+            "password fields should render bullet masking instead of plaintext: {s}"
         );
     }
 
