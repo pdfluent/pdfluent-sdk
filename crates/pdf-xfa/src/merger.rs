@@ -270,6 +270,14 @@ impl<'a> FormMerger<'a> {
         let name = attr(element, "name").unwrap_or("").to_string();
         let occur = parse_occur(element);
 
+        // XFA §4.4.3: match="none" means no data binding, no automatic expansion.
+        // The subform exists as a single instance; only scriptable instanceManager
+        // may add more.
+        let (_bind_ref_unused, bind_none) = parse_bind(element);
+        if bind_none {
+            return Ok(vec![self.parse_node(element, data_context, is_root)?]);
+        }
+
         // Get raw bind ref for multi-segment SOM path resolution.
         // parse_bind_data_name() only takes the last segment, which fails for
         // multi-segment refs like "$.group.field[*]" (XFA §4.4 p199).
@@ -645,7 +653,8 @@ impl<'a> FormMerger<'a> {
                     let child_entries = if matches!(tag, "subform" | "exclGroup" | "area") {
                         let name = attr(child, "name").unwrap_or("");
                         let occur = parse_occur(child);
-                        if occur.is_repeating() && !name.is_empty() {
+                        let (_, bind_none) = parse_bind(child);
+                        if occur.is_repeating() && !name.is_empty() && !bind_none {
                             self.expand_repeating_subform_instances(child, data_context, false)?
                         } else {
                             vec![self.parse_node(child, data_context, false)?]
