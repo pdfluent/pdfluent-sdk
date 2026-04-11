@@ -137,6 +137,10 @@ impl<'a> FormMerger<'a> {
         }
 
         let mut meta = parse_node_meta(elem);
+        meta.style.inset_top_pt = Some(node.box_model.margins.top);
+        meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
+        meta.style.inset_left_pt = Some(node.box_model.margins.left);
+        meta.style.inset_right_pt = Some(node.box_model.margins.right);
         let is_draw_or_field = tag == "draw" || tag == "field";
         if is_draw_or_field {
             if meta.style.font_weight.is_none() {
@@ -334,7 +338,11 @@ impl<'a> FormMerger<'a> {
             if element.tag_name().name() == "exclGroup" {
                 self.apply_exclusive_choice_value(element, instance_data_ctx, &inst_node.children);
             }
-            let meta = parse_node_meta(element);
+            let mut meta = parse_node_meta(element);
+            meta.style.inset_top_pt = Some(inst_node.box_model.margins.top);
+            meta.style.inset_bottom_pt = Some(inst_node.box_model.margins.bottom);
+            meta.style.inset_left_pt = Some(inst_node.box_model.margins.left);
+            meta.style.inset_right_pt = Some(inst_node.box_model.margins.right);
             let inst_id = self.form_tree.add_node_with_meta(inst_node, meta);
             instances.push((inst_id, trailing));
         }
