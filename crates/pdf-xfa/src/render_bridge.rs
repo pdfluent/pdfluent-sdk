@@ -241,9 +241,29 @@ fn render_nodes(
         let inset_b = node.style.inset_bottom_pt.unwrap_or(0.0);
         let inner_w = (w - inset_l - inset_r).max(0.0);
         let inner_h = (h - inset_t - inset_b).max(0.0);
+        let (caption_font_size, caption_font_family) =
+            caption_font_for_content(&node.content, &node.style, &node_config);
+        let is_button = matches!(
+            &node.content,
+            LayoutContent::Field {
+                field_kind: FieldKind::Button,
+                ..
+            }
+        );
+        let caption_reserve = if is_button {
+            0.0
+        } else {
+            effective_caption_reserve(
+                &node.style,
+                caption_font_size,
+                caption_font_family,
+                &node_config,
+            )
+        };
 
         // Caption/value offset computed from inner rect (after margin insets).
-        let (cap_dx, cap_dy, val_w, val_h) = caption_value_offset(&node.style, inner_w, inner_h);
+        let (cap_dx, cap_dy, val_w, val_h) =
+            caption_value_offset(&node.style, caption_reserve, inner_w, inner_h);
         let val_x = abs_x + inset_l + cap_dx;
         let val_y_offset = inset_t + cap_dy;
         let val_pdf_y = mapper.xfa_to_pdf_y(abs_y + val_y_offset, val_h);
@@ -315,13 +335,6 @@ fn render_nodes(
         // Render caption for any node that has caption_text in its style.
         // For Button fields, skip the external caption — the caption text is
         // used as the button label rendered inside the button body instead.
-        let is_button = matches!(
-            &node.content,
-            LayoutContent::Field {
-                field_kind: FieldKind::Button,
-                ..
-            }
-        );
         let is_field = matches!(&node.content, LayoutContent::Field { .. });
         let field_caption_needs_post_body_render =
             is_field && matches!(node.style.caption_placement.as_deref(), Some("top"));
@@ -329,29 +342,14 @@ fn render_nodes(
             && !is_button
             && (!is_field || !field_caption_needs_post_body_render)
         {
-            let (cap_fs, cap_ff) = match &node.content {
-                LayoutContent::Field {
-                    font_size,
-                    font_family,
-                    ..
-                } => (*font_size, *font_family),
-                LayoutContent::WrappedText {
-                    font_size,
-                    font_family,
-                    ..
-                } => (*font_size, *font_family),
-                _ => (
-                    node.style.font_size.unwrap_or(config.default_font_size),
-                    FontFamily::SansSerif,
-                ),
-            };
             render_caption(
                 abs_x + inset_l,
                 mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h),
                 inner_w,
                 inner_h,
-                cap_fs,
-                cap_ff,
+                caption_reserve,
+                caption_font_size,
+                caption_font_family,
                 &node.style,
                 &node_config,
                 ops,
@@ -459,8 +457,9 @@ fn render_nodes(
                         mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h),
                         inner_w,
                         inner_h,
-                        *font_size,
-                        *font_family,
+                        caption_reserve,
+                        caption_font_size,
+                        caption_font_family,
                         &node.style,
                         &node_config,
                         ops,
@@ -950,12 +949,65 @@ fn build_font_metrics(
     metrics
 }
 
+fn caption_font_for_content(
+    content: &LayoutContent,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+) -> (f64, FontFamily) {
+    match content {
+        LayoutContent::Field {
+            font_size,
+            font_family,
+            ..
+        }
+        | LayoutContent::WrappedText {
+            font_size,
+            font_family,
+            ..
+        } => (*font_size, *font_family),
+        _ => (
+            node_style.font_size.unwrap_or(config.default_font_size),
+            FontFamily::SansSerif,
+        ),
+    }
+}
+
+fn effective_caption_reserve(
+    style: &FormNodeStyle,
+    font_size: f64,
+    font_family: FontFamily,
+    config: &XfaRenderConfig,
+) -> f64 {
+    let caption_text = match style.caption_text.as_deref() {
+        Some(text) if !text.is_empty() => text,
+        _ => return 0.0,
+    };
+    if let Some(reserve) = style.caption_reserve {
+        return reserve.max(0.0);
+    }
+    let fs = if font_size > 0.0 {
+        font_size
+    } else {
+        config.default_font_size
+    };
+    let metrics = build_font_metrics(fs, font_family, style, config);
+    match style.caption_placement.as_deref().unwrap_or("left") {
+        "left" | "right" => metrics.measure_width(caption_text),
+        "top" | "bottom" => metrics.line_height_pt(),
+        _ => 0.0,
+    }
+}
+
 /// Compute the offset and size of the value area within a field that has a caption.
 ///
 /// Returns (dx, dy, value_width, value_height) where dx/dy are the offsets from
 /// the field origin to the value area origin.
-fn caption_value_offset(style: &FormNodeStyle, w: f64, h: f64) -> (f64, f64, f64, f64) {
-    let reserve = style.caption_reserve.unwrap_or(0.0);
+fn caption_value_offset(
+    style: &FormNodeStyle,
+    reserve: f64,
+    w: f64,
+    h: f64,
+) -> (f64, f64, f64, f64) {
     if reserve <= 0.0 || style.caption_text.is_none() {
         return (0.0, 0.0, w, h);
     }
@@ -982,6 +1034,7 @@ fn render_caption(
     pdf_y: f64,
     w: f64,
     h: f64,
+    caption_reserve: f64,
     font_size: f64,
     font_family: FontFamily,
     node_style: &FormNodeStyle,
@@ -993,7 +1046,6 @@ fn render_caption(
         _ => return,
     };
     let caption_placement = node_style.caption_placement.as_deref().unwrap_or("left");
-    let caption_reserve = node_style.caption_reserve.unwrap_or(0.0);
     let fs = if font_size > 0.0 {
         font_size
     } else {
@@ -2447,20 +2499,17 @@ fn lookup_font_metrics<'a>(
     node_style: &FormNodeStyle,
     config: &'a XfaRenderConfig,
 ) -> Option<&'a FontMetricsData> {
-    node_style
-        .font_family
-        .as_ref()
-        .and_then(|tf| {
-            let vkey = font_variant_key(
-                tf,
-                node_style.font_weight.as_deref(),
-                node_style.font_style.as_deref(),
-            );
-            config
-                .font_metrics_data
-                .get(&vkey)
-                .or_else(|| config.font_metrics_data.get(tf))
-        })
+    node_style.font_family.as_ref().and_then(|tf| {
+        let vkey = font_variant_key(
+            tf,
+            node_style.font_weight.as_deref(),
+            node_style.font_style.as_deref(),
+        );
+        config
+            .font_metrics_data
+            .get(&vkey)
+            .or_else(|| config.font_metrics_data.get(tf))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3021,6 +3070,64 @@ mod tests {
         assert!(
             caption_idx < fill_idx,
             "left captions should keep the legacy pre-body ordering: {s}"
+        );
+    }
+
+    #[test]
+    fn left_caption_without_explicit_reserve_shifts_field_body() {
+        let style = FormNodeStyle {
+            caption_text: Some("Field 1".to_string()),
+            caption_placement: Some("left".to_string()),
+            bg_color: Some((12, 34, 56)),
+            ..Default::default()
+        };
+        let config = XfaRenderConfig::default();
+        let reserve = effective_caption_reserve(&style, 10.0, FontFamily::Serif, &config);
+        let metrics = build_font_metrics(10.0, FontFamily::Serif, &style, &config);
+        assert!(
+            (reserve - metrics.measure_width("Field 1")).abs() < 0.01,
+            "auto reserve should match caption width for simple left captions"
+        );
+
+        let s = styled_overlay_str(make_styled_field(10.0, 100.0, 200.0, 30.0, "", style));
+        let mapper = CoordinateMapper::new(792.0, 612.0);
+        let expected_fill = format!(
+            "{:.2} {:.2} {:.2} 30.00 re",
+            10.0 + reserve,
+            mapper.xfa_to_pdf_y(100.0, 30.0),
+            200.0 - reserve
+        );
+        assert!(
+            s.contains(&expected_fill),
+            "field body should be shifted right by the caption reserve: {s}"
+        );
+    }
+
+    #[test]
+    fn button_caption_does_not_shrink_button_body() {
+        let style = FormNodeStyle {
+            caption_text: Some("Click".to_string()),
+            caption_placement: Some("left".to_string()),
+            bg_color: Some((12, 34, 56)),
+            ..Default::default()
+        };
+        let config = XfaRenderConfig::default();
+        let reserve = effective_caption_reserve(&style, 10.0, FontFamily::Serif, &config);
+        assert!(
+            reserve > 0.0,
+            "button caption should still have measurable text"
+        );
+
+        let s = styled_overlay_str(make_styled_button(10.0, 100.0, 200.0, 30.0, "", style));
+        let mapper = CoordinateMapper::new(792.0, 612.0);
+        let expected_fill = format!(
+            "{:.2} {:.2} 200.00 30.00 re",
+            10.0,
+            mapper.xfa_to_pdf_y(100.0, 30.0)
+        );
+        assert!(
+            s.contains(&expected_fill),
+            "button body should keep the full field width because its caption is rendered internally: {s}"
         );
     }
 
