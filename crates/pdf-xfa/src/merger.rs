@@ -137,9 +137,6 @@ impl<'a> FormMerger<'a> {
         }
 
         let mut meta = parse_node_meta(elem);
-        if !meta.event_scripts.is_empty() {
-            eprintln!("[DEBUG] parse_node_meta: tag={} name={} event_scripts={:?}", tag, node.name, meta.event_scripts);
-        }
         meta.style.inset_top_pt = Some(node.box_model.margins.top);
         meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
         meta.style.inset_left_pt = Some(node.box_model.margins.left);
