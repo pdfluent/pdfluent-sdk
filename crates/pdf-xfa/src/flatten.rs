@@ -254,7 +254,8 @@ fn xfa_flatten_inner(
         let indent = "  ".repeat(depth);
         let val = match &node.node_type {
             xfa_layout_engine::form::FormNodeType::Field { value } if !value.is_empty() => {
-                format!(" val={:?}", &value[..value.len().min(30)])
+                let truncated: String = value.chars().take(30).collect();
+                format!(" val={:?}", truncated)
             }
             _ => String::new(),
         };
