@@ -430,7 +430,7 @@ fn parse_page_area(tree: &mut FormTree, elem: Node<'_, '_>) -> Result<FormNode> 
     let (page_w, page_h) = read_medium(elem);
 
     // Read <contentArea> elements.
-    let content_areas = read_content_areas(elem);
+    let content_areas = read_content_areas(elem, page_w, page_h);
 
     let bm = BoxModel {
         width: Some(page_w),
@@ -1729,7 +1729,11 @@ fn read_medium(page_area: Node<'_, '_>) -> (f64, f64) {
 }
 
 /// Read all `<contentArea>` children and return their `ContentArea` structs.
-fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
+fn read_content_areas(
+    page_area: Node<'_, '_>,
+    page_width: f64,
+    page_height: f64,
+) -> Vec<ContentArea> {
     let mut areas = Vec::new();
     for child in page_area.children().filter(|n| n.is_element()) {
         if child.tag_name().name() == "contentArea" {
@@ -1739,8 +1743,12 @@ fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
             // content areas with only w/h.
             let x = attr(child, "x").and_then(parse_dim).unwrap_or(0.0);
             let y = attr(child, "y").and_then(parse_dim).unwrap_or(0.0);
-            let w = attr(child, "w").and_then(parse_dim).unwrap_or(540.0);
-            let h = attr(child, "h").and_then(parse_dim).unwrap_or(720.0);
+            // w/h default to full page dimensions when omitted, matching the
+            // behavior of the empty (no contentArea) fallback. Previously used
+            // hardcoded 540×720 (US Letter body), which was inconsistent with
+            // the no-contentArea path and had no spec basis.
+            let w = attr(child, "w").and_then(parse_dim).unwrap_or(page_width);
+            let h = attr(child, "h").and_then(parse_dim).unwrap_or(page_height);
             areas.push(ContentArea {
                 name: attr(child, "name").unwrap_or("").to_string(),
                 x,
@@ -1753,13 +1761,12 @@ fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
         }
     }
     if areas.is_empty() {
-        // Default content area: US Letter with 0.5in margins.
         areas.push(ContentArea {
             name: String::new(),
-            x: 36.0,
-            y: 36.0,
-            width: 540.0,
-            height: 720.0,
+            x: 0.0,
+            y: 0.0,
+            width: page_width,
+            height: page_height,
             leader: None,
             trailer: None,
         });
