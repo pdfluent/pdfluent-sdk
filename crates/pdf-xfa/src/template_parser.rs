@@ -1733,8 +1733,12 @@ fn read_content_areas(page_area: Node<'_, '_>) -> Vec<ContentArea> {
     let mut areas = Vec::new();
     for child in page_area.children().filter(|n| n.is_element()) {
         if child.tag_name().name() == "contentArea" {
-            let x = attr(child, "x").and_then(parse_dim).unwrap_or(36.0);
-            let y = attr(child, "y").and_then(parse_dim).unwrap_or(36.0);
+            // XFA 3.3 §8.3.1 — contentArea x/y default to 0 when omitted.
+            // Treating missing coordinates as a 0.5in inset shifts the entire
+            // page content down/right for templates that define full-page
+            // content areas with only w/h.
+            let x = attr(child, "x").and_then(parse_dim).unwrap_or(0.0);
+            let y = attr(child, "y").and_then(parse_dim).unwrap_or(0.0);
             let w = attr(child, "w").and_then(parse_dim).unwrap_or(540.0);
             let h = attr(child, "h").and_then(parse_dim).unwrap_or(720.0);
             areas.push(ContentArea {
@@ -2657,6 +2661,35 @@ mod tests {
         let meta_s = tree.meta(single);
         assert_eq!(meta_s.display_items, vec!["Red", "Green", "Blue"]);
         assert!(meta_s.save_items.is_empty());
+    }
+
+    #[test]
+    fn content_area_without_xy_defaults_to_origin() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="root" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="8in" h="10in"/>
+      </pageArea>
+    </pageSet>
+  </subform>
+</template>"#;
+
+        let (tree, root_id) = parse_template(xml, None).unwrap();
+        let page_area_id = find_node_id_by_name(&tree, root_id, "Page1").unwrap();
+        let page_area = tree.get(page_area_id);
+
+        match &page_area.node_type {
+            FormNodeType::PageArea { content_areas } => {
+                assert_eq!(content_areas.len(), 1);
+                assert_eq!(content_areas[0].x, 0.0);
+                assert_eq!(content_areas[0].y, 0.0);
+                assert!((content_areas[0].width - 576.0).abs() < 0.01);
+                assert!((content_areas[0].height - 720.0).abs() < 0.01);
+            }
+            other => panic!("expected PageArea, got {other:?}"),
+        }
     }
 
     #[test]
