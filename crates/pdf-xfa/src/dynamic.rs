@@ -644,7 +644,7 @@ fn split_property_path(path: &str) -> Option<(SomExpression, ResolvedProperty)> 
     let mut expr = parse_som(&normalized).ok()?;
     let property = if let Some(last) = expr.segments.last() {
         match &last.selector {
-            SomSelector::Name(name) => parse_property_name(name)?,
+            SomSelector::Name(name) => parse_property_name(name).unwrap_or(ResolvedProperty::RawValue),
             _ => ResolvedProperty::RawValue,
         }
     } else {
@@ -1658,6 +1658,45 @@ endif
 
         tree.get_mut(root).children = vec![total];
         tree.meta_mut(total).event_scripts = vec![formcalc_script("40 + 2", "calculate")];
+
+        apply_dynamic_scripts(&mut tree, root);
+
+        match &tree.get(total).node_type {
+            FormNodeType::Field { value } => assert_eq!(value, "42"),
+            _ => panic!("expected field"),
+        }
+    }
+
+    #[test]
+    fn calculate_event_resolves_bare_field_names_as_raw_values() {
+        let mut tree = FormTree::new();
+        let root = add_node(&mut tree, "root", FormNodeType::Root);
+        let section = add_node(&mut tree, "Section", FormNodeType::Subform);
+        let number1 = add_node(
+            &mut tree,
+            "Number1",
+            FormNodeType::Field {
+                value: "40".to_string(),
+            },
+        );
+        let number2 = add_node(
+            &mut tree,
+            "Number2",
+            FormNodeType::Field {
+                value: "2".to_string(),
+            },
+        );
+        let total = add_node(
+            &mut tree,
+            "Total",
+            FormNodeType::Field {
+                value: String::new(),
+            },
+        );
+
+        tree.get_mut(root).children = vec![section];
+        tree.get_mut(section).children = vec![number1, number2, total];
+        tree.meta_mut(total).event_scripts = vec![formcalc_script("Number1 + Number2", "calculate")];
 
         apply_dynamic_scripts(&mut tree, root);
 
