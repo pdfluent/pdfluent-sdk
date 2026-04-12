@@ -2592,6 +2592,21 @@ fn render_draw(
         DrawContent::Rectangle { x, y, w, h, radius } => {
             let rx = abs_x + x;
             let ry = pdf_y + container_h - y - h;
+            // Apply border color from <value><rectangle><edge><color>.
+            if let Some((r, g, b)) = node_style.border_color {
+                write_ops(
+                    ops,
+                    format_args!(
+                        "{:.4} {:.4} {:.4} RG\n",
+                        r as f64 / 255.0,
+                        g as f64 / 255.0,
+                        b as f64 / 255.0
+                    ),
+                );
+            }
+            if let Some(w_pt) = node_style.border_width_pt {
+                write_ops(ops, format_args!("{:.2} w\n", w_pt));
+            }
             if *radius <= 0.0 {
                 write_ops(
                     ops,
