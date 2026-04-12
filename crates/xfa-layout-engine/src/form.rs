@@ -545,6 +545,8 @@ pub struct FormNodeStyle {
     pub underline: bool,
     /// Font line-through / strikethrough (XFA `<font lineThrough="1">`).
     pub line_through: bool,
+    /// XFA format picture clause (e.g. `num{z,zzz.99}`).
+    pub format_pattern: Option<String>,
 }
 
 impl Default for FormNodeStyle {
@@ -588,6 +590,7 @@ impl Default for FormNodeStyle {
             rich_text_spans: None,
             underline: false,
             line_through: false,
+            format_pattern: None,
         }
     }
 }
