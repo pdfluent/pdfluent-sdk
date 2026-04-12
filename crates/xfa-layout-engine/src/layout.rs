@@ -486,10 +486,10 @@ impl<'a> LayoutEngine<'a> {
     /// Returns true if the node should be completely skipped during layout
     /// (no layout space consumed).
     ///
-    /// XFA `presence` semantics (S3.2.8):
-    /// - `invisible` / `inactive` -- no layout space, not rendered.
-    /// - `hidden` -- reserves layout space but not rendered (NOT layout-hidden).
+    /// Adobe empirical behavior (not strictly per spec):
+    /// - `hidden` / `invisible` / `inactive` -- no layout space, not rendered.
     /// - `visible` -- normal.
+    /// See `Presence::is_layout_hidden()` for rationale (fixes #806).
     fn is_layout_hidden(&self, id: FormNodeId) -> bool {
         let meta = self.form.meta(id);
         if meta.presence.is_layout_hidden() {
@@ -1788,8 +1788,8 @@ impl<'a> LayoutEngine<'a> {
     /// Each entry refers to the same FormNodeId (the template), which the layout
     /// engine treats as separate instances at different positions.
     ///
-    /// Nodes with `presence="hidden"` (not `"invisible"`) are skipped entirely
-    /// because they consume no layout space (XFA 3.3 §3.2.8).
+    /// Nodes with non-visible presence (hidden/invisible/inactive) are skipped
+    /// entirely — they consume no layout space (Adobe empirical, fixes #806).
     // XFA Spec 3.3 §7.4 / §9.2 — Repeating Elements using Occurrence Limits:
     // At layout time, the occur.count() (= initial for empty merge, or
     // data-driven count) determines how many copies appear.  Blank repeating
@@ -2329,8 +2329,9 @@ impl<'a> LayoutEngine<'a> {
         extent: Size,
         children_override: Option<&[FormNodeId]>,
     ) -> Result<LayoutNode> {
-        // Invisible/Inactive nodes produce no visual content or children.
-        // Hidden nodes reserve space but produce no visual content.
+        // All non-visible presence values (hidden/invisible/inactive) produce
+        // no visual content. In practice these nodes are already filtered in
+        // queue_content/expand_occur, but this guard handles children_override.
         if self.form.meta(id).presence.is_layout_hidden() {
             let hidden_meta = self.form.meta(id);
             return Ok(LayoutNode {
