@@ -399,10 +399,25 @@ fn render_nodes(
                         &node.save_items,
                     ),
                     FieldKind::Button => {
-                        // Buttons are interactive-only elements (Print, Clear,
-                        // Submit, etc.).  They serve no purpose in a flattened/
-                        // static PDF and are suppressed by Adobe Reader and
-                        // pdfrest when printing or flattening.
+                        let label = if value.is_empty() {
+                            node.style.caption_text.as_deref().unwrap_or("")
+                        } else {
+                            value
+                        };
+                        if !label.is_empty() {
+                            render_button(
+                                val_x,
+                                val_pdf_y,
+                                val_w,
+                                val_h,
+                                label,
+                                *font_size,
+                                *font_family,
+                                &node.style,
+                                &node_config,
+                                ops,
+                            )
+                        }
                     }
                     FieldKind::PasswordEdit => {
                         let masked_value: String = value.chars().map(|_| '•').collect();
@@ -1749,6 +1764,100 @@ fn render_dropdown(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn render_button(
+    x: f64,
+    pdf_y: f64,
+    w: f64,
+    h: f64,
+    value: &str,
+    font_size: f64,
+    font_family: FontFamily,
+    node_style: &FormNodeStyle,
+    config: &XfaRenderConfig,
+    ops: &mut Vec<u8>,
+) {
+    // Adobe behavior: empty buttons are invisible
+    if value.is_empty() {
+        return;
+    }
+    let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
+    let bw = config.border_width.max(0.0);
+
+    // Use the node's bg_color (from <border><fill><color>) when available;
+    // otherwise fall back to computed shading from the config border color.
+    let fill_color = if let Some((r, g, b)) = node_style.bg_color {
+        [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]
+    } else {
+        [
+            (config.border_color[0] + 0.3).min(1.0),
+            (config.border_color[1] + 0.3).min(1.0),
+            (config.border_color[2] + 0.3).min(1.0),
+        ]
+    };
+    let border_color = node_style
+        .border_color
+        .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+        .unwrap_or([
+            fill_color[0] * 0.6,
+            fill_color[1] * 0.6,
+            fill_color[2] * 0.6,
+        ]);
+
+    write_ops(
+        ops,
+        format_args!(
+            "q\n{:.3} {:.3} {:.3} rg\n",
+            fill_color[0], fill_color[1], fill_color[2]
+        ),
+    );
+    emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+    ops.extend_from_slice(b"f\n");
+
+    write_ops(
+        ops,
+        format_args!(
+            "{:.3} {:.3} {:.3} RG\n{:.2} w\n",
+            border_color[0], border_color[1], border_color[2], bw
+        ),
+    );
+    emit_rect_path(ops, x, pdf_y, w, h, border_radius);
+    ops.extend_from_slice(b"S\n");
+
+    if !value.is_empty() {
+        let fs = if font_size > 0.0 {
+            font_size
+        } else {
+            config.default_font_size
+        };
+        let metrics = build_font_metrics(fs, font_family, node_style, config);
+        let font_ref = resolve_font_ref(&config.font_map, node_style, font_family);
+        let idh_metrics = lookup_font_metrics(node_style, config);
+        let text_w = metrics.measure_width(value);
+        let text_x = x + (w - text_w) / 2.0;
+        let v_offset = pdf_y + h / 2.0 - fs / 2.0;
+        let encoded = pdf_encode_text(value, idh_metrics);
+        let tc = node_style
+            .text_color
+            .map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+            .unwrap_or(config.text_color);
+        write_ops(
+            ops,
+            format_args!(
+                "BT\n{:.3} {:.3} {:.3} rg\n{} {:.1} Tf\n",
+                tc[0], tc[1], tc[2], font_ref, fs,
+            ),
+        );
+        emit_text_style_ops(node_style, ops);
+        write_ops(
+            ops,
+            format_args!("{:.2} {:.2} Td\n{} Tj\n", text_x, v_offset, encoded),
+        );
+        reset_text_style_ops(node_style, ops);
+        ops.extend_from_slice(b"ET\n");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_signature(
     x: f64,
     pdf_y: f64,
@@ -2907,6 +3016,16 @@ mod tests {
             !s.contains(" c\n"),
             "default button border radius should stay square: {s}"
         );
+    }
+
+    #[test]
+    fn button_with_caption_renders_even_when_value_is_empty() {
+        let style = FormNodeStyle {
+            caption_text: Some("Click".to_string()),
+            ..Default::default()
+        };
+        let s = styled_overlay_str(make_styled_button(10.0, 10.0, 100.0, 20.0, "", style));
+        assert!(s.contains("(Click) Tj"), "button caption should render as label: {s}");
     }
 
     #[test]
