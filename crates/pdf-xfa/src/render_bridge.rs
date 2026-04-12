@@ -268,57 +268,73 @@ fn render_nodes(
         let val_y_offset = inset_t + cap_dy;
         let val_pdf_y = mapper.xfa_to_pdf_y(abs_y + val_y_offset, val_h);
 
-        if !matches!(node.content, LayoutContent::Field { .. }) {
+        // #849: Adobe draws field borders at the element's OUTER bounds,
+        // not at the inset (inner) position.  Non-field content keeps the
+        // previous inner-rect / value-rect logic.
+        let is_field_content = matches!(node.content, LayoutContent::Field { .. });
+        {
             let border_radius = node.style.border_radius_pt.unwrap_or(0.0);
             let border_style = node.style.border_style.as_deref();
-            // Border/bg at inner rect (after margin insets), or at value
-            // area when a caption is present.
-            let (bx, by, bw, bh) = if node.style.caption_text.is_some() {
+            let (bx, by, bw, bh) = if is_field_content {
+                // Field: border at outer bounds.
+                (abs_x, pdf_y, w, h)
+            } else if node.style.caption_text.is_some() {
                 (val_x, val_pdf_y, val_w, val_h)
             } else {
                 let inner_pdf_y = mapper.xfa_to_pdf_y(abs_y + inset_t, inner_h);
                 (abs_x + inset_l, inner_pdf_y, inner_w, inner_h)
             };
-            if let Some(bg) = &node_config.background_color {
-                write_ops(
-                    ops,
-                    format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
-                );
-                emit_rect_path(ops, bx, by, bw, bh, border_radius);
-                ops.extend_from_slice(b"f\n");
+            // For Field content, background fills are drawn by render_field
+            // at the value rect to preserve correct caption-before-fill ordering
+            // for left/right captions.
+            if !is_field_content {
+                if let Some(bg) = &node_config.background_color {
+                    write_ops(
+                        ops,
+                        format_args!("{:.3} {:.3} {:.3} rg\n", bg[0], bg[1], bg[2]),
+                    );
+                    emit_rect_path(ops, bx, by, bw, bh, border_radius);
+                    ops.extend_from_slice(b"f\n");
+                }
             }
             if node_config.draw_borders && node_config.border_width > 0.0 && bw > 0.0 && bh > 0.0 {
                 let bwid = node_config.border_width;
-                let bc = node_config.border_color;
-                write_ops(
-                    ops,
-                    format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bwid, bc[0], bc[1], bc[2]),
-                );
-                let per_edge = node.style.border_colors.map(|cs| {
-                    cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
-                });
-                let per_edge_widths = node.style.border_widths.as_ref();
-                apply_border_dash(ops, border_style);
-                let edges = node.style.border_edges;
-                if per_edge.is_some() || per_edge_widths.is_some() {
-                    emit_individual_edges(
-                        ops,
-                        bx,
-                        by,
-                        bw,
-                        bh,
-                        &edges,
-                        per_edge.as_ref(),
-                        per_edge_widths,
-                        bwid,
-                    );
-                } else if edges[0] && edges[1] && edges[2] && edges[3] {
-                    emit_rect_path(ops, bx, by, bw, bh, border_radius);
-                    ops.extend_from_slice(b"S\n");
+                if is_field_content
+                    && matches!(border_style, Some("lowered") | Some("raised"))
+                {
+                    emit_3d_border(ops, bx, by, bw, bh, bwid, border_style);
                 } else {
-                    emit_individual_edges(ops, bx, by, bw, bh, &edges, None, None, bwid);
+                    let bc = node_config.border_color;
+                    write_ops(
+                        ops,
+                        format_args!("{:.2} w\n{:.3} {:.3} {:.3} RG\n", bwid, bc[0], bc[1], bc[2]),
+                    );
+                    let per_edge = node.style.border_colors.map(|cs| {
+                        cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
+                    });
+                    let per_edge_widths = node.style.border_widths.as_ref();
+                    apply_border_dash(ops, border_style);
+                    let edges = node.style.border_edges;
+                    if per_edge.is_some() || per_edge_widths.is_some() {
+                        emit_individual_edges(
+                            ops,
+                            bx,
+                            by,
+                            bw,
+                            bh,
+                            &edges,
+                            per_edge.as_ref(),
+                            per_edge_widths,
+                            bwid,
+                        );
+                    } else if edges[0] && edges[1] && edges[2] && edges[3] {
+                        emit_rect_path(ops, bx, by, bw, bh, border_radius);
+                        ops.extend_from_slice(b"S\n");
+                    } else {
+                        emit_individual_edges(ops, bx, by, bw, bh, &edges, None, None, bwid);
+                    }
+                    reset_border_dash(ops, border_style);
                 }
-                reset_border_dash(ops, border_style);
             }
         }
 
@@ -1138,12 +1154,10 @@ fn render_field(
     config: &XfaRenderConfig,
     ops: &mut Vec<u8>,
 ) {
+    // Borders are drawn by the main render loop at the element's outer
+    // bounds (#849).  Fill is drawn here at the value rect to preserve
+    // correct caption-before-fill ordering for left/right captions.
     let border_radius = node_style.border_radius_pt.unwrap_or(0.0);
-    let border_style = node_style.border_style.as_deref();
-
-    // fix(#809): flattening should only paint explicit template fills.
-    // The light-gray interactive widget default is a viewer affordance, not a
-    // flatten artifact in Adobe/pdfRest output.
     if let Some(bg) = config.background_color {
         write_ops(
             ops,
@@ -1151,47 +1165,6 @@ fn render_field(
         );
         emit_rect_path(ops, x, pdf_y, w, h, border_radius);
         ops.extend_from_slice(b"f\n");
-    }
-    if config.draw_borders && config.border_width > 0.0 {
-        if matches!(border_style, Some("lowered") | Some("raised")) {
-            emit_3d_border(ops, x, pdf_y, w, h, config.border_width, border_style);
-        } else {
-            write_ops(
-                ops,
-                format_args!(
-                    "{:.2} w\n{:.3} {:.3} {:.3} RG\n",
-                    config.border_width,
-                    config.border_color[0],
-                    config.border_color[1],
-                    config.border_color[2],
-                ),
-            );
-            let per_edge = node_style.border_colors.map(|cs| {
-                cs.map(|(r, g, b)| [r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0])
-            });
-            let per_edge_widths = node_style.border_widths.as_ref();
-            apply_border_dash(ops, border_style);
-            let edges = node_style.border_edges;
-            if per_edge.is_some() || per_edge_widths.is_some() {
-                emit_individual_edges(
-                    ops,
-                    x,
-                    pdf_y,
-                    w,
-                    h,
-                    &edges,
-                    per_edge.as_ref(),
-                    per_edge_widths,
-                    config.border_width,
-                );
-            } else if edges[0] && edges[1] && edges[2] && edges[3] {
-                emit_rect_path(ops, x, pdf_y, w, h, border_radius);
-                ops.extend_from_slice(b"S\n");
-            } else {
-                emit_individual_edges(ops, x, pdf_y, w, h, &edges, None, None, config.border_width);
-            }
-            reset_border_dash(ops, border_style);
-        }
     }
     if !value.is_empty() {
         let fs = if font_size > 0.0 {
