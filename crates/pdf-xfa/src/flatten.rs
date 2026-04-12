@@ -1925,6 +1925,12 @@ fn resolve_appearance_state(
                 return Some(id);
             }
         }
+        // When the selected state is "Off" but no "Off" appearance exists,
+        // the widget is deselected — don't fall back to a checked/on
+        // appearance which would incorrectly render as checked.
+        if state == b"Off" {
+            return None;
+        }
     }
 
     for fallback in [b"Yes".as_slice(), b"On".as_slice(), b"Off".as_slice()] {
@@ -3006,6 +3012,47 @@ ET
         assert!(
             content.contains("YES"),
             "flatten should choose the selected normal appearance state"
+        );
+    }
+
+    #[test]
+    fn widget_as_off_without_off_appearance_returns_none() {
+        // When /AS is "Off" but the Normal appearance dict has no "Off" key,
+        // resolve_widget_normal_appearance should return None instead of
+        // falling back to the checked appearance (fixes #829 radio button
+        // rendering).
+        let yes_stream = Object::Stream(Stream::new(
+            dictionary! {
+                "Type" => Object::Name(b"XObject".to_vec()),
+                "Subtype" => Object::Name(b"Form".to_vec()),
+                "BBox" => Object::Array(vec![
+                    Object::Integer(0), Object::Integer(0),
+                    Object::Integer(10), Object::Integer(10),
+                ]),
+            },
+            b"q 5 5 m 5 5 l S Q\n".to_vec(),
+        ));
+
+        let mut doc = Document::with_version("1.4");
+        // Normal appearance has only a "0" key (checked state), no "Off" key.
+        let state_id = doc.add_object(Object::Dictionary(dictionary! {
+            "0" => yes_stream,
+        }));
+        let annot = dictionary! {
+            "Subtype" => Object::Name(b"Widget".to_vec()),
+            "Rect" => Object::Array(vec![
+                Object::Integer(100), Object::Integer(700),
+                Object::Integer(110), Object::Integer(710),
+            ]),
+            "AP" => Object::Dictionary(dictionary! {
+                "N" => Object::Reference(state_id),
+            }),
+            "AS" => Object::Name(b"Off".to_vec()),
+            "FT" => Object::Name(b"Btn".to_vec()),
+        };
+        assert!(
+            resolve_widget_normal_appearance(&mut doc, &annot).is_none(),
+            "Off state with no Off appearance should return None"
         );
     }
 
