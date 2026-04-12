@@ -1631,6 +1631,8 @@ impl<'a> LayoutEngine<'a> {
         } else {
             0.0
         };
+        let parent_margin_x = node.box_model.margins.left;
+        let parent_margin_y = node.box_model.margins.top;
 
         let mut placed_children = Vec::new();
         let mut rest_children = Vec::new();
@@ -1639,13 +1641,18 @@ impl<'a> LayoutEngine<'a> {
         for &child_id in &sorted {
             let child = self.form.get(child_id);
             let child_size = self.compute_extent(child_id);
-            let shifted_y = child.box_model.y - y_base;
+            let shifted_y = child.box_model.y - y_base + parent_margin_y;
             let child_bottom = shifted_y + child_size.height;
 
             if child_bottom <= remaining_height + 1.0 {
                 // Child fits on this page -- place at shifted position.
-                let child_node =
-                    self.layout_single_node(child_id, child, child.box_model.x, shifted_y, None)?;
+                let child_node = self.layout_single_node(
+                    child_id,
+                    child,
+                    child.box_model.x + parent_margin_x,
+                    shifted_y,
+                    None,
+                )?;
                 max_placed_bottom = max_placed_bottom.max(child_bottom);
                 placed_children.push(child_node);
             } else {
@@ -1663,9 +1670,14 @@ impl<'a> LayoutEngine<'a> {
             let first_id = sorted[0];
             let first = self.form.get(first_id);
             let first_size = self.compute_extent(first_id);
-            let shifted_y = first.box_model.y - y_base;
-            let child_node =
-                self.layout_single_node(first_id, first, first.box_model.x, shifted_y, None)?;
+            let shifted_y = first.box_model.y - y_base + parent_margin_y;
+            let child_node = self.layout_single_node(
+                first_id,
+                first,
+                first.box_model.x + parent_margin_x,
+                shifted_y,
+                None,
+            )?;
             max_placed_bottom = shifted_y + first_size.height;
             placed_children.push(child_node);
             // Remove the force-placed child from rest.
@@ -2412,6 +2424,27 @@ impl<'a> LayoutEngine<'a> {
         } else {
             self.layout_children(node_children, child_available, node.layout)?
         };
+        let mut children = children;
+
+        if node.layout == LayoutStrategy::Positioned {
+            let dx = node.box_model.margins.left;
+            let mut dy = node.box_model.margins.top;
+            if let Some(override_children) = children_override {
+                if let Some(y_base) = override_children
+                    .iter()
+                    .map(|&cid| self.form.get(cid).box_model.y)
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                {
+                    dy -= y_base;
+                }
+            }
+            if dx != 0.0 || dy != 0.0 {
+                for child in &mut children {
+                    child.rect.x += dx;
+                    child.rect.y += dy;
+                }
+            }
+        }
 
         Ok(LayoutNode {
             form_node: id,
@@ -2846,6 +2879,93 @@ mod tests {
         assert_eq!(page.nodes[0].rect.y, 30.0);
         assert_eq!(page.nodes[1].rect.x, 10.0);
         assert_eq!(page.nodes[1].rect.y, 60.0);
+    }
+
+    #[test]
+    fn positioned_children_offset_by_parent_margins() {
+        use crate::types::Insets;
+
+        let mut tree = FormTree::new();
+        let child = tree.add_node(FormNode {
+            name: "Child".to_string(),
+            node_type: FormNodeType::Field {
+                value: "Child".to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(80.0),
+                height: Some(20.0),
+                x: 0.0,
+                y: 0.0,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let parent = tree.add_node(FormNode {
+            name: "Parent".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(100.0),
+                x: 50.0,
+                y: 40.0,
+                margins: Insets {
+                    top: 15.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 10.0,
+                },
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![child],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                width: Some(612.0),
+                height: Some(792.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![parent],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        let parent_node = &result.pages[0].nodes[0];
+        assert_eq!(parent_node.rect.x, 50.0);
+        assert_eq!(parent_node.rect.y, 40.0);
+        assert_eq!(parent_node.children[0].rect.x, 10.0);
+        assert_eq!(parent_node.children[0].rect.y, 15.0);
     }
 
     #[test]
@@ -4629,6 +4749,144 @@ mod tests {
             10,
             "All 10 fields should be placed across pages"
         );
+    }
+
+    #[test]
+    fn positioned_split_preserves_parent_margin_offset() {
+        use crate::types::Insets;
+
+        let mut tree = FormTree::new();
+
+        let first = tree.add_node(FormNode {
+            name: "First".to_string(),
+            node_type: FormNodeType::Field {
+                value: "First".to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(100.0),
+                height: Some(40.0),
+                x: 0.0,
+                y: 0.0,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+        let second = tree.add_node(FormNode {
+            name: "Second".to_string(),
+            node_type: FormNodeType::Field {
+                value: "Second".to_string(),
+            },
+            box_model: BoxModel {
+                width: Some(100.0),
+                height: Some(40.0),
+                x: 0.0,
+                y: 60.0,
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let positioned = tree.add_node(FormNode {
+            name: "PositionedBody".to_string(),
+            node_type: FormNodeType::Subform,
+            box_model: BoxModel {
+                width: Some(140.0),
+                margins: Insets {
+                    top: 10.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 8.0,
+                },
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![first, second],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let page_area = tree.add_node(FormNode {
+            name: "Page1".to_string(),
+            node_type: FormNodeType::PageArea {
+                content_areas: vec![ContentArea {
+                    name: "Body".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 200.0,
+                    height: 70.0,
+                    leader: None,
+                    trailer: None,
+                }],
+            },
+            box_model: BoxModel {
+                width: Some(200.0),
+                height: Some(70.0),
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::Positioned,
+            children: vec![],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let root = tree.add_node(FormNode {
+            name: "Root".to_string(),
+            node_type: FormNodeType::Root,
+            box_model: BoxModel {
+                max_width: f64::MAX,
+                max_height: f64::MAX,
+                ..Default::default()
+            },
+            layout: LayoutStrategy::TopToBottom,
+            children: vec![page_area, positioned],
+            occur: Occur::once(),
+            font: FontMetrics::default(),
+            calculate: None,
+            validate: None,
+            column_widths: vec![],
+            col_span: 1,
+        });
+
+        let engine = LayoutEngine::new(&tree);
+        let result = engine.layout(root).unwrap();
+
+        assert_eq!(result.pages.len(), 2);
+        assert_eq!(result.pages[0].nodes[0].children.len(), 1);
+        assert_eq!(result.pages[1].nodes[0].children.len(), 1);
+        assert_eq!(result.pages[0].nodes[0].children[0].rect.x, 8.0);
+        assert_eq!(result.pages[0].nodes[0].children[0].rect.y, 10.0);
+        assert_eq!(result.pages[1].nodes[0].children[0].rect.x, 8.0);
+        assert_eq!(result.pages[1].nodes[0].children[0].rect.y, 10.0);
     }
 
     #[test]
