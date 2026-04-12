@@ -116,11 +116,7 @@ fn parse_node(
         }
     };
 
-    let mut meta = parse_node_meta(elem);
-    meta.style.inset_top_pt = Some(node.box_model.margins.top);
-    meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
-    meta.style.inset_left_pt = Some(node.box_model.margins.left);
-    meta.style.inset_right_pt = Some(node.box_model.margins.right);
+    let meta = parse_node_meta(elem);
     Ok((tree.add_node_with_meta(node, meta), trailing_info))
 }
 
