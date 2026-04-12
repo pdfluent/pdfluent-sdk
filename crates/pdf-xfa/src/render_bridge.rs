@@ -1867,6 +1867,13 @@ fn render_button(
         reset_text_style_ops(node_style, ops);
         ops.extend_from_slice(b"ET\n");
     }
+    // Balance the `q` pushed at the top of this function. Without this the
+    // button leaves an extra graphics-state frame on the stack so the caller's
+    // outer `Q` (render_nodes) ends up popping this frame instead of the
+    // per-node clip frame. The button's clip region then leaks across sibling
+    // fields — see 053ecab3: every TextField rendered after the button ended
+    // up clipped to the empty intersection of its own rect and the button's.
+    ops.extend_from_slice(b"Q\n");
 }
 
 #[allow(clippy::too_many_arguments)]

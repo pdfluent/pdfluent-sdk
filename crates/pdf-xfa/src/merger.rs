@@ -2923,6 +2923,47 @@ mod tests {
     }
 
     #[test]
+    fn border_fill_direct_color_populates_button_bg_color() {
+        // Mirrors 053ecab3's E-Mail submit button: <border><fill><color value=...>
+        // without the <solid> wrapper. Parser must pick the color up so
+        // render_button() draws the yellow fill instead of the gray fallback.
+        let template = r#"<?xml version="1.0"?>
+<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+  <subform name="form" layout="tb">
+    <pageSet>
+      <pageArea name="Page1">
+        <contentArea w="595pt" h="842pt"/>
+        <medium short="595pt" long="842pt"/>
+      </pageArea>
+    </pageSet>
+    <field name="Btn" w="25.4mm" h="9.525mm">
+      <ui><button highlight="inverted"/></ui>
+      <caption><value><text>E-Mail</text></value></caption>
+      <border hand="right">
+        <edge stroke="raised"/>
+        <fill><color value="255,255,153"/></fill>
+      </border>
+    </field>
+  </subform>
+</template>"#;
+        let data_xml = r#"<?xml version="1.0"?>
+<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">
+  <xfa:data><form/></xfa:data>
+</xfa:datasets>"#;
+        let data_dom = DataDom::from_xml(data_xml).unwrap();
+        let merger = FormMerger::new(&data_dom);
+        let (tree, _root_id) = merger.merge(template).unwrap();
+        let btn_id = tree
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.name == "Btn")
+            .map(|(i, _)| FormNodeId(i))
+            .expect("button field must exist");
+        assert_eq!(tree.meta(btn_id).style.bg_color, Some((255, 255, 153)));
+    }
+
+    #[test]
     fn rich_text_exdata_captions_are_collapsed_to_plain_text() {
         let template = r#"<?xml version="1.0"?>
 <template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
