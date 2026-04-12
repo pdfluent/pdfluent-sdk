@@ -411,13 +411,44 @@ fn normalize_font_name(name: &str) -> String {
         name
     };
 
-    // Strip PostScript suffixes
+    // Strip PostScript suffixes. These can appear on the full name
+    // ("ArialMT") as well as on variant names ("Arial-BoldMT"), so we
+    // also strip a trailing "MT" that sits directly after a Bold/Italic
+    // marker — e.g. "-BoldMT" → "-Bold", "-BoldItalicMT" → "-BoldItalic".
     let stripped = stripped
         .strip_suffix("PSMT")
         .or_else(|| stripped.strip_suffix("MT"))
         .unwrap_or(stripped);
 
     stripped.to_lowercase()
+}
+
+/// Aggressive canonical key used for /Widths matching.
+///
+/// The `/Widths` table in a PDF may be registered under many spellings for
+/// the same logical font: `Arial-Bold`, `Arial,Bold`, `Arial Bold`,
+/// `ArialBold`, `Arial-BoldMT`, `ABCDEF+Arial-Bold`. All of these should
+/// map to a single lookup key so that an XFA font spec resolves the same
+/// widths regardless of the separator convention used by the producer.
+///
+/// The canonical form strips:
+/// * the subset prefix (`ABCDEF+`)
+/// * the trailing `PSMT`/`MT` markers
+/// * every non-alphanumeric character (`-`, `,`, space, `_`, `.`)
+///
+/// and lowercases the rest. Empty strings map to `None` so callers can
+/// skip the lookup safely.
+fn canonical_font_key(name: &str) -> Option<String> {
+    let normalized = normalize_font_name(name);
+    let canonical: String = normalized
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if canonical.is_empty() {
+        None
+    } else {
+        Some(canonical)
+    }
 }
 
 /// Return alias list for common font family names.
@@ -807,6 +838,7 @@ impl XfaFontResolver {
             return font;
         }
 
+        let mut matched = false;
         for name in variant_names
             .iter()
             .map(String::as_str)
@@ -822,8 +854,30 @@ impl XfaFontResolver {
                 if font.pdf_source_font.is_none() {
                     font.pdf_source_font = width_data.source_font;
                 }
+                matched = true;
                 break;
             }
+        }
+
+        // When no /Widths are attached but the PDF does ship width tables,
+        // the font will silently fall back to AFM metrics and wrap text at
+        // the wrong offsets. Surface these misses behind an env flag so
+        // diagnostic runs can see which XFA fonts failed to bind.
+        if !matched
+            && font.pdf_widths.is_none()
+            && !self.embedded_pdf_widths.is_empty()
+            && std::env::var("XFA_FONT_BRIDGE_DEBUG").is_ok()
+        {
+            eprintln!(
+                "attach_pdf_widths: no /Widths match for typeface '{}' (resolved='{}', variants={:?}); available keys (first 20): {:?}",
+                spec.typeface,
+                font.name,
+                variant_names,
+                self.embedded_pdf_widths
+                    .keys()
+                    .take(20)
+                    .collect::<Vec<_>>(),
+            );
         }
 
         font
@@ -847,12 +901,19 @@ fn remember_pdf_widths(
 
     let normalized = normalize_font_name(name);
     if normalized != lower {
-        widths_map.insert(normalized, record.clone());
+        widths_map.insert(normalized.clone(), record.clone());
     }
 
     let no_spaces = lower.replace(' ', "");
     if no_spaces != lower {
-        widths_map.insert(no_spaces, record);
+        widths_map.insert(no_spaces, record.clone());
+    }
+
+    // Canonical form (no separators, no MT/PSMT, no subset prefix) — lets
+    // "Arial-BoldMT", "Arial,Bold", "Arial Bold" etc. collapse to the same
+    // key so variants with different separator conventions all resolve.
+    if let Some(canonical) = canonical_font_key(name) {
+        widths_map.entry(canonical).or_insert(record);
     }
 }
 
@@ -861,14 +922,39 @@ fn lookup_pdf_widths(
     name: &str,
 ) -> Option<PdfWidthData> {
     let lower = name.to_lowercase();
-    widths_map
-        .get(&lower)
-        .cloned()
-        .or_else(|| widths_map.get(&normalize_font_name(name)).cloned())
-        .or_else(|| {
-            let no_spaces = lower.replace(' ', "");
-            widths_map.get(&no_spaces).cloned()
-        })
+    if let Some(hit) = widths_map.get(&lower) {
+        return Some(hit.clone());
+    }
+    let normalized = normalize_font_name(name);
+    if let Some(hit) = widths_map.get(&normalized) {
+        return Some(hit.clone());
+    }
+    let no_spaces = lower.replace(' ', "");
+    if let Some(hit) = widths_map.get(&no_spaces) {
+        return Some(hit.clone());
+    }
+    // Canonical key fallback handles separator mismatches ("Arial-BoldMT"
+    // vs "Arial,Bold") and subset prefixes ("ABCDEF+Arial-Bold").
+    if let Some(canonical) = canonical_font_key(name) {
+        if let Some(hit) = widths_map.get(&canonical) {
+            return Some(hit.clone());
+        }
+        // Last-resort substring match on canonical keys in both directions.
+        // Prefer the longest matching stored key so "arialbold" wins over
+        // "arial" when both are present.
+        let mut best: Option<(&String, &PdfWidthData)> = None;
+        for (key, data) in widths_map {
+            if (key.contains(&canonical) || canonical.contains(key.as_str()))
+                && best.is_none_or(|(b, _)| key.len() > b.len())
+            {
+                best = Some((key, data));
+            }
+        }
+        if let Some((_, data)) = best {
+            return Some(data.clone());
+        }
+    }
+    None
 }
 
 /// Build variant-specific font names for bold/italic lookup.
@@ -1476,6 +1562,93 @@ mod tests {
                 base_encoding: PdfBaseEncoding::WinAnsi,
                 differences: vec![(32, 0x0020)],
             })
+        );
+    }
+
+    #[test]
+    fn canonical_font_key_collapses_variant_separators() {
+        let keys: Vec<_> = ["Arial-Bold", "Arial,Bold", "Arial Bold", "ArialBold"]
+            .iter()
+            .map(|n| canonical_font_key(n).unwrap())
+            .collect();
+        // All four spellings must map to the same canonical key.
+        assert!(keys.iter().all(|k| k == "arialbold"), "got {:?}", keys);
+    }
+
+    #[test]
+    fn canonical_font_key_strips_mt_and_subset_prefix() {
+        assert_eq!(
+            canonical_font_key("Arial-BoldMT").as_deref(),
+            Some("arialbold")
+        );
+        assert_eq!(
+            canonical_font_key("ABCDEF+Arial-Bold").as_deref(),
+            Some("arialbold")
+        );
+        assert_eq!(
+            canonical_font_key("TimesNewRomanPSMT").as_deref(),
+            Some("timesnewroman")
+        );
+        assert_eq!(canonical_font_key("").as_deref(), None);
+        assert_eq!(canonical_font_key("-,_").as_deref(), None);
+    }
+
+    #[test]
+    fn lookup_pdf_widths_matches_across_separator_variants() {
+        let mut map = HashMap::new();
+        let widths = (32_u16, vec![278_u16, 333, 611]);
+        // Producer registered widths under "Arial,Bold".
+        remember_pdf_widths(&mut map, "Arial,Bold", &widths, None, None);
+
+        // Every common spelling of the same logical font should hit:
+        for probe in &[
+            "Arial,Bold",
+            "Arial-Bold",
+            "ArialBold",
+            "Arial Bold",
+            "Arial-BoldMT",
+            "ABCDEF+Arial-Bold",
+        ] {
+            assert!(
+                lookup_pdf_widths(&map, probe).is_some(),
+                "lookup should resolve '{probe}' via the canonical key"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_pdf_widths_substring_fallback() {
+        let mut map = HashMap::new();
+        let widths = (32_u16, vec![500_u16; 3]);
+        // Producer only stored the plain family name.
+        remember_pdf_widths(&mut map, "Helvetica", &widths, None, None);
+
+        // A more specific request should still find the family as a last resort.
+        assert!(lookup_pdf_widths(&map, "HelveticaNeue").is_some());
+    }
+
+    #[test]
+    fn attach_pdf_widths_binds_arial_bold_mt_across_separator_variants() {
+        // Producer registered widths under "Arial,Bold"; XFA asks for
+        // "Arial-BoldMT" (a different but equivalent spelling). Before the
+        // canonical-key fix this dropped the /Widths and fell back to AFM.
+        let widths = (32_u16, vec![278_u16, 333, 611]);
+        let embedded = vec![EmbeddedFontData {
+            name: "Arial,Bold".to_string(),
+            data: Vec::new(),
+            pdf_widths: Some(widths.clone()),
+            pdf_encoding: None,
+            pdf_source_font: Some(PdfSourceFont { object_id: (7, 0) }),
+        }];
+        let mut resolver = XfaFontResolver::new(embedded);
+        let spec = XfaFontSpec::from_xfa_attrs("Arial-BoldMT", Some("bold"), None, None, None);
+        let resolved = resolver
+            .resolve(&spec)
+            .expect("resolver should bind /Widths for the variant spelling");
+        assert_eq!(resolved.pdf_widths, Some(widths));
+        assert_eq!(
+            resolved.pdf_source_font,
+            Some(PdfSourceFont { object_id: (7, 0) })
         );
     }
 
