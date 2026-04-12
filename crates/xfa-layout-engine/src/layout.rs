@@ -40,6 +40,8 @@ use crate::types::{LayoutStrategy, Rect, Size, TextAlign};
 ///   one of them, return the corresponding display-item.
 /// - **NumericEdit**: strip unnecessary trailing zeros from float strings
 ///   (e.g. "1.00000000" → "1", "3.50" → "3.5").
+/// - **DateTimePicker**: if the raw value starts with an ISO date prefix,
+///   collapse it to `YYYY-MM-DD`.
 /// - Otherwise return the value as-is.
 fn resolve_display_value<'a>(value: &'a str, meta: &'a FormNodeMeta) -> std::borrow::Cow<'a, str> {
     if value.is_empty() {
@@ -64,7 +66,27 @@ fn resolve_display_value<'a>(value: &'a str, meta: &'a FormNodeMeta) -> std::bor
             return std::borrow::Cow::Owned(formatted);
         }
     }
+    if meta.field_kind == FieldKind::DateTimePicker {
+        if let Some(date) = extract_iso_date_prefix(value) {
+            return std::borrow::Cow::Owned(date.to_string());
+        }
+    }
     std::borrow::Cow::Borrowed(value)
+}
+
+fn extract_iso_date_prefix(value: &str) -> Option<&str> {
+    let prefix = value.get(0..10)?;
+    let bytes = prefix.as_bytes();
+    if bytes.len() != 10
+        || !bytes[0..4].iter().all(u8::is_ascii_digit)
+        || bytes[4] != b'-'
+        || !bytes[5..7].iter().all(u8::is_ascii_digit)
+        || bytes[7] != b'-'
+        || !bytes[8..10].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    Some(prefix)
 }
 
 /// A unique identifier for a layout node.
@@ -6122,6 +6144,26 @@ mod tests {
         assert_eq!(resolve_display_value("0.12345", &meta), "0.12345");
         assert_eq!(resolve_display_value("42", &meta), "42");
         // Non-numeric value passes through
+        assert_eq!(resolve_display_value("abc", &meta), "abc");
+        assert_eq!(resolve_display_value("", &meta), "");
+    }
+
+    #[test]
+    fn resolve_display_value_date_time_picker_uses_iso_date_prefix() {
+        let mut meta = FormNodeMeta::default();
+        meta.field_kind = FieldKind::DateTimePicker;
+
+        assert_eq!(resolve_display_value("2026-04-12", &meta), "2026-04-12");
+        assert_eq!(
+            resolve_display_value("2026-04-12T13:45:00Z", &meta),
+            "2026-04-12"
+        );
+        assert_eq!(
+            resolve_display_value("2026-04-12T13:45:00+02:00", &meta),
+            "2026-04-12"
+        );
+        // Non-ISO values pass through unchanged until picture clauses exist.
+        assert_eq!(resolve_display_value("12/04/2026", &meta), "12/04/2026");
         assert_eq!(resolve_display_value("abc", &meta), "abc");
         assert_eq!(resolve_display_value("", &meta), "");
     }
