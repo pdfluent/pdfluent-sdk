@@ -118,12 +118,12 @@ fn parse_node(
 
     let mut meta = parse_node_meta(elem);
     // Only fields need their <margin ...Inset> values forwarded to
-    // style.inset_*_pt — the renderer uses insets to position value text
-    // inside the field (#849). Borders are drawn at the element's OUTER
-    // bounds (matching Adobe), not at the inset position. Draws and
-    // subforms are skipped: draws' decorative insets cause misalignment
-    // with pre-rendered backdrops, and subforms are already handled by
-    // the layout engine via content_width()/content_height().
+    // style.inset_*_pt — the renderer uses that to offset the value and
+    // shrink the border/bg to the inner rect. Draws are skipped because
+    // their decorative insets in background-image forms (see 49f8705c)
+    // cause visible misalignment with the pre-rendered backdrop; subforms
+    // are skipped to avoid the double-application the layout engine
+    // already handles via content_width()/content_height() subtraction.
     if tag == "field" {
         meta.style.inset_top_pt = Some(node.box_model.margins.top);
         meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
