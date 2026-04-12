@@ -140,11 +140,14 @@ impl<'a> FormMerger<'a> {
         let is_draw_or_field = tag == "draw" || tag == "field";
         if is_draw_or_field {
             // Fields get their <margin topInset/...> bridged to style.inset_*_pt
-            // so the renderer positions value text inside the field (#849).
-            // Borders are drawn at the element's OUTER bounds (like Adobe),
-            // not at the inset position. Draws skip this bridge: their
-            // decorative insets in background-image forms (e.g. 49f8705c)
-            // cause visible misalignment with the pre-rendered backdrop.
+            // so the renderer offsets the value and shrinks the border/bg to
+            // the inner rect (render_bridge.rs:238-280). Draws skip this bridge:
+            // draws in complex background-image forms (e.g. VA Form 10-2478,
+            // 49f8705c) carry decorative insets that visually misalign with the
+            // pre-rendered form backdrop when shifted inward. Keeping the
+            // transfer only for fields preserves the #841 field-padding fix
+            // without re-introducing the −0.18 regression on 49f8705c that
+            // c24798f7a originally set out to fix.
             if tag == "field" {
                 meta.style.inset_top_pt = Some(node.box_model.margins.top);
                 meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
