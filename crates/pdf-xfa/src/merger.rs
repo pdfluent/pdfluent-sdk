@@ -139,6 +139,22 @@ impl<'a> FormMerger<'a> {
         let mut meta = parse_node_meta(elem);
         let is_draw_or_field = tag == "draw" || tag == "field";
         if is_draw_or_field {
+            // Fields and draws are layout leaves — their <margin topInset/
+            // leftInset/...> values position the VALUE inside the field's
+            // border (render_bridge.rs uses inset_*_pt to offset val_x/val_y
+            // and to shrink the border/bg rect). The parent revert in
+            // c24798f7a removed this transfer for every node to stop
+            // double-application when subforms passed margins through the
+            // renderer's child-origin offset (render_bridge.rs:594) as well
+            // as through the layout engine's content_width() subtraction.
+            // Leaves don't lay out children through that path, so it is
+            // safe — and necessary — to keep the margin→inset bridge here.
+            // Without it, fields with explicit insets lose their internal
+            // 1mm/2mm padding and text renders flush against the border.
+            meta.style.inset_top_pt = Some(node.box_model.margins.top);
+            meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
+            meta.style.inset_left_pt = Some(node.box_model.margins.left);
+            meta.style.inset_right_pt = Some(node.box_model.margins.right);
             if meta.style.font_weight.is_none() {
                 if let Some(weight) = extract_exdata_font_weight(elem) {
                     meta.style.font_weight = Some(weight);

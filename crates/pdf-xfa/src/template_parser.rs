@@ -116,7 +116,19 @@ fn parse_node(
         }
     };
 
-    let meta = parse_node_meta(elem);
+    let mut meta = parse_node_meta(elem);
+    // Leaves (field/draw) need their explicit <margin ...Inset> values
+    // forwarded to style.inset_*_pt so the renderer offsets the value and
+    // shrinks the border/bg to the inner rect. Subform containers skip
+    // this transfer because the layout engine already subtracts margins
+    // from child content area, and re-applying them in the renderer's
+    // child-origin offset would double-apply.
+    if tag == "field" || tag == "draw" {
+        meta.style.inset_top_pt = Some(node.box_model.margins.top);
+        meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
+        meta.style.inset_left_pt = Some(node.box_model.margins.left);
+        meta.style.inset_right_pt = Some(node.box_model.margins.right);
+    }
     Ok((tree.add_node_with_meta(node, meta), trailing_info))
 }
 
