@@ -721,6 +721,36 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         }
     }
 
+    // Parse <value><rectangle><edge><color> for draw rectangle border color.
+    // XFA rectangle elements define their stroke color on <edge> children
+    // inside the <value> container, NOT inside <border>.
+    if style.border_color.is_none() {
+        if let Some(value) = find_first_child_by_name(elem, "value") {
+            if let Some(rect) = find_first_child_by_name(value, "rectangle") {
+                let edges: Vec<_> = rect
+                    .children()
+                    .filter(|c| c.is_element() && c.tag_name().name() == "edge")
+                    .collect();
+                if let Some(edge) = edges.first() {
+                    if let Some(color) = find_first_child_by_name(*edge, "color") {
+                        if let Some(rgb) = parse_xfa_color(color) {
+                            style.border_color = Some(rgb);
+                        }
+                    }
+                    if style.border_width_pt.is_none() {
+                        let thickness = attr(*edge, "thickness")
+                            .and_then(Measurement::parse)
+                            .map(|m| m.to_points())
+                            .unwrap_or(1.0);
+                        if thickness > 0.0 {
+                            style.border_width_pt = Some(thickness);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Parse <font typeface="..." size="..." weight="..."> for font properties.
     // XFA Spec 3.3 §28.1 — Adobe Non-conformance:
     //   - font-weight: numeric values (100-900) ignored, only "bold"/"normal" (p1229)
