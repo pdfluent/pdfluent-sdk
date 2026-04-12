@@ -117,13 +117,14 @@ fn parse_node(
     };
 
     let mut meta = parse_node_meta(elem);
-    // Leaves (field/draw) need their explicit <margin ...Inset> values
-    // forwarded to style.inset_*_pt so the renderer offsets the value and
-    // shrinks the border/bg to the inner rect. Subform containers skip
-    // this transfer because the layout engine already subtracts margins
-    // from child content area, and re-applying them in the renderer's
-    // child-origin offset would double-apply.
-    if tag == "field" || tag == "draw" {
+    // Only fields need their <margin ...Inset> values forwarded to
+    // style.inset_*_pt — the renderer uses that to offset the value and
+    // shrink the border/bg to the inner rect. Draws are skipped because
+    // their decorative insets in background-image forms (see 49f8705c)
+    // cause visible misalignment with the pre-rendered backdrop; subforms
+    // are skipped to avoid the double-application the layout engine
+    // already handles via content_width()/content_height() subtraction.
+    if tag == "field" {
         meta.style.inset_top_pt = Some(node.box_model.margins.top);
         meta.style.inset_bottom_pt = Some(node.box_model.margins.bottom);
         meta.style.inset_left_pt = Some(node.box_model.margins.left);
