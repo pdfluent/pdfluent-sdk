@@ -845,6 +845,18 @@ fn parse_node_style(elem: Node<'_, '_>) -> FormNodeStyle {
         }
     }
 
+    // Parse <format><picture> for numeric/date/time formatting patterns.
+    if let Some(format) = find_first_child_by_name(elem, "format") {
+        if let Some(picture) = find_first_child_by_name(format, "picture") {
+            if let Some(text) = picture.text() {
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    style.format_pattern = Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+
     style
 }
 

@@ -444,18 +444,24 @@ fn render_nodes(
                         &node_config,
                         ops,
                     ),
-                    _ => render_field(
-                        val_x,
-                        val_pdf_y,
-                        val_w,
-                        val_h,
-                        value,
-                        *font_size,
-                        *font_family,
-                        &node.style,
-                        &node_config,
-                        ops,
-                    ),
+                    _ => {
+                        let display_val = crate::appearance_bridge::format_value(
+                            value,
+                            node.style.format_pattern.as_deref(),
+                        );
+                        render_field(
+                            val_x,
+                            val_pdf_y,
+                            val_w,
+                            val_h,
+                            &display_val,
+                            *font_size,
+                            *font_family,
+                            &node.style,
+                            &node_config,
+                            ops,
+                        )
+                    }
                 }
 
                 if node.style.caption_text.is_some()

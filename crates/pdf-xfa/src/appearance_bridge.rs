@@ -346,23 +346,144 @@ pub fn checkbox_appearance(checked: bool, width: f64, height: f64) -> Appearance
 }
 
 /// Apply XFA formatting patterns to a value.
+///
+/// Supports `num{...}` patterns per XFA Spec 3.3 §17.6:
+/// - `z` = digit, suppress leading zeros
+/// - `9` = digit, show leading zeros
+/// - `.` = decimal separator
+/// - `,` = grouping separator
+/// - Literal text is passed through
 pub fn format_value(value: &str, pattern: Option<&str>) -> String {
     let Some(pattern) = pattern else {
         return value.to_string();
     };
     if pattern.starts_with("num{") && pattern.ends_with('}') {
+        let inner = &pattern[4..pattern.len() - 1];
         if let Ok(num) = value.parse::<f64>() {
-            if num == num.floor() {
-                format!("{}", num as i64)
-            } else {
-                format!("{:.2}", num)
-            }
+            format_numeric(num, inner)
         } else {
             value.to_string()
         }
     } else {
         value.to_string()
     }
+}
+
+/// Format a number according to an XFA numeric picture pattern.
+fn format_numeric(num: f64, pattern: &str) -> String {
+    let is_negative = num < 0.0;
+    let abs_num = num.abs();
+
+    // Split pattern on decimal point
+    let (int_pat, dec_pat) = match pattern.find('.') {
+        Some(pos) => (&pattern[..pos], Some(&pattern[pos + 1..])),
+        None => (pattern, None),
+    };
+
+    // Determine decimal places from pattern
+    let decimal_places = dec_pat
+        .map(|d| d.chars().filter(|c| *c == '9' || *c == 'z').count())
+        .unwrap_or(0);
+
+    // Round the number to the required decimal places
+    let factor = 10f64.powi(decimal_places as i32);
+    let rounded = (abs_num * factor).round() / factor;
+
+    // Split number into integer and fractional parts
+    let int_part = rounded.trunc() as u64;
+    let frac_part = ((rounded - rounded.trunc()) * factor).round() as u64;
+
+    // Format integer part: get raw digits
+    let int_str = int_part.to_string();
+
+    // Collect digit positions from pattern
+    let pat_digit_slots: Vec<char> = int_pat.chars().filter(|c| *c == 'z' || *c == '9').collect();
+    let num_slots = pat_digit_slots.len();
+
+    // Right-align digits into slots
+    let padded_len = num_slots.max(int_str.len());
+    let mut digits = vec![0u8; padded_len];
+    for (i, b) in int_str.bytes().rev().enumerate() {
+        digits[padded_len - 1 - i] = b - b'0';
+    }
+
+    // Build output by walking the pattern left-to-right
+    let mut int_result = String::new();
+    let mut seen_significant = false;
+
+    // First emit any extra digits that overflow the pattern
+    for d in digits.iter().take(padded_len.saturating_sub(num_slots)) {
+        int_result.push((b'0' + d) as char);
+        seen_significant = true;
+    }
+
+    let mut di = padded_len.saturating_sub(num_slots);
+    for ch in int_pat.chars() {
+        match ch {
+            'z' => {
+                let d = digits[di];
+                di += 1;
+                if d != 0 || seen_significant {
+                    int_result.push((b'0' + d) as char);
+                    seen_significant = true;
+                }
+            }
+            '9' => {
+                let d = digits[di];
+                di += 1;
+                int_result.push((b'0' + d) as char);
+                seen_significant = true;
+            }
+            ',' => {
+                // Only emit comma if we have seen significant digits
+                // and there are more digits to come
+                if seen_significant {
+                    int_result.push(',');
+                }
+            }
+            _ => int_result.push(ch),
+        }
+    }
+
+    // Format decimal part
+    let result_dec = if let Some(dp) = dec_pat {
+        let frac_str = format!("{:0>width$}", frac_part, width = decimal_places);
+        let frac_bytes: Vec<u8> = frac_str.bytes().map(|b| b - b'0').collect();
+        let mut dec_result = String::new();
+        let mut fi = 0;
+        for ch in dp.chars() {
+            match ch {
+                '9' | 'z' => {
+                    if fi < frac_bytes.len() {
+                        dec_result.push((b'0' + frac_bytes[fi]) as char);
+                        fi += 1;
+                    } else {
+                        dec_result.push('0');
+                    }
+                }
+                _ => dec_result.push(ch),
+            }
+        }
+        Some(dec_result)
+    } else {
+        None
+    };
+
+    // Assemble final result
+    let mut result = String::new();
+    if is_negative {
+        result.push('-');
+    }
+    if int_result.is_empty() {
+        result.push('0');
+    } else {
+        result.push_str(&int_result);
+    }
+    if let Some(dec) = result_dec {
+        result.push('.');
+        result.push_str(&dec);
+    }
+    result
 }
 
 fn pdf_escape(s: &str) -> String {
@@ -428,6 +549,21 @@ mod tests {
     fn format_value_numeric() {
         assert_eq!(format_value("42.5", Some("num{zzz.99}")), "42.50");
         assert_eq!(format_value("hello", None), "hello");
+        // Integer formatting: suppress trailing decimals
+        assert_eq!(format_value("1.00000000", Some("num{z,zzz}")), "1");
+        assert_eq!(format_value("2.00000000", Some("num{z,zzz}")), "2");
+        assert_eq!(format_value("1234", Some("num{z,zzz}")), "1,234");
+        assert_eq!(format_value("0", Some("num{z,zzz}")), "0");
+        // Decimal formatting
+        assert_eq!(format_value("3.14159", Some("num{z.99}")), "3.14");
+        assert_eq!(format_value("0.5", Some("num{z.99}")), "0.50");
+        // Leading-zero patterns
+        assert_eq!(format_value("5", Some("num{999}")), "005");
+        assert_eq!(format_value("42", Some("num{999}")), "042");
+        // Negative
+        assert_eq!(format_value("-7.5", Some("num{z.99}")), "-7.50");
+        // Non-numeric value with num pattern
+        assert_eq!(format_value("abc", Some("num{z,zzz}")), "abc");
     }
 
     #[test]
