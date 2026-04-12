@@ -445,10 +445,16 @@ fn render_nodes(
                         ops,
                     ),
                     _ => {
-                        let display_val = crate::appearance_bridge::format_value(
-                            value,
-                            node.style.format_pattern.as_deref(),
-                        );
+                        let display_val = if node.style.format_pattern.is_some() {
+                            crate::appearance_bridge::format_value(
+                                value,
+                                node.style.format_pattern.as_deref(),
+                            )
+                        } else if matches!(field_kind, FieldKind::NumericEdit) {
+                            crate::appearance_bridge::format_numeric_default(value)
+                        } else {
+                            value.to_string()
+                        };
                         render_field(
                             val_x,
                             val_pdf_y,
