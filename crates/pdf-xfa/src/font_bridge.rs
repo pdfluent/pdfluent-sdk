@@ -709,7 +709,21 @@ impl XfaFontResolver {
             .ok_or_else(|| {
                 XfaError::FontError(format!("cannot resolve font: {}", spec.typeface))
             })?;
-        let font = self.attach_pdf_widths(font, spec, &variant_names);
+        let mut font = self.attach_pdf_widths(font, spec, &variant_names);
+        // #858: When a PDF-only font (from AcroForm /DR) has no embedded data,
+        // the Identity-H encoding path is unavailable and non-WinAnsi characters
+        // (e.g. Polish ł,ś,ć) become '?'. Augment with system font data so
+        // embed_font_in_pdf can create a Type0/Identity-H font.
+        if font.data.is_empty() && font.pdf_source_font.is_some() {
+            let sys = self
+                .try_system(&font.name)
+                .or_else(|| self.try_system(&spec.typeface))
+                .or_else(|| self.try_aliases(&spec.typeface));
+            if let Some(sys_font) = sys {
+                font.data = sys_font.data;
+                font.face_index = sys_font.face_index;
+            }
+        }
         self.cache.insert(cache_key, font.clone());
         Ok(font)
     }
