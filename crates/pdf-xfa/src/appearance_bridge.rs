@@ -369,6 +369,25 @@ pub fn format_value(value: &str, pattern: Option<&str>) -> String {
     }
 }
 
+/// Default formatting for `numericEdit` fields without an explicit
+/// `<format><picture>` pattern.  Strips trailing fractional zeros so
+/// that data values like `"3.00000000"` display as `"3"` and
+/// `"1.50"` displays as `"1.5"`.
+pub fn format_numeric_default(value: &str) -> String {
+    let trimmed = value.trim();
+    let Ok(num) = trimmed.parse::<f64>() else {
+        return value.to_string();
+    };
+    if num.fract() == 0.0 {
+        // Integer — drop all decimals
+        format!("{}", num as i64)
+    } else {
+        // Has meaningful decimals — strip trailing zeros
+        let s = format!("{}", num);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
 /// Format a number according to an XFA numeric picture pattern.
 fn format_numeric(num: f64, pattern: &str) -> String {
     let is_negative = num < 0.0;
