@@ -68,7 +68,7 @@ use crate::render_bridge::{
     generate_all_overlays, unicode_to_winansi, FontMetricsData, PageOverlay, XfaRenderConfig,
 };
 use xfa_dom_resolver::data_dom::DataDom;
-use xfa_layout_engine::form::{DrawContent, FormNodeStyle};
+use xfa_layout_engine::form::{DrawContent, FormNodeId, FormNodeStyle, FormTree};
 use xfa_layout_engine::layout::{LayoutContent, LayoutDom, LayoutEngine, LayoutNode};
 
 fn create_minimal_pdf_document() -> Document {
@@ -196,12 +196,14 @@ pub fn flatten_xfa_to_pdf(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     let pdf_bytes_ref = pdf_bytes.to_vec();
     let template_xml_owned = template_xml.clone();
     let datasets_xml_owned = packets.datasets().map(strip_undefined_xml_entities);
+    let form_xml_owned = packets.get_packet("form").map(|s| s.to_string());
 
     let handle = thread::spawn(move || {
         xfa_flatten_inner(
             &pdf_bytes_ref,
             &template_xml_owned,
             datasets_xml_owned.as_deref(),
+            form_xml_owned.as_deref(),
         )
     });
 
@@ -223,6 +225,7 @@ fn xfa_flatten_inner(
     pdf_bytes: &[u8],
     template_xml: &str,
     datasets_xml: Option<&str>,
+    form_xml: Option<&str>,
 ) -> Result<Vec<u8>> {
     use crate::dynamic::apply_dynamic_scripts;
 
@@ -239,6 +242,15 @@ fn xfa_flatten_inner(
         .map_err(|e| XfaError::ParseFailed(format!("template merge: {e}")))?;
 
     let _ = apply_dynamic_scripts(&mut tree, root_id);
+
+    // XFA §3: when the PDF contains a pre-merged form DOM (saved by Adobe's
+    // runtime after scripts executed), use its presence attributes to override
+    // the template-based defaults. This captures script-driven visibility
+    // changes (e.g. Avoka framework's sfcUtils.updateVisibility) that our
+    // FormCalc interpreter cannot execute.
+    if let Some(fxml) = form_xml {
+        apply_form_dom_presence(&mut tree, root_id, fxml);
+    }
 
     // Temporary tree dump for debugging
     fn dump_tree(
@@ -1412,8 +1424,92 @@ fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Detect corrupt or minimal XFA templates that cannot produce useful output.
+/// Apply presence overrides from the XFA form DOM packet.
 ///
+/// When an XFA PDF has been opened and saved by Adobe Reader, the form DOM
+/// captures the runtime state of all nodes after scripts executed. We walk
+/// the form DOM and the FormTree in parallel (matching by subform/field name)
+/// to transfer `presence="hidden"` attributes that our script interpreter
+/// could not compute (e.g. Avoka framework's `sfcUtils.updateVisibility`).
+fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &str) {
+    use xfa_layout_engine::form::Presence;
+
+    let Ok(doc) = roxmltree::Document::parse(form_xml) else {
+        return;
+    };
+
+    // Build a map from (parent_form_node_id, child_name) → FormNodeId
+    // for efficient lookup during the parallel walk.
+    fn apply_recursive(
+        tree: &mut FormTree,
+        form_node_id: FormNodeId,
+        xml_node: roxmltree::Node<'_, '_>,
+    ) {
+        let xml_tag = xml_node.tag_name().name();
+        if xml_tag != "subform" && xml_tag != "field" && xml_tag != "form" {
+            return;
+        }
+
+        // Apply presence override from the form DOM to the FormTree node.
+        // Only override when the form DOM says "hidden" — this captures
+        // script-driven hide operations without reverting template-level
+        // visibility defaults for the vast majority of nodes.
+        if xml_tag == "subform" || xml_tag == "field" {
+            if let Some(pres) = xml_node.attribute("presence") {
+                if pres == "hidden" {
+                    tree.meta_mut(form_node_id).presence = Presence::Hidden;
+                }
+            }
+        }
+
+        // Match children: walk XML children and find corresponding FormTree children by name.
+        // Form DOM has instanceManager nodes interspersed; skip those.
+        let form_children = tree.get(form_node_id).children.clone();
+        let xml_children: Vec<roxmltree::Node<'_, '_>> = xml_node
+            .children()
+            .filter(|c| {
+                c.is_element()
+                    && (c.tag_name().name() == "subform" || c.tag_name().name() == "field")
+            })
+            .collect();
+
+        // Greedy name-based matching: for each XML child, find the first
+        // unmatched FormTree child with the same name.
+        let mut used = vec![false; form_children.len()];
+        for xml_child in &xml_children {
+            let xml_name = xml_child.attribute("name").unwrap_or("");
+            // Find first unmatched FormTree child with this name
+            let matched = form_children
+                .iter()
+                .enumerate()
+                .find(|(i, &fid)| !used[*i] && tree.get(fid).name == xml_name);
+            if let Some((idx, &fid)) = matched {
+                used[idx] = true;
+                apply_recursive(tree, fid, *xml_child);
+            }
+        }
+    }
+
+    // The form DOM root is <form><subform name="...">...</subform></form>
+    let form_root = doc.root_element();
+    // Find the root subform in the form DOM
+    let form_root_subform = form_root
+        .children()
+        .find(|c| c.is_element() && c.tag_name().name() == "subform");
+
+    if let Some(xml_root_sf) = form_root_subform {
+        // Match against the FormTree root's first subform child (the template root subform)
+        let root_children = tree.get(root_id).children.clone();
+        let root_name = xml_root_sf.attribute("name").unwrap_or("");
+        for &child_id in &root_children {
+            if tree.get(child_id).name == root_name {
+                apply_recursive(tree, child_id, xml_root_sf);
+                break;
+            }
+        }
+    }
+}
+
 /// Tiny PDFs (<1KB) with XFA templates that lack essential elements (subform,
 /// pageSet) are corrupt stubs. Attempting to flatten these produces blank pages
 /// instead of preserving the original page content.
