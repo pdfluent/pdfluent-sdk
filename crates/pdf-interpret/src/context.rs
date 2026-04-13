@@ -11,7 +11,6 @@ use log::warn;
 use pdf_syntax::content::ops::Transform;
 use pdf_syntax::object::Dict;
 use pdf_syntax::object::Name;
-use pdf_syntax::object::Object;
 use pdf_syntax::page::Resources;
 use pdf_syntax::xref::XRef;
 use std::collections::HashMap;
@@ -233,15 +232,15 @@ impl<'a> Context<'a> {
     }
 
     pub(crate) fn get_color_space(
-        &self,
-        resources: &Resources<'a>,
+        &mut self,
+        resources: &Resources<'_>,
         name: Name,
     ) -> Option<ColorSpace> {
-        ColorSpace::new_with_resource_resolver(
-            Object::Name(name),
-            &self.object_cache,
-            |resource_name| resources.get_color_space(resource_name),
-        )
+        let cs_object = resources.get_color_space(name)?;
+        self.object_cache
+            .get_or_insert_with(cs_object.cache_key(), || {
+                ColorSpace::new(cs_object.clone(), &self.object_cache)
+            })
     }
 
     pub(crate) fn stroke_props(&self) -> StrokeProps {
