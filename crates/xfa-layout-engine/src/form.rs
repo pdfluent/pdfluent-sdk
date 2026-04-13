@@ -335,7 +335,7 @@ impl Presence {
     /// XFA Spec 3.3 §2.6 (p68):
     /// - `hidden`:   no layout space, no rendering (effectively absent)
     /// - `invisible`: no layout space in Adobe (spec says "takes space",
-    ///                but empirical testing shows Adobe skips it)
+    ///   but empirical testing shows Adobe skips it)
     /// - `inactive`:  completely absent (no binding, no space)
     ///
     /// `Hidden` was previously excluded from this predicate based on an
@@ -344,7 +344,10 @@ impl Presence {
     /// elements caused 2-23x overpagination in forms with many
     /// `presence="hidden"` subforms (fixes #806).
     pub fn is_layout_hidden(self) -> bool {
-        matches!(self, Presence::Hidden | Presence::Invisible | Presence::Inactive)
+        matches!(
+            self,
+            Presence::Hidden | Presence::Invisible | Presence::Inactive
+        )
     }
 }
 

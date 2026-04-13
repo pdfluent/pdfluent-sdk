@@ -33,6 +33,10 @@ path = "src/bin/license_tool.rs"
 name = "corpus-render"
 path = "src/bin/corpus-render.rs"
 
+[[bin]]
+name = "font-cache-builder"
+path = "src/bin/font-cache-builder.rs"
+
 [dependencies]
 xfa-dom-resolver.workspace = true
 formcalc-interpreter.workspace = true
@@ -51,6 +55,7 @@ pdf-syntax.workspace = true
 pdf-sign.workspace = true
 pdf-compliance.workspace = true
 image.workspace = true
+ttf-parser.workspace = true
 base64 = "0.22"
 clap_complete = "4"
 clap_mangen = "0.2"
