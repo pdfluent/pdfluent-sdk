@@ -404,9 +404,8 @@ fn xfa_flatten_inner(
     // additional pages once XFA data is laid out. Clamping all 1-page inputs
     // to the original page count causes under-pagination on dynamic forms such
     // as Travel Expense Report / Checklist where Adobe renders 2-3 pages.
-    let preserve_static = is_static_form
-        || n_layout < n_existing
-        || has_static_content && overlay_is_substantial;
+    let preserve_static =
+        is_static_form || n_layout < n_existing || has_static_content && overlay_is_substantial;
 
     if preserve_static {
         // Bake widget appearances (field values, checkboxes, etc.) into the
@@ -448,6 +447,14 @@ fn xfa_flatten_inner(
                     &embedded_font_objects,
                 )?;
             }
+        }
+
+        // Bake checkbox/radio AP marks from AcroForm widgets onto existing
+        // pages.  The XFA overlay draws borders and captions; the AP "on"
+        // stream adds the filled mark (circle, checkmark, etc.) that the
+        // oracle renders for hybrid forms (#886).
+        for &page_id in &existing_page_ids[..n_existing.min(n_layout)] {
+            bake_checkbox_radio_ap_marks(&mut doc, page_id);
         }
     }
 
@@ -886,7 +893,10 @@ fn extract_simple_pdf_source_font(
     // PDF 1.7 §5.5 defines simple-font widths in the font's encoding space.
     // LIMITATION: CID/Type0 fonts use /W arrays and CMaps instead; they are
     // intentionally excluded here.
-    let encoding_obj = dict.get(b"Encoding").ok().and_then(|obj| resolve_object(doc, obj));
+    let encoding_obj = dict
+        .get(b"Encoding")
+        .ok()
+        .and_then(|obj| resolve_object(doc, obj));
     match encoding_obj {
         Some(obj) if obj.as_name().ok() == Some(b"WinAnsiEncoding".as_slice()) => {}
         Some(obj) => {
@@ -1418,7 +1428,9 @@ fn collect_used_chars_from_layout_node(
                 span.font_weight
                     .as_deref()
                     .or(node.style.font_weight.as_deref()),
-                span.font_style.as_deref().or(node.style.font_style.as_deref()),
+                span.font_style
+                    .as_deref()
+                    .or(node.style.font_style.as_deref()),
                 &span.text,
             );
         }
@@ -1496,7 +1508,9 @@ fn embed_resolved_fonts(
             .or_else(|| used_chars_by_font.get(&font.name))
             .or_else(|| variant_key_base_name(name).and_then(|base| used_chars_by_font.get(base)));
         let source_can_encode_all_text = used_chars.is_none_or(|chars| {
-            chars.iter().all(|ch| simple_font_can_encode_char(font, *ch))
+            chars
+                .iter()
+                .all(|ch| simple_font_can_encode_char(font, *ch))
         });
         let (obj_id, render_font_data) = if let Some(source_font) = font.pdf_source_font {
             if source_can_encode_all_text || font.data.is_empty() {
@@ -1552,22 +1566,61 @@ fn static_fallback(pdf_bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Apply presence overrides from the XFA form DOM packet.
+/// Apply presence overrides and repeating-instance expansion from the XFA form
+/// DOM packet.
 ///
 /// When an XFA PDF has been opened and saved by Adobe Reader, the form DOM
-/// captures the runtime state of all nodes after scripts executed. We walk
+/// captures the runtime state of all nodes after scripts executed.  We walk
 /// the form DOM and the FormTree in parallel (matching by subform/field name)
-/// to transfer `presence="hidden"` attributes that our script interpreter
-/// could not compute (e.g. Avoka framework's `sfcUtils.updateVisibility`).
+/// to:
+///
+/// 1. Transfer `presence="hidden"` attributes that our script interpreter
+///    could not compute (e.g. Avoka framework's `sfcUtils.updateVisibility`).
+/// 2. Replicate repeating subform instances (XFA §4.4.3): when `bind
+///    match="none"` prevents data-driven expansion, the form DOM records the
+///    correct instance count produced by the runtime's `instanceManager`.  We
+///    deep-clone the template instance and populate field values from the form
+///    DOM so the layout engine produces the right number of pages.
 fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &str) {
-    use xfa_layout_engine::form::Presence;
+    use xfa_layout_engine::form::{FormNodeType, Presence};
 
     let Ok(doc) = roxmltree::Document::parse(form_xml) else {
         return;
     };
 
-    // Build a map from (parent_form_node_id, child_name) → FormNodeId
-    // for efficient lookup during the parallel walk.
+    /// Deep-clone a subtree rooted at `src_id`, returning the new root id.
+    fn clone_subtree(tree: &mut FormTree, src_id: FormNodeId) -> FormNodeId {
+        let node = tree.get(src_id).clone();
+        let meta = tree.meta(src_id).clone();
+        // Temporarily take children out to avoid borrow issues
+        let child_ids: Vec<FormNodeId> = node.children.clone();
+        let mut new_node = node;
+        new_node.children = Vec::new();
+        // Clear xfa_id to avoid duplicate id conflicts
+        let mut new_meta = meta;
+        new_meta.xfa_id = None;
+        let new_id = tree.add_node_with_meta(new_node, new_meta);
+        // Recursively clone children
+        for &child_id in &child_ids {
+            let cloned_child = clone_subtree(tree, child_id);
+            tree.get_mut(new_id).children.push(cloned_child);
+        }
+        new_id
+    }
+
+    /// Extract the text content of the first `<value>` child's inner element
+    /// (e.g. `<value><text>hello</text></value>` → `"hello"`).
+    fn extract_field_value(xml_field: roxmltree::Node<'_, '_>) -> Option<String> {
+        let value_el = xml_field
+            .children()
+            .find(|c| c.is_element() && c.tag_name().name() == "value")?;
+        // The inner element may be <text>, <date>, <time>, <float>, etc.
+        let inner = value_el.children().find(|c| c.is_element())?;
+        inner.text().map(|t| t.to_string())
+    }
+
+    /// Apply presence, values, and child expansion from the form DOM to a
+    /// FormTree node.
     fn apply_recursive(
         tree: &mut FormTree,
         form_node_id: FormNodeId,
@@ -1578,10 +1631,7 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
             return;
         }
 
-        // Apply presence override from the form DOM to the FormTree node.
-        // Only override when the form DOM says "hidden" — this captures
-        // script-driven hide operations without reverting template-level
-        // visibility defaults for the vast majority of nodes.
+        // Apply presence override.
         if xml_tag == "subform" || xml_tag == "field" {
             if let Some(pres) = xml_node.attribute("presence") {
                 if pres == "hidden" {
@@ -1590,43 +1640,118 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
             }
         }
 
-        // Match children: walk XML children and find corresponding FormTree children by name.
-        // Form DOM has instanceManager nodes interspersed; skip those.
-        let form_children = tree.get(form_node_id).children.clone();
+        // Transfer field value from the form DOM when the FormTree node has no
+        // value yet (empty string) or the form DOM has a computed value.
+        if xml_tag == "field" {
+            if let Some(val) = extract_field_value(xml_node) {
+                if let FormNodeType::Field { ref value, .. } = tree.get(form_node_id).node_type {
+                    if value.is_empty() {
+                        tree.get_mut(form_node_id).node_type =
+                            FormNodeType::Field { value: val };
+                    }
+                }
+            }
+            return; // fields have no structural children to recurse into
+        }
+
+        // Collect XML children (subforms and fields), skipping instanceManagers.
         let xml_children: Vec<roxmltree::Node<'_, '_>> = xml_node
             .children()
             .filter(|c| {
                 c.is_element()
-                    && (c.tag_name().name() == "subform" || c.tag_name().name() == "field")
+                    && (c.tag_name().name() == "subform"
+                        || c.tag_name().name() == "field"
+                        || c.tag_name().name() == "draw")
             })
             .collect();
 
-        // Greedy name-based matching: for each XML child, find the first
-        // unmatched FormTree child with the same name.
+        // Group consecutive XML children by name to detect repeating instances.
+        // E.g., [Activity, Activity, Activity, Activity] → ("Activity", 4)
+        let mut xml_groups: Vec<(&str, Vec<roxmltree::Node<'_, '_>>)> = Vec::new();
+        for &xc in &xml_children {
+            let xname = xc.attribute("name").unwrap_or("");
+            if let Some(last) = xml_groups.last_mut() {
+                if last.0 == xname {
+                    last.1.push(xc);
+                    continue;
+                }
+            }
+            xml_groups.push((xname, vec![xc]));
+        }
+
+        // For each group, match against FormTree children, cloning when needed.
+        let mut form_children = tree.get(form_node_id).children.clone();
         let mut used = vec![false; form_children.len()];
-        for xml_child in &xml_children {
-            let xml_name = xml_child.attribute("name").unwrap_or("");
-            // Find first unmatched FormTree child with this name
-            let matched = form_children
+
+        for (gname, group_xml_nodes) in &xml_groups {
+            let xml_count = group_xml_nodes.len();
+
+            // Count existing FormTree children with this name
+            let existing: Vec<(usize, FormNodeId)> = form_children
                 .iter()
                 .enumerate()
-                .find(|(i, &fid)| !used[*i] && tree.get(fid).name == xml_name);
-            if let Some((idx, &fid)) = matched {
-                used[idx] = true;
-                apply_recursive(tree, fid, *xml_child);
+                .filter(|(i, &fid)| !used[*i] && tree.get(fid).name == *gname)
+                .map(|(i, &fid)| (i, fid))
+                .collect();
+            let existing_count = existing.len();
+
+            // If the form DOM has more instances than the FormTree, clone to match.
+            if xml_count > existing_count && existing_count > 0 {
+                let template_id = existing[0].1;
+                // Find insertion position: after the last existing sibling
+                let last_existing_idx = existing.last().unwrap().0;
+                let insert_pos = last_existing_idx + 1;
+                let clones_needed = xml_count - existing_count;
+                let mut new_ids = Vec::new();
+                for _ in 0..clones_needed {
+                    let cloned = clone_subtree(tree, template_id);
+                    new_ids.push(cloned);
+                }
+                // Insert cloned nodes into the parent's children list
+                for (offset, new_id) in new_ids.iter().enumerate() {
+                    form_children.insert(insert_pos + offset, *new_id);
+                    used.insert(insert_pos + offset, false);
+                }
+                // Persist the updated children list
+                tree.get_mut(form_node_id).children = form_children.clone();
+            }
+
+            // Now match each XML node in the group to a FormTree child
+            let mut group_idx = 0;
+            for &xc in group_xml_nodes {
+                // Find next unmatched FormTree child with this name
+                let matched = form_children
+                    .iter()
+                    .enumerate()
+                    .skip(if group_idx > 0 {
+                        // Start searching after the last matched position
+                        form_children
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, &fid)| used[*i] && tree.get(fid).name == *gname)
+                            .last()
+                            .map(|(i, _)| i + 1)
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    })
+                    .find(|(i, &fid)| !used[*i] && tree.get(fid).name == *gname);
+                if let Some((idx, &fid)) = matched {
+                    used[idx] = true;
+                    apply_recursive(tree, fid, xc);
+                }
+                group_idx += 1;
             }
         }
     }
 
     // The form DOM root is <form><subform name="...">...</subform></form>
     let form_root = doc.root_element();
-    // Find the root subform in the form DOM
     let form_root_subform = form_root
         .children()
         .find(|c| c.is_element() && c.tag_name().name() == "subform");
 
     if let Some(xml_root_sf) = form_root_subform {
-        // Match against the FormTree root's first subform child (the template root subform)
         let root_children = tree.get(root_id).children.clone();
         let root_name = xml_root_sf.attribute("name").unwrap_or("");
         for &child_id in &root_children {
@@ -1717,7 +1842,10 @@ fn parse_xml_entity_reference(xml: &str, amp_pos: usize) -> Option<(&str, usize)
         if matches!(bytes.get(idx), Some(b'x' | b'X')) {
             idx += 1;
             let hex_start = idx;
-            while matches!(bytes.get(idx), Some(b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')) {
+            while matches!(
+                bytes.get(idx),
+                Some(b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
+            ) {
                 idx += 1;
             }
             if idx == hex_start || !matches!(bytes.get(idx), Some(b';')) {
@@ -1841,6 +1969,102 @@ fn count_text_operators(stream: &[u8]) -> usize {
         }
     }
     count
+}
+
+/// Bake checkbox/radio button appearance marks from AcroForm widget AP streams
+/// onto existing page content for dynamic XFA forms.
+///
+/// Hybrid XFA PDFs carry pre-rendered appearance streams in their widget `/AP/N`
+/// dictionaries.  For radio/checkbox widgets the Normal appearance dict often has
+/// only the "on" state (filled circle / checkmark) with no "Off" entry.  The
+/// oracle (iText / Adobe) renders this mark regardless of the current `/AS`
+/// value.  This function stamps the "on" Normal appearance for every
+/// checkbox/radio widget onto the page so the flattened output matches.
+fn bake_checkbox_radio_ap_marks(doc: &mut Document, page_id: ObjectId) -> usize {
+    let annots = page_annotations(doc, page_id);
+    if annots.is_empty() {
+        return 0;
+    }
+
+    let mut baked = 0usize;
+    let mut overlay_ops = Vec::new();
+
+    for annot in &annots {
+        let Some(annot_id) = annot.as_reference().ok() else {
+            continue;
+        };
+        let Ok(annot_dict) = doc.get_dictionary(annot_id).cloned() else {
+            continue;
+        };
+
+        let is_widget = annot_dict
+            .get(b"Subtype")
+            .ok()
+            .and_then(|obj| obj.as_name().ok())
+            == Some(&b"Widget"[..]);
+        if !is_widget {
+            continue;
+        }
+
+        // Radio/checkbox widgets have a dictionary of named states in /AP/N
+        // (e.g. /N << /0 35 0 R >>).  Text fields and pushbuttons have /AP/N
+        // as a single stream reference.  Use this to filter.
+        let ap = match annot_dict.get(b"AP").ok().and_then(|o| o.as_dict().ok()) {
+            Some(ap) => ap.clone(),
+            None => continue,
+        };
+        let normal_obj = match ap.get(b"N").ok() {
+            Some(obj) => obj.clone(),
+            None => continue,
+        };
+
+        // Resolve /N to a dictionary of appearance states.
+        let states: Dictionary = match &normal_obj {
+            Object::Reference(id) => match doc.get_object(*id).ok().cloned() {
+                Some(Object::Dictionary(d)) => d,
+                _ => continue, // direct stream → not radio/checkbox
+            },
+            Object::Dictionary(d) => d.clone(),
+            _ => continue,
+        };
+
+        // Find the first non-"Off" state (the "on" mark appearance).
+        let on_id = states
+            .iter()
+            .filter(|(name, _)| name.as_slice() != b"Off")
+            .find_map(|(_, obj)| match obj {
+                Object::Reference(id) => Some(*id),
+                _ => None,
+            });
+        let Some(ap_id) = on_id else { continue };
+
+        // Verify the referenced object is a Form XObject stream.
+        match doc.get_object(ap_id).ok() {
+            Some(Object::Stream(_)) => {}
+            _ => continue,
+        }
+
+        let Some(rect) = annotation_rect(&annot_dict) else {
+            continue;
+        };
+
+        let xobject_name = format!("XfaCbAp{}", baked);
+        add_xobject_to_page_resources(doc, page_id, &xobject_name, ap_id);
+        write_ops(
+            &mut overlay_ops,
+            format_args!(
+                "q 1 0 0 1 {:.3} {:.3} cm /{} Do Q\n",
+                rect[0], rect[1], xobject_name
+            ),
+        );
+        baked += 1;
+    }
+
+    if !overlay_ops.is_empty() {
+        append_to_page_content(doc, page_id, &overlay_ops);
+    }
+
+    baked
 }
 
 fn is_xfa_placeholder_stream(stream: &[u8]) -> bool {
@@ -2054,11 +2278,9 @@ fn resolve_appearance_state(
             }
         }
         // When the selected state is "Off" but no "Off" appearance exists,
-        // the widget is deselected — don't fall back to a checked/on
-        // appearance which would incorrectly render as checked.
-        if state == b"Off" {
-            return None;
-        }
+        // fall through to the "on" appearance.  Radio/checkbox widgets in
+        // hybrid XFA forms often have only the "on" mark in /AP/N — the
+        // oracle (iText/Adobe) renders that mark regardless of /AS (#886).
     }
 
     for fallback in [b"Yes".as_slice(), b"On".as_slice(), b"Off".as_slice()] {
@@ -3144,11 +3366,12 @@ ET
     }
 
     #[test]
-    fn widget_as_off_without_off_appearance_returns_none() {
+    fn widget_as_off_without_off_appearance_falls_through_to_on() {
         // When /AS is "Off" but the Normal appearance dict has no "Off" key,
-        // resolve_widget_normal_appearance should return None instead of
-        // falling back to the checked appearance (fixes #829 radio button
-        // rendering).
+        // resolve_widget_normal_appearance should fall through to the "on"
+        // state appearance.  Radio/checkbox widgets in hybrid XFA forms
+        // often have only the "on" mark in /AP/N; the oracle renders that
+        // mark regardless of /AS (#886).
         let yes_stream = Object::Stream(Stream::new(
             dictionary! {
                 "Type" => Object::Name(b"XObject".to_vec()),
@@ -3179,8 +3402,8 @@ ET
             "FT" => Object::Name(b"Btn".to_vec()),
         };
         assert!(
-            resolve_widget_normal_appearance(&mut doc, &annot).is_none(),
-            "Off state with no Off appearance should return None"
+            resolve_widget_normal_appearance(&mut doc, &annot).is_some(),
+            "Off state with no Off appearance should fall through to on state"
         );
     }
 
@@ -3581,7 +3804,11 @@ ET
         let (_font_map, font_objects, metrics_data) =
             embed_resolved_fonts(&mut doc, &resolved, &empty_layout);
 
-        assert_eq!(doc.objects.len(), before, "should not embed a new font object");
+        assert_eq!(
+            doc.objects.len(),
+            before,
+            "should not embed a new font object"
+        );
         assert_eq!(font_objects.len(), 1);
         assert_eq!(font_objects[0].1, source_font_id);
         assert!(
@@ -3600,7 +3827,8 @@ ET
             stripped, xml,
             "raw ampersands inside processing instructions are valid and must survive sanitization"
         );
-        roxmltree::Document::parse(&stripped).expect("processing instructions must remain parseable");
+        roxmltree::Document::parse(&stripped)
+            .expect("processing instructions must remain parseable");
     }
 
     #[test]
@@ -3618,4 +3846,102 @@ ET
         roxmltree::Document::parse(&stripped).expect("sanitized XML should parse");
     }
 
+    /// Form DOM with more repeating instances than the template must expand
+    /// the FormTree and populate field values.
+    #[test]
+    fn form_dom_expands_repeating_subform_instances() {
+        use xfa_layout_engine::form::{FormNodeType, Occur};
+
+        // Template: one Activity subform with bind=none, occur max=-1
+        let template = r#"<template xmlns="http://www.xfa.org/schema/xfa-template/3.3/">
+          <subform name="root" layout="tb">
+            <pageSet><pageArea name="P1">
+              <contentArea w="200mm" h="280mm"/>
+              <medium short="210mm" long="297mm"/>
+            </pageArea></pageSet>
+            <subform name="body" layout="tb">
+              <subform name="Items" layout="tb">
+                <bind match="none"/>
+                <subform name="Row" layout="tb">
+                  <bind match="none"/>
+                  <occur max="-1"/>
+                  <field name="Label"><ui><textEdit/></ui></field>
+                </subform>
+              </subform>
+            </subform>
+          </subform>
+        </template>"#;
+
+        // Form DOM: 3 Row instances with values
+        let form_xml = r#"<form xmlns="http://www.xfa.org/schema/xfa-form/2.8/">
+          <subform name="root">
+            <subform name="body">
+              <subform name="Items">
+                <instanceManager name="_Row"/>
+                <subform name="Row">
+                  <field name="Label"><value><text>Alpha</text></value></field>
+                </subform>
+                <subform name="Row">
+                  <field name="Label"><value><text>Beta</text></value></field>
+                </subform>
+                <subform name="Row">
+                  <field name="Label"><value><text>Gamma</text></value></field>
+                </subform>
+              </subform>
+            </subform>
+          </subform>
+        </form>"#;
+
+        let data_dom = xfa_dom_resolver::data_dom::DataDom::new();
+        let merger = crate::merger::FormMerger::new(&data_dom);
+        let (mut tree, root_id) = merger.merge(template).unwrap();
+
+        // Before form DOM: only 1 Row instance
+        // Dump tree to understand structure
+        fn find_by_name(tree: &FormTree, parent: FormNodeId, name: &str) -> Option<FormNodeId> {
+            for &c in &tree.get(parent).children {
+                if tree.get(c).name == name {
+                    return Some(c);
+                }
+                if let Some(found) = find_by_name(tree, c, name) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        let items_id = find_by_name(&tree, root_id, "Items")
+            .expect("Items subform not found in tree");
+        let rows_before = tree
+            .get(items_id)
+            .children
+            .iter()
+            .filter(|&&c| tree.get(c).name == "Row")
+            .count();
+        assert_eq!(rows_before, 1, "template merge should produce 1 Row (bind=none)");
+
+        // Apply form DOM
+        apply_form_dom_presence(&mut tree, root_id, form_xml);
+
+        // After form DOM: 3 Row instances with correct values
+        let rows_after: Vec<FormNodeId> = tree
+            .get(items_id)
+            .children
+            .iter()
+            .filter(|&&c| tree.get(c).name == "Row")
+            .copied()
+            .collect();
+        assert_eq!(rows_after.len(), 3, "form DOM should expand to 3 Row instances");
+
+        let values: Vec<String> = rows_after
+            .iter()
+            .map(|&row_id| {
+                let label_id = tree.get(row_id).children[0];
+                match &tree.get(label_id).node_type {
+                    FormNodeType::Field { value } => value.clone(),
+                    _ => String::new(),
+                }
+            })
+            .collect();
+        assert_eq!(values, vec!["Alpha", "Beta", "Gamma"]);
+    }
 }
