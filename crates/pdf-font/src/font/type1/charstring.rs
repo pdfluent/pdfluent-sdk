@@ -15,6 +15,8 @@ struct CharStringParserContext<'a> {
     stems_len: u32,
     has_endchar: bool,
     has_seac: bool,
+    width: Option<f32>,
+    width_only: bool,
 }
 
 pub(crate) fn parse_char_string(
@@ -27,6 +29,8 @@ pub(crate) fn parse_char_string(
         stems_len: 0,
         has_endchar: false,
         has_seac: false,
+        width: None,
+        width_only: false,
     };
 
     let mut inner_builder = Builder {
@@ -57,11 +61,59 @@ pub(crate) fn parse_char_string(
     };
     _parse_char_string(&mut ctx, data, 0, &mut parser)?;
 
-    if !ctx.has_endchar {
+    if !ctx.has_endchar && !ctx.has_seac {
         return Err(OutlineError::MissingEndChar);
     }
 
     Ok(())
+}
+
+pub(crate) fn parse_char_string_width(
+    data: &[u8],
+    params: &Parameters,
+) -> Result<f32, OutlineError> {
+    let mut ctx = CharStringParserContext {
+        params,
+        stems_len: 0,
+        has_endchar: false,
+        has_seac: false,
+        width: None,
+        width_only: true,
+    };
+
+    let mut inner_builder = Builder {
+        builder: &mut crate::font::DummyOutline,
+        bbox: RectF::new(),
+    };
+
+    let stack = ArgumentsStack {
+        data: &mut [0.0; MAX_ARGUMENTS_STACK_LEN],
+        len: 0,
+        max_len: MAX_ARGUMENTS_STACK_LEN,
+    };
+
+    let ps_stack = ArgumentsStack {
+        data: &mut [0.0; MAX_ARGUMENTS_STACK_LEN],
+        len: 0,
+        max_len: MAX_ARGUMENTS_STACK_LEN,
+    };
+
+    let mut parser = CharStringParser {
+        stack,
+        builder: &mut inner_builder,
+        x: 0.0,
+        y: 0.0,
+        sbx: 0.0,
+        is_flexing: false,
+        ps_stack,
+    };
+    _parse_char_string(&mut ctx, data, 0, &mut parser)?;
+
+    if !ctx.has_endchar && !ctx.has_seac {
+        return Err(OutlineError::MissingEndChar);
+    }
+
+    ctx.width.ok_or(OutlineError::InvalidArgumentsStackLength)
 }
 
 fn _parse_char_string(
@@ -185,6 +237,13 @@ fn _parse_char_string(
                             .charstrings
                             .get(base_char.ok_or(OutlineError::InvalidSeacCode)?)
                             .ok_or(OutlineError::InvalidSeacCode)?;
+                        if ctx.width_only {
+                            if ctx.width.is_none() {
+                                _parse_char_string(ctx, base_char_string, depth + 1, p)?;
+                            }
+                            break;
+                        }
+
                         _parse_char_string(ctx, base_char_string, depth + 1, p)?;
                         p.x = dx + p.sbx - asb;
                         p.y = dy;
@@ -199,6 +258,9 @@ fn _parse_char_string(
                     }
                     tb_operator::SBW => {
                         trace_op!("SBW");
+                        if ctx.width_only && ctx.width.is_none() {
+                            ctx.width = Some(p.stack.at(2));
+                        }
                         p.x = p.stack.at(0);
                         p.y = p.stack.at(1);
                         p.sbx = p.x;
@@ -296,6 +358,9 @@ fn _parse_char_string(
             }
             sb_operator::HSBW => {
                 trace_op!("HSBW");
+                if ctx.width_only && ctx.width.is_none() {
+                    ctx.width = Some(p.stack.at(1));
+                }
 
                 p.x += p.stack.at(0);
                 p.sbx = p.x;

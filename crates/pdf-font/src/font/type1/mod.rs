@@ -7,7 +7,7 @@ mod operator;
 mod standard;
 pub(crate) mod stream;
 
-use crate::font::type1::charstring::parse_char_string;
+use crate::font::type1::charstring::{parse_char_string, parse_char_string_width};
 use crate::font::type1::decrypt::{decrypt, decrypt_byte};
 use crate::font::type1::standard::STANDARD;
 use crate::font::type1::stream::Stream;
@@ -176,6 +176,12 @@ impl Table {
         parse_char_string(data, &self.params, builder).ok()?;
 
         Some(())
+    }
+
+    /// Returns the raw charstring advance width for a glyph name.
+    pub fn glyph_width(&self, string: &str) -> Option<f32> {
+        let data = self.params.charstrings.get(string)?;
+        parse_char_string_width(data, &self.params).ok()
     }
 
     /// Return the glyph name of the code point.
