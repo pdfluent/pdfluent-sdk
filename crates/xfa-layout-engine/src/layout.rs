@@ -837,14 +837,24 @@ impl<'a> LayoutEngine<'a> {
         }
 
         // Available height for content = total - leader - trailer.
-        // When the content area is shorter than the remaining page space,
-        // extend it to fill the page.  This matches Adobe/itext behavior:
-        // content areas define an initial region, but TB content is allowed
-        // to extend beyond it within the same page rather than overflowing
-        // to a new page.
+        // Content area height: only extend beyond the declared height if
+        // the content area reaches close to the page bottom. When there is
+        // significant space between the content area bottom edge and the
+        // page bottom (typically occupied by page-area fixed elements like
+        // footers), respect the declared height so content overflows to the
+        // next page rather than overlapping fixed chrome.
         let effective_ca_height = {
-            let remaining_page = page_height - content_area.y;
-            content_area.height.max(remaining_page)
+            let ca_bottom = content_area.y + content_area.height;
+            let gap_below_ca = page_height - ca_bottom;
+            // Allow extension only if the gap below is less than 36pt (~0.5in).
+            // Larger gaps indicate page-area fixed elements (footers, disclaimers)
+            // that content should not overlap.
+            if gap_below_ca < 36.0 {
+                let remaining_page = page_height - content_area.y;
+                content_area.height.max(remaining_page)
+            } else {
+                content_area.height
+            }
         };
         let content_height = effective_ca_height - leader_height - trailer_height;
         let available = Size {
