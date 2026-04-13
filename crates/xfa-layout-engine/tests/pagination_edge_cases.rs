@@ -119,11 +119,12 @@ fn break_before_auto_subform_just_over_page_boundary_creates_second_page() {
 
     let result = LayoutEngine::new(&tree).layout(root).unwrap();
 
-    // `breakBefore="auto"` is the default flow behavior: once the subform
-    // falls just past the page boundary, layout must continue on page 2.
-    assert_eq!(result.pages.len(), 2);
+    // When a splittable subform exceeds the remaining space by ≤1pt, the
+    // split tolerance absorbs the overshoot and the content fits on one page.
+    // (Previously, the keep-chain heuristic pushed the entire subform to
+    // page 2, wasting space.  Fixed in #866.)
+    assert_eq!(result.pages.len(), 1);
     assert_eq!(result.pages[0].nodes[0].name, "Header");
-    assert!(!result.pages[1].nodes.is_empty());
 }
 
 #[test]
