@@ -18,7 +18,9 @@ use crate::x_object::{
 use kurbo::{Affine, Point, Shape};
 use log::warn;
 use pdf_syntax::content::ops::TypedInstruction;
-use pdf_syntax::object::dict::keys::{ANNOTS, AP, F, FT, MCID, N, OC, RECT};
+use pdf_syntax::object::dict::keys::{
+    ANNOTS, AP, DEVICE_CMYK, DEVICE_GRAY, DEVICE_RGB, F, FT, MCID, N, OC, RECT,
+};
 use pdf_syntax::object::{Array, Dict, Name, Object, Rect, Stream, dict_or_stream};
 use pdf_syntax::page::{Page, Resources};
 use smallvec::smallvec;
@@ -298,16 +300,22 @@ pub fn interpret<'a, 'b>(
         match op {
             TypedInstruction::SaveState(_) => context.save_state(),
             TypedInstruction::StrokeColorDeviceRgb(s) => {
-                context.get_mut().graphics_state.stroke_cs = ColorSpace::device_rgb();
+                context.get_mut().graphics_state.stroke_cs = context
+                    .get_color_space(resources, Name::new(DEVICE_RGB))
+                    .unwrap_or_else(ColorSpace::device_rgb);
                 context.get_mut().graphics_state.stroke_color =
                     smallvec![s.0.as_f32(), s.1.as_f32(), s.2.as_f32()];
             }
             TypedInstruction::StrokeColorDeviceGray(s) => {
-                context.get_mut().graphics_state.stroke_cs = ColorSpace::device_gray();
+                context.get_mut().graphics_state.stroke_cs = context
+                    .get_color_space(resources, Name::new(DEVICE_GRAY))
+                    .unwrap_or_else(ColorSpace::device_gray);
                 context.get_mut().graphics_state.stroke_color = smallvec![s.0.as_f32()];
             }
             TypedInstruction::StrokeColorCmyk(s) => {
-                context.get_mut().graphics_state.stroke_cs = ColorSpace::device_cmyk();
+                context.get_mut().graphics_state.stroke_cs = context
+                    .get_color_space(resources, Name::new(DEVICE_CMYK))
+                    .unwrap_or_else(ColorSpace::device_cmyk);
                 context.get_mut().graphics_state.stroke_color =
                     smallvec![s.0.as_f32(), s.1.as_f32(), s.2.as_f32(), s.3.as_f32()];
             }
@@ -370,16 +378,22 @@ pub fn interpret<'a, 'b>(
                 fill_stroke_path(context, device, FillRule::NonZero);
             }
             TypedInstruction::NonStrokeColorDeviceGray(s) => {
-                context.get_mut().graphics_state.none_stroke_cs = ColorSpace::device_gray();
+                context.get_mut().graphics_state.none_stroke_cs = context
+                    .get_color_space(resources, Name::new(DEVICE_GRAY))
+                    .unwrap_or_else(ColorSpace::device_gray);
                 context.get_mut().graphics_state.non_stroke_color = smallvec![s.0.as_f32()];
             }
             TypedInstruction::NonStrokeColorDeviceRgb(s) => {
-                context.get_mut().graphics_state.none_stroke_cs = ColorSpace::device_rgb();
+                context.get_mut().graphics_state.none_stroke_cs = context
+                    .get_color_space(resources, Name::new(DEVICE_RGB))
+                    .unwrap_or_else(ColorSpace::device_rgb);
                 context.get_mut().graphics_state.non_stroke_color =
                     smallvec![s.0.as_f32(), s.1.as_f32(), s.2.as_f32()];
             }
             TypedInstruction::NonStrokeColorCmyk(s) => {
-                context.get_mut().graphics_state.none_stroke_cs = ColorSpace::device_cmyk();
+                context.get_mut().graphics_state.none_stroke_cs = context
+                    .get_color_space(resources, Name::new(DEVICE_CMYK))
+                    .unwrap_or_else(ColorSpace::device_cmyk);
                 context.get_mut().graphics_state.non_stroke_color =
                     smallvec![s.0.as_f32(), s.1.as_f32(), s.2.as_f32(), s.3.as_f32()];
             }
@@ -481,25 +495,17 @@ pub fn interpret<'a, 'b>(
                 // Ignore for now.
             }
             TypedInstruction::ColorSpaceStroke(c) => {
-                let cs = if let Some(named) = ColorSpace::new_from_name(c.0.clone()) {
-                    named
-                } else {
-                    context
-                        .get_color_space(resources, c.0)
-                        .unwrap_or(ColorSpace::device_gray())
-                };
+                let cs = context
+                    .get_color_space(resources, c.0)
+                    .unwrap_or_else(ColorSpace::device_gray);
 
                 context.get_mut().graphics_state.stroke_color = cs.initial_color();
                 context.get_mut().graphics_state.stroke_cs = cs;
             }
             TypedInstruction::ColorSpaceNonStroke(c) => {
-                let cs = if let Some(named) = ColorSpace::new_from_name(c.0.clone()) {
-                    named
-                } else {
-                    context
-                        .get_color_space(resources, c.0)
-                        .unwrap_or(ColorSpace::device_gray())
-                };
+                let cs = context
+                    .get_color_space(resources, c.0)
+                    .unwrap_or_else(ColorSpace::device_gray);
 
                 context.get_mut().graphics_state.non_stroke_color = cs.initial_color();
                 context.get_mut().graphics_state.none_stroke_cs = cs;
@@ -715,6 +721,7 @@ pub fn interpret<'a, 'b>(
                 if let Some(x_object) = resources.get_x_object(x.0).and_then(|s| {
                     XObject::new(
                         &s,
+                        |name| resources.get_color_space(name),
                         &context.settings.warning_sink,
                         &cache,
                         transfer_function.clone(),
@@ -729,7 +736,7 @@ pub fn interpret<'a, 'b>(
                 let cache = context.object_cache.clone();
                 if let Some(x_object) = ImageXObject::new(
                     &i.0,
-                    |name| context.get_color_space(resources, name.clone()),
+                    |name| resources.get_color_space(name),
                     &warning_sink,
                     &cache,
                     false,
@@ -751,7 +758,11 @@ pub fn interpret<'a, 'b>(
                 if let Some(sp) = resources
                     .get_shading(s.0)
                     .and_then(|o| dict_or_stream(&o))
-                    .and_then(|s| Shading::new(&s.0, s.1.as_ref(), &context.object_cache))
+                    .and_then(|s| {
+                        Shading::new(&s.0, s.1.as_ref(), &context.object_cache, |name| {
+                            resources.get_color_space(name)
+                        })
+                    })
                     .map(|s| {
                         Pattern::Shading(ShadingPattern {
                             shading: Arc::new(s),
