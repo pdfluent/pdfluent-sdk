@@ -12,6 +12,7 @@ use log::warn;
 use pdf_syntax::bit_reader::BitReader;
 use pdf_syntax::object::Array;
 use pdf_syntax::object::Dict;
+use pdf_syntax::object::Name;
 use pdf_syntax::object::Object;
 use pdf_syntax::object::Rect;
 use pdf_syntax::object::Stream;
@@ -122,12 +123,21 @@ pub struct Shading {
 }
 
 impl Shading {
-    pub(crate) fn new(dict: &Dict<'_>, stream: Option<&Stream<'_>>, cache: &Cache) -> Option<Self> {
+    pub(crate) fn new<'a, 'res, F>(
+        dict: &Dict<'a>,
+        stream: Option<&Stream<'a>>,
+        cache: &Cache,
+        resolve_named: F,
+    ) -> Option<Self>
+    where
+        F: Fn(Name) -> Option<Object<'res>>,
+    {
         let cache_key = dict.cache_key();
 
         let shading_num = dict.get::<u8>(SHADING_TYPE)?;
 
-        let color_space = ColorSpace::new(dict.get(COLORSPACE)?, cache)?;
+        let color_space =
+            ColorSpace::new_with_resource_resolver(dict.get(COLORSPACE)?, cache, resolve_named)?;
 
         let shading_type = match shading_num {
             1 => {

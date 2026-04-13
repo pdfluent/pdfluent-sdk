@@ -4,8 +4,8 @@ use crate::cache::{Cache, CacheKey};
 use crate::function::Function;
 use log::warn;
 use moxcms::{
-    ColorProfile, DataColorSpace, Layout, Transform8BitExecutor, TransformF32BitExecutor,
-    TransformOptions, Xyzd,
+    ColorProfile, DataColorSpace, Layout, RenderingIntent, Transform8BitExecutor,
+    TransformF32BitExecutor, TransformOptions, Xyzd,
 };
 use pdf_syntax::object;
 use pdf_syntax::object::Array;
@@ -31,6 +31,47 @@ fn default_cmyk_profile() -> Option<&'static ICCProfile> {
 
 /// A storage for the components of colors.
 pub type ColorComponents = SmallVec<[f32; 4]>;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum DeviceDefaultKind {
+    Gray,
+    Rgb,
+    Cmyk,
+}
+
+fn device_default_kind(name: &Name) -> Option<DeviceDefaultKind> {
+    match name.deref() {
+        DEVICE_GRAY | G => Some(DeviceDefaultKind::Gray),
+        DEVICE_RGB | RGB => Some(DeviceDefaultKind::Rgb),
+        DEVICE_CMYK | CMYK | CALCMYK => Some(DeviceDefaultKind::Cmyk),
+        _ => None,
+    }
+}
+
+fn default_resource_name(kind: DeviceDefaultKind) -> Name {
+    Name::new(match kind {
+        DeviceDefaultKind::Gray => DEFAULT_GRAY,
+        DeviceDefaultKind::Rgb => DEFAULT_RGB,
+        DeviceDefaultKind::Cmyk => DEFAULT_CMYK,
+    })
+}
+
+fn is_builtin_color_space_name(name: &Name) -> bool {
+    matches!(
+        name.deref(),
+        DEVICE_RGB
+            | RGB
+            | DEVICE_GRAY
+            | G
+            | DEVICE_CMYK
+            | CMYK
+            | CALCMYK
+            | PATTERN
+            | DEFAULT_GRAY
+            | DEFAULT_RGB
+            | DEFAULT_CMYK
+    )
+}
 
 /// An RGB color with an alpha channel.
 #[derive(Debug, Copy, Clone)]
@@ -111,12 +152,31 @@ pub(crate) enum ColorSpaceType {
 }
 
 impl ColorSpaceType {
-    fn new(object: Object<'_>, cache: &Cache) -> Option<Self> {
-        Self::new_inner(object, cache)
-    }
-
-    fn new_inner(object: Object<'_>, cache: &Cache) -> Option<Self> {
+    fn new_inner<'obj, 'res, F>(
+        object: Object<'obj>,
+        cache: &Cache,
+        resolve_named: &F,
+        disabled_default: Option<DeviceDefaultKind>,
+    ) -> Option<Self>
+    where
+        F: Fn(Name) -> Option<Object<'res>>,
+    {
         if let Some(name) = object.clone().into_name() {
+            if let Some(kind) = device_default_kind(&name)
+                && disabled_default != Some(kind)
+                && let Some(default_object) = resolve_named(default_resource_name(kind))
+                && let Some(default_space) =
+                    Self::new_inner(default_object, cache, resolve_named, Some(kind))
+            {
+                return Some(default_space);
+            }
+
+            if !is_builtin_color_space_name(&name)
+                && let Some(named_object) = resolve_named(name.clone())
+            {
+                return Self::new_inner(named_object, cache, resolve_named, disabled_default);
+            }
+
             return Self::new_from_name(name.clone());
         } else if let Some(color_array) = object.clone().into_array() {
             let mut iter = color_array.clone().flex_iter();
@@ -127,35 +187,37 @@ impl ColorSpaceType {
                     let icc_stream = iter.next::<Stream<'_>>()?;
                     let dict = icc_stream.dict();
                     let num_components = dict.get::<usize>(N)?;
+                    let icc = cache.get_or_insert_with(
+                        (icc_stream.cache_key(), num_components as u128).cache_key(),
+                        || {
+                            let decoded = icc_stream.decoded().ok()?;
+                            ICCProfile::new(&decoded, num_components)
+                        },
+                    );
 
-                    return cache.get_or_insert_with(icc_stream.cache_key(), || {
-                        if let Some(decoded) = icc_stream.decoded().ok().as_ref() {
-                            ICCProfile::new(decoded, num_components)
-                                .map(|icc| {
-                                    // TODO: For SVG and PNG we can assume that the output color space is
-                                    // sRGB. If we ever implement PDF-to-PDF, we probably want to
-                                    // let the user pass the native color type and don't make this optimization
-                                    // if it's not sRGB.
-                                    if icc.is_srgb() {
-                                        Self::DeviceRgb
-                                    } else {
-                                        Self::ICCBased(icc)
-                                    }
-                                })
-                                .or_else(|| {
-                                    dict.get::<Object<'_>>(ALTERNATE)
-                                        .and_then(|o| Self::new(o, cache))
-                                })
-                                .or_else(|| match dict.get::<u8>(N) {
-                                    Some(1) => Some(Self::DeviceGray),
-                                    Some(3) => Some(Self::DeviceRgb),
-                                    Some(4) => Some(Self::DeviceCmyk),
-                                    _ => None,
-                                })
-                        } else {
-                            None
-                        }
-                    });
+                    return icc
+                        .map(|icc| {
+                            // TODO: For SVG and PNG we can assume that the output color space is
+                            // sRGB. If we ever implement PDF-to-PDF, we probably want to
+                            // let the user pass the native color type and don't make this optimization
+                            // if it's not sRGB.
+                            if icc.is_srgb() {
+                                Self::DeviceRgb
+                            } else {
+                                Self::ICCBased(icc)
+                            }
+                        })
+                        .or_else(|| {
+                            dict.get::<Object<'_>>(ALTERNATE).and_then(|o| {
+                                Self::new_inner(o, cache, resolve_named, disabled_default)
+                            })
+                        })
+                        .or_else(|| match dict.get::<u8>(N) {
+                            Some(1) => Some(Self::DeviceGray),
+                            Some(3) => Some(Self::DeviceRgb),
+                            Some(4) => Some(Self::DeviceCmyk),
+                            _ => None,
+                        });
                 }
                 CALCMYK => return Some(Self::DeviceCmyk),
                 CALGRAY => {
@@ -174,20 +236,37 @@ impl ColorSpaceType {
                     return Some(Self::Lab(Lab::new(&lab_dict)?));
                 }
                 INDEXED | I => {
-                    return Some(Self::Indexed(Indexed::new(&color_array, cache)?));
+                    return Some(Self::Indexed(Indexed::new(
+                        &color_array,
+                        cache,
+                        resolve_named,
+                        disabled_default,
+                    )?));
                 }
                 SEPARATION => {
-                    return Some(Self::Separation(Separation::new(&color_array, cache)?));
+                    return Some(Self::Separation(Separation::new(
+                        &color_array,
+                        cache,
+                        resolve_named,
+                        disabled_default,
+                    )?));
                 }
                 DEVICE_N => {
-                    return Some(Self::DeviceN(DeviceN::new(&color_array, cache)?));
+                    return Some(Self::DeviceN(DeviceN::new(
+                        &color_array,
+                        cache,
+                        resolve_named,
+                        disabled_default,
+                    )?));
                 }
                 PATTERN => {
                     // Base colorspace is the next element: [/Pattern /DeviceCMYK] or
                     // [/Pattern [/ICCBased ...]] etc. Do NOT skip an extra element here.
                     let cs = iter
                         .next::<Object<'_>>()
-                        .and_then(|o| ColorSpace::new(o, cache))
+                        .and_then(|o| {
+                            ColorSpace::new_inner(o, cache, resolve_named, disabled_default)
+                        })
                         .unwrap_or(ColorSpace::device_rgb());
                     return Some(Self::Pattern(cs));
                 }
@@ -218,14 +297,32 @@ impl ColorSpaceType {
 pub struct ColorSpace(Arc<ColorSpaceType>);
 
 impl ColorSpace {
-    /// Create a new color space from the given object.
-    pub(crate) fn new(object: Object<'_>, cache: &Cache) -> Option<Self> {
-        Some(Self(Arc::new(ColorSpaceType::new(object, cache)?)))
+    pub(crate) fn new_with_resource_resolver<'obj, 'res, F>(
+        object: Object<'obj>,
+        cache: &Cache,
+        resolve_named: F,
+    ) -> Option<Self>
+    where
+        F: Fn(Name) -> Option<Object<'res>>,
+    {
+        Self::new_inner(object, cache, &resolve_named, None)
     }
 
-    /// Create a new color space from the name.
-    pub(crate) fn new_from_name(name: Name) -> Option<Self> {
-        ColorSpaceType::new_from_name(name).map(|c| Self(Arc::new(c)))
+    fn new_inner<'obj, 'res, F>(
+        object: Object<'obj>,
+        cache: &Cache,
+        resolve_named: &F,
+        disabled_default: Option<DeviceDefaultKind>,
+    ) -> Option<Self>
+    where
+        F: Fn(Name) -> Option<Object<'res>>,
+    {
+        Some(Self(Arc::new(ColorSpaceType::new_inner(
+            object,
+            cache,
+            resolve_named,
+            disabled_default,
+        )?)))
     }
 
     /// Return the device gray color space.
@@ -463,6 +560,7 @@ impl ToRgb for ColorSpace {
 #[derive(Debug, Clone)]
 pub(crate) struct CalGray {
     white_point: [f32; 3],
+    #[allow(dead_code)]
     black_point: [f32; 3],
     gamma: f32,
 }
@@ -484,23 +582,72 @@ impl CalGray {
 
 impl ToRgb for CalGray {
     fn convert_f32(&self, input: &[f32], output: &mut [u8], _: bool) -> Option<()> {
+        // Bradford chromatic adaptation constants (same as CalRgb).
+        const BRADFORD: [f32; 9] = [
+            0.8951, 0.2664, -0.1614, -0.7502, 1.7135, 0.0367, 0.0389, -0.0685, 1.0296,
+        ];
+        const BRADFORD_INV: [f32; 9] = [
+            0.9869929, -0.1470543, 0.1599627, 0.4323053, 0.5183603, 0.0492912, -0.0085287,
+            0.0400428, 0.9684867,
+        ];
+        const XYZ_TO_SRGB: [f32; 9] = [
+            3.2404542, -1.5371385, -0.4985314, -0.969266, 1.8760108, 0.041556, 0.0556434,
+            -0.2040259, 1.0572252,
+        ];
+        const D65: [f32; 3] = [0.95047, 1.0, 1.08883];
+
+        #[inline]
+        fn mat_mul(a: &[f32; 9], b: &[f32; 3]) -> [f32; 3] {
+            [
+                a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
+                a[3] * b[0] + a[4] * b[1] + a[5] * b[2],
+                a[6] * b[0] + a[7] * b[1] + a[8] * b[2],
+            ]
+        }
+
+        #[inline]
+        fn srgb_transfer(c: f32) -> f32 {
+            if c <= 0.0031308 {
+                (12.92 * c).clamp(0.0, 1.0)
+            } else if c >= 0.99554525 {
+                1.0
+            } else {
+                ((1.0 + 0.055) * c.powf(1.0 / 2.4) - 0.055).clamp(0.0, 1.0)
+            }
+        }
+
+        // Precompute Bradford adaptation ratio (constant for all pixels).
+        let wp = self.white_point;
+        let lms_src = mat_mul(&BRADFORD, &wp);
+        let lms_d65 = mat_mul(&BRADFORD, &D65);
+        let adapt = [
+            if lms_src[0].abs() > 1e-10 { lms_d65[0] / lms_src[0] } else { 1.0 },
+            if lms_src[1].abs() > 1e-10 { lms_d65[1] / lms_src[1] } else { 1.0 },
+            if lms_src[2].abs() > 1e-10 { lms_d65[2] / lms_src[2] } else { 1.0 },
+        ];
+
         for (input, output) in input.iter().copied().zip(output.chunks_exact_mut(3)) {
-            let g = self.gamma;
-            let (_xw, yw, _zw) = {
-                let wp = self.white_point;
-                (wp[0], wp[1], wp[2])
-            };
-            let (_xb, _yb, _zb) = {
-                let bp = self.black_point;
-                (bp[0], bp[1], bp[2])
-            };
+            let a = input.clamp(0.0, 1.0);
+            let ag = a.powf(self.gamma);
 
-            let a = input;
-            let ag = a.powf(g);
-            let l = yw * ag;
-            let val = (0.0_f32.max(295.8 * l.powf(0.333_333_34) - 40.8) + 0.5) as u8;
+            // PDF spec §8.6.5.3: XYZ = WhitePoint × A^γ
+            let xyz = [wp[0] * ag, wp[1] * ag, wp[2] * ag];
 
-            output.copy_from_slice(&[val, val, val]);
+            // Bradford chromatic adaptation: source WP → D65
+            let lms = mat_mul(&BRADFORD, &xyz);
+            let xyz_d65 = mat_mul(&BRADFORD_INV, &[
+                lms[0] * adapt[0],
+                lms[1] * adapt[1],
+                lms[2] * adapt[2],
+            ]);
+
+            // XYZ (D65) → linear sRGB → sRGB
+            let linear = mat_mul(&XYZ_TO_SRGB, &xyz_d65);
+            output.copy_from_slice(&[
+                (srgb_transfer(linear[0]) * 255.0 + 0.5) as u8,
+                (srgb_transfer(linear[1]) * 255.0 + 0.5) as u8,
+                (srgb_transfer(linear[2]) * 255.0 + 0.5) as u8,
+            ]);
         }
 
         Some(())
@@ -641,6 +788,7 @@ impl CalRgb {
         let lms_d65 = Self::to_d65(source_white_point, &lms);
         Self::matrix_product(&Self::BRADFORD_SCALE_INVERSE_MATRIX, &lms_d65)
     }
+
 }
 
 impl ToRgb for CalRgb {
@@ -748,11 +896,24 @@ pub(crate) struct Indexed {
 }
 
 impl Indexed {
-    fn new(array: &Array<'_>, cache: &Cache) -> Option<Self> {
+    fn new<'obj, 'res, F>(
+        array: &Array<'obj>,
+        cache: &Cache,
+        resolve_named: &F,
+        disabled_default: Option<DeviceDefaultKind>,
+    ) -> Option<Self>
+    where
+        F: Fn(Name) -> Option<Object<'res>>,
+    {
         let mut iter = array.flex_iter();
         // Skip name
         let _ = iter.next::<Name>()?;
-        let base_color_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache)?;
+        let base_color_space = ColorSpace::new_inner(
+            iter.next::<Object<'_>>()?,
+            cache,
+            resolve_named,
+            disabled_default,
+        )?;
         let hival = iter.next::<u8>()?;
 
         let values = {
@@ -812,12 +973,25 @@ pub(crate) struct Separation {
 }
 
 impl Separation {
-    fn new(array: &Array<'_>, cache: &Cache) -> Option<Self> {
+    fn new<'obj, 'res, F>(
+        array: &Array<'obj>,
+        cache: &Cache,
+        resolve_named: &F,
+        disabled_default: Option<DeviceDefaultKind>,
+    ) -> Option<Self>
+    where
+        F: Fn(Name) -> Option<Object<'res>>,
+    {
         let mut iter = array.flex_iter();
         // Skip `/Separation`
         let _ = iter.next::<Name>()?;
         let name = iter.next::<Name>()?;
-        let alternate_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache)?;
+        let alternate_space = ColorSpace::new_inner(
+            iter.next::<Object<'_>>()?,
+            cache,
+            resolve_named,
+            disabled_default,
+        )?;
         let tint_transform = Function::new(&iter.next::<Object<'_>>()?)?;
         // Either I did something wrong, or no other viewers properly handles
         // `All`, so let's just ignore it as well.
@@ -835,10 +1009,11 @@ impl ToRgb for Separation {
     fn convert_f32(&self, input: &[f32], output: &mut [u8], _: bool) -> Option<()> {
         let evaluated = input
             .iter()
-            .flat_map(|n| {
-                self.tint_transform
-                    .eval(smallvec![*n])
-                    .unwrap_or(self.alternate_space.initial_color())
+            .flat_map(|n| match self.tint_transform.eval(smallvec![*n]) {
+                Some(values) if values.len() == self.alternate_space.num_components() as usize => {
+                    values
+                }
+                _ => self.alternate_space.initial_color(),
             })
             .collect::<Vec<_>>();
         self.alternate_space.convert_f32(&evaluated, output, false)
@@ -858,7 +1033,15 @@ pub(crate) struct DeviceN {
 }
 
 impl DeviceN {
-    fn new(array: &Array<'_>, cache: &Cache) -> Option<Self> {
+    fn new<'obj, 'res, F>(
+        array: &Array<'obj>,
+        cache: &Cache,
+        resolve_named: &F,
+        disabled_default: Option<DeviceDefaultKind>,
+    ) -> Option<Self>
+    where
+        F: Fn(Name) -> Option<Object<'res>>,
+    {
         let mut iter = array.flex_iter();
         // Skip `/DeviceN`
         let _ = iter.next::<Name>()?;
@@ -866,7 +1049,12 @@ impl DeviceN {
         let names = iter.next::<Array<'_>>()?.iter::<Name>().collect::<Vec<_>>();
         let num_components = u8::try_from(names.len()).ok()?;
         let all_none = names.iter().all(|n| n.as_str() == "None");
-        let alternate_space = ColorSpace::new(iter.next::<Object<'_>>()?, cache)?;
+        let alternate_space = ColorSpace::new_inner(
+            iter.next::<Object<'_>>()?,
+            cache,
+            resolve_named,
+            disabled_default,
+        )?;
         let tint_transform = Function::new(&iter.next::<Object<'_>>()?)?;
 
         if num_components == 0 {
@@ -886,10 +1074,11 @@ impl ToRgb for DeviceN {
     fn convert_f32(&self, input: &[f32], output: &mut [u8], _: bool) -> Option<()> {
         let evaluated = input
             .chunks_exact(self.num_components as usize)
-            .flat_map(|n| {
-                self.tint_transform
-                    .eval(n.to_smallvec())
-                    .unwrap_or(self.alternate_space.initial_color())
+            .flat_map(|n| match self.tint_transform.eval(n.to_smallvec()) {
+                Some(values) if values.len() == self.alternate_space.num_components() as usize => {
+                    values
+                }
+                _ => self.alternate_space.initial_color(),
             })
             .collect::<Vec<_>>();
         self.alternate_space.convert_f32(&evaluated, output, false)
@@ -920,6 +1109,27 @@ impl Debug for ICCProfile {
 impl ICCProfile {
     fn new(profile: &[u8], number_components: usize) -> Option<Self> {
         let src_profile = ColorProfile::new_from_slice(profile).ok()?;
+        let profile_components = match src_profile.color_space {
+            DataColorSpace::Gray => 1,
+            DataColorSpace::Rgb
+            | DataColorSpace::Lab
+            | DataColorSpace::Luv
+            | DataColorSpace::Xyz
+            | DataColorSpace::YCbr
+            | DataColorSpace::Yxy
+            | DataColorSpace::Hsv
+            | DataColorSpace::Hls
+            | DataColorSpace::Cmy
+            | DataColorSpace::Color3 => 3,
+            DataColorSpace::Cmyk | DataColorSpace::Color4 => 4,
+            _ => {
+                warn!(
+                    "unsupported ICC profile color space {:?}",
+                    src_profile.color_space
+                );
+                return None;
+            }
+        };
 
         const SRGB_MARKER: &[u8] = b"sRGB";
 
@@ -929,7 +1139,14 @@ impl ICCProfile {
             .unwrap_or(false);
         let is_lab = src_profile.color_space == DataColorSpace::Lab;
 
-        Self::new_from_src_profile(src_profile, is_srgb, is_lab, number_components)
+        if number_components != profile_components {
+            warn!(
+                "ICCBased /N={} does not match embedded ICC profile component count {}; using profile",
+                number_components, profile_components
+            );
+        }
+
+        Self::new_from_src_profile(src_profile, is_srgb, is_lab, profile_components)
     }
 
     fn new_from_src_profile(
@@ -951,12 +1168,21 @@ impl ICCProfile {
             }
         };
 
+        // PDF spec §8.6.5.8: default rendering intent is RelativeColorimetric.
+        // moxcms defaults to Perceptual, which compresses in-gamut colors and
+        // produces subtle colour shifts.  Use RelativeColorimetric to match
+        // the PDF spec default and MuPDF/Acrobat behaviour.
+        let options = TransformOptions {
+            rendering_intent: RenderingIntent::RelativeColorimetric,
+            ..TransformOptions::default()
+        };
+
         let u8_transform = src_profile
             .create_transform_8bit(
                 src_layout,
                 &dest_profile,
                 Layout::Rgb,
-                TransformOptions::default(),
+                options,
             )
             .ok()?;
 
@@ -965,7 +1191,7 @@ impl ICCProfile {
                 src_layout,
                 &dest_profile,
                 Layout::Rgb,
-                TransformOptions::default(),
+                options,
             )
             .ok()?;
 
@@ -1020,7 +1246,7 @@ impl ToRgb for ICCProfile {
     }
 
     fn convert_u8(&self, input: &[u8], output: &mut [u8]) -> Option<()> {
-        if self.is_srgb() {
+        if self.is_srgb() && input.len() == output.len() {
             output.copy_from_slice(input);
         } else {
             self.0.transform_u8.transform(input, output).ok()?;
@@ -1145,5 +1371,111 @@ pub(crate) trait ToRgb {
             output[2],
             (opacity * 255.0 + 0.5) as u8,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moxcms::ColorProfile;
+    use pdf_syntax::object::Object;
+    use pdf_syntax::reader::{Reader, ReaderContext, ReaderExt};
+
+    fn parse_object(data: &[u8]) -> Object<'_> {
+        let mut reader = Reader::new(data);
+        reader
+            .read_with_context::<Object<'_>>(&ReaderContext::dummy())
+            .expect("valid PDF object")
+    }
+
+    #[test]
+    fn iccbased_uses_embedded_profile_component_count() {
+        let profile = ColorProfile::new_srgb().encode().expect("sRGB ICC profile");
+        let icc_profile = ICCProfile::new(&profile, 4).expect("parsed ICC profile");
+
+        assert_eq!(icc_profile.0.number_components, 3);
+    }
+
+    #[test]
+    fn default_gray_substitutes_device_gray() {
+        let default_gray_bytes = b"[/CalGray << /WhitePoint [1 1 1] /Gamma 2 >>]";
+        let default_gray = parse_object(default_gray_bytes);
+        let cache = Cache::new();
+
+        let resolved = ColorSpace::new_with_resource_resolver(
+            Object::Name(Name::new(DEVICE_GRAY)),
+            &cache,
+            |name| {
+                if name == Name::new(DEFAULT_GRAY) {
+                    Some(default_gray.clone())
+                } else {
+                    None
+                }
+            },
+        )
+        .expect("resolved DeviceGray");
+        let expected = ColorSpace::new_with_resource_resolver(default_gray, &cache, |_| None)
+            .expect("parsed DefaultGray replacement");
+
+        assert_eq!(
+            resolved.to_rgba(&[0.5], 1.0, false).to_rgba8(),
+            expected.to_rgba(&[0.5], 1.0, false).to_rgba8()
+        );
+    }
+
+    #[test]
+    fn separation_uses_default_alternate_space() {
+        let default_gray_bytes = b"[/CalGray << /WhitePoint [1 1 1] /Gamma 2 >>]";
+        let default_gray = parse_object(default_gray_bytes);
+        let separation = parse_object(
+            b"[/Separation /Spot /DeviceGray << /FunctionType 2 /Domain [0 1] /Range [0 1] /C0 [0] /C1 [1] /N 1 >>]",
+        );
+        let cache = Cache::new();
+
+        let resolved = ColorSpace::new_with_resource_resolver(separation, &cache, |name| {
+            if name == Name::new(DEFAULT_GRAY) {
+                Some(default_gray.clone())
+            } else {
+                None
+            }
+        })
+        .expect("parsed Separation");
+        let expected = ColorSpace::new_with_resource_resolver(default_gray, &cache, |_| None)
+            .expect("parsed DefaultGray replacement");
+
+        assert_eq!(
+            resolved.to_rgba(&[0.5], 1.0, false).to_rgba8(),
+            expected.to_rgba(&[0.5], 1.0, false).to_rgba8()
+        );
+    }
+
+    #[test]
+    fn separation_invalid_tint_output_falls_back_to_alternate_initial_color() {
+        let separation = parse_object(
+            b"[/Separation /Spot /DeviceRGB << /FunctionType 2 /Domain [0 1] /Range [0 1] /C0 [0] /C1 [1] /N 1 >>]",
+        );
+        let cache = Cache::new();
+        let color_space = ColorSpace::new_with_resource_resolver(separation, &cache, |_| None)
+            .expect("parsed Separation");
+
+        assert_eq!(
+            color_space.to_rgba(&[1.0], 1.0, false).to_rgba8(),
+            AlphaColor::BLACK.to_rgba8()
+        );
+    }
+
+    #[test]
+    fn devicen_invalid_tint_output_falls_back_to_alternate_initial_color() {
+        let devicen = parse_object(
+            b"[/DeviceN [/Spot1 /Spot2] /DeviceRGB << /FunctionType 2 /Domain [0 1] /Range [0 1] /C0 [0] /C1 [1] /N 1 >>]",
+        );
+        let cache = Cache::new();
+        let color_space = ColorSpace::new_with_resource_resolver(devicen, &cache, |_| None)
+            .expect("parsed DeviceN");
+
+        assert_eq!(
+            color_space.to_rgba(&[1.0, 0.0], 1.0, false).to_rgba8(),
+            AlphaColor::BLACK.to_rgba8()
+        );
     }
 }

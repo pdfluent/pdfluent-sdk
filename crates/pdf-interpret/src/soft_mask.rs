@@ -104,9 +104,10 @@ impl<'a> SoftMask<'a> {
         let obj_id = dict.get_ref(G)?.into();
         let group_stream = dict.get::<Stream<'_>>(G)?;
         let group = FormXObject::new(&group_stream)?;
-        let cs = ColorSpace::new(
+        let cs = ColorSpace::new_with_resource_resolver(
             group.dict.get::<Dict<'_>>(GROUP)?.get::<Object<'_>>(CS)?,
             &context.object_cache,
+            |name| parent_resources.get_color_space(name),
         )?;
         let transfer_function = dict
             .get::<Object<'_>>(TR)
