@@ -1811,6 +1811,17 @@ impl<'a> LayoutEngine<'a> {
             } else {
                 child.occur.count()
             };
+            // #865: Script-controlled pages have occur min=0/max=0/initial=0.
+            // Without a script engine, these would be invisible.  Show them
+            // once so the static content is rendered.
+            let count = if count == 0
+                && matches!(child.node_type, FormNodeType::Subform)
+                && self.has_field_descendants(child_id)
+            {
+                1
+            } else {
+                count
+            };
             for _ in 0..count {
                 expanded.push(child_id);
             }
