@@ -1689,22 +1689,31 @@ fn load_mem_with_options_lazy_objstm_no_objects_lost() {
 #[test]
 fn resolve_pending_object_streams_skips_objects_reassigned_to_newer_container() {
     let mut doc = Document::new();
-    doc.reference_table
-        .insert(7, XrefEntry::Compressed { container: 20, index: 0 });
+    doc.reference_table.insert(
+        7,
+        XrefEntry::Compressed {
+            container: 20,
+            index: 0,
+        },
+    );
 
     let mut old_stream = ObjectStream::builder().compression_level(0).build();
     old_stream
         .add_object((7, 0), Object::Integer(1))
         .expect("old ObjStm should accept object");
-    doc.objects
-        .insert((10, 0), Object::Stream(old_stream.to_stream_object().unwrap()));
+    doc.objects.insert(
+        (10, 0),
+        Object::Stream(old_stream.to_stream_object().unwrap()),
+    );
 
     let mut new_stream = ObjectStream::builder().compression_level(0).build();
     new_stream
         .add_object((7, 0), Object::Integer(2))
         .expect("new ObjStm should accept object");
-    doc.objects
-        .insert((20, 0), Object::Stream(new_stream.to_stream_object().unwrap()));
+    doc.objects.insert(
+        (20, 0),
+        Object::Stream(new_stream.to_stream_object().unwrap()),
+    );
 
     doc.pending_obj_streams = vec![(10, 0), (20, 0)];
     doc.resolve_pending_object_streams()
@@ -1714,7 +1723,9 @@ fn resolve_pending_object_streams_skips_objects_reassigned_to_newer_container() 
         .get_object((7, 0))
         .expect("object should resolve from the current ObjStm");
     assert_eq!(
-        resolved.as_i64().expect("resolved object should stay an integer"),
+        resolved
+            .as_i64()
+            .expect("resolved object should stay an integer"),
         2
     );
     assert!(
