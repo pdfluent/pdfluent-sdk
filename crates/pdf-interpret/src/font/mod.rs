@@ -683,15 +683,42 @@ pub(crate) fn synthesize_unicode_map_from_encoding(dict: &Dict<'_>) -> Option<[O
 }
 
 // When mapping to glyphs, some fonts might only have a glyph for the "normalized"
-// name.
+// name. These aliases come from the Adobe Glyph List (AGL) and are safe
+// synonyms: they are consulted only when the literal lookup already failed, so
+// adding new entries broadens recovery without overriding correct mappings.
 pub(crate) fn normalized_glyph_name(mut name: &str) -> &str {
-    if name == "nbspace" {
+    if name == "nbspace" || name == "nonbreakingspace" {
         name = "space";
     }
 
-    if name == "sfthyphen" {
+    if name == "sfthyphen" || name == "softhyphen" {
         name = "hyphen";
     }
 
     name
+}
+
+#[cfg(test)]
+mod normalized_glyph_name_tests {
+    use super::normalized_glyph_name;
+
+    #[test]
+    fn maps_space_aliases() {
+        assert_eq!(normalized_glyph_name("nbspace"), "space");
+        assert_eq!(normalized_glyph_name("nonbreakingspace"), "space");
+    }
+
+    #[test]
+    fn maps_hyphen_aliases() {
+        assert_eq!(normalized_glyph_name("sfthyphen"), "hyphen");
+        assert_eq!(normalized_glyph_name("softhyphen"), "hyphen");
+    }
+
+    #[test]
+    fn preserves_unrelated_names() {
+        assert_eq!(normalized_glyph_name("A"), "A");
+        assert_eq!(normalized_glyph_name(".notdef"), ".notdef");
+        assert_eq!(normalized_glyph_name("hyphen"), "hyphen");
+        assert_eq!(normalized_glyph_name("space"), "space");
+    }
 }
