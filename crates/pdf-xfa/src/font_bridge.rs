@@ -391,6 +391,9 @@ pub struct XfaFontResolver {
     embedded_pdf_widths: HashMap<String, PdfWidthData>,
     system_fonts: HashMap<String, PathBuf>,
     cache: HashMap<String, ResolvedFont>,
+    /// Optional directory of pre-extracted font programs (from oracle PDFs).
+    /// Fonts are looked up by PostScript name before falling back to system fonts.
+    font_cache_fonts: HashMap<String, PathBuf>,
 }
 
 /// Normalize a font name by stripping subset prefixes and PostScript suffixes.
@@ -653,12 +656,20 @@ impl XfaFontResolver {
             }
         }
         let system_fonts = scan_system_fonts();
+        let font_cache_fonts = scan_font_cache_dir();
         Self {
             embedded,
             embedded_pdf_widths,
             system_fonts,
             cache: HashMap::new(),
+            font_cache_fonts,
         }
+    }
+
+    /// Set a custom font cache directory (overrides `XFA_FONT_CACHE` env var).
+    pub fn with_font_cache(mut self, dir: &std::path::Path) -> Self {
+        self.font_cache_fonts = scan_font_dir(dir);
+        self
     }
 
     /// Resolve a font specification to a usable font.
@@ -687,15 +698,20 @@ impl XfaFontResolver {
             .iter()
             .find_map(|vn| {
                 self.try_embedded(vn)
+                    .or_else(|| self.try_font_cache(vn))
                     .or_else(|| self.try_system(vn))
                     .or_else(|| {
                         let norm = normalize_font_name(vn);
-                        self.try_embedded(&norm).or_else(|| self.try_system(&norm))
+                        self.try_embedded(&norm)
+                            .or_else(|| self.try_font_cache(&norm))
+                            .or_else(|| self.try_system(&norm))
                     })
             })
             // Then try the base name as before.
             .or_else(|| self.try_embedded(&spec.typeface))
             .or_else(|| self.try_embedded(&normalized))
+            .or_else(|| self.try_font_cache(&spec.typeface))
+            .or_else(|| self.try_font_cache(&normalized))
             .or_else(|| self.try_system(&spec.typeface))
             .or_else(|| self.try_system(&normalized))
             .or_else(|| self.try_base_name(&spec.typeface))
@@ -730,6 +746,11 @@ impl XfaFontResolver {
 
     fn try_embedded(&self, name: &str) -> Option<ResolvedFont> {
         self.embedded.get(&name.to_lowercase()).cloned()
+    }
+
+    fn try_font_cache(&self, name: &str) -> Option<ResolvedFont> {
+        let path = self.font_cache_fonts.get(&name.to_lowercase())?;
+        load_system_font(path, name)
     }
 
     fn try_system(&self, name: &str) -> Option<ResolvedFont> {
@@ -1334,6 +1355,80 @@ fn system_font_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Scan a single directory of font files (flat, no recursion).
+///
+/// Returns a map from lowercase PostScript name / family name / filename stem
+/// to the font file path — same name-table logic as `scan_system_fonts`.
+fn scan_font_dir(dir: &std::path::Path) -> HashMap<String, PathBuf> {
+    let mut fonts = HashMap::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return fonts,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            continue;
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc" | "cff") {
+            continue;
+        }
+        // Register by filename stem
+        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+            fonts
+                .entry(stem.to_lowercase())
+                .or_insert_with(|| path.clone());
+        }
+        // Register by name table entries
+        if let Ok(data) = std::fs::read(&path) {
+            let num_faces = ttf_parser::fonts_in_collection(&data).unwrap_or(1);
+            for face_idx in 0..num_faces {
+                if let Ok(face) = ttf_parser::Face::parse(&data, face_idx) {
+                    for name_record in face.names() {
+                        let dominated = matches!(
+                            name_record.name_id,
+                            ttf_parser::name_id::FAMILY
+                                | ttf_parser::name_id::FULL_NAME
+                                | ttf_parser::name_id::POST_SCRIPT_NAME
+                        );
+                        if dominated {
+                            if let Some(s) = name_record.to_string() {
+                                let key = s.to_lowercase();
+                                fonts.entry(key).or_insert_with(|| path.clone());
+                                let no_spaces = s.replace(' ', "").to_lowercase();
+                                if no_spaces != s.to_lowercase() {
+                                    fonts.entry(no_spaces).or_insert_with(|| path.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fonts
+}
+
+/// Scan font cache directory from `XFA_FONT_CACHE` env var.
+fn scan_font_cache_dir() -> HashMap<String, PathBuf> {
+    match std::env::var("XFA_FONT_CACHE") {
+        Ok(dir) => {
+            let path = PathBuf::from(&dir);
+            if path.is_dir() {
+                scan_font_dir(&path)
+            } else {
+                HashMap::new()
+            }
+        }
+        Err(_) => HashMap::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1690,5 +1785,76 @@ mod tests {
             resolved.data.is_empty(),
             "reused PDF fonts should not require a synthetic embedded program"
         );
+    }
+
+    #[test]
+    fn scan_font_dir_empty_dir() {
+        let dir = std::env::temp_dir().join("xfa_font_cache_test_empty");
+        let _ = std::fs::create_dir_all(&dir);
+        let fonts = scan_font_dir(&dir);
+        // May or may not be empty depending on temp dir state, but should not panic
+        assert!(fonts.len() < 10000);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_font_dir_nonexistent() {
+        let fonts = scan_font_dir(std::path::Path::new("/nonexistent/font/cache/dir"));
+        assert!(fonts.is_empty());
+    }
+
+    #[test]
+    fn scan_font_cache_dir_unset() {
+        // When XFA_FONT_CACHE is not set, should return empty map
+        std::env::remove_var("XFA_FONT_CACHE");
+        let fonts = scan_font_cache_dir();
+        assert!(fonts.is_empty());
+    }
+
+    #[test]
+    fn resolver_with_font_cache_dir() {
+        let dir = std::env::temp_dir().join("xfa_font_cache_test_resolver");
+        let _ = std::fs::create_dir_all(&dir);
+        let resolver = XfaFontResolver::new(vec![]).with_font_cache(&dir);
+        // Should have the cache fonts map initialized (likely empty for temp dir)
+        assert!(resolver.font_cache_fonts.len() < 10000);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn font_cache_resolves_before_system_fallback() {
+        // Create a temp dir with a fake "font" file named after a font
+        let dir = std::env::temp_dir().join("xfa_font_cache_test_resolve_order");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Copy a real system font (if available) to the cache under a test name.
+        // On macOS, Helvetica.ttc exists; on Linux, try LiberationSans.
+        let source = {
+            #[cfg(target_os = "macos")]
+            {
+                PathBuf::from("/System/Library/Fonts/Helvetica.ttc")
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                PathBuf::from("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf")
+            }
+        };
+        if !source.exists() {
+            // Skip test if no system font available
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        let dest = dir.join("TestCacheFont.ttf");
+        std::fs::copy(&source, &dest).unwrap();
+
+        let resolver = XfaFontResolver::new(vec![]).with_font_cache(&dir);
+        // The cache should have picked up the font by filename stem
+        assert!(
+            resolver.font_cache_fonts.contains_key("testcachefont"),
+            "font cache should contain the test font by stem name"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

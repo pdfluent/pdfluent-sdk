@@ -305,9 +305,9 @@ impl<'a> LayoutEngine<'a> {
                     let pa = &page_areas[0];
                     let ca = primary_content_area(pa);
                     let half_page = ca.height * 0.5;
-                    content_queued.iter().all(|qn| {
-                        self.compute_extent(qn.id).height <= half_page
-                    })
+                    content_queued
+                        .iter()
+                        .all(|qn| self.compute_extent(qn.id).height <= half_page)
                 };
 
             // #794 — Single positioned subform delegation: when there is
@@ -489,6 +489,7 @@ impl<'a> LayoutEngine<'a> {
     /// Adobe empirical behavior (not strictly per spec):
     /// - `hidden` / `invisible` / `inactive` -- no layout space, not rendered.
     /// - `visible` -- normal.
+    ///
     /// See `Presence::is_layout_hidden()` for rationale (fixes #806).
     fn is_layout_hidden(&self, id: FormNodeId) -> bool {
         let meta = self.form.meta(id);
@@ -920,10 +921,14 @@ impl<'a> LayoutEngine<'a> {
             // through normal overflow/split logic instead of being pushed to a
             // fresh page, which wastes space and causes over-pagination (#866).
             if placed_count > 0 && vis_pos < visible_ids.len() {
-                let (chain_height, chain_len) = self.visible_keep_chain_height(&visible_ids, vis_pos, available);
+                let (chain_height, chain_len) =
+                    self.visible_keep_chain_height(&visible_ids, vis_pos, available);
                 let remaining_on_page = content_bottom - y_cursor;
                 let is_single_splittable = chain_len == 1 && self.can_split(child_id);
-                if !is_single_splittable && chain_height > remaining_on_page && chain_height <= content_height {
+                if !is_single_splittable
+                    && chain_height > remaining_on_page
+                    && chain_height <= content_height
+                {
                     // Chain (or non-splittable single node) fits on a fresh page — break now.
                     break;
                 }
@@ -1244,8 +1249,8 @@ impl<'a> LayoutEngine<'a> {
                 },
                 children: Vec::new(),
                 style: self.form.meta(id).style.clone(),
-                    display_items: self.form.meta(id).display_items.clone(),
-                    save_items: self.form.meta(id).save_items.clone(),
+                display_items: self.form.meta(id).display_items.clone(),
+                save_items: self.form.meta(id).save_items.clone(),
             };
             return Ok((full_node, Vec::new()));
         }
@@ -1271,8 +1276,8 @@ impl<'a> LayoutEngine<'a> {
             },
             children: Vec::new(),
             style: self.form.meta(id).style.clone(),
-                    display_items: self.form.meta(id).display_items.clone(),
-                    save_items: self.form.meta(id).save_items.clone(),
+            display_items: self.form.meta(id).display_items.clone(),
+            save_items: self.form.meta(id).save_items.clone(),
         };
 
         let rest = if bottom_lines.is_empty() {
@@ -1500,7 +1505,11 @@ impl<'a> LayoutEngine<'a> {
                             }
                             (
                                 Some(ids),
-                                if nested.is_empty() { None } else { Some(nested) },
+                                if nested.is_empty() {
+                                    None
+                                } else {
+                                    Some(nested)
+                                },
                             )
                         };
 
@@ -1593,8 +1602,8 @@ impl<'a> LayoutEngine<'a> {
             content,
             children: placed_children,
             style: self.form.meta(id).style.clone(),
-                    display_items: self.form.meta(id).display_items.clone(),
-                    save_items: self.form.meta(id).save_items.clone(),
+            display_items: self.form.meta(id).display_items.clone(),
+            save_items: self.form.meta(id).save_items.clone(),
         };
 
         let rest = split_rest_override.unwrap_or_else(|| {
@@ -1745,8 +1754,8 @@ impl<'a> LayoutEngine<'a> {
             content,
             children: placed_children,
             style: self.form.meta(id).style.clone(),
-                    display_items: self.form.meta(id).display_items.clone(),
-                    save_items: self.form.meta(id).save_items.clone(),
+            display_items: self.form.meta(id).display_items.clone(),
+            save_items: self.form.meta(id).save_items.clone(),
         };
 
         // Remaining children are wrapped in a QueuedNode for the same
@@ -1956,9 +1965,8 @@ impl<'a> LayoutEngine<'a> {
                     let child_border_w = child_style
                         .border_width_pt
                         .unwrap_or(child.box_model.border_width);
-                    let insets_w = child.box_model.margins.horizontal()
-                        + child_border_w * 2.0
-                        + para_margins;
+                    let insets_w =
+                        child.box_model.margins.horizontal() + child_border_w * 2.0 + para_margins;
                     let max_w = (child_size.width - insets_w).max(1.0);
                     let wrapped = text::wrap_text(
                         txt,
@@ -1971,8 +1979,11 @@ impl<'a> LayoutEngine<'a> {
                         self.split_text_node(child_id, y_cursor, remaining_height, &wrapped.lines)?;
 
                     if partial.rect.height > 0.0 && partial.rect.height <= remaining_height + 1.0 {
-                        let x =
-                            self.child_h_align_offset(child_id, partial.rect.width, available.width);
+                        let x = self.child_h_align_offset(
+                            child_id,
+                            partial.rect.width,
+                            available.width,
+                        );
                         let mut partial = partial;
                         partial.rect.x = x;
                         nodes.push(partial);
@@ -1981,21 +1992,25 @@ impl<'a> LayoutEngine<'a> {
                         let x =
                             self.child_h_align_offset(child_id, child_size.width, available.width);
                         let node = self.layout_single_node_with_extent(
-                            child_id,
-                            child,
-                            x,
-                            y_cursor,
-                            child_size,
-                            None,
+                            child_id, child, x, y_cursor, child_size, None,
                         )?;
                         nodes.push(node);
                     }
                 } else if remaining_height > 0.0 && self.can_split(child_id) {
-                    let (partial, _) =
-                        self.split_tb_node(child_id, y_cursor, remaining_height, available, None, None)?;
+                    let (partial, _) = self.split_tb_node(
+                        child_id,
+                        y_cursor,
+                        remaining_height,
+                        available,
+                        None,
+                        None,
+                    )?;
                     if partial.rect.height > 0.0 && partial.rect.height <= remaining_height + 1.0 {
-                        let x =
-                            self.child_h_align_offset(child_id, partial.rect.width, available.width);
+                        let x = self.child_h_align_offset(
+                            child_id,
+                            partial.rect.width,
+                            available.width,
+                        );
                         let mut partial = partial;
                         partial.rect.x = x;
                         nodes.push(partial);
@@ -2004,12 +2019,7 @@ impl<'a> LayoutEngine<'a> {
                         let x =
                             self.child_h_align_offset(child_id, child_size.width, available.width);
                         let node = self.layout_single_node_with_extent(
-                            child_id,
-                            child,
-                            x,
-                            y_cursor,
-                            child_size,
-                            None,
+                            child_id, child, x, y_cursor, child_size, None,
                         )?;
                         nodes.push(node);
                     }
@@ -2017,12 +2027,7 @@ impl<'a> LayoutEngine<'a> {
                     // Keep progress when the first child is oversized.
                     let x = self.child_h_align_offset(child_id, child_size.width, available.width);
                     let node = self.layout_single_node_with_extent(
-                        child_id,
-                        child,
-                        x,
-                        y_cursor,
-                        child_size,
-                        None,
+                        child_id, child, x, y_cursor, child_size, None,
                     )?;
                     nodes.push(node);
                 }
@@ -2227,8 +2232,8 @@ impl<'a> LayoutEngine<'a> {
                 content: LayoutContent::None,
                 children: cells,
                 style: self.form.meta(row_id).style.clone(),
-                    display_items: self.form.meta(row_id).display_items.clone(),
-                    save_items: self.form.meta(row_id).save_items.clone(),
+                display_items: self.form.meta(row_id).display_items.clone(),
+                save_items: self.form.meta(row_id).save_items.clone(),
             };
             nodes.push(row_layout);
 
@@ -2496,8 +2501,8 @@ impl<'a> LayoutEngine<'a> {
             content,
             children,
             style: self.form.meta(id).style.clone(),
-                    display_items: self.form.meta(id).display_items.clone(),
-                    save_items: self.form.meta(id).save_items.clone(),
+            display_items: self.form.meta(id).display_items.clone(),
+            save_items: self.form.meta(id).save_items.clone(),
         })
     }
 
