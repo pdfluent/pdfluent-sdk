@@ -1,0 +1,49 @@
+name: WASM Build
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  wasm-build:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM package
+        run: wasm-pack build crates/xfa-wasm --target web --release
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: crates/xfa-wasm/pkg/
+          retention-days: 30
+
+      - name: Trigger website rebuild
+        if: github.ref == 'refs/heads/master'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.WEBSITE_DEPLOY_TOKEN }}
+          repository: pdfluent/pdfluent-playground
+          event-type: wasm-updated
