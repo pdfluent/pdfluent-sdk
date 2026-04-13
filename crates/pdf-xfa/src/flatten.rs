@@ -1646,8 +1646,7 @@ fn apply_form_dom_presence(tree: &mut FormTree, root_id: FormNodeId, form_xml: &
             if let Some(val) = extract_field_value(xml_node) {
                 if let FormNodeType::Field { ref value, .. } = tree.get(form_node_id).node_type {
                     if value.is_empty() {
-                        tree.get_mut(form_node_id).node_type =
-                            FormNodeType::Field { value: val };
+                        tree.get_mut(form_node_id).node_type = FormNodeType::Field { value: val };
                     }
                 }
             }
@@ -3909,15 +3908,18 @@ ET
             }
             None
         }
-        let items_id = find_by_name(&tree, root_id, "Items")
-            .expect("Items subform not found in tree");
+        let items_id =
+            find_by_name(&tree, root_id, "Items").expect("Items subform not found in tree");
         let rows_before = tree
             .get(items_id)
             .children
             .iter()
             .filter(|&&c| tree.get(c).name == "Row")
             .count();
-        assert_eq!(rows_before, 1, "template merge should produce 1 Row (bind=none)");
+        assert_eq!(
+            rows_before, 1,
+            "template merge should produce 1 Row (bind=none)"
+        );
 
         // Apply form DOM
         apply_form_dom_presence(&mut tree, root_id, form_xml);
@@ -3930,7 +3932,11 @@ ET
             .filter(|&&c| tree.get(c).name == "Row")
             .copied()
             .collect();
-        assert_eq!(rows_after.len(), 3, "form DOM should expand to 3 Row instances");
+        assert_eq!(
+            rows_after.len(),
+            3,
+            "form DOM should expand to 3 Row instances"
+        );
 
         let values: Vec<String> = rows_after
             .iter()
